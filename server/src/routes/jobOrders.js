@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } = require('../lib/designSupervisorVisibility');
 
 const router = express.Router();
 const ROUTE = '/job-orders';
@@ -52,6 +53,13 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     if (search) {
       where.push('(jo.job_order_no LIKE ? OR so.sales_order_no LIKE ? OR c.name LIKE ? OR jo.description LIKE ?)');
       params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    }
+    // A Design Supervisor only ever sees their own design queue -- JOs still in "For
+    // Design Supervisor" (awaiting an artist assignment from them) or "For Artist"
+    // (already assigned, still in layout) -- not the full Job Orders list.
+    if (await isScopedToDesignQueue(req.user.id)) {
+      where.push('jo.status = ? AND jo.sub_status IN (?)');
+      params.push(DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -123,6 +131,13 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
     if (!jo) return res.status(404).json({ error: 'Not found' });
+    // Defense in depth -- a Design Supervisor can't view a JO outside their design
+    // queue just by guessing/pasting its URL, even though the list already filters it.
+    if (await isScopedToDesignQueue(req.user.id)) {
+      if (jo.status !== DESIGN_QUEUE_STATUS || !DESIGN_QUEUE_SUB_STATUSES.includes(jo.sub_status)) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+    }
 
     const [processes] = await pool.query(
       `SELECT jop.*, pr.process_name, i.display_name AS item_name, loc.location_name
