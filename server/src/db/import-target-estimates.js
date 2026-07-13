@@ -36,9 +36,18 @@ const TARGET_STATUSES = ['Pending', 'Approved by Supervisor'];
 // though the list endpoint's own status filter param takes lowercase "by" -- confirmed
 // by direct comparison, not guessed. Matched case-insensitively here to not silently
 // mis-map every one of these again.
-const STATUS_MAP_LOWER = { pending: 'pending_supervisor_approval', 'approved by supervisor': 'pending_customer_approval' };
+const STATUS_MAP_LOWER = {
+  pending: 'pending_supervisor_approval',
+  'approved by supervisor': 'pending_customer_approval',
+  approved: 'approved',
+  cancelled: 'cancelled',
+  disapproved: 'disapproved',
+};
 function mapStatus(liveStatus) {
-  return STATUS_MAP_LOWER[String(liveStatus || '').trim().toLowerCase()] || 'pending_supervisor_approval';
+  const key = String(liveStatus || '').trim().toLowerCase();
+  if (STATUS_MAP_LOWER[key]) return STATUS_MAP_LOWER[key];
+  console.warn(`  ! unrecognized live status "${liveStatus}" -- defaulting to pending_supervisor_approval, check mapStatus()`);
+  return 'pending_supervisor_approval';
 }
 const DATE_RANGE = { date1: 'Jul 1, 2026', date2: 'Jul 13, 2026' };
 

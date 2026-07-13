@@ -17,10 +17,22 @@ const TARGET_SALES_REPS = ['Arjie Bayagna', 'Catherine Jane  Langajed', 'Jocel A
 const TARGET_STATUSES = ['Pending', 'Approved by Supervisor'];
 // Status_TransH on the detail response is "Approved By Supervisor" (capital B) even
 // though the list endpoint's own status filter param takes lowercase "by" -- confirmed
-// by direct comparison against the live site, not guessed.
-const STATUS_MAP_LOWER = { pending: 'pending_supervisor_approval', 'approved by supervisor': 'pending_customer_approval' };
+// by direct comparison against the live site, not guessed. "approved" is also confirmed
+// (seen directly on a live "Approved" estimate). "cancelled"/"disapproved" are inferred
+// from the same naming convention, not yet confirmed against a real live record with
+// that exact status -- verify if one of those ever gets imported.
+const STATUS_MAP_LOWER = {
+  pending: 'pending_supervisor_approval',
+  'approved by supervisor': 'pending_customer_approval',
+  approved: 'approved',
+  cancelled: 'cancelled',
+  disapproved: 'disapproved',
+};
 function mapStatus(liveStatus) {
-  return STATUS_MAP_LOWER[String(liveStatus || '').trim().toLowerCase()] || 'pending_supervisor_approval';
+  const key = String(liveStatus || '').trim().toLowerCase();
+  if (STATUS_MAP_LOWER[key]) return STATUS_MAP_LOWER[key];
+  console.warn(`  ! unrecognized live status "${liveStatus}" -- defaulting to pending_supervisor_approval, check mapStatus()`);
+  return 'pending_supervisor_approval';
 }
 
 const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -379,4 +391,7 @@ async function syncNewEstimates({ lookbackDays = 90 } = {}) {
   return { checked: targets.length, imported, skipped, errored, details, dateRange };
 }
 
-module.exports = { syncNewEstimates };
+// Exported beyond syncNewEstimates so a one-off script can import a single, specific
+// estimate by SysPK (e.g. one pasted from a URL) without duplicating all the
+// master-data-resolution logic above.
+module.exports = { syncNewEstimates, login, apiCall, importOneEstimate, freshCache };
