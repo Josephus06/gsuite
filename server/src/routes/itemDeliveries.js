@@ -66,6 +66,49 @@ async function logAudit(conn, { deliveryId, userId, eventType, fieldName = null,
 // QI'd that hasn't shipped yet show up (min(quantity_built, quantity_inspected) -
 // quantity_delivered > 0), matching the real screen excluding lines that haven't
 // reached production at all.
+// Mirrors the real system's "Production > Item Delivery" ("Saved Item Delivery") list --
+// a flat filterable table (no status tabs), same pattern as Assembly Build's list.
+router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const {
+      search, customer_id: customerId, as_of: asOf, page = '1', limit = '10',
+    } = req.query;
+
+    const where = [];
+    const params = [];
+    if (customerId) { where.push('so.customer_id = ?'); params.push(customerId); }
+    if (asOf) { where.push('del.date_created <= ?'); params.push(asOf); }
+    if (search) {
+      where.push('(del.delivery_no LIKE ? OR so.sales_order_no LIKE ? OR c.name LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const baseFrom = `FROM item_deliveries del
+       JOIN sales_orders so ON so.id = del.sales_order_id
+       LEFT JOIN customers c ON c.id = so.customer_id`;
+
+    const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${baseFrom} ${whereSql}`, params);
+
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, Number(limit) || 10));
+    const offset = (pageNum - 1) * limitNum;
+
+    const [rows] = await pool.query(
+      `SELECT del.id, del.delivery_no, del.date_created, del.status, so.sales_order_no, c.name AS customer_name,
+              (SELECT COALESCE(SUM(qty_delivered), 0) FROM item_delivery_lines WHERE item_delivery_id = del.id) AS total_qty_delivered
+       ${baseFrom} ${whereSql}
+       ORDER BY del.id DESC
+       LIMIT ? OFFSET ?`,
+      [...params, limitNum, offset]
+    );
+
+    res.json({ rows, total, page: pageNum, limit: limitNum });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/for-sales-order/:salesOrderId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[so]] = await pool.query(

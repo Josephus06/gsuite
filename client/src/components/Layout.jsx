@@ -65,6 +65,12 @@ const NAV_STRUCTURE = [
       { route: '/production', label: 'Production' },
       { route: '/scheduled-jo', label: 'Scheduled JO' },
       { route: '/assembly-builds', label: 'Assembly Build' },
+      // Quality Inspection / Item Delivery don't have their own `pages` row -- their
+      // backend routes intentionally reuse Production's / Sales Orders' permission
+      // scope (see qualityInspections.js / itemDeliveries.js), so the nav visibility
+      // check below needs to look at permRoute instead of the link's own route.
+      { route: '/quality-inspections', permRoute: '/production', label: 'Quality Inspection' },
+      { route: '/item-deliveries', permRoute: '/sales-orders', label: 'Item Delivery' },
     ],
   },
   {
@@ -92,7 +98,7 @@ export default function Layout() {
 
   const visibleStructure = NAV_STRUCTURE
     .map((item) => (item.children
-      ? { ...item, children: item.children.filter((c) => can(c.route, 'can_view')) }
+      ? { ...item, children: item.children.filter((c) => can(c.permRoute || c.route, 'can_view')) }
       : item))
     .filter((item) => (item.children ? item.children.length > 0 : can(item.route, 'can_view')));
 

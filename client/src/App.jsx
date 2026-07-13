@@ -42,6 +42,8 @@ import ItemReceiptView from './pages/ItemReceiptView';
 import QualityInspectionView from './pages/QualityInspectionView';
 import ItemDelivery from './pages/ItemDelivery';
 import ItemDeliveryView from './pages/ItemDeliveryView';
+import ItemDeliveries from './pages/ItemDeliveries';
+import QualityInspections from './pages/QualityInspections';
 import SalesInvoiceView from './pages/SalesInvoiceView';
 import SalesInvoices from './pages/SalesInvoices';
 import PurchaseRequisitions from './pages/PurchaseRequisitions';
@@ -134,8 +136,10 @@ function App() {
         <Route path="/transfer-orders/:id/lines/:lineId/reallocate" element={<ReallocateItems />} />
         <Route path="/transfer-orders/item-fulfillments/:fulfillmentId" element={<ItemFulfillmentView />} />
         <Route path="/transfer-orders/item-receipts/:receiptId" element={<ItemReceiptView />} />
+        <Route path="/quality-inspections" element={<QualityInspections />} />
         <Route path="/quality-inspections/:id" element={<QualityInspectionView />} />
         <Route path="/sales-orders/:id/item-delivery/new" element={<ItemDelivery />} />
+        <Route path="/item-deliveries" element={<ItemDeliveries />} />
         <Route path="/item-deliveries/:id" element={<ItemDeliveryView />} />
         <Route path="/sales-invoices" element={<SalesInvoices />} />
         <Route path="/sales-invoices/:id" element={<SalesInvoiceView />} />

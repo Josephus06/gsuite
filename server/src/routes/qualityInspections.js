@@ -17,6 +17,54 @@ async function logAudit(conn, { qiId, userId, eventType, fieldName = null, oldVa
   );
 }
 
+// Mirrors the real system's "Production > Quality Inspection" ("Saved Quality
+// Inspection") list -- a flat filterable table (no status tabs), same pattern as
+// Assembly Build's list.
+router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const {
+      search, job_location_id: jobLocationId, customer_id: customerId, as_of: asOf, page = '1', limit = '10',
+    } = req.query;
+
+    const where = [];
+    const params = [];
+    if (jobLocationId) { where.push('jo.job_location_id = ?'); params.push(jobLocationId); }
+    if (customerId) { where.push('so.customer_id = ?'); params.push(customerId); }
+    if (asOf) { where.push('qi.date_created <= ?'); params.push(asOf); }
+    if (search) {
+      where.push('(qi.qi_no LIKE ? OR jo.job_order_no LIKE ? OR c.name LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const baseFrom = `FROM quality_inspections qi
+       JOIN job_orders jo ON jo.id = qi.job_order_id
+       LEFT JOIN locations loc ON loc.id = jo.job_location_id
+       LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
+       LEFT JOIN customers c ON c.id = so.customer_id`;
+
+    const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${baseFrom} ${whereSql}`, params);
+
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, Number(limit) || 10));
+    const offset = (pageNum - 1) * limitNum;
+
+    const [rows] = await pool.query(
+      `SELECT qi.id, qi.qi_no, qi.date_created, qi.status, jo.job_order_no, loc.location_name AS job_location_name, c.name AS customer_name,
+              (SELECT COALESCE(SUM(pass_qty), 0) FROM quality_inspection_lines WHERE quality_inspection_id = qi.id) AS total_pass_qty,
+              (SELECT COALESCE(SUM(rma_qty), 0) FROM quality_inspection_lines WHERE quality_inspection_id = qi.id) AS total_rma_qty
+       ${baseFrom} ${whereSql}
+       ORDER BY qi.id DESC
+       LIMIT ? OFFSET ?`,
+      [...params, limitNum, offset]
+    );
+
+    res.json({ rows, total, page: pageNum, limit: limitNum });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Powers the Quality Inspection create modal's header + Assembly Build table -- only
 // batches with something still uninspected (quantity_built - passed_qty - rma_qty > 0)
 // show up, matching the real screen only ever listing what's actually left to inspect.
