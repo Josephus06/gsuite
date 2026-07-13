@@ -72,6 +72,7 @@ export default function JobOrderEdit() {
 
   const [locations, setLocations] = useState([]);
   const [employees, setEmployees] = useState([]);
+  const [artists, setArtists] = useState([]);
   const [processesList, setProcessesList] = useState([]);
   const [inventoryItems, setInventoryItems] = useState([]);
   const [units, setUnits] = useState([]);
@@ -81,10 +82,11 @@ export default function JobOrderEdit() {
       api.get(`/job-orders/${id}`),
       api.get('/lookups/locations'),
       api.get('/employees'),
+      api.get('/employees', { params: { account_type: 'Artist' } }),
       api.get('/lookups/processes'),
       api.get('/inventory'),
       api.get('/lookups/units-of-measure'),
-    ]).then(([joRes, locRes, empRes, procRes, invRes, unitRes]) => {
+    ]).then(([joRes, locRes, empRes, artistRes, procRes, invRes, unitRes]) => {
       setJo(joRes.data);
       setProcesses(joRes.data.processes || []);
       setForm({
@@ -100,6 +102,7 @@ export default function JobOrderEdit() {
       });
       setLocations(locRes.data);
       setEmployees(empRes.data);
+      setArtists(artistRes.data);
       setProcessesList(procRes.data);
       setInventoryItems(invRes.data);
       setUnits(unitRes.data);
@@ -281,7 +284,7 @@ export default function JobOrderEdit() {
           <div className="field"><label>Contact Phone</label><input value={form.contact_phone} onChange={(e) => setForm({ ...form, contact_phone: e.target.value })} /></div>
           <div className="field"><label>Artist</label>
             <EntityPicker
-              label="Artist" items={employees} value={form.artist_id} getLabel={employeeLabel}
+              label="Artist" items={artists} value={form.artist_id} getLabel={employeeLabel}
               columns={[{ key: 'name', label: 'Name', render: employeeLabel }, { key: 'position_title', label: 'Position' }]}
               searchKeys={['first_name', 'last_name']}
               onSelect={(e) => setForm({ ...form, artist_id: e.id })}

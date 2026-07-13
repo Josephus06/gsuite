@@ -321,9 +321,13 @@ router.put('/:id/assign-design', requireAuth, requirePermission(ROUTE, 'can_edit
     return res.status(403).json({ error: 'Only a Design Supervisor can assign layout job type and artist.' });
   }
 
-  const { layout_job_type_id, artist_id, planned_start_at } = req.body;
+  const { layout_job_type_id, artist_id, planned_start_at, layout_qty: layoutQtyRaw } = req.body;
   if (!layout_job_type_id || !artist_id || !planned_start_at) {
     return res.status(400).json({ error: 'Layout - Job Type, Artist, and Planned Start are all required.' });
+  }
+  const layoutQty = Number(layoutQtyRaw);
+  if (!Number.isFinite(layoutQty) || layoutQty <= 0) {
+    return res.status(400).json({ error: 'Qty must be a positive number.' });
   }
 
   const conn = await pool.getConnection();
@@ -339,16 +343,20 @@ router.put('/:id/assign-design', requireAuth, requirePermission(ROUTE, 'can_edit
     const [[pmsJobType]] = await conn.query('SELECT minutes_consume FROM pms_job_types WHERE id = ?', [layout_job_type_id]);
     if (!pmsJobType) { await conn.rollback(); return res.status(400).json({ error: 'Invalid Layout - Job Type.' }); }
 
-    // Planned End = Planned Start + the PMS Job Type's allotted minutes_consume.
-    const plannedEndAt = new Date(new Date(planned_start_at).getTime() + Number(pmsJobType.minutes_consume || 0) * 60 * 1000);
+    // Planned End = Planned Start + (the PMS Job Type's allotted minutes_consume x Qty)
+    // -- minutes_consume is the allotment for one unit of this layout task, so a Qty of
+    // e.g. 5 files/designs scales the allotted time (and, downstream, the Assigned JO
+    // countdown timer and Performance % basis) proportionally.
+    const plannedEndAt = new Date(new Date(planned_start_at).getTime() + Number(pmsJobType.minutes_consume || 0) * layoutQty * 60 * 1000);
 
     await conn.query(
-      "UPDATE job_orders SET layout_job_type_id = ?, artist_id = ?, planned_start_at = ?, planned_end_at = ?, sub_status = 'For Artist', updated_at = NOW() WHERE id = ?",
-      [layout_job_type_id, artist_id, planned_start_at, plannedEndAt, req.params.id]
+      "UPDATE job_orders SET layout_job_type_id = ?, artist_id = ?, planned_start_at = ?, planned_end_at = ?, layout_qty = ?, sub_status = 'For Artist', updated_at = NOW() WHERE id = ?",
+      [layout_job_type_id, artist_id, planned_start_at, plannedEndAt, layoutQty, req.params.id]
     );
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'layout_job_type_id', newValue: layout_job_type_id });
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'artist_id', newValue: artist_id });
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'planned_start_at', newValue: planned_start_at });
+    await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'layout_qty', newValue: layoutQty });
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'planned_end_at', newValue: plannedEndAt.toISOString() });
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'sub_status', oldValue: 'For Design Supervisor', newValue: 'For Artist' });
     await conn.commit();

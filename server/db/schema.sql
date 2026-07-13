@@ -1095,11 +1095,15 @@ ALTER TABLE job_orders
     ADD COLUMN layout_started_at DATETIME NULL;
 
 -- Planned Start is set by the design supervisor at assignment time; Planned End is
--- computed server-side as Planned Start + the selected PMS Job Type's minutes_consume.
+-- computed server-side as Planned Start + (the selected PMS Job Type's minutes_consume
+-- x layout_qty) -- minutes_consume alone is a per-unit allotment (e.g. minutes per
+-- design/file), so a multi-piece layout task needs its own qty to scale the allotted
+-- time and, downstream, the Assigned JO timer's countdown and Performance % basis.
 ALTER TABLE job_orders
     ADD COLUMN planned_start_at DATETIME NULL,
     ADD COLUMN planned_end_at DATETIME NULL,
-    ADD COLUMN layout_ended_at DATETIME NULL;
+    ADD COLUMN layout_ended_at DATETIME NULL,
+    ADD COLUMN layout_qty DECIMAL(14,4) NULL DEFAULT 1;
 
 -- Supports Play/Hold/Stop as a real pause-aware timer instead of a single start/end
 -- pair: each Play (or Resume-from-Hold) opens a new row (ended_at NULL); Hold closes it

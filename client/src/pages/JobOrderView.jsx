@@ -79,8 +79,8 @@ export default function JobOrderView() {
 
   const [showAssign, setShowAssign] = useState(false);
   const [pmsJobTypes, setPmsJobTypes] = useState([]);
-  const [employees, setEmployees] = useState([]);
-  const [assignForm, setAssignForm] = useState({ layout_job_type_id: '', artist_id: '', planned_start_at: '' });
+  const [artists, setArtists] = useState([]);
+  const [assignForm, setAssignForm] = useState({ layout_job_type_id: '', artist_id: '', planned_start_at: '', layout_qty: 1 });
   const [assignError, setAssignError] = useState('');
 
   function load() {
@@ -111,11 +111,11 @@ export default function JobOrderView() {
   }
 
   function openAssign() {
-    setAssignForm({ layout_job_type_id: '', artist_id: '', planned_start_at: '' });
+    setAssignForm({ layout_job_type_id: '', artist_id: '', planned_start_at: '', layout_qty: 1 });
     setAssignError('');
     setShowAssign(true);
     if (pmsJobTypes.length === 0) api.get('/pms-job-types').then(({ data }) => setPmsJobTypes(data));
-    if (employees.length === 0) api.get('/employees').then(({ data }) => setEmployees(data));
+    if (artists.length === 0) api.get('/employees', { params: { account_type: 'Artist' } }).then(({ data }) => setArtists(data));
   }
 
   async function handleAssignDesign(e) {
@@ -228,6 +228,7 @@ export default function JobOrderView() {
             <div>Job Desc. : <span className="hi">{jo.description}</span></div>
             <div>Layout - Job Type : <span className="hi">{jo.layout_job_type_name}</span></div>
             <div>Artist : <span className="hi">{jo.artist_name}</span></div>
+            {jo.artist_id && <div>Layout Qty : <span className="hi">{jo.layout_qty ?? 1}</span></div>}
             <div>Qty : <span className="hi">{jo.quantity} {jo.units}</span> Qty Built: <span className="hi">{jo.quantity_built} {jo.units}</span> Qty Inspected: <span className="hi">{jo.quantity_inspected} {jo.units}</span></div>
             <div>Length : <span className="hi">{jo.length ?? 0}</span> Width : <span className="hi">{jo.width ?? 0}</span> Height : <span className="hi">{jo.height ?? ''}</span></div>
             <div>Memo : <span className="hi">{jo.memo}</span></div>
@@ -352,10 +353,18 @@ export default function JobOrderView() {
             <div className="field">
               <label>Artist</label>
               <EntityPicker
-                label="Artist" items={employees} value={assignForm.artist_id} getLabel={(e) => `${e.first_name} ${e.last_name}`}
+                label="Artist" items={artists} value={assignForm.artist_id} getLabel={(e) => `${e.first_name} ${e.last_name}`}
                 columns={[{ key: 'name', label: 'Name', render: (e) => `${e.first_name} ${e.last_name}` }, { key: 'position_title', label: 'Position' }]}
                 searchKeys={['first_name', 'last_name']}
                 onSelect={(e) => setAssignForm({ ...assignForm, artist_id: e.id })}
+              />
+            </div>
+            <div className="field">
+              <label>Qty</label>
+              <input
+                type="number" min="0.0001" step="any" required
+                value={assignForm.layout_qty}
+                onChange={(e) => setAssignForm({ ...assignForm, layout_qty: e.target.value })}
               />
             </div>
             <div className="field">
@@ -367,11 +376,12 @@ export default function JobOrderView() {
               />
             </div>
             <div className="field">
-              <label>Planned End <span className="muted">(auto-computed)</span></label>
+              <label>Planned End <span className="muted">(auto-computed: Minutes Consume × Qty)</span></label>
               <input readOnly tabIndex={-1} value={(() => {
                 const minutes = pmsJobTypes.find((p) => p.id === Number(assignForm.layout_job_type_id))?.minutes_consume;
-                if (!assignForm.planned_start_at || !minutes) return '';
-                const end = new Date(new Date(assignForm.planned_start_at).getTime() + Number(minutes) * 60 * 1000);
+                const qty = Number(assignForm.layout_qty);
+                if (!assignForm.planned_start_at || !minutes || !qty) return '';
+                const end = new Date(new Date(assignForm.planned_start_at).getTime() + Number(minutes) * qty * 60 * 1000);
                 return end.toLocaleString();
               })()} />
             </div>

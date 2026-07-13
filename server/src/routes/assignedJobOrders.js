@@ -35,7 +35,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     const [rows] = await pool.query(
       `SELECT jo.id, jo.job_order_no, jo.status, jo.sub_status, jo.description,
-              jo.planned_start_at, jo.planned_end_at, jo.layout_started_at, jo.layout_ended_at,
+              jo.planned_start_at, jo.planned_end_at, jo.layout_started_at, jo.layout_ended_at, jo.layout_qty,
               c.name AS customer_name,
               pjt.id AS pms_job_type_id, pjt.code AS pms_job_type_code, pjt.display_name AS pms_job_type_name,
               pjt.minutes_consume,
@@ -62,7 +62,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     const [[me]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
     const [[row]] = await pool.query(
       `SELECT jo.id, jo.job_order_no, jo.status, jo.sub_status, jo.description, jo.artist_id,
-              jo.planned_start_at, jo.planned_end_at, jo.layout_started_at, jo.layout_ended_at,
+              jo.planned_start_at, jo.planned_end_at, jo.layout_started_at, jo.layout_ended_at, jo.layout_qty,
               c.name AS customer_name,
               pjt.id AS pms_job_type_id, pjt.code AS pms_job_type_code, pjt.display_name AS pms_job_type_name,
               pjt.minutes_consume

@@ -66,7 +66,10 @@ export default function AssignedJobOrderRun() {
     .reduce((sum, s) => sum + (new Date(s.ended_at).getTime() - new Date(s.started_at).getTime()) / 1000, 0);
   const liveSeconds = openSession ? (now - new Date(openSession.started_at).getTime()) / 1000 : 0;
   const actualSeconds = closedSeconds + liveSeconds;
-  const allottedSeconds = Number(jo.minutes_consume || 0) * 60;
+  // minutes_consume is the allotment for ONE unit of this layout task -- scaled by the
+  // Qty entered when the artist was assigned (server-side, jobOrders.js's assign-design
+  // route computes planned_end_at the same way, so this stays consistent with that).
+  const allottedSeconds = Number(jo.minutes_consume || 0) * Number(jo.layout_qty || 1) * 60;
   const remainingSeconds = allottedSeconds - actualSeconds;
   const overdue = remainingSeconds < 0;
   const performance = actualSeconds > 0 && allottedSeconds > 0 ? (allottedSeconds / actualSeconds) * 100 : null;
@@ -113,7 +116,7 @@ export default function AssignedJobOrderRun() {
             <div>Customer : <span className="hi">{jo.customer_name}</span></div>
             <div>Job Desc. : <span className="hi">{jo.description}</span></div>
             <div>Layout - Job Type : <span className="hi">{jo.pms_job_type_name ? `${jo.pms_job_type_code} — ${jo.pms_job_type_name}` : '—'}</span></div>
-            <div>Minutes Consume (Allotted) : <span className="hi">{jo.minutes_consume ?? 0} mins</span></div>
+            <div>Minutes Consume (Allotted) : <span className="hi">{jo.minutes_consume ?? 0} mins × {jo.layout_qty ?? 1} qty = {allottedSeconds / 60} mins</span></div>
           </div>
           <div>
             <h4>Planned</h4>

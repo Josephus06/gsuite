@@ -5,13 +5,25 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const router = express.Router();
 const ROUTE = '/employees';
 
+// account_type filters to employees whose linked user account is that type (e.g.
+// ?account_type=Artist for an Artist-only picker) -- joins through users.employee_id
+// since account_type lives on the user account, not the employee record itself.
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
+    const { account_type: accountType } = req.query;
+    const where = [];
+    const params = [];
+    if (accountType) { where.push('u.account_type = ?'); params.push(accountType); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
     const [rows] = await pool.query(
-      `SELECT e.*, d.name AS department_name
+      `SELECT DISTINCT e.*, d.name AS department_name
        FROM employees e
        LEFT JOIN departments d ON d.id = e.department_id
-       ORDER BY e.id DESC`
+       ${accountType ? 'JOIN users u ON u.employee_id = e.id' : ''}
+       ${whereSql}
+       ORDER BY e.id DESC`,
+      params
     );
     res.json(rows);
   } catch (err) {
