@@ -2,7 +2,99 @@
 // no charting library added, everything here is plain SVG + the glow styling lives in
 // dashboard.css (drop-shadow filters keyed to each chart's stroke color).
 
+import { useEffect, useRef, useState } from 'react';
+
 function num(v) { return Number.isFinite(Number(v)) ? Number(v) : 0; }
+
+// Animates from 0 to `value` over `duration`ms using an ease-out curve -- used to give
+// stat numbers a "materializing" feel on load instead of just appearing. Re-triggers
+// whenever `value` itself changes (e.g. dashboard data reloads).
+export function useCountUp(value, duration = 900) {
+  const [display, setDisplay] = useState(0);
+  const target = num(value);
+  const fromRef = useRef(0);
+
+  useEffect(() => {
+    const from = fromRef.current;
+    const start = performance.now();
+    let raf;
+    function tick(now) {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - (1 - t) * (1 - t) * (1 - t);
+      setDisplay(from + (target - from) * eased);
+      if (t < 1) raf = requestAnimationFrame(tick);
+      else fromRef.current = target;
+    }
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target, duration]);
+
+  return display;
+}
+
+// A continuously-spinning 3D ring (real CSS 3D: perspective + rotateX tilt + an
+// infinite rotateY loop on the ring itself, plus a slow counter-orbiting particle) --
+// used in place of the flat GaugeRing where the dashboard wants a genuinely animated
+// holographic centerpiece rather than a static progress ring.
+export function Holo3DOrb({ value, max = 100, size = 150, color = '#22d3ee', label, sub }) {
+  const pct = Math.max(0, Math.min(1, num(value) / (max || 1)));
+  const animated = useCountUp(value);
+  return (
+    <div className="holo3d-orb-scene" style={{ width: size, height: size }}>
+      <div className="holo3d-orb-ring-wrap">
+        <div className="holo3d-orb-ring holo3d-orb-ring-outer" style={{ '--orb-color': color, '--orb-pct': pct }} />
+        <div className="holo3d-orb-ring holo3d-orb-ring-inner" style={{ '--orb-color': color }} />
+        <div className="holo3d-orb-particle" style={{ '--orb-color': color }} />
+      </div>
+      <div className="holo3d-orb-center">
+        <div className="holo-donut-value">{label ?? `${Math.round(animated)}%`}</div>
+        {sub && <div className="holo-donut-sub">{sub}</div>}
+      </div>
+    </div>
+  );
+}
+
+// A hand-rolled CSS 3D bar chart -- each bar is a real extruded box (front + top +
+// side faces via transform-style: preserve-3d), the whole scene sits on a fixed
+// isometric tilt (kept static, not spinning, so the values stay legible) and gently
+// "breathes" (a few degrees of oscillating tilt) so it still reads as animated/alive,
+// with each bar growing in from zero height on mount.
+export function Holo3DBars({ data, color = '#22d3ee', width = 320, height = 120, labels }) {
+  const values = (data || []).map(num);
+  const max = Math.max(...values, 1);
+  const barW = 26;
+  const gap = 16;
+  const depth = 10;
+
+  return (
+    <div className="holo3d-bars-scene" style={{ width, height: height + 46 }}>
+      <div className="holo3d-bars-stage">
+        {values.map((v, i) => {
+          const h = Math.max(6, (v / max) * height);
+          return (
+            <div
+              key={i}
+              className="holo3d-bar"
+              style={{
+                '--bar-h': `${h}px`, '--bar-w': `${barW}px`, '--bar-d': `${depth}px`, '--bar-color': color,
+                left: `${i * (barW + gap)}px`, animationDelay: `${i * 90}ms`,
+              }}
+            >
+              <div className="holo3d-bar-top" />
+              <div className="holo3d-bar-front" />
+            </div>
+          );
+        })}
+      </div>
+      {labels && (
+        <div className="holo3d-bars-labels" style={{ width: values.length * (barW + gap) }}>
+          {labels.map((l, i) => <span key={i} style={{ width: barW + gap }}>{l}</span>)}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // A smooth-ish trend line with a soft gradient fill underneath, used inside stat cards
 // (mirrors the small wavy charts in the reference dashboard's top stat row).

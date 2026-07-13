@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
-import { Sparkline, DonutChart, GaugeRing, BarList } from '../components/charts';
+import { Sparkline, DonutChart, GaugeRing, BarList, Holo3DOrb, Holo3DBars, useCountUp } from '../components/charts';
 
 const ROLE_LABELS = {
   admin: 'Administrator',
@@ -58,14 +58,27 @@ function timeAgo(iso) {
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
 }
+function last6MonthLabels() {
+  const now = new Date();
+  const out = [];
+  for (let i = 5; i >= 0; i--) {
+    out.push(new Date(now.getFullYear(), now.getMonth() - i, 1).toLocaleDateString('en-US', { month: 'short' }));
+  }
+  return out;
+}
 
-function StatCard({ label, value, icon, color, trend }) {
+// numericValue + format are opt-in: pass a raw number and a formatter to get an
+// animated count-up on mount/update; omit them and pass a pre-formatted `value` for the
+// old static behavior (every other dashboard keeps doing that unchanged).
+function StatCard({ label, value, numericValue, format, icon, color, trend }) {
+  const animated = useCountUp(numericValue ?? 0);
+  const displayValue = numericValue !== undefined ? (format ? format(animated) : Math.round(animated)) : value;
   return (
     <div className="holo-card holo-stat-card">
       <div className="holo-stat-top">
         <div>
           <div className="holo-stat-label">{label}</div>
-          <div className="holo-stat-value" style={{ color }}>{value}</div>
+          <div className="holo-stat-value" style={{ color }}>{displayValue}</div>
         </div>
         {icon && (
           <div className="holo-stat-icon" style={{ color, background: `${color}22` }}>{icon}</div>
@@ -193,16 +206,16 @@ function SalesDashboard({ data }) {
   return (
     <>
       <div className="holo-grid">
-        <StatCard label="Weighted Sales (This Month)" value={`₱${money(summary.weightedSales.amount)}`} color="var(--holo-cyan)" icon="⚖️" trend={summary.trend} />
-        <StatCard label="Total Paid Orders" value={`₱${money(summary.paid.amount)}`} color="var(--holo-green)" icon="✅" />
-        <StatCard label="Total Unpaid Orders" value={`₱${money(summary.unpaid.amount)}`} color="var(--holo-amber)" icon="🕓" />
-        <StatCard label="Avg. Deal Size" value={`₱${money(summary.avgDealSize)}`} color="var(--holo-magenta)" icon="💼" />
+        <StatCard label="Weighted Sales (This Month)" numericValue={summary.weightedSales.amount} format={(v) => `₱${money(v)}`} color="var(--holo-cyan)" icon="⚖️" trend={summary.trend} />
+        <StatCard label="Total Paid Orders" numericValue={summary.paid.amount} format={(v) => `₱${money(v)}`} color="var(--holo-green)" icon="✅" />
+        <StatCard label="Total Unpaid Orders" numericValue={summary.unpaid.amount} format={(v) => `₱${money(v)}`} color="var(--holo-amber)" icon="🕓" />
+        <StatCard label="Avg. Deal Size" numericValue={summary.avgDealSize} format={(v) => `₱${money(v)}`} color="var(--holo-magenta)" icon="💼" />
       </div>
 
       <div className="holo-grid holo-grid-wide">
         <div className="holo-card" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <h3 style={{ alignSelf: 'flex-start' }}>KPI · Win Rate</h3>
-          <GaugeRing value={summary.kpi.winRate} max={100} color="var(--holo-cyan)" label={`${summary.kpi.winRate}%`} sub="win rate" />
+          <Holo3DOrb value={summary.kpi.winRate} max={100} color="var(--holo-cyan)" sub="win rate" />
           <div style={{ display: 'flex', gap: 24, marginTop: 14, fontSize: 12.5 }}>
             <div style={{ textAlign: 'center' }}>
               <div style={{ color: 'var(--holo-text-dim)' }}>Estimates Created</div>
@@ -235,10 +248,10 @@ function SalesDashboard({ data }) {
 
         <div className="holo-card">
           <h3>Weighted Sales Trend</h3>
-          <div style={{ padding: '10px 0' }}>
-            <Sparkline data={summary.trend} color="#22d3ee" width={320} height={90} id="trend-wide" />
+          <div style={{ padding: '10px 0', display: 'flex', justifyContent: 'center' }}>
+            <Holo3DBars data={summary.trend} color="#22d3ee" width={260} height={90} labels={last6MonthLabels()} />
           </div>
-          <div className="holo-sub" style={{ marginTop: 8 }}>Last 6 months, sales orders created</div>
+          <div className="holo-sub" style={{ marginTop: 8, textAlign: 'center' }}>Last 6 months, sales orders created</div>
         </div>
       </div>
 
