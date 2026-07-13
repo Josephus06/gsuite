@@ -4,6 +4,7 @@ import api from '../api/client';
 import DataTable from '../components/DataTable';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { useAuth } from '../context/useAuth';
 
 // Mirrors the real system's full-page Job Order Edit form (not a modal): a 3-column
 // header form + a Materials tab with an inline-editable process/material table + a
@@ -51,6 +52,8 @@ export default function JobOrderEdit() {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
+  const canAssignArtist = !!user?.is_design_supervisor;
   // Edit is reachable from both Sales > Job Orders and Production > Production --
   // Cancel/Save should return wherever the user actually came from instead of always
   // landing on the Sales-side view, which used to strand Production users on a
@@ -282,7 +285,9 @@ export default function JobOrderEdit() {
               columns={[{ key: 'name', label: 'Name', render: employeeLabel }, { key: 'position_title', label: 'Position' }]}
               searchKeys={['first_name', 'last_name']}
               onSelect={(e) => setForm({ ...form, artist_id: e.id })}
+              disabled={!canAssignArtist}
             />
+            {!canAssignArtist && <small className="muted">Only a Design Supervisor can assign an artist.</small>}
           </div>
           <div className="field"><label>Sales Division</label><input readOnly value={jo.sales_division_name || ''} /></div>
 

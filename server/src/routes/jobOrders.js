@@ -176,6 +176,19 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       await conn.rollback();
       return res.status(400).json({ error: 'Planned End cannot be before Planned Start.' });
     }
+    // This generic edit form resubmits artist_id on every save whether or not it
+    // actually changed (it's just part of the form state) -- only enforce the Design
+    // Supervisor restriction when the value is genuinely different from what's stored,
+    // same restriction already enforced on the dedicated assign-design endpoint.
+    const requestedArtistId = req.body.artist_id === undefined || req.body.artist_id === '' ? null : Number(req.body.artist_id);
+    const currentArtistId = oldRow.artist_id === null || oldRow.artist_id === undefined ? null : Number(oldRow.artist_id);
+    if (requestedArtistId !== currentArtistId) {
+      const [[user]] = await conn.query('SELECT is_design_supervisor FROM users WHERE id = ?', [req.user.id]);
+      if (!user?.is_design_supervisor) {
+        await conn.rollback();
+        return res.status(403).json({ error: 'Only a Design Supervisor can assign an artist to a Job Order.' });
+      }
+    }
     const values = EDIT_FIELDS.map((f) => (req.body[f] === undefined || req.body[f] === '' ? null : req.body[f]));
 
     // Setting both Planned dates is what "scheduling" this JO means on the production
