@@ -203,6 +203,13 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         await conn.rollback();
         return res.status(403).json({ error: 'Only a Design Supervisor can assign an artist to a Job Order.' });
       }
+      // Same cutoff as the dedicated assign-design endpoint -- once Released, the
+      // design/artist stage is over, so this generic edit form can't be used as a
+      // side door to reassign an artist after the fact.
+      if (oldRow.status === 'Released') {
+        await conn.rollback();
+        return res.status(409).json({ error: 'This Job Order is Released -- the artist can no longer be reassigned.' });
+      }
     }
     const values = EDIT_FIELDS.map((f) => (req.body[f] === undefined || req.body[f] === '' ? null : req.body[f]));
 
@@ -310,11 +317,13 @@ router.put('/:id/forward-to-design', requireAuth, requirePermission(ROUTE, 'can_
   }
 });
 
-// Design supervisors assign a Layout - Job Type (PMS Job Type) + Artist to a JO once
-// it's reached the design-review queue; doing so hands it off to the artist (Sub Status
-// -> "For Artist"). Requires the Can Approve-style role flag on the user, same pattern
-// as can_approve_sales_estimate for Estimates -- not gated by the generic can_edit
-// permission alone.
+// Design supervisors assign (or later reassign) a Layout - Job Type (PMS Job Type) +
+// Artist to a JO; doing so hands it off to the artist (Sub Status -> "For Artist").
+// Requires the Can Approve-style role flag on the user, same pattern as
+// can_approve_sales_estimate for Estimates -- not gated by the generic can_edit
+// permission alone. Reassignment is allowed at any point up to Released -- once a JO's
+// overall status is "Released" (Sales gave final approval, production has it), the
+// design/artist stage is over and this closes; Cancelled is likewise final.
 router.put('/:id/assign-design', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const [[user]] = await pool.query('SELECT is_design_supervisor FROM users WHERE id = ?', [req.user.id]);
   if (!user?.is_design_supervisor) {
@@ -333,11 +342,11 @@ router.put('/:id/assign-design', requireAuth, requirePermission(ROUTE, 'can_edit
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [[jo]] = await conn.query('SELECT sub_status FROM job_orders WHERE id = ?', [req.params.id]);
+    const [[jo]] = await conn.query('SELECT status, sub_status, artist_id FROM job_orders WHERE id = ?', [req.params.id]);
     if (!jo) { await conn.rollback(); return res.status(404).json({ error: 'Not found' }); }
-    if (jo.sub_status !== 'For Design Supervisor') {
+    if (jo.status === 'Released' || jo.status === 'Cancelled') {
       await conn.rollback();
-      return res.status(409).json({ error: 'This Job Order is not pending design supervisor assignment.' });
+      return res.status(409).json({ error: `This Job Order is ${jo.status} -- the artist can no longer be reassigned.` });
     }
 
     const [[pmsJobType]] = await conn.query('SELECT minutes_consume FROM pms_job_types WHERE id = ?', [layout_job_type_id]);
@@ -348,17 +357,26 @@ router.put('/:id/assign-design', requireAuth, requirePermission(ROUTE, 'can_edit
     // e.g. 5 files/designs scales the allotted time (and, downstream, the Assigned JO
     // countdown timer and Performance % basis) proportionally.
     const plannedEndAt = new Date(new Date(planned_start_at).getTime() + Number(pmsJobType.minutes_consume || 0) * layoutQty * 60 * 1000);
+    const isReassignment = jo.sub_status !== 'For Design Supervisor';
 
     await conn.query(
-      "UPDATE job_orders SET layout_job_type_id = ?, artist_id = ?, planned_start_at = ?, planned_end_at = ?, layout_qty = ?, sub_status = 'For Artist', updated_at = NOW() WHERE id = ?",
+      "UPDATE job_orders SET layout_job_type_id = ?, artist_id = ?, planned_start_at = ?, planned_end_at = ?, layout_qty = ?, sub_status = 'For Artist', layout_started_at = NULL, layout_ended_at = NULL, updated_at = NOW() WHERE id = ?",
       [layout_job_type_id, artist_id, planned_start_at, plannedEndAt, layoutQty, req.params.id]
     );
+    // A (re)assignment always restarts the layout clock from zero -- clearing any prior
+    // Play/Hold session history, same treatment request-revision already gives a JO
+    // bounced back for revision, so a newly (re)assigned artist's Performance % isn't
+    // polluted by a previous artist's (or a previous round's) recorded time.
+    await conn.query('DELETE FROM job_order_layout_sessions WHERE job_order_id = ?', [req.params.id]);
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'layout_job_type_id', newValue: layout_job_type_id });
-    await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'artist_id', newValue: artist_id });
+    await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'artist_id', oldValue: jo.artist_id, newValue: artist_id });
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'planned_start_at', newValue: planned_start_at });
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'layout_qty', newValue: layoutQty });
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'planned_end_at', newValue: plannedEndAt.toISOString() });
-    await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'sub_status', oldValue: 'For Design Supervisor', newValue: 'For Artist' });
+    await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'sub_status', oldValue: jo.sub_status, newValue: 'For Artist' });
+    if (isReassignment) {
+      await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'artist_reassigned', oldValue: jo.artist_id, newValue: artist_id });
+    }
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);

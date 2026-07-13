@@ -111,7 +111,15 @@ export default function JobOrderView() {
   }
 
   function openAssign() {
-    setAssignForm({ layout_job_type_id: '', artist_id: '', planned_start_at: '', layout_qty: 1 });
+    // Reassigning starts from the current values (not a blank form) so a design
+    // supervisor swapping the artist doesn't have to re-enter the Layout - Job Type/Qty/
+    // Planned Start too when only the artist itself needs to change.
+    setAssignForm({
+      layout_job_type_id: jo.layout_job_type_id || '',
+      artist_id: jo.artist_id || '',
+      planned_start_at: jo.planned_start_at ? String(jo.planned_start_at).slice(0, 16).replace(' ', 'T') : '',
+      layout_qty: jo.layout_qty || 1,
+    });
     setAssignError('');
     setShowAssign(true);
     if (pmsJobTypes.length === 0) api.get('/pms-job-types').then(({ data }) => setPmsJobTypes(data));
@@ -175,8 +183,10 @@ export default function JobOrderView() {
           {canEdit && jo.sub_status === 'Pending' && (
             <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleForwardToDesign}>Forward to Design Supervisor</button>
           )}
-          {canEdit && jo.sub_status === 'For Design Supervisor' && !!user?.is_design_supervisor && (
-            <button className="btn btn-sm btn-primary" onClick={openAssign}>Assign Layout Job Type / Artist</button>
+          {canEdit && !!user?.is_design_supervisor && jo.status !== 'Released' && jo.status !== 'Cancelled' && (
+            <button className="btn btn-sm btn-primary" onClick={openAssign}>
+              {jo.artist_id ? 'Reassign Artist' : 'Assign Layout Job Type / Artist'}
+            </button>
           )}
           {(canEdit || isAssignedArtist) && (jo.sub_status === 'For Artist' || jo.sub_status === 'For Artist (Revision)') && (
             <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleSalesApproval}>Sales Approval</button>
