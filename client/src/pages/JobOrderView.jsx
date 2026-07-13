@@ -151,6 +151,10 @@ export default function JobOrderView() {
   const canApprove = can('/job-orders', 'can_approve');
   const isTerminal = jo.status === 'Completed' || jo.status === 'Cancelled';
   const isOnHold = !!jo.is_on_hold;
+  // The artist a JO is assigned to needs to be able to send their own completed layout
+  // to Sales for sign-off even without generic can_edit on Job Orders -- they shouldn't
+  // need broader edit rights over the JO just to do that one thing.
+  const isAssignedArtist = !!user?.employee_id && jo.artist_id === user.employee_id;
 
   const processes = jo.processes || [];
   const totalCost = processes.reduce((s, p) => s + num(p.total_cost), 0);
@@ -174,7 +178,7 @@ export default function JobOrderView() {
           {canEdit && jo.sub_status === 'For Design Supervisor' && !!user?.is_design_supervisor && (
             <button className="btn btn-sm btn-primary" onClick={openAssign}>Assign Layout Job Type / Artist</button>
           )}
-          {canEdit && (jo.sub_status === 'For Artist' || jo.sub_status === 'For Artist (Revision)') && (
+          {(canEdit || isAssignedArtist) && (jo.sub_status === 'For Artist' || jo.sub_status === 'For Artist (Revision)') && (
             <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleSalesApproval}>Sales Approval</button>
           )}
           {canApprove && jo.sub_status === 'Sales Approval' && (

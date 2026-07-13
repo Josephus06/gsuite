@@ -350,12 +350,29 @@ router.put('/:id/assign-design', requireAuth, requirePermission(ROUTE, 'can_edit
 
 // Once the artist has done the layout (Sub Status "For Artist", or "For Artist
 // (Revision)" after a bounce-back), this sends it to Sales for sign-off.
-router.put('/:id/sales-approval', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+//
+// Reachable by anyone with generic can_edit on Job Orders, OR by the specific artist
+// this JO is assigned to even without it -- they need to be able to send their own
+// completed layout for sign-off without getting broader edit rights over the JO itself
+// (the artist_id lock on the generic PUT /:id route above still applies to them).
+router.put('/:id/sales-approval', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [[jo]] = await conn.query('SELECT sub_status FROM job_orders WHERE id = ?', [req.params.id]);
+    const [[jo]] = await conn.query('SELECT sub_status, artist_id FROM job_orders WHERE id = ?', [req.params.id]);
     if (!jo) { await conn.rollback(); return res.status(404).json({ error: 'Not found' }); }
+
+    const [[me]] = await conn.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
+    const isAssignedArtist = !!me?.employee_id && jo.artist_id === me.employee_id;
+    if (!isAssignedArtist) {
+      const [[page]] = await conn.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
+      const [[perm]] = await conn.query('SELECT can_edit AS allowed FROM user_page_permissions WHERE user_id = ? AND page_id = ?', [req.user.id, page?.id]);
+      if (!perm?.allowed) {
+        await conn.rollback();
+        return res.status(403).json({ error: 'You do not have permission to perform this action' });
+      }
+    }
+
     if (jo.sub_status !== 'For Artist' && jo.sub_status !== 'For Artist (Revision)') {
       await conn.rollback();
       return res.status(409).json({ error: 'This Job Order is not ready for Sales Approval.' });
