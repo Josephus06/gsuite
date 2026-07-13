@@ -1,65 +1,56 @@
-// One-off script: pulls a SPECIFIC, narrow slice of real Estimates (for parallel-run
-// testing) from the live GraphicStar site -- only estimates whose Sales Rep is Arjie
-// Bayagna, Catherine Jane Langajed, or Jocel Ann Berina, whose status is "Pending" or
-// "Approved by Supervisor" (i.e. Pending Supervisor Approval / Pending Customer
-// Approval), created Jul 1-11, 2026. Confirmed against the live site: 51 estimates match.
+// Admin-triggered sync: pulls any NEW estimates (not yet imported locally) for the same
+// narrow slice used by the original one-off migration -- Arjie Bayagna, Catherine Jane
+// Langajed, Jocel Ann Berina, status Pending Supervisor Approval / Pending Customer
+// Approval -- from the live GraphicStar site and saves them to whichever DB this server
+// is connected to (local in dev, Railway's MySQL in production).
 //
-// Full nested detail (job order lines + process/material lines) is pulled via
-// get_transaction and mapped onto estimate_job_orders / estimate_job_order_processes.
-// Every referenced master-data record (customer, contact, sales rep/prepared-by/
-// approved-by employees, sales division, locations, job type, tax code, inventory item)
-// is looked up by name/code and auto-created locally if missing -- processes are NOT
-// auto-created here since import-all-processes.js already pulled the entire live catalog.
-//
-// Resumable: skips any estimate whose estimate_no already exists locally, and preserves
-// the live EST-###### number exactly (rather than re-numbering) so the same record is
-// identifiable side-by-side against the live system during parallel-run testing.
-//
-// Not part of the running app -- run manually:
-//   node src/db/import-target-estimates.js
-const { chromium } = require('playwright');
+// Runs as plain server-side HTTP calls, NOT a headless browser: confirmed the live app's
+// login is a plain `POST /api/login` returning a JWT directly in the JSON response, and
+// every subsequent call just needs that JWT as a Bearer header -- no cookies, no JS
+// execution required. This is a straight port of the original Playwright-driven
+// import-target-estimates.js onto Node's built-in fetch, so it can run inside a normal
+// Express request handler with no browser/Chromium install needed on the host.
 const pool = require('../db');
-require('dotenv').config();
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
-const USERNAME = process.env.LIVE_SITE_USERNAME;
-const PASSWORD = process.env.LIVE_SITE_PASSWORD;
-
-if (!USERNAME || !PASSWORD) {
-  console.error('Set LIVE_SITE_USERNAME and LIVE_SITE_PASSWORD in server/.env before running this script.');
-  process.exit(1);
-}
-
 const TARGET_SALES_REPS = ['Arjie Bayagna', 'Catherine Jane  Langajed', 'Jocel Ann Berina'];
 const TARGET_STATUSES = ['Pending', 'Approved by Supervisor'];
 // Status_TransH on the detail response is "Approved By Supervisor" (capital B) even
 // though the list endpoint's own status filter param takes lowercase "by" -- confirmed
-// by direct comparison, not guessed. Matched case-insensitively here to not silently
-// mis-map every one of these again.
+// by direct comparison against the live site, not guessed.
 const STATUS_MAP_LOWER = { pending: 'pending_supervisor_approval', 'approved by supervisor': 'pending_customer_approval' };
 function mapStatus(liveStatus) {
   return STATUS_MAP_LOWER[String(liveStatus || '').trim().toLowerCase()] || 'pending_supervisor_approval';
 }
-const DATE_RANGE = { date1: 'Jul 1, 2026', date2: 'Jul 13, 2026' };
 
-// This app authenticates API calls via a JWT in localStorage (satellizer_token) sent as
-// an Authorization header, not just cookies -- most GET-style list endpoints tolerated
-// its absence, but get_transaction (the detail endpoint) strictly rejects requests
-// without it, confirmed by replaying an exact captured request body with/without it.
-async function apiCall(page, endpoint, body) {
-  return page.evaluate(async ({ endpoint, body }) => {
-    const token = localStorage.getItem('satellizer_token');
-    const res = await fetch(`/api/${endpoint}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(body),
-      credentials: 'include',
-    });
-    return res.json();
-  }, { endpoint, body });
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function liveDateString(d) { return `${MONTH_ABBR[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`; }
+
+async function login() {
+  const username = process.env.LIVE_SITE_USERNAME;
+  const password = process.env.LIVE_SITE_PASSWORD;
+  if (!username || !password) {
+    throw new Error('LIVE_SITE_USERNAME / LIVE_SITE_PASSWORD are not configured on this server.');
+  }
+  const res = await fetch(`${SITE}/api/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const body = await res.json();
+  if (!body?.success || !body?.data?.token) {
+    throw new Error(`Live site login failed: ${body?.message || res.status}`);
+  }
+  return body.data.token;
+}
+
+async function apiCall(token, endpoint, body) {
+  const res = await fetch(`${SITE}/api/${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+  return res.json();
 }
 
 // ---- master-data resolvers (match by name/code, auto-create a minimal stub if missing) ----
@@ -68,9 +59,11 @@ function clean(s) { return (s || '').trim().replace(/\s+/g, ' '); }
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
 function nullableNum(v) { if (v === null || v === undefined || v === 'null') return null; const n = Number(v); return Number.isFinite(n) ? n : null; }
 
-const cache = { employee: new Map(), customer: new Map(), salesDivision: new Map(), location: new Map(), jobType: new Map(), tax: new Map(), inventory: new Map(), unit: new Map() };
+function freshCache() {
+  return { employee: new Map(), customer: new Map(), salesDivision: new Map(), location: new Map(), jobType: new Map(), tax: new Map(), inventory: new Map(), unit: new Map() };
+}
 
-async function ensureUnit(code) {
+async function ensureUnit(cache, code) {
   const key = clean(code) || 'EACH';
   if (cache.unit.has(key)) return cache.unit.get(key);
   const [[existing]] = await pool.query('SELECT id FROM units_of_measure WHERE code = ?', [key]);
@@ -80,7 +73,7 @@ async function ensureUnit(code) {
   return result.insertId;
 }
 
-async function ensureEmployee(fullName) {
+async function ensureEmployee(cache, fullName) {
   const name = clean(fullName);
   if (!name) return null;
   if (cache.employee.has(name)) return cache.employee.get(name);
@@ -97,12 +90,11 @@ async function ensureEmployee(fullName) {
     'INSERT INTO employees (employee_code, first_name, last_name, is_active) VALUES (?, ?, ?, TRUE)',
     [code, firstName, lastName]
   );
-  console.log(`  + created employee "${name}"`);
   cache.employee.set(name, result.insertId);
   return result.insertId;
 }
 
-async function ensureCustomer(liveCust) {
+async function ensureCustomer(cache, liveCust) {
   if (!liveCust) return null;
   const name = clean(liveCust.Name_Cust || liveCust.Company_Cust);
   if (!name) return null;
@@ -114,7 +106,6 @@ async function ensureCustomer(liveCust) {
     'INSERT INTO customers (customer_code, name, company_name, tin, credit_limit, is_active) VALUES (?, ?, ?, ?, ?, TRUE)',
     [code, name, liveCust.Company_Cust || null, liveCust.TIN_Cust || null, nullableNum(liveCust.CreditLimit_Cust)]
   );
-  console.log(`  + created customer "${name}"`);
   cache.customer.set(name, result.insertId);
   return result.insertId;
 }
@@ -135,19 +126,18 @@ async function ensureCustomerContact(liveContact, customerId) {
   return result.insertId;
 }
 
-async function ensureSalesDivision(name) {
+async function ensureSalesDivision(cache, name) {
   const key = clean(name);
   if (!key) return null;
   if (cache.salesDivision.has(key)) return cache.salesDivision.get(key);
   const [[existing]] = await pool.query('SELECT id FROM sales_divisions WHERE LOWER(name) = LOWER(?)', [key]);
   if (existing) { cache.salesDivision.set(key, existing.id); return existing.id; }
   const [result] = await pool.query('INSERT INTO sales_divisions (name, is_active) VALUES (?, TRUE)', [key]);
-  console.log(`  + created sales division "${key}"`);
   cache.salesDivision.set(key, result.insertId);
   return result.insertId;
 }
 
-async function ensureLocation(name) {
+async function ensureLocation(cache, name) {
   const key = clean(name);
   if (!key) return null;
   if (cache.location.has(key)) return cache.location.get(key);
@@ -158,12 +148,11 @@ async function ensureLocation(name) {
     'INSERT INTO locations (location_code, location_name, is_active) VALUES (?, ?, TRUE)',
     [code, key]
   );
-  console.log(`  + created location "${key}"`);
   cache.location.set(key, result.insertId);
   return result.insertId;
 }
 
-async function ensureJobType(liveJob) {
+async function ensureJobType(cache, liveJob) {
   if (!liveJob) return null;
   const name = clean(liveJob.DisplayName_Job);
   if (!name) return null;
@@ -175,38 +164,34 @@ async function ensureJobType(liveJob) {
     'INSERT INTO job_types (item_code, display_name, sales_description, purchase_description, is_active) VALUES (?, ?, ?, ?, TRUE)',
     [code, name, liveJob.SalesDescription_Job || null, liveJob.PurchaseDescription_Job || null]
   );
-  console.log(`  + created job type "${name}"`);
   cache.jobType.set(name, result.insertId);
   return result.insertId;
 }
 
-async function ensureTax(code) {
+async function ensureTax(cache, code) {
   const key = clean(code);
   if (!key) return null;
   if (cache.tax.has(key)) return cache.tax.get(key);
   const [[exact]] = await pool.query('SELECT id FROM taxes WHERE code = ?', [key]);
   if (exact) { cache.tax.set(key, exact.id); return exact.id; }
   // Live tax codes look like "VAT_PH:VATIN-12" -- the trailing number is the rate.
-  // Match against a local tax with that same rate rather than leaving the FK null when
-  // it's clearly the same tax under a different code string (confirmed: this clone's
-  // only seeded tax is VAT12 @ 12%, matching every live VAT_PH:VATIN-12 code seen).
   const rateMatch = key.match(/(\d+(\.\d+)?)\s*$/);
   if (rateMatch) {
     const [[byRate]] = await pool.query('SELECT id FROM taxes WHERE rate = ?', [Number(rateMatch[1])]);
     if (byRate) { cache.tax.set(key, byRate.id); return byRate.id; }
   }
-  cache.tax.set(key, null); // don't fabricate a tax rate we don't actually know
+  cache.tax.set(key, null);
   return null;
 }
 
-async function ensureInventoryItem(liveInvty) {
+async function ensureInventoryItem(cache, liveInvty) {
   if (!liveInvty) return null;
   const code = clean(liveInvty.UserPK_Invty);
   if (!code) return null;
   if (cache.inventory.has(code)) return cache.inventory.get(code);
   const [[existing]] = await pool.query('SELECT id FROM inventories WHERE item_code = ?', [code]);
   if (existing) { cache.inventory.set(code, existing.id); return existing.id; }
-  const unitId = await ensureUnit(liveInvty.BaseUnit_Invty || liveInvty.UnitTitle_Invty || liveInvty.SalesUnit_Invty);
+  const unitId = await ensureUnit(cache, liveInvty.BaseUnit_Invty || liveInvty.UnitTitle_Invty || liveInvty.SalesUnit_Invty);
   const [result] = await pool.query(
     `INSERT INTO inventories (item_code, display_name, sales_description, base_unit_id, item_type, is_active, average_cost, material_cost, selling_price)
      VALUES (?, ?, ?, ?, ?, TRUE, ?, ?, ?)`,
@@ -216,7 +201,6 @@ async function ensureInventoryItem(liveInvty) {
       nullableNum(liveInvty.MaxAveCost_Invty), nullableNum(liveInvty.MaterialCost_Invty), nullableNum(liveInvty.SellingPrice_Invty),
     ]
   );
-  console.log(`  + created inventory item "${code}"`);
   cache.inventory.set(code, result.insertId);
   return result.insertId;
 }
@@ -230,11 +214,11 @@ async function processIdByCode(code) {
 
 // ---- main import ----
 
-async function importOneEstimate(page, stub) {
+async function importOneEstimate(cache, token, stub) {
   const [[already]] = await pool.query('SELECT id FROM estimates WHERE estimate_no = ?', [stub.est_upk]);
-  if (already) { console.log(`SKIP ${stub.est_upk} (already imported)`); return 'skipped'; }
+  if (already) return { outcome: 'skipped', estimateNo: stub.est_upk };
 
-  const resp = await apiCall(page, 'get_transaction', {
+  const resp = await apiCall(token, 'get_transaction', {
     where: { Module_TransH: 'ESTIMATES', SysPK_TransH: stub.est_pk },
     include: [
       ['transaction_transactionledgerjobs', ['transactionledgerjob_transactionledgerinvtys', 'transactionledgerinvty_process', 'transactionledgerinvty_invty'], 'transactionledgerjob_location', 'transactionledgerjob_job', 'transactionledgerjob_shippingaddress', 'transactionledgerjob_transactionnstdjo'],
@@ -244,15 +228,15 @@ async function importOneEstimate(page, stub) {
     order: [[{}, 'ID_LdgrJob', 'ASC'], [{}, 'ID_LdgrInvty', 'ASC']],
   });
   const t = resp?.data?.[0];
-  if (!t) { console.log(`  ! no detail returned for ${stub.est_upk}, skipping. Raw response:`, JSON.stringify(resp).slice(0, 500)); return 'error'; }
+  if (!t) return { outcome: 'error', estimateNo: stub.est_upk, message: 'No detail returned from live site' };
 
-  const customerId = await ensureCustomer(t.transaction_customer);
+  const customerId = await ensureCustomer(cache, t.transaction_customer);
   const contactId = await ensureCustomerContact(t.transaction_contactperson, customerId);
-  const salesRepId = await ensureEmployee(t.transaction_employee?.Name_Empl);
-  const preparedById = await ensureEmployee(t.PreparedBy_TransH);
-  const approvedById = t.ApprovedBy_TransH ? await ensureEmployee(t.ApprovedBy_TransH) : null;
-  const salesDivisionId = await ensureSalesDivision(t.transaction_department?.Name_Dept);
-  const officeLocationId = await ensureLocation(t.transaction_location?.Name_Loc);
+  const salesRepId = await ensureEmployee(cache, t.transaction_employee?.Name_Empl);
+  const preparedById = await ensureEmployee(cache, t.PreparedBy_TransH);
+  const approvedById = t.ApprovedBy_TransH ? await ensureEmployee(cache, t.ApprovedBy_TransH) : null;
+  const salesDivisionId = await ensureSalesDivision(cache, t.transaction_department?.Name_Dept);
+  const officeLocationId = await ensureLocation(cache, t.transaction_location?.Name_Loc);
 
   const status = mapStatus(t.Status_TransH);
 
@@ -283,9 +267,9 @@ async function importOneEstimate(page, stub) {
   let totalGpAmount = 0;
   for (let jIdx = 0; jIdx < jobs.length; jIdx++) {
     const jo = jobs[jIdx];
-    const jobTypeId = await ensureJobType(jo.transactionledgerjob_job);
-    const jobLocationId = await ensureLocation(jo.transactionledgerjob_location?.Name_Loc);
-    const joTaxCodeId = await ensureTax(jo.TaxCode_LdgrJob);
+    const jobTypeId = await ensureJobType(cache, jo.transactionledgerjob_job);
+    const jobLocationId = await ensureLocation(cache, jo.transactionledgerjob_location?.Name_Loc);
+    const joTaxCodeId = await ensureTax(cache, jo.TaxCode_LdgrJob);
     const joNetOfTax = num(jo.VatExAmount_LdgrJob);
     const joGpRate = num(jo.GPRate_LdgrJob);
     const joGpAmount = Number((joNetOfTax * joGpRate / 100).toFixed(2));
@@ -311,8 +295,8 @@ async function importOneEstimate(page, stub) {
     for (let lIdx = 0; lIdx < lines.length; lIdx++) {
       const l = lines[lIdx];
       const processId = await processIdByCode(l.transactionledgerinvty_process?.UserPK_Proc);
-      const itemId = await ensureInventoryItem(l.transactionledgerinvty_invty);
-      const lineTaxCodeId = await ensureTax(l.TaxCode_LdgrInvty);
+      const itemId = await ensureInventoryItem(cache, l.transactionledgerinvty_invty);
+      const lineTaxCodeId = await ensureTax(cache, l.TaxCode_LdgrInvty);
       const discProcessPrice = num(l.DiscProcessPrice_LdgrInvty);
       const discMaterialPrice = num(l.DiscMaterialPrice_LdgrInvty);
       const netOfTax = Number((discProcessPrice + discMaterialPrice).toFixed(2));
@@ -346,32 +330,26 @@ async function importOneEstimate(page, stub) {
   const estGpRate = netOfTaxTotal > 0 ? Number((totalGpAmount / netOfTaxTotal * 100).toFixed(2)) : 0;
   await pool.query('UPDATE estimates SET est_gp_rate = ?, est_gp_amount = ? WHERE id = ?', [estGpRate, Number(totalGpAmount.toFixed(2)), estimateId]);
 
-  console.log(`  + imported ${stub.est_upk} (${jobs.length} job order(s))`);
-  return 'imported';
+  return { outcome: 'imported', estimateNo: stub.est_upk, jobOrders: jobs.length };
 }
 
-async function main() {
-  const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1900, height: 1100 } });
-  await page.goto(SITE + '/', { waitUntil: 'domcontentloaded', timeout: 30000 });
-  const inputs = await page.$$('input');
-  await inputs[0].fill(USERNAME);
-  await inputs[1].fill(PASSWORD);
-  await page.click('button:has-text("Sign In")');
-  // Redirect off /login can take several seconds depending on live-site load --
-  // poll instead of a fixed sleep so a slow-but-successful login isn't misread as a failure.
-  for (let i = 0; i < 15 && page.url().includes('login'); i++) {
-    await page.waitForTimeout(1000);
-  }
-  if (page.url().includes('login')) { console.error('Login failed.'); process.exit(1); }
+// lookbackDays: how far back from today to search the live site's estimate list for
+// matches -- generous by default since the only cost of a wider window is a few extra
+// cheap list-endpoint calls; the expensive detail fetch only runs for genuinely new ones.
+async function syncNewEstimates({ lookbackDays = 90 } = {}) {
+  const token = await login();
+
+  const today = new Date();
+  const from = new Date(today.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
+  const dateRange = { date1: liveDateString(from), date2: liveDateString(today) };
 
   const stubs = [];
   for (const status of TARGET_STATUSES) {
     let offset = 0;
     for (;;) {
-      const resp = await apiCall(page, 'get_hierarchy_estimates', {
+      const resp = await apiCall(token, 'get_hierarchy_estimates', {
         prepared_by: null, sales_rep: null, location: null, status, searchKey: '',
-        filterdate: { filter: 'period from', date1: { hide: false, date: DATE_RANGE.date1 }, date2: { hide: false, date: DATE_RANGE.date2 } },
+        filterdate: { filter: 'period from', date1: { hide: false, date: dateRange.date1 }, date2: { hide: false, date: dateRange.date2 } },
         limit: 200, offset,
       });
       const batch = resp?.data?.[0] || [];
@@ -381,30 +359,24 @@ async function main() {
       if (batch.length < 200) break;
     }
   }
-  let targets = stubs.filter((s) => TARGET_SALES_REPS.includes(s.Name_Empl));
-  if (process.env.IMPORT_LIMIT) targets = targets.slice(0, Number(process.env.IMPORT_LIMIT));
-  console.log(`Found ${targets.length} target estimates to import.\n`);
+  const targets = stubs.filter((s) => TARGET_SALES_REPS.includes(s.Name_Empl));
 
+  const cache = freshCache();
   let imported = 0, skipped = 0, errored = 0;
-  for (let i = 0; i < targets.length; i++) {
-    console.log(`[${i + 1}/${targets.length}] ${targets[i].est_upk} (${targets[i].Name_Empl})`);
+  const details = [];
+  for (const stub of targets) {
     try {
-      const outcome = await importOneEstimate(page, targets[i]);
-      if (outcome === 'imported') imported++;
-      else if (outcome === 'skipped') skipped++;
-      else errored++;
+      const result = await importOneEstimate(cache, token, stub);
+      if (result.outcome === 'imported') { imported++; details.push(result); }
+      else if (result.outcome === 'skipped') skipped++;
+      else { errored++; details.push(result); }
     } catch (err) {
-      console.error(`  ! FAILED ${targets[i].est_upk}:`, err.message);
       errored++;
+      details.push({ outcome: 'error', estimateNo: stub.est_upk, message: err.message });
     }
   }
 
-  console.log(`\nDone. Imported ${imported}, skipped ${skipped} (already present), errored ${errored}.`);
-  await browser.close();
-  await pool.end();
+  return { checked: targets.length, imported, skipped, errored, details, dateRange };
 }
 
-main().catch((err) => {
-  console.error('Import failed:', err);
-  process.exit(1);
-});
+module.exports = { syncNewEstimates };

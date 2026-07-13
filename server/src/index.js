@@ -37,6 +37,7 @@ const purchaseOrderRoutes = require('./routes/purchaseOrders');
 const vendorBillRoutes = require('./routes/vendorBills');
 const billPaymentRoutes = require('./routes/billPayments');
 const billCreditRoutes = require('./routes/billCredits');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 
@@ -78,6 +79,7 @@ app.use('/api/purchase-orders', purchaseOrderRoutes);
 app.use('/api/vendor-bills', vendorBillRoutes);
 app.use('/api/bill-payments', billPaymentRoutes);
 app.use('/api/bill-credits', billCreditRoutes);
+app.use('/api/admin', adminRoutes);
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 

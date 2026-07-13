@@ -22,7 +22,7 @@ function money(v) {
 }
 
 export default function Estimates() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const navigate = useNavigate();
 
   const [rows, setRows] = useState([]);
@@ -30,6 +30,7 @@ export default function Estimates() {
   const [counts, setCounts] = useState({});
   const [loading, setLoading] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   const [status, setStatus] = useState('pending_supervisor_approval');
   const [search, setSearch] = useState('');
@@ -78,6 +79,19 @@ export default function Estimates() {
     }
   }
 
+  async function handleSync() {
+    setSyncing(true);
+    try {
+      const { data } = await api.post('/admin/sync-estimates');
+      alert(`Sync complete. Checked ${data.checked}, imported ${data.imported} new, ${data.skipped} already present, ${data.errored} errored.`);
+      load();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Sync failed');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   const totalPages = Math.max(1, Math.ceil(total / limit));
 
   return (
@@ -86,6 +100,11 @@ export default function Estimates() {
         <h1>Saved Estimates</h1>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => setShowFilters((s) => !s)}>Toggle Filter</button>
+          {user?.account_type === 'System Admin' && (
+            <button className="btn btn-sm" disabled={syncing} onClick={handleSync}>
+              {syncing ? <LoadingSpinner inline size="sm" label="Syncing..." /> : 'Sync New Estimates'}
+            </button>
+          )}
           {can('/estimates', 'can_add') && <button className="btn btn-primary" onClick={() => navigate('/estimates/new')}>Add Estimate</button>}
         </div>
       </div>
