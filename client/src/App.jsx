@@ -41,6 +41,7 @@ import ItemFulfillmentView from './pages/ItemFulfillmentView';
 import ItemReceiptView from './pages/ItemReceiptView';
 import QualityInspectionView from './pages/QualityInspectionView';
 import ItemDelivery from './pages/ItemDelivery';
+import ItemDeliveryView from './pages/ItemDeliveryView';
 import SalesInvoiceView from './pages/SalesInvoiceView';
 import SalesInvoices from './pages/SalesInvoices';
 import PurchaseRequisitions from './pages/PurchaseRequisitions';
@@ -135,6 +136,7 @@ function App() {
         <Route path="/transfer-orders/item-receipts/:receiptId" element={<ItemReceiptView />} />
         <Route path="/quality-inspections/:id" element={<QualityInspectionView />} />
         <Route path="/sales-orders/:id/item-delivery/new" element={<ItemDelivery />} />
+        <Route path="/item-deliveries/:id" element={<ItemDeliveryView />} />
         <Route path="/sales-invoices" element={<SalesInvoices />} />
         <Route path="/sales-invoices/:id" element={<SalesInvoiceView />} />
         <Route path="/purchase-requisitions" element={<PurchaseRequisitions />} />

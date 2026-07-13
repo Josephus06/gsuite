@@ -42,8 +42,8 @@ export default function ItemDelivery() {
 
     setSaving(true);
     try {
-      await api.post('/item-deliveries', { sales_order_id: Number(id), date_created: dateCreated, memo, lines: payload });
-      navigate(`/sales-orders/${id}`);
+      const { data: created } = await api.post('/item-deliveries', { sales_order_id: Number(id), date_created: dateCreated, memo, lines: payload });
+      navigate(`/item-deliveries/${created.id}`);
     } catch (err) {
       setError(err.response?.data?.error || 'Save failed');
     } finally {

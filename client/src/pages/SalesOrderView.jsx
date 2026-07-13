@@ -66,6 +66,7 @@ export default function SalesOrderView() {
   const [showBillMenu, setShowBillMenu] = useState(false);
   const [showSIModal, setShowSIModal] = useState(false);
   const [invoices, setInvoices] = useState([]);
+  const [deliveries, setDeliveries] = useState([]);
 
   function load() {
     return api.get(`/sales-orders/${id}`).then(({ data }) => { setSo(data); setLoading(false); });
@@ -76,6 +77,7 @@ export default function SalesOrderView() {
   useEffect(() => {
     if (tab === 'related') {
       api.get(`/sales-invoices/by-sales-order/${id}`).then(({ data }) => setInvoices(data));
+      api.get(`/item-deliveries/by-sales-order/${id}`).then(({ data }) => setDeliveries(data));
     }
   }, [tab, id]);
 
@@ -237,9 +239,18 @@ export default function SalesOrderView() {
             <table>
               <thead><tr><th>Type</th><th>Reference</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead>
               <tbody>
-                {invoices.length === 0 && (
-                  <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>No Invoices yet.</td></tr>
+                {invoices.length === 0 && deliveries.length === 0 && (
+                  <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>No related records yet.</td></tr>
                 )}
+                {deliveries.map((del) => (
+                  <tr key={`del-${del.id}`}>
+                    <td>Item Delivery</td>
+                    <td><button type="button" className="link-btn" onClick={() => navigate(`/item-deliveries/${del.id}`)}>{del.delivery_no}</button></td>
+                    <td>{del.date_created ? String(del.date_created).slice(0, 10) : ''}</td>
+                    <td></td>
+                    <td>{del.status === 'cancelled' ? 'Cancelled' : 'Saved'}</td>
+                  </tr>
+                ))}
                 {invoices.map((inv) => (
                   <tr key={inv.id}>
                     <td>Invoice</td>

@@ -9,6 +9,51 @@ const router = express.Router();
 // reusing Transfer Orders' and Quality Inspection reusing Production's.
 const ROUTE = '/sales-orders';
 
+// GL Impact: recognizing cost-of-sale at delivery time, the mirror image of Assembly
+// Build's cost-absorption entry -- reverse-engineered directly from the real system's
+// sandbox (Item Delivery > GL Impact tab): debit Cost of Goods Sold (the delivered
+// line's Job Type's own cogs_account_id) and credit Finished Goods Inventory (that same
+// Job Type's asset_account_id, the exact account Assembly Build debited when the cost
+// first went INTO inventory), for the delivered quantity's share of that Job Order's
+// total built cost.
+//
+// item_delivery_lines only stores job_order_id + qty_delivered -- no per-process link
+// and no cost snapshot at all (unlike assembly_build_lines) -- so cost is derived live:
+// (SUM of that JO's job_order_processes.total_cost) / jo.quantity gives a per-unit cost,
+// multiplied by this line's qty_delivered. This assumes cost is spread evenly across the
+// JO's full required quantity, which is the only basis available; if a JO's per-unit
+// cost genuinely varies within its own run this would be an approximation, not exact.
+async function computeGlImpact(lines) {
+  const accountIds = [...new Set(lines.flatMap((l) => [l.cogs_account_id, l.asset_account_id]).filter(Boolean))];
+  if (!accountIds.length) return [];
+  const [coaRows] = await pool.query('SELECT id, account_code, account_name FROM chart_of_accounts WHERE id IN (?)', [accountIds]);
+  const coaById = new Map(coaRows.map((c) => [c.id, c]));
+
+  const debits = new Map();
+  const credits = new Map();
+  for (const l of lines) {
+    if (!l.cogs_account_id || !l.asset_account_id) continue;
+    const joQuantity = Number(l.jo_quantity) || 0;
+    if (!joQuantity) continue;
+    const unitCost = (Number(l.jo_total_cost) || 0) / joQuantity;
+    const amount = unitCost * (Number(l.qty_delivered) || 0);
+    if (!amount) continue;
+    debits.set(l.cogs_account_id, (debits.get(l.cogs_account_id) || 0) + amount);
+    credits.set(l.asset_account_id, (credits.get(l.asset_account_id) || 0) + amount);
+  }
+
+  const rows = [];
+  for (const [id, amt] of debits) {
+    const acct = coaById.get(id);
+    if (acct) rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: Number(amt.toFixed(2)), credit: 0 });
+  }
+  for (const [id, amt] of credits) {
+    const acct = coaById.get(id);
+    if (acct) rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: 0, credit: Number(amt.toFixed(2)) });
+  }
+  return rows;
+}
+
 async function logAudit(conn, { deliveryId, userId, eventType, fieldName = null, oldValue = null, newValue = null }) {
   await conn.query(
     `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
@@ -51,13 +96,27 @@ router.get('/for-sales-order/:salesOrderId', requireAuth, requirePermission(ROUT
   }
 });
 
+router.get('/by-sales-order/:salesOrderId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT id, delivery_no, date_created, status FROM item_deliveries WHERE sales_order_id = ? ORDER BY id DESC',
+      [req.params.salesOrderId]
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[d]] = await pool.query(
-      `SELECT del.*, so.sales_order_no, c.name AS customer_name, u.display_name AS created_by_name
+      `SELECT del.*, so.sales_order_no, so.contact_email, so.contact_title, so.contact_phone,
+              c.name AS customer_name, cc.contact_name, u.display_name AS created_by_name
        FROM item_deliveries del
        JOIN sales_orders so ON so.id = del.sales_order_id
        LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN customer_contacts cc ON cc.id = so.contact_person_id
        LEFT JOIN users u ON u.id = del.created_by_user_id
        WHERE del.id = ?`,
       [req.params.id]
@@ -65,14 +124,21 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     if (!d) return res.status(404).json({ error: 'Not found' });
 
     const [lines] = await pool.query(
-      `SELECT idl.*, jo.job_order_no, jo.description, jo.quantity_inspected, jo.quantity_delivered, jo.units
+      `SELECT idl.*, jo.job_order_no, jo.description, jo.quantity AS jo_quantity, jo.quantity_inspected,
+              jo.quantity_delivered, jo.units, jo.length, jo.width, jo.height,
+              jt.display_name AS item_name, jt.cogs_account_id, jt.asset_account_id,
+              loc.location_name AS job_location_name,
+              (SELECT COALESCE(SUM(total_cost), 0) FROM job_order_processes WHERE job_order_id = jo.id) AS jo_total_cost
        FROM item_delivery_lines idl
        LEFT JOIN job_orders jo ON jo.id = idl.job_order_id
+       LEFT JOIN job_types jt ON jt.id = jo.job_type_id
+       LEFT JOIN locations loc ON loc.id = jo.job_location_id
        WHERE idl.item_delivery_id = ?`,
       [req.params.id]
     );
 
-    res.json({ ...d, lines });
+    const glImpact = await computeGlImpact(lines);
+    res.json({ ...d, lines, gl_impact: glImpact });
   } catch (err) {
     next(err);
   }
