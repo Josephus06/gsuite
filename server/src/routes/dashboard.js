@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { DESIGN_QUEUE_STATUS } = require('../lib/designSupervisorVisibility');
 
 const router = express.Router();
 
@@ -17,7 +18,7 @@ const UNPAID_STATUSES = ['pending_for_jo', 'jo_in_process', 'pending_delivery', 
 // supervisor_id link can change after the token was issued.
 async function resolveScope(userId) {
   const [[me]] = await pool.query(
-    `SELECT u.id, u.employee_id, u.account_type, u.is_account_officer, u.is_supervisor, u.is_sales_manager
+    `SELECT u.id, u.employee_id, u.account_type, u.is_account_officer, u.is_supervisor, u.is_sales_manager, u.is_design_supervisor
      FROM users u WHERE u.id = ?`,
     [userId]
   );
@@ -28,6 +29,20 @@ async function resolveScope(userId) {
   // fields in the Account Type step, and Account Type is the deliberate role signal.
   if (me.account_type === 'System Admin') {
     return { role: 'admin', employeeIds: [] };
+  }
+
+  // Design Supervisor takes priority over the sales-role checks below -- it's a
+  // production/design role, not a sales one, even though nothing stops both flags being
+  // set on the same account in principle.
+  if (me.is_design_supervisor) {
+    return { role: 'design_supervisor', employeeIds: me.employee_id ? [me.employee_id] : [] };
+  }
+
+  // Artist is purely the free-text Account Type value (no dedicated boolean flag exists
+  // for it, same as there's none for most non-sales roles) -- checked after Design
+  // Supervisor since a Design Supervisor's own Account Type is often also "Artist".
+  if (me.account_type === 'Artist') {
+    return { role: 'artist', employeeIds: me.employee_id ? [me.employee_id] : [] };
   }
 
   if (me.is_sales_manager) {
@@ -224,6 +239,152 @@ async function adminMetrics() {
   };
 }
 
+// A JO counts as "active" on the design/artist board once it has an artist and hasn't
+// gone back to Sales/production yet -- covers the initial pass and any revision round,
+// deliberately excluding "For Design Supervisor" (no artist yet, that's the assignment
+// queue below, not a schedule row) and anything Released/Cancelled.
+const ARTIST_ACTIVE_SUB_STATUSES = ['For Artist', 'For Artist (Revision)', 'Sales Approval'];
+
+async function scheduleRows(whereSql, params) {
+  const [rows] = await pool.query(
+    `SELECT jo.id, jo.job_order_no, jo.description, jo.sub_status, jo.planned_start_at, jo.planned_end_at,
+            jo.layout_started_at, jo.layout_ended_at, jo.artist_id,
+            c.name AS customer_name, CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name,
+            EXISTS(SELECT 1 FROM job_order_layout_sessions s WHERE s.job_order_id = jo.id AND s.ended_at IS NULL) AS is_running
+     FROM job_orders jo
+     LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
+     LEFT JOIN customers c ON c.id = so.customer_id
+     LEFT JOIN employees ar ON ar.id = jo.artist_id
+     ${whereSql}
+     ORDER BY jo.planned_start_at IS NULL, jo.planned_start_at ASC`,
+    params
+  );
+  return rows.map((r) => ({
+    id: r.id, jobOrderNo: r.job_order_no, description: r.description, subStatus: r.sub_status,
+    plannedStartAt: r.planned_start_at, plannedEndAt: r.planned_end_at,
+    layoutStartedAt: r.layout_started_at, layoutEndedAt: r.layout_ended_at,
+    customerName: r.customer_name, artistId: r.artist_id, artistName: r.artist_name,
+    isRunning: !!r.is_running,
+  }));
+}
+
+async function designSupervisorMetrics() {
+  const [[pendingAssignment]] = await pool.query(
+    `SELECT COUNT(*) AS count FROM job_orders WHERE status = ? AND sub_status = 'For Design Supervisor'`,
+    [DESIGN_QUEUE_STATUS]
+  );
+
+  const [[notStarted]] = await pool.query(
+    `SELECT COUNT(*) AS count FROM job_orders
+     WHERE sub_status IN ('For Artist', 'For Artist (Revision)') AND layout_started_at IS NULL`
+  );
+
+  const [[inProgress]] = await pool.query(
+    `SELECT COUNT(DISTINCT jo.id) AS count
+     FROM job_orders jo JOIN job_order_layout_sessions s ON s.job_order_id = jo.id AND s.ended_at IS NULL`
+  );
+
+  const [[pendingSalesApproval]] = await pool.query(
+    `SELECT COUNT(*) AS count FROM job_orders WHERE sub_status = 'Sales Approval'`
+  );
+
+  const subStatusPlaceholders = ARTIST_ACTIVE_SUB_STATUSES.map(() => '?').join(', ');
+  const schedule = await scheduleRows(
+    `WHERE jo.artist_id IS NOT NULL AND jo.sub_status IN (${subStatusPlaceholders})`,
+    ARTIST_ACTIVE_SUB_STATUSES
+  );
+
+  const [workload] = await pool.query(
+    `SELECT jo.artist_id, CONCAT(ar.first_name, ' ', ar.last_name) AS name, COUNT(*) AS count
+     FROM job_orders jo JOIN employees ar ON ar.id = jo.artist_id
+     WHERE jo.artist_id IS NOT NULL AND jo.sub_status IN (${subStatusPlaceholders})
+     GROUP BY jo.artist_id, name ORDER BY count DESC`,
+    ARTIST_ACTIVE_SUB_STATUSES
+  );
+
+  // "Overdue" here means: currently running (an open Play session) and past its own
+  // Planned End -- a simpler, dashboard-level proxy for the exact
+  // actualSeconds-vs-allotted comparison AssignedJobOrderRun.jsx does live for one JO at
+  // a time; good enough for "which of these needs attention right now".
+  const [overdue] = await pool.query(
+    `SELECT jo.id, jo.job_order_no, jo.planned_end_at, CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name
+     FROM job_orders jo
+     JOIN job_order_layout_sessions s ON s.job_order_id = jo.id AND s.ended_at IS NULL
+     LEFT JOIN employees ar ON ar.id = jo.artist_id
+     WHERE jo.planned_end_at IS NOT NULL AND jo.planned_end_at < NOW()
+     GROUP BY jo.id, jo.job_order_no, jo.planned_end_at, ar.first_name, ar.last_name
+     ORDER BY jo.planned_end_at ASC`
+  );
+
+  return {
+    pendingAssignment: Number(pendingAssignment.count),
+    notStarted: Number(notStarted.count),
+    inProgress: Number(inProgress.count),
+    pendingSalesApproval: Number(pendingSalesApproval.count),
+    schedule,
+    workload: workload.map((w) => ({ artistId: w.artist_id, name: w.name, count: Number(w.count) })),
+    overdue: overdue.map((o) => ({ id: o.id, jobOrderNo: o.job_order_no, plannedEndAt: o.planned_end_at, artistName: o.artist_name })),
+  };
+}
+
+async function artistMetrics(employeeId) {
+  if (!employeeId) {
+    return { active: 0, notStarted: 0, completedThisMonth: 0, avgPerformance: null, schedule: [] };
+  }
+
+  const [[active]] = await pool.query(
+    `SELECT COUNT(*) AS count FROM job_orders WHERE artist_id = ? AND sub_status IN ('For Artist', 'For Artist (Revision)')`,
+    [employeeId]
+  );
+  const [[notStarted]] = await pool.query(
+    `SELECT COUNT(*) AS count FROM job_orders
+     WHERE artist_id = ? AND sub_status IN ('For Artist', 'For Artist (Revision)') AND layout_started_at IS NULL`,
+    [employeeId]
+  );
+  const monthStart = monthRange();
+  const [[completedThisMonth]] = await pool.query(
+    `SELECT COUNT(*) AS count FROM job_orders WHERE artist_id = ? AND layout_ended_at >= ?`,
+    [employeeId, monthStart]
+  );
+
+  // Performance % per completed JO this month = allotted (minutes_consume x layout_qty)
+  // / actual (sum of that JO's session durations) x 100 -- same formula
+  // AssignedJobOrderRun.jsx computes live for one JO; averaged here across all of this
+  // artist's completions this month for a single at-a-glance number.
+  const [completedRows] = await pool.query(
+    `SELECT jo.id, jo.layout_qty, pjt.minutes_consume,
+            (SELECT COALESCE(SUM(TIMESTAMPDIFF(SECOND, s.started_at, s.ended_at)), 0)
+             FROM job_order_layout_sessions s WHERE s.job_order_id = jo.id AND s.ended_at IS NOT NULL) AS actual_seconds
+     FROM job_orders jo
+     LEFT JOIN pms_job_types pjt ON pjt.id = jo.layout_job_type_id
+     WHERE jo.artist_id = ? AND jo.layout_ended_at >= ?`,
+    [employeeId, monthStart]
+  );
+  const performances = completedRows
+    .map((r) => {
+      const allotted = Number(r.minutes_consume || 0) * Number(r.layout_qty || 1) * 60;
+      const actual = Number(r.actual_seconds || 0);
+      return allotted > 0 && actual > 0 ? (allotted / actual) * 100 : null;
+    })
+    .filter((p) => p !== null);
+  const avgPerformance = performances.length
+    ? Number((performances.reduce((s, p) => s + p, 0) / performances.length).toFixed(1))
+    : null;
+
+  const schedule = await scheduleRows(
+    `WHERE jo.artist_id = ? AND jo.sub_status IN ('For Artist', 'For Artist (Revision)')`,
+    [employeeId]
+  );
+
+  return {
+    active: Number(active.count),
+    notStarted: Number(notStarted.count),
+    completedThisMonth: Number(completedThisMonth.count),
+    avgPerformance,
+    schedule,
+  };
+}
+
 router.get('/', requireAuth, async (req, res, next) => {
   try {
     const scope = await resolveScope(req.user.id);
@@ -231,6 +392,16 @@ router.get('/', requireAuth, async (req, res, next) => {
     if (scope.role === 'admin') {
       const metrics = await adminMetrics();
       return res.json({ role: 'admin', ...metrics });
+    }
+
+    if (scope.role === 'design_supervisor') {
+      const metrics = await designSupervisorMetrics();
+      return res.json({ role: 'design_supervisor', ...metrics });
+    }
+
+    if (scope.role === 'artist') {
+      const metrics = await artistMetrics(scope.employeeIds[0]);
+      return res.json({ role: 'artist', ...metrics });
     }
 
     const summary = await repMetrics(scope.employeeIds);

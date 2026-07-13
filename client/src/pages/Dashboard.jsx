@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { Sparkline, DonutChart, GaugeRing, BarList } from '../components/charts';
@@ -8,7 +9,25 @@ const ROLE_LABELS = {
   sales_manager: 'Sales Manager',
   supervisor: 'Sales Supervisor',
   account_officer: 'Account Officer',
+  design_supervisor: 'Design Supervisor',
+  artist: 'Artist',
 };
+
+// Mirrors AssignedJobOrders.jsx's own timerStatus() -- kept in sync since both derive
+// the same Play/Hold/Stop state off the same three fields.
+function timerStatus(row) {
+  if (row.layoutEndedAt) return 'Completed';
+  if (row.isRunning) return 'Running';
+  if (row.layoutStartedAt) return 'Held';
+  return 'Not Started';
+}
+const TIMER_STATUS_STYLE = {
+  'Not Started': { background: 'rgba(148,163,184,0.15)', color: '#94a3b8' },
+  Held: { background: 'rgba(251,191,36,0.15)', color: '#fbbf24' },
+  Running: { background: 'rgba(34,211,238,0.15)', color: '#22d3ee' },
+  Completed: { background: 'rgba(52,211,153,0.15)', color: '#34d399' },
+};
+function formatDateTime(v) { return v ? new Date(v).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'; }
 
 const JOB_TYPE_COLORS = ['#22d3ee', '#f472b6', '#a78bfa', '#fbbf24', '#34d399'];
 const PIPELINE_COLORS = {
@@ -59,6 +78,7 @@ function StatCard({ label, value, icon, color, trend }) {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -83,7 +103,10 @@ export default function Dashboard() {
         <span className="holo-role-badge">{ROLE_LABELS[data.role] || data.role}</span>
       </div>
 
-      {data.role === 'admin' ? <AdminDashboard data={data} /> : <SalesDashboard data={data} />}
+      {data.role === 'admin' && <AdminDashboard data={data} />}
+      {data.role === 'design_supervisor' && <DesignSupervisorDashboard data={data} navigate={navigate} />}
+      {data.role === 'artist' && <ArtistDashboard data={data} navigate={navigate} />}
+      {!['admin', 'design_supervisor', 'artist'].includes(data.role) && <SalesDashboard data={data} />}
     </div>
   );
 }
@@ -250,6 +273,105 @@ function SalesDashboard({ data }) {
           ) : <p className="holo-empty">No one reports to you yet.</p>}
         </div>
       )}
+    </>
+  );
+}
+
+function ScheduleTable({ rows, navigate, showArtist = true }) {
+  if (!rows.length) return <p className="holo-empty">Nothing scheduled.</p>;
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table className="holo-rep-table">
+        <thead>
+          <tr>
+            <th>JO #</th>
+            {showArtist && <th>Artist</th>}
+            <th>Customer</th>
+            <th>Description</th>
+            <th>Planned Start</th>
+            <th>Planned End</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            const status = timerStatus(r);
+            return (
+              <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/job-orders/${r.id}`)}>
+                <td>{r.jobOrderNo}</td>
+                {showArtist && <td>{r.artistName || '—'}</td>}
+                <td>{r.customerName || '—'}</td>
+                <td>{r.description}</td>
+                <td>{formatDateTime(r.plannedStartAt)}</td>
+                <td>{formatDateTime(r.plannedEndAt)}</td>
+                <td><span className="holo-status-pill" style={TIMER_STATUS_STYLE[status]}>{status}</span></td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DesignSupervisorDashboard({ data, navigate }) {
+  const workloadData = data.workload.map((w, i) => ({ label: w.name, value: w.count, color: JOB_TYPE_COLORS[i % JOB_TYPE_COLORS.length] }));
+
+  return (
+    <>
+      <div className="holo-grid">
+        <StatCard label="Pending My Assignment" value={data.pendingAssignment} color="var(--holo-amber)" icon="📥" />
+        <StatCard label="Not Yet Started" value={data.notStarted} color="var(--holo-magenta)" icon="⏸️" />
+        <StatCard label="In Progress" value={data.inProgress} color="var(--holo-cyan)" icon="🎨" />
+        <StatCard label="Pending Sales Approval" value={data.pendingSalesApproval} color="var(--holo-green)" icon="✅" />
+      </div>
+
+      <div className="holo-grid holo-grid-wide">
+        <div className="holo-card">
+          <h3>Workload per Artist</h3>
+          <BarList color="var(--holo-violet)" data={workloadData} />
+        </div>
+
+        <div className="holo-card">
+          <h3>Running Past Planned End</h3>
+          {data.overdue.length ? (
+            <div className="holo-activity">
+              {data.overdue.map((o) => (
+                <div className="holo-activity-row" key={o.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/job-orders/${o.id}`)}>
+                  <div>
+                    <div className="holo-activity-main">{o.jobOrderNo} · {o.artistName || 'Unassigned'}</div>
+                    <div className="holo-activity-sub">Planned End: {formatDateTime(o.plannedEndAt)}</div>
+                  </div>
+                  <span className="holo-status-pill" style={{ background: 'rgba(239,68,68,0.15)', color: '#ef4444' }}>Overdue</span>
+                </div>
+              ))}
+            </div>
+          ) : <p className="holo-empty">Nothing currently running is overdue.</p>}
+        </div>
+      </div>
+
+      <div className="holo-card">
+        <h3>Artist Schedule</h3>
+        <ScheduleTable rows={data.schedule} navigate={navigate} />
+      </div>
+    </>
+  );
+}
+
+function ArtistDashboard({ data, navigate }) {
+  return (
+    <>
+      <div className="holo-grid">
+        <StatCard label="Active Job Orders" value={data.active} color="var(--holo-cyan)" icon="🎨" />
+        <StatCard label="Not Yet Started" value={data.notStarted} color="var(--holo-magenta)" icon="⏸️" />
+        <StatCard label="Completed This Month" value={data.completedThisMonth} color="var(--holo-green)" icon="✅" />
+        <StatCard label="Avg. Performance" value={data.avgPerformance === null ? '—' : `${data.avgPerformance}%`} color="var(--holo-amber)" icon="⚡" />
+      </div>
+
+      <div className="holo-card">
+        <h3>My Schedule</h3>
+        <ScheduleTable rows={data.schedule} navigate={(url) => navigate(url.replace('/job-orders/', '/assigned-jo/'))} showArtist={false} />
+      </div>
     </>
   );
 }
