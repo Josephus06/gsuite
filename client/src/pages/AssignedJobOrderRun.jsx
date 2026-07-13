@@ -70,6 +70,13 @@ export default function AssignedJobOrderRun() {
   const remainingSeconds = allottedSeconds - actualSeconds;
   const overdue = remainingSeconds < 0;
   const performance = actualSeconds > 0 && allottedSeconds > 0 ? (allottedSeconds / actualSeconds) * 100 : null;
+  // The countdown never actually stops at zero -- actualSeconds keeps accruing off the
+  // live `now` tick above regardless of overdue, which is what naturally drags
+  // `performance` down the longer this runs past its allotted time. These two flags just
+  // decide when to surface that on screen: a heads-up with 30s or less left, then a
+  // persistent reminder once it's actually run over, so it's never a surprise.
+  const nearingLimit = isRunning && !overdue && remainingSeconds <= 30;
+  const pastLimit = isRunning && overdue;
 
   const isCompleted = !!jo.layout_ended_at;
   const notStarted = !jo.layout_started_at;
@@ -82,6 +89,16 @@ export default function AssignedJobOrderRun() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {nearingLimit && (
+        <div className="warning-banner timer-notice-pulse">
+          ⚠ Less than 30 seconds remaining on this Job Order — Hold or Stop it now.
+        </div>
+      )}
+      {pastLimit && (
+        <div className="error-banner">
+          ⏱ Time limit reached. This Job Order is still running — every extra second now counts against your Performance %. End it now.
+        </div>
+      )}
 
       <div className="estimate-banner">
         <div className="estimate-banner-title">
