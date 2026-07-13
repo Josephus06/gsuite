@@ -213,21 +213,43 @@ async function ensureInventoryItem(liveInvty) {
   const code = clean(liveInvty.UserPK_Invty);
   if (!code) return null;
   if (cache.inventory.has(code)) return cache.inventory.get(code);
+  const isLengthBased = !!liveInvty.IsLength_Invty;
+  const isWidthBased = !!liveInvty.IsWidth_Invty;
   const [[existing]] = await pool.query('SELECT id FROM inventories WHERE item_code = ?', [code]);
-  if (existing) { cache.inventory.set(code, existing.id); return existing.id; }
+  if (existing) {
+    await pool.query('UPDATE inventories SET is_length_based = ?, is_width_based = ? WHERE id = ?', [isLengthBased, isWidthBased, existing.id]);
+    cache.inventory.set(code, existing.id);
+    return existing.id;
+  }
   const unitId = await ensureUnit(liveInvty.BaseUnit_Invty || liveInvty.UnitTitle_Invty || liveInvty.SalesUnit_Invty);
   const [result] = await pool.query(
-    `INSERT INTO inventories (item_code, display_name, sales_description, base_unit_id, item_type, is_active, average_cost, material_cost, selling_price)
-     VALUES (?, ?, ?, ?, ?, TRUE, ?, ?, ?)`,
+    `INSERT INTO inventories (item_code, display_name, sales_description, base_unit_id, item_type, is_active, average_cost, material_cost, selling_price, is_length_based, is_width_based)
+     VALUES (?, ?, ?, ?, ?, TRUE, ?, ?, ?, ?, ?)`,
     [
       code, liveInvty.DisplayName_Invty || code, liveInvty.SalesDescription_Invty || null, unitId,
       liveInvty.Module_Invty || 'INVENTORY',
       nullableNum(liveInvty.MaxAveCost_Invty), nullableNum(liveInvty.MaterialCost_Invty), nullableNum(liveInvty.SellingPrice_Invty),
+      isLengthBased, isWidthBased,
     ]
   );
   console.log(`  + created inventory item "${code}"`);
   cache.inventory.set(code, result.insertId);
   return result.insertId;
+}
+
+// Mirrors client/src/utils/costing.js's computeAutoPricing `total` field exactly (see
+// the identical helper + full explanation in liveEstimateSync.js).
+const LENGTH_UNIT_TO_FEET = { FT: 1, LFT: 1, IN: 1 / 12, LINCH: 1 / 12, MM: 0.00328084, CM: 0.0328084, MTR: 3.28084, M: 3.28084, LMTR: 3.28084, YD: 3 };
+function computeLineTotal(l) {
+  const inv = l.transactionledgerinvty_invty;
+  const qty = num(l.Qty_LdgrInvty);
+  const length = nullableNum(l.Length_LdgrInvty);
+  const width = nullableNum(l.Width_LdgrInvty);
+  const isAreaBased = !!inv?.IsLength_Invty && !!inv?.IsWidth_Invty && length > 0 && width > 0;
+  if (!isAreaBased) return qty;
+  const lengthFactor = LENGTH_UNIT_TO_FEET[l.UnitOfMeasure_LdgrInvty] ?? 1;
+  const areaSqft = (length * lengthFactor) * (width * lengthFactor);
+  return Number((areaSqft * qty).toFixed(4));
 }
 
 async function processIdByCode(code) {
@@ -340,7 +362,7 @@ async function importOneEstimate(page, stub) {
           joId, lIdx + 1, processId, nullableNum(l.ProcessQty_LdgrInvty), l.transactionledgerinvty_process?.UOM_Proc || null,
           l.Category_LdgrInvty || null, l.Parts_LdgrInvty || null, itemId,
           nullableNum(l.Length_LdgrInvty), nullableNum(l.Width_LdgrInvty), l.UnitOfMeasure_LdgrInvty || null,
-          num(l.Qty_LdgrInvty), num(l.Total_LdgrInvty), l.Unit_LdgrInvty || null,
+          num(l.Qty_LdgrInvty), computeLineTotal(l), l.Unit_LdgrInvty || null,
           num(l.ProcessPrice_LdgrInvty), num(l.ProcessDiscountPercent_LdgrInvty), num(l.ProcessDiscountAmount_LdgrInvty),
           discProcessPrice, num(l.MaterialPrice_LdgrInvty), num(l.MaterialDiscountPercent_LdgrInvty), num(l.MaterialDiscountAmount_LdgrInvty),
           discMaterialPrice, netOfTax, lineTaxCodeId, taxAmount, grossAmount, l.SalesRemarks_LdgrInvty || null,
