@@ -239,6 +239,12 @@ CREATE TABLE users (
     -- is ephemeral across redeploys, so the DB (already the durable store for everything
     -- else) is the only place a file would reliably survive there.
     avatar_data MEDIUMTEXT NULL,
+    -- Purchasing Supervisor: the first-tier approver for PO1/PO2 Purchase Orders (see
+    -- purchaseOrders.js's approve route). Deliberately a separate flag from is_supervisor
+    -- (that one is Sales-Supervisor-specific, relied on by dashboard.js's resolveScope and
+    -- salesVisibility.js for sales-team scoping) so a Purchasing Supervisor doesn't get
+    -- mis-scoped into the Sales Supervisor dashboard/visibility.
+    is_purchasing_supervisor BOOLEAN DEFAULT FALSE,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NULL
 );

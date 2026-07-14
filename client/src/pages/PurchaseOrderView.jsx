@@ -117,8 +117,8 @@ export default function PurchaseOrderView() {
   const canApprovePO = can('/purchase-orders', 'can_approve');
   const canCancel = po.status !== 'cancelled';
   const showApprove = canApprovePO && (
-    (po.status === 'pending_approval' && !!user?.is_supervisor)
-    || (po.status === 'pending_approval_gm' && user?.account_type === 'System Admin')
+    (po.status === 'pending_approval' && !!user?.is_purchasing_supervisor)
+    || (po.status === 'pending_approval_gm' && (user?.account_type === 'System Admin' || user?.account_type === 'General Manager'))
   );
   const showReceive = canEdit && po.type !== 'PO2' && po.status === 'approved' && po.receipt_status !== 'fully_received';
   const showVendorReturn = canEdit && po.type !== 'PO2' && po.receipt_status !== 'not_received';

@@ -41,6 +41,7 @@ router.post('/login', async (req, res, next) => {
         can_approve_sales_estimate: !!user.can_approve_sales_estimate,
         is_design_supervisor: !!user.is_design_supervisor,
         is_supervisor: !!user.is_supervisor,
+        is_purchasing_supervisor: !!user.is_purchasing_supervisor,
         account_type: user.account_type,
       },
     });
@@ -55,7 +56,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
       `SELECT id, username, email, display_name, default_branch_id, employee_id,
               account_type, can_approve_sales_estimate, is_design_supervisor,
               is_account_officer, is_supervisor, is_sales_manager,
-              is_sales_marketing_director, is_sales_business_unit, supervisor_id,
+              is_sales_marketing_director, is_sales_business_unit, is_purchasing_supervisor, supervisor_id,
               avatar_data
        FROM users WHERE id = ?`,
       [req.user.id]
@@ -68,6 +69,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
     user.is_sales_manager = !!user.is_sales_manager;
     user.is_sales_marketing_director = !!user.is_sales_marketing_director;
     user.is_sales_business_unit = !!user.is_sales_business_unit;
+    user.is_purchasing_supervisor = !!user.is_purchasing_supervisor;
 
     // The "Default Login Location" branch (User Branches tab, is_default = TRUE) --
     // distinct from users.default_branch_id (a separate, legacy field set on the User

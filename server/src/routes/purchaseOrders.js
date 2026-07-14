@@ -282,23 +282,28 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   }
 });
 
-// Two-stage approval mirroring the real system: a supervisor approves first; if the
-// PO's total_amount exceeds APPROVAL_THRESHOLD that only advances it to
-// 'pending_approval_gm', which then needs a second approval from a System Admin
-// ("General Manager" in the real system) before it's fully 'approved'.
+// Approval path depends on PO type and amount (see the /direct route's status pick for
+// PO3/PO4, which skip straight to the GM tier below):
+//   PO1/PO2, total > APPROVAL_THRESHOLD: Purchasing Supervisor approves -> pending_approval_gm
+//     -> General Manager approves -> 'approved'.
+//   PO1/PO2, total <= APPROVAL_THRESHOLD: Purchasing Supervisor approves -> 'approved' directly.
+//   PO3/PO4: created straight into pending_approval_gm -- General Manager approves -> 'approved'.
+// A System Admin can also perform the GM-tier approval (matches the "GM" ~ admin-level
+// authority precedent used elsewhere, e.g. approving PO3/PO4 costing without a dedicated
+// GM account existing yet).
 router.put('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[po]] = await conn.query('SELECT status, total_amount FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!po) return res.status(404).json({ error: 'Not found' });
-    const [[actingUser]] = await conn.query('SELECT is_supervisor, account_type FROM users WHERE id = ?', [req.user.id]);
+    const [[actingUser]] = await conn.query('SELECT is_purchasing_supervisor, account_type FROM users WHERE id = ?', [req.user.id]);
 
     let newStatus;
     await conn.beginTransaction();
     if (po.status === 'pending_approval') {
-      if (!actingUser.is_supervisor) {
+      if (!actingUser.is_purchasing_supervisor) {
         await conn.rollback();
-        return res.status(403).json({ error: 'Only a supervisor can approve this Purchase Order at this stage.' });
+        return res.status(403).json({ error: 'Only a Purchasing Supervisor can approve this Purchase Order at this stage.' });
       }
       newStatus = Number(po.total_amount) > APPROVAL_THRESHOLD ? 'pending_approval_gm' : 'approved';
       await conn.query(
@@ -306,7 +311,7 @@ router.put('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve'),
         [newStatus, req.user.id, req.params.id]
       );
     } else if (po.status === 'pending_approval_gm') {
-      if (actingUser.account_type !== 'System Admin') {
+      if (actingUser.account_type !== 'System Admin' && actingUser.account_type !== 'General Manager') {
         await conn.rollback();
         return res.status(403).json({ error: 'Only a General Manager / System Admin can approve this Purchase Order.' });
       }
@@ -456,14 +461,19 @@ router.post('/direct', requireAuth, requirePermission(ROUTE, 'can_add'), async (
       return { ...l, lineDiscAmount, lineNetOfTax, lineTaxAmount, extPrice };
     });
     const totalAmount = netOfTax + taxAmount;
+    // PO3 (Services with JO) / PO4 (Services/Non-Inventory without JO) skip the
+    // Purchasing Supervisor tier entirely and go straight to the General Manager --
+    // unlike PO1/PO2, which always start with the Purchasing Supervisor regardless of
+    // amount (see the /:id/approve route for the full tier breakdown).
+    const initialStatus = 'pending_approval_gm';
 
     await conn.beginTransaction();
     const [result] = await conn.query(
       `INSERT INTO purchase_orders (po_no, type, date_created, need_by_date, supplier_id, term_id, ref_no, memo,
          subtotal, discount_amount, net_of_tax, tax_amount, total_amount, status, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_approval', ?)`,
+       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [poCategory, dateCreated || new Date().toISOString().slice(0, 10), needByDate || null, supplierId, termId || null, refNo || null, memo || null,
-        subtotal, discountAmount, netOfTax, taxAmount, totalAmount, req.user.id]
+        subtotal, discountAmount, netOfTax, taxAmount, totalAmount, initialStatus, req.user.id]
     );
     const poId = result.insertId;
     await conn.query('UPDATE purchase_orders SET po_no = ? WHERE id = ?', [`PO-${poId}`, poId]);

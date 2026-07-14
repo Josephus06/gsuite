@@ -10,7 +10,7 @@ const ROUTE = '/users';
 const ACCOUNT_TYPE_FIELDS = [
   'user_group_id', 'account_type', 'can_approve_sales_estimate', 'is_account_officer',
   'is_supervisor', 'is_sales_manager', 'is_sales_marketing_director', 'is_sales_business_unit',
-  'is_design_supervisor', 'approval_code', 'supervisor_id',
+  'is_design_supervisor', 'is_purchasing_supervisor', 'approval_code', 'supervisor_id',
 ];
 
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
