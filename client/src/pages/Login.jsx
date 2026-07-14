@@ -81,7 +81,6 @@ export default function Login() {
         </div>
       </div>
 
-      <div className="login-footer">Developed by : JAA ❤️ ATB 2026</div>
     </div>
   );
 }
