@@ -162,7 +162,7 @@ export default function Dashboard() {
     <div className="holo-dashboard">
       <div className="holo-header">
         <div>
-          <h1>Welcome back, {user?.display_name}</h1>
+          <h1>{user?.display_name}</h1>
           <div className="holo-sub">Here's what's happening across your pipeline today.</div>
         </div>
         <span className="holo-role-badge">{ROLE_LABELS[data.role] || data.role}</span>
