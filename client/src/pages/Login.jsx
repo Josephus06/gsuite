@@ -66,8 +66,6 @@ export default function Login() {
           <button className="login-submit-v2" disabled={loading}>
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
-
-          <div className="login-footer">Developed by : JAA ❤️ ATB 2026</div>
         </div>
       </form>
 
@@ -82,6 +80,8 @@ export default function Login() {
           <div className="login-photo-caption-sub">Your No.1 Printing Solution Provider</div>
         </div>
       </div>
+
+      <div className="login-footer">Developed by : JAA ❤️ ATB 2026</div>
     </div>
   );
 }

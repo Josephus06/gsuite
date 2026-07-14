@@ -598,7 +598,19 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .login-submit-v2:hover { background: #3f9c93; }
 .login-submit-v2:disabled { opacity: 0.6; cursor: not-allowed; }
 
-.login-footer { margin-top: 28px; font-size: 11.5px; color: #8a9490; text-align: center; }
+.login-footer {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11.5px;
+  color: #fff;
+  background: rgba(6, 14, 32, 0.55);
+  padding: 6px 16px;
+  border-radius: 999px;
+  white-space: nowrap;
+  z-index: 5;
+}
 
 @media (max-width: 760px) {
   .login-page-v2 { flex-direction: column; }
@@ -613,6 +625,9 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
     padding: 36px 0;
   }
   .login-card-v2-inner { padding: 0 28px; max-width: 360px; }
+  /* Bottom-left instead of centered -- centered would sit under the photo panel's own
+     bottom-right caption text once the layout stacks to a single column. */
+  .login-footer { left: 12px; right: auto; bottom: 60px; transform: none; font-size: 10.5px; padding: 5px 12px; }
 }
 
 .subsection {
