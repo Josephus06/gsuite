@@ -14,7 +14,7 @@ const STATUS_VALUES = ['pending_approval', 'approved', 'cancelled'];
 // divides that down by the item's conversion_factor to get the per-Base-Unit price
 // (pesos per SQFT), for display next to Qty on Hand/New Qty which are always Base Unit.
 const LINE_SELECT = `
-  SELECT l.*, i.item_code, i.display_name AS item_name,
+  SELECT l.*, i.item_code, i.display_name AS item_name, i.asset_account_id,
          CASE WHEN l.unit_used = 'base' THEN bu.title ELSE COALESCE(su.title, bu.title) END AS uom_title,
          l.est_unit_cost / COALESCE(NULLIF(i.conversion_factor, 0), 1) AS est_unit_cost_base,
          loc.location_name, d.name AS department_name
@@ -25,6 +25,47 @@ const LINE_SELECT = `
   LEFT JOIN locations loc ON loc.id = l.location_id
   LEFT JOIN departments d ON d.id = l.department_id
 `;
+
+// GL Impact: the adjustment-account leg (credited on an increase, debited on a
+// decrease) was already correct -- this adds the missing counter-leg, each line's own
+// item asset account, for the opposite direction and the same amount (new_qty -
+// qty_on_hand, in Base Unit, times the per-Base-Unit cost -- the exact figure
+// `recomputeTotal` already sums into `estimated_total_value`, so this always ties out
+// to the header total exactly). Real system's sandbox confirms this asset/adjustment-
+// account pairing (IA-330: Dr Raw Materials Inventory - Dpod 142.50 / Cr Direct
+// Materials 142.50 for a +150 qty increase) -- direction here matches that example.
+async function computeGlImpact(adj, lines) {
+  if (!adj.adjustment_account_id || !adj.adjustment_account_code) return [];
+
+  const itemAccountAmounts = new Map(); // account_id -> signed amount (positive = qty increase)
+  let adjustmentTotal = 0;
+  for (const l of lines) {
+    const amount = (Number(l.new_qty) - Number(l.qty_on_hand)) * Number(l.est_unit_cost_base || 0);
+    if (!amount || !l.asset_account_id) continue;
+    itemAccountAmounts.set(l.asset_account_id, (itemAccountAmounts.get(l.asset_account_id) || 0) + amount);
+    adjustmentTotal += amount;
+  }
+  if (!itemAccountAmounts.size) return [];
+
+  const [itemAccts] = await pool.query('SELECT id, account_code, account_name FROM chart_of_accounts WHERE id IN (?)', [[...itemAccountAmounts.keys()]]);
+  const rows = [];
+  for (const acct of itemAccts) {
+    const amount = Number((itemAccountAmounts.get(acct.id) || 0).toFixed(2));
+    if (!amount) continue;
+    rows.push({
+      account_code: acct.account_code, account_name: acct.account_name,
+      debit: amount > 0 ? amount : 0, credit: amount < 0 ? -amount : 0,
+    });
+  }
+  const total = Number(adjustmentTotal.toFixed(2));
+  if (total) {
+    rows.push({
+      account_code: adj.adjustment_account_code, account_name: adj.adjustment_account_name,
+      debit: total < 0 ? -total : 0, credit: total > 0 ? total : 0,
+    });
+  }
+  return rows;
+}
 
 async function logAudit(conn, { adjustmentId, userId, eventType, fieldName = null, oldValue = null, newValue = null }) {
   await conn.query(
@@ -81,8 +122,9 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       `${LINE_SELECT} WHERE l.inventory_adjustment_id = ? ORDER BY l.line_no`,
       [req.params.id]
     );
+    const glImpact = adj.status === 'approved' ? await computeGlImpact(adj, lines) : [];
 
-    res.json({ ...adj, lines });
+    res.json({ ...adj, gl_impact: glImpact, lines });
   } catch (err) {
     next(err);
   }

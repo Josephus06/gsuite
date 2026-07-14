@@ -45,6 +45,53 @@ function computeTOStatus(lines) {
 
 const OPEN_TO_STATUSES = ['pending_fulfillment', 'partially_fulfilled', 'pending_receipt_partially_fulfilled'];
 
+// GL Impact for Item Fulfillment / Item Receipt -- the real system's sandbox (GL Impact
+// tab, `transaction_transactionledgerentries`) posts these as a two-step stock move
+// through a fixed "Inventory In Transit" clearing account (15900), not a direct
+// inventory-to-inventory entry: Item Fulfillment credits the item's own inventory asset
+// account and debits the clearing account (stock leaves Withdraw From immediately);
+// Item Receipt is the exact mirror, debiting the item's asset account and crediting the
+// same clearing account (stock lands at Transfer To). Both legs use the same item, so
+// they reference the same `inventories.asset_account_id` -- confirmed against two real
+// paired examples (IF-9252/qty 1 ROLL crediting "Raw Materials Inventory - LFP", and
+// IR-9296/qty 24 SHT debiting "Raw Materials Inventory - Dpod" -- different items,
+// different accounts, but each internally consistent with its own item).
+// `qtyField`/`assetIsDebit` let one function serve both (Fulfillment: qty_fulfilled,
+// asset account credited; Receipt: qty_received, asset account debited).
+async function computeTransitGlImpact(lines, { qtyField, assetIsDebit }) {
+  const [[transitAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '15900'");
+  if (!transitAcct) return [];
+
+  const assetAmounts = new Map(); // account_id -> amount
+  let transitTotal = 0;
+  for (const l of lines) {
+    const amount = Number(l[qtyField]) * Number(l.average_cost || 0);
+    if (!amount || !l.asset_account_id) continue;
+    assetAmounts.set(l.asset_account_id, (assetAmounts.get(l.asset_account_id) || 0) + amount);
+    transitTotal += amount;
+  }
+  if (!assetAmounts.size) return [];
+
+  const [assetAccts] = await pool.query('SELECT id, account_code, account_name FROM chart_of_accounts WHERE id IN (?)', [[...assetAmounts.keys()]]);
+  const rows = [];
+  for (const acct of assetAccts) {
+    const amount = Number((assetAmounts.get(acct.id) || 0).toFixed(2));
+    if (!amount) continue;
+    rows.push({
+      account_code: acct.account_code, account_name: acct.account_name,
+      debit: assetIsDebit ? amount : 0, credit: assetIsDebit ? 0 : amount,
+    });
+  }
+  const total = Number(transitTotal.toFixed(2));
+  if (total) {
+    rows.push({
+      account_code: transitAcct.account_code, account_name: transitAcct.account_name,
+      debit: assetIsDebit ? 0 : total, credit: assetIsDebit ? total : 0,
+    });
+  }
+  return rows;
+}
+
 router.get('/status-counts', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [rows] = await pool.query('SELECT status, COUNT(*) AS count FROM transfer_orders GROUP BY status');
@@ -248,7 +295,7 @@ router.get('/item-fulfillments/:fulfillmentId', requireAuth, requirePermission(R
     if (!f) return res.status(404).json({ error: 'Not found' });
 
     const [lines] = await pool.query(
-      `SELECT ifl.*, tol.uom, tol.unit, i.item_code, i.display_name AS item_name, i.average_cost, il.qty_on_hand
+      `SELECT ifl.*, tol.uom, tol.unit, i.item_code, i.display_name AS item_name, i.average_cost, i.asset_account_id, il.qty_on_hand
        FROM item_fulfillment_lines ifl
        LEFT JOIN transfer_order_lines tol ON tol.id = ifl.transfer_order_line_id
        LEFT JOIN inventories i ON i.id = ifl.item_id
@@ -258,8 +305,9 @@ router.get('/item-fulfillments/:fulfillmentId', requireAuth, requirePermission(R
     );
     const status = lines.every((l) => Number(l.received || 0) >= Number(l.qty_fulfilled || 0)) ? 'CLOSED' : 'OPEN';
     const totalAmount = lines.reduce((s, l) => s + Number(l.qty_fulfilled) * Number(l.average_cost || 0), 0);
+    const glImpact = await computeTransitGlImpact(lines, { qtyField: 'qty_fulfilled', assetIsDebit: false });
 
-    res.json({ ...f, status, total_amount: totalAmount, lines });
+    res.json({ ...f, status, total_amount: totalAmount, gl_impact: glImpact, lines });
   } catch (err) {
     next(err);
   }
@@ -388,7 +436,7 @@ router.get('/item-receipts/:receiptId', requireAuth, requirePermission(ROUTE, 'c
 
     const [lines] = await pool.query(
       `SELECT rl.item_id, rl.qty_received, rl.memo, tol.uom, tol.unit,
-              i.item_code, i.display_name AS item_name, i.average_cost,
+              i.item_code, i.display_name AS item_name, i.average_cost, i.asset_account_id,
               il.qty_on_hand, ifl.qty_fulfilled, ifl.received
        FROM item_receipt_lines rl
        LEFT JOIN transfer_order_lines tol ON tol.id = rl.transfer_order_line_id
@@ -399,8 +447,9 @@ router.get('/item-receipts/:receiptId', requireAuth, requirePermission(ROUTE, 'c
       [r.transfer_to_location_id, req.params.receiptId]
     );
     const totalAmount = lines.reduce((s, l) => s + Number(l.qty_received) * Number(l.average_cost || 0), 0);
+    const glImpact = await computeTransitGlImpact(lines, { qtyField: 'qty_received', assetIsDebit: true });
 
-    res.json({ ...r, total_amount: totalAmount, lines });
+    res.json({ ...r, total_amount: totalAmount, gl_impact: glImpact, lines });
   } catch (err) {
     next(err);
   }

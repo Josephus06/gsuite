@@ -108,6 +108,7 @@ export default function BillCreditView() {
       <div className="status-tabs" style={{ marginTop: 20 }}>
         <button className={`status-tab ${tab === 'expenses' ? 'active' : ''}`} onClick={() => setTab('expenses')}>Expenses</button>
         <button className={`status-tab ${tab === 'apply' ? 'active' : ''}`} onClick={() => setTab('apply')}>Apply</button>
+        <button className={`status-tab ${tab === 'gl' ? 'active' : ''}`} onClick={() => setTab('gl')}>GL Impact</button>
         <button className={`status-tab ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}>System Info</button>
       </div>
 
@@ -155,6 +156,38 @@ export default function BillCreditView() {
                     <td>{money(a.applied_amount)}</td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === 'gl' && (
+        <div className="card">
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Account Code</th><th>Account Title</th><th>Debit</th><th>Credit</th></tr>
+              </thead>
+              <tbody>
+                {(!bc.gl_impact || bc.gl_impact.length === 0) && (
+                  <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>No GL impact yet.</td></tr>
+                )}
+                {(bc.gl_impact || []).map((row, idx) => (
+                  <tr key={idx}>
+                    <td>{row.account_code}</td>
+                    <td>{row.account_name}</td>
+                    <td>{row.debit ? money(row.debit) : ''}</td>
+                    <td>{row.credit ? money(row.credit) : ''}</td>
+                  </tr>
+                ))}
+                {bc.gl_impact?.length > 0 && (
+                  <tr>
+                    <td /><td />
+                    <td><strong>{money(bc.gl_impact.reduce((s, r) => s + Number(r.debit || 0), 0))}</strong></td>
+                    <td><strong>{money(bc.gl_impact.reduce((s, r) => s + Number(r.credit || 0), 0))}</strong></td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

@@ -14,9 +14,9 @@ function money(v) {
 function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : '—'; }
 
 // Mirrors the real "Item Fulfillment" detail view -- reached from a Transfer Order's
-// Related Records tab. Total Amount is derived on the fly (qty_fulfilled x each item's
-// average_cost) rather than a stored/posted figure, same treatment as Inventory
-// Adjustment's GL Impact tab -- there's no real Journal/GL module in this build.
+// Related Records tab. Total Amount and GL Impact are both derived on the fly
+// (qty_fulfilled x each item's average_cost) rather than stored/posted figures --
+// there's no real Journal/GL module in this build yet, only per-request computation.
 export default function ItemFulfillmentView() {
   const { fulfillmentId } = useParams();
   const navigate = useNavigate();
@@ -115,7 +115,33 @@ export default function ItemFulfillmentView() {
 
       {tab === 'gl' && (
         <div className="card">
-          <p className="muted">GL posting isn't modeled for Item Fulfillment in this build.</p>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Account Code</th><th>Account Title</th><th>Debit</th><th>Credit</th></tr>
+              </thead>
+              <tbody>
+                {(!data.gl_impact || data.gl_impact.length === 0) && (
+                  <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>No GL impact yet.</td></tr>
+                )}
+                {(data.gl_impact || []).map((row, idx) => (
+                  <tr key={idx}>
+                    <td>{row.account_code}</td>
+                    <td>{row.account_name}</td>
+                    <td>{row.debit ? money(row.debit) : ''}</td>
+                    <td>{row.credit ? money(row.credit) : ''}</td>
+                  </tr>
+                ))}
+                {data.gl_impact?.length > 0 && (
+                  <tr>
+                    <td /><td />
+                    <td><strong>{money(data.gl_impact.reduce((s, r) => s + Number(r.debit || 0), 0))}</strong></td>
+                    <td><strong>{money(data.gl_impact.reduce((s, r) => s + Number(r.credit || 0), 0))}</strong></td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

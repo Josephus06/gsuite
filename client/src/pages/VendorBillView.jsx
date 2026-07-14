@@ -70,11 +70,6 @@ export default function VendorBillView() {
 
   const canEdit = can('/vendor-bills', 'can_edit');
   const isOpen = vb.status === 'open';
-  const total = Number(vb.gross_amount || 0) - Number(vb.wtax_amount || 0);
-  const glRows = [{
-    id: 1, account_code: vb.account_code, account_name: vb.account_name,
-    debit: 0, credit: total > 0 ? total : 0,
-  }];
 
   return (
     <div>
@@ -188,16 +183,33 @@ export default function VendorBillView() {
 
       {tab === 'gl' && (
         <div className="card">
-          <DataTable
-            columns={[
-              { key: 'account_code', label: 'Account Code' },
-              { key: 'account_name', label: 'Account Title' },
-              { key: 'debit', label: 'Debit', render: (r) => money(r.debit) },
-              { key: 'credit', label: 'Credit', render: (r) => money(r.credit) },
-            ]}
-            rows={vb.account_code ? glRows : []}
-            emptyLabel="No GL impact yet."
-          />
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Account Code</th><th>Account Title</th><th>Debit</th><th>Credit</th></tr>
+              </thead>
+              <tbody>
+                {(!vb.gl_impact || vb.gl_impact.length === 0) && (
+                  <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>No GL impact yet.</td></tr>
+                )}
+                {(vb.gl_impact || []).map((row, idx) => (
+                  <tr key={idx}>
+                    <td>{row.account_code}</td>
+                    <td>{row.account_name}</td>
+                    <td>{row.debit ? money(row.debit) : ''}</td>
+                    <td>{row.credit ? money(row.credit) : ''}</td>
+                  </tr>
+                ))}
+                {vb.gl_impact?.length > 0 && (
+                  <tr>
+                    <td /><td />
+                    <td><strong>{money(vb.gl_impact.reduce((s, r) => s + Number(r.debit || 0), 0))}</strong></td>
+                    <td><strong>{money(vb.gl_impact.reduce((s, r) => s + Number(r.credit || 0), 0))}</strong></td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

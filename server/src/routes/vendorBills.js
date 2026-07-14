@@ -27,6 +27,36 @@ function computeLineAmounts({ unitPrice, discPercent, taxRate, qty }) {
   return { subtotal, disc_amount: discAmount, net_of_tax: netOfTax, tax_amount: taxAmount, ext_price: extPrice };
 }
 
+// GL Impact: the AP-side mirror of Sales Invoice's revenue-recognition entry, same
+// reverse-engineering pass against the real system's sandbox: credit Accounts Payable -
+// Trade (20100) for the bill's gross total, debit the bill's own selected account
+// (`vb.account_id`, whatever the goods/expense offset is -- typically "Inventory
+// Received Not Billed" for a PO-linked bill) for the net-of-tax amount, debit VAT on
+// Purchases (14300, fixed) for the tax.
+//
+// Deliberately NOT routed per-line via `taxes.tax_account_id` the way Sales Invoice
+// routes its VAT credit -- checked this build's real data and there's currently only
+// one tax code (VAT12) in the whole `taxes` table, and its `tax_account_id` is
+// correctly scoped to Sales (VAT on Sales, 21100), since that's the only context it's
+// been used in so far. Reusing that same field here would incorrectly land purchase-
+// side input tax on the sales-side output-tax account. If/when this build ever needs
+// genuinely separate sales vs. purchase tax codes, `taxes` would need its own second
+// account field for the purchase side -- not guessing that shape now.
+async function computeGlImpact(vb, lines) {
+  const [[apAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '20100'");
+  const [[vatAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '14300'");
+  if (!apAcct) return [];
+
+  const rows = [];
+  const grossAmount = Number(vb.gross_amount) || 0;
+  const netOfTax = Number(vb.net_of_tax) || 0;
+  const taxAmount = Number(vb.tax_amount) || 0;
+  if (grossAmount) rows.push({ account_code: apAcct.account_code, account_name: apAcct.account_name, debit: 0, credit: grossAmount });
+  if (netOfTax && vb.account_code) rows.push({ account_code: vb.account_code, account_name: vb.account_name, debit: netOfTax, credit: 0 });
+  if (taxAmount && vatAcct) rows.push({ account_code: vatAcct.account_code, account_name: vatAcct.account_name, debit: taxAmount, credit: 0 });
+  return rows;
+}
+
 async function recomputePoBillStatus(conn, poId) {
   const [[row]] = await conn.query(
     `SELECT SUM(CASE WHEN billed_qty >= received_qty AND received_qty > 0 THEN 1 ELSE 0 END) AS fully,
@@ -72,8 +102,15 @@ router.get('/for-purchase-order/:poId', requireAuth, requirePermission(ROUTE, 'c
       [req.params.poId]
     );
 
-    const [[apAccount]] = await pool.query(
-      "SELECT id, account_code, account_name FROM chart_of_accounts WHERE account_name = 'Accounts Payable - Trade' LIMIT 1"
+    // Pre-fills the Create Vendor Bill modal's own Account picker. This is the bill's
+    // debit-side offset account -- Accounts Payable itself is always the fixed credit
+    // leg in computeGlImpact() below, never user-selected, so defaulting this picker to
+    // AP-Trade was wrong (it made every bill created from this modal double-book AP on
+    // both sides unless someone thought to change it). "Inventory Received Not Billed"
+    // is the real system's actual default for a PO-linked bill -- the 3-way-match
+    // clearing account credited when the goods were received, debited back out here.
+    const [[defaultAccount]] = await pool.query(
+      "SELECT id, account_code, account_name FROM chart_of_accounts WHERE account_code = '20300' LIMIT 1"
     );
 
     const billableLines = lines.map((l) => {
@@ -90,7 +127,7 @@ router.get('/for-purchase-order/:poId', requireAuth, requirePermission(ROUTE, 'c
 
     res.json({
       ...po,
-      default_account: apAccount || null,
+      default_account: defaultAccount || null,
       lines: billableLines,
     });
   } catch (err) {
@@ -171,7 +208,8 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
 
-    res.json({ ...vb, lines });
+    const glImpact = await computeGlImpact(vb, lines);
+    res.json({ ...vb, gl_impact: glImpact, lines });
   } catch (err) {
     next(err);
   }

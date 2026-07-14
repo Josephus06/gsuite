@@ -109,7 +109,33 @@ export default function ItemReceiptView() {
 
       {tab === 'gl' && (
         <div className="card">
-          <p className="muted">GL posting isn't modeled for Item Receipt in this build.</p>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Account Code</th><th>Account Title</th><th>Debit</th><th>Credit</th></tr>
+              </thead>
+              <tbody>
+                {(!data.gl_impact || data.gl_impact.length === 0) && (
+                  <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>No GL impact yet.</td></tr>
+                )}
+                {(data.gl_impact || []).map((row, idx) => (
+                  <tr key={idx}>
+                    <td>{row.account_code}</td>
+                    <td>{row.account_name}</td>
+                    <td>{row.debit ? money(row.debit) : ''}</td>
+                    <td>{row.credit ? money(row.credit) : ''}</td>
+                  </tr>
+                ))}
+                {data.gl_impact?.length > 0 && (
+                  <tr>
+                    <td /><td />
+                    <td><strong>{money(data.gl_impact.reduce((s, r) => s + Number(r.debit || 0), 0))}</strong></td>
+                    <td><strong>{money(data.gl_impact.reduce((s, r) => s + Number(r.credit || 0), 0))}</strong></td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

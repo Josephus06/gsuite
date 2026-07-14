@@ -29,6 +29,41 @@ function computeLineAmounts({ amount, taxRate, isWithhold, wtaxRate }) {
   return { tax_amount: taxAmount, gross_amount: grossAmount, wtax_amount: wtaxAmount, amount_due: Number((grossAmount - wtaxAmount).toFixed(2)) };
 }
 
+// GL Impact: no tab existed for this transaction type at all -- added following the
+// same reverse-engineered pattern as Sales Invoice/Vendor Bill (fixed-account debit/
+// credit + a per-line credit to whichever account each expense line targets). Debits
+// the credit's own AP account (`bc.ap_account_id`, reducing what's owed to the
+// supplier) for the full total; credits each line's own selected account for its net
+// amount, and VAT on Purchases (14300, fixed -- see the note on Vendor Bill's
+// computeGlImpact on why this isn't routed per-tax-code) for any per-line tax -- i.e.
+// this reverses whichever account(s)/tax the original Vendor Bill posted, proportional
+// to what this credit actually covers. (The one real sandbox example available credited
+// "Advances To Suppliers" instead, because that particular credit was fully applied
+// against a supplier prepayment -- a concept this build's bill_credits schema doesn't
+// model, so reversing the bill's own line accounts is the closest correct analog here,
+// not a literal copy of that one example.)
+async function computeGlImpact(bc, lines) {
+  if (!bc.ap_account_id || !bc.ap_account_code) return [];
+  const totalAmount = Number(bc.total_amount) || 0;
+  if (!totalAmount) return [];
+
+  const rows = [{ account_code: bc.ap_account_code, account_name: bc.ap_account_name, debit: totalAmount, credit: 0 }];
+
+  for (const l of lines) {
+    const amount = Number(l.amount) || 0;
+    if (amount && l.account_code) {
+      rows.push({ account_code: l.account_code, account_name: l.account_name, debit: 0, credit: amount });
+    }
+  }
+
+  const taxTotal = lines.reduce((s, l) => s + (Number(l.tax_amount) || 0), 0);
+  if (taxTotal) {
+    const [[vatAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '14300'");
+    if (vatAcct) rows.push({ account_code: vatAcct.account_code, account_name: vatAcct.account_name, debit: 0, credit: Number(taxTotal.toFixed(2)) });
+  }
+  return rows;
+}
+
 async function applyToVendorBill(conn, vendorBillId, amount) {
   const [[vb]] = await conn.query('SELECT amount_due FROM vendor_bills WHERE id = ?', [vendorBillId]);
   if (!vb) throw Object.assign(new Error('One of the selected bills is no longer valid.'), { status: 400 });
@@ -55,7 +90,7 @@ async function reverseVendorBillApplication(conn, vendorBillId, amount) {
 router.get('/for-vendor-bill/:vbId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[vb]] = await pool.query(
-      `SELECT vb.id, vb.bill_no, vb.office_location_id, vb.account_id AS ap_account_id, vb.memo, vb.amount_due,
+      `SELECT vb.id, vb.bill_no, vb.office_location_id, vb.memo, vb.amount_due,
               po.supplier_id, s.name AS supplier_name
        FROM vendor_bills vb
        JOIN purchase_orders po ON po.id = vb.purchase_order_id
@@ -64,6 +99,15 @@ router.get('/for-vendor-bill/:vbId', requireAuth, requirePermission(ROUTE, 'can_
       [req.params.vbId]
     );
     if (!vb) return res.status(404).json({ error: 'Not found' });
+
+    // Pre-fills the Create Bill Credit modal's own "A/P Account" picker. This is always
+    // Accounts Payable itself (a credit reduces what's owed, the same liability account
+    // Vendor Bill/Sales Invoice both treat as fixed elsewhere in this build) -- it was
+    // previously defaulted to the *vendor bill's own* offset account instead, which
+    // would make computeGlImpact() below debit e.g. "Inventory Received Not Billed"
+    // against itself rather than against AP.
+    const [[apAccount]] = await pool.query("SELECT id FROM chart_of_accounts WHERE account_code = '20100' LIMIT 1");
+    vb.ap_account_id = apAccount?.id || null;
 
     const [applyLines] = await pool.query(
       `SELECT vb2.id AS vendor_bill_id, vb2.bill_no, vb2.date_created, vb2.date_due, vb2.gross_amount, vb2.amount_due
@@ -143,7 +187,8 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
 
-    res.json({ ...bc, lines, applications });
+    const glImpact = await computeGlImpact(bc, lines);
+    res.json({ ...bc, gl_impact: glImpact, lines, applications });
   } catch (err) {
     next(err);
   }

@@ -81,17 +81,6 @@ export default function InventoryAdjustmentView() {
   const isPending = adj.status === 'pending_approval';
   const lines = adj.lines || [];
 
-  const total = Number(adj.estimated_total_value || 0);
-  const glRows = adj.status === 'approved'
-    ? [{
-      id: 1,
-      account_code: adj.adjustment_account_code,
-      account_name: adj.adjustment_account_name,
-      debit: total < 0 ? Math.abs(total) : 0,
-      credit: total > 0 ? total : 0,
-    }]
-    : [{ id: 1, account_code: '', account_name: '', debit: 0, credit: 0 }];
-
   return (
     <div>
       <div className="page-header">
@@ -176,16 +165,33 @@ export default function InventoryAdjustmentView() {
 
       {tab === 'gl' && (
         <div className="card">
-          <DataTable
-            columns={[
-              { key: 'account_code', label: 'Account Code' },
-              { key: 'account_name', label: 'Account Title' },
-              { key: 'debit', label: 'Debit', render: (r) => money(r.debit) },
-              { key: 'credit', label: 'Credit', render: (r) => money(r.credit) },
-            ]}
-            rows={glRows}
-            emptyLabel="No GL impact yet."
-          />
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Account Code</th><th>Account Title</th><th>Debit</th><th>Credit</th></tr>
+              </thead>
+              <tbody>
+                {(!adj.gl_impact || adj.gl_impact.length === 0) && (
+                  <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>No GL impact yet.</td></tr>
+                )}
+                {(adj.gl_impact || []).map((row, idx) => (
+                  <tr key={idx}>
+                    <td>{row.account_code}</td>
+                    <td>{row.account_name}</td>
+                    <td>{row.debit ? money(row.debit) : ''}</td>
+                    <td>{row.credit ? money(row.credit) : ''}</td>
+                  </tr>
+                ))}
+                {adj.gl_impact?.length > 0 && (
+                  <tr>
+                    <td /><td />
+                    <td><strong>{money(adj.gl_impact.reduce((s, r) => s + Number(r.debit || 0), 0))}</strong></td>
+                    <td><strong>{money(adj.gl_impact.reduce((s, r) => s + Number(r.credit || 0), 0))}</strong></td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
