@@ -28,6 +28,8 @@ const NAV_STRUCTURE = [
       { route: '/inventory', label: 'Inventory Items' },
       { route: '/inventory-adjustments', label: 'Inventory Adjustments' },
       { route: '/transfer-orders', label: 'Transfer Orders' },
+      { route: '/item-fulfillments', permRoute: '/transfer-orders', label: 'Item Fulfillment' },
+      { route: '/item-receipts', permRoute: '/transfer-orders', label: 'Item Receipt' },
       { route: '/stock-ledger-reports', label: 'Stock Ledger' },
       { route: '/bin-card-reports', label: 'Bin Card' },
     ],

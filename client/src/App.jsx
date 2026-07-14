@@ -37,7 +37,9 @@ import TransferOrders from './pages/TransferOrders';
 import TransferOrderEdit from './pages/TransferOrderEdit';
 import TransferOrderView from './pages/TransferOrderView';
 import ReallocateItems from './pages/ReallocateItems';
+import ItemFulfillments from './pages/ItemFulfillments';
 import ItemFulfillmentView from './pages/ItemFulfillmentView';
+import ItemReceipts from './pages/ItemReceipts';
 import ItemReceiptView from './pages/ItemReceiptView';
 import QualityInspectionView from './pages/QualityInspectionView';
 import ItemDelivery from './pages/ItemDelivery';
@@ -136,6 +138,8 @@ function App() {
         <Route path="/transfer-orders/:id/lines/:lineId/reallocate" element={<ReallocateItems />} />
         <Route path="/transfer-orders/item-fulfillments/:fulfillmentId" element={<ItemFulfillmentView />} />
         <Route path="/transfer-orders/item-receipts/:receiptId" element={<ItemReceiptView />} />
+        <Route path="/item-fulfillments" element={<ItemFulfillments />} />
+        <Route path="/item-receipts" element={<ItemReceipts />} />
         <Route path="/quality-inspections" element={<QualityInspections />} />
         <Route path="/quality-inspections/:id" element={<QualityInspectionView />} />
         <Route path="/sales-orders/:id/item-delivery/new" element={<ItemDelivery />} />

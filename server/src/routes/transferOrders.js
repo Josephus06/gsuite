@@ -86,6 +86,95 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   }
 });
 
+// Global Item Fulfillment / Item Receipt lists -- reached from their own Inventory nav
+// entries rather than only nested under one Transfer Order's Related Records tab.
+// Registered here, before GET /:id, since that route's `:id` param would otherwise
+// swallow a literal `/item-fulfillments` or `/item-receipts` request first (both are a
+// single path segment, same shape as `:id` -- Express matches whichever route was
+// registered first).
+function locationRequestorFilters(where, params, query, toAlias) {
+  const { withdraw_from: withdrawFrom, transfer_to: transferTo, requestor_id: requestorId, as_of: asOf } = query;
+  if (withdrawFrom) { where.push(`${toAlias}.withdraw_from_location_id = ?`); params.push(withdrawFrom); }
+  if (transferTo) { where.push(`${toAlias}.transfer_to_location_id = ?`); params.push(transferTo); }
+  if (requestorId) { where.push(`${toAlias}.requestor_id = ?`); params.push(requestorId); }
+  return asOf;
+}
+
+router.get('/item-fulfillments', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const { search } = req.query;
+    const where = [];
+    const params = [];
+    const asOf = locationRequestorFilters(where, params, req.query, 't');
+    if (asOf) { where.push('f.date_created <= ?'); params.push(asOf); }
+    if (search) { where.push('(f.fulfillment_no LIKE ? OR t.to_no LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const [rows] = await pool.query(
+      `SELECT f.id, f.fulfillment_no, f.date_created, f.memo, t.to_no,
+              wf.location_name AS withdraw_from_name, tt.location_name AS transfer_to_name,
+              CONCAT(e.first_name, ' ', e.last_name) AS requestor_name
+       FROM item_fulfillments f
+       JOIN transfer_orders t ON t.id = f.transfer_order_id
+       LEFT JOIN locations wf ON wf.id = t.withdraw_from_location_id
+       LEFT JOIN locations tt ON tt.id = t.transfer_to_location_id
+       LEFT JOIN employees e ON e.id = t.requestor_id
+       ${whereSql}
+       ORDER BY f.id DESC`,
+      params
+    );
+
+    if (rows.length) {
+      const [lineRows] = await pool.query(
+        'SELECT item_fulfillment_id, qty_fulfilled, received FROM item_fulfillment_lines WHERE item_fulfillment_id IN (?)',
+        [rows.map((r) => r.id)]
+      );
+      const linesByFulfillment = new Map();
+      for (const l of lineRows) {
+        if (!linesByFulfillment.has(l.item_fulfillment_id)) linesByFulfillment.set(l.item_fulfillment_id, []);
+        linesByFulfillment.get(l.item_fulfillment_id).push(l);
+      }
+      for (const r of rows) {
+        const lines = linesByFulfillment.get(r.id) || [];
+        r.status = lines.length && lines.every((l) => Number(l.received || 0) >= Number(l.qty_fulfilled || 0)) ? 'CLOSED' : 'OPEN';
+      }
+    }
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/item-receipts', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const { search } = req.query;
+    const where = [];
+    const params = [];
+    const asOf = locationRequestorFilters(where, params, req.query, 't');
+    if (asOf) { where.push('r.date_created <= ?'); params.push(asOf); }
+    if (search) { where.push('(r.receipt_no LIKE ? OR t.to_no LIKE ? OR f.fulfillment_no LIKE ?)'); params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const [rows] = await pool.query(
+      `SELECT r.id, r.receipt_no, r.date_created, r.memo, t.to_no, f.fulfillment_no,
+              wf.location_name AS withdraw_from_name, tt.location_name AS transfer_to_name,
+              CONCAT(e.first_name, ' ', e.last_name) AS requestor_name
+       FROM item_receipts r
+       JOIN transfer_orders t ON t.id = r.transfer_order_id
+       JOIN item_fulfillments f ON f.id = r.item_fulfillment_id
+       LEFT JOIN locations wf ON wf.id = t.withdraw_from_location_id
+       LEFT JOIN locations tt ON tt.id = t.transfer_to_location_id
+       LEFT JOIN employees e ON e.id = t.requestor_id
+       ${whereSql}
+       ORDER BY r.id DESC`,
+      params
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[row]] = await pool.query(
