@@ -25,23 +25,45 @@ export default function Login() {
   }
 
   return (
-    <div className="login-page">
-      <form className="login-card" onSubmit={handleSubmit}>
-        <h1>GSUITE ERP</h1>
-        <p className="muted" style={{ marginBottom: 20 }}>Sign in to continue</p>
-        {error && <div className="error-banner">{error}</div>}
-        <div className="field">
-          <label>Username or Email</label>
-          <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus required />
+    <div className="login-page-v2">
+      <form className="login-card-v2" onSubmit={handleSubmit}>
+        <div className="login-card-v2-inner">
+          <h1>Sign In</h1>
+          {error && <div className="error-banner">{error}</div>}
+
+          <div className="login-field-v2">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="4" /><path d="M4 20c0-4 4-6 8-6s8 2 8 6" /></svg>
+            <input
+              placeholder="Username or e-mail"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoFocus
+              required
+            />
+          </div>
+          <div className="login-field-v2">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
+            <input
+              type="password"
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </div>
+
+          <button className="login-submit-v2" disabled={loading}>
+            {loading ? 'Signing in...' : 'Sign In'}
+          </button>
         </div>
-        <div className="field">
-          <label>Password</label>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-        </div>
-        <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }} disabled={loading}>
-          {loading ? 'Signing in...' : 'Sign in'}
-        </button>
       </form>
+
+      <div className="login-photo-panel">
+        <div className="login-photo-caption">
+          <div className="login-photo-caption-main">CEBU GRAPHICSTAR IMAGING CORP</div>
+          <div className="login-photo-caption-sub">Your No.1 Printing Solution Provider</div>
+        </div>
+      </div>
     </div>
   );
 }

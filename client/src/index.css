@@ -477,21 +477,121 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .stat-card .value { font-size: 26px; font-weight: 700; color: var(--text-h); }
 .stat-card .label { font-size: 12px; color: var(--text); margin-top: 4px; }
 
-.login-page {
+/* ---- Login v2: split-screen "torn paper" card over the branch photo. Deliberately
+   fixed-light (independent of the light/dark toggle) since it's a full-bleed photo
+   background, not a themed app surface. The photo itself is loaded from
+   /branch-main.jpg (drop the real file in client/public/) with a navy gradient behind
+   it as a graceful placeholder/fallback -- multiple CSS background-image layers simply
+   skip a layer that fails to load, so this needs no JS fallback logic. ---- */
+.login-page-v2 {
   min-height: 100vh;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg);
+  background: #0a1830;
 }
-.login-card {
+
+.login-photo-panel {
+  flex: 1;
+  position: relative;
+  min-height: 100vh;
+  background-image:
+    linear-gradient(0deg, rgba(6, 14, 32, 0.75), rgba(6, 14, 32, 0.15) 45%),
+    url('/branch-main.jpg'),
+    linear-gradient(160deg, #1c3a6b 0%, #0a1830 100%);
+  background-size: cover;
+  background-position: center;
+}
+.login-photo-caption {
+  position: absolute;
+  right: 40px;
+  bottom: 40px;
+  text-align: right;
+  color: #fff;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.55);
+}
+.login-photo-caption-main {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  max-width: 420px;
+}
+.login-photo-caption-sub {
+  font-size: 15px;
+  font-weight: 600;
+  opacity: 0.92;
+  margin-top: 4px;
+}
+
+.login-card-v2 {
+  flex-shrink: 0;
+  width: min(480px, 46vw);
+  min-width: 360px;
+  min-height: 100vh;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  box-shadow: 0 0 60px rgba(0, 0, 0, 0.25);
+  clip-path: polygon(0% 0%, 72% 0%, 88% 5%, 72% 15%, 88% 25%, 72% 35%, 88% 45%, 72% 55%, 88% 65%, 72% 75%, 88% 85%, 72% 95%, 0% 100%);
+}
+.login-card-v2-inner { width: 100%; max-width: 260px; padding: 0 0 0 56px; }
+.login-card-v2-inner h1 {
+  font-size: 30px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: #14213d;
+  margin-bottom: 28px;
+}
+
+.login-field-v2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(94, 201, 192, 0.16);
+  border-radius: 999px;
+  padding: 12px 18px;
+  margin-bottom: 16px;
+}
+.login-field-v2 svg { width: 17px; height: 17px; flex-shrink: 0; color: #3f9c93; }
+.login-field-v2 input {
+  border: none;
+  background: none;
+  padding: 0;
   width: 100%;
-  max-width: 360px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 32px;
-  box-shadow: var(--shadow);
+  color: #14213d;
+}
+.login-field-v2 input:focus { outline: none; }
+.login-field-v2 input::placeholder { color: #5c7a76; }
+
+.login-submit-v2 {
+  width: 100%;
+  border: none;
+  border-radius: 999px;
+  padding: 13px 0;
+  margin-top: 8px;
+  background: #4fb8ae;
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.login-submit-v2:hover { background: #3f9c93; }
+.login-submit-v2:disabled { opacity: 0.6; cursor: not-allowed; }
+
+@media (max-width: 760px) {
+  .login-page-v2 { flex-direction: column; }
+  .login-photo-panel { flex: none; height: 34vh; min-height: 200px; }
+  .login-photo-caption { right: 20px; bottom: 20px; }
+  .login-photo-caption-main { font-size: 18px; max-width: 260px; }
+  .login-photo-caption-sub { font-size: 12.5px; }
+  .login-card-v2 {
+    width: 100%; min-width: 0; min-height: 66vh;
+    clip-path: none;
+    justify-content: center;
+    padding: 36px 0;
+  }
+  .login-card-v2-inner { padding: 0 28px; max-width: 360px; }
 }
 
 .subsection {
