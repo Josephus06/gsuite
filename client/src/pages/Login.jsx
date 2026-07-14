@@ -66,6 +66,8 @@ export default function Login() {
           <button className="login-submit-v2" disabled={loading}>
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
+
+          <div className="login-footer">Developed by : JAA ❤️ ATB 2026</div>
         </div>
       </form>
 

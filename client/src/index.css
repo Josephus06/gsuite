@@ -598,6 +598,8 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .login-submit-v2:hover { background: #3f9c93; }
 .login-submit-v2:disabled { opacity: 0.6; cursor: not-allowed; }
 
+.login-footer { margin-top: 28px; font-size: 11.5px; color: #8a9490; text-align: center; }
+
 @media (max-width: 760px) {
   .login-page-v2 { flex-direction: column; }
   .login-photo-panel { flex: none; height: 34vh; min-height: 200px; }
