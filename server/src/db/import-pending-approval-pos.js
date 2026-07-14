@@ -1,8 +1,15 @@
-// One-off script: imports every Purchase Order currently in "Pending Approval" status
-// (the first-tier approval queue, distinct from "Pending Approval (GM)") from the live
-// GraphicStar site. Reverse-engineered from the real site's own PO list/detail calls
+// One-off script: imports every Purchase Order currently in "Pending Approval" or
+// "Pending Approval (GM)" status (both approval-queue tabs on the live PO list) from the
+// live GraphicStar site. Reverse-engineered from the real site's own PO list/detail calls
 // (a dedicated get_purchase_orders list endpoint, and get_transactions for detail --
 // NOT the same get_transaction singular endpoint the Estimates import uses).
+//
+// The GM tab's live `status` filter value is "Pending Approval for GM" (confirmed by
+// watching the real site's own network call when clicking that tab -- not guessable from
+// the tab's on-screen label "Pending Approval (GM)"), mapped to this app's existing
+// 'pending_approval_gm' status (already a first-class status here: see
+// server/src/routes/purchaseOrders.js's approve route, which promotes a PO to
+// pending_approval_gm once its total exceeds the supervisor approval threshold).
 //
 // Preserves the live PO-###### number verbatim (matching the Estimates import's own
 // EST-###### preservation), so records are identifiable side-by-side against the live
@@ -140,7 +147,7 @@ async function ensureInventoryItem(liveInvty) {
   return result.insertId;
 }
 
-async function importOnePO(token, stub) {
+async function importOnePO(token, stub, dbStatus) {
   const [[already]] = await pool.query('SELECT id FROM purchase_orders WHERE po_no = ?', [stub.UserPK_TransH]);
   if (already) { console.log(`SKIP ${stub.UserPK_TransH} (already imported)`); return 'skipped'; }
 
@@ -163,11 +170,11 @@ async function importOnePO(token, stub) {
     `INSERT INTO purchase_orders
        (po_no, type, date_created, need_by_date, supplier_id, term_id, ref_no, memo,
         subtotal, discount_amount, net_of_tax, tax_amount, total_amount, status, receipt_status, bill_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_approval', 'not_received', 'not_billed')`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'not_received', 'not_billed')`,
     [
       t.UserPK_TransH, t.Type_TransH || 'PO1', t.DateCreated_TransH, t.DeliveryDate_TransH || null,
       supplierId, termId, t.ReferrenceNO_TransH || null, t.Memo_TransH || null,
-      num(t.SubTotal_TransH), num(t.DiscountAmount_TransH), num(t.SubTotalVatEx_TransH), num(t.TaxAmount_TransH), num(t.TotalAmount_TransH),
+      num(t.SubTotal_TransH), num(t.DiscountAmount_TransH), num(t.SubTotalVatEx_TransH), num(t.TaxAmount_TransH), num(t.TotalAmount_TransH), dbStatus,
     ]
   );
   const poId = headerResult.insertId;
@@ -198,14 +205,19 @@ async function importOnePO(token, stub) {
   return 'imported';
 }
 
-async function main() {
-  const token = await login();
+// [live `status` filter value, our DB's status column value] -- one pass per approval
+// tab on the live PO list.
+const STATUS_TABS = [
+  ['Pending Approval', 'pending_approval'],
+  ['Pending Approval for GM', 'pending_approval_gm'],
+];
 
+async function fetchStubs(token, liveStatus) {
   const stubs = [];
   let offset = 0;
   for (;;) {
     const resp = await apiCall(token, 'get_purchase_orders', {
-      empl_pk: null, status: 'Pending Approval', substatuts: null,
+      empl_pk: null, status: liveStatus, substatuts: liveStatus === 'Pending Approval' ? null : '',
       filterdate: { filter: 'as of', date1: { hide: false, date: 'Dec 31, 2026' }, date2: { hide: true, date: 'Dec 31, 2026' } },
       accnt_pk: null, searchKey: '', limit: 200, offset, viewAll: 1,
     });
@@ -215,23 +227,33 @@ async function main() {
     offset += 200;
     if (batch.length < 200) break;
   }
-  console.log(`Found ${stubs.length} Purchase Order(s) in "Pending Approval" status.\n`);
+  return stubs;
+}
+
+async function main() {
+  const token = await login();
 
   let imported = 0, skipped = 0, errored = 0;
-  for (let i = 0; i < stubs.length; i++) {
-    console.log(`[${i + 1}/${stubs.length}] ${stubs[i].UserPK_TransH} (${stubs[i].Name_Accnt})`);
-    try {
-      const outcome = await importOnePO(token, stubs[i]);
-      if (outcome === 'imported') imported++;
-      else if (outcome === 'skipped') skipped++;
-      else errored++;
-    } catch (err) {
-      console.error(`  ! FAILED ${stubs[i].UserPK_TransH}:`, err.message);
-      errored++;
+  for (const [liveStatus, dbStatus] of STATUS_TABS) {
+    const stubs = await fetchStubs(token, liveStatus);
+    console.log(`Found ${stubs.length} Purchase Order(s) in "${liveStatus}" status.\n`);
+
+    for (let i = 0; i < stubs.length; i++) {
+      console.log(`[${i + 1}/${stubs.length}] ${stubs[i].UserPK_TransH} (${stubs[i].Name_Accnt})`);
+      try {
+        const outcome = await importOnePO(token, stubs[i], dbStatus);
+        if (outcome === 'imported') imported++;
+        else if (outcome === 'skipped') skipped++;
+        else errored++;
+      } catch (err) {
+        console.error(`  ! FAILED ${stubs[i].UserPK_TransH}:`, err.message);
+        errored++;
+      }
     }
+    console.log('');
   }
 
-  console.log(`\nDone. Imported ${imported}, skipped ${skipped} (already present), errored ${errored}.`);
+  console.log(`Done. Imported ${imported}, skipped ${skipped} (already present), errored ${errored}.`);
   await pool.end();
 }
 
