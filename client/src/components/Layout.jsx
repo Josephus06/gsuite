@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import Avatar from './Avatar';
@@ -91,6 +92,16 @@ export default function Layout() {
   const { user, logout, can } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [expandedGroup, setExpandedGroup] = useState(null);
+
+  // Closing on every route change covers both a leaf-link tap (goes straight to the new
+  // page) and the browser back/forward buttons -- either way the mobile panel shouldn't
+  // still be covering the screen afterward.
+  useEffect(() => {
+    setMobileOpen(false);
+    setExpandedGroup(null);
+  }, [location.pathname]);
 
   function handleLogout() {
     logout();
@@ -106,7 +117,18 @@ export default function Layout() {
   return (
     <div className="app-shell">
       <header className="topnav">
-        <div className="topnav-brand">Cebu Graphicstar Imaging Corp.</div>
+        <button
+          type="button"
+          className="topnav-hamburger"
+          aria-label={mobileOpen ? 'Close menu' : 'Open menu'}
+          onClick={() => setMobileOpen((o) => !o)}
+        >
+          {mobileOpen ? '✕' : '☰'}
+        </button>
+        <div className="topnav-brand">
+          <span className="topnav-brand-full">Cebu Graphicstar Imaging Corp.</span>
+          <span className="topnav-brand-short">GSuite</span>
+        </div>
         <nav className="topnav-menu">
           {visibleStructure.map((item) => (item.children ? (
             <div key={item.label} className="topnav-dropdown">
@@ -132,10 +154,46 @@ export default function Layout() {
         </nav>
         <div className="topnav-user">
           <Avatar user={user} size={28} />
-          <span className="muted">{user?.display_name}</span>
+          <span className="muted topnav-user-name">{user?.display_name}</span>
           <button className="btn btn-sm" onClick={handleLogout}>Log out</button>
         </div>
       </header>
+
+      {mobileOpen && (
+        <>
+          <div className="topnav-mobile-backdrop" onClick={() => setMobileOpen(false)} />
+          {/* Click-to-expand accordion instead of the desktop menu's hover flyouts --
+              hover has no equivalent on touch, so each group toggles open in place. */}
+          <nav className="topnav-mobile-panel">
+            {visibleStructure.map((item) => (item.children ? (
+              <div key={item.label} className="topnav-mobile-group">
+                <button
+                  type="button"
+                  className={`topnav-mobile-group-toggle ${item.children.some((c) => location.pathname.startsWith(c.route)) ? 'active' : ''}`}
+                  onClick={() => setExpandedGroup((g) => (g === item.label ? null : item.label))}
+                >
+                  {item.label}
+                  <span className={`caret ${expandedGroup === item.label ? 'open' : ''}`}>▾</span>
+                </button>
+                {expandedGroup === item.label && (
+                  <div className="topnav-mobile-group-items">
+                    {item.children.map((c) => (
+                      <NavLink key={c.route} to={c.route} className={({ isActive }) => (isActive ? 'active' : '')}>
+                        {c.label}
+                      </NavLink>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <NavLink key={item.route} to={item.route} className={({ isActive }) => `topnav-mobile-link ${isActive ? 'active' : ''}`}>
+                {item.label}
+              </NavLink>
+            )))}
+          </nav>
+        </>
+      )}
+
       <div className="main">
         <div className="content">
           <Outlet />

@@ -136,6 +136,21 @@ label {
   position: relative;
   z-index: 20;
 }
+.topnav-hamburger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  margin: auto 4px auto 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 17px;
+  color: var(--text-h);
+}
+
 .topnav-brand {
   display: flex;
   align-items: center;
@@ -146,7 +161,9 @@ label {
   margin-right: 8px;
   border-right: 1px solid var(--border);
   white-space: nowrap;
+  overflow: hidden;
 }
+.topnav-brand-short { display: none; }
 .topnav-menu { display: flex; align-items: stretch; gap: 2px; }
 .topnav-menu > a {
   display: flex;
@@ -214,6 +231,65 @@ label {
   align-items: center;
   gap: 12px;
   white-space: nowrap;
+}
+
+/* ---- Mobile nav: hamburger + slide-down accordion panel, swapped in for the desktop
+   hover-dropdown menu below the breakpoint (hover has no touch equivalent, and 8
+   categories plus the brand/user block has no room on a phone-width topnav). ---- */
+.topnav-mobile-backdrop {
+  position: fixed; inset: 56px 0 0 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 18;
+}
+.topnav-mobile-panel {
+  position: fixed; top: 56px; left: 0; right: 0;
+  max-height: calc(100vh - 56px);
+  overflow-y: auto;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  z-index: 19;
+}
+.topnav-mobile-link, .topnav-mobile-group-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  padding: 13px 12px;
+  border-radius: 8px;
+  background: none;
+  border: none;
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 15px;
+  font-family: var(--sans);
+}
+.topnav-mobile-link.active, .topnav-mobile-group-toggle.active { color: var(--accent); background: var(--accent-bg); }
+.topnav-mobile-group-toggle .caret { transition: transform 0.15s ease; }
+.topnav-mobile-group-toggle .caret.open { transform: rotate(180deg); }
+.topnav-mobile-group-items { display: flex; flex-direction: column; padding: 0 0 6px 14px; }
+.topnav-mobile-group-items a {
+  padding: 11px 12px;
+  border-radius: 8px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 14px;
+}
+.topnav-mobile-group-items a.active { color: var(--accent); background: var(--accent-bg); }
+
+@media (max-width: 860px) {
+  .topnav-hamburger { display: flex; }
+  .topnav-menu { display: none; }
+  .topnav-brand-full { display: none; }
+  .topnav-brand-short { display: inline; }
+  .topnav-brand { padding-right: 8px; margin-right: 4px; }
+  .topnav-user-name { display: none; }
+  .topnav { padding: 0 10px; gap: 4px; }
 }
 
 /* ---- Avatar: circular profile photo, used in the topnav and dashboard profile cards ---- */
@@ -717,6 +793,22 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .print-sig-label { font-weight: 600; margin-bottom: 32px; }
 .print-sig-name { margin-bottom: 4px; }
 .print-sig-line { border-top: 1px solid #999; padding-top: 4px; color: #777; }
+
+/* ---- General mobile polish: page chrome shared by every page (header/button rows,
+   side-by-side form fields, modals) rather than anything page-specific -- individual
+   pages already wrap their own wide tables in .table-wrap/.spreadsheet-wrap, which
+   handle themselves via horizontal scroll at any width. ---- */
+@media (max-width: 720px) {
+  .content { padding: 14px; }
+  .page-header { flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+  .field-row { flex-direction: column; gap: 0; }
+  .modal-overlay { padding: 0; align-items: stretch; }
+  .modal { max-width: none; width: 100%; min-height: 100%; border-radius: 0; padding: 18px 16px 24px; }
+  .wizard-steps { overflow-x: auto; padding-bottom: 12px; }
+  .wizard-actions { flex-wrap: wrap; gap: 8px; }
+  .inline-form { flex-direction: column; align-items: stretch; }
+  .modal-actions { flex-wrap: wrap; }
+}
 
 @media print {
   .topnav, .print-toolbar { display: none !important; }
