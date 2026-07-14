@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -15,7 +15,6 @@ function employeeLabel(e) { return e ? `${e.first_name} ${e.last_name}` : ''; }
 // specific Transfer Order's "Fulfill" button -- that flow already exists and doesn't
 // need a second entry point here.
 export default function ItemFulfillments() {
-  const navigate = useNavigate();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -112,7 +111,7 @@ export default function ItemFulfillments() {
       <div className="card">
         {loading ? <LoadingSpinner /> : (
           <div className="table-wrap">
-            <table>
+            <table className="responsive-cards">
               <thead>
                 <tr>
                   <th>Item Fulfillment #</th>
@@ -132,15 +131,15 @@ export default function ItemFulfillments() {
                 )}
                 {rows.map((row) => (
                   <tr key={row.id}>
-                    <td>{row.fulfillment_no}</td>
-                    <td>{formatDate(row.date_created)}</td>
-                    <td>{row.to_no}</td>
-                    <td>{row.withdraw_from_name}</td>
-                    <td>{row.transfer_to_name}</td>
-                    <td>{row.requestor_name || '—'}</td>
-                    <td>{row.status}</td>
-                    <td>{row.memo}</td>
-                    <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/transfer-orders/item-fulfillments/${row.id}`)}>View</button></td>
+                    <td data-label="Item Fulfillment #">{row.fulfillment_no}</td>
+                    <td data-label="Date Created">{formatDate(row.date_created)}</td>
+                    <td data-label="TO No.">{row.to_no}</td>
+                    <td data-label="Withdraw From">{row.withdraw_from_name}</td>
+                    <td data-label="Transfer To">{row.transfer_to_name}</td>
+                    <td data-label="Requestor">{row.requestor_name || '—'}</td>
+                    <td data-label="Status">{row.status}</td>
+                    <td data-label="Memo">{row.memo}</td>
+                    <td><Link className="btn btn-sm btn-primary" to={`/transfer-orders/item-fulfillments/${row.id}`}>View</Link></td>
                   </tr>
                 ))}
               </tbody>

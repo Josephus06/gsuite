@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -7,7 +7,6 @@ import LoadingSpinner from '../components/LoadingSpinner';
 // Mirrors the real system's "Production > Item Delivery" ("Saved Item Delivery") list --
 // a flat filterable table (no status tabs), same pattern as Assembly Build's list.
 export default function ItemDeliveries() {
-  const navigate = useNavigate();
 
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
@@ -81,7 +80,7 @@ export default function ItemDeliveries() {
         {loading ? <LoadingSpinner /> : (
           <>
             <div className="table-wrap">
-              <table>
+              <table className="responsive-cards">
                 <thead>
                   <tr>
                     <th>ID #</th>
@@ -99,13 +98,13 @@ export default function ItemDeliveries() {
                   )}
                   {rows.map((row) => (
                     <tr key={row.id}>
-                      <td>{row.delivery_no}</td>
-                      <td>{row.sales_order_no}</td>
-                      <td>{row.date_created ? String(row.date_created).slice(0, 10) : ''}</td>
-                      <td>{row.customer_name}</td>
-                      <td>{row.total_qty_delivered}</td>
-                      <td>{row.status === 'cancelled' ? <span className="badge badge-muted">Cancelled</span> : <span className="badge badge-success">Saved</span>}</td>
-                      <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/item-deliveries/${row.id}`)}>View</button></td>
+                      <td data-label="ID #">{row.delivery_no}</td>
+                      <td data-label="SO #">{row.sales_order_no}</td>
+                      <td data-label="Date Created">{row.date_created ? String(row.date_created).slice(0, 10) : ''}</td>
+                      <td data-label="Customer">{row.customer_name}</td>
+                      <td data-label="Total Qty Delivered">{row.total_qty_delivered}</td>
+                      <td data-label="Status">{row.status === 'cancelled' ? <span className="badge badge-muted">Cancelled</span> : <span className="badge badge-success">Saved</span>}</td>
+                      <td><Link className="btn btn-sm btn-primary" to={`/item-deliveries/${row.id}`}>View</Link></td>
                     </tr>
                   ))}
                 </tbody>

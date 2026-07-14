@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import Pagination from '../components/Pagination';
@@ -125,7 +125,7 @@ export default function PurchaseOrders() {
         {loading ? <LoadingSpinner /> : (
           <>
             <div className="table-wrap">
-              <table>
+              <table className="responsive-cards">
                 <thead>
                   <tr>
                     <th>PO No</th>
@@ -150,20 +150,20 @@ export default function PurchaseOrders() {
                   )}
                   {rows.map((row) => (
                     <tr key={row.id}>
-                      <td>{row.po_no}</td>
-                      <td>{row.ref_no}</td>
-                      <td>{formatDate(row.date_created)}</td>
-                      <td>{row.supplier_name}</td>
-                      <td>{money(row.discount_amount)}</td>
-                      <td>{money(row.net_of_tax)}</td>
-                      <td>{money(row.tax_amount)}</td>
-                      <td>{money(row.total_amount)}</td>
-                      <td>{row.created_by_name}</td>
-                      <td>{STATUS_LABELS[row.list_status] || row.list_status}</td>
-                      <td>{ITEM_STATUS_LABELS[row.receipt_status]}</td>
-                      <td>{row.type}</td>
-                      <td>{row.memo}</td>
-                      <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/purchase-orders/${row.id}`)}>View</button></td>
+                      <td data-label="PO No">{row.po_no}</td>
+                      <td data-label="Ref. No">{row.ref_no}</td>
+                      <td data-label="Date Created">{formatDate(row.date_created)}</td>
+                      <td data-label="Supplier">{row.supplier_name}</td>
+                      <td data-label="Discount Amt">{money(row.discount_amount)}</td>
+                      <td data-label="Total Amt (Net of VAT)">{money(row.net_of_tax)}</td>
+                      <td data-label="Tax Amt">{money(row.tax_amount)}</td>
+                      <td data-label="Total Amt">{money(row.total_amount)}</td>
+                      <td data-label="Prepared By">{row.created_by_name}</td>
+                      <td data-label="Status">{STATUS_LABELS[row.list_status] || row.list_status}</td>
+                      <td data-label="Item Status">{ITEM_STATUS_LABELS[row.receipt_status]}</td>
+                      <td data-label="PO Type">{row.type}</td>
+                      <td data-label="Memo">{row.memo}</td>
+                      <td><Link className="btn btn-sm btn-primary" to={`/purchase-orders/${row.id}`}>View</Link></td>
                     </tr>
                   ))}
                 </tbody>

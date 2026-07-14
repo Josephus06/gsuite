@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -8,7 +8,6 @@ import LoadingSpinner from '../components/LoadingSpinner';
 // Inspection") list -- a flat filterable table (no status tabs), same pattern as
 // Assembly Build's list.
 export default function QualityInspections() {
-  const navigate = useNavigate();
 
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
@@ -93,7 +92,7 @@ export default function QualityInspections() {
         {loading ? <LoadingSpinner /> : (
           <>
             <div className="table-wrap">
-              <table>
+              <table className="responsive-cards">
                 <thead>
                   <tr>
                     <th>QI #</th>
@@ -113,15 +112,15 @@ export default function QualityInspections() {
                   )}
                   {rows.map((row) => (
                     <tr key={row.id}>
-                      <td>{row.qi_no}</td>
-                      <td>{row.job_order_no}</td>
-                      <td>{row.date_created ? String(row.date_created).slice(0, 10) : ''}</td>
-                      <td>{row.job_location_name}</td>
-                      <td>{row.customer_name}</td>
-                      <td>{row.total_pass_qty}</td>
-                      <td>{row.total_rma_qty}</td>
-                      <td>{row.status === 'cancelled' ? <span className="badge badge-muted">Cancelled</span> : <span className="badge badge-success">Saved</span>}</td>
-                      <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/quality-inspections/${row.id}`)}>View</button></td>
+                      <td data-label="QI #">{row.qi_no}</td>
+                      <td data-label="JO #">{row.job_order_no}</td>
+                      <td data-label="Date Created">{row.date_created ? String(row.date_created).slice(0, 10) : ''}</td>
+                      <td data-label="Job Location">{row.job_location_name}</td>
+                      <td data-label="Customer">{row.customer_name}</td>
+                      <td data-label="Pass Qty">{row.total_pass_qty}</td>
+                      <td data-label="RMA Qty">{row.total_rma_qty}</td>
+                      <td data-label="Status">{row.status === 'cancelled' ? <span className="badge badge-muted">Cancelled</span> : <span className="badge badge-success">Saved</span>}</td>
+                      <td><Link className="btn btn-sm btn-primary" to={`/quality-inspections/${row.id}`}>View</Link></td>
                     </tr>
                   ))}
                 </tbody>

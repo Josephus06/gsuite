@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { computeMaterialCosting } from '../utils/costing';
@@ -45,7 +45,6 @@ function baseCost(raw, conversionFactor) {
 
 export default function MaterialCosting() {
   const { can } = useAuth();
-  const navigate = useNavigate();
 
   const [rows, setRows] = useState([]);
   const [counts, setCounts] = useState({});
@@ -211,7 +210,7 @@ export default function MaterialCosting() {
                         />
                       </td>
                       <td style={{ display: 'flex', gap: 6, flexDirection: 'column', alignItems: 'flex-start' }}>
-                        <button type="button" className="btn btn-sm" onClick={() => navigate(`/inventory/${row.id}`)}>View</button>
+                        <Link className="btn btn-sm" to={`/inventory/${row.id}`}>View</Link>
                         {canApproveCosting && (
                           <button type="button" className="btn btn-sm btn-primary" disabled={approvingId === row.id} onClick={() => handleApproveCosting(row)}>
                             Approve Costing

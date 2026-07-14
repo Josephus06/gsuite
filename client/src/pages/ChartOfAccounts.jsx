@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
@@ -61,7 +61,7 @@ export default function ChartOfAccounts() {
         {loading ? <LoadingSpinner /> : (
           <>
             <div className="table-wrap">
-              <table>
+              <table className="responsive-cards">
                 <thead>
                   <tr>
                     <th>Account Code</th>
@@ -78,14 +78,14 @@ export default function ChartOfAccounts() {
                   )}
                   {rows.map((row) => (
                     <tr key={row.id}>
-                      <td>{row.account_code}</td>
-                      <td>{row.account_name}</td>
-                      <td>{row.description}</td>
-                      <td>{row.coa_account_type}</td>
-                      <td>{row.account_sub_type}</td>
+                      <td data-label="Account Code">{row.account_code}</td>
+                      <td data-label="Account Title">{row.account_name}</td>
+                      <td data-label="Description">{row.description}</td>
+                      <td data-label="Type">{row.coa_account_type}</td>
+                      <td data-label="Sub-Type">{row.account_sub_type}</td>
                       <td style={{ display: 'flex', gap: 6 }}>
                         {can('/chart-of-accounts', 'can_edit') && <button className="btn btn-sm" onClick={() => navigate(`/chart-of-accounts/${row.id}/edit`)}>Update</button>}
-                        <button className="btn btn-sm btn-primary" onClick={() => navigate(`/chart-of-accounts/${row.id}`)}>View</button>
+                        <Link className="btn btn-sm btn-primary" to={`/chart-of-accounts/${row.id}`}>View</Link>
                       </td>
                     </tr>
                   ))}

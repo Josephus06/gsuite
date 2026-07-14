@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -16,7 +16,6 @@ function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
 // Mirrors Saved Invoices' list layout -- the AP-side counterpart, reached from a
 // Purchase Order's "Bill" button rather than its own standalone Add flow.
 export default function VendorBills() {
-  const navigate = useNavigate();
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -72,7 +71,7 @@ export default function VendorBills() {
       <div className="card">
         {loading ? <LoadingSpinner /> : (
           <div className="table-wrap">
-            <table>
+            <table className="responsive-cards">
               <thead>
                 <tr>
                   <th>Bill #</th>
@@ -94,17 +93,17 @@ export default function VendorBills() {
                 )}
                 {pageRows.map((row) => (
                   <tr key={row.id}>
-                    <td>{row.bill_no}</td>
-                    <td>{row.po_no}</td>
-                    <td>{formatDate(row.date_created)}</td>
-                    <td>{formatDate(row.date_due)}</td>
-                    <td>{row.office_location_name}</td>
-                    <td>{row.supplier_name}</td>
-                    <td>{money(row.gross_amount)}</td>
-                    <td>{money(row.amount_due)}</td>
-                    <td>{row.term}</td>
-                    <td>{STATUS_LABELS[row.status] || row.status}</td>
-                    <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/vendor-bills/${row.id}`)}>View</button></td>
+                    <td data-label="Bill #">{row.bill_no}</td>
+                    <td data-label="PO #">{row.po_no}</td>
+                    <td data-label="Date Created">{formatDate(row.date_created)}</td>
+                    <td data-label="Date Due">{formatDate(row.date_due)}</td>
+                    <td data-label="Office Location">{row.office_location_name}</td>
+                    <td data-label="Vendor">{row.supplier_name}</td>
+                    <td data-label="Gross Amount">{money(row.gross_amount)}</td>
+                    <td data-label="Amount Due">{money(row.amount_due)}</td>
+                    <td data-label="Term">{row.term}</td>
+                    <td data-label="Status">{STATUS_LABELS[row.status] || row.status}</td>
+                    <td><Link className="btn btn-sm btn-primary" to={`/vendor-bills/${row.id}`}>View</Link></td>
                   </tr>
                 ))}
               </tbody>

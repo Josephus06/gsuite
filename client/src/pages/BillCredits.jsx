@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -14,7 +14,6 @@ function money(v) {
 function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
 
 export default function BillCredits() {
-  const navigate = useNavigate();
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -69,7 +68,7 @@ export default function BillCredits() {
       <div className="card">
         {loading ? <LoadingSpinner /> : (
           <div className="table-wrap">
-            <table>
+            <table className="responsive-cards">
               <thead>
                 <tr>
                   <th>Credit #</th><th>Created From</th><th>Date Created</th><th>Vendor</th><th>Total Amount</th><th>Applied Amount</th><th>Status</th><th></th>
@@ -81,14 +80,14 @@ export default function BillCredits() {
                 )}
                 {pageRows.map((row) => (
                   <tr key={row.id}>
-                    <td>{row.bill_credit_no}</td>
-                    <td>{row.bill_no}</td>
-                    <td>{formatDate(row.date_created)}</td>
-                    <td>{row.supplier_name}</td>
-                    <td>{money(row.total_amount)}</td>
-                    <td>{money(row.applied_amount)}</td>
-                    <td>{STATUS_LABELS[row.status] || row.status}</td>
-                    <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/bill-credits/${row.id}`)}>View</button></td>
+                    <td data-label="Credit #">{row.bill_credit_no}</td>
+                    <td data-label="Created From">{row.bill_no}</td>
+                    <td data-label="Date Created">{formatDate(row.date_created)}</td>
+                    <td data-label="Vendor">{row.supplier_name}</td>
+                    <td data-label="Total Amount">{money(row.total_amount)}</td>
+                    <td data-label="Applied Amount">{money(row.applied_amount)}</td>
+                    <td data-label="Status">{STATUS_LABELS[row.status] || row.status}</td>
+                    <td><Link className="btn btn-sm btn-primary" to={`/bill-credits/${row.id}`}>View</Link></td>
                   </tr>
                 ))}
               </tbody>

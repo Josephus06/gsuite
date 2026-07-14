@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
@@ -155,7 +155,7 @@ export default function Estimates() {
         {loading ? <LoadingSpinner /> : (
           <>
             <div className="table-wrap">
-              <table>
+              <table className="responsive-cards">
                 <thead>
                   <tr>
                     <th>Estimate No</th>
@@ -175,17 +175,17 @@ export default function Estimates() {
                   )}
                   {rows.map((row) => (
                     <tr key={row.id}>
-                      <td>{row.estimate_no}</td>
-                      <td>{row.date_created ? String(row.date_created).slice(0, 10) : ''}</td>
-                      <td>{row.location_name}</td>
-                      <td>{row.customer_name}</td>
-                      <td>{row.contract_description}</td>
-                      <td>{row.sales_rep_name}</td>
-                      <td>{row.prepared_by_name}</td>
-                      <td>{money(row.total_amount)}</td>
+                      <td data-label="Estimate No">{row.estimate_no}</td>
+                      <td data-label="Date Created">{row.date_created ? String(row.date_created).slice(0, 10) : ''}</td>
+                      <td data-label="Location">{row.location_name}</td>
+                      <td data-label="Customer">{row.customer_name}</td>
+                      <td data-label="Contract Description">{row.contract_description}</td>
+                      <td data-label="Sales Rep.">{row.sales_rep_name}</td>
+                      <td data-label="Prepared By">{row.prepared_by_name}</td>
+                      <td data-label="Total Amount">{money(row.total_amount)}</td>
                       <td>
                         <div style={{ display: 'flex', gap: 6 }}>
-                          <button className="btn btn-sm btn-primary" onClick={() => navigate(`/estimates/${row.id}`)}>View</button>
+                          <Link className="btn btn-sm btn-primary" to={`/estimates/${row.id}`}>View</Link>
                           {can('/estimates', 'can_delete') && <button className="btn btn-sm btn-danger" onClick={() => handleDelete(row)}>Delete</button>}
                         </div>
                       </td>

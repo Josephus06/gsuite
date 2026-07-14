@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
@@ -25,7 +25,6 @@ function money(v) {
 }
 
 export default function SalesOrders() {
-  const navigate = useNavigate();
 
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
@@ -125,7 +124,7 @@ export default function SalesOrders() {
         {loading ? <LoadingSpinner /> : (
           <>
             <div className="table-wrap">
-              <table>
+              <table className="responsive-cards">
                 <thead>
                   <tr>
                     <th>Sale Order No.</th>
@@ -147,17 +146,17 @@ export default function SalesOrders() {
                   )}
                   {rows.map((row) => (
                     <tr key={row.id}>
-                      <td>{row.sales_order_no}</td>
-                      <td>{row.estimate_no}</td>
-                      <td>{row.date_created ? String(row.date_created).slice(0, 10) : ''}</td>
-                      <td>{row.location_name}</td>
-                      <td>{row.customer_name}</td>
-                      <td>{row.contract_description}</td>
-                      <td>{row.sales_rep_name}</td>
-                      <td>{row.prepared_by_name}</td>
-                      <td>{money(row.net_of_tax)}</td>
-                      <td>{money(row.total_amount)}</td>
-                      <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/sales-orders/${row.id}`)}>View</button></td>
+                      <td data-label="Sale Order No.">{row.sales_order_no}</td>
+                      <td data-label="Est No.">{row.estimate_no}</td>
+                      <td data-label="Date">{row.date_created ? String(row.date_created).slice(0, 10) : ''}</td>
+                      <td data-label="Location">{row.location_name}</td>
+                      <td data-label="Customer">{row.customer_name}</td>
+                      <td data-label="Contract Description">{row.contract_description}</td>
+                      <td data-label="Sales Rep.">{row.sales_rep_name}</td>
+                      <td data-label="Prepared By">{row.prepared_by_name}</td>
+                      <td data-label="Net of Tax">{money(row.net_of_tax)}</td>
+                      <td data-label="Total Amount">{money(row.total_amount)}</td>
+                      <td><Link className="btn btn-sm btn-primary" to={`/sales-orders/${row.id}`}>View</Link></td>
                     </tr>
                   ))}
                 </tbody>

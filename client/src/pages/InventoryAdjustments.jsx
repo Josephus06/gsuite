@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
@@ -85,7 +85,7 @@ export default function InventoryAdjustments() {
       <div className="card">
         {loading ? <LoadingSpinner /> : (
           <div className="table-wrap">
-            <table>
+            <table className="responsive-cards">
               <thead>
                 <tr>
                   <th>Record No.</th>
@@ -102,12 +102,12 @@ export default function InventoryAdjustments() {
                 )}
                 {pageRows.map((row) => (
                   <tr key={row.id}>
-                    <td>{row.adjustment_no}</td>
-                    <td>{formatDate(row.date_created)}</td>
-                    <td>{money(row.estimated_total_value)}</td>
-                    <td>{row.memo}</td>
-                    <td>{STATUS_TABS.find((t) => t.key === row.status)?.label || row.status}</td>
-                    <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/inventory-adjustments/${row.id}`)}>View</button></td>
+                    <td data-label="Record No.">{row.adjustment_no}</td>
+                    <td data-label="Date Created">{formatDate(row.date_created)}</td>
+                    <td data-label="Estimated Total Value">{money(row.estimated_total_value)}</td>
+                    <td data-label="Memo">{row.memo}</td>
+                    <td data-label="Status">{STATUS_TABS.find((t) => t.key === row.status)?.label || row.status}</td>
+                    <td><Link className="btn btn-sm btn-primary" to={`/inventory-adjustments/${row.id}`}>View</Link></td>
                   </tr>
                 ))}
               </tbody>

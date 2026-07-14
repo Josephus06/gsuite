@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
@@ -86,7 +86,7 @@ export default function TransferOrders() {
       <div className="card">
         {loading ? <LoadingSpinner /> : (
           <div className="table-wrap">
-            <table>
+            <table className="responsive-cards">
               <thead>
                 <tr>
                   <th>TO No.</th>
@@ -106,15 +106,15 @@ export default function TransferOrders() {
                 )}
                 {pageRows.map((row) => (
                   <tr key={row.id}>
-                    <td>{row.to_no}</td>
-                    <td>{formatDate(row.date_created)}</td>
-                    <td>{formatDate(row.date_needed)}</td>
-                    <td>{row.withdraw_from_name}</td>
-                    <td>{row.transfer_to_name}</td>
-                    <td>{row.job_order_no || '—'}</td>
-                    <td>{row.requestor_name || '—'}</td>
-                    <td>{STATUS_LABELS[row.status] || row.status}</td>
-                    <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/transfer-orders/${row.id}`)}>View</button></td>
+                    <td data-label="TO No.">{row.to_no}</td>
+                    <td data-label="Date Created">{formatDate(row.date_created)}</td>
+                    <td data-label="Date Needed">{formatDate(row.date_needed)}</td>
+                    <td data-label="Withdraw From">{row.withdraw_from_name}</td>
+                    <td data-label="Transfer To">{row.transfer_to_name}</td>
+                    <td data-label="Job Order">{row.job_order_no || '—'}</td>
+                    <td data-label="Requestor">{row.requestor_name || '—'}</td>
+                    <td data-label="Status">{STATUS_LABELS[row.status] || row.status}</td>
+                    <td><Link className="btn btn-sm btn-primary" to={`/transfer-orders/${row.id}`}>View</Link></td>
                   </tr>
                 ))}
               </tbody>

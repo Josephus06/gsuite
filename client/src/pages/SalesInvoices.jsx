@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -18,7 +18,6 @@ function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
 // types), so Type always reads "SI" and there's no Type filter -- everything else
 // (columns, Status filter, search) mirrors the real screen.
 export default function SalesInvoices() {
-  const navigate = useNavigate();
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -73,7 +72,7 @@ export default function SalesInvoices() {
       <div className="card">
         {loading ? <LoadingSpinner /> : (
           <div className="table-wrap">
-            <table>
+            <table className="responsive-cards">
               <thead>
                 <tr>
                   <th>Invoice #</th>
@@ -102,24 +101,24 @@ export default function SalesInvoices() {
                 )}
                 {pageRows.map((row) => (
                   <tr key={row.id}>
-                    <td>{row.invoice_no}</td>
-                    <td>{row.sales_order_no}</td>
-                    <td>{formatDate(row.date_created)}</td>
-                    <td>{formatDate(row.date_due)}</td>
-                    <td>{row.office_location_name}</td>
-                    <td>{row.customer_name}</td>
-                    <td>{row.sales_rep_name}</td>
-                    <td>{row.department_name}</td>
-                    <td>{money(row.net_of_tax)}</td>
-                    <td>{money(row.tax_amount)}</td>
-                    <td>{money(row.gross_amount)}</td>
-                    <td>{money(row.amount_due)}</td>
-                    <td>SI</td>
-                    <td>{row.bs_si_no}</td>
-                    <td>{row.term}</td>
-                    <td>{STATUS_LABELS[row.status] || row.status}</td>
-                    <td>{row.memo}</td>
-                    <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/sales-invoices/${row.id}`)}>View</button></td>
+                    <td data-label="Invoice #">{row.invoice_no}</td>
+                    <td data-label="SO #">{row.sales_order_no}</td>
+                    <td data-label="Date Created">{formatDate(row.date_created)}</td>
+                    <td data-label="Date Due">{formatDate(row.date_due)}</td>
+                    <td data-label="Office Location">{row.office_location_name}</td>
+                    <td data-label="Customer">{row.customer_name}</td>
+                    <td data-label="Sales Rep">{row.sales_rep_name}</td>
+                    <td data-label="Department">{row.department_name}</td>
+                    <td data-label="Net of Tax">{money(row.net_of_tax)}</td>
+                    <td data-label="Tax Amount">{money(row.tax_amount)}</td>
+                    <td data-label="Gross Amount">{money(row.gross_amount)}</td>
+                    <td data-label="Amount Due">{money(row.amount_due)}</td>
+                    <td data-label="Type">SI</td>
+                    <td data-label="BS/SI #">{row.bs_si_no}</td>
+                    <td data-label="Term">{row.term}</td>
+                    <td data-label="Status">{STATUS_LABELS[row.status] || row.status}</td>
+                    <td data-label="Memo">{row.memo}</td>
+                    <td><Link className="btn btn-sm btn-primary" to={`/sales-invoices/${row.id}`}>View</Link></td>
                   </tr>
                 ))}
               </tbody>

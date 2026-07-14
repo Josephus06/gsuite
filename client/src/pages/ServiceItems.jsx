@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
@@ -60,7 +60,7 @@ export default function ServiceItems() {
       <div className="card">
         {loading ? <LoadingSpinner /> : (
           <div className="table-wrap">
-            <table>
+            <table className="responsive-cards">
               <thead>
                 <tr>
                   <th>Item Code</th>
@@ -83,19 +83,19 @@ export default function ServiceItems() {
                 )}
                 {pageRows.map((row) => (
                   <tr key={row.id}>
-                    <td>{row.item_code}</td>
-                    <td>{row.display_name}</td>
-                    <td>{row.sales_description}</td>
-                    <td>{row.purchase_description}</td>
-                    <td>{row.purchase_unit_code || row.base_unit_code}</td>
-                    <td>{row.sales_unit_code || row.base_unit_code}</td>
-                    <td>{YES_NO(row.is_with_jo)}</td>
-                    <td>{YES_NO(row.is_po)}</td>
-                    <td>{YES_NO(row.is_jo)}</td>
-                    <td>{row.expense_account_name}</td>
-                    <td>{row.cogs_account_name}</td>
+                    <td data-label="Item Code">{row.item_code}</td>
+                    <td data-label="Display Name">{row.display_name}</td>
+                    <td data-label="Sales Desc.">{row.sales_description}</td>
+                    <td data-label="Purchase Desc.">{row.purchase_description}</td>
+                    <td data-label="Purchase Unit">{row.purchase_unit_code || row.base_unit_code}</td>
+                    <td data-label="Sales Unit">{row.sales_unit_code || row.base_unit_code}</td>
+                    <td data-label="W/JO">{YES_NO(row.is_with_jo)}</td>
+                    <td data-label="PO">{YES_NO(row.is_po)}</td>
+                    <td data-label="JO">{YES_NO(row.is_jo)}</td>
+                    <td data-label="Expense">{row.expense_account_name}</td>
+                    <td data-label="COGS">{row.cogs_account_name}</td>
                     <td style={{ display: 'flex', gap: 6 }}>
-                      <button className="btn btn-sm btn-primary" onClick={() => navigate(`/inventory/${row.id}`)}>View</button>
+                      <Link className="btn btn-sm btn-primary" to={`/inventory/${row.id}`}>View</Link>
                       {can('/service-items', 'can_edit') && <button className="btn btn-sm" onClick={() => navigate(`/inventory/${row.id}/edit`)}>Update</button>}
                     </td>
                   </tr>

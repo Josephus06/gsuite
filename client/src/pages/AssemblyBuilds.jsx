@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -7,7 +7,6 @@ import LoadingSpinner from '../components/LoadingSpinner';
 // Mirrors the real system's "Production > Assembly Build" ("Saved Assembly Build")
 // list -- a flat filterable table (no status tabs), same pattern as Saved Job Orders.
 export default function AssemblyBuilds() {
-  const navigate = useNavigate();
 
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
@@ -103,7 +102,7 @@ export default function AssemblyBuilds() {
         {loading ? <LoadingSpinner /> : (
           <>
             <div className="table-wrap">
-              <table>
+              <table className="responsive-cards">
                 <thead>
                   <tr>
                     <th>AB #</th>
@@ -125,17 +124,17 @@ export default function AssemblyBuilds() {
                   )}
                   {rows.map((row) => (
                     <tr key={row.id}>
-                      <td>{row.ab_no}</td>
-                      <td>{row.job_order_no}</td>
-                      <td>{row.date_created ? String(row.date_created).slice(0, 10) : ''}</td>
-                      <td>{row.job_location_name}</td>
-                      <td>{row.job_type_name}</td>
-                      <td>{row.job_desc}</td>
-                      <td>{row.sales_rep_name}</td>
-                      <td>{row.customer_name}</td>
-                      <td>{row.quantity_built}</td>
-                      <td>{row.status === 'cancelled' ? <span className="badge badge-muted">Cancelled</span> : <span className="badge badge-success">Saved</span>}</td>
-                      <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/assembly-builds/${row.id}`)}>View</button></td>
+                      <td data-label="AB #">{row.ab_no}</td>
+                      <td data-label="JO #">{row.job_order_no}</td>
+                      <td data-label="Date Created">{row.date_created ? String(row.date_created).slice(0, 10) : ''}</td>
+                      <td data-label="Job Location">{row.job_location_name}</td>
+                      <td data-label="Job Type">{row.job_type_name}</td>
+                      <td data-label="Job Desc">{row.job_desc}</td>
+                      <td data-label="Sales Rep">{row.sales_rep_name}</td>
+                      <td data-label="Customer">{row.customer_name}</td>
+                      <td data-label="Qty">{row.quantity_built}</td>
+                      <td data-label="Status">{row.status === 'cancelled' ? <span className="badge badge-muted">Cancelled</span> : <span className="badge badge-success">Saved</span>}</td>
+                      <td><Link className="btn btn-sm btn-primary" to={`/assembly-builds/${row.id}`}>View</Link></td>
                     </tr>
                   ))}
                 </tbody>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
@@ -95,7 +95,7 @@ export default function Inventory() {
       <div className="card">
         {loading ? <LoadingSpinner /> : (
           <div className="table-wrap">
-            <table>
+            <table className="responsive-cards">
               <thead>
                 <tr>
                   <th>Item Code</th>
@@ -112,13 +112,13 @@ export default function Inventory() {
                 )}
                 {pageRows.map((row) => (
                   <tr key={row.id}>
-                    <td>{row.item_code}</td>
-                    <td>{row.display_name}</td>
-                    <td>{row.base_unit_title}</td>
-                    <td>{money(row.last_purchase_price)}</td>
-                    <td>{money(row.average_cost)}</td>
+                    <td data-label="Item Code">{row.item_code}</td>
+                    <td data-label="Display Name">{row.display_name}</td>
+                    <td data-label="Unit Title">{row.base_unit_title}</td>
+                    <td data-label="Last Purchase Price">{money(row.last_purchase_price)}</td>
+                    <td data-label="Average Cost">{money(row.average_cost)}</td>
                     <td style={{ display: 'flex', gap: 6 }}>
-                      <button className="btn btn-sm btn-primary" onClick={() => navigate(`/inventory/${row.id}`)}>View</button>
+                      <Link className="btn btn-sm btn-primary" to={`/inventory/${row.id}`}>View</Link>
                       {can('/inventory', 'can_edit') && <button className="btn btn-sm" onClick={() => navigate(`/inventory/${row.id}/edit`)}>Update</button>}
                       {can('/inventory', 'can_delete') && <button className="btn btn-sm btn-danger" onClick={() => handleDelete(row)}>Delete</button>}
                     </td>

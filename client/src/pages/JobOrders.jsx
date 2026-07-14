@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -113,7 +113,7 @@ export default function JobOrders() {
         {loading ? <LoadingSpinner /> : (
           <>
             <div className="table-wrap">
-              <table>
+              <table className="responsive-cards">
                 <thead>
                   <tr>
                     <th>JO #</th>
@@ -141,27 +141,27 @@ export default function JobOrders() {
                   )}
                   {rows.map((row) => (
                     <tr key={row.id}>
-                      <td>{row.job_order_no}</td>
-                      <td>
+                      <td data-label="JO #">{row.job_order_no}</td>
+                      <td data-label="SO #">
                         <button type="button" className="link-btn" onClick={() => navigate(`/sales-orders/${row.sales_order_id}`)}>
                           {row.sales_order_no}
                         </button>
                       </td>
-                      <td>{row.created_at ? String(row.created_at).slice(0, 10) : ''}</td>
-                      <td>{row.office_location_name}</td>
-                      <td>{row.job_location_name}</td>
-                      <td>{row.sales_division_name}</td>
-                      <td>{row.job_type_name}</td>
-                      <td>{row.description}</td>
-                      <td>{row.quantity}</td>
-                      <td>{row.customer_name}</td>
-                      <td>{row.contact_name}</td>
-                      <td>{row.prepared_by_name}</td>
-                      <td>{row.sales_rep_name}</td>
-                      <td>{row.artist_name}</td>
-                      <td>{row.status}</td>
-                      <td>{row.sub_status}</td>
-                      <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/job-orders/${row.id}`)}>View</button></td>
+                      <td data-label="Date Created">{row.created_at ? String(row.created_at).slice(0, 10) : ''}</td>
+                      <td data-label="Office Location">{row.office_location_name}</td>
+                      <td data-label="Location">{row.job_location_name}</td>
+                      <td data-label="Department">{row.sales_division_name}</td>
+                      <td data-label="Job Type">{row.job_type_name}</td>
+                      <td data-label="Job Desc">{row.description}</td>
+                      <td data-label="Qty">{row.quantity}</td>
+                      <td data-label="Customer">{row.customer_name}</td>
+                      <td data-label="Contact Person">{row.contact_name}</td>
+                      <td data-label="Prepared By">{row.prepared_by_name}</td>
+                      <td data-label="Sales Rep">{row.sales_rep_name}</td>
+                      <td data-label="Artist">{row.artist_name}</td>
+                      <td data-label="Status">{row.status}</td>
+                      <td data-label="Sub Status">{row.sub_status}</td>
+                      <td><Link className="btn btn-sm btn-primary" to={`/job-orders/${row.id}`}>View</Link></td>
                     </tr>
                   ))}
                 </tbody>

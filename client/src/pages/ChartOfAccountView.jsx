@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -83,7 +83,7 @@ export default function ChartOfAccountView() {
               { key: 'account_name', label: 'Account Title' },
             ]}
             rows={account.children || []}
-            actions={(c) => <button className="btn btn-sm btn-primary" onClick={() => navigate(`/chart-of-accounts/${c.id}`)}>View</button>}
+            actions={(c) => <Link className="btn btn-sm btn-primary" to={`/chart-of-accounts/${c.id}`}>View</Link>}
             emptyLabel="No sub-accounts."
           />
         </div>

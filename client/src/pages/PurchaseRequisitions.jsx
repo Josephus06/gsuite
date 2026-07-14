@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
@@ -78,7 +78,7 @@ export default function PurchaseRequisitions() {
       <div className="card">
         {loading ? <LoadingSpinner /> : (
           <div className="table-wrap">
-            <table>
+            <table className="responsive-cards">
               <thead>
                 <tr>
                   <th>PR No</th>
@@ -97,14 +97,14 @@ export default function PurchaseRequisitions() {
                 )}
                 {pageRows.map((row) => (
                   <tr key={row.id}>
-                    <td>{row.pr_no}</td>
-                    <td>{formatDate(row.date_created)}</td>
-                    <td>{row.department_name}</td>
-                    <td>{row.requestor_name}</td>
-                    <td>{row.prepared_by_name}</td>
-                    <td>{STATUS_LABELS[row.status] || row.status}</td>
-                    <td>{row.item_status}</td>
-                    <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/purchase-requisitions/${row.id}`)}>View</button></td>
+                    <td data-label="PR No">{row.pr_no}</td>
+                    <td data-label="Date Created">{formatDate(row.date_created)}</td>
+                    <td data-label="Department">{row.department_name}</td>
+                    <td data-label="Requestor">{row.requestor_name}</td>
+                    <td data-label="Prepared By">{row.prepared_by_name}</td>
+                    <td data-label="Status">{STATUS_LABELS[row.status] || row.status}</td>
+                    <td data-label="Item Status">{row.item_status}</td>
+                    <td><Link className="btn btn-sm btn-primary" to={`/purchase-requisitions/${row.id}`}>View</Link></td>
                   </tr>
                 ))}
               </tbody>
