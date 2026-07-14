@@ -2,6 +2,17 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 
+// GraphicStar's own product-showcase graphics (Room Nameplates, Yearbooks, Booth
+// Fabrication, Acrylic Medals) -- faded into a 2x2 collage behind the sign-in card
+// rather than shown at full strength, since each one individually is a busy ad graphic
+// with its own logo/CTA baked in.
+const COLLAGE_IMAGES = [
+  '/login-collage/1-room-nameplates.jpg',
+  '/login-collage/2-yearbooks.jpg',
+  '/login-collage/3-booth-fabrication.jpg',
+  '/login-collage/4-acrylic-medals.jpg',
+];
+
 export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -59,6 +70,11 @@ export default function Login() {
       </form>
 
       <div className="login-photo-panel">
+        <div className="login-collage">
+          {COLLAGE_IMAGES.map((src) => (
+            <div key={src} className="login-collage-cell" style={{ backgroundImage: `url('${src}')` }} />
+          ))}
+        </div>
         <div className="login-photo-caption">
           <div className="login-photo-caption-main">CEBU GRAPHICSTAR IMAGING CORP</div>
           <div className="login-photo-caption-sub">Your No.1 Printing Solution Provider</div>
