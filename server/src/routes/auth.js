@@ -55,7 +55,8 @@ router.get('/me', requireAuth, async (req, res, next) => {
       `SELECT id, username, email, display_name, default_branch_id, employee_id,
               account_type, can_approve_sales_estimate, is_design_supervisor,
               is_account_officer, is_supervisor, is_sales_manager,
-              is_sales_marketing_director, is_sales_business_unit, supervisor_id
+              is_sales_marketing_director, is_sales_business_unit, supervisor_id,
+              avatar_data
        FROM users WHERE id = ?`,
       [req.user.id]
     );
@@ -90,6 +91,38 @@ router.get('/me', requireAuth, async (req, res, next) => {
     );
 
     res.json({ user, permissions });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Accepts a data: URL (the client resizes/compresses to a small square JPEG via canvas
+// before sending -- see client/src/utils/image.js) rather than a multipart file upload,
+// so no disk storage / multer dependency is needed; capped well under the express.json
+// body limit to keep rows small since this also gets cached in localStorage.
+const AVATAR_DATA_URL_RE = /^data:image\/(png|jpe?g|webp);base64,/;
+const MAX_AVATAR_DATA_URL_LENGTH = 700_000;
+
+router.put('/me/avatar', requireAuth, async (req, res, next) => {
+  try {
+    const { dataUrl } = req.body;
+    if (typeof dataUrl !== 'string' || !AVATAR_DATA_URL_RE.test(dataUrl)) {
+      return res.status(400).json({ error: 'Expected a PNG/JPEG/WebP image data URL' });
+    }
+    if (dataUrl.length > MAX_AVATAR_DATA_URL_LENGTH) {
+      return res.status(400).json({ error: 'Image is too large' });
+    }
+    await pool.query('UPDATE users SET avatar_data = ? WHERE id = ?', [dataUrl, req.user.id]);
+    res.json({ avatar_data: dataUrl });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/me/avatar', requireAuth, async (req, res, next) => {
+  try {
+    await pool.query('UPDATE users SET avatar_data = NULL WHERE id = ?', [req.user.id]);
+    res.json({ avatar_data: null });
   } catch (err) {
     next(err);
   }

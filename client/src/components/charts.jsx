@@ -69,7 +69,7 @@ export function Holo3DBars({ data, color = '#22d3ee', width = 320, height = 120,
 
   return (
     <div className="holo3d-bars-scene" style={{ width, height: height + 46 }}>
-      <div className="holo3d-bars-stage">
+      <div className="holo3d-bars-stage" style={{ height }}>
         {values.map((v, i) => {
           const h = Math.max(6, (v / max) * height);
           return (
@@ -136,7 +136,7 @@ export function DonutChart({ data, size = 150, thickness = 16, centerLabel, cent
   return (
     <div className="holo-donut" style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={thickness} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(43,45,66,0.09)" strokeWidth={thickness} />
         {segments.map((seg, i) => {
           const fraction = num(seg.value) / (total > 0 ? total : 1);
           const dash = fraction * c;
@@ -176,7 +176,7 @@ export function GaugeRing({ value, max = 100, size = 120, thickness = 12, color 
   return (
     <div className="holo-donut" style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth={thickness} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(43,45,66,0.09)" strokeWidth={thickness} />
         <circle
           cx={size / 2} cy={size / 2} r={r} fill="none"
           stroke={color} strokeWidth={thickness}

@@ -234,6 +234,11 @@ CREATE TABLE users (
     -- the account officers with supervisor_id = them; a Sales Manager's dashboard shows
     -- all sales users regardless of this link (no self-reference needed at that level).
     supervisor_id BIGINT NULL REFERENCES users(id),
+    -- Profile picture: a small (client-resized) JPEG stored inline as a data: URL rather
+    -- than on disk -- this app has no object storage configured and Railway's filesystem
+    -- is ephemeral across redeploys, so the DB (already the durable store for everything
+    -- else) is the only place a file would reliably survive there.
+    avatar_data MEDIUMTEXT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NULL
 );

@@ -117,6 +117,7 @@ async function repMetrics(employeeIds) {
       avgDealSize: 0,
       pipeline: [],
       trend: [0, 0, 0, 0, 0, 0],
+      rings: [],
     };
   }
   const placeholders = employeeIds.map(() => '?').join(', ');
@@ -161,20 +162,33 @@ async function repMetrics(employeeIds) {
   const created = Number(estTotals?.created || 0);
   const approved = Number(estTotals?.approved || 0);
   const trend = await salesTrend(employeeIds);
+  const winRate = created ? Number(((approved / created) * 100).toFixed(1)) : 0;
+  const paidAmt = Number(paid.amount);
+  const unpaidAmt = Number(unpaid.amount);
+  const pipelineRows = pipeline.map((p) => ({ status: p.status, count: Number(p.count) }));
+  const pipelineTotal = pipelineRows.reduce((s, p) => s + p.count, 0);
+  const pipelineApproved = pipelineRows.find((p) => p.status === 'approved')?.count || 0;
 
   return {
     weightedSales: { count: Number(weighted.count), amount: Number(weighted.amount) },
-    kpi: { winRate: created ? Number(((approved / created) * 100).toFixed(1)) : 0, estimatesCreated: created, estimatesApproved: approved },
-    paid: { count: Number(paid.count), amount: Number(paid.amount) },
-    unpaid: { count: Number(unpaid.count), amount: Number(unpaid.amount) },
+    kpi: { winRate, estimatesCreated: created, estimatesApproved: approved },
+    paid: { count: Number(paid.count), amount: paidAmt },
+    unpaid: { count: Number(unpaid.count), amount: unpaidAmt },
     avgDealSize: allTime.count ? Number((allTime.amount / allTime.count).toFixed(2)) : 0,
-    pipeline: pipeline.map((p) => ({ status: p.status, count: Number(p.count) })),
+    pipeline: pipelineRows,
     trend,
+    rings: [
+      { label: 'Win Rate', value: winRate, color: '#7c6fe8' },
+      { label: 'Paid Ratio', value: (paidAmt + unpaidAmt) > 0 ? Math.round((paidAmt / (paidAmt + unpaidAmt)) * 100) : 0, color: '#4f8cf7' },
+      { label: 'Pipeline Approved', value: pipelineTotal ? Math.round((pipelineApproved / pipelineTotal) * 100) : 0, color: '#22c39e' },
+    ],
   };
 }
 
 async function adminMetrics() {
   const [[activeUsers]] = await pool.query('SELECT COUNT(*) AS count FROM users WHERE is_active = TRUE');
+  const [[userTotals]] = await pool.query('SELECT COUNT(*) AS total FROM users');
+  const [[estRingTotals]] = await pool.query(`SELECT COUNT(*) AS total, SUM(status = 'approved') AS approved FROM estimates`);
 
   const [topCustomers] = await pool.query(
     `SELECT c.id, c.name, COUNT(*) AS order_count, COALESCE(SUM(so.total_amount), 0) AS amount
@@ -207,6 +221,10 @@ async function adminMetrics() {
     `SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS amount FROM sales_orders WHERE date_created >= ?`,
     [monthStart]
   );
+  const [[orderPaidThisMonth]] = await pool.query(
+    `SELECT COUNT(*) AS count, SUM(status = ?) AS paid FROM sales_orders WHERE date_created >= ?`,
+    [PAID_STATUS, monthStart]
+  );
 
   // estimates.total_amount is a stale/legacy column (no longer written to -- the wizard
   // now computes an estimate's total live from its job orders' gross_amount, same as
@@ -236,6 +254,11 @@ async function adminMetrics() {
       id: r.id, estimateNo: r.estimate_no, status: r.status, totalAmount: Number(r.total_amount || 0),
       customerName: r.customer_name, createdAt: r.created_at,
     })),
+    rings: [
+      { label: 'Users Active', value: userTotals.total ? Math.round((Number(activeUsers.count) / userTotals.total) * 100) : 0, color: '#7c6fe8' },
+      { label: 'Estimates Approved', value: estRingTotals.total ? Math.round((Number(estRingTotals.approved || 0) / estRingTotals.total) * 100) : 0, color: '#4f8cf7' },
+      { label: 'Orders Paid', value: orderPaidThisMonth.count ? Math.round((Number(orderPaidThisMonth.paid || 0) / orderPaidThisMonth.count) * 100) : 0, color: '#22c39e' },
+    ],
   };
 }
 
@@ -316,20 +339,29 @@ async function designSupervisorMetrics() {
      ORDER BY jo.planned_end_at ASC`
   );
 
+  const notStartedCount = Number(notStarted.count);
+  const inProgressCount = Number(inProgress.count);
+  const pendingSalesApprovalCount = Number(pendingSalesApproval.count);
+  const activeCount = notStartedCount + inProgressCount;
+
   return {
     pendingAssignment: Number(pendingAssignment.count),
-    notStarted: Number(notStarted.count),
-    inProgress: Number(inProgress.count),
-    pendingSalesApproval: Number(pendingSalesApproval.count),
+    notStarted: notStartedCount,
+    inProgress: inProgressCount,
+    pendingSalesApproval: pendingSalesApprovalCount,
     schedule,
     workload: workload.map((w) => ({ artistId: w.artist_id, name: w.name, count: Number(w.count) })),
     overdue: overdue.map((o) => ({ id: o.id, jobOrderNo: o.job_order_no, plannedEndAt: o.planned_end_at, artistName: o.artist_name })),
+    rings: [
+      { label: 'In Progress', value: activeCount ? Math.round((inProgressCount / activeCount) * 100) : 0, color: '#7c6fe8' },
+      { label: 'Sales-Ready', value: (inProgressCount + pendingSalesApprovalCount) ? Math.round((pendingSalesApprovalCount / (inProgressCount + pendingSalesApprovalCount)) * 100) : 0, color: '#4f8cf7' },
+    ],
   };
 }
 
 async function artistMetrics(employeeId) {
   if (!employeeId) {
-    return { active: 0, notStarted: 0, completedThisMonth: 0, avgPerformance: null, schedule: [] };
+    return { active: 0, notStarted: 0, completedThisMonth: 0, avgPerformance: null, schedule: [], rings: [] };
   }
 
   const [[active]] = await pool.query(
@@ -376,12 +408,19 @@ async function artistMetrics(employeeId) {
     [employeeId]
   );
 
+  const activeCount = Number(active.count);
+  const notStartedCount = Number(notStarted.count);
+
   return {
-    active: Number(active.count),
-    notStarted: Number(notStarted.count),
+    active: activeCount,
+    notStarted: notStartedCount,
     completedThisMonth: Number(completedThisMonth.count),
     avgPerformance,
     schedule,
+    rings: [
+      ...(avgPerformance !== null ? [{ label: 'Avg Performance', value: Math.max(0, Math.min(100, Math.round(avgPerformance))), color: '#7c6fe8' }] : []),
+      { label: 'Started Ratio', value: activeCount ? Math.round(((activeCount - notStartedCount) / activeCount) * 100) : 0, color: '#4f8cf7' },
+    ],
   };
 }
 

@@ -216,6 +216,27 @@ label {
   white-space: nowrap;
 }
 
+/* ---- Avatar: circular profile photo, used in the topnav and dashboard profile cards ---- */
+.avatar-wrap { position: relative; flex-shrink: 0; display: inline-block; }
+.avatar-img { border-radius: 50%; object-fit: cover; display: block; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18); }
+.avatar-fallback {
+  border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #8b7ff0, #4f8cf7); color: #fff; font-weight: 700;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+.avatar-edit-btn {
+  position: absolute; bottom: -2px; right: -2px; width: 22px; height: 22px; border-radius: 50%;
+  background: #7c6fe8; color: #fff; border: 2px solid #fff; font-size: 11px; line-height: 1;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+.avatar-edit-btn:disabled { opacity: 0.6; cursor: default; }
+.avatar-error {
+  position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  background: #ef4444; color: #fff; font-size: 11px; padding: 4px 8px; border-radius: 6px;
+  white-space: nowrap; z-index: 5; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
 .main {
   flex: 1;
   display: flex;
@@ -704,12 +725,27 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 }
 
 /* =====================================================================
-   Dashboard -- holographic / glassmorphic theme. Deliberately fixed-dark
-   (independent of the light/dark toggle above) since the glow effects only
-   read correctly against a dark background -- scoped entirely under
-   .holo-dashboard so nothing else on the site is affected.
+   Dashboard -- bright card-grid theme (colors/layout modeled on a
+   recruiting-style reference dashboard: solid-color icon stat cards, a
+   profile card with avatar + progress rings, a big primary chart card).
+   Deliberately fixed-light (independent of the light/dark toggle above),
+   scoped entirely under .holo-dashboard so nothing else on the site is
+   affected. The --holo-* dark-neon variables are kept and still drive the
+   3D holographic widgets (Holo3DOrb / Holo3DBars) -- those live inside a
+   .holo-tile-dark wrapper so the glow effects still read correctly, while
+   everything else on the page uses the light --dash-* palette below.
    ===================================================================== */
 .holo-dashboard {
+  --dash-bg: #f2f3fa;
+  --dash-purple: #7c6fe8;
+  --dash-blue: #4f8cf7;
+  --dash-green: #22c39e;
+  --dash-lime: #9fc93a;
+  --dash-text: #2b2d42;
+  --dash-text-dim: #8a8da8;
+  --dash-border: rgba(43, 45, 66, 0.08);
+  --dash-card-shadow: 0 8px 28px rgba(43, 45, 66, 0.08);
+
   --holo-bg-1: #0b0d21;
   --holo-bg-2: #131a3a;
   --holo-cyan: #22d3ee;
@@ -717,18 +753,14 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
   --holo-violet: #a78bfa;
   --holo-amber: #fbbf24;
   --holo-green: #34d399;
-  --holo-text: #e7e8ff;
-  --holo-text-dim: #8d90c4;
-  --holo-card-border: rgba(167, 139, 250, 0.25);
+  --holo-text: #2b2d42;
+  --holo-text-dim: #8a8da8;
+  --holo-card-border: var(--dash-border);
   margin: -24px;
   padding: 24px;
   min-height: calc(100vh - 0px);
-  background:
-    radial-gradient(ellipse 900px 500px at 15% -10%, rgba(167, 139, 250, 0.25), transparent 60%),
-    radial-gradient(ellipse 700px 500px at 100% 0%, rgba(34, 211, 238, 0.18), transparent 55%),
-    radial-gradient(ellipse 800px 600px at 50% 120%, rgba(244, 114, 182, 0.12), transparent 55%),
-    linear-gradient(160deg, var(--holo-bg-1), var(--holo-bg-2));
-  color: var(--holo-text);
+  background: var(--dash-bg);
+  color: var(--dash-text);
 }
 
 .holo-header {
@@ -740,9 +772,8 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
   gap: 12px;
 }
 .holo-header h1 {
-  color: #fff;
+  color: var(--dash-text);
   font-size: 24px;
-  text-shadow: 0 0 18px rgba(167, 139, 250, 0.5);
   margin: 0;
 }
 .holo-header .holo-sub { color: var(--holo-text-dim); font-size: 13px; margin-top: 2px; }
@@ -756,10 +787,9 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
   font-weight: 600;
   letter-spacing: 0.03em;
   text-transform: uppercase;
-  background: rgba(167, 139, 250, 0.15);
-  border: 1px solid var(--holo-card-border);
-  color: var(--holo-violet);
-  box-shadow: 0 0 16px rgba(167, 139, 250, 0.25);
+  background: rgba(124, 111, 232, 0.12);
+  border: 1px solid rgba(124, 111, 232, 0.25);
+  color: var(--dash-purple);
 }
 
 .holo-grid {
@@ -772,32 +802,17 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 
 .holo-card {
   position: relative;
-  background: linear-gradient(160deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.015));
-  border: 1px solid var(--holo-card-border);
-  border-radius: 16px;
+  background: #fff;
+  border: 1px solid var(--dash-border);
+  border-radius: 18px;
   padding: 18px 20px;
-  backdrop-filter: blur(14px);
-  box-shadow: 0 8px 32px rgba(3, 5, 20, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  box-shadow: var(--dash-card-shadow);
   overflow: hidden;
-  transform-style: preserve-3d;
-  perspective: 800px;
-  transition: transform 0.35s ease, box-shadow 0.35s ease;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
 }
 .holo-card:hover {
-  transform: perspective(800px) rotateX(2deg) rotateY(-2deg) translateY(-3px);
-  box-shadow: 0 20px 44px rgba(3, 5, 20, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-}
-.holo-card::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(135deg, rgba(167, 139, 250, 0.5), transparent 40%, rgba(34, 211, 238, 0.3));
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
+  transform: translateY(-3px);
+  box-shadow: 0 16px 36px rgba(43, 45, 66, 0.13);
 }
 .holo-card h3 {
   margin: 0 0 14px;
@@ -805,65 +820,114 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--holo-text-dim);
+  color: var(--dash-text-dim);
 }
 
-.holo-stat-card { display: flex; flex-direction: column; gap: 10px; }
+/* Solid-color "icon stat" cards -- tone-purple/blue/green/lime cycle across each
+   dashboard's top row, matching the reference dashboard's 4-color palette. */
+.holo-stat-card { display: flex; flex-direction: column; gap: 10px; color: #fff; border: none; }
+.holo-stat-card.tone-purple { background: linear-gradient(135deg, #8f83f3, #6a5ce0); }
+.holo-stat-card.tone-blue { background: linear-gradient(135deg, #5b9df9, #3f74e6); }
+.holo-stat-card.tone-green { background: linear-gradient(135deg, #2bd1ab, #16a889); }
+.holo-stat-card.tone-lime { background: linear-gradient(135deg, #c3e05a, #96c22e); }
+.holo-stat-card:hover { box-shadow: 0 16px 32px rgba(43, 45, 66, 0.22); }
 .holo-stat-top { display: flex; justify-content: space-between; align-items: flex-start; }
-.holo-stat-label { font-size: 12px; color: var(--holo-text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
-.holo-stat-value { font-size: 26px; font-weight: 700; color: #fff; margin-top: 4px; text-shadow: 0 0 14px currentColor; }
+.holo-stat-label { font-size: 12px; color: rgba(255, 255, 255, 0.85); text-transform: uppercase; letter-spacing: 0.05em; }
+.holo-stat-value { font-size: 26px; font-weight: 700; color: #fff; margin-top: 4px; }
 .holo-stat-delta { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
-.holo-stat-delta.up { color: var(--holo-green); background: rgba(52, 211, 153, 0.12); }
-.holo-stat-delta.down { color: var(--holo-magenta); background: rgba(244, 114, 182, 0.12); }
+.holo-stat-delta.up { color: #fff; background: rgba(255, 255, 255, 0.2); }
+.holo-stat-delta.down { color: #fff; background: rgba(0, 0, 0, 0.15); }
 .holo-stat-icon {
-  width: 34px; height: 34px; border-radius: 10px;
+  width: 38px; height: 38px; border-radius: 12px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 16px;
-  box-shadow: 0 0 16px currentColor;
+  font-size: 17px;
+  background: rgba(255, 255, 255, 0.22) !important;
+  color: #fff !important;
 }
 
 .holo-sparkline { display: block; margin-top: 2px; }
 
 .holo-donut { position: relative; display: flex; align-items: center; justify-content: center; margin: 0 auto; }
 .holo-donut-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-.holo-donut-value { font-size: 20px; font-weight: 700; color: #fff; }
-.holo-donut-sub { font-size: 10.5px; color: var(--holo-text-dim); margin-top: 2px; max-width: 80px; }
+.holo-donut-value { font-size: 20px; font-weight: 700; color: var(--dash-text); }
+.holo-donut-sub { font-size: 10.5px; color: var(--dash-text-dim); margin-top: 2px; max-width: 80px; }
 
 .holo-legend { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
-.holo-legend-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--holo-text); }
+.holo-legend-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--dash-text); }
 .holo-legend-dot { width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 6px currentColor; flex-shrink: 0; }
-.holo-legend-label { flex: 1; color: var(--holo-text-dim); }
-.holo-legend-value { font-weight: 600; color: #fff; }
+.holo-legend-label { flex: 1; color: var(--dash-text-dim); }
+.holo-legend-value { font-weight: 600; color: var(--dash-text); }
 
 .holo-barlist { display: flex; flex-direction: column; gap: 12px; }
 .holo-barlist-row { display: grid; grid-template-columns: 110px 1fr auto; align-items: center; gap: 10px; }
-.holo-barlist-label { font-size: 12.5px; color: var(--holo-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.holo-barlist-track { height: 8px; border-radius: 999px; background: rgba(255, 255, 255, 0.06); overflow: hidden; }
+.holo-barlist-label { font-size: 12.5px; color: var(--dash-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.holo-barlist-track { height: 8px; border-radius: 999px; background: rgba(43, 45, 66, 0.07); overflow: hidden; }
 .holo-barlist-fill { height: 100%; border-radius: 999px; transition: width 0.6s ease; }
-.holo-barlist-value { font-size: 12.5px; font-weight: 600; color: #fff; white-space: nowrap; }
+.holo-barlist-value { font-size: 12.5px; font-weight: 600; color: var(--dash-text); white-space: nowrap; }
 
 .holo-activity { display: flex; flex-direction: column; gap: 2px; }
 .holo-activity-row {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 10px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 10px 0; border-bottom: 1px solid var(--dash-border);
   font-size: 12.5px;
 }
 .holo-activity-row:last-child { border-bottom: none; }
-.holo-activity-main { color: var(--holo-text); }
-.holo-activity-sub { color: var(--holo-text-dim); font-size: 11.5px; margin-top: 2px; }
-.holo-activity-amount { font-weight: 600; color: #fff; }
+.holo-activity-main { color: var(--dash-text); }
+.holo-activity-sub { color: var(--dash-text-dim); font-size: 11.5px; margin-top: 2px; }
+.holo-activity-amount { font-weight: 600; color: var(--dash-text); }
 .holo-status-pill { font-size: 10px; padding: 2px 8px; border-radius: 999px; text-transform: capitalize; font-weight: 600; }
 
 .holo-rep-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .holo-rep-table th {
-  text-align: left; color: var(--holo-text-dim); font-weight: 600; text-transform: uppercase;
+  text-align: left; color: var(--dash-text-dim); font-weight: 600; text-transform: uppercase;
   font-size: 10.5px; letter-spacing: 0.04em; padding: 0 10px 10px; background: transparent;
 }
-.holo-rep-table td { padding: 10px; color: var(--holo-text); border-top: 1px solid rgba(255, 255, 255, 0.06); background: transparent; }
-.holo-rep-table tr:hover td { background: rgba(167, 139, 250, 0.1); }
+.holo-rep-table td { padding: 10px; color: var(--dash-text); border-top: 1px solid var(--dash-border); background: transparent; }
+.holo-rep-table tr:hover td { background: rgba(124, 111, 232, 0.06); }
 .holo-rep-table td:not(:first-child), .holo-rep-table th:not(:first-child) { text-align: right; }
 
-.holo-empty { color: var(--holo-text-dim); font-size: 13px; text-align: center; padding: 24px 0; }
+.holo-empty { color: var(--dash-text-dim); font-size: 13px; text-align: center; padding: 24px 0; }
+
+/* ---- Dashboard layout shell: profile card (left) + primary chart card (right) ---- */
+.dash-main-grid { display: grid; grid-template-columns: 300px 1fr; gap: 18px; margin-bottom: 20px; align-items: stretch; }
+@media (max-width: 900px) { .dash-main-grid { grid-template-columns: 1fr; } }
+
+.dash-profile-card { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.dash-profile-card .avatar-wrap { margin-bottom: 12px; }
+.dash-profile-name { font-size: 16px; font-weight: 700; color: var(--dash-text); }
+.dash-profile-role { font-size: 12.5px; color: var(--dash-text-dim); margin-top: 2px; margin-bottom: 18px; }
+
+.dash-rings-row { display: flex; justify-content: center; gap: 16px; margin-bottom: 8px; flex-wrap: wrap; }
+.dash-ring-item { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.dash-ring-item .holo-donut-value { font-size: 14px; }
+.dash-ring-label { font-size: 10.5px; color: var(--dash-text-dim); max-width: 70px; text-align: center; }
+
+.dash-activity-heading {
+  align-self: flex-start; margin: 18px 0 4px; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--dash-text-dim);
+}
+.dash-profile-card .holo-activity { width: 100%; text-align: left; }
+
+.dash-chart-card { display: flex; flex-direction: column; }
+
+/* A dark "holo tile" embedded inside a light card -- houses the Holo3DOrb / Holo3DBars
+   widgets so their neon glow effects still read correctly against a dark surface, while
+   the card around them matches the rest of the light dashboard. */
+.holo-tile-dark {
+  --holo-text-dim: #9497c9;
+  position: relative;
+  border-radius: 16px;
+  padding: 18px;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 400px 240px at 20% -10%, rgba(167, 139, 250, 0.3), transparent 60%),
+    radial-gradient(ellipse 300px 220px at 100% 110%, rgba(34, 211, 238, 0.18), transparent 55%),
+    linear-gradient(160deg, var(--holo-bg-1), var(--holo-bg-2));
+  display: flex; flex-direction: column; align-items: center;
+  flex: 1;
+}
+.holo-tile-dark .holo-donut-value { color: #fff; }
+.holo-tile-dark .holo-donut-sub { color: #9497c9; }
 
 /* ---- Holo3DOrb: continuously-spinning 3D ring, real perspective/rotateX/rotateY ---- */
 .holo3d-orb-scene { position: relative; margin: 0 auto; perspective: 500px; }

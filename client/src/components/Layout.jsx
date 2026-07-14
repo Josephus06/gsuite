@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
+import Avatar from './Avatar';
 
 // Mirrors the real GraphicStar system's topbar arrangement: a row of category
 // dropdowns (Master Lists, Inventory, Sales, Costing, ...) instead of a left
@@ -130,6 +131,7 @@ export default function Layout() {
           )))}
         </nav>
         <div className="topnav-user">
+          <Avatar user={user} size={28} />
           <span className="muted">{user?.display_name}</span>
           <button className="btn btn-sm" onClick={handleLogout}>Log out</button>
         </div>
