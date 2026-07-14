@@ -349,6 +349,16 @@ tbody tr:hover { background: var(--accent-bg); }
 .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
 .table-wrap table { border: none; }
 .table-wrap .table-wrap { border: none; }
+/* List-page tables: wrap cell text instead of forcing one long line per cell -- that
+   nowrap default is what was pushing 12+ column tables wider than the viewport at any
+   width, not just mobile. Deliberately plain `normal` (wraps at spaces only), not
+   break-word -- that broke atomic single-token values like "PO-19773", "3,214.29", or
+   the View button's own label mid-word once their column got squeezed, which looked
+   broken rather than just narrower. Short tokens stay intact; only genuinely multi-word
+   content (Supplier names, Memo) actually wraps, which is enough on its own to let
+   columns shrink to fit width:100%. */
+.table-wrap th, .table-wrap td { white-space: normal; }
+.table-wrap .btn { white-space: nowrap; }
 
 .badge {
   display: inline-flex;
