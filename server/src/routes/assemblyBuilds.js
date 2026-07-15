@@ -1,121 +1,14 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { computeAssemblyBuildGl } = require('../lib/glImpact');
 
 const router = express.Router();
 const ROUTE = '/assembly-builds';
 
-// GL Impact: a standard manufacturing cost-absorption entry, derived live (not
-// persisted as real ledger rows -- no Journal/GL module in this build, same convention
-// already used by Inventory Adjustment's GL Impact tab). Reverse-engineered directly
-// from the real system's sandbox (Assembly Build > GL Impact tab, live API's
-// transaction_transactionledgerentries): debit Finished Goods Inventory (the build's
-// Job Type's own asset account) for the total cost; credit each process line's material
-// cost to that item's own asset account (falling back to a generic "Direct Materials"
-// account for non-inventory items like a labor placeholder); credit the labor/overhead
-// portion of each line's process cost split across Direct Labor / Indirect Labor /
-// Depreciation-FOH / Repairs&Maintenance-FOH / Electricity Expense / Materials-Tools&
-// Supplies, using the *ratio* of those components on the process's current cost bracket
-// (matched by this line's Total Qty to Build) -- ratios only, applied to the already-
-// stored process_cost, so the split always sums exactly to the real persisted total even
-// if bracket rates changed since the line's cost was first computed.
-const FIXED_GL_CODES = {
-  directLabor: '30402', indirectLabor: '30501', powerEquipment: '30627',
-  depreciation: '30507', repairsMaintenance: '30513', indirectMaterials: '30504',
-  // click_charge/ink_cost/other_charges have no confirmed real-system mapping (never
-  // observed non-zero on the live sandbox samples used to reverse-engineer this) --
-  // bucketed into Direct Materials as the closest sensible account, same fallback used
-  // for material cost on non-inventory items.
-  directMaterials: '30401',
-};
-
-async function computeGlImpact(conn, ab, lines) {
-  if (!ab.fg_account_id) return [];
-
-  const [coaRows] = await conn.query(
-    'SELECT id, account_code, account_name FROM chart_of_accounts WHERE id = ? OR account_code IN (?)',
-    [ab.fg_account_id, Object.values(FIXED_GL_CODES)]
-  );
-  const itemAccountIds = [...new Set(lines.map((l) => l.item_asset_account_id).filter(Boolean))];
-  if (itemAccountIds.length) {
-    const [itemCoaRows] = await conn.query('SELECT id, account_code, account_name FROM chart_of_accounts WHERE id IN (?)', [itemAccountIds]);
-    coaRows.push(...itemCoaRows);
-  }
-  const coaById = new Map(coaRows.map((c) => [c.id, c]));
-  const coaByCode = new Map(coaRows.map((c) => [c.account_code, c]));
-
-  const processIds = [...new Set(lines.map((l) => l.process_id).filter(Boolean))];
-  const bracketsByProcess = new Map();
-  if (processIds.length) {
-    const [brackets] = await conn.query(
-      'SELECT * FROM process_cost_brackets WHERE process_id IN (?) AND is_active = TRUE ORDER BY qty_min',
-      [processIds]
-    );
-    for (const b of brackets) {
-      if (!bracketsByProcess.has(b.process_id)) bracketsByProcess.set(b.process_id, []);
-      bracketsByProcess.get(b.process_id).push(b);
-    }
-  }
-
-  const credits = new Map(); // account_id -> amount
-  function credit(accountId, amount) {
-    if (!accountId || !amount) return;
-    credits.set(accountId, (credits.get(accountId) || 0) + amount);
-  }
-
-  let debitTotal = 0;
-  for (const line of lines) {
-    debitTotal += Number(line.total_cost) || 0;
-
-    const materialCost = Number(line.material_cost) || 0;
-    if (materialCost) {
-      const acct = line.item_asset_account_id ? coaById.get(line.item_asset_account_id) : null;
-      credit(acct ? acct.id : coaByCode.get(FIXED_GL_CODES.directMaterials)?.id, materialCost);
-    }
-
-    const processCost = Number(line.process_cost) || 0;
-    if (processCost) {
-      const bracketList = bracketsByProcess.get(line.process_id) || [];
-      const qtyBasis = Number(line.total_qty_to_build) || 0;
-      const bracket = bracketList.find((b) => qtyBasis >= Number(b.qty_min) && qtyBasis <= Number(b.qty_max)) || bracketList[0];
-
-      const components = bracket ? {
-        [FIXED_GL_CODES.directLabor]: Number(bracket.direct_labor) || 0,
-        [FIXED_GL_CODES.indirectLabor]: Number(bracket.moh_indirect_labor) || 0,
-        [FIXED_GL_CODES.powerEquipment]: Number(bracket.moh_power_equipment) || 0,
-        [FIXED_GL_CODES.depreciation]: Number(bracket.moh_depreciation) || 0,
-        [FIXED_GL_CODES.repairsMaintenance]: Number(bracket.moh_repairs_maintenance) || 0,
-        [FIXED_GL_CODES.indirectMaterials]: Number(bracket.moh_indirect_materials) || 0,
-        [FIXED_GL_CODES.directMaterials]: (Number(bracket.click_charge) || 0) + (Number(bracket.ink_cost) || 0) + (Number(bracket.other_charges) || 0),
-      } : {};
-      const componentTotal = Object.values(components).reduce((a, b) => a + b, 0);
-
-      if (componentTotal > 0) {
-        for (const [code, amount] of Object.entries(components)) {
-          if (!amount) continue;
-          credit(coaByCode.get(code)?.id, processCost * (amount / componentTotal));
-        }
-      } else {
-        // No bracket found (or every component is zero) -- can't split, so don't
-        // silently drop the cost: land it all on Direct Labor as the single most
-        // common component rather than fabricating a breakdown we don't have data for.
-        credit(coaByCode.get(FIXED_GL_CODES.directLabor)?.id, processCost);
-      }
-    }
-  }
-
-  const rows = [];
-  for (const [accountId, amount] of credits) {
-    const acct = coaById.get(accountId);
-    if (!acct) continue;
-    rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: 0, credit: Number(amount.toFixed(2)) });
-  }
-  const fgAcct = coaById.get(ab.fg_account_id);
-  if (fgAcct && debitTotal) {
-    rows.unshift({ account_code: fgAcct.account_code, account_name: fgAcct.account_name, debit: Number(debitTotal.toFixed(2)), credit: 0 });
-  }
-  return rows;
-}
+// GL Impact computation lives in server/src/lib/glImpact.js (computeAssemblyBuildGl),
+// shared with the Reports engine so the reports can never drift from what this tab shows.
+const computeGlImpact = computeAssemblyBuildGl;
 
 async function logAudit(conn, { assemblyBuildId, userId, eventType, fieldName = null, oldValue = null, newValue = null }) {
   await conn.query(

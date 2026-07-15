@@ -818,6 +818,143 @@ router.post('/:id/returns', requireAuth, requirePermission(ROUTE, 'can_edit'), a
   }
 });
 
+// Editing a saved Purchase Order -- mirrors the real system's "Edit" button (confirmed
+// against the sandbox: reuses the same header/line fields as Create, gated by
+// `can_edit`). Only allowed while still Pending Approval, matching how every other
+// transaction type in this build already treats "once approved, no further edits" --
+// once a PO is approved it may already have Receiving Reports / Vendor Bills built on
+// top of its lines, and this build has no undo path for that (same reasoning as
+// Inventory Adjustment/Sales Invoice/Vendor Bill only supporting Cancel post-save, never
+// Edit). Qty changes are only accepted for lines with no Purchase Requisition link and
+// zero received/billed activity -- PR-sourced (PO1) quantities stay fixed to avoid
+// desyncing purchase_requisition_lines.po_qty, which Create/Cancel both maintain with
+// their own reconciliation logic this route deliberately doesn't duplicate; everything
+// else (rate, discount, tax code, description, location, department) is always
+// editable, and lines can be added/removed as long as nothing's been received/billed
+// against them yet.
+router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[po]] = await conn.query('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
+    if (!po) return res.status(404).json({ error: 'Not found' });
+    if (!['pending_approval', 'pending_approval_gm'].includes(po.status)) {
+      return res.status(409).json({ error: 'Only a Purchase Order that is still Pending Approval can be edited.' });
+    }
+
+    const {
+      date_created: dateCreated, need_by_date: needByDate, supplier_id: supplierId,
+      term_id: termId, ref_no: refNo, memo, lines,
+    } = req.body;
+    if (!supplierId) return res.status(400).json({ error: 'Select a Supplier.' });
+    const submitted = (Array.isArray(lines) ? lines : []).filter((l) => l.item_id && Number(l.qty) > 0);
+    if (!submitted.length) return res.status(400).json({ error: 'Add at least one line with a Qty greater than 0.' });
+
+    const [existingLines] = await conn.query('SELECT * FROM purchase_order_lines WHERE purchase_order_id = ?', [req.params.id]);
+    const existingById = new Map(existingLines.map((l) => [l.id, l]));
+
+    const submittedIds = new Set(submitted.filter((l) => l.id).map((l) => Number(l.id)));
+    for (const existing of existingLines) {
+      if (submittedIds.has(existing.id)) continue;
+      if (Number(existing.received_qty) > 0 || Number(existing.billed_qty) > 0) {
+        return res.status(409).json({ error: 'Cannot remove a line that already has Received or Billed activity.' });
+      }
+    }
+
+    for (const l of submitted) {
+      if (!l.id) continue;
+      const existing = existingById.get(Number(l.id));
+      if (!existing) return res.status(400).json({ error: 'One of the submitted lines does not belong to this Purchase Order.' });
+      const hasActivity = Number(existing.received_qty) > 0 || Number(existing.billed_qty) > 0;
+      const qtyChanged = Number(l.qty) !== Number(existing.qty);
+      if (qtyChanged && (existing.purchase_requisition_line_id || hasActivity)) {
+        return res.status(409).json({
+          error: existing.purchase_requisition_line_id
+            ? 'Qty on a line sourced from a Purchase Requisition cannot be changed here.'
+            : 'Qty cannot be changed on a line that already has Received or Billed activity.',
+        });
+      }
+    }
+    for (const l of submitted) {
+      if (l.id) continue;
+      if (l.purchase_requisition_line_id) return res.status(400).json({ error: 'New lines cannot be linked to a Purchase Requisition.' });
+    }
+
+    const taxCodeIds = [...new Set(submitted.map((l) => l.tax_code_id).filter(Boolean))];
+    const taxRateById = new Map();
+    if (taxCodeIds.length) {
+      const [taxRows] = await conn.query('SELECT id, rate FROM taxes WHERE id IN (?)', [taxCodeIds]);
+      taxRows.forEach((t) => taxRateById.set(t.id, Number(t.rate)));
+    }
+
+    let subtotal = 0; let discountAmount = 0; let netOfTax = 0; let taxAmount = 0;
+    const computed = submitted.map((l) => {
+      const qty = Number(l.qty);
+      const rate = Number(l.rate || 0);
+      const discPercent = Number(l.disc_percent || 0);
+      const lineSubtotal = qty * rate;
+      const lineDiscAmount = lineSubtotal * (discPercent / 100);
+      const lineNetOfTax = lineSubtotal - lineDiscAmount;
+      const taxRatePct = l.tax_code_id ? (taxRateById.get(l.tax_code_id) || 0) : 0;
+      const lineTaxAmount = lineNetOfTax * (taxRatePct / 100);
+      const extPrice = lineNetOfTax + lineTaxAmount;
+      subtotal += lineSubtotal; discountAmount += lineDiscAmount; netOfTax += lineNetOfTax; taxAmount += lineTaxAmount;
+      return { ...l, lineDiscAmount, lineNetOfTax, lineTaxAmount, extPrice };
+    });
+    const totalAmount = netOfTax + taxAmount;
+
+    await conn.beginTransaction();
+
+    for (const existing of existingLines) {
+      if (submittedIds.has(existing.id)) continue;
+      if (existing.purchase_requisition_line_id) {
+        await conn.query('UPDATE purchase_requisition_lines SET po_qty = GREATEST(po_qty - ?, 0) WHERE id = ?', [existing.qty, existing.purchase_requisition_line_id]);
+      }
+      await conn.query('DELETE FROM purchase_order_lines WHERE id = ?', [existing.id]);
+    }
+
+    for (const l of computed) {
+      if (l.id) {
+        await conn.query(
+          `UPDATE purchase_order_lines SET
+             purchase_description = ?, location_id = ?, department_id = ?, qty = ?, purchase_unit = ?, unit_title = ?,
+             rate = ?, disc_percent = ?, disc_amount = ?, net_of_tax = ?, tax_code_id = ?, tax_amount = ?, ext_price = ?
+           WHERE id = ?`,
+          [l.purchase_description || null, l.location_id || null, l.department_id || null, l.qty, l.purchase_unit || null, l.unit_title || null,
+            l.rate || 0, l.disc_percent || 0, l.lineDiscAmount, l.lineNetOfTax, l.tax_code_id || null, l.lineTaxAmount, l.extPrice, l.id]
+        );
+      } else {
+        await conn.query(
+          `INSERT INTO purchase_order_lines
+             (purchase_order_id, item_id, purchase_description, location_id, department_id, job_order_id,
+              qty, purchase_unit, unit_title, rate, disc_percent, disc_amount, net_of_tax, tax_code_id, tax_amount, ext_price)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [req.params.id, l.item_id, l.purchase_description || null, l.location_id || null, l.department_id || null, l.job_order_id || null,
+            l.qty, l.purchase_unit || null, l.unit_title || null, l.rate || 0, l.disc_percent || 0, l.lineDiscAmount, l.lineNetOfTax, l.tax_code_id || null, l.lineTaxAmount, l.extPrice]
+        );
+      }
+    }
+
+    await conn.query(
+      `UPDATE purchase_orders SET
+         date_created = ?, need_by_date = ?, supplier_id = ?, term_id = ?, ref_no = ?, memo = ?,
+         subtotal = ?, discount_amount = ?, net_of_tax = ?, tax_amount = ?, total_amount = ?
+       WHERE id = ?`,
+      [dateCreated || po.date_created, needByDate || null, supplierId, termId || null, refNo || null, memo || null,
+        subtotal, discountAmount, netOfTax, taxAmount, totalAmount, req.params.id]
+    );
+    await logAudit(conn, { poId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'total_amount', oldValue: po.total_amount, newValue: totalAmount });
+    await conn.commit();
+
+    const [[row]] = await pool.query('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
+    res.json(row);
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
 router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {

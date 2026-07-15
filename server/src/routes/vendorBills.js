@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { computeVendorBillGl } = require('../lib/glImpact');
 
 const router = express.Router();
 // Reached from a Received Purchase Order's "Bill" button, confirmed against the real
@@ -27,35 +28,9 @@ function computeLineAmounts({ unitPrice, discPercent, taxRate, qty }) {
   return { subtotal, disc_amount: discAmount, net_of_tax: netOfTax, tax_amount: taxAmount, ext_price: extPrice };
 }
 
-// GL Impact: the AP-side mirror of Sales Invoice's revenue-recognition entry, same
-// reverse-engineering pass against the real system's sandbox: credit Accounts Payable -
-// Trade (20100) for the bill's gross total, debit the bill's own selected account
-// (`vb.account_id`, whatever the goods/expense offset is -- typically "Inventory
-// Received Not Billed" for a PO-linked bill) for the net-of-tax amount, debit VAT on
-// Purchases (14300, fixed) for the tax.
-//
-// Deliberately NOT routed per-line via `taxes.tax_account_id` the way Sales Invoice
-// routes its VAT credit -- checked this build's real data and there's currently only
-// one tax code (VAT12) in the whole `taxes` table, and its `tax_account_id` is
-// correctly scoped to Sales (VAT on Sales, 21100), since that's the only context it's
-// been used in so far. Reusing that same field here would incorrectly land purchase-
-// side input tax on the sales-side output-tax account. If/when this build ever needs
-// genuinely separate sales vs. purchase tax codes, `taxes` would need its own second
-// account field for the purchase side -- not guessing that shape now.
-async function computeGlImpact(vb, lines) {
-  const [[apAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '20100'");
-  const [[vatAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '14300'");
-  if (!apAcct) return [];
-
-  const rows = [];
-  const grossAmount = Number(vb.gross_amount) || 0;
-  const netOfTax = Number(vb.net_of_tax) || 0;
-  const taxAmount = Number(vb.tax_amount) || 0;
-  if (grossAmount) rows.push({ account_code: apAcct.account_code, account_name: apAcct.account_name, debit: 0, credit: grossAmount });
-  if (netOfTax && vb.account_code) rows.push({ account_code: vb.account_code, account_name: vb.account_name, debit: netOfTax, credit: 0 });
-  if (taxAmount && vatAcct) rows.push({ account_code: vatAcct.account_code, account_name: vatAcct.account_name, debit: taxAmount, credit: 0 });
-  return rows;
-}
+// GL Impact computation lives in server/src/lib/glImpact.js (computeVendorBillGl),
+// shared with the Reports engine so the reports can never drift from what this tab shows.
+const computeGlImpact = computeVendorBillGl;
 
 async function recomputePoBillStatus(conn, poId) {
   const [[row]] = await conn.query(

@@ -86,9 +86,23 @@ const NAV_STRUCTURE = [
       { route: '/vendor-bills', label: 'Vendor Bills' },
       { route: '/bill-payments', label: 'Bill Payments' },
       { route: '/bill-credits', label: 'Bill Credits' },
+      { route: '/reports/trial-balance', label: 'Trial Balance' },
+      { route: '/reports/income-statement', label: 'Income Statement' },
+      { route: '/reports/balance-sheet', label: 'Balance Sheet' },
+      { route: '/reports/general-ledger', label: 'General Ledger' },
     ],
   },
 ];
+
+// Flattened route -> label lookup for the browser tab title, reusing the exact same
+// labels the nav menu shows -- one source of truth instead of a second hardcoded list.
+// Sorted longest-route-first so a detail/edit sub-route (e.g. /chart-of-accounts/123)
+// prefix-matches its own section (/chart-of-accounts) rather than a shorter unrelated
+// route that happens to also be a prefix.
+const FLAT_ROUTES = NAV_STRUCTURE
+  .flatMap((item) => (item.children ? item.children : [item]))
+  .map((c) => ({ route: c.route, label: c.label }))
+  .sort((a, b) => b.route.length - a.route.length);
 
 export default function Layout() {
   const { user, logout, can } = useAuth();
@@ -103,6 +117,11 @@ export default function Layout() {
   useEffect(() => {
     setMobileOpen(false);
     setExpandedGroup(null);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    const match = FLAT_ROUTES.find((r) => location.pathname === r.route || location.pathname.startsWith(`${r.route}/`));
+    document.title = match ? `${match.label} - GSuite` : 'GSuite';
   }, [location.pathname]);
 
   function handleLogout() {

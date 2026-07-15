@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { computeBillCreditGl } = require('../lib/glImpact');
 
 const router = express.Router();
 // Reached from an Open Vendor Bill's "Bill Credit" button, confirmed against the real
@@ -29,40 +30,9 @@ function computeLineAmounts({ amount, taxRate, isWithhold, wtaxRate }) {
   return { tax_amount: taxAmount, gross_amount: grossAmount, wtax_amount: wtaxAmount, amount_due: Number((grossAmount - wtaxAmount).toFixed(2)) };
 }
 
-// GL Impact: no tab existed for this transaction type at all -- added following the
-// same reverse-engineered pattern as Sales Invoice/Vendor Bill (fixed-account debit/
-// credit + a per-line credit to whichever account each expense line targets). Debits
-// the credit's own AP account (`bc.ap_account_id`, reducing what's owed to the
-// supplier) for the full total; credits each line's own selected account for its net
-// amount, and VAT on Purchases (14300, fixed -- see the note on Vendor Bill's
-// computeGlImpact on why this isn't routed per-tax-code) for any per-line tax -- i.e.
-// this reverses whichever account(s)/tax the original Vendor Bill posted, proportional
-// to what this credit actually covers. (The one real sandbox example available credited
-// "Advances To Suppliers" instead, because that particular credit was fully applied
-// against a supplier prepayment -- a concept this build's bill_credits schema doesn't
-// model, so reversing the bill's own line accounts is the closest correct analog here,
-// not a literal copy of that one example.)
-async function computeGlImpact(bc, lines) {
-  if (!bc.ap_account_id || !bc.ap_account_code) return [];
-  const totalAmount = Number(bc.total_amount) || 0;
-  if (!totalAmount) return [];
-
-  const rows = [{ account_code: bc.ap_account_code, account_name: bc.ap_account_name, debit: totalAmount, credit: 0 }];
-
-  for (const l of lines) {
-    const amount = Number(l.amount) || 0;
-    if (amount && l.account_code) {
-      rows.push({ account_code: l.account_code, account_name: l.account_name, debit: 0, credit: amount });
-    }
-  }
-
-  const taxTotal = lines.reduce((s, l) => s + (Number(l.tax_amount) || 0), 0);
-  if (taxTotal) {
-    const [[vatAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '14300'");
-    if (vatAcct) rows.push({ account_code: vatAcct.account_code, account_name: vatAcct.account_name, debit: 0, credit: Number(taxTotal.toFixed(2)) });
-  }
-  return rows;
-}
+// GL Impact computation lives in server/src/lib/glImpact.js (computeBillCreditGl),
+// shared with the Reports engine so the reports can never drift from what this tab shows.
+const computeGlImpact = computeBillCreditGl;
 
 async function applyToVendorBill(conn, vendorBillId, amount) {
   const [[vb]] = await conn.query('SELECT amount_due FROM vendor_bills WHERE id = ?', [vendorBillId]);

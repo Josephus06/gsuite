@@ -116,6 +116,11 @@ export default function PurchaseOrderView() {
   const canEdit = can('/purchase-orders', 'can_edit');
   const canApprovePO = can('/purchase-orders', 'can_approve');
   const canCancel = po.status !== 'cancelled';
+  // Mirrors the real system: Edit only appears before approval -- once a PO is
+  // Approved it may already have Receiving Reports / Vendor Bills built on top of its
+  // lines, and this build has no undo path for that, same reasoning as every other
+  // transaction type here only supporting Cancel (never Edit) once posted.
+  const showEdit = canEdit && (po.status === 'pending_approval' || po.status === 'pending_approval_gm');
   const showApprove = canApprovePO && (
     (po.status === 'pending_approval' && !!user?.is_purchasing_supervisor)
     || (po.status === 'pending_approval_gm' && (user?.account_type === 'System Admin' || user?.account_type === 'General Manager'))
@@ -132,7 +137,7 @@ export default function PurchaseOrderView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/purchase-orders')}>Back</button>
-          <button className="btn btn-sm" disabled title="Editing a saved Purchase Order isn't implemented in this build">Edit</button>
+          {showEdit && <button className="btn btn-sm" onClick={() => navigate(`/purchase-orders/${id}/edit`)}>Edit</button>}
           {showReceive && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/purchase-orders/${id}/receive`)}>Receive</button>}
           {hasBillableLine && <button className="btn btn-sm btn-primary" onClick={() => setShowBillModal(true)}>Bill</button>}
           {showVendorReturn && <button className="btn btn-sm" onClick={() => navigate(`/purchase-orders/${id}/return`)}>Vendor Return</button>}

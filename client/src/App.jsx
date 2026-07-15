@@ -55,6 +55,7 @@ import PlaceOrderForm from './pages/PlaceOrderForm';
 import PurchaseOrders from './pages/PurchaseOrders';
 import PurchaseOrderView from './pages/PurchaseOrderView';
 import PurchaseOrderCreate from './pages/PurchaseOrderCreate';
+import PurchaseOrderEdit from './pages/PurchaseOrderEdit';
 import LandedCostEdit from './pages/LandedCostEdit';
 import ReceivingReportEdit from './pages/ReceivingReportEdit';
 import ReceivingReportView from './pages/ReceivingReportView';
@@ -70,6 +71,10 @@ import ChartOfAccountTypes from './pages/ChartOfAccountTypes';
 import ChartOfAccounts from './pages/ChartOfAccounts';
 import ChartOfAccountEdit from './pages/ChartOfAccountEdit';
 import ChartOfAccountView from './pages/ChartOfAccountView';
+import TrialBalance from './pages/reports/TrialBalance';
+import IncomeStatement from './pages/reports/IncomeStatement';
+import BalanceSheet from './pages/reports/BalanceSheet';
+import GeneralLedger from './pages/reports/GeneralLedger';
 import Lookups from './pages/Lookups';
 import ProcessCosting from './pages/ProcessCosting';
 import MaterialCosting from './pages/MaterialCosting';
@@ -154,6 +159,7 @@ function App() {
         <Route path="/place-order-form" element={<PlaceOrderForm />} />
         <Route path="/purchase-orders" element={<PurchaseOrders />} />
         <Route path="/purchase-orders/new" element={<PurchaseOrderCreate />} />
+        <Route path="/purchase-orders/:id/edit" element={<PurchaseOrderEdit />} />
         <Route path="/purchase-orders/:id/landed-cost/new" element={<LandedCostEdit />} />
         <Route path="/purchase-orders/:id/receive" element={<ReceivingReportEdit />} />
         <Route path="/purchase-orders/receipts/:receiptId" element={<ReceivingReportView />} />
@@ -171,6 +177,10 @@ function App() {
         <Route path="/chart-of-accounts/new" element={<ChartOfAccountEdit />} />
         <Route path="/chart-of-accounts/:id/edit" element={<ChartOfAccountEdit />} />
         <Route path="/chart-of-accounts/:id" element={<ChartOfAccountView />} />
+        <Route path="/reports/trial-balance" element={<TrialBalance />} />
+        <Route path="/reports/income-statement" element={<IncomeStatement />} />
+        <Route path="/reports/balance-sheet" element={<BalanceSheet />} />
+        <Route path="/reports/general-ledger" element={<GeneralLedger />} />
         <Route path="/lookups" element={<Lookups />} />
         <Route path="/process-costing" element={<ProcessCosting />} />
         <Route path="/material-costing" element={<MaterialCosting />} />

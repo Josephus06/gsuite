@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
+const { computeSalesInvoiceGl } = require('../lib/glImpact');
 
 const router = express.Router();
 // Unlike Item Fulfillment/Receipt/Quality Inspection/Item Delivery (all reached only by
@@ -10,52 +11,9 @@ const router = express.Router();
 // (route '/sales-invoices'), not a borrowed scope.
 const ROUTE = '/sales-invoices';
 
-// GL Impact: standard revenue-recognition entry, reverse-engineered directly from the
-// real system's sandbox (10 real invoices checked across different customers/amounts --
-// always the exact same 3 accounts, no per-customer or per-item variation): debit
-// Accounts Receivable Trade for the invoice's gross total, credit Sales for the
-// net-of-tax amount, credit VAT on Sales for the tax. Unlike Assembly Build/Item
-// Delivery's inventory-category routing, AR and Sales are genuinely fixed accounts here
-// (confirmed by the real data, not assumed) -- only VAT is routed per tax code, via
-// taxes.tax_account_id, since sales_invoice_lines carries a tax_code per line (a string
-// snapshot, not a FK) and a future second tax code should route correctly rather than
-// silently landing on the wrong account.
-async function computeGlImpact(si, lines) {
-  const [[arAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '12100'");
-  const [[salesAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '30100'");
-  if (!arAcct || !salesAcct) return [];
-
-  const rows = [];
-  const grossAmount = Number(si.gross_amount) || 0;
-  const netOfTax = Number(si.net_of_tax) || 0;
-  if (grossAmount) rows.push({ account_code: arAcct.account_code, account_name: arAcct.account_name, debit: grossAmount, credit: 0 });
-  if (netOfTax) rows.push({ account_code: salesAcct.account_code, account_name: salesAcct.account_name, debit: 0, credit: netOfTax });
-
-  const taxTotals = new Map(); // tax_code -> amount
-  for (const l of lines) {
-    const amt = Number(l.tax_amount) || 0;
-    if (!amt) continue;
-    taxTotals.set(l.tax_code || null, (taxTotals.get(l.tax_code || null) || 0) + amt);
-  }
-  if (taxTotals.size === 0 && Number(si.tax_amount)) taxTotals.set(null, Number(si.tax_amount));
-
-  for (const [code, amt] of taxTotals) {
-    let acct = null;
-    if (code) {
-      const [[t]] = await pool.query('SELECT tax_account_id FROM taxes WHERE code = ?', [code]);
-      if (t?.tax_account_id) {
-        const [[a]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [t.tax_account_id]);
-        acct = a;
-      }
-    }
-    if (!acct) {
-      const [[fallback]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '21100'");
-      acct = fallback;
-    }
-    if (acct) rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: 0, credit: Number(amt.toFixed(2)) });
-  }
-  return rows;
-}
+// GL Impact computation lives in server/src/lib/glImpact.js (computeSalesInvoiceGl),
+// shared with the Reports engine so the reports can never drift from what this tab shows.
+const computeGlImpact = computeSalesInvoiceGl;
 
 async function logAudit(conn, { invoiceId, userId, eventType, fieldName = null, oldValue = null, newValue = null }) {
   await conn.query(

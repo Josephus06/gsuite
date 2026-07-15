@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { computeInventoryAdjustmentGl } = require('../lib/glImpact');
 
 const router = express.Router();
 const ROUTE = '/inventory-adjustments';
@@ -26,46 +27,9 @@ const LINE_SELECT = `
   LEFT JOIN departments d ON d.id = l.department_id
 `;
 
-// GL Impact: the adjustment-account leg (credited on an increase, debited on a
-// decrease) was already correct -- this adds the missing counter-leg, each line's own
-// item asset account, for the opposite direction and the same amount (new_qty -
-// qty_on_hand, in Base Unit, times the per-Base-Unit cost -- the exact figure
-// `recomputeTotal` already sums into `estimated_total_value`, so this always ties out
-// to the header total exactly). Real system's sandbox confirms this asset/adjustment-
-// account pairing (IA-330: Dr Raw Materials Inventory - Dpod 142.50 / Cr Direct
-// Materials 142.50 for a +150 qty increase) -- direction here matches that example.
-async function computeGlImpact(adj, lines) {
-  if (!adj.adjustment_account_id || !adj.adjustment_account_code) return [];
-
-  const itemAccountAmounts = new Map(); // account_id -> signed amount (positive = qty increase)
-  let adjustmentTotal = 0;
-  for (const l of lines) {
-    const amount = (Number(l.new_qty) - Number(l.qty_on_hand)) * Number(l.est_unit_cost_base || 0);
-    if (!amount || !l.asset_account_id) continue;
-    itemAccountAmounts.set(l.asset_account_id, (itemAccountAmounts.get(l.asset_account_id) || 0) + amount);
-    adjustmentTotal += amount;
-  }
-  if (!itemAccountAmounts.size) return [];
-
-  const [itemAccts] = await pool.query('SELECT id, account_code, account_name FROM chart_of_accounts WHERE id IN (?)', [[...itemAccountAmounts.keys()]]);
-  const rows = [];
-  for (const acct of itemAccts) {
-    const amount = Number((itemAccountAmounts.get(acct.id) || 0).toFixed(2));
-    if (!amount) continue;
-    rows.push({
-      account_code: acct.account_code, account_name: acct.account_name,
-      debit: amount > 0 ? amount : 0, credit: amount < 0 ? -amount : 0,
-    });
-  }
-  const total = Number(adjustmentTotal.toFixed(2));
-  if (total) {
-    rows.push({
-      account_code: adj.adjustment_account_code, account_name: adj.adjustment_account_name,
-      debit: total < 0 ? -total : 0, credit: total > 0 ? total : 0,
-    });
-  }
-  return rows;
-}
+// GL Impact computation lives in server/src/lib/glImpact.js (computeInventoryAdjustmentGl),
+// shared with the Reports engine so the reports can never drift from what this tab shows.
+const computeGlImpact = computeInventoryAdjustmentGl;
 
 async function logAudit(conn, { adjustmentId, userId, eventType, fieldName = null, oldValue = null, newValue = null }) {
   await conn.query(

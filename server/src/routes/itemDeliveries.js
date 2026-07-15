@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
+const { computeItemDeliveryGl } = require('../lib/glImpact');
 
 const router = express.Router();
 // Reached from a Sales Order's Item Delivery button, not its own page in the nav --
@@ -9,50 +10,9 @@ const router = express.Router();
 // reusing Transfer Orders' and Quality Inspection reusing Production's.
 const ROUTE = '/sales-orders';
 
-// GL Impact: recognizing cost-of-sale at delivery time, the mirror image of Assembly
-// Build's cost-absorption entry -- reverse-engineered directly from the real system's
-// sandbox (Item Delivery > GL Impact tab): debit Cost of Goods Sold (the delivered
-// line's Job Type's own cogs_account_id) and credit Finished Goods Inventory (that same
-// Job Type's asset_account_id, the exact account Assembly Build debited when the cost
-// first went INTO inventory), for the delivered quantity's share of that Job Order's
-// total built cost.
-//
-// item_delivery_lines only stores job_order_id + qty_delivered -- no per-process link
-// and no cost snapshot at all (unlike assembly_build_lines) -- so cost is derived live:
-// (SUM of that JO's job_order_processes.total_cost) / jo.quantity gives a per-unit cost,
-// multiplied by this line's qty_delivered. This assumes cost is spread evenly across the
-// JO's full required quantity, which is the only basis available; if a JO's per-unit
-// cost genuinely varies within its own run this would be an approximation, not exact.
-async function computeGlImpact(lines) {
-  const accountIds = [...new Set(lines.flatMap((l) => [l.cogs_account_id, l.asset_account_id]).filter(Boolean))];
-  if (!accountIds.length) return [];
-  const [coaRows] = await pool.query('SELECT id, account_code, account_name FROM chart_of_accounts WHERE id IN (?)', [accountIds]);
-  const coaById = new Map(coaRows.map((c) => [c.id, c]));
-
-  const debits = new Map();
-  const credits = new Map();
-  for (const l of lines) {
-    if (!l.cogs_account_id || !l.asset_account_id) continue;
-    const joQuantity = Number(l.jo_quantity) || 0;
-    if (!joQuantity) continue;
-    const unitCost = (Number(l.jo_total_cost) || 0) / joQuantity;
-    const amount = unitCost * (Number(l.qty_delivered) || 0);
-    if (!amount) continue;
-    debits.set(l.cogs_account_id, (debits.get(l.cogs_account_id) || 0) + amount);
-    credits.set(l.asset_account_id, (credits.get(l.asset_account_id) || 0) + amount);
-  }
-
-  const rows = [];
-  for (const [id, amt] of debits) {
-    const acct = coaById.get(id);
-    if (acct) rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: Number(amt.toFixed(2)), credit: 0 });
-  }
-  for (const [id, amt] of credits) {
-    const acct = coaById.get(id);
-    if (acct) rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: 0, credit: Number(amt.toFixed(2)) });
-  }
-  return rows;
-}
+// GL Impact computation lives in server/src/lib/glImpact.js (computeItemDeliveryGl),
+// shared with the Reports engine so the reports can never drift from what this tab shows.
+const computeGlImpact = computeItemDeliveryGl;
 
 async function logAudit(conn, { deliveryId, userId, eventType, fieldName = null, oldValue = null, newValue = null }) {
   await conn.query(
