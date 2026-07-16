@@ -369,6 +369,8 @@ tbody tr:hover { background: var(--accent-bg); }
 }
 .badge-success { background: rgba(22, 163, 74, 0.12); color: var(--success); }
 .badge-muted { background: var(--border); color: var(--text); }
+.badge-danger { background: var(--danger-bg); color: var(--danger); }
+.badge-info { background: var(--accent-bg); color: var(--accent); }
 
 .modal-overlay {
   position: fixed;

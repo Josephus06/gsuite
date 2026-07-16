@@ -155,7 +155,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   try {
     const {
       status, search, sales_rep_id: salesRepId, office_location_id: officeLocationId, as_of: asOf,
-      page = '1', limit = '10',
+      customer_id: customerId, page = '1', limit = '10',
     } = req.query;
 
     // Filters other than status (used both for the list itself and for the tab
@@ -166,6 +166,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     if (salesRepId) { commonWhere.push('e.sales_rep_id = ?'); commonParams.push(salesRepId); }
     if (officeLocationId) { commonWhere.push('e.office_location_id = ?'); commonParams.push(officeLocationId); }
     if (asOf) { commonWhere.push('e.date_created <= ?'); commonParams.push(asOf); }
+    if (customerId) { commonWhere.push('e.customer_id = ?'); commonParams.push(customerId); }
     if (search) {
       commonWhere.push('(e.estimate_no LIKE ? OR c.name LIKE ? OR e.contract_description LIKE ?)');
       commonParams.push(`%${search}%`, `%${search}%`, `%${search}%`);

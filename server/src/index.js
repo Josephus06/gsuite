@@ -39,6 +39,9 @@ const billPaymentRoutes = require('./routes/billPayments');
 const billCreditRoutes = require('./routes/billCredits');
 const adminRoutes = require('./routes/admin');
 const reportsRoutes = require('./routes/reports');
+const leadRoutes = require('./routes/leads');
+const opportunityRoutes = require('./routes/opportunities');
+const crmActivityRoutes = require('./routes/crmActivities');
 
 const app = express();
 
@@ -82,6 +85,9 @@ app.use('/api/bill-payments', billPaymentRoutes);
 app.use('/api/bill-credits', billCreditRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/reports', reportsRoutes);
+app.use('/api/leads', leadRoutes);
+app.use('/api/opportunities', opportunityRoutes);
+app.use('/api/crm-activities', crmActivityRoutes);
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 

@@ -1902,3 +1902,72 @@ CREATE TABLE bill_credit_applications (
     applied_amount DECIMAL(14,2) NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- =====================================================================
+-- SECTION 20: CRM (LEADS, OPPORTUNITIES, ACTIVITIES)
+-- =====================================================================
+-- Not present in the real GraphicStar system at all (confirmed against the sandbox --
+-- it's a pure transaction-and-fulfillment ERP with a static Customer master record, no
+-- lead/pipeline/activity-log concept anywhere) -- this section is a net-new addition to
+-- this build, not a replication of real-system fields.
+
+CREATE TABLE leads (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    lead_no VARCHAR(30) UNIQUE NOT NULL,
+    company_name VARCHAR(200) NOT NULL,
+    contact_name VARCHAR(150),
+    email VARCHAR(150),
+    phone VARCHAR(50),
+    source VARCHAR(50),
+    status VARCHAR(30) NOT NULL DEFAULT 'new',
+    sales_rep_id BIGINT NULL REFERENCES employees(id),
+    memo VARCHAR(1000),
+    converted_customer_id BIGINT NULL REFERENCES customers(id),
+    converted_at DATETIME NULL,
+    created_by_user_id BIGINT NULL REFERENCES users(id),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NULL
+);
+
+CREATE TABLE opportunities (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    opportunity_no VARCHAR(30) UNIQUE NOT NULL,
+    name VARCHAR(200) NOT NULL,
+    customer_id BIGINT NULL REFERENCES customers(id),
+    lead_id BIGINT NULL REFERENCES leads(id),
+    -- prospecting, qualified, proposal, negotiation, won, lost
+    stage VARCHAR(30) NOT NULL DEFAULT 'prospecting',
+    estimated_value DECIMAL(14,2) DEFAULT 0,
+    expected_close_date DATE NULL,
+    sales_rep_id BIGINT NULL REFERENCES employees(id),
+    -- Optional link to an already-created formal quote once one exists -- reuses the
+    -- existing Estimates module rather than duplicating its own wizard/approval flow.
+    estimate_id BIGINT NULL REFERENCES estimates(id),
+    lost_reason VARCHAR(255),
+    closed_at DATETIME NULL,
+    memo VARCHAR(1000),
+    created_by_user_id BIGINT NULL REFERENCES users(id),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NULL
+);
+
+-- Polymorphic activity/interaction log -- same auditable_type/auditable_id shape
+-- audit_logs already uses (see SECTION 2), just a second, purpose-built table since
+-- audit_logs itself is a system-generated field-change trail, not a user-authored note/
+-- call/task log.
+CREATE TABLE crm_activities (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    related_type VARCHAR(30) NOT NULL,
+    related_id BIGINT NOT NULL,
+    activity_type VARCHAR(20) NOT NULL,
+    subject VARCHAR(255) NOT NULL,
+    description VARCHAR(2000),
+    due_date DATE NULL,
+    is_done BOOLEAN NOT NULL DEFAULT FALSE,
+    completed_at DATETIME NULL,
+    assigned_to_user_id BIGINT NULL REFERENCES users(id),
+    created_by_user_id BIGINT NULL REFERENCES users(id),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NULL,
+    INDEX idx_crm_activities_related (related_type, related_id)
+);

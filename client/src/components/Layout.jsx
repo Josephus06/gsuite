@@ -10,6 +10,14 @@ import Avatar from './Avatar';
 const NAV_STRUCTURE = [
   { route: '/dashboard', label: 'Dashboard' },
   {
+    label: 'CRM',
+    children: [
+      { route: '/crm-dashboard', label: 'CRM Dashboard' },
+      { route: '/leads', label: 'Leads' },
+      { route: '/opportunities', label: 'Opportunities' },
+    ],
+  },
+  {
     label: 'Master Lists',
     children: [
       { route: '/employees', label: 'Employees' },
@@ -104,6 +112,32 @@ const FLAT_ROUTES = NAV_STRUCTURE
   .map((c) => ({ route: c.route, label: c.label }))
   .sort((a, b) => b.route.length - a.route.length);
 
+const TITLE_SUFFIX_WORDS = { new: 'New', edit: 'Edit', print: 'Print' };
+
+// Derives "{Section} | {Mode}" generically for every page in the app, not just one
+// section -- every route here follows the same nesting convention (base = the section's
+// own page/list, /new = Create, /:id = View, /:id/edit = Edit, /:id/<action> = that
+// action), so the mode can be inferred from the URL shape itself instead of every
+// individual page component having to set its own document.title. The base route stays
+// unsuffixed (works equally well whether that section is a real list, like Purchase
+// Orders, or a single-page utility, like Dashboard/Lookups). Numeric segments (record
+// IDs) are stripped out before picking the mode word, so e.g. /purchase-orders/29/return
+// reads as "Purchase Orders | Return", not "Purchase Orders | 29".
+function deriveTitle(pathname) {
+  const match = FLAT_ROUTES.find((r) => pathname === r.route || pathname.startsWith(`${r.route}/`));
+  if (!match) return null;
+
+  const remainder = pathname.slice(match.route.length).split('/').filter(Boolean);
+  if (remainder.length === 0) return match.label;
+
+  const words = remainder.filter((seg) => !/^\d+$/.test(seg));
+  if (words.length === 0) return `${match.label} | View`;
+
+  const last = words[words.length - 1];
+  const suffix = TITLE_SUFFIX_WORDS[last] || last.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  return `${match.label} | ${suffix}`;
+}
+
 export default function Layout() {
   const { user, logout, can } = useAuth();
   const navigate = useNavigate();
@@ -120,8 +154,8 @@ export default function Layout() {
   }, [location.pathname]);
 
   useEffect(() => {
-    const match = FLAT_ROUTES.find((r) => location.pathname === r.route || location.pathname.startsWith(`${r.route}/`));
-    document.title = match ? `${match.label} - GSuite` : 'GSuite';
+    const title = deriveTitle(location.pathname);
+    document.title = title ? `${title} - GSuite` : 'GSuite';
   }, [location.pathname]);
 
   function handleLogout() {

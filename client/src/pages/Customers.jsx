@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -15,6 +16,7 @@ const EMPTY_ADDRESS = { address_type: 'Shipping', address_line: '', is_default: 
 
 export default function Customers() {
   const { can } = useAuth();
+  const navigate = useNavigate();
   const [rows, setRows] = useState([]);
   const [businessStyles, setBusinessStyles] = useState([]);
   const [paymentTerms, setPaymentTerms] = useState([]);
@@ -143,6 +145,7 @@ export default function Customers() {
             rows={rows}
             actions={(row) => (
               <>
+                <button className="btn btn-sm btn-primary" onClick={() => navigate(`/customers/${row.id}`)}>View</button>
                 {can('/customers', 'can_edit') && <button className="btn btn-sm" onClick={() => openEdit(row)}>Edit</button>}
                 {can('/customers', 'can_delete') && <button className="btn btn-sm btn-danger" onClick={() => handleDelete(row)}>Delete</button>}
               </>
