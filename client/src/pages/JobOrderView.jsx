@@ -163,6 +163,13 @@ export default function JobOrderView() {
   // to Sales for sign-off even without generic can_edit on Job Orders -- they shouldn't
   // need broader edit rights over the JO just to do that one thing.
   const isAssignedArtist = !!user?.employee_id && jo.artist_id === user.employee_id;
+  // Same reasoning for the JO's own sales rep (Forward to Design Supervisor) and any
+  // Design Supervisor (Assign Artist) -- these are workflow actions gated by role/
+  // ownership, not by the generic can_edit permission (which now only gates the actual
+  // "Edit" button above). can_edit still works as a fallback override for admins/
+  // managers, matching the backend's own dual-check on these two routes.
+  const isOwningSalesRep = !!user?.employee_id && jo.sales_rep_id === user.employee_id;
+  const isDesignSupervisor = !!user?.is_design_supervisor;
 
   const processes = jo.processes || [];
   const totalCost = processes.reduce((s, p) => s + num(p.total_cost), 0);
@@ -180,10 +187,10 @@ export default function JobOrderView() {
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/job-orders')}>Back to Lists</button>
           {canEdit && jo.status !== 'Cancelled' && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/job-orders/${id}/edit`)}>Edit</button>}
-          {canEdit && jo.sub_status === 'Pending' && (
+          {(isOwningSalesRep || canEdit) && jo.sub_status === 'Pending' && (
             <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleForwardToDesign}>Forward to Design Supervisor</button>
           )}
-          {canEdit && !!user?.is_design_supervisor && jo.status !== 'Released' && jo.status !== 'Cancelled' && (
+          {(isDesignSupervisor || canEdit) && jo.status !== 'Released' && jo.status !== 'Cancelled' && (
             <button className="btn btn-sm btn-primary" onClick={openAssign}>
               {jo.artist_id ? 'Reassign Artist' : 'Assign Layout Job Type / Artist'}
             </button>

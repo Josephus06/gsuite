@@ -294,12 +294,28 @@ router.put('/:id/resume', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
 // freshly-created JO's Sub Status is still "Pending", and clicking it sends the JO into
 // the design-review queue (Sub Status -> "For Design Supervisor"). Main Status stays
 // "Planned - Pending for BOM" throughout -- only the Sub Status changes.
-router.put('/:id/forward-to-design', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+// Reachable by anyone with generic can_edit on Job Orders, OR by the specific sales rep
+// this JO belongs to even without it -- a sales rep needs to be able to forward their
+// own job orders into the design queue without needing broader edit rights over Job
+// Orders in general. Same dual-check shape as sales-approval below.
+router.put('/:id/forward-to-design', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [[jo]] = await conn.query('SELECT sub_status FROM job_orders WHERE id = ?', [req.params.id]);
+    const [[jo]] = await conn.query('SELECT sub_status, sales_rep_id FROM job_orders WHERE id = ?', [req.params.id]);
     if (!jo) { await conn.rollback(); return res.status(404).json({ error: 'Not found' }); }
+
+    const [[me]] = await conn.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
+    const isOwningSalesRep = !!me?.employee_id && jo.sales_rep_id === me.employee_id;
+    if (!isOwningSalesRep) {
+      const [[page]] = await conn.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
+      const [[perm]] = await conn.query('SELECT can_edit AS allowed FROM user_page_permissions WHERE user_id = ? AND page_id = ?', [req.user.id, page?.id]);
+      if (!perm?.allowed) {
+        await conn.rollback();
+        return res.status(403).json({ error: 'You do not have permission to perform this action' });
+      }
+    }
+
     if (jo.sub_status !== 'Pending') {
       await conn.rollback();
       return res.status(409).json({ error: 'This Job Order is not in the Pending queue' });
@@ -319,15 +335,22 @@ router.put('/:id/forward-to-design', requireAuth, requirePermission(ROUTE, 'can_
 
 // Design supervisors assign (or later reassign) a Layout - Job Type (PMS Job Type) +
 // Artist to a JO; doing so hands it off to the artist (Sub Status -> "For Artist").
-// Requires the Can Approve-style role flag on the user, same pattern as
-// can_approve_sales_estimate for Estimates -- not gated by the generic can_edit
-// permission alone. Reassignment is allowed at any point up to Released -- once a JO's
-// overall status is "Released" (Sales gave final approval, production has it), the
-// design/artist stage is over and this closes; Cancelled is likewise final.
-router.put('/:id/assign-design', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
-  const [[user]] = await pool.query('SELECT is_design_supervisor FROM users WHERE id = ?', [req.user.id]);
+// Gated on the is_design_supervisor role flag itself (same pattern as
+// can_approve_sales_estimate for Estimates), with generic can_edit on Job Orders as a
+// fallback override for admins/managers who aren't personally flagged as a design
+// supervisor -- previously this ALSO required can_edit unconditionally even for an
+// actual design supervisor, which is what made the button unusable for one whose
+// account only had can_view. Reassignment is allowed at any point up to Released --
+// once a JO's overall status is "Released" (Sales gave final approval, production has
+// it), the design/artist stage is over and this closes; Cancelled is likewise final.
+router.put('/:id/assign-design', requireAuth, async (req, res, next) => {
+  const [[user]] = await pool.query('SELECT is_design_supervisor, employee_id FROM users WHERE id = ?', [req.user.id]);
   if (!user?.is_design_supervisor) {
-    return res.status(403).json({ error: 'Only a Design Supervisor can assign layout job type and artist.' });
+    const [[page]] = await pool.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
+    const [[perm]] = await pool.query('SELECT can_edit AS allowed FROM user_page_permissions WHERE user_id = ? AND page_id = ?', [req.user.id, page?.id]);
+    if (!perm?.allowed) {
+      return res.status(403).json({ error: 'Only a Design Supervisor can assign layout job type and artist.' });
+    }
   }
 
   const { layout_job_type_id, artist_id, planned_start_at, layout_qty: layoutQtyRaw } = req.body;
