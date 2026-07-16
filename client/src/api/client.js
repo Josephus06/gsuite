@@ -1,6 +1,12 @@
 import axios from 'axios';
+import { Capacitor } from '@capacitor/core';
 
-const api = axios.create({ baseURL: '/api' });
+// A Capacitor app has no same-origin server to be relative to -- it loads the bundled
+// dist/ files from a local scheme (https://localhost on Android), so a relative '/api'
+// would hit that local scheme instead of any real backend. Native builds point at the
+// live production API instead; the web build (dev + browser deploy) is unaffected.
+const baseURL = Capacitor.isNativePlatform() ? 'https://gsuitev2.graphicstar.ph/api' : '/api';
+const api = axios.create({ baseURL });
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
