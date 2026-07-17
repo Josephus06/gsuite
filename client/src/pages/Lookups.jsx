@@ -4,6 +4,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import EntityPicker from '../components/EntityPicker';
 
 const CONFIG = [
   { key: 'chart-of-accounts', label: 'Chart of Accounts', fields: [
@@ -30,6 +31,7 @@ const CONFIG = [
   { key: 'departments', label: 'Departments', fields: [
     { name: 'name', label: 'Name', type: 'text', required: true },
     { name: 'description', label: 'Description', type: 'textarea' },
+    { name: 'head_user_id', label: 'Department Head', type: 'user-ref' },
     { name: 'is_active', label: 'Active', type: 'checkbox' },
   ] },
   { key: 'units-of-measure', label: 'Units of Measure', fields: [
@@ -126,6 +128,10 @@ const CONFIG = [
     { name: 'name', label: 'Name', type: 'text', required: true },
     { name: 'is_active', label: 'Active', type: 'checkbox' },
   ] },
+  // Flat, company-wide list (general_managers), not a row-editable table -- rendered
+  // as its own dedicated list+picker below instead of the generic DataTable/Modal
+  // flow, same reasoning as the per-department Ticket Approvers section.
+  { key: 'general-managers', label: 'General Managers', fields: [] },
 ];
 
 function emptyForm(fields) {
@@ -134,18 +140,29 @@ function emptyForm(fields) {
   return form;
 }
 
+// Department heads are picked from `users`, not from another lookup table, so they're
+// fetched via /users (once, whenever the active tab needs it) rather than the generic
+// /lookups/:ref path the 'ref' field type uses.
+
+
 export default function Lookups() {
   const { can } = useAuth();
   const [activeKey, setActiveKey] = useState(CONFIG[0].key);
   const [rows, setRows] = useState([]);
   const [refOptions, setRefOptions] = useState({});
+  const [userOptions, setUserOptions] = useState([]);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({});
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [approvers, setApprovers] = useState([]);
 
   const active = useMemo(() => CONFIG.find((c) => c.key === activeKey), [activeKey]);
   const refKeys = useMemo(() => [...new Set(active.fields.filter((f) => f.type === 'ref').map((f) => f.ref))], [active]);
+  const needsUsers = useMemo(
+    () => active.fields.some((f) => f.type === 'user-ref') || activeKey === 'general-managers',
+    [active, activeKey]
+  );
 
   async function load() {
     setLoading(true);
@@ -157,6 +174,10 @@ export default function Lookups() {
       refs[refKey] = res.data;
     }
     setRefOptions(refs);
+    if (needsUsers) {
+      const res = await api.get('/users');
+      setUserOptions(res.data);
+    }
     setLoading(false);
   }
 
@@ -174,6 +195,38 @@ export default function Lookups() {
     setForm(f);
     setEditing(row.id);
     setError('');
+    if (activeKey === 'departments') loadApprovers(row.id);
+  }
+
+  // Ticket approvers are many-to-many (department_ticket_approvers), so they're managed
+  // as their own immediately-persisted list here rather than folded into the generic
+  // single-row Save/Cancel form above -- each add/remove is its own request.
+  async function loadApprovers(departmentId) {
+    const { data } = await api.get(`/lookups/departments/${departmentId}/ticket-approvers`);
+    setApprovers(data);
+  }
+
+  async function addApprover(u) {
+    await api.post(`/lookups/departments/${editing}/ticket-approvers`, { user_id: u.id });
+    loadApprovers(editing);
+  }
+
+  async function removeApprover(u) {
+    await api.delete(`/lookups/departments/${editing}/ticket-approvers/${u.id}`);
+    loadApprovers(editing);
+  }
+
+  // General Managers: same immediately-persisted list pattern as Ticket Approvers
+  // above, just company-wide rather than per-department -- `rows` already holds the
+  // current GM list since GET /lookups/general-managers matches the generic load().
+  async function addGeneralManager(u) {
+    await api.post('/lookups/general-managers', { user_id: u.id });
+    load();
+  }
+
+  async function removeGeneralManager(u) {
+    await api.delete(`/lookups/general-managers/${u.id}`);
+    load();
   }
 
   async function handleSubmit(e) {
@@ -181,7 +234,7 @@ export default function Lookups() {
     setError('');
     const payload = {};
     for (const f of active.fields) {
-      payload[f.name] = form[f.name] === '' && f.type === 'ref' ? null : form[f.name];
+      payload[f.name] = form[f.name] === '' && (f.type === 'ref' || f.type === 'user-ref') ? null : form[f.name];
     }
     try {
       if (editing === 'new') {
@@ -219,14 +272,21 @@ export default function Lookups() {
             const match = list.find((o) => o.id === r[f.name]);
             return match ? match[f.refLabel] : '—';
           }
-          : undefined,
+          : f.type === 'user-ref'
+            ? (r) => {
+              const match = userOptions.find((u) => u.id === r[f.name]);
+              return match ? match.display_name : '—';
+            }
+            : undefined,
     }));
 
   return (
     <div>
       <div className="page-header">
         <h1>Lookups</h1>
-        {can('/lookups', 'can_add') && <button className="btn btn-primary" onClick={openCreate}>Add Record</button>}
+        {activeKey !== 'general-managers' && can('/lookups', 'can_add') && (
+          <button className="btn btn-primary" onClick={openCreate}>Add Record</button>
+        )}
       </div>
       <div className="tabs">
         {CONFIG.map((c) => (
@@ -236,7 +296,35 @@ export default function Lookups() {
         ))}
       </div>
       <div className="card">
-        {loading ? <LoadingSpinner /> : (
+        {loading ? <LoadingSpinner /> : activeKey === 'general-managers' ? (
+          <div>
+            <div className="muted" style={{ fontSize: 13, marginBottom: 12 }}>
+              Whoever a department head forwards a ticket to for extra sign-off (Tickets page's "Forward to GM"). Any one of these people approving clears it -- company-wide, not tied to a department.
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+              {rows.length === 0 && <div className="muted">No General Managers tagged.</div>}
+              {rows.map((u) => (
+                <div key={u.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', maxWidth: 360 }}>
+                  <span>{u.display_name}</span>
+                  {can('/lookups', 'can_edit') && (
+                    <button className="btn btn-sm btn-danger" onClick={() => removeGeneralManager(u)}>Remove</button>
+                  )}
+                </div>
+              ))}
+            </div>
+            {can('/lookups', 'can_edit') && (
+              <EntityPicker
+                label="Add General Manager" items={userOptions.filter((u) => !rows.some((r) => r.id === u.id))}
+                getLabel={(u) => u?.display_name}
+                columns={[{ key: 'display_name', label: 'Name' }, { key: 'username', label: 'Username' }]}
+                searchKeys={['display_name', 'username']}
+                onSelect={addGeneralManager}
+                triggerLabel="Add General Manager"
+                triggerClassName="btn btn-sm"
+              />
+            )}
+          </div>
+        ) : (
           <DataTable
             paginate
             columns={columns}
@@ -282,6 +370,14 @@ export default function Lookups() {
                       {(refOptions[f.ref] || []).map((o) => <option key={o.id} value={o.id}>{o[f.refLabel]}</option>)}
                     </select>
                   </>
+                ) : f.type === 'user-ref' ? (
+                  <>
+                    <label>{f.label}</label>
+                    <select required={f.required} value={form[f.name] ?? ''} onChange={(e) => setForm({ ...form, [f.name]: e.target.value })}>
+                      <option value="">—</option>
+                      {userOptions.map((u) => <option key={u.id} value={u.id}>{u.display_name}</option>)}
+                    </select>
+                  </>
                 ) : f.type === 'textarea' ? (
                   <>
                     <label>{f.label}</label>
@@ -301,6 +397,34 @@ export default function Lookups() {
                 )}
               </div>
             ))}
+
+            {activeKey === 'departments' && editing !== 'new' && (
+              <div className="field">
+                <label>Ticket Approvers</label>
+                <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+                  Any ticket created by someone in this department needs sign-off from one of these people before the receiving department can assign it. Leave empty for no approval gate.
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+                  {approvers.length === 0 && <div className="muted">No approvers tagged.</div>}
+                  {approvers.map((a) => (
+                    <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>{a.display_name}</span>
+                      <button type="button" className="btn btn-sm btn-danger" onClick={() => removeApprover(a)}>Remove</button>
+                    </div>
+                  ))}
+                </div>
+                <EntityPicker
+                  label="Add Approver" items={userOptions.filter((u) => !approvers.some((a) => a.id === u.id))}
+                  getLabel={(u) => u?.display_name}
+                  columns={[{ key: 'display_name', label: 'Name' }, { key: 'username', label: 'Username' }]}
+                  searchKeys={['display_name', 'username']}
+                  onSelect={addApprover}
+                  triggerLabel="Add Approver"
+                  triggerClassName="btn btn-sm"
+                />
+              </div>
+            )}
+
             <div className="modal-actions">
               <button type="button" className="btn" onClick={() => setEditing(null)}>Cancel</button>
               <button type="submit" className="btn btn-primary">Save</button>

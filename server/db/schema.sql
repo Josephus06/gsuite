@@ -1971,3 +1971,114 @@ CREATE TABLE crm_activities (
     updated_at DATETIME NULL,
     INDEX idx_crm_activities_related (related_type, related_id)
 );
+
+-- =====================================================================
+-- SECTION 21: TICKETS (CHAT SUPPORT -> DEPARTMENT-ROUTED TICKETING)
+-- =====================================================================
+-- Not present in the real GraphicStar system -- an app-support feature (helping users
+-- of THIS build, not a business-domain concept), so nothing to replicate here.
+-- head_user_id: each department's single designated head, who receives tickets routed
+-- to that department and delegates them to staff within it. Deliberately NOT reusing
+-- the existing is_supervisor flag -- checked the real data first: the two current
+-- Sales supervisors (arjie, michelle) both have employee.department_id = NULL, so
+-- there's no reliable existing link from "supervisor" to "department" to build on.
+ALTER TABLE departments ADD COLUMN head_user_id BIGINT NULL REFERENCES users(id);
+
+CREATE TABLE tickets (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    ticket_no VARCHAR(30) UNIQUE NOT NULL,
+    department_id BIGINT NOT NULL REFERENCES departments(id),
+    subject VARCHAR(255) NOT NULL,
+    description VARCHAR(2000) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'open',
+    priority VARCHAR(10) NOT NULL DEFAULT 'normal',
+    created_by_user_id BIGINT NOT NULL REFERENCES users(id),
+    assigned_to_user_id BIGINT NULL REFERENCES users(id),
+    assigned_by_user_id BIGINT NULL REFERENCES users(id),
+    resolved_by_user_id BIGINT NULL REFERENCES users(id),
+    resolved_at DATETIME NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NULL
+);
+
+-- The ongoing chat thread once a ticket exists -- the requester and whoever's working
+-- the ticket (department head / assignee) both post here.
+CREATE TABLE ticket_messages (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    ticket_id BIGINT NOT NULL REFERENCES tickets(id),
+    sender_user_id BIGINT NOT NULL REFERENCES users(id),
+    message VARCHAR(2000) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_ticket_messages_ticket (ticket_id)
+);
+
+-- Per-department, admin-configurable gate: if the ticket's CREATOR belongs to a
+-- department with one or more rows here (e.g. Sales), ANY ONE of those tagged users
+-- signing off unblocks the ticket for the destination department to assign/work --
+-- it stays visible to the creator, the destination department, and every tagged
+-- approver the whole time (see ticketVisibility.js), just not actionable until then.
+-- A department with no rows here has no gate at all, same as today.
+CREATE TABLE department_ticket_approvers (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    department_id BIGINT NOT NULL REFERENCES departments(id),
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_dept_ticket_approver (department_id, user_id)
+);
+
+-- Snapshotted from department_ticket_approvers at ticket creation time (who was
+-- eligible then), rather than re-derived live -- so changing a department's approver
+-- list later doesn't retroactively change who's responsible for a ticket already in
+-- flight. Empty for a ticket = no approval gate. approved_by_user_id/approved_at on
+-- tickets itself record whichever one of these actually clicked Approve.
+CREATE TABLE ticket_approvers (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    ticket_id BIGINT NOT NULL REFERENCES tickets(id),
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    UNIQUE KEY uq_ticket_approver (ticket_id, user_id)
+);
+
+ALTER TABLE tickets
+    ADD COLUMN approved_by_user_id BIGINT NULL REFERENCES users(id),
+    ADD COLUMN approved_at DATETIME NULL;
+
+-- General-purpose, polymorphic (related_type/related_id, same shape as crm_activities)
+-- so future events beyond "ticket resolved" can reuse this table rather than each
+-- needing their own. Only the ticket-resolved trigger is wired up for now (see
+-- PUT /:id/status in tickets.js) -- the table/API are intentionally general so adding
+-- e.g. "ticket assigned to you" or "new reply" later is just a new INSERT, no schema
+-- change. Polled by the client (NotificationBell.jsx) rather than pushed, same
+-- approach as the chat widget's ticket-thread polling.
+CREATE TABLE notifications (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    type VARCHAR(50) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    message VARCHAR(500) NULL,
+    related_type VARCHAR(50) NULL,
+    related_id BIGINT NULL,
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_notifications_user (user_id, is_read)
+);
+
+-- Company-wide, not per-department (unlike department_ticket_approvers) -- a General
+-- Manager escalation applies regardless of which department the ticket was routed to.
+-- A flat list rather than a single user_id column for the same reason
+-- department_ticket_approvers is many-to-many: any one of them clearing it is enough.
+CREATE TABLE general_managers (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT NOT NULL UNIQUE REFERENCES users(id),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- A second, manually-triggered escalation gate on top of the Sales-approval one --
+-- the department head/supervisor forwards a not-yet-assigned ticket to the GM for an
+-- extra sign-off; PUT /:id/assign in tickets.js blocks until gm_approved_at is set,
+-- same shape as the approved_at gate but independent of it (a ticket can clear its
+-- Sales approval and still need GM sign-off, or vice versa in principle).
+ALTER TABLE tickets
+    ADD COLUMN forwarded_to_gm_at DATETIME NULL,
+    ADD COLUMN forwarded_by_user_id BIGINT NULL REFERENCES users(id),
+    ADD COLUMN gm_approved_at DATETIME NULL,
+    ADD COLUMN gm_approved_by_user_id BIGINT NULL REFERENCES users(id);

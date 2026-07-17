@@ -88,6 +88,8 @@ import ScheduledJobOrderTasks from './pages/ScheduledJobOrderTasks';
 import ScheduledJobOrderRun from './pages/ScheduledJobOrderRun';
 import AssemblyBuilds from './pages/AssemblyBuilds';
 import AssemblyBuildView from './pages/AssemblyBuildView';
+import Tickets from './pages/Tickets';
+import TicketView from './pages/TicketView';
 
 function App() {
   return (
@@ -101,6 +103,8 @@ function App() {
         }
       >
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/tickets" element={<Tickets />} />
+        <Route path="/tickets/:id" element={<TicketView />} />
         <Route path="/employees" element={<Employees />} />
         <Route path="/users" element={<Users />} />
         <Route path="/users/new" element={<UserWizard />} />

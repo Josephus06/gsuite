@@ -10,7 +10,7 @@ const TABLES = {
   'chart-of-accounts': { table: 'chart_of_accounts', columns: ['account_code', 'account_name', 'account_type', 'parent_account_id', 'is_active'] },
   locations: { table: 'locations', columns: ['location_code', 'location_name', 'location_type', 'address', 'telephone', 'contact_person', 'is_active'] },
   'business-styles': { table: 'business_styles', columns: ['name', 'description', 'is_active'] },
-  departments: { table: 'departments', columns: ['name', 'description', 'is_active'] },
+  departments: { table: 'departments', columns: ['name', 'description', 'head_user_id', 'is_active'] },
   'units-of-measure': { table: 'units_of_measure', columns: ['code', 'title', 'is_active'] },
   'unit-conversions': { table: 'unit_conversions', columns: ['from_unit_id', 'to_unit_id', 'multiplier'] },
   'inventory-categories': { table: 'inventory_categories', columns: ['parent_category_id', 'name', 'description', 'is_active'] },
@@ -38,6 +38,85 @@ function resolveTable(req, res, next) {
 
 router.get('/', requireAuth, (req, res) => {
   res.json(Object.keys(TABLES).map((key) => ({ key, table: TABLES[key].table })));
+});
+
+// Ticket approvers are a many-to-many per department (department_ticket_approvers),
+// which doesn't fit the generic single-row-payload CRUD below -- a small dedicated
+// sub-resource instead. Placed before /:key/:id so Express matches these first (they
+// have a different segment shape anyway, but keeping them together for clarity).
+router.get('/departments/:id/ticket-approvers', requireAuth, requirePermission('/lookups', 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT u.id, u.display_name, u.username FROM department_ticket_approvers dta
+       JOIN users u ON u.id = dta.user_id
+       WHERE dta.department_id = ? ORDER BY u.display_name`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/departments/:id/ticket-approvers', requireAuth, requirePermission('/lookups', 'can_edit'), async (req, res, next) => {
+  try {
+    const { user_id: userId } = req.body;
+    if (!userId) return res.status(400).json({ error: 'user_id is required.' });
+    await pool.query(
+      'INSERT IGNORE INTO department_ticket_approvers (department_id, user_id) VALUES (?, ?)',
+      [req.params.id, userId]
+    );
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/departments/:id/ticket-approvers/:userId', requireAuth, requirePermission('/lookups', 'can_edit'), async (req, res, next) => {
+  try {
+    await pool.query(
+      'DELETE FROM department_ticket_approvers WHERE department_id = ? AND user_id = ?',
+      [req.params.id, req.params.userId]
+    );
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// General Managers are a flat, company-wide list (general_managers), not scoped to a
+// department -- same reasoning as ticket-approvers above for why this is a dedicated
+// sub-resource rather than the generic single-row CRUD.
+router.get('/general-managers', requireAuth, requirePermission('/lookups', 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT u.id, u.display_name, u.username FROM general_managers gm
+       JOIN users u ON u.id = gm.user_id ORDER BY u.display_name`
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/general-managers', requireAuth, requirePermission('/lookups', 'can_edit'), async (req, res, next) => {
+  try {
+    const { user_id: userId } = req.body;
+    if (!userId) return res.status(400).json({ error: 'user_id is required.' });
+    await pool.query('INSERT IGNORE INTO general_managers (user_id) VALUES (?)', [userId]);
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/general-managers/:userId', requireAuth, requirePermission('/lookups', 'can_edit'), async (req, res, next) => {
+  try {
+    await pool.query('DELETE FROM general_managers WHERE user_id = ?', [req.params.userId]);
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.get('/:key', requireAuth, requirePermission('/lookups', 'can_view'), resolveTable, async (req, res, next) => {

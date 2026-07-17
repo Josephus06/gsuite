@@ -461,3 +461,8 @@ router.get('/', requireAuth, async (req, res, next) => {
 });
 
 module.exports = router;
+// Reused by the chatbot's data-Q&A intents (server/src/lib/chatbotIntents.js) so "what's
+// my weighted sales this month" answers with the exact same number this Dashboard
+// itself shows, rather than a second, possibly-drifting copy of the same query.
+module.exports.resolveScope = resolveScope;
+module.exports.repMetrics = repMetrics;

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import Avatar from './Avatar';
+import ChatWidget from './ChatWidget';
+import NotificationBell from './NotificationBell';
 
 // Mirrors the real GraphicStar system's topbar arrangement: a row of category
 // dropdowns (Master Lists, Inventory, Sales, Costing, ...) instead of a left
@@ -9,6 +11,7 @@ import Avatar from './Avatar';
 // names the real system uses for them.
 const NAV_STRUCTURE = [
   { route: '/dashboard', label: 'Dashboard' },
+  { route: '/tickets', label: 'Tickets' },
   {
     label: 'CRM',
     children: [
@@ -208,6 +211,7 @@ export default function Layout() {
           )))}
         </nav>
         <div className="topnav-user">
+          <NotificationBell />
           <Avatar user={user} size={28} />
           <span className="muted topnav-user-name">{user?.display_name}</span>
           <button className="btn btn-sm" onClick={handleLogout}>Log out</button>
@@ -254,6 +258,8 @@ export default function Layout() {
           <Outlet />
         </div>
       </div>
+
+      <ChatWidget />
     </div>
   );
 }
