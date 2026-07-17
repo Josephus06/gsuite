@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { Sparkline, DonutChart, GaugeRing, BarList, Holo3DOrb, Holo3DBars, useCountUp } from '../components/charts';
 import Avatar from '../components/Avatar';
+import { parseUtc } from '../utils/datetime';
 
 const STAT_TONES = ['purple', 'blue', 'green', 'lime'];
 
@@ -54,7 +55,7 @@ function money(v) {
 }
 function timeAgo(iso) {
   if (!iso) return '';
-  const diffMs = Date.now() - new Date(iso).getTime();
+  const diffMs = Date.now() - parseUtc(iso).getTime();
   const mins = Math.floor(diffMs / 60000);
   if (mins < 60) return `${mins}m ago`;
   const hrs = Math.floor(mins / 60);

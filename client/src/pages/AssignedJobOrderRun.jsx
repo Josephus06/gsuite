@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { parseUtc } from '../utils/datetime';
 
 // Where the artist actually runs the layout timer for one assigned JO (Play/Hold/Stop
 // live here, not on the Assigned JO list) -- shows a countdown from the PMS Job Type's
@@ -63,8 +64,8 @@ export default function AssignedJobOrderRun() {
   const sessions = jo.sessions || [];
   const closedSeconds = sessions
     .filter((s) => s.ended_at)
-    .reduce((sum, s) => sum + (new Date(s.ended_at).getTime() - new Date(s.started_at).getTime()) / 1000, 0);
-  const liveSeconds = openSession ? (now - new Date(openSession.started_at).getTime()) / 1000 : 0;
+    .reduce((sum, s) => sum + (parseUtc(s.ended_at).getTime() - parseUtc(s.started_at).getTime()) / 1000, 0);
+  const liveSeconds = openSession ? (now - parseUtc(openSession.started_at).getTime()) / 1000 : 0;
   const actualSeconds = closedSeconds + liveSeconds;
   // minutes_consume is the allotment for ONE unit of this layout task -- scaled by the
   // Qty entered when the artist was assigned (server-side, jobOrders.js's assign-design
@@ -166,7 +167,7 @@ export default function AssignedJobOrderRun() {
               )}
               {sessions.map((s, idx) => {
                 const duration = s.ended_at
-                  ? (new Date(s.ended_at).getTime() - new Date(s.started_at).getTime()) / 1000
+                  ? (parseUtc(s.ended_at).getTime() - parseUtc(s.started_at).getTime()) / 1000
                   : liveSeconds;
                 return (
                   <tr key={s.id}>

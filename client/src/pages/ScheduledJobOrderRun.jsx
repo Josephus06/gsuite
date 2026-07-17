@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { parseUtc } from '../utils/datetime';
 
 // Where the production employee actually runs the clock for one assigned process
 // (Play/Hold/Stop live here, not on the Scheduled JO list) -- shows a countdown from
@@ -65,8 +66,8 @@ export default function ScheduledJobOrderRun() {
   const sessions = proc.sessions || [];
   const closedSeconds = sessions
     .filter((s) => s.ended_at)
-    .reduce((sum, s) => sum + (new Date(s.ended_at).getTime() - new Date(s.started_at).getTime()) / 1000, 0);
-  const liveSeconds = openSession ? (now - new Date(openSession.started_at).getTime()) / 1000 : 0;
+    .reduce((sum, s) => sum + (parseUtc(s.ended_at).getTime() - parseUtc(s.started_at).getTime()) / 1000, 0);
+  const liveSeconds = openSession ? (now - parseUtc(openSession.started_at).getTime()) / 1000 : 0;
   const actualSeconds = closedSeconds + liveSeconds;
   const allottedSeconds = Number(proc.allotted_minutes || 0) * 60;
   const remainingSeconds = allottedSeconds - actualSeconds;
@@ -149,7 +150,7 @@ export default function ScheduledJobOrderRun() {
               )}
               {sessions.map((s, idx) => {
                 const duration = s.ended_at
-                  ? (new Date(s.ended_at).getTime() - new Date(s.started_at).getTime()) / 1000
+                  ? (parseUtc(s.ended_at).getTime() - parseUtc(s.started_at).getTime()) / 1000
                   : liveSeconds;
                 return (
                   <tr key={s.id}>
