@@ -17,7 +17,7 @@ const NAV_STRUCTURE = [
     children: [
       { route: '/crm-dashboard', label: 'CRM Dashboard' },
       { route: '/leads', label: 'Leads' },
-      { route: '/opportunities', label: 'Opportunities' },
+      { route: '/pipeline', label: 'Pipeline' },
     ],
   },
   {

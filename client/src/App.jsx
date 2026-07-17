@@ -9,8 +9,7 @@ import UserWizard from './pages/UserWizard';
 import Customers from './pages/Customers';
 import CustomerView from './pages/CustomerView';
 import Leads from './pages/Leads';
-import Opportunities from './pages/Opportunities';
-import OpportunityView from './pages/OpportunityView';
+import Pipeline from './pages/Pipeline';
 import CrmDashboard from './pages/CrmDashboard';
 import Suppliers from './pages/Suppliers';
 import Inventory from './pages/Inventory';
@@ -113,8 +112,7 @@ function App() {
         <Route path="/customers/:id" element={<CustomerView />} />
         <Route path="/crm-dashboard" element={<CrmDashboard />} />
         <Route path="/leads" element={<Leads />} />
-        <Route path="/opportunities" element={<Opportunities />} />
-        <Route path="/opportunities/:id" element={<OpportunityView />} />
+        <Route path="/pipeline" element={<Pipeline />} />
         <Route path="/suppliers" element={<Suppliers />} />
         <Route path="/inventory" element={<Inventory />} />
         <Route path="/inventory/new" element={<InventoryEdit />} />

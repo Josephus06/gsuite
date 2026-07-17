@@ -4,8 +4,6 @@ import api from '../api/client';
 import ActivityTimeline from '../components/ActivityTimeline';
 import LoadingSpinner from '../components/LoadingSpinner';
 
-const STAGE_LABELS = { prospecting: 'Prospecting', qualified: 'Qualified', proposal: 'Proposal', negotiation: 'Negotiation', won: 'Won', lost: 'Lost' };
-
 function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
@@ -14,15 +12,17 @@ function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { mo
 
 // The "Customer 360" view -- didn't exist at all before this (Customers.jsx was
 // list-+-edit-modal only). Ties together the existing sub-resources (contacts/
-// addresses, already returned by GET /customers/:id) with the new CRM layer
-// (Opportunities, Activities) plus the customer's real transactional history
-// (Estimates/Sales Orders/Invoices, via the customer_id filters added to those list
-// endpoints for this feature).
+// addresses, already returned by GET /customers/:id) with the CRM layer (Pipeline,
+// derived from real estimates/sales_orders -- see server/src/routes/crmPipeline.js --
+// rather than a manually-tracked Opportunity; Activities) plus the customer's real
+// transactional history (Estimates/Sales Orders/Invoices, via the customer_id filters
+// added to those list endpoints for this feature).
 export default function CustomerView() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [customer, setCustomer] = useState(null);
-  const [opportunities, setOpportunities] = useState([]);
+  const [pipeline, setPipeline] = useState([]);
+  const [stages, setStages] = useState({ labels: {}, openStages: [] });
   const [estimates, setEstimates] = useState([]);
   const [salesOrders, setSalesOrders] = useState([]);
   const [invoices, setInvoices] = useState([]);
@@ -33,13 +33,15 @@ export default function CustomerView() {
     setLoading(true);
     Promise.all([
       api.get(`/customers/${id}`),
-      api.get('/opportunities', { params: { customer_id: id } }),
+      api.get('/crm-pipeline', { params: { customer_id: id } }),
+      api.get('/crm-pipeline/meta/stages'),
       api.get('/estimates', { params: { customer_id: id, limit: 100 } }),
       api.get('/sales-orders', { params: { customer_id: id, limit: 100 } }),
       api.get('/sales-invoices', { params: { customer_id: id } }),
-    ]).then(([c, o, e, so, inv]) => {
+    ]).then(([c, p, s, e, so, inv]) => {
       setCustomer(c.data);
-      setOpportunities(o.data);
+      setPipeline(p.data);
+      setStages(s.data);
       setEstimates(e.data.rows);
       setSalesOrders(so.data.rows);
       setInvoices(inv.data);
@@ -49,7 +51,8 @@ export default function CustomerView() {
 
   if (loading || !customer) return <LoadingSpinner />;
 
-  const openOppValue = opportunities.filter((o) => o.stage !== 'won' && o.stage !== 'lost').reduce((s, o) => s + Number(o.estimated_value || 0), 0);
+  const openDeals = pipeline.filter((r) => stages.openStages.includes(r.stage));
+  const openPipelineValue = openDeals.reduce((s, r) => s + r.value, 0);
 
   return (
     <div>
@@ -73,8 +76,8 @@ export default function CustomerView() {
             <div>Credit Limit : <span className="hi">{money(customer.credit_limit)}</span></div>
           </div>
           <div>
-            <div>Open Pipeline : <span className="hi">{money(openOppValue)}</span></div>
-            <div>Open Opportunities : <span className="hi">{opportunities.filter((o) => o.stage !== 'won' && o.stage !== 'lost').length}</span></div>
+            <div>Open Pipeline : <span className="hi">{money(openPipelineValue)}</span></div>
+            <div>Open Deals : <span className="hi">{openDeals.length}</span></div>
           </div>
           <div>
             <div>Estimates : <span className="hi">{estimates.length}</span></div>
@@ -85,7 +88,7 @@ export default function CustomerView() {
 
       <div className="status-tabs" style={{ marginTop: 20 }}>
         <button className={`status-tab ${tab === 'overview' ? 'active' : ''}`} onClick={() => setTab('overview')}>Overview</button>
-        <button className={`status-tab ${tab === 'opportunities' ? 'active' : ''}`} onClick={() => setTab('opportunities')}>Opportunities ({opportunities.length})</button>
+        <button className={`status-tab ${tab === 'pipeline' ? 'active' : ''}`} onClick={() => setTab('pipeline')}>Pipeline ({pipeline.length})</button>
         <button className={`status-tab ${tab === 'activity' ? 'active' : ''}`} onClick={() => setTab('activity')}>Activity</button>
         <button className={`status-tab ${tab === 'transactions' ? 'active' : ''}`} onClick={() => setTab('transactions')}>Transactions</button>
       </div>
@@ -119,20 +122,27 @@ export default function CustomerView() {
         </div>
       )}
 
-      {tab === 'opportunities' && (
+      {tab === 'pipeline' && (
         <div className="card">
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Opportunity #</th><th>Name</th><th>Stage</th><th>Value</th><th>Expected Close</th></tr></thead>
+              <thead><tr><th>Document #</th><th>Stage</th><th>Value</th><th>Date</th><th>Sales Rep</th></tr></thead>
               <tbody>
-                {opportunities.length === 0 && <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>No opportunities yet.</td></tr>}
-                {opportunities.map((o) => (
-                  <tr key={o.id}>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/opportunities/${o.id}`)}>{o.opportunity_no}</button></td>
-                    <td>{o.name}</td>
-                    <td>{STAGE_LABELS[o.stage]}</td>
-                    <td>{money(o.estimated_value)}</td>
-                    <td>{formatDate(o.expected_close_date)}</td>
+                {pipeline.length === 0 && <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>No deals yet.</td></tr>}
+                {pipeline.map((r) => (
+                  <tr key={r.estimate_id}>
+                    <td>
+                      <button
+                        type="button" className="link-btn"
+                        onClick={() => navigate(r.sales_order_id ? `/sales-orders/${r.sales_order_id}` : `/estimates/${r.estimate_id}`)}
+                      >
+                        {r.current_doc_no}
+                      </button>
+                    </td>
+                    <td>{stages.labels[r.stage]}</td>
+                    <td>{money(r.value)}</td>
+                    <td>{formatDate(r.date_created)}</td>
+                    <td>{r.sales_rep_name || '—'}</td>
                   </tr>
                 ))}
               </tbody>

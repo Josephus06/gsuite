@@ -15,10 +15,11 @@ const STATUS_BADGE = { new: 'badge-muted', contacted: 'badge-info', qualified: '
 function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : '—'; }
 
 // A Lead is a prospect that isn't a real Customer yet -- no real ERP transaction
-// (Estimate, Sales Order, etc.) can reference it, only crm_activities and, once
-// created, an Opportunity. Converting spawns a real `customers` row (server/src/
-// routes/leads.js's POST /:id/convert) at which point the Lead becomes read-only
-// history rather than something to keep editing.
+// (Estimate, Sales Order, etc.) can reference it, only crm_activities. Converting
+// spawns a real `customers` row (server/src/routes/leads.js's POST /:id/convert), at
+// which point the Lead becomes read-only history and the customer can start getting
+// real Estimates -- which is what actually drives the CRM Pipeline now (see
+// server/src/routes/crmPipeline.js), not a manually-tracked Opportunity stage.
 export default function Leads() {
   const { can } = useAuth();
   const navigate = useNavigate();

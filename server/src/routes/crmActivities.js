@@ -3,14 +3,16 @@ const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
-const RELATED_TYPES = ['Lead', 'Customer', 'Opportunity'];
+const RELATED_TYPES = ['Lead', 'Customer', 'Estimate'];
 const ACTIVITY_TYPES = ['call', 'email', 'meeting', 'note', 'task'];
 
 // crm_activities has no `pages` row of its own -- it's always accessed as a sub-
-// resource of a Lead/Customer/Opportunity, so it reuses whichever of THOSE the caller
-// is already permitted to view/edit (same `permRoute`-reuse pattern Item Fulfillment/
-// Quality Inspection use, see client/src/components/Layout.jsx:31-32). requireAuth
-// alone is enough here since the page-level guard already happened on the parent page.
+// resource of a Lead/Customer/Estimate (the CRM pipeline's own unit, since
+// server/src/routes/crmPipeline.js replaced the old manually-tracked Opportunity), so
+// it reuses whichever of THOSE the caller is already permitted to view/edit (same
+// `permRoute`-reuse pattern Item Fulfillment/Quality Inspection use, see
+// client/src/components/Layout.jsx:31-32). requireAuth alone is enough here since the
+// page-level guard already happened on the parent page.
 
 router.get('/', requireAuth, async (req, res, next) => {
   try {
@@ -34,7 +36,7 @@ router.get('/', requireAuth, async (req, res, next) => {
 });
 
 // Powers the "My Tasks" dashboard widget: open (not-yet-done) tasks assigned to the
-// logged-in user, across every Lead/Customer/Opportunity, soonest due date first.
+// logged-in user, across every Lead/Customer/Estimate, soonest due date first.
 router.get('/my-tasks', requireAuth, async (req, res, next) => {
   try {
     const [rows] = await pool.query(

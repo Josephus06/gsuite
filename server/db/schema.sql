@@ -1929,27 +1929,13 @@ CREATE TABLE leads (
     updated_at DATETIME NULL
 );
 
-CREATE TABLE opportunities (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    opportunity_no VARCHAR(30) UNIQUE NOT NULL,
-    name VARCHAR(200) NOT NULL,
-    customer_id BIGINT NULL REFERENCES customers(id),
-    lead_id BIGINT NULL REFERENCES leads(id),
-    -- prospecting, qualified, proposal, negotiation, won, lost
-    stage VARCHAR(30) NOT NULL DEFAULT 'prospecting',
-    estimated_value DECIMAL(14,2) DEFAULT 0,
-    expected_close_date DATE NULL,
-    sales_rep_id BIGINT NULL REFERENCES employees(id),
-    -- Optional link to an already-created formal quote once one exists -- reuses the
-    -- existing Estimates module rather than duplicating its own wizard/approval flow.
-    estimate_id BIGINT NULL REFERENCES estimates(id),
-    lost_reason VARCHAR(255),
-    closed_at DATETIME NULL,
-    memo VARCHAR(1000),
-    created_by_user_id BIGINT NULL REFERENCES users(id),
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NULL
-);
+-- `opportunities` (a manually-tracked prospecting/qualified/proposal/negotiation/won/
+-- lost pipeline with a hand-typed estimated_value) was removed -- every deal already
+-- leaves a real trail through estimates -> sales_orders -> job_orders, so tracking a
+-- second, parallel, manually-maintained pipeline duplicated data that already exists.
+-- The CRM Pipeline (client/src/pages/Pipeline.jsx) is now derived entirely from those
+-- real tables at query time -- see server/src/routes/crmPipeline.js -- no table of its
+-- own needed.
 
 -- Polymorphic activity/interaction log -- same auditable_type/auditable_id shape
 -- audit_logs already uses (see SECTION 2), just a second, purpose-built table since
