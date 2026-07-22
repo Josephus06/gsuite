@@ -8,7 +8,8 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "db:migrate": "node src/db/migrate.js",
-    "db:seed": "node src/db/seed.js"
+    "db:seed": "node src/db/seed.js",
+    "send:ticket-reminders": "node src/scripts/ticket_reminder.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -16,7 +17,8 @@
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
-    "mysql2": "^3.11.0"
+    "mysql2": "^3.11.0",
+    "nodemailer": "^6.9.3"
   },
   "devDependencies": {
     "playwright": "^1.61.1"
