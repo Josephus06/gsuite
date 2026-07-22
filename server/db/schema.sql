@@ -1070,6 +1070,34 @@ CREATE TABLE job_order_processes (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Standalone Sales > Non-Standard Job Orders. These do not originate from an
+-- Estimate/Sales Order, but use the same customer, routing, and materials concepts.
+CREATE TABLE non_standard_job_orders (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    nstdjo_no VARCHAR(50) UNIQUE NOT NULL,
+    customer_id BIGINT NOT NULL REFERENCES customers(id),
+    contact_person_id BIGINT NULL REFERENCES customer_contacts(id),
+    contact_email VARCHAR(255), contact_title VARCHAR(100), contact_phone VARCHAR(100),
+    memo VARCHAR(1000), date_created DATE NOT NULL,
+    job_location_id BIGINT NULL REFERENCES locations(id),
+    job_type VARCHAR(100) NOT NULL,
+    site_inspection_subtype VARCHAR(100) NULL,
+    pms_job_type_id BIGINT NULL REFERENCES pms_job_types(id),
+    description VARCHAR(500) NOT NULL, quantity DECIMAL(14,4) NOT NULL,
+    shipping_address VARCHAR(500), delivery_date DATE NOT NULL, delivery_time TIME,
+    sales_rep_id BIGINT NULL REFERENCES employees(id), sales_division_id BIGINT NULL REFERENCES departments(id),
+    status VARCHAR(50) NOT NULL DEFAULT 'saved', forwarded_at DATETIME NULL,
+    created_by_user_id BIGINT NULL REFERENCES users(id), created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NULL
+);
+
+CREATE TABLE non_standard_job_order_materials (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT, non_standard_job_order_id BIGINT NOT NULL REFERENCES non_standard_job_orders(id),
+    line_no INT NOT NULL, process_id BIGINT NULL REFERENCES processes(id), category VARCHAR(100), parts VARCHAR(150),
+    item_id BIGINT NULL REFERENCES inventories(id), artist_remarks VARCHAR(500), length DECIMAL(10,2), width DECIMAL(10,2),
+    uom VARCHAR(30), qty DECIMAL(14,4), total DECIMAL(14,4), unit VARCHAR(30), sales_remarks VARCHAR(500), created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_nstdjo_material_line (non_standard_job_order_id, line_no)
+);
+
 ALTER TABLE sales_order_lines
     ADD COLUMN job_order_id BIGINT NULL REFERENCES job_orders(id),
     ADD COLUMN estimate_job_order_id BIGINT NULL REFERENCES estimate_job_orders(id);
@@ -1981,6 +2009,7 @@ CREATE TABLE tickets (
     created_by_user_id BIGINT NOT NULL REFERENCES users(id),
     assigned_to_user_id BIGINT NULL REFERENCES users(id),
     assigned_by_user_id BIGINT NULL REFERENCES users(id),
+    assigned_at DATETIME NULL,
     resolved_by_user_id BIGINT NULL REFERENCES users(id),
     resolved_at DATETIME NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

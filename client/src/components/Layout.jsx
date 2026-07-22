@@ -50,6 +50,7 @@ const NAV_STRUCTURE = [
     children: [
       { route: '/estimates', label: 'Estimates' },
       { route: '/sales-orders', label: 'Sales Orders' },
+      { route: '/non-standard-job-orders', label: 'NSTDJO' },
       { route: '/job-orders', label: 'Job Orders' },
     ],
   },

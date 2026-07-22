@@ -164,7 +164,7 @@ export default function Dashboard() {
       <div className="holo-header">
         <div>
           <h1>{user?.display_name}</h1>
-          <div className="holo-sub">Here's what's happening across your pipeline today.</div>
+          <div className="holo-sub">Good Day Graphicstarian </div>
         </div>
         <span className="holo-role-badge">{ROLE_LABELS[data.role] || data.role}</span>
       </div>

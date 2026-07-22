@@ -227,8 +227,8 @@ router.put('/:id/assign', requireAuth, async (req, res, next) => {
       return res.status(409).json({ error: 'This ticket was forwarded to the General Manager and cannot be assigned until approved.' });
     }
     await pool.query(
-      "UPDATE tickets SET assigned_to_user_id = ?, assigned_by_user_id = ?, status = IF(status = 'open', 'in_progress', status), updated_at = NOW() WHERE id = ?",
-      [assignedToUserId || null, req.user.id, req.params.id]
+      "UPDATE tickets SET assigned_to_user_id = ?, assigned_by_user_id = ?, assigned_at = CASE WHEN ? IS NOT NULL THEN NOW() ELSE NULL END, status = IF(status = 'open', 'in_progress', status), updated_at = NOW() WHERE id = ?",
+      [assignedToUserId || null, req.user.id, assignedToUserId || null, req.params.id]
     );
     const [[row]] = await pool.query('SELECT * FROM tickets WHERE id = ?', [req.params.id]);
     res.json(row);

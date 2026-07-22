@@ -79,6 +79,7 @@ import TrialBalance from './pages/reports/TrialBalance';
 import IncomeStatement from './pages/reports/IncomeStatement';
 import BalanceSheet from './pages/reports/BalanceSheet';
 import GeneralLedger from './pages/reports/GeneralLedger';
+import TicketSummary from './pages/reports/TicketSummary';
 import Lookups from './pages/Lookups';
 import ProcessCosting from './pages/ProcessCosting';
 import MaterialCosting from './pages/MaterialCosting';
@@ -89,6 +90,7 @@ import AssemblyBuilds from './pages/AssemblyBuilds';
 import AssemblyBuildView from './pages/AssemblyBuildView';
 import Tickets from './pages/Tickets';
 import TicketView from './pages/TicketView';
+import NonStandardJobOrders from './pages/NonStandardJobOrders';
 
 function App() {
   return (
@@ -126,6 +128,7 @@ function App() {
         <Route path="/estimates/:id/print" element={<EstimatePrint />} />
         <Route path="/sales-orders" element={<SalesOrders />} />
         <Route path="/sales-orders/:id" element={<SalesOrderView />} />
+        <Route path="/non-standard-job-orders" element={<NonStandardJobOrders />} />
         <Route path="/job-orders" element={<JobOrders />} />
         <Route path="/job-orders/:id" element={<JobOrderView />} />
         <Route path="/job-orders/:id/edit" element={<JobOrderEdit />} />
@@ -193,6 +196,7 @@ function App() {
         <Route path="/reports/income-statement" element={<IncomeStatement />} />
         <Route path="/reports/balance-sheet" element={<BalanceSheet />} />
         <Route path="/reports/general-ledger" element={<GeneralLedger />} />
+        <Route path="/reports/ticket-summary" element={<TicketSummary />} />
         <Route path="/lookups" element={<Lookups />} />
         <Route path="/process-costing" element={<ProcessCosting />} />
         <Route path="/material-costing" element={<MaterialCosting />} />

@@ -44,7 +44,10 @@ const crmPipelineRoutes = require('./routes/crmPipeline');
 const crmActivityRoutes = require('./routes/crmActivities');
 const chatbotRoutes = require('./routes/chatbot');
 const ticketRoutes = require('./routes/tickets');
+const ticketReportRoutes = require('./routes/ticketReport');
 const notificationRoutes = require('./routes/notifications');
+const nonStandardJobOrderRoutes = require('./routes/nonStandardJobOrders');
+const { ensureAssignedAtColumn } = require('./db/ensureSchema');
 
 const app = express();
 
@@ -92,8 +95,11 @@ app.use('/api/leads', leadRoutes);
 app.use('/api/crm-pipeline', crmPipelineRoutes);
 app.use('/api/crm-activities', crmActivityRoutes);
 app.use('/api/chatbot', chatbotRoutes);
+app.use('/api/reports/tickets', ticketReportRoutes);
+app.use('/api/tickets/report', ticketReportRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/non-standard-job-orders', nonStandardJobOrderRoutes);
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
@@ -113,4 +119,15 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`GSUITE ERP API listening on http://localhost:${PORT}`));
+
+async function startServer() {
+  try {
+    await ensureAssignedAtColumn();
+    app.listen(PORT, () => console.log(`GSUITE ERP API listening on http://localhost:${PORT}`));
+  } catch (error) {
+    console.error('Failed to ensure database schema:', error);
+    process.exit(1);
+  }
+}
+
+startServer();

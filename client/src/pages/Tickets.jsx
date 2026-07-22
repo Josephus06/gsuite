@@ -146,6 +146,32 @@ export default function Tickets() {
     { key: 'created_at', label: 'Created', render: (r) => formatDate(r.created_at) },
   ];
 
+  async function handleDownloadReport() {
+    try {
+      const res = await api.get('/reports/tickets?format=csv', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'ticket-report.csv';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to download report');
+    }
+  }
+
+  async function handleShowSummary() {
+    try {
+      const res = await api.get('/reports/tickets');
+      const { summary } = res.data;
+      alert(`Total tickets: ${summary.total}\nResolved: ${summary.resolved}\nUnresolved: ${summary.unresolved}`);
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to fetch summary');
+    }
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -157,6 +183,8 @@ export default function Tickets() {
         {Object.entries(STATUS_LABELS).map(([key, label]) => (
           <button key={key} className={`status-tab ${status === key ? 'active' : ''}`} onClick={() => setStatus(key)}>{label}</button>
         ))}
+        <button className="status-tab" onClick={() => navigate('/reports/ticket-summary')}>Ticket Summary</button>
+        <button className="status-tab" onClick={handleDownloadReport}>Download CSV</button>
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>

@@ -77,7 +77,7 @@ export default function Login() {
         </div>
         <div className="login-photo-caption">
           <div className="login-photo-caption-main">CEBU GRAPHICSTAR IMAGING CORP</div>
-          <div className="login-photo-caption-sub">Your No.1 Printing Solution Provider</div>
+          <div className="login-photo-caption-sub">Your No.1 Printing Solution Provider tetel </div>
         </div>
       </div>
 
