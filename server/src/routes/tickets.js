@@ -231,6 +231,15 @@ router.put('/:id/assign', requireAuth, async (req, res, next) => {
       "UPDATE tickets SET assigned_to_user_id = ?, assigned_by_user_id = ?, assigned_at = CASE WHEN ? IS NOT NULL THEN NOW() ELSE NULL END, status = IF(status = 'open', 'in_progress', status), updated_at = NOW() WHERE id = ?",
       [assignedToUserId || null, req.user.id, assignedToUserId || null, req.params.id]
     );
+
+    if (assignedToUserId) {
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
+         VALUES (?, 'ticket_assigned', ?, ?, 'Ticket', ?)`,
+        [assignedToUserId, `${ticket.ticket_no} assigned to you`, `You have been assigned ticket ${ticket.ticket_no}.`, req.params.id]
+      );
+    }
+
     const [[row]] = await pool.query('SELECT * FROM tickets WHERE id = ?', [req.params.id]);
     res.json(row);
   } catch (err) {
@@ -245,7 +254,7 @@ router.put('/:id/assign', requireAuth, async (req, res, next) => {
 router.put('/:id/approve', requireAuth, async (req, res, next) => {
   try {
     const [[ticket]] = await pool.query(
-      'SELECT approved_at, ticket_no, department_id FROM tickets WHERE id = ?',
+      'SELECT approved_at, ticket_no, department_id, created_by_user_id FROM tickets WHERE id = ?',
       [req.params.id]
     );
     if (!ticket) return res.status(404).json({ error: 'Not found' });
@@ -272,6 +281,12 @@ router.put('/:id/approve', requireAuth, async (req, res, next) => {
         [dept.head_user_id, `${ticket.ticket_no} is approved and ready to work on`, 'Approval cleared -- this ticket can now be assigned.', req.params.id]
       );
     }
+
+    await pool.query(
+      `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
+       VALUES (?, 'ticket_approved', ?, ?, 'Ticket', ?)`,
+      [ticket.created_by_user_id, `${ticket.ticket_no} has been approved`, `Your ticket ${ticket.ticket_no} has been approved.`, req.params.id]
+    );
 
     const [[row]] = await pool.query('SELECT * FROM tickets WHERE id = ?', [req.params.id]);
     res.json(row);

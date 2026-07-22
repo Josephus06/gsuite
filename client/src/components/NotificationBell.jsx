@@ -9,6 +9,20 @@ function formatTime(v) {
   return v ? new Date(v).toLocaleString('en-US', { month: 'short', day: '2-digit', hour: 'numeric', minute: '2-digit' }) : '';
 }
 
+function notificationTypeLabel(type) {
+  switch (type) {
+    case 'ticket_pending_approval': return 'Pending Approval';
+    case 'ticket_ready': return 'Ticket Ready';
+    case 'ticket_assigned': return 'Assigned';
+    case 'ticket_approved': return 'Approved';
+    case 'ticket_resolved': return 'Resolved';
+    case 'gm_approval_needed': return 'GM Approval';
+    default:
+      if (!type) return '';
+      return type.replace(/_/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase());
+  }
+}
+
 // Bell + unread badge in the topnav, plus a toast popup for anything that arrives
 // after mount -- polled every 5s (same setInterval pattern as ChatWidget's ticket
 // thread) plus an immediate extra poll whenever the tab regains focus/visibility, so
@@ -150,7 +164,10 @@ export default function NotificationBell() {
                   background: n.is_read ? 'transparent' : 'var(--panel-2, #f3f4f6)',
                 }}
               >
-                <div style={{ fontSize: 13, fontWeight: n.is_read ? 400 : 600 }}>{n.title}</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                  <div style={{ fontSize: 13, fontWeight: n.is_read ? 400 : 600 }}>{n.title}</div>
+                  <div className="muted" style={{ fontSize: 11 }}>{notificationTypeLabel(n.type)}</div>
+                </div>
                 {n.message && <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{n.message}</div>}
                 <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{formatTime(n.created_at)}</div>
               </div>
@@ -168,7 +185,10 @@ export default function NotificationBell() {
             style={{ width: 300, padding: 12, cursor: 'pointer', boxShadow: '0 8px 30px rgba(0,0,0,0.3)', borderLeft: '3px solid var(--accent)' }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-              <strong style={{ fontSize: 13 }}>{t.title}</strong>
+              <div>
+                <strong style={{ fontSize: 13 }}>{t.title}</strong>
+                <div className="muted" style={{ fontSize: 11 }}>{notificationTypeLabel(t.type)}</div>
+              </div>
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); dismissToast(t.id); }}
