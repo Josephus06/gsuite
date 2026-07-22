@@ -19,7 +19,7 @@ function formatDateTime(v) {
 export default function TicketView() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const [ticket, setTicket] = useState(null);
   const [departments, setDepartments] = useState([]);
   const [users, setUsers] = useState([]);
@@ -126,10 +126,21 @@ export default function TicketView() {
     }
   }
 
+  async function handleDelete() {
+    if (!confirm(`Delete ticket ${ticket.ticket_no}? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/tickets/${id}`);
+      navigate('/tickets');
+    } catch (err) {
+      alert(err.response?.data?.error || 'Delete failed');
+    }
+  }
+
   if (loading) return <LoadingSpinner />;
   if (notFound || !ticket) return <div className="empty-state">Ticket not found.</div>;
 
   const isAssignee = ticket.assigned_to_user_id === user?.id;
+  const canDelete = can('/tickets', 'can_delete');
   const canAct = canManage || isAssignee;
   const isClosedOut = ticket.status === 'resolved' || ticket.status === 'closed';
   const isPending = !!ticket.approver_names && !ticket.approved_at;
@@ -196,6 +207,12 @@ export default function TicketView() {
               searchKeys={['display_name', 'username']}
               onSelect={handleAssign}
             />
+          </div>
+        )}
+
+        {canDelete && (
+          <div className="modal-actions" style={{ justifyContent: 'flex-start', marginTop: 12 }}>
+            <button className="btn btn-sm btn-danger" onClick={handleDelete}>Delete Ticket</button>
           </div>
         )}
 

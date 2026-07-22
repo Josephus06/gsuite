@@ -1,9 +1,10 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requirePermission } = require('../middleware/auth');
 const { ticketVisibilityClause, canManageTicket, isGeneralManager } = require('../lib/ticketVisibility');
 
 const router = express.Router();
+const ROUTE = '/tickets';
 const STATUSES = ['open', 'in_progress', 'resolved', 'closed'];
 
 // Every authenticated user needs to be able to list departments to route a ticket or
@@ -390,6 +391,35 @@ router.put('/:id/status', requireAuth, async (req, res, next) => {
     res.json(row);
   } catch (err) {
     next(err);
+  }
+});
+
+router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [[ticket]] = await conn.query('SELECT department_id FROM tickets WHERE id = ?', [req.params.id]);
+    if (!ticket) {
+      await conn.rollback();
+      return res.status(404).json({ error: 'Not found' });
+    }
+
+    await conn.query('DELETE FROM ticket_messages WHERE ticket_id = ?', [req.params.id]);
+    await conn.query('DELETE FROM ticket_approvers WHERE ticket_id = ?', [req.params.id]);
+    await conn.query('DELETE FROM notifications WHERE related_type = ? AND related_id = ?', ['Ticket', req.params.id]);
+    await conn.query('DELETE FROM tickets WHERE id = ?', [req.params.id]);
+
+    await conn.commit();
+    res.status(204).send();
+  } catch (err) {
+    await conn.rollback();
+    if (err.code === 'ER_ROW_IS_REFERENCED_2') {
+      return res.status(409).json({ error: 'This ticket cannot be deleted because it is referenced by other data.' });
+    }
+    next(err);
+  } finally {
+    conn.release();
   }
 });
 

@@ -11,8 +11,9 @@ const PAGES = [
   { name: 'Inventory Items', route: '/inventory', icon: 'box', sort_order: 6 },
   { name: 'Estimates', route: '/estimates', icon: 'file-text', sort_order: 7 },
   { name: 'Sales Orders', route: '/sales-orders', icon: 'shopping-cart', sort_order: 8 },
-  { name: 'NSTDJO', route: '/non-standard-job-orders', icon: 'file-text', sort_order: 8 },
-  { name: 'Process Costing', route: '/process-costing', icon: 'calculator', sort_order: 9 },
+  { name: 'Tickets', route: '/tickets', icon: 'ticket', sort_order: 9 },
+  { name: 'NSTDJO', route: '/non-standard-job-orders', icon: 'file-text', sort_order: 10 },
+  { name: 'Process Costing', route: '/process-costing', icon: 'calculator', sort_order: 11 },
   { name: 'Lookups', route: '/lookups', icon: 'settings', sort_order: 10 },
 ];
 
