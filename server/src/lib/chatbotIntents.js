@@ -11,8 +11,18 @@ function extractJobOrderForArtistLookup(message) {
 }
 
 function extractSupervisorLookupName(message) {
-  const match = String(message).match(/\b(?:who\s+is|who's|what\s+is)\s+(.+?)\s*(?:'s)?\s+supervisor\b/i);
-  return match ? match[1].trim() : null;
+  const text = String(message);
+  const patterns = [
+    /\b(?:who\s+is|who's|what\s+is)\s+the\s+supervisor\s+of\s+(.+?)\b/i,
+    /\b(?:supervisor\s+of|supervisor\s+for)\s+(.+?)\b/i,
+    /\b(?:who\s+is|who's|what\s+is)\s+(.+?)\s*(?:'s)?\s+supervisor\b/i,
+  ];
+
+  for (const re of patterns) {
+    const match = text.match(re);
+    if (match) return match[1].trim();
+  }
+  return null;
 }
 
 async function isSystemAdmin(userId) {
