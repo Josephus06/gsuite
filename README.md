@@ -84,6 +84,19 @@ npm run dev            # http://localhost:5173 (proxies /api to :4000)
 
 Open http://localhost:5173 and log in with the seeded admin account.
 
+## Daily ticket reminder emails
+
+The backend now schedules the unresolved ticket reminder job automatically on startup once per day at the local server time configured by `TICKET_REMINDER_HOUR` and `TICKET_REMINDER_MINUTE`.
+
+This job only runs on its daily schedule (or when invoked manually with `npm run send:ticket-reminders`). Backdated tickets are included the next time the reminder job runs for the date they were backdated to.
+
+If you need to run it manually:
+
+```bash
+cd server
+npm run send:ticket-reminders
+```
+
 ## How RBAC works
 
 - `pages` holds the navigable sections of the app (Dashboard, Employees, Users, ...).

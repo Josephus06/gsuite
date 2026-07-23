@@ -67,8 +67,10 @@ export default function AssignedJobOrders() {
                 {rows.length === 0 && (
                   <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>No Job Orders assigned to you right now.</td></tr>
                 )}
+                {/* Job Orders and Non-Standard Job Orders have independent id sequences,
+                    so the key has to include the kind or the two can collide. */}
                 {pageRows.map((row) => (
-                  <tr key={row.id}>
+                  <tr key={`${row.kind}-${row.id}`}>
                     <td>{row.job_order_no}</td>
                     <td>{row.customer_name}</td>
                     <td>{row.description}</td>
@@ -78,7 +80,7 @@ export default function AssignedJobOrders() {
                     <td>{formatDateTime(row.planned_start_at)}</td>
                     <td>{formatDateTime(row.planned_end_at)}</td>
                     <td>{timerStatus(row)}</td>
-                    <td><button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(`/assigned-jo/${row.id}`)}>Open</button></td>
+                    <td><button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(row.kind === 'NSTDJO' ? `/assigned-jo/nstdjo/${row.id}` : `/assigned-jo/${row.id}`)}>Open</button></td>
                   </tr>
                 ))}
               </tbody>

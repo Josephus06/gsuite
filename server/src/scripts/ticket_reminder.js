@@ -10,10 +10,9 @@ const SMTP_PASS = process.env.SMTP_PASS;
 const FROM_EMAIL = process.env.FROM_EMAIL || (SMTP_USER || 'no-reply@example.com');
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
 
-async function main() {
+async function sendTicketReminders() {
   if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
-    console.error('SMTP configuration missing. Set SMTP_HOST, SMTP_USER and SMTP_PASS in env.');
-    process.exit(1);
+    throw new Error('SMTP configuration missing. Set SMTP_HOST, SMTP_USER and SMTP_PASS in env.');
   }
 
   const transporter = nodemailer.createTransport({
@@ -23,7 +22,6 @@ async function main() {
     auth: { user: SMTP_USER, pass: SMTP_PASS },
   });
 
-  // Find tickets created yesterday that are not resolved/closed
   const [rows] = await pool.query(
     `SELECT t.id, t.ticket_no, t.subject, t.created_at, t.created_by_user_id,
             u.display_name AS created_by_name,
@@ -39,15 +37,20 @@ async function main() {
 
   if (!rows.length) {
     console.log('No pending tickets from yesterday.');
-    await pool.end();
     return;
   }
 
-  // Group by department
   const byDept = {};
   for (const r of rows) {
     const did = r.department_id || 'none';
-    if (!byDept[did]) byDept[did] = { dept: r.department_name, head: { id: r.head_user_id, email: r.head_email, name: r.head_name }, tickets: [] };
+    if (!byDept[did]) {
+      byDept[did] = {
+        dept: r.department_name,
+        deptId: r.department_id,
+        head: { id: r.head_user_id, email: r.head_email, name: r.head_name },
+        tickets: [],
+      };
+    }
     byDept[did].tickets.push(r);
   }
 
@@ -81,12 +84,31 @@ async function main() {
     } catch (err) {
       console.error('Failed to send email to', headEmail, err);
     }
-  }
 
+    if (group.head.id) {
+      try {
+        await pool.query(
+          `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
+           VALUES (?, 'ticket_unresolved_reminder', ?, ?, 'Department', ?)`,
+          [group.head.id, subject, text, group.deptId]
+        );
+      } catch (err) {
+        console.error('Failed to create in-app reminder notification for', group.head.id, err);
+      }
+    }
+  }
+}
+
+async function main() {
+  await sendTicketReminders();
   await pool.end();
 }
 
-main().catch((err) => {
-  console.error('Reminder job failed:', err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('Reminder job failed:', err);
+    process.exit(1);
+  });
+}
+
+module.exports = { sendTicketReminders };

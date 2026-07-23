@@ -22,9 +22,13 @@ function formatDateTime(v) {
   return v ? new Date(v).toLocaleString() : '—';
 }
 
-export default function AssignedJobOrderRun() {
+// `kind` comes from the route, not the payload -- the run screen has to know which set of
+// timer endpoints to drive before it has fetched anything. Non-Standard Job Orders are
+// layout work like any other, so they share this whole screen.
+export default function AssignedJobOrderRun({ kind = 'JO' }) {
   const { id } = useParams();
   const navigate = useNavigate();
+  const basePath = kind === 'NSTDJO' ? `/assigned-jo/nstdjo/${id}` : `/assigned-jo/${id}`;
   const [jo, setJo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -32,10 +36,10 @@ export default function AssignedJobOrderRun() {
   const [now, setNow] = useState(Date.now());
 
   function load() {
-    return api.get(`/assigned-jo/${id}`).then(({ data }) => { setJo(data); setLoading(false); });
+    return api.get(basePath).then(({ data }) => { setJo(data); setLoading(false); });
   }
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { load(); }, [id, kind]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openSession = jo?.sessions?.find((s) => !s.ended_at) || null;
   const isRunning = !!openSession;
@@ -50,10 +54,25 @@ export default function AssignedJobOrderRun() {
     setBusy(true);
     setError('');
     try {
-      await api.put(`/assigned-jo/${id}/${action}`);
+      await api.put(`${basePath}/${action}`);
       await load();
     } catch (err) {
       setError(err.response?.data?.error || 'Action failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Lives on the NSTDJO route rather than /assigned-jo -- that endpoint accepts the
+  // assigned artist directly, so it works without granting them rights on that page.
+  async function sendForSalesApproval() {
+    setBusy(true);
+    setError('');
+    try {
+      await api.put(`/non-standard-job-orders/${id}/sales-approval`);
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not send this for Sales Approval.');
     } finally {
       setBusy(false);
     }
@@ -152,6 +171,20 @@ export default function AssignedJobOrderRun() {
           )}
           {isCompleted && <span className="badge badge-success">Completed</span>}
         </div>
+        {/* Once a Non-Standard Job Order's layout is done, the artist hands it to Sales
+            from here -- they work in this screen and may not have rights on the NSTDJO
+            page itself. Job Orders keep offering this from the Job Order view instead. */}
+        {jo.kind === 'NSTDJO' && isCompleted && jo.sub_status === 'For Artist' && (
+          <div style={{ marginTop: 16 }}>
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={sendForSalesApproval}>
+              Sales Approval
+            </button>
+            <div className="muted" style={{ marginTop: 6 }}>Sends this layout to Sales for sign-off.</div>
+          </div>
+        )}
+        {jo.kind === 'NSTDJO' && jo.sub_status === 'Sales Approval' && (
+          <div className="muted" style={{ marginTop: 16 }}>Sent to Sales — awaiting their approval.</div>
+        )}
       </div>
 
       <div className="card" style={{ marginTop: 20 }}>

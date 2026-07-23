@@ -29,6 +29,7 @@ import PmsJobTypes from './pages/PmsJobTypes';
 import JobTypes from './pages/JobTypes';
 import JobTypeEdit from './pages/JobTypeEdit';
 import AssignedJobOrders from './pages/AssignedJobOrders';
+import ArtistIncentiveReport from './pages/reports/ArtistIncentiveReport';
 import AssignedJobOrderRun from './pages/AssignedJobOrderRun';
 import Production from './pages/Production';
 import ProductionJobOrderView from './pages/ProductionJobOrderView';
@@ -91,6 +92,7 @@ import AssemblyBuildView from './pages/AssemblyBuildView';
 import Tickets from './pages/Tickets';
 import TicketView from './pages/TicketView';
 import NonStandardJobOrders from './pages/NonStandardJobOrders';
+import NonStandardJobOrderView from './pages/NonStandardJobOrderView';
 
 function App() {
   return (
@@ -129,6 +131,7 @@ function App() {
         <Route path="/sales-orders" element={<SalesOrders />} />
         <Route path="/sales-orders/:id" element={<SalesOrderView />} />
         <Route path="/non-standard-job-orders" element={<NonStandardJobOrders />} />
+        <Route path="/non-standard-job-orders/:id" element={<NonStandardJobOrderView />} />
         <Route path="/job-orders" element={<JobOrders />} />
         <Route path="/job-orders/:id" element={<JobOrderView />} />
         <Route path="/job-orders/:id/edit" element={<JobOrderEdit />} />
@@ -137,6 +140,10 @@ function App() {
         <Route path="/job-types/new" element={<JobTypeEdit />} />
         <Route path="/job-types/:id/edit" element={<JobTypeEdit />} />
         <Route path="/assigned-jo" element={<AssignedJobOrders />} />
+        <Route path="/reports/artist-incentive" element={<ArtistIncentiveReport />} />
+        {/* Same run screen for both; the route supplies which timer endpoints to use.
+            Declared before the :id route so "nstdjo" isn't matched as an id. */}
+        <Route path="/assigned-jo/nstdjo/:id" element={<AssignedJobOrderRun kind="NSTDJO" />} />
         <Route path="/assigned-jo/:id" element={<AssignedJobOrderRun />} />
         <Route path="/production" element={<Production />} />
         <Route path="/production/:id" element={<ProductionJobOrderView />} />

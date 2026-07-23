@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } = require('../lib/designSupervisorVisibility');
+const { getArtistEmployeeScope } = require('../lib/artistVisibility');
 
 const router = express.Router();
 const ROUTE = '/job-orders';
@@ -60,6 +61,15 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     if (await isScopedToDesignQueue(req.user.id)) {
       where.push('jo.status = ? AND jo.sub_status IN (?)');
       params.push(DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES);
+    } else {
+      // An Artist sees only the Job Orders assigned to them. Without this they match no
+      // filter at all (they are neither an Account Officer nor a Supervisor) and see the
+      // entire list.
+      const artistEmployeeId = await getArtistEmployeeScope(req.user.id);
+      if (artistEmployeeId) {
+        where.push('jo.artist_id = ?');
+        params.push(artistEmployeeId);
+      }
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -135,6 +145,11 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // queue just by guessing/pasting its URL, even though the list already filters it.
     if (await isScopedToDesignQueue(req.user.id)) {
       if (jo.status !== DESIGN_QUEUE_STATUS || !DESIGN_QUEUE_SUB_STATUSES.includes(jo.sub_status)) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+    } else {
+      const artistEmployeeId = await getArtistEmployeeScope(req.user.id);
+      if (artistEmployeeId && String(jo.artist_id) !== String(artistEmployeeId)) {
         return res.status(404).json({ error: 'Not found' });
       }
     }

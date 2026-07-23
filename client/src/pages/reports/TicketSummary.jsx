@@ -92,8 +92,8 @@ export default function TicketSummary() {
           <div className="field">
             <label>Filter by created date</label>
             <select value={filterType} onChange={(e) => setFilterType(e.target.value)}>
-              <option value="as_of">As of created date</option>
-              <option value="period_from">Created date range</option>
+              <option value="as_of">As of </option>
+              <option value="period_from">Created </option>
             </select>
           </div>
           {filterType === 'period_from' && (
