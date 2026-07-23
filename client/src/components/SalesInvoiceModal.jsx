@@ -17,12 +17,16 @@ function addDays(dateStr, days) {
   return d.toISOString().slice(0, 10);
 }
 
-// Mirrors the real "Create SI" popup, reached from a Sales Order's Bill dropdown. Every
-// line is a straight copy of that sales_order_line's own already-computed billing
-// figures -- there's no per-line "amount to invoice" input on the real screen, just
-// Delete to exclude a line entirely, so this only ever bills a line's full remaining
-// (Delivered minus already-Invoiced) gap in one shot.
-export default function SalesInvoiceModal({ salesOrderId, onClose, onSaved }) {
+// Mirrors the real "Create SI" popup, reached two ways: from a Sales Order's Bill
+// dropdown, or from a Delivery Ticket's own Bill > SI (pass deliveryTicketId). Every line
+// is a straight copy of already-computed billing figures -- there's no per-line "amount
+// to invoice" input on the real screen, just Delete to exclude a line entirely.
+//
+// From a Sales Order it bills each line's remaining (Delivered minus already-Invoiced)
+// gap. From a Delivery Ticket it bills that ticket's own stored lines verbatim, ad-hoc
+// "Add Item" charges included, and converts the ticket -- so the lines are fixed and
+// Delete is hidden: you cannot half-convert a ticket.
+export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, onClose, onSaved }) {
   const [data, setData] = useState(null);
   const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
   const [dateDue, setDateDue] = useState('');
@@ -43,28 +47,41 @@ export default function SalesInvoiceModal({ salesOrderId, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  const fromTicket = Boolean(deliveryTicketId);
+
   useEffect(() => {
+    const source = fromTicket
+      ? `/sales-invoices/for-delivery-ticket/${deliveryTicketId}`
+      : `/sales-invoices/for-sales-order/${salesOrderId}`;
     Promise.all([
-      api.get(`/sales-invoices/for-sales-order/${salesOrderId}`),
+      api.get(source),
       api.get('/employees'),
       api.get('/lookups/locations'),
       api.get('/lookups/departments'),
-    ]).then(([soRes, empRes, locRes, deptRes]) => {
-      const d = soRes.data;
+    ]).then(([srcRes, empRes, locRes, deptRes]) => {
+      const d = srcRes.data;
       setData(d);
       setEmployees(empRes.data);
       setLocations(locRes.data);
       setDepartments(deptRes.data);
       setBillToAddress(d.shipping_address || '');
-      setTerm(d.credit_term || '');
+      // A ticket already carries its own Term/PO #/Memo, chosen when it was raised --
+      // carry them onto the invoice rather than falling back to the customer's default.
+      setTerm(d.term || d.credit_term || '');
+      setPoNo(d.po_no || '');
+      setMemo(d.memo || '');
       if (d.sales_rep_id) setSalesRep({ id: d.sales_rep_id, first_name: d.sales_rep_name?.split(' ')[0], last_name: d.sales_rep_name?.split(' ').slice(1).join(' ') });
       if (d.office_location_id) setOfficeLocation({ id: d.office_location_id, location_name: d.office_location_name });
+      if (d.department_id) setDepartment({ id: d.department_id, name: d.department_name });
       setDateDue(addDays(new Date().toISOString().slice(0, 10), 30));
       setLoading(false);
+    }).catch((err) => {
+      setError(err.response?.data?.error || 'Could not load this record.');
+      setLoading(false);
     });
-  }, [salesOrderId]);
+  }, [salesOrderId, deliveryTicketId, fromTicket]);
 
-  if (loading || !data) {
+  if (loading || (!data && !error)) {
     return (
       <div className="modal-overlay">
         <div className="modal modal-xl"><LoadingSpinner /></div>
@@ -72,7 +89,21 @@ export default function SalesInvoiceModal({ salesOrderId, onClose, onSaved }) {
     );
   }
 
-  const includedLines = data.lines.filter((l) => !excludedIds.has(l.sales_order_line_id));
+  if (!data) {
+    return (
+      <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+        <div className="modal modal-xl">
+          <div className="error-banner">{error}</div>
+          <div className="modal-actions"><button type="button" className="btn" onClick={onClose}>Close</button></div>
+        </div>
+      </div>
+    );
+  }
+
+  // A ticket-sourced line may be an ad-hoc charge with no sales_order_line_id at all, so
+  // it needs its own key; SO-sourced lines keep using theirs.
+  const lineKey = (l, idx) => l.delivery_ticket_line_id ?? l.sales_order_line_id ?? idx;
+  const includedLines = data.lines.filter((l, idx) => !excludedIds.has(lineKey(l, idx)));
   const subtotal = includedLines.reduce((s, l) => s + Number(l.subtotal || 0), 0);
   const discountAmount = includedLines.reduce((s, l) => s + Number(l.disc_amount || 0), 0);
   const netOfTax = includedLines.reduce((s, l) => s + Number(l.net_of_tax || 0), 0);
@@ -87,7 +118,12 @@ export default function SalesInvoiceModal({ salesOrderId, onClose, onSaved }) {
     setSaving(true);
     try {
       const { data: si } = await api.post('/sales-invoices', {
-        sales_order_id: salesOrderId,
+        // Billing a ticket sends its id and nothing about lines -- the server bills the
+        // ticket in full, which is what converting it means.
+        ...(fromTicket
+          ? { delivery_ticket_id: deliveryTicketId, sales_order_id: data.sales_order_id }
+          : { sales_order_line_ids: includedLines.map((l) => l.sales_order_line_id) }),
+        sales_order_id: fromTicket ? data.sales_order_id : salesOrderId,
         date_created: dateCreated,
         date_due: dateDue,
         term,
@@ -99,7 +135,6 @@ export default function SalesInvoiceModal({ salesOrderId, onClose, onSaved }) {
         bill_to_address: billToAddress,
         memo,
         withholding_tax_pct: withholdingPct,
-        sales_order_line_ids: includedLines.map((l) => l.sales_order_line_id),
       });
       onSaved(si);
     } catch (err) {
@@ -113,7 +148,7 @@ export default function SalesInvoiceModal({ salesOrderId, onClose, onSaved }) {
     <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal modal-xl" style={{ padding: 0, overflow: 'hidden' }}>
         <div className="estimate-banner" style={{ borderRadius: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <h2 style={{ margin: 0, color: '#fff' }}>Create SI</h2>
+          <h2 style={{ margin: 0, color: '#fff' }}>{fromTicket ? `Create SI from ${data.dt_no}` : 'Create SI'}</h2>
           <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 24, lineHeight: 1, cursor: 'pointer' }}>×</button>
         </div>
 
@@ -125,7 +160,7 @@ export default function SalesInvoiceModal({ salesOrderId, onClose, onSaved }) {
               <div className="field"><label>Date</label><input type="date" value={dateCreated} onChange={(e) => setDateCreated(e.target.value)} /></div>
               <div className="field"><label>Date Due</label><input type="date" value={dateDue} onChange={(e) => setDateDue(e.target.value)} /></div>
               <div>Customer : <span className="hi">{data.customer_name}</span></div>
-              <div>Created Form : <span className="hi">{data.sales_order_no}</span></div>
+              <div>Created Form : <span className="hi">{fromTicket ? `${data.dt_no} (${data.sales_order_no})` : data.sales_order_no}</span></div>
               <div className="field">
                 <label>Sales Rep</label>
                 <EntityPicker
@@ -196,11 +231,12 @@ export default function SalesInvoiceModal({ salesOrderId, onClose, onSaved }) {
                   <tr><td colSpan={17} className="muted" style={{ textAlign: 'center', padding: 20 }}>Nothing left to invoice.</td></tr>
                 )}
                 {data.lines.map((l, idx) => {
-                  const excluded = excludedIds.has(l.sales_order_line_id);
+                  const key = lineKey(l, idx);
+                  const excluded = excludedIds.has(key);
                   return (
-                    <tr key={l.sales_order_line_id} style={excluded ? { opacity: 0.4, textDecoration: 'line-through' } : undefined}>
+                    <tr key={key} style={excluded ? { opacity: 0.4, textDecoration: 'line-through' } : undefined}>
                       <td>{idx + 1}</td>
-                      <td>{l.job_order_no}</td>
+                      <td>{l.job_order_no || '—'}</td>
                       <td>{l.item_name}</td>
                       <td>{l.description}</td>
                       <td>{l.job_location_name}</td>
@@ -216,16 +252,20 @@ export default function SalesInvoiceModal({ salesOrderId, onClose, onSaved }) {
                       <td>{money(l.tax_amount)}</td>
                       <td>{money(l.gross_amount)}</td>
                       <td>
-                        <button
-                          type="button" className="btn btn-sm"
-                          onClick={() => setExcludedIds((prev) => {
-                            const next = new Set(prev);
-                            if (excluded) next.delete(l.sales_order_line_id); else next.add(l.sales_order_line_id);
-                            return next;
-                          })}
-                        >
-                          {excluded ? 'Undo' : 'Delete'}
-                        </button>
+                        {/* Converting a ticket bills it whole -- there is no partial
+                            conversion, so excluding a line isn't offered here. */}
+                        {!fromTicket && (
+                          <button
+                            type="button" className="btn btn-sm"
+                            onClick={() => setExcludedIds((prev) => {
+                              const next = new Set(prev);
+                              if (excluded) next.delete(key); else next.add(key);
+                              return next;
+                            })}
+                          >
+                            {excluded ? 'Undo' : 'Delete'}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );

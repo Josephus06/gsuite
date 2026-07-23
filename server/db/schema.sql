@@ -1080,6 +1080,10 @@ CREATE TABLE non_standard_job_orders (
     contact_email VARCHAR(255), contact_title VARCHAR(100), contact_phone VARCHAR(100),
     memo VARCHAR(1000), date_created DATE NOT NULL,
     job_location_id BIGINT NULL REFERENCES locations(id),
+    -- job_type_id is the real link to the master list; job_type keeps the display name as
+    -- it stood when the order was raised, so renaming a job type later cannot restate
+    -- what an existing order was for.
+    job_type_id BIGINT NULL REFERENCES job_types(id),
     job_type VARCHAR(100) NOT NULL,
     site_inspection_subtype VARCHAR(100) NULL,
     pms_job_type_id BIGINT NULL REFERENCES pms_job_types(id),
@@ -2131,3 +2135,197 @@ ALTER TABLE tickets
     ADD COLUMN forwarded_by_user_id BIGINT NULL REFERENCES users(id),
     ADD COLUMN gm_approved_at DATETIME NULL,
     ADD COLUMN gm_approved_by_user_id BIGINT NULL REFERENCES users(id);
+
+-- =====================================================================
+-- Delivery Ticket (Sales Order > Bill > DT)
+-- =====================================================================
+-- A Delivery Ticket is its own transaction type, not a flavour of Sales Invoice: the
+-- real system numbers it DT-#### (its own sequence, not INV-#), gives it its own detail
+-- screen with Edit/Print/Credit Memo/Bill/Void, and posts it against "Accounts
+-- Receivable Trade - Unbilled" (12101) rather than AR Trade (12100). That last detail is
+-- the whole point of the document -- it recognises the receivable and the sale at the
+-- moment goods leave, while the DT itself is still *unbilled*; its own Bill button is
+-- what later turns it into an actual invoice and moves 12101 to 12100.
+--
+-- Unlike sales_invoice_lines, a line here does NOT have to come from a sales_order_line
+-- -- the real create form has an "Add Item" button, so ad-hoc lines (delivery fees,
+-- mobilisation charges) can be billed on the ticket alongside the order's own lines.
+-- sales_order_line_id/job_order_id are therefore both nullable.
+CREATE TABLE delivery_tickets (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    dt_no VARCHAR(30) UNIQUE NOT NULL,
+    sales_order_id BIGINT NOT NULL REFERENCES sales_orders(id),
+    date_created DATE NOT NULL,
+    date_due DATE NULL,
+    term VARCHAR(60),
+    po_no VARCHAR(60),
+    sales_rep_id BIGINT NULL REFERENCES employees(id),
+    office_location_id BIGINT NULL REFERENCES locations(id),
+    department_id BIGINT NULL REFERENCES departments(id),
+    memo VARCHAR(500),
+    subtotal DECIMAL(14,2) DEFAULT 0,
+    discount_amount DECIMAL(14,2) DEFAULT 0,
+    net_of_tax DECIMAL(14,2) DEFAULT 0,
+    tax_amount DECIMAL(14,2) DEFAULT 0,
+    gross_amount DECIMAL(14,2) DEFAULT 0,
+    amount_due DECIMAL(14,2) DEFAULT 0,
+    status VARCHAR(30) DEFAULT 'open',
+    created_by_user_id BIGINT NULL REFERENCES users(id),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    voided_by_user_id BIGINT NULL REFERENCES users(id),
+    voided_at DATETIME NULL
+);
+
+CREATE TABLE delivery_ticket_lines (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    delivery_ticket_id BIGINT NOT NULL REFERENCES delivery_tickets(id),
+    line_no INT NOT NULL,
+    sales_order_line_id BIGINT NULL REFERENCES sales_order_lines(id),
+    job_order_id BIGINT NULL REFERENCES job_orders(id),
+    item_id BIGINT NULL REFERENCES inventories(id),
+    item_name VARCHAR(255),
+    description VARCHAR(500),
+    location_id BIGINT NULL REFERENCES locations(id),
+    quantity DECIMAL(14,4),
+    units VARCHAR(30),
+    unit_title VARCHAR(60),
+    price_per_unit DECIMAL(14,4),
+    subtotal DECIMAL(14,2),
+    disc_percent DECIMAL(5,2),
+    disc_per_unit DECIMAL(14,4),
+    disc_amount DECIMAL(14,2),
+    disc_price_per_unit DECIMAL(14,4),
+    net_of_tax DECIMAL(14,2),
+    tax_code VARCHAR(30),
+    tax_amount DECIMAL(14,2),
+    gross_amount DECIMAL(14,2)
+);
+
+-- Billing a Delivery Ticket raises a Sales Invoice from it (the DT's own Bill > SI
+-- button) -- the ticket is the provisional, unbilled recognition and the invoice is the
+-- official document that supersedes it. This link is what flips the ticket to
+-- 'converted' and what its Related Records tab reads; voiding the invoice releases the
+-- ticket back to 'open' so it can be billed again.
+ALTER TABLE sales_invoices
+    ADD COLUMN delivery_ticket_id BIGINT NULL REFERENCES delivery_tickets(id);
+
+-- A Delivery Ticket line added via "Add Item" (a delivery fee, a mobilisation charge)
+-- has no sales_order_line behind it, so an invoice billing that ticket cannot supply one
+-- either. NOT NULL held only while every invoice line necessarily came off the order.
+ALTER TABLE sales_invoice_lines
+    MODIFY sales_order_line_id BIGINT NULL;
+
+-- =====================================================================
+-- Customer Payment / Credit Memo (Invoice > Accept Payment | Credit Memo)
+-- =====================================================================
+-- The AR mirrors of Bill Payment / Bill Credit, reached from an Open Invoice's own
+-- "Accept Payment" and "Credit Memo" buttons. Same shape as their AP counterparts: a
+-- single payment can settle several of the same customer's open invoices at once (the
+-- APPLY tab) and can additionally draw on that customer's existing open Credit Memos
+-- (the CREDITS tab) -- each line is one or the other, never both.
+CREATE TABLE customer_payments (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    customer_payment_no VARCHAR(30) UNIQUE NOT NULL,
+    date_created DATE NOT NULL,
+    customer_id BIGINT NOT NULL REFERENCES customers(id),
+    department_id BIGINT NULL REFERENCES departments(id),
+    office_location_id BIGINT NULL REFERENCES locations(id),
+    ar_account_id BIGINT NULL REFERENCES chart_of_accounts(id),
+    deposit_account_id BIGINT NULL REFERENCES chart_of_accounts(id),
+    receipt_type VARCHAR(60),
+    or_no VARCHAR(60),
+    payment_type VARCHAR(60),
+    issued_by_user_id BIGINT NULL REFERENCES users(id),
+    payment_method_id BIGINT NULL REFERENCES payment_methods(id),
+    payment_amount DECIMAL(14,2) DEFAULT 0,
+    applied_amount DECIMAL(14,2) DEFAULT 0,
+    unapplied_amount DECIMAL(14,2) DEFAULT 0,
+    memo VARCHAR(500),
+    -- A saved payment starts NOT DEPOSITED, not Open: the cash has been received and the
+    -- invoice is settled, but it hasn't been swept into the bank yet. 'deposited' is the
+    -- other live value, reached once a bank deposit sweeps it (not modelled yet).
+    status VARCHAR(30) NOT NULL DEFAULT 'not_deposited',
+    created_by_user_id BIGINT NULL REFERENCES users(id),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    voided_by_user_id BIGINT NULL REFERENCES users(id),
+    voided_at DATETIME NULL
+);
+
+CREATE TABLE customer_payment_lines (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    customer_payment_id BIGINT NOT NULL REFERENCES customer_payments(id),
+    sales_invoice_id BIGINT NULL REFERENCES sales_invoices(id),
+    credit_memo_id BIGINT NULL REFERENCES credit_memos(id),
+    applied_amount DECIMAL(14,2) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Unlike Bill Credit -- whose lines are general-ledger expense rows against arbitrary
+-- Chart of Accounts entries -- a Credit Memo's lines are *sales* lines, the same shape as
+-- the invoice line they credit back (Qty/Price/Unit/Disc/Tax), added via the ITEMS tab's
+-- "Add Item" button. That asymmetry is real: crediting a customer reverses goods or
+-- services sold, so it has to reverse the revenue and the output VAT line by line.
+--
+-- Same deliberate deviation as bill_credits: the real system defaults the APPLY tab's
+-- amount to the source invoice's full total regardless of what ITEMS adds up to, and will
+-- save with a negative Unapplied Amount. That's an accounting error, so this build caps
+-- total applied at the memo's own gross_amount and rejects (never clamps) an
+-- over-application, consistent with every other amount cap in this codebase.
+CREATE TABLE credit_memos (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    credit_memo_no VARCHAR(30) UNIQUE NOT NULL,
+    sales_invoice_id BIGINT NOT NULL REFERENCES sales_invoices(id),
+    customer_id BIGINT NOT NULL REFERENCES customers(id),
+    date_created DATE NOT NULL,
+    office_location_id BIGINT NULL REFERENCES locations(id),
+    ar_account_id BIGINT NULL REFERENCES chart_of_accounts(id),
+    memo VARCHAR(500),
+    subtotal DECIMAL(14,2) DEFAULT 0,
+    discount_amount DECIMAL(14,2) DEFAULT 0,
+    net_of_tax DECIMAL(14,2) DEFAULT 0,
+    tax_amount DECIMAL(14,2) DEFAULT 0,
+    gross_amount DECIMAL(14,2) DEFAULT 0,
+    applied_amount DECIMAL(14,2) DEFAULT 0,
+    status VARCHAR(20) NOT NULL DEFAULT 'open',
+    created_by_user_id BIGINT NULL REFERENCES users(id),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    voided_by_user_id BIGINT NULL REFERENCES users(id),
+    voided_at DATETIME NULL
+);
+
+CREATE TABLE credit_memo_lines (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    credit_memo_id BIGINT NOT NULL REFERENCES credit_memos(id),
+    line_no INT NOT NULL,
+    sales_invoice_line_id BIGINT NULL REFERENCES sales_invoice_lines(id),
+    job_order_id BIGINT NULL REFERENCES job_orders(id),
+    item_id BIGINT NULL REFERENCES inventories(id),
+    item_name VARCHAR(255),
+    description VARCHAR(500),
+    department_id BIGINT NULL REFERENCES departments(id),
+    quantity DECIMAL(14,4),
+    units VARCHAR(30),
+    price_per_unit DECIMAL(14,4),
+    subtotal DECIMAL(14,2),
+    disc_percent DECIMAL(5,2),
+    disc_per_unit DECIMAL(14,4),
+    disc_amount DECIMAL(14,2),
+    disc_price_per_unit DECIMAL(14,4),
+    net_of_tax DECIMAL(14,2),
+    tax_code VARCHAR(30),
+    tax_amount DECIMAL(14,2),
+    gross_amount DECIMAL(14,2)
+);
+
+CREATE TABLE credit_memo_applications (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    credit_memo_id BIGINT NOT NULL REFERENCES credit_memos(id),
+    sales_invoice_id BIGINT NOT NULL REFERENCES sales_invoices(id),
+    applied_amount DECIMAL(14,2) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Settling an invoice draws its Amount Due down toward zero; 'paid_in_full' is what the
+-- real screen shows once it reaches there, alongside the existing 'saved' (Open) and
+-- 'cancelled' (Void). Voiding a payment or credit memo releases the amount back and
+-- returns the invoice to 'saved'.

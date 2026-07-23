@@ -3,6 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
+import CustomerPaymentModal from '../components/CustomerPaymentModal';
+import CreditMemoModal from '../components/CreditMemoModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 function qty(v) {
@@ -15,7 +17,13 @@ function money(v) {
 }
 function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : '—'; }
 
-const STATUS_LABELS = { saved: 'Open', cancelled: 'Void' };
+const STATUS_LABELS = { saved: 'Open', paid_in_full: 'Paid In Full', cancelled: 'Void' };
+// Related Records lists payments and credits alongside each other, so it needs both
+// vocabularies -- a payment is NOT DEPOSITED until a bank deposit sweeps it, while a
+// credit memo is simply open or void.
+const RELATED_STATUS_LABELS = {
+  not_deposited: 'Not Deposited', deposited: 'Deposited', open: 'Open', voided: 'Void',
+};
 
 // Mirrors the real "Sales Invoice" detail view -- reached from a Sales Order's Related
 // Records tab after billing it. Each line was a snapshot of a sales_order_line's own
@@ -28,12 +36,25 @@ export default function SalesInvoiceView() {
   const [si, setSi] = useState(null);
   const [tab, setTab] = useState('items');
   const [auditLogs, setAuditLogs] = useState([]);
+  const [payments, setPayments] = useState([]);
+  const [creditMemos, setCreditMemos] = useState([]);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showCreditMemoModal, setShowCreditMemoModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   function load() {
-    return api.get(`/sales-invoices/${id}`).then(({ data }) => { setSi(data); setLoading(false); });
+    return Promise.all([
+      api.get(`/sales-invoices/${id}`),
+      api.get(`/customer-payments/by-invoice/${id}`),
+      api.get(`/credit-memos/by-invoice/${id}`),
+    ]).then(([siRes, payRes, cmRes]) => {
+      setSi(siRes.data);
+      setPayments(payRes.data);
+      setCreditMemos(cmRes.data);
+      setLoading(false);
+    });
   }
 
   useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -62,6 +83,9 @@ export default function SalesInvoiceView() {
 
   const canEdit = can('/sales-invoices', 'can_edit');
   const isSaved = si.status === 'saved';
+  // Both actions settle or reduce what's owed, so they only make sense while something is
+  // still owed and the invoice hasn't been voided.
+  const isSettleable = si.status !== 'cancelled' && Number(si.amount_due) > 0;
 
   return (
     <div>
@@ -71,6 +95,8 @@ export default function SalesInvoiceView() {
           <button className="btn btn-sm" onClick={() => navigate(`/sales-orders/${si.sales_order_id}`)}>Back</button>
           <button className="btn btn-sm" disabled title="Editing a saved Invoice isn't implemented in this build">Edit</button>
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
+          {canEdit && isSettleable && <button className="btn btn-sm btn-primary" onClick={() => setShowPaymentModal(true)}>Accept Payment</button>}
+          {canEdit && isSettleable && <button className="btn btn-sm btn-primary" onClick={() => setShowCreditMemoModal(true)}>Credit Memo</button>}
           {canEdit && isSaved && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Void</button>}
         </div>
       </div>
@@ -88,6 +114,9 @@ export default function SalesInvoiceView() {
           <div>
             <div>Customer : <span className="hi">{si.customer_name}</span></div>
             <div>Created Form : <button type="button" className="link-btn" onClick={() => navigate(`/sales-orders/${si.sales_order_id}`)}>{si.sales_order_no}</button></div>
+            {si.delivery_ticket_id && (
+              <div>Delivery Ticket : <button type="button" className="link-btn" onClick={() => navigate(`/delivery-tickets/${si.delivery_ticket_id}`)}>{si.dt_no}</button></div>
+            )}
             <div>Date : <span className="hi">{formatDate(si.date_created)}</span></div>
             <div>BS/SI # : <span className="hi">{si.bs_si_no || ''}</span></div>
             <div>PO # : <span className="hi">{si.po_no || ''}</span></div>
@@ -112,6 +141,7 @@ export default function SalesInvoiceView() {
         <div><span className="muted">Discount</span><div className="hi-lg">{money(si.discount_amount)}</div></div>
         <div><span className="muted">EWT</span><div className="hi-lg">{money(si.ewt_amount)}</div></div>
         <div><span className="muted">Tax</span><div className="hi-lg">{money(si.tax_amount)}</div></div>
+        <div><span className="muted">Gross</span><div className="hi-lg">{money(si.gross_amount)}</div></div>
         <div><span className="muted">Amount Due</span><div className="hi-lg">{money(si.amount_due)}</div></div>
       </div>
 
@@ -191,6 +221,37 @@ export default function SalesInvoiceView() {
       {tab === 'related' && (
         <div className="card">
           <p>Sales Order: <button type="button" className="btn btn-sm" onClick={() => navigate(`/sales-orders/${si.sales_order_id}`)}>{si.sales_order_no}</button></p>
+          {si.delivery_ticket_id && (
+            <p>Delivery Ticket: <button type="button" className="btn btn-sm" onClick={() => navigate(`/delivery-tickets/${si.delivery_ticket_id}`)}>{si.dt_no}</button></p>
+          )}
+          <div className="table-wrap" style={{ marginTop: 12 }}>
+            <table>
+              <thead><tr><th>Type</th><th>Reference</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead>
+              <tbody>
+                {payments.length === 0 && creditMemos.length === 0 && (
+                  <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>No payments or credits against this invoice yet.</td></tr>
+                )}
+                {payments.map((p) => (
+                  <tr key={`p${p.id}`}>
+                    <td>Customer Payment</td>
+                    <td><button type="button" className="link-btn" onClick={() => navigate(`/customer-payments/${p.id}`)}>{p.customer_payment_no}</button></td>
+                    <td>{formatDate(p.date_created)}</td>
+                    <td>{money(p.applied_amount)}</td>
+                    <td>{RELATED_STATUS_LABELS[p.status] || p.status}</td>
+                  </tr>
+                ))}
+                {creditMemos.map((c) => (
+                  <tr key={`c${c.id}`}>
+                    <td>Credit Memo</td>
+                    <td><button type="button" className="link-btn" onClick={() => navigate(`/credit-memos/${c.id}`)}>{c.credit_memo_no}</button></td>
+                    <td>{formatDate(c.date_created)}</td>
+                    <td>{money(c.gross_amount)}</td>
+                    <td>{RELATED_STATUS_LABELS[c.status] || c.status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -209,6 +270,22 @@ export default function SalesInvoiceView() {
             emptyLabel="No audit history yet."
           />
         </div>
+      )}
+
+      {showPaymentModal && (
+        <CustomerPaymentModal
+          invoiceId={Number(id)}
+          onClose={() => setShowPaymentModal(false)}
+          onSaved={async (cp) => { setShowPaymentModal(false); await load(); navigate(`/customer-payments/${cp.id}`); }}
+        />
+      )}
+
+      {showCreditMemoModal && (
+        <CreditMemoModal
+          invoiceId={Number(id)}
+          onClose={() => setShowCreditMemoModal(false)}
+          onSaved={async (cm) => { setShowCreditMemoModal(false); await load(); navigate(`/credit-memos/${cm.id}`); }}
+        />
       )}
     </div>
   );

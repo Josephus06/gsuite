@@ -52,6 +52,12 @@ import ItemDeliveryView from './pages/ItemDeliveryView';
 import ItemDeliveries from './pages/ItemDeliveries';
 import QualityInspections from './pages/QualityInspections';
 import SalesInvoiceView from './pages/SalesInvoiceView';
+import DeliveryTicketView from './pages/DeliveryTicketView';
+import DeliveryTickets from './pages/DeliveryTickets';
+import CustomerPayments from './pages/CustomerPayments';
+import CreditMemos from './pages/CreditMemos';
+import CustomerPaymentView from './pages/CustomerPaymentView';
+import CreditMemoView from './pages/CreditMemoView';
 import SalesInvoices from './pages/SalesInvoices';
 import PurchaseRequisitions from './pages/PurchaseRequisitions';
 import PurchaseRequisitionEdit from './pages/PurchaseRequisitionEdit';
@@ -174,6 +180,12 @@ function App() {
         <Route path="/item-deliveries/:id" element={<ItemDeliveryView />} />
         <Route path="/sales-invoices" element={<SalesInvoices />} />
         <Route path="/sales-invoices/:id" element={<SalesInvoiceView />} />
+        <Route path="/delivery-tickets" element={<DeliveryTickets />} />
+        <Route path="/delivery-tickets/:id" element={<DeliveryTicketView />} />
+        <Route path="/customer-payments" element={<CustomerPayments />} />
+        <Route path="/customer-payments/:id" element={<CustomerPaymentView />} />
+        <Route path="/credit-memos" element={<CreditMemos />} />
+        <Route path="/credit-memos/:id" element={<CreditMemoView />} />
         <Route path="/purchase-requisitions" element={<PurchaseRequisitions />} />
         <Route path="/purchase-requisitions/new" element={<PurchaseRequisitionEdit />} />
         <Route path="/purchase-requisitions/:id/edit" element={<PurchaseRequisitionEdit />} />

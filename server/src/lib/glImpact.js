@@ -251,6 +251,126 @@ async function computeTransitGl(lines, { qtyField, assetIsDebit }) {
   return rows;
 }
 
+// GL Impact for a Customer Payment -- the AR mirror of a Bill Payment: debit whichever
+// cash/bank account the money landed in, credit Accounts Receivable Trade (12100) for the
+// same amount, settling the invoices this payment was applied to.
+//
+// Only the portion applied to *invoices* posts. A line applied against one of the
+// customer's own Credit Memos moves no cash -- it offsets the payment with a credit that
+// already posted its own entry when the memo was raised, so posting it here would
+// double-count. Unapplied cash likewise doesn't touch AR; it sits as an on-account
+// balance this build tracks on the payment itself rather than in the ledger.
+async function computeCustomerPaymentGl(cp, lines) {
+  const [[arAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '12100'");
+  if (!arAcct || !cp.deposit_account_id) return [];
+  const [[depositAcct]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [cp.deposit_account_id]);
+  if (!depositAcct) return [];
+
+  const appliedToInvoices = lines
+    .filter((l) => l.sales_invoice_id)
+    .reduce((s, l) => s + Number(l.applied_amount || 0), 0);
+  const amount = Number(appliedToInvoices.toFixed(2));
+  if (!amount) return [];
+
+  return [
+    { account_code: depositAcct.account_code, account_name: depositAcct.account_name, debit: amount, credit: 0 },
+    { account_code: arAcct.account_code, account_name: arAcct.account_name, debit: 0, credit: amount },
+  ];
+}
+
+// GL Impact for a Credit Memo -- the exact reversal of the Sales Invoice entry it credits
+// back: debit Sales (30100) for the net amount and VAT on Sales for the tax (both of
+// which the invoice credited), and credit Accounts Receivable Trade (12100) for the gross
+// the customer no longer owes.
+//
+// VAT is routed per line tax code via taxes.tax_account_id, same as the invoice's own
+// entry, so a credit reverses tax onto exactly the account the sale put it on.
+async function computeCreditMemoGl(cm, lines) {
+  const [[arAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '12100'");
+  const [[salesAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '30100'");
+  if (!arAcct || !salesAcct) return [];
+
+  const rows = [];
+  const netOfTax = Number(cm.net_of_tax) || 0;
+  const grossAmount = Number(cm.gross_amount) || 0;
+  if (netOfTax) rows.push({ account_code: salesAcct.account_code, account_name: salesAcct.account_name, debit: netOfTax, credit: 0 });
+
+  const taxTotals = new Map(); // tax_code -> amount
+  for (const l of lines) {
+    const amt = Number(l.tax_amount) || 0;
+    if (!amt) continue;
+    taxTotals.set(l.tax_code || null, (taxTotals.get(l.tax_code || null) || 0) + amt);
+  }
+  if (taxTotals.size === 0 && Number(cm.tax_amount)) taxTotals.set(null, Number(cm.tax_amount));
+
+  for (const [code, amt] of taxTotals) {
+    let acct = null;
+    if (code) {
+      const [[t]] = await pool.query('SELECT tax_account_id FROM taxes WHERE code = ?', [code]);
+      if (t?.tax_account_id) {
+        const [[a]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [t.tax_account_id]);
+        acct = a;
+      }
+    }
+    if (!acct) {
+      const [[fallback]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '21100'");
+      acct = fallback;
+    }
+    if (acct) rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: Number(amt.toFixed(2)), credit: 0 });
+  }
+
+  if (grossAmount) rows.push({ account_code: arAcct.account_code, account_name: arAcct.account_name, debit: 0, credit: grossAmount });
+  return rows;
+}
+
+// GL Impact for a Delivery Ticket -- the same three-account revenue-recognition shape as
+// Sales Invoice, with one deliberate difference taken straight from the real system's
+// DT screen (DT-1316: Dr 12101 280.00 / Cr 30100 250.00 / Cr 21100 30.00): the debit goes
+// to "Accounts Receivable Trade - Unbilled" (12101), NOT AR Trade (12100). That is the
+// whole distinction between the two documents -- a DT recognises the sale and the
+// receivable when goods leave, while the receivable is still unbilled; the DT's own Bill
+// button is what later raises the invoice that moves it to 12100.
+//
+// VAT is routed per line tax code via taxes.tax_account_id, same as computeSalesInvoiceGl
+// -- so a future second tax code lands on its own account rather than silently on VAT on
+// Sales.
+async function computeDeliveryTicketGl(dt, lines) {
+  const [[arUnbilled]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '12101'");
+  const [[salesAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '30100'");
+  if (!arUnbilled || !salesAcct) return [];
+
+  const rows = [];
+  const grossAmount = Number(dt.gross_amount) || 0;
+  const netOfTax = Number(dt.net_of_tax) || 0;
+  if (grossAmount) rows.push({ account_code: arUnbilled.account_code, account_name: arUnbilled.account_name, debit: grossAmount, credit: 0 });
+  if (netOfTax) rows.push({ account_code: salesAcct.account_code, account_name: salesAcct.account_name, debit: 0, credit: netOfTax });
+
+  const taxTotals = new Map(); // tax_code -> amount
+  for (const l of lines) {
+    const amt = Number(l.tax_amount) || 0;
+    if (!amt) continue;
+    taxTotals.set(l.tax_code || null, (taxTotals.get(l.tax_code || null) || 0) + amt);
+  }
+  if (taxTotals.size === 0 && Number(dt.tax_amount)) taxTotals.set(null, Number(dt.tax_amount));
+
+  for (const [code, amt] of taxTotals) {
+    let acct = null;
+    if (code) {
+      const [[t]] = await pool.query('SELECT tax_account_id FROM taxes WHERE code = ?', [code]);
+      if (t?.tax_account_id) {
+        const [[a]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [t.tax_account_id]);
+        acct = a;
+      }
+    }
+    if (!acct) {
+      const [[fallback]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '21100'");
+      acct = fallback;
+    }
+    if (acct) rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: 0, credit: Number(amt.toFixed(2)) });
+  }
+  return rows;
+}
+
 // GL Impact: the AP-side mirror of Sales Invoice's revenue-recognition entry, same
 // reverse-engineering pass against the real system's sandbox: credit Accounts Payable -
 // Trade (20100) for the bill's gross total, debit the bill's own selected account
@@ -494,6 +614,59 @@ async function getPostedGlLines({ toDate, fromDate }) {
     }
   }
 
+  // Customer Payments (voided ones post nothing)
+  {
+    const { sql, params } = dateFilter('cp.date_created');
+    const [headers] = await pool.query(
+      `SELECT cp.* FROM customer_payments cp WHERE cp.status != 'voided' AND ${sql}`, params
+    );
+    for (const cp of headers) {
+      const [lines] = await pool.query('SELECT * FROM customer_payment_lines WHERE customer_payment_id = ?', [cp.id]);
+      const rows = await computeCustomerPaymentGl(cp, lines);
+      push(rows, {
+        entry_date: cp.date_created, source_type: 'customer_payment', source_no: cp.customer_payment_no, source_id: cp.id, memo: cp.memo || null,
+        location_id: cp.office_location_id || null, department_id: cp.department_id || null,
+      });
+    }
+  }
+
+  // Credit Memos (voided ones post nothing)
+  {
+    const { sql, params } = dateFilter('cm.date_created');
+    const [headers] = await pool.query(
+      `SELECT cm.* FROM credit_memos cm WHERE cm.status != 'voided' AND ${sql}`, params
+    );
+    for (const cm of headers) {
+      const [lines] = await pool.query('SELECT * FROM credit_memo_lines WHERE credit_memo_id = ?', [cm.id]);
+      const rows = await computeCreditMemoGl(cm, lines);
+      push(rows, {
+        entry_date: cm.date_created, source_type: 'credit_memo', source_no: cm.credit_memo_no, source_id: cm.id, memo: cm.memo || null,
+        location_id: cm.office_location_id || null, department_id: null,
+      });
+    }
+  }
+
+  // Delivery Tickets. Only *open* ones post: a void ticket never happened, and a
+  // 'converted' one has been superseded by the Sales Invoice raised from it, which posts
+  // the same revenue against AR Trade (12100). Leaving converted tickets in would
+  // double-count both the sale and the VAT.
+  {
+    const { sql, params } = dateFilter('dt.date_created');
+    const [headers] = await pool.query(
+      `SELECT dt.*, so.office_location_id FROM delivery_tickets dt
+       JOIN sales_orders so ON so.id = dt.sales_order_id
+       WHERE dt.status = 'open' AND ${sql}`, params
+    );
+    for (const dt of headers) {
+      const [lines] = await pool.query('SELECT * FROM delivery_ticket_lines WHERE delivery_ticket_id = ?', [dt.id]);
+      const rows = await computeDeliveryTicketGl(dt, lines);
+      push(rows, {
+        entry_date: dt.date_created, source_type: 'delivery_ticket', source_no: dt.dt_no, source_id: dt.id, memo: dt.memo || null,
+        location_id: dt.office_location_id || null, department_id: dt.department_id || null,
+      });
+    }
+  }
+
   // Vendor Bills
   {
     const { sql, params } = dateFilter('vb.date_created');
@@ -572,6 +745,9 @@ module.exports = {
   computeAssemblyBuildGl,
   computeItemDeliveryGl,
   computeTransitGl,
+  computeDeliveryTicketGl,
+  computeCustomerPaymentGl,
+  computeCreditMemoGl,
   computeVendorBillGl,
   computeInventoryAdjustmentGl,
   computeBillCreditGl,

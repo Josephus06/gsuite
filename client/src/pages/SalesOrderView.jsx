@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import SalesInvoiceModal from '../components/SalesInvoiceModal';
+import DeliveryTicketModal from '../components/DeliveryTicketModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 // Read-only Sales Order detail -- mirrors EstimateView.jsx's layout (banner + 4-column
@@ -65,6 +66,7 @@ export default function SalesOrderView() {
   const [creatingLineId, setCreatingLineId] = useState(null);
   const [showBillMenu, setShowBillMenu] = useState(false);
   const [showSIModal, setShowSIModal] = useState(false);
+  const [showDTModal, setShowDTModal] = useState(false);
   const [invoices, setInvoices] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
 
@@ -134,7 +136,7 @@ export default function SalesOrderView() {
                   <button type="button" className="btn btn-sm" disabled style={{ width: '100%', marginBottom: 4 }} title="Billing Statements aren't implemented in this build">BS</button>
                   <button type="button" className="btn btn-sm" style={{ width: '100%', marginBottom: 4 }} onClick={() => { setShowBillMenu(false); setShowSIModal(true); }}>SI</button>
                   <button type="button" className="btn btn-sm" disabled style={{ width: '100%', marginBottom: 4 }} title="Delivery Receipts aren't implemented in this build">DR</button>
-                  <button type="button" className="btn btn-sm" disabled style={{ width: '100%' }} title="Delivery Tickets aren't implemented in this build">DT</button>
+                  <button type="button" className="btn btn-sm" style={{ width: '100%' }} onClick={() => { setShowBillMenu(false); setShowDTModal(true); }}>DT</button>
                 </div>
               )}
             </div>
@@ -287,6 +289,14 @@ export default function SalesOrderView() {
           salesOrderId={Number(id)}
           onClose={() => setShowSIModal(false)}
           onSaved={async (si) => { setShowSIModal(false); await load(); navigate(`/sales-invoices/${si.id}`); }}
+        />
+      )}
+
+      {showDTModal && (
+        <DeliveryTicketModal
+          salesOrderId={Number(id)}
+          onClose={() => setShowDTModal(false)}
+          onSaved={async (dt) => { setShowDTModal(false); await load(); navigate(`/delivery-tickets/${dt.id}`); }}
         />
       )}
     </div>
