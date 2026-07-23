@@ -7,6 +7,7 @@ import ItemFulfillmentModal from '../components/ItemFulfillmentModal';
 import ItemFulfillmentsPickerModal from '../components/ItemFulfillmentsPickerModal';
 import ItemReceiptModal from '../components/ItemReceiptModal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { isNonStockItem } from '../utils/itemTypes';
 
 // Mirrors the real "Transfer Order" view screen: banner + Items/Related Records/System
 // Info tabs. Adjusted Qty is the one field that stays live-editable right here (not
@@ -181,13 +182,23 @@ export default function TransferOrderView() {
                       ) : (l.adjusted_qty != null ? qty(l.adjusted_qty) : '')}
                     </td>
                     <td>{qty(l.new_qty)}</td>
-                    <td>{qty(l.committed)}</td>
+                    {/* Committed and Qty On Hand are stock figures that stay at zero for a
+                        Service line no matter what -- showing 0.0000 reads as "out of
+                        stock, go reallocate", which is the opposite of the truth. */}
+                    <td>{isNonStockItem(l.item_type) ? <span className="muted">—</span> : qty(l.committed)}</td>
                     <td>{qty(l.fulfilled)}</td>
                     <td>{qty(l.received)}</td>
                     <td>{qty(l.back_ordered)}</td>
-                    <td>{qty(l.qty_on_hand)}</td>
+                    <td>{isNonStockItem(l.item_type) ? <span className="muted">—</span> : qty(l.qty_on_hand)}</td>
                     <td>{l.memo}</td>
-                    <td><button type="button" className="btn btn-sm" onClick={() => navigate(`/transfer-orders/${id}/lines/${l.id}/reallocate`)}>Reallocate</button></td>
+                    <td>
+                      {/* Reallocate divides a location's on-hand pool between competing
+                          orders -- meaningless for a Service line, which has no pool to
+                          divide and needs no commitment before it can be fulfilled. */}
+                      {isNonStockItem(l.item_type)
+                        ? <span className="muted" title="Service items hold no stock -- nothing to reallocate.">—</span>
+                        : <button type="button" className="btn btn-sm" onClick={() => navigate(`/transfer-orders/${id}/lines/${l.id}/reallocate`)}>Reallocate</button>}
+                    </td>
                   </tr>
                 ))}
               </tbody>

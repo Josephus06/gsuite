@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import api from '../api/client';
 import LoadingSpinner from './LoadingSpinner';
+import { isNonStockItem } from '../utils/itemTypes';
 
 function qty(v) {
   const n = Number(v);
@@ -87,8 +88,15 @@ export default function ItemFulfillmentModal({ to, lines, onClose, onSaved }) {
                   <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 20 }}>Everything on this transfer order is already fulfilled.</td></tr>
                 )}
                 {fulfillableLines.map((l, idx) => {
+                  // A Service line has no stock to commit, so Committed never moves off 0
+                  // and the committed check would block it forever -- its cap is simply
+                  // whatever's left on the line. See utils/itemTypes.js; the same rule
+                  // gates the server side in routes/transferOrders.js.
+                  const nonStock = isNonStockItem(l.item_type);
                   const committedRemaining = Number(l.committed || 0) - Number(l.fulfilled || 0);
-                  const blocked = committedRemaining <= 0;
+                  const remaining = Number(l.adjusted_qty ?? l.qty) - Number(l.fulfilled || 0);
+                  const cap = nonStock ? remaining : committedRemaining;
+                  const blocked = !nonStock && committedRemaining <= 0;
                   return (
                     <tr key={l.id}>
                       <td style={{ color: '#db2777', fontWeight: 600 }}>{idx + 1}</td>
@@ -96,14 +104,14 @@ export default function ItemFulfillmentModal({ to, lines, onClose, onSaved }) {
                       <td>{qty(l.qty)}</td>
                       <td>{l.uom}</td>
                       <td>{l.unit}</td>
-                      <td>{qty(l.committed)}</td>
+                      <td>{nonStock ? <span className="muted" title="Service items hold no stock, so nothing is committed.">—</span> : qty(l.committed)}</td>
                       <td>{qty(l.fulfilled)}</td>
                       <td>
                         {blocked ? (
                           <span className="muted" title="Reallocate stock to this order before it can be fulfilled.">Not committed</span>
                         ) : (
                           <input
-                            type="number" step="0.0001" max={committedRemaining} style={{ width: 100 }}
+                            type="number" step="0.0001" max={cap} style={{ width: 100 }}
                             value={qtyToFulfill[l.id] ?? ''}
                             onChange={(e) => setQtyToFulfill((prev) => ({ ...prev, [l.id]: e.target.value }))}
                           />

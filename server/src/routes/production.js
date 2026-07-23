@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { isNonStockItem } = require('../lib/itemTypes');
 
 const router = express.Router();
 const ROUTE = '/production';
@@ -122,7 +123,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // without one) -- COALESCE to the JO's own job_location_id so a missing location
     // doesn't read as a false "0 on hand everywhere" shortage.
     const [processes] = await pool.query(
-      `SELECT jop.*, pr.process_name, pr.minutes_per_unit, i.display_name AS item_name, loc.location_name,
+      `SELECT jop.*, pr.process_name, pr.minutes_per_unit, i.display_name AS item_name, i.item_type, loc.location_name,
               il.qty_on_hand AS on_hand, il.qty_committed AS committed,
               GREATEST(COALESCE(jop.total, 0) - COALESCE(il.qty_on_hand, 0), 0) AS back_order,
               COALESCE(jop.total, 0) * COALESCE(pr.minutes_per_unit, 0) AS allotted_minutes
@@ -135,6 +136,15 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
        WHERE jop.job_order_id = ? ORDER BY jop.line_no`,
       [req.params.id]
     );
+
+    // A Service line (SERVICE LABOR and the like) consumes no material, so the shortage
+    // arithmetic above is meaningless for it: with no stock row anywhere it always reads
+    // as short by its full requirement, which then offers a Create TO for labor. Zeroed
+    // here rather than in the SQL so lib/itemTypes.js stays the single definition of what
+    // counts as non-stock.
+    for (const p of processes) {
+      if (isNonStockItem(p.item_type)) p.back_order = 0;
+    }
 
     // Every Assembly Build transaction saved against this JO -- surfaced on the Related
     // Records tab alongside the originating Sales Order.
@@ -159,9 +169,10 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
 router.put('/:id/processes/:processId/complete', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
     const [[proc]] = await pool.query(
-      `SELECT jop.total, jop.total_completed, jop.item_id, jop.location_id, il.qty_on_hand AS on_hand
+      `SELECT jop.total, jop.total_completed, jop.item_id, jop.location_id, il.qty_on_hand AS on_hand, i.item_type
        FROM job_order_processes jop
        LEFT JOIN job_orders parent_jo ON parent_jo.id = jop.job_order_id
+       LEFT JOIN inventories i ON i.id = jop.item_id
        LEFT JOIN inventory_locations il ON il.inventory_id = jop.item_id AND il.location_id = COALESCE(jop.location_id, parent_jo.job_location_id)
        WHERE jop.id = ? AND jop.job_order_id = ?`,
       [req.params.processId, req.params.id]
@@ -179,7 +190,12 @@ router.put('/:id/processes/:processId/complete', requireAuth, requirePermission(
     if (amount > remaining) {
       return res.status(400).json({ error: `Amount exceeds the remaining total needed (${remaining}).` });
     }
-    if (amount > onHand) {
+    // The on-hand ceiling is about not marking material consumed that isn't there --
+    // it can't apply to a Service line, which draws down no material at all. Left in
+    // place it strands the line at 0% forever (on hand is always 0), and because
+    // Available Qty to Build is capped by the least-complete line, one un-completable
+    // SERVICE LABOR line blocks the whole Job Order from ever being built.
+    if (!isNonStockItem(proc.item_type) && amount > onHand) {
       return res.status(400).json({ error: `Amount exceeds what's on hand (${onHand}).` });
     }
 
@@ -222,7 +238,7 @@ router.put('/:id/assembly-build', requireAuth, requirePermission(ROUTE, 'can_edi
               COALESCE(jop.location_id, ?) AS location_id,
               jop.process_qty, jop.qty, jop.total, jop.total_completed, jop.total_built, jop.unit,
               jop.process_cost, jop.material_cost, jop.total_cost,
-              il.qty_on_hand, i.display_name AS item_name
+              il.qty_on_hand, i.display_name AS item_name, i.item_type
        FROM job_order_processes jop
        LEFT JOIN inventory_locations il ON il.inventory_id = jop.item_id AND il.location_id = COALESCE(jop.location_id, ?)
        LEFT JOIN inventories i ON i.id = jop.item_id
@@ -241,13 +257,16 @@ router.put('/:id/assembly-build', requireAuth, requirePermission(ROUTE, 'can_edi
       return res.status(409).json({ error: `Quantity to Build exceeds the Available Qty to Build (${availableQtyToBuild}).` });
     }
 
+    // `required` is how much this build consumes off the line; `nonStock` splits that
+    // into its two halves for Service lines -- the build still records progress against
+    // them (Total Built moves), but there is no material to check for or deduct.
     const lines = processes.map((p) => {
       const totalQtyToBuild = (Number(p.total || 0) / jobQty) * quantityToBuild;
       const required = p.item_id && p.location_id ? totalQtyToBuild : 0;
-      return { ...p, totalQtyToBuild, required };
+      return { ...p, totalQtyToBuild, required, nonStock: isNonStockItem(p.item_type) };
     });
     for (const l of lines) {
-      if (!l.required) continue;
+      if (!l.required || l.nonStock) continue;
       const onHand = Number(l.qty_on_hand || 0);
       if (l.required > onHand) {
         return res.status(409).json({ error: `Not enough on hand for ${l.item_name}: need ${l.required.toFixed(4)}, only ${onHand.toFixed(4)} on hand.` });
@@ -257,10 +276,12 @@ router.put('/:id/assembly-build', requireAuth, requirePermission(ROUTE, 'can_edi
     await conn.beginTransaction();
     for (const l of lines) {
       if (l.required) {
-        await conn.query(
-          'UPDATE inventory_locations SET qty_on_hand = qty_on_hand - ? WHERE inventory_id = ? AND location_id = ?',
-          [l.required, l.item_id, l.location_id]
-        );
+        if (!l.nonStock) {
+          await conn.query(
+            'UPDATE inventory_locations SET qty_on_hand = qty_on_hand - ? WHERE inventory_id = ? AND location_id = ?',
+            [l.required, l.item_id, l.location_id]
+          );
+        }
         await conn.query('UPDATE job_order_processes SET total_built = total_built + ? WHERE id = ?', [l.required, l.id]);
       }
     }

@@ -6,6 +6,7 @@ import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import QualityInspectionModal from '../components/QualityInspectionModal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { isNonStockItem } from '../utils/itemTypes';
 
 // Mirrors the real system's "Production > Production" detail screen -- same underlying
 // Job Order as JobOrderView.jsx, but reached once the JO is Released and viewed for
@@ -109,7 +110,12 @@ function CompleteProcessModal({ process: p, onClose, onSaved }) {
   const total = num(p.total);
   const onHand = num(p.on_hand);
   const completed = num(p.total_completed);
-  const availableToComplete = Math.max(Math.min(total, onHand) - completed, 0);
+  // A Service line is labor, not material: nothing has to be in stock for it to be
+  // marked done, so the whole remaining requirement is available to complete. Capping it
+  // by on-hand (always 0 for these) would pin it at 0% with no way to ever move it.
+  const nonStock = isNonStockItem(p.item_type);
+  const ceiling = nonStock ? total : Math.min(total, onHand);
+  const availableToComplete = Math.max(ceiling - completed, 0);
   const pct = total > 0 ? Math.min((completed / total) * 100, 100) : 0;
 
   async function handleUpdate() {
@@ -147,7 +153,7 @@ function CompleteProcessModal({ process: p, onClose, onSaved }) {
         <div className="item"><div className="label">Unit</div><div className="value">{p.unit}</div></div>
         <div className="item"><div className="label">Total Completed</div><div className="value">{qty(p.total_completed)}</div></div>
         <div className="item"><div className="label">Total Built</div><div className="value">{qty(p.total_built)}</div></div>
-        <div className="item"><div className="label">On Hand</div><div className="value">{qty(p.on_hand)}</div></div>
+        <div className="item"><div className="label">On Hand</div><div className="value">{nonStock ? <span className="muted" title="Service items hold no stock.">—</span> : qty(p.on_hand)}</div></div>
         <div className="item">
           <div className="label">Available Total to Complete</div>
           <div className="value"><span className="highlight-box">{qty(availableToComplete)} {p.unit}</span></div>
@@ -164,12 +170,15 @@ function CompleteProcessModal({ process: p, onClose, onSaved }) {
       <div className="field" style={{ marginTop: 16 }}>
         <label>Total to Complete ({p.unit})</label>
         <div style={{ display: 'flex', gap: 8 }}>
+          {/* Clear the error as soon as the amount changes -- otherwise a rejected empty
+              Update leaves "Enter an amount greater than 0." sitting above a field that
+              now plainly has a number in it, which reads as the save still failing. */}
           <input
             type="number" step="0.0001" min="0" max={availableToComplete} value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            onChange={(e) => { setAmount(e.target.value); setError(''); }}
           />
           <button type="button" className="btn btn-primary" style={{ whiteSpace: 'nowrap' }}
-            onClick={() => setAmount(String(availableToComplete))}>
+            onClick={() => { setAmount(String(availableToComplete)); setError(''); }}>
             Complete All
           </button>
         </div>
@@ -520,7 +529,16 @@ export default function ProductionJobOrderView() {
                         );
                       }
                       if (c.key === 'on_hand' || c.key === 'committed' || c.key === 'total_completed' || c.key === 'total_built' || c.key === 'back_order') {
-                        return <td key={c.key}>{p.item_id ? qty(p[c.key]) : ''}</td>;
+                        if (!p.item_id) return <td key={c.key} />;
+                        // On Hand / Committed / Back Order are stock figures that stay at
+                        // zero on a Service line whatever happens -- printing 0.0000 (and
+                        // especially a Back Order equal to the full requirement) reads as
+                        // a materials shortage on something that needs no materials.
+                        const stockOnly = c.key === 'on_hand' || c.key === 'committed' || c.key === 'back_order';
+                        if (stockOnly && isNonStockItem(p.item_type)) {
+                          return <td key={c.key}><span className="muted">—</span></td>;
+                        }
+                        return <td key={c.key}>{qty(p[c.key])}</td>;
                       }
                       if (c.key.endsWith('cost') || c.key === 'total' || c.key === 'grand_total') {
                         return <td key={c.key}>{money(p[c.key])}</td>;
@@ -534,7 +552,9 @@ export default function ProductionJobOrderView() {
             </table>
           </div>
           {(() => {
-            const shortItems = processes.filter((p) => p.item_id && num(p.back_order) > 0);
+            // Service lines are excluded outright, not just via back_order: a Transfer
+            // Order moves stock between warehouses, and there is no labor to move.
+            const shortItems = processes.filter((p) => p.item_id && !isNonStockItem(p.item_type) && num(p.back_order) > 0);
             if (!shortItems.length) return null;
             return (
               <button type="button" className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => handleCreateTO(shortItems)}>

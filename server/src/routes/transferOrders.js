@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeTransitGl } = require('../lib/glImpact');
+const { isNonStockItem } = require('../lib/itemTypes');
 
 const router = express.Router();
 const ROUTE = '/transfer-orders';
@@ -12,7 +13,7 @@ const ROUTE = '/transfer-orders';
 // the TO was raised). Aliasing il.qty_on_hand AS qty_on_hand after l.* overrides the
 // stale value with the live one.
 const LINE_SELECT = `
-  SELECT l.*, i.item_code, i.display_name AS item_name,
+  SELECT l.*, i.item_code, i.display_name AS item_name, i.item_type,
          jo.job_order_no, il.qty_on_hand AS qty_on_hand
   FROM transfer_order_lines l
   JOIN transfer_orders t ON t.id = l.transfer_order_id
@@ -40,7 +41,13 @@ function computeTOStatus(lines) {
   const totalFulfilled = lines.reduce((s, l) => s + Number(l.fulfilled || 0), 0);
   const totalReceived = lines.reduce((s, l) => s + Number(l.received || 0), 0);
   if (totalFulfilled <= 0) return 'pending_fulfillment';
-  if (totalFulfilled < totalTarget) return totalReceived > 0 ? 'pending_receipt_partially_fulfilled' : 'partially_fulfilled';
+  // What separates the two partial states is stock *in transit*, not stock already
+  // received: a partly-fulfilled order whose fulfillments are still unreceived is
+  // "Pending Receipt / Partially Fulfilled" (it has something to receive), while one
+  // whose every fulfillment has landed is plain "Partially Fulfilled" (nothing to
+  // receive -- only more to fulfill). Keying off totalReceived > 0 instead gets the
+  // very first partial fulfillment wrong and hides the Receive button on it.
+  if (totalFulfilled < totalTarget) return totalReceived < totalFulfilled ? 'pending_receipt_partially_fulfilled' : 'partially_fulfilled';
   return totalReceived < totalFulfilled ? 'pending_receipt' : 'received';
 }
 
@@ -319,7 +326,7 @@ router.post('/item-fulfillments/:fulfillmentId/item-receipts', requireAuth, requ
     if (!submitted.length) return res.status(400).json({ error: 'Enter a Qty to Receive for at least one item.' });
 
     const [ifLines] = await conn.query(
-      `SELECT ifl.*, i.item_code FROM item_fulfillment_lines ifl
+      `SELECT ifl.*, i.item_code, i.item_type FROM item_fulfillment_lines ifl
        LEFT JOIN inventories i ON i.id = ifl.item_id WHERE ifl.item_fulfillment_id = ?`,
       [req.params.fulfillmentId]
     );
@@ -348,12 +355,17 @@ router.post('/item-fulfillments/:fulfillmentId/item-receipts', requireAuth, requ
       const line = byId.get(Number(s.item_fulfillment_line_id));
       const qtyToReceive = Number(s.qty_to_receive);
 
-      await conn.query(
-        `INSERT INTO inventory_locations (inventory_id, location_id, qty_on_hand)
-         VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE qty_on_hand = qty_on_hand + VALUES(qty_on_hand)`,
-        [line.item_id, f.transfer_to_location_id, qtyToReceive]
-      );
+      // Mirror of the fulfillment leg: a Service line lands no stock at Transfer To,
+      // so don't create an inventory_locations row for it (this INSERT..ON DUPLICATE KEY
+      // would otherwise conjure one from nothing).
+      if (!isNonStockItem(line.item_type)) {
+        await conn.query(
+          `INSERT INTO inventory_locations (inventory_id, location_id, qty_on_hand)
+           VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE qty_on_hand = qty_on_hand + VALUES(qty_on_hand)`,
+          [line.item_id, f.transfer_to_location_id, qtyToReceive]
+        );
+      }
       await conn.query('UPDATE item_fulfillment_lines SET received = received + ? WHERE id = ?', [qtyToReceive, line.id]);
       await conn.query('UPDATE transfer_order_lines SET received = received + ? WHERE id = ?', [qtyToReceive, line.transfer_order_line_id]);
       await conn.query(
@@ -436,11 +448,15 @@ router.get('/item-receipts/:receiptId', requireAuth, requirePermission(ROUTE, 'c
 router.get('/lines/:lineId/reallocate', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[line]] = await pool.query(
-      `SELECT tol.item_id, t.withdraw_from_location_id FROM transfer_order_lines tol
-       JOIN transfer_orders t ON t.id = tol.transfer_order_id WHERE tol.id = ?`,
+      `SELECT tol.item_id, t.withdraw_from_location_id, i.item_type FROM transfer_order_lines tol
+       JOIN transfer_orders t ON t.id = tol.transfer_order_id
+       LEFT JOIN inventories i ON i.id = tol.item_id WHERE tol.id = ?`,
       [req.params.lineId]
     );
     if (!line) return res.status(404).json({ error: 'Not found' });
+    if (isNonStockItem(line.item_type)) {
+      return res.status(409).json({ error: 'This is a Service item -- it holds no stock, so there is nothing to reallocate. It can be fulfilled directly.' });
+    }
 
     const [[item]] = await pool.query('SELECT id, item_code, display_name FROM inventories WHERE id = ?', [line.item_id]);
     const [[location]] = await pool.query('SELECT id, location_name FROM locations WHERE id = ?', [line.withdraw_from_location_id]);
@@ -475,11 +491,15 @@ router.post('/lines/:lineId/reallocate', requireAuth, requirePermission(ROUTE, '
   const conn = await pool.getConnection();
   try {
     const [[line]] = await conn.query(
-      `SELECT tol.item_id, t.withdraw_from_location_id FROM transfer_order_lines tol
-       JOIN transfer_orders t ON t.id = tol.transfer_order_id WHERE tol.id = ?`,
+      `SELECT tol.item_id, t.withdraw_from_location_id, i.item_type FROM transfer_order_lines tol
+       JOIN transfer_orders t ON t.id = tol.transfer_order_id
+       LEFT JOIN inventories i ON i.id = tol.item_id WHERE tol.id = ?`,
       [req.params.lineId]
     );
     if (!line) return res.status(404).json({ error: 'Not found' });
+    if (isNonStockItem(line.item_type)) {
+      return res.status(409).json({ error: 'This is a Service item -- it holds no stock, so there is nothing to reallocate. It can be fulfilled directly.' });
+    }
 
     const submitted = (Array.isArray(req.body.lines) ? req.body.lines : []).filter((l) => l.transfer_order_line_id);
     if (!submitted.length) return res.status(400).json({ error: 'Select at least one order to commit qty to.' });
@@ -730,7 +750,7 @@ router.post('/:id/item-fulfillments', requireAuth, requirePermission(ROUTE, 'can
     if (!submitted.length) return res.status(400).json({ error: 'Enter a Qty to Fulfill for at least one item.' });
 
     const [toLines] = await conn.query(
-      `SELECT tol.*, i.item_code FROM transfer_order_lines tol
+      `SELECT tol.*, i.item_code, i.item_type FROM transfer_order_lines tol
        LEFT JOIN inventories i ON i.id = tol.item_id WHERE tol.transfer_order_id = ?`,
       [req.params.id]
     );
@@ -746,6 +766,13 @@ router.post('/:id/item-fulfillments', requireAuth, requirePermission(ROUTE, 'can
       if (qtyToFulfill > remaining) {
         return res.status(409).json({ error: `Qty to Fulfill for ${line.item_code} exceeds the remaining balance (${remaining}).` });
       }
+      // Both remaining gates below are about physical stock, so neither applies to a
+      // Service line -- there is no material to reserve and none to draw down, so its
+      // only real limit is the remaining balance checked above. Gating it on Committed
+      // would strand it forever: Reallocate hands out a location's on-hand pool, and a
+      // Service item has no on-hand anywhere to hand out. See lib/itemTypes.js.
+      if (isNonStockItem(line.item_type)) continue;
+
       // Committed, not raw on-hand, is what actually gates fulfillment -- it's this
       // line's reserved share of a pool that other pending Transfer Order lines may
       // also be claiming (see /lines/:lineId/reallocate). A freshly-raised line sits at
@@ -777,10 +804,15 @@ router.post('/:id/item-fulfillments', requireAuth, requirePermission(ROUTE, 'can
       const line = byId.get(Number(s.transfer_order_line_id));
       const qtyToFulfill = Number(s.qty_to_fulfill);
 
-      await conn.query(
-        'UPDATE inventory_locations SET qty_on_hand = qty_on_hand - ? WHERE inventory_id = ? AND location_id = ?',
-        [qtyToFulfill, line.item_id, t.withdraw_from_location_id]
-      );
+      // A Service line still records what was fulfilled, but moves no stock -- there is
+      // no qty_on_hand row to draw down, and creating one would invent a stock balance
+      // for something that was never physical.
+      if (!isNonStockItem(line.item_type)) {
+        await conn.query(
+          'UPDATE inventory_locations SET qty_on_hand = qty_on_hand - ? WHERE inventory_id = ? AND location_id = ?',
+          [qtyToFulfill, line.item_id, t.withdraw_from_location_id]
+        );
+      }
       await conn.query('UPDATE transfer_order_lines SET fulfilled = fulfilled + ? WHERE id = ?', [qtyToFulfill, line.id]);
       await conn.query(
         `INSERT INTO item_fulfillment_lines (item_fulfillment_id, transfer_order_line_id, item_id, qty_fulfilled, memo)
