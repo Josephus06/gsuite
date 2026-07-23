@@ -45,9 +45,11 @@ const crmActivityRoutes = require('./routes/crmActivities');
 const chatbotRoutes = require('./routes/chatbot');
 const ticketRoutes = require('./routes/tickets');
 const ticketReportRoutes = require('./routes/ticketReport');
+const artistIncentiveReportRoutes = require('./routes/artistIncentiveReport');
 const notificationRoutes = require('./routes/notifications');
 const nonStandardJobOrderRoutes = require('./routes/nonStandardJobOrders');
 const { ensureAssignedAtColumn } = require('./db/ensureSchema');
+const { sendTicketReminders } = require('./scripts/ticket_reminder');
 
 const app = express();
 
@@ -95,6 +97,7 @@ app.use('/api/leads', leadRoutes);
 app.use('/api/crm-pipeline', crmPipelineRoutes);
 app.use('/api/crm-activities', crmActivityRoutes);
 app.use('/api/chatbot', chatbotRoutes);
+app.use('/api/reports/artist-incentive', artistIncentiveReportRoutes);
 app.use('/api/reports/tickets', ticketReportRoutes);
 app.use('/api/tickets/report', ticketReportRoutes);
 app.use('/api/tickets', ticketRoutes);
@@ -102,6 +105,39 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/non-standard-job-orders', nonStandardJobOrderRoutes);
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
+
+const REMINDER_HOUR = Number(process.env.TICKET_REMINDER_HOUR || 1);
+const REMINDER_MINUTE = Number(process.env.TICKET_REMINDER_MINUTE || 0);
+
+function scheduleDailyTicketReminders(hour = 1, minute = 0) {
+  const scheduleNextRun = () => {
+    const now = new Date();
+    const nextRun = new Date(now);
+    nextRun.setHours(hour, minute, 0, 0);
+    if (nextRun <= now) nextRun.setDate(nextRun.getDate() + 1);
+
+    const delayMs = nextRun - now;
+    console.log(`Ticket reminder email job scheduled for ${nextRun.toLocaleString()}`);
+
+    setTimeout(async () => {
+      try {
+        await sendTicketReminders();
+      } catch (err) {
+        console.error('Scheduled ticket reminder failed:', err);
+      }
+      scheduleNextRun();
+    }, delayMs);
+  };
+
+  scheduleNextRun();
+}
+
+// Only schedule when SMTP is configured. Otherwise the reminder job is disabled.
+if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+  scheduleDailyTicketReminders(REMINDER_HOUR, REMINDER_MINUTE);
+} else {
+  console.warn('Ticket reminder email job disabled because SMTP configuration is missing.');
+}
 
 // In production (Railway) the client is built into client/dist and this server
 // serves it directly -- single deployable service, same origin as /api so the

@@ -895,6 +895,38 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .spreadsheet-table tr.draft-row { background: rgba(234, 179, 8, 0.08); }
 .spreadsheet-row-actions { display: flex; gap: 4px; white-space: nowrap; }
 
+/* NSTDJO Materials: process and item names run long ("DESIGN-Ready file with no
+   changes"), so their pickers get enough room to read the chosen value -- at the default
+   cell width it was clipped to a few characters and looked empty. The numeric columns are
+   tightened to claw that width back, so twelve columns still fit without the row relying
+   entirely on the .table-wrap horizontal scroll. */
+/* table-layout: fixed is what actually controls these columns. Under the default `auto`
+   layout each column is sized by its input's intrinsic ~20-character width -- which a CSS
+   `width` does not shrink -- so all twelve columns landed on ~166px and the row spanned
+   ~2100px. Fixed layout ignores that intrinsic width and honours the widths below, giving
+   the two name columns room to stay readable while the numeric ones stay compact. */
+.nstdjo-materials { table-layout: fixed; width: 100%; min-width: 1210px; }
+.nstdjo-materials input, .nstdjo-materials select { width: 100%; min-width: 0; box-sizing: border-box; }
+.nstdjo-materials th, .nstdjo-materials td { padding: 4px 3px; }
+/* 1 Process, 3 Item -- the two name columns that need to stay readable. */
+.nstdjo-materials th:nth-child(1), .nstdjo-materials td:nth-child(1),
+.nstdjo-materials th:nth-child(3), .nstdjo-materials td:nth-child(3) { width: 160px; }
+/* 2 Qty, 4 Length, 5 Width, 6 Qty, 7 UOM, 8 Total, 9 Unit -- numeric, compact. */
+.nstdjo-materials th:nth-child(2), .nstdjo-materials td:nth-child(2),
+.nstdjo-materials th:nth-child(4), .nstdjo-materials td:nth-child(4),
+.nstdjo-materials th:nth-child(5), .nstdjo-materials td:nth-child(5),
+.nstdjo-materials th:nth-child(6), .nstdjo-materials td:nth-child(6),
+.nstdjo-materials th:nth-child(7), .nstdjo-materials td:nth-child(7),
+.nstdjo-materials th:nth-child(8), .nstdjo-materials td:nth-child(8),
+.nstdjo-materials th:nth-child(9), .nstdjo-materials td:nth-child(9) { width: 64px; }
+/* 10 Process Price, 11 Artist Incentive -- both derived, read-only. */
+.nstdjo-materials th:nth-child(10), .nstdjo-materials td:nth-child(10),
+.nstdjo-materials th:nth-child(11), .nstdjo-materials td:nth-child(11) { width: 86px; }
+/* 12 Artist Remarks, 13 Sales Remarks, 14 row actions. */
+.nstdjo-materials th:nth-child(12), .nstdjo-materials td:nth-child(12),
+.nstdjo-materials th:nth-child(13), .nstdjo-materials td:nth-child(13) { width: 112px; }
+.nstdjo-materials th:nth-child(14), .nstdjo-materials td:nth-child(14) { width: 78px; }
+
 .review-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));

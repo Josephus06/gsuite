@@ -49,10 +49,183 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       [me.employee_id]
     );
 
-    res.json(rows.map((r) => ({ ...r, is_running: !!r.is_running })));
+    // Non-Standard Job Orders assigned to the same artist appear in the same worklist --
+    // they are layout work like any other, just raised outside the Estimate/SO flow.
+    // Tagged with `kind` so the client knows which set of timer endpoints to drive.
+    const [nstdjoRows] = await pool.query(
+      `SELECT n.id, n.nstdjo_no AS job_order_no, n.status, n.sub_status, n.description,
+              n.planned_start_at, n.planned_end_at, n.layout_started_at, n.layout_ended_at, n.layout_qty,
+              c.name AS customer_name,
+              pjt.id AS pms_job_type_id, pjt.code AS pms_job_type_code, pjt.display_name AS pms_job_type_name,
+              pjt.minutes_consume,
+              EXISTS(SELECT 1 FROM non_standard_job_order_layout_sessions s
+                      WHERE s.non_standard_job_order_id = n.id AND s.ended_at IS NULL) AS is_running
+       FROM non_standard_job_orders n
+       LEFT JOIN customers c ON c.id = n.customer_id
+       LEFT JOIN pms_job_types pjt ON pjt.id = n.layout_job_type_id
+       WHERE n.artist_employee_id = ?
+         AND n.status = 'Planned - Pending for BOM' AND n.sub_status = 'For Artist'
+       ORDER BY n.id DESC`,
+      [me.employee_id]
+    );
+
+    res.json([
+      ...rows.map((r) => ({ ...r, kind: 'JO', is_running: !!r.is_running })),
+      ...nstdjoRows.map((r) => ({ ...r, kind: 'NSTDJO', is_running: !!r.is_running })),
+    ]);
   } catch (err) {
     next(err);
   }
+});
+
+// ---------------------------------------------------------------------------------
+// Non-Standard Job Orders. A parallel set of endpoints under /nstdjo rather than a
+// discriminator on the existing ones, so the Job Order paths above are untouched. The
+// stopwatch semantics are identical: each Play opens a session row, Hold closes it, and
+// Actual Time Consumed is the sum of closed spans, so held time never counts.
+// Registered before '/:id' so the literal segment is not swallowed by that parameter.
+// ---------------------------------------------------------------------------------
+async function logNstdjoAudit(conn, { id, userId, fieldName, newValue }) {
+  await conn.query(
+    `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, new_value, set_by_user_id)
+     VALUES ('NonStandardJobOrder', ?, 'Updated', ?, ?, ?)`,
+    [id, fieldName, newValue, userId]
+  );
+}
+
+// Only the assigned artist drives their own clock.
+async function getOwnedNstdjo(conn, id, userId) {
+  const [[me]] = await conn.query('SELECT employee_id FROM users WHERE id = ?', [userId]);
+  const [[row]] = await conn.query(
+    'SELECT artist_employee_id, sub_status, layout_started_at, layout_ended_at FROM non_standard_job_orders WHERE id = ?',
+    [id]
+  );
+  if (!row) return { error: [404, 'Not found'] };
+  if (!me?.employee_id || row.artist_employee_id !== me.employee_id) {
+    return { error: [403, 'This Non-Standard Job Order is not assigned to you.'] };
+  }
+  return { row };
+}
+
+router.get('/nstdjo/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [[me]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
+    const [[row]] = await pool.query(
+      `SELECT n.id, n.nstdjo_no AS job_order_no, n.status, n.sub_status, n.description, n.quantity,
+              n.planned_start_at, n.planned_end_at, n.layout_started_at, n.layout_ended_at, n.layout_qty,
+              n.artist_employee_id, c.name AS customer_name, n.job_type,
+              pjt.id AS pms_job_type_id, pjt.code AS pms_job_type_code, pjt.display_name AS pms_job_type_name,
+              pjt.minutes_consume
+         FROM non_standard_job_orders n
+         LEFT JOIN customers c ON c.id = n.customer_id
+         LEFT JOIN pms_job_types pjt ON pjt.id = n.layout_job_type_id
+        WHERE n.id = ?`,
+      [req.params.id]
+    );
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    if (!me?.employee_id || row.artist_employee_id !== me.employee_id) {
+      return res.status(403).json({ error: 'This Non-Standard Job Order is not assigned to you.' });
+    }
+    const [sessions] = await pool.query(
+      'SELECT id, started_at, ended_at FROM non_standard_job_order_layout_sessions WHERE non_standard_job_order_id = ? ORDER BY id',
+      [req.params.id]
+    );
+    res.json({ ...row, kind: 'NSTDJO', sessions, is_running: sessions.some((s) => !s.ended_at) });
+  } catch (err) { next(err); }
+});
+
+router.put('/nstdjo/:id/start-layout', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const { row, error } = await getOwnedNstdjo(conn, req.params.id, req.user.id);
+    if (error) { await conn.rollback(); return res.status(error[0]).json({ error: error[1] }); }
+    if (row.sub_status !== 'For Artist') {
+      await conn.rollback();
+      return res.status(409).json({ error: 'This Non-Standard Job Order is not ready for layouting.' });
+    }
+    if (row.layout_ended_at) {
+      await conn.rollback();
+      return res.status(409).json({ error: 'This Non-Standard Job Order has already been completed.' });
+    }
+    const [[open]] = await conn.query(
+      'SELECT id FROM non_standard_job_order_layout_sessions WHERE non_standard_job_order_id = ? AND ended_at IS NULL',
+      [req.params.id]
+    );
+    if (open) { await conn.rollback(); return res.status(409).json({ error: 'The layout timer is already running.' }); }
+
+    const isFirstStart = !row.layout_started_at;
+    await conn.query(
+      'INSERT INTO non_standard_job_order_layout_sessions (non_standard_job_order_id, started_at) VALUES (?, NOW())',
+      [req.params.id]
+    );
+    if (isFirstStart) {
+      await conn.query('UPDATE non_standard_job_orders SET layout_started_at = NOW(), updated_at = NOW() WHERE id = ?', [req.params.id]);
+    }
+    await logNstdjoAudit(conn, {
+      id: req.params.id, userId: req.user.id,
+      fieldName: isFirstStart ? 'layout_timer_started' : 'layout_timer_resumed', newValue: new Date().toISOString(),
+    });
+    await conn.commit();
+    const [[out]] = await pool.query('SELECT id, layout_started_at FROM non_standard_job_orders WHERE id = ?', [req.params.id]);
+    res.json(out);
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally { conn.release(); }
+});
+
+router.put('/nstdjo/:id/hold-layout', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const { row, error } = await getOwnedNstdjo(conn, req.params.id, req.user.id);
+    if (error) { await conn.rollback(); return res.status(error[0]).json({ error: error[1] }); }
+    if (row.layout_ended_at) {
+      await conn.rollback();
+      return res.status(409).json({ error: 'This Non-Standard Job Order has already been completed.' });
+    }
+    const [result] = await conn.query(
+      'UPDATE non_standard_job_order_layout_sessions SET ended_at = NOW() WHERE non_standard_job_order_id = ? AND ended_at IS NULL',
+      [req.params.id]
+    );
+    if (result.affectedRows === 0) {
+      await conn.rollback();
+      return res.status(409).json({ error: 'The layout timer is not currently running.' });
+    }
+    await logNstdjoAudit(conn, { id: req.params.id, userId: req.user.id, fieldName: 'layout_timer_held', newValue: new Date().toISOString() });
+    await conn.commit();
+    res.json({ id: Number(req.params.id) });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally { conn.release(); }
+});
+
+router.put('/nstdjo/:id/finish-layout', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const { row, error } = await getOwnedNstdjo(conn, req.params.id, req.user.id);
+    if (error) { await conn.rollback(); return res.status(error[0]).json({ error: error[1] }); }
+    if (!row.layout_started_at) {
+      await conn.rollback();
+      return res.status(409).json({ error: 'The layout timer has not been started yet.' });
+    }
+    if (row.layout_ended_at) {
+      await conn.rollback();
+      return res.status(409).json({ error: 'The layout timer has already been stopped for this Non-Standard Job Order.' });
+    }
+    await conn.query('UPDATE non_standard_job_order_layout_sessions SET ended_at = NOW() WHERE non_standard_job_order_id = ? AND ended_at IS NULL', [req.params.id]);
+    await conn.query('UPDATE non_standard_job_orders SET layout_ended_at = NOW(), updated_at = NOW() WHERE id = ?', [req.params.id]);
+    await logNstdjoAudit(conn, { id: req.params.id, userId: req.user.id, fieldName: 'layout_timer_completed', newValue: new Date().toISOString() });
+    await conn.commit();
+    const [[out]] = await pool.query('SELECT id, layout_started_at, layout_ended_at FROM non_standard_job_orders WHERE id = ?', [req.params.id]);
+    res.json(out);
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally { conn.release(); }
 });
 
 // Single JO detail for the "run" screen -- includes the full Play/Hold session log so

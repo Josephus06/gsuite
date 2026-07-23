@@ -65,6 +65,7 @@ const NAV_STRUCTURE = [
     label: 'Design',
     children: [
       { route: '/assigned-jo', label: 'Assigned JO' },
+      { route: '/reports/artist-incentive', label: 'Artist Incentive Report' },
     ],
   },
   {

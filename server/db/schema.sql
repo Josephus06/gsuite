@@ -1083,16 +1083,50 @@ CREATE TABLE non_standard_job_orders (
     job_type VARCHAR(100) NOT NULL,
     site_inspection_subtype VARCHAR(100) NULL,
     pms_job_type_id BIGINT NULL REFERENCES pms_job_types(id),
+    -- Set by the Design Supervisor when assigning an artist, seeded from pms_job_type_id
+    -- (what Sales asked for) so changing it here doesn't erase the original request.
+    -- planned_end_at = planned_start_at + (layout job type's minutes_consume x layout_qty).
+    layout_job_type_id BIGINT NULL REFERENCES pms_job_types(id),
+    layout_qty DECIMAL(14,4) NULL, planned_start_at DATETIME NULL, planned_end_at DATETIME NULL,
     description VARCHAR(500) NOT NULL, quantity DECIMAL(14,4) NOT NULL,
     shipping_address VARCHAR(500), delivery_date DATE NOT NULL, delivery_time TIME,
-    sales_rep_id BIGINT NULL REFERENCES employees(id), sales_division_id BIGINT NULL REFERENCES departments(id),
-    status VARCHAR(50) NOT NULL DEFAULT 'saved', forwarded_at DATETIME NULL,
+    sales_rep_id BIGINT NULL REFERENCES employees(id),
+    -- Assigned by Design after the order is forwarded; blank on a freshly raised order.
+    artist_employee_id BIGINT NULL REFERENCES employees(id),
+    sales_division_id BIGINT NULL REFERENCES departments(id),
+    -- Status stays "Planned - Pending for BOM" for the whole design stage; sub_status is
+    -- what moves (Pending -> For Design Supervisor -> For Artist), matching Job Orders so
+    -- both feed the same Design Supervisor queue. See lib/designSupervisorVisibility.js.
+    status VARCHAR(50) NOT NULL DEFAULT 'saved', sub_status VARCHAR(50) NOT NULL DEFAULT 'Pending',
+    -- A saved order first sits on sub_status "SBU Approval" until one of its raiser's
+    -- department approvers signs off; only then does it move to "For Design Supervisor".
+    approved_at DATETIME NULL, approved_by_user_id BIGINT NULL REFERENCES users(id),
+    forwarded_at DATETIME NULL,
     created_by_user_id BIGINT NULL REFERENCES users(id), created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NULL
+);
+
+-- Column order mirrors the Materials grid on the Non-Standard Job Order form:
+-- Process, Qty, Item, Length, Width, Qty, UOM, Total, Unit, Process Price,
+-- Artist Incentive, Artist Remarks, Sales Remarks. process_qty/process_price describe the
+-- process line, qty/uom/total/unit describe the item consumed by it. artist_incentive is
+-- the artist's 5% cut of process_price, stored rather than derived on read so changing
+-- the rate later cannot restate what past job orders already paid out.
+-- Who must sign off on a given order, snapshotted at creation from
+-- department_ticket_approvers for the raiser's own department -- the same gate Tickets
+-- use. Snapshotted rather than re-derived so changing a department's approvers later
+-- doesn't reassign responsibility for orders already in flight. Any ONE of them clears it.
+CREATE TABLE non_standard_job_order_approvers (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    non_standard_job_order_id BIGINT NOT NULL REFERENCES non_standard_job_orders(id),
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_nstdjo_approver (non_standard_job_order_id, user_id)
 );
 
 CREATE TABLE non_standard_job_order_materials (
     id BIGINT PRIMARY KEY AUTO_INCREMENT, non_standard_job_order_id BIGINT NOT NULL REFERENCES non_standard_job_orders(id),
-    line_no INT NOT NULL, process_id BIGINT NULL REFERENCES processes(id), category VARCHAR(100), parts VARCHAR(150),
+    line_no INT NOT NULL, process_id BIGINT NULL REFERENCES processes(id), process_qty DECIMAL(14,4), process_price DECIMAL(14,4),
+    artist_incentive DECIMAL(14,4),
     item_id BIGINT NULL REFERENCES inventories(id), artist_remarks VARCHAR(500), length DECIMAL(10,2), width DECIMAL(10,2),
     uom VARCHAR(30), qty DECIMAL(14,4), total DECIMAL(14,4), unit VARCHAR(30), sales_remarks VARCHAR(500), created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_nstdjo_material_line (non_standard_job_order_id, line_no)
