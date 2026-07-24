@@ -6,6 +6,16 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const router = express.Router();
 const ROUTE = '/users';
 
+// Replace a user's SBU division ownership in full. Called on create/update; harmless
+// (clears to none) for non-SBU users, so no flag check is needed here.
+async function saveSalesDivisions(userId, ids) {
+  const divisionIds = (Array.isArray(ids) ? ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  await pool.query('DELETE FROM user_sales_divisions WHERE user_id = ?', [userId]);
+  for (const divisionId of [...new Set(divisionIds)]) {
+    await pool.query('INSERT INTO user_sales_divisions (user_id, sales_division_id) VALUES (?, ?)', [userId, divisionId]);
+  }
+}
+
 // "Account Type" tab fields (step 4 of the real system's Add/Update User wizard).
 const ACCOUNT_TYPE_FIELDS = [
   'user_group_id', 'account_type', 'can_approve_sales_estimate', 'is_account_officer',
@@ -60,8 +70,13 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       'SELECT page_id, can_view, can_add, can_edit, can_delete, can_approve FROM user_page_permissions WHERE user_id = ?',
       [req.params.id]
     );
+    // The sales divisions this user owns as an SBU (empty for everyone else).
+    const [divisions] = await pool.query(
+      'SELECT sales_division_id FROM user_sales_divisions WHERE user_id = ?',
+      [req.params.id]
+    );
 
-    res.json({ ...user, branches, permissions });
+    res.json({ ...user, branches, permissions, sales_division_ids: divisions.map((d) => d.sales_division_id) });
   } catch (err) {
     next(err);
   }
@@ -80,6 +95,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
        VALUES (?, ?, ?, ?, ?, ?, ?, ${ACCOUNT_TYPE_FIELDS.map(() => '?').join(', ')})`,
       [employee_id || null, username, email, passwordHash, display_name, default_branch_id || null, is_active ?? true, ...accountTypeValues]
     );
+    await saveSalesDivisions(result.insertId, req.body.sales_division_ids);
     const [[row]] = await pool.query(
       `SELECT id, username, email, display_name, employee_id, default_branch_id, is_active, ${ACCOUNT_TYPE_FIELDS.join(', ')} FROM users WHERE id = ?`,
       [result.insertId]
@@ -107,6 +123,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     }
 
     await pool.query(`UPDATE users SET ${fields.join(', ')}, updated_at = NOW() WHERE id = ?`, [...values, req.params.id]);
+    if (req.body.sales_division_ids !== undefined) await saveSalesDivisions(req.params.id, req.body.sales_division_ids);
     const [[row]] = await pool.query(
       `SELECT id, username, email, display_name, employee_id, default_branch_id, is_active, ${ACCOUNT_TYPE_FIELDS.join(', ')} FROM users WHERE id = ?`,
       [req.params.id]

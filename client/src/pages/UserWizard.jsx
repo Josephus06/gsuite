@@ -30,6 +30,7 @@ const EMPTY_ACCOUNT_TYPE = {
   user_group_id: '', account_type: '', can_approve_sales_estimate: false, is_account_officer: false,
   is_supervisor: false, is_sales_manager: false, is_sales_marketing_director: false, is_sales_business_unit: false,
   is_design_supervisor: false, is_purchasing_supervisor: false, approval_code: '', supervisor_id: '',
+  sales_division_ids: [],
 };
 
 const EMPTY_BRANCH = { location_id: '', department_id: '', can_override_date: false, remarks: '', is_default: false };
@@ -53,6 +54,7 @@ export default function UserWizard() {
   const [locations, setLocations] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [userGroups, setUserGroups] = useState([]);
+  const [salesDivisions, setSalesDivisions] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
   const [pages, setPages] = useState([]);
   const [permSearch, setPermSearch] = useState('');
@@ -61,11 +63,12 @@ export default function UserWizard() {
 
   async function init() {
     setLoading(true);
-    const [emp, loc, dept, groups, pgs, usrs] = await Promise.all([
+    const [emp, loc, dept, groups, divs, pgs, usrs] = await Promise.all([
       api.get('/employees'),
       api.get('/lookups/locations'),
       api.get('/lookups/departments'),
       api.get('/lookups/user-groups'),
+      api.get('/lookups/sales-divisions'),
       api.get('/users/meta/pages'),
       api.get('/users'),
     ]);
@@ -73,6 +76,7 @@ export default function UserWizard() {
     setLocations(loc.data);
     setDepartments(dept.data);
     setUserGroups(groups.data);
+    setSalesDivisions(divs.data);
     setPages(pgs.data);
     setAllUsers(usrs.data.filter((u) => !id || u.id !== Number(id)));
 
@@ -90,6 +94,7 @@ export default function UserWizard() {
         is_sales_marketing_director: !!data.is_sales_marketing_director, is_sales_business_unit: !!data.is_sales_business_unit,
         is_design_supervisor: !!data.is_design_supervisor, is_purchasing_supervisor: !!data.is_purchasing_supervisor,
         approval_code: data.approval_code || '', supervisor_id: data.supervisor_id || '',
+        sales_division_ids: data.sales_division_ids || [],
       });
       setBranches((data.branches || []).map((b) => ({
         location_id: b.location_id, department_id: b.department_id || '',
@@ -364,6 +369,34 @@ export default function UserWizard() {
                 <label htmlFor={key}>{label}</label>
               </div>
             ))}
+
+            {/* A Sales Business Unit owns whole sales divisions -- its commission rolls up
+                every sale in the divisions ticked here plus its own. Revealed only when the
+                SBU flag is set, the same way the real form surfaces it. */}
+            {accountType.is_sales_business_unit && (
+              <div className="field" style={{ marginLeft: 24, marginTop: 4 }}>
+                <label>Sales Divisions under this SBU</label>
+                {salesDivisions.length === 0 && <div className="muted">No sales divisions defined.</div>}
+                {salesDivisions.map((d) => {
+                  const checked = accountType.sales_division_ids.includes(d.id);
+                  return (
+                    <div className="field-checkbox" key={d.id}>
+                      <input
+                        type="checkbox" id={`div-${d.id}`} checked={checked}
+                        onChange={(e) => setAccountType((at) => ({
+                          ...at,
+                          sales_division_ids: e.target.checked
+                            ? [...at.sales_division_ids, d.id]
+                            : at.sales_division_ids.filter((x) => x !== d.id),
+                        }))}
+                      />
+                      <label htmlFor={`div-${d.id}`}>{d.name}</label>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             <div className="field">
               <label>Approval Code</label>
               <input value={accountType.approval_code} onChange={(e) => setAccountType({ ...accountType, approval_code: e.target.value })} />

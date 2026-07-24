@@ -86,6 +86,13 @@ import TrialBalance from './pages/reports/TrialBalance';
 import IncomeStatement from './pages/reports/IncomeStatement';
 import BalanceSheet from './pages/reports/BalanceSheet';
 import GeneralLedger from './pages/reports/GeneralLedger';
+import ArAging from './pages/reports/ArAging';
+import CommissionSchemes from './pages/CommissionSchemes';
+import CommissionSchemeView from './pages/CommissionSchemeView';
+import EmployeeQuotas from './pages/EmployeeQuotas';
+import EmployeeQuotaView from './pages/EmployeeQuotaView';
+import CommissionReport from './pages/reports/CommissionReport';
+import CommissionJoDetail from './pages/reports/CommissionJoDetail';
 import TicketSummary from './pages/reports/TicketSummary';
 import Lookups from './pages/Lookups';
 import ProcessCosting from './pages/ProcessCosting';
@@ -215,6 +222,13 @@ function App() {
         <Route path="/reports/income-statement" element={<IncomeStatement />} />
         <Route path="/reports/balance-sheet" element={<BalanceSheet />} />
         <Route path="/reports/general-ledger" element={<GeneralLedger />} />
+        <Route path="/reports/ar-aging" element={<ArAging />} />
+        <Route path="/commission-schemes" element={<CommissionSchemes />} />
+        <Route path="/commission-schemes/:id" element={<CommissionSchemeView />} />
+        <Route path="/employee-quotas" element={<EmployeeQuotas />} />
+        <Route path="/employee-quotas/:id" element={<EmployeeQuotaView />} />
+        <Route path="/commission-report" element={<CommissionReport />} />
+        <Route path="/commission-jo-detail" element={<CommissionJoDetail />} />
         <Route path="/reports/ticket-summary" element={<TicketSummary />} />
         <Route path="/lookups" element={<Lookups />} />
         <Route path="/process-costing" element={<ProcessCosting />} />

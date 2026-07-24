@@ -21,6 +21,17 @@ const NAV_STRUCTURE = [
     ],
   },
   {
+    label: 'Commission',
+    children: [
+      { route: '/commission-schemes', label: 'Commission Table' },
+      { route: '/employee-quotas', label: 'Employee Quota' },
+      { route: '/commission-report', label: 'Commission' },
+      // Shares the Commission Report's permission (its backend route does too) rather than
+      // having its own pages row.
+      { route: '/commission-jo-detail', permRoute: '/commission-report', label: 'Commission JO Detail' },
+    ],
+  },
+  {
     label: 'Master Lists',
     children: [
       { route: '/employees', label: 'Employees' },
@@ -106,6 +117,7 @@ const NAV_STRUCTURE = [
       { route: '/reports/income-statement', label: 'Income Statement' },
       { route: '/reports/balance-sheet', label: 'Balance Sheet' },
       { route: '/reports/general-ledger', label: 'General Ledger' },
+      { route: '/reports/ar-aging', label: 'AR Aging' },
     ],
   },
 ];

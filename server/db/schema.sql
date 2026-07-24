@@ -2329,3 +2329,66 @@ CREATE TABLE credit_memo_applications (
 -- real screen shows once it reaches there, alongside the existing 'saved' (Open) and
 -- 'cancelled' (Void). Voiding a payment or credit memo releases the amount back and
 -- returns the invoice to 'saved'.
+
+-- =====================================================================
+-- Commission module (Commission > Setups)
+-- =====================================================================
+-- Commission Table: the admin-maintained rate schemes, one per sales role (Sales Manager,
+-- Account Officer, Sales Supervisor, SBU Head, ...). Each scheme is a lookup ladder -- a
+-- rep's Total Weighted Sales for a period falls into one bracket, and that bracket's
+-- Commission Amount is what they earn. Entirely manual: the admin types the brackets in,
+-- there's no formula deriving them (confirmed against the real Schemes tab, where e.g.
+-- Sales Supervisor's 1-200,000 -> 660 and Account Officer's 100,000.01-200,000 -> 2,514.29
+-- follow no single rate). `commission_rate` is a second per-bracket figure the real screen
+-- shows alongside the amount (identical to it in the sampled schemes) -- kept as its own
+-- column since the admin sets it independently, not as a derived percentage.
+CREATE TABLE commission_schemes (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(150) NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by_user_id BIGINT NULL REFERENCES users(id),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NULL
+);
+
+CREATE TABLE commission_scheme_brackets (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    commission_scheme_id BIGINT NOT NULL REFERENCES commission_schemes(id),
+    -- The bracket's Total Weighted Sales range. Brackets are a hand-entered list, not
+    -- required to be contiguous or sorted (the real Account Officer scheme has big
+    -- brackets first, then small ones appended) -- sort_order preserves entry order.
+    sort_order INT NOT NULL DEFAULT 0,
+    min_weighted_sales DECIMAL(16,2) NOT NULL,
+    max_weighted_sales DECIMAL(16,2) NOT NULL,
+    commission_amount DECIMAL(16,2) NOT NULL DEFAULT 0,
+    commission_rate DECIMAL(16,2) NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_csb_scheme (commission_scheme_id)
+);
+
+-- Employee Quota: a monthly sales target per employee, again fully manual (the admin sets
+-- each person's quota per month; the real screen shows a flat 2,800,000 across every month
+-- for one rep, 1,400,000 for another -- no derivation). One row per employee/year/month.
+CREATE TABLE employee_quotas (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    employee_id BIGINT NOT NULL REFERENCES employees(id),
+    year INT NOT NULL,
+    month TINYINT NOT NULL,
+    quota DECIMAL(16,2) NOT NULL DEFAULT 0,
+    created_by_user_id BIGINT NULL REFERENCES users(id),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NULL,
+    UNIQUE KEY uq_emp_quota (employee_id, year, month)
+);
+
+-- Which sales divisions a Sales Business Unit (SBU) user owns. An SBU Head's commission
+-- rolls up the sales of every division assigned here plus their own -- the division-level
+-- analogue of the supervisor_id reporting rollup (an SBU runs whole divisions rather than
+-- a direct reporting chain). Only meaningful when users.is_sales_business_unit is set.
+CREATE TABLE user_sales_divisions (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    sales_division_id BIGINT NOT NULL REFERENCES sales_divisions(id),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_user_division (user_id, sales_division_id)
+);
