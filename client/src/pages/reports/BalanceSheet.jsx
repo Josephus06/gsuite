@@ -1,9 +1,14 @@
 import { Fragment, useState } from 'react';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import MonthYearPicker from '../../components/MonthYearPicker';
 import CoaTreeRows, { money } from './CoaTreeRows';
 
-function today() { return new Date().toISOString().slice(0, 10); }
+// The balance sheet is "as of" the last day of the selected month.
+function endOfMonth({ year, month }) {
+  const d = new Date(year, month, 0); // day 0 of next month = last day of this month
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 // Mirrors the real system's Accounting > Reports > Balance Sheet: same "as of" /
 // Generate pattern and parent/child COA tree as Trial Balance, but only Asset,
@@ -12,16 +17,18 @@ function today() { return new Date().toISOString().slice(0, 10); }
 // (cumulative Income - cumulative Expense to date) -- without it Assets would never
 // actually equal Liabilities + Equity. Flagged in the UI, not hidden.
 export default function BalanceSheet() {
-  const [asOf, setAsOf] = useState(today());
+  const now = new Date();
+  const [monthYear, setMonthYear] = useState({ year: now.getFullYear(), month: now.getMonth() + 1 });
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   async function generate() {
+    if (!monthYear) { setError('Select a month first.'); return; }
     setLoading(true);
     setError('');
     try {
-      const { data } = await api.get('/reports/balance-sheet', { params: { asOf } });
+      const { data } = await api.get('/reports/balance-sheet', { params: { asOf: endOfMonth(monthYear) } });
       setReport(data);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to generate report');
@@ -39,8 +46,8 @@ export default function BalanceSheet() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="filter-grid">
           <div className="field">
-            <label>Date as of</label>
-            <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+            <label>Date as of:</label>
+            <MonthYearPicker value={monthYear} onChange={setMonthYear} />
           </div>
         </div>
         <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={generate} disabled={loading}>

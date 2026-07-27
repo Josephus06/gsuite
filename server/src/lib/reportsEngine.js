@@ -371,4 +371,60 @@ async function buildGeneralLedger(asOfDate) {
   return { as_of: asOfDate, rows };
 }
 
-module.exports = { buildTrialBalance, buildBalanceSheet, buildIncomeStatement, buildGeneralLedger };
+// The party name shown per GL line in the drill-down (customer for sales-side sources).
+async function resolveGlLineNames(lines) {
+  const idsByType = new Map();
+  for (const l of lines) { if (!idsByType.has(l.source_type)) idsByType.set(l.source_type, new Set()); idsByType.get(l.source_type).add(l.source_id); }
+  const NAME_SQL = {
+    sales_invoice: 'SELECT si.id, c.name FROM sales_invoices si JOIN sales_orders so ON so.id=si.sales_order_id JOIN customers c ON c.id=so.customer_id WHERE si.id IN (?)',
+    assembly_build: 'SELECT ab.id, c.name FROM assembly_builds ab JOIN job_orders jo ON jo.id=ab.job_order_id JOIN sales_orders so ON so.id=jo.sales_order_id JOIN customers c ON c.id=so.customer_id WHERE ab.id IN (?)',
+    item_delivery: 'SELECT del.id, c.name FROM item_deliveries del JOIN sales_orders so ON so.id=del.sales_order_id JOIN customers c ON c.id=so.customer_id WHERE del.id IN (?)',
+    customer_payment: 'SELECT cp.id, c.name FROM customer_payments cp JOIN customers c ON c.id=cp.customer_id WHERE cp.id IN (?)',
+    credit_memo: 'SELECT cm.id, c.name FROM credit_memos cm JOIN sales_orders so ON so.id=cm.sales_order_id JOIN customers c ON c.id=so.customer_id WHERE cm.id IN (?)',
+    delivery_ticket: 'SELECT dt.id, c.name FROM delivery_tickets dt JOIN sales_orders so ON so.id=dt.sales_order_id JOIN customers c ON c.id=so.customer_id WHERE dt.id IN (?)',
+  };
+  const names = new Map();
+  for (const [type, ids] of idsByType) {
+    const sql = NAME_SQL[type]; if (!sql || !ids.size) continue;
+    try { const [rows] = await pool.query(sql, [[...ids]]); for (const r of rows) names.set(`${type}:${r.id}`, r.name); } catch { /* leave blank */ }
+  }
+  return names;
+}
+
+// Transaction-level drill-down behind one income-statement cell: the posted GL lines for one
+// account, scoped to the clicked column (a department / location / month, or all for Total),
+// over the report's period -- Trans #, date, party name, debit, credit + totals.
+async function buildGlTransactions({ accountCode, breakdown = 'total', columnKey = 'total', asOfDate, fromDate }) {
+  const from = fromDate || yearStart(asOfDate);
+  const [coaRows, glLines] = await Promise.all([loadCoa(), getPostedGlLines({ toDate: asOfDate, fromDate: from })]);
+  const monthKey = (d) => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`; };
+
+  // A clicked account may be a summary; its transactions post to descendant leaf accounts, so
+  // collect the account and all its descendants' codes.
+  const target = coaRows.find((c) => c.account_code === accountCode);
+  const childrenByParent = new Map();
+  for (const c of coaRows) { if (c.parent_account_id != null) { if (!childrenByParent.has(c.parent_account_id)) childrenByParent.set(c.parent_account_id, []); childrenByParent.get(c.parent_account_id).push(c); } }
+  const codes = new Set([accountCode]);
+  if (target) { const q = [target.id]; while (q.length) { for (const ch of childrenByParent.get(q.shift()) || []) { codes.add(ch.account_code); q.push(ch.id); } } }
+
+  let lines = glLines.filter((l) => codes.has(l.account_code) && ((Number(l.debit) || 0) || (Number(l.credit) || 0)));
+  if (breakdown === 'department') lines = lines.filter((l) => String(l.department_id || 'unassigned') === String(columnKey));
+  else if (breakdown === 'location') lines = lines.filter((l) => String(l.location_id || 'unassigned') === String(columnKey));
+  else if (breakdown === 'months') lines = lines.filter((l) => monthKey(l.entry_date) === String(columnKey));
+
+  const names = await resolveGlLineNames(lines);
+  const rows = lines
+    .map((l) => ({
+      source_no: l.source_no, source_type: l.source_type, entry_date: l.entry_date,
+      name: names.get(`${l.source_type}:${l.source_id}`) || l.memo || '',
+      debit: round2(l.debit || 0), credit: round2(l.credit || 0),
+    }))
+    .sort((a, b) => new Date(a.entry_date) - new Date(b.entry_date) || String(a.source_no).localeCompare(String(b.source_no)));
+  return {
+    account_code: accountCode, rows,
+    total_debit: round2(rows.reduce((s, r) => s + r.debit, 0)),
+    total_credit: round2(rows.reduce((s, r) => s + r.credit, 0)),
+  };
+}
+
+module.exports = { buildTrialBalance, buildBalanceSheet, buildIncomeStatement, buildGeneralLedger, buildGlTransactions };

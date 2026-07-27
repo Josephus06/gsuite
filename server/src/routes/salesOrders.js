@@ -124,7 +124,9 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
 // Mirrors the real system's "Create JO" cell on a Sales Order line: turns that line
 // into a Job Order (a deliberately minimal production-record stand-in, not the full
 // production/QI/delivery/invoicing pipeline the real system has behind it).
-router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+// Creating a JO from a line is an "add" (a sales rep forwarding their order to production),
+// not an edit of the sales order -- gate it on can_add, which sales accounts have.
+router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();

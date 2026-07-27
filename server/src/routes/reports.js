@@ -1,6 +1,6 @@
 const express = require('express');
 const { requireAuth, requirePermission } = require('../middleware/auth');
-const { buildTrialBalance, buildBalanceSheet, buildIncomeStatement, buildGeneralLedger } = require('../lib/reportsEngine');
+const { buildTrialBalance, buildBalanceSheet, buildIncomeStatement, buildGeneralLedger, buildGlTransactions } = require('../lib/reportsEngine');
 const { buildArAging, buildArAgingCustomerDetails, buildArAgingCustomerLedger } = require('../lib/arAging');
 const { buildCommissionReport, buildCommissionJoDetail, getTeamEmployeeIds, getSbuDivisionIds } = require('../lib/commissionReport');
 const pool = require('../db');
@@ -92,6 +92,23 @@ router.get('/balance-sheet', requireAuth, requirePermission('/reports/balance-sh
 router.get('/general-ledger', requireAuth, requirePermission('/reports/general-ledger', 'can_view'), async (req, res, next) => {
   try {
     res.json(await buildGeneralLedger(req.query.asOf || today()));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Drill-down behind an income-statement amount: the transactions for one account, scoped to
+// the clicked column (department/location/month) over the report period.
+router.get('/income-statement/transactions', requireAuth, requirePermission('/reports/income-statement', 'can_view'), async (req, res, next) => {
+  try {
+    if (!req.query.accountCode) return res.status(400).json({ error: 'accountCode is required.' });
+    res.json(await buildGlTransactions({
+      accountCode: req.query.accountCode,
+      breakdown: req.query.breakdown || 'total',
+      columnKey: req.query.columnKey || 'total',
+      asOfDate: req.query.asOf || today(),
+      fromDate: req.query.from || null,
+    }));
   } catch (err) {
     next(err);
   }

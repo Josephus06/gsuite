@@ -19,7 +19,9 @@ const pool = require('../db');
 require('dotenv').config();
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const REP_IDS = [5, 7, 8, 9]; // Catherine, Arjie, Jocel, Michelle
+// Sales-1: Catherine(5), Arjie(7), Jocel(8), Michelle(9).
+// Sales-3: Vanessa(69), Jerome(132), Paul(240), Margie(256), Nicole(269).
+const REP_IDS = [5, 7, 8, 9, 69, 132, 240, 256, 269];
 const DEPOSIT_ACCOUNT_CODE = '11000'; // Cash in Bank
 
 async function main() {

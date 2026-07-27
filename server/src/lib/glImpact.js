@@ -519,7 +519,11 @@ async function getPostedGlLines({ toDate, fromDate }) {
   {
     const { sql, params } = dateFilter('ab.date_created');
     const [headers] = await pool.query(
-      `SELECT ab.*, jt.asset_account_id AS fg_account_id, jo.job_location_id AS location_id
+      `SELECT ab.*, jt.asset_account_id AS fg_account_id, jo.job_location_id AS location_id,
+              (SELECT dept.id FROM sales_orders so
+                 JOIN sales_divisions sd ON sd.id = so.sales_division_id
+                 JOIN departments dept ON REPLACE(REPLACE(LOWER(dept.name),' ',''),'-','') = REPLACE(REPLACE(LOWER(sd.name),' ',''),'-','')
+                WHERE so.id = jo.sales_order_id LIMIT 1) AS dept_id
        FROM assembly_builds ab
        JOIN job_orders jo ON jo.id = ab.job_order_id
        LEFT JOIN job_types jt ON jt.id = jo.job_type_id
@@ -535,7 +539,7 @@ async function getPostedGlLines({ toDate, fromDate }) {
       const rows = await computeAssemblyBuildGl(pool, ab, lines);
       push(rows, {
         entry_date: ab.date_created, source_type: 'assembly_build', source_no: ab.ab_no, source_id: ab.id, memo: ab.memo || null,
-        location_id: ab.location_id || null, department_id: null,
+        location_id: ab.location_id || null, department_id: ab.dept_id || null,
       });
     }
   }
@@ -547,7 +551,11 @@ async function getPostedGlLines({ toDate, fromDate }) {
       `SELECT del.*,
               (SELECT jo.job_location_id FROM item_delivery_lines idl2
                LEFT JOIN job_orders jo ON jo.id = idl2.job_order_id
-               WHERE idl2.item_delivery_id = del.id LIMIT 1) AS location_id
+               WHERE idl2.item_delivery_id = del.id LIMIT 1) AS location_id,
+              (SELECT dept.id FROM sales_orders so
+                 JOIN sales_divisions sd ON sd.id = so.sales_division_id
+                 JOIN departments dept ON REPLACE(REPLACE(LOWER(dept.name),' ',''),'-','') = REPLACE(REPLACE(LOWER(sd.name),' ',''),'-','')
+                WHERE so.id = del.sales_order_id LIMIT 1) AS dept_id
        FROM item_deliveries del WHERE del.status != 'cancelled' AND ${sql}`, params
     );
     for (const d of headers) {
@@ -563,7 +571,7 @@ async function getPostedGlLines({ toDate, fromDate }) {
       const rows = await computeItemDeliveryGl(lines);
       push(rows, {
         entry_date: d.date_created, source_type: 'item_delivery', source_no: d.delivery_no, source_id: d.id, memo: d.memo || null,
-        location_id: d.location_id || null, department_id: null,
+        location_id: d.location_id || null, department_id: d.dept_id || null,
       });
     }
   }

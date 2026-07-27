@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import { money } from './CoaTreeRows';
@@ -16,7 +16,8 @@ const BREAKDOWN_OPTIONS = [
 // Total Only mode) -- one shared rendering path for all 4 breakdown modes, matching how
 // the backend (reportsEngine.js's buildIncomeStatement) computes them through the same
 // multi-column pipeline.
-function SectionRows({ sections, numCols }) {
+function SectionRows({ sections, columns, onDrill }) {
+  const numCols = columns.length;
   const rows = [];
   for (const s of sections) {
     rows.push(
@@ -31,7 +32,13 @@ function SectionRows({ sections, numCols }) {
           <td style={{ paddingLeft: 24 }}>{a.account_code}</td>
           <td>{a.account_name}</td>
           {a.amounts.map((v, i) => (
-            <td key={i} style={{ textAlign: 'right' }}>{money(v)} <span style={{ color: 'var(--muted, #888)', fontSize: '0.85em' }}>({a.percents[i]}%)</span></td>
+            <td key={i} style={{ textAlign: 'right' }}>
+              {v ? (
+                <button type="button" className="link-btn" style={{ color: 'var(--link, #2563eb)', textDecoration: 'underline', cursor: 'pointer' }}
+                  onClick={() => onDrill(a, columns[i])}>{money(v)}</button>
+              ) : money(v)}
+              {' '}<span style={{ color: 'var(--muted, #888)', fontSize: '0.85em' }}>({a.percents[i]}%)</span>
+            </td>
           ))}
         </tr>
       );
@@ -44,6 +51,60 @@ function SectionRows({ sections, numCols }) {
     );
   }
   return rows;
+}
+
+// Drill-down modal: the transactions behind one clicked income-statement amount.
+function TransactionsModal({ ctx, onClose }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let alive = true;
+    api.get('/reports/income-statement/transactions', { params: ctx.params })
+      .then((r) => { if (alive) { setData(r.data); setLoading(false); } })
+      .catch((e) => { if (alive) { setError(e.response?.data?.error || 'Failed to load transactions'); setLoading(false); } });
+    return () => { alive = false; };
+  }, [ctx]);
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 50, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: 24, overflow: 'auto' }}>
+      <div onClick={(e) => e.stopPropagation()} className="card" style={{ maxWidth: 900, width: '100%', maxHeight: '85vh', overflow: 'auto', marginTop: 24 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <strong>TRANSACTIONS &nbsp;|&nbsp; {ctx.title}</strong>
+          <button type="button" className="btn" onClick={onClose}>Close</button>
+        </div>
+        {loading && <LoadingSpinner />}
+        {error && <div style={{ color: '#b91c1c' }}>{error}</div>}
+        {data && (
+          <div className="table-wrap">
+            <table className="responsive-cards">
+              <thead>
+                <tr><th>Trans #</th><th>Date</th><th>Name</th><th style={{ textAlign: 'right' }}>Debit</th><th style={{ textAlign: 'right' }}>Credit</th></tr>
+              </thead>
+              <tbody>
+                {data.rows.map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.source_no}</td>
+                    <td>{(r.entry_date || '').slice(0, 10)}</td>
+                    <td>{r.name}</td>
+                    <td style={{ textAlign: 'right' }}>{money(r.debit)}</td>
+                    <td style={{ textAlign: 'right' }}>{money(r.credit)}</td>
+                  </tr>
+                ))}
+                {!data.rows.length && <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--muted,#888)' }}>No transactions.</td></tr>}
+              </tbody>
+              <tfoot>
+                <tr style={{ fontWeight: 700 }}>
+                  <td colSpan={3}>TOTAL</td>
+                  <td style={{ textAlign: 'right' }}>{money(data.total_debit)}</td>
+                  <td style={{ textAlign: 'right' }}>{money(data.total_credit)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // Mirrors the real system's Accounting > Reports > Income Statement, including its
@@ -60,6 +121,14 @@ export default function IncomeStatement() {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [drill, setDrill] = useState(null);
+
+  function handleDrill(account, column) {
+    const params = { accountCode: account.account_code, breakdown: report.breakdown, columnKey: column.key, asOf: report.as_of };
+    if (report.from_date) params.from = report.from_date;
+    const colPart = report.breakdown === 'total' ? '' : ` | ${column.label}`;
+    setDrill({ params, title: `${account.account_code} | ${account.account_name} | ${report.from_date} to ${report.as_of}${colPart}` });
+  }
 
   async function generate(mode) {
     setMenuOpen(false);
@@ -153,14 +222,14 @@ export default function IncomeStatement() {
               </thead>
               <tbody>
                 <tr><td colSpan={2 + numCols} style={{ fontWeight: 700, background: 'var(--panel-2, #f3f4f6)' }}>REVENUES</td></tr>
-                <SectionRows sections={report.revenue_sections} numCols={numCols} />
+                <SectionRows sections={report.revenue_sections} columns={report.columns} onDrill={handleDrill} />
                 <tr>
                   <td /><td style={{ fontWeight: 700 }}>TOTAL REVENUES</td>
                   {report.revenue_totals.map((v, i) => <td key={i} style={{ textAlign: 'right', fontWeight: 700 }}>{money(v)}</td>)}
                 </tr>
 
                 <tr><td colSpan={2 + numCols} style={{ fontWeight: 700, background: 'var(--panel-2, #f3f4f6)' }}>COST OF GOODS SOLD &amp; EXPENSES</td></tr>
-                <SectionRows sections={report.expense_sections} numCols={numCols} />
+                <SectionRows sections={report.expense_sections} columns={report.columns} onDrill={handleDrill} />
                 <tr>
                   <td /><td style={{ fontWeight: 700 }}>TOTAL EXPENSES</td>
                   {report.expense_totals.map((v, i) => <td key={i} style={{ textAlign: 'right', fontWeight: 700 }}>{money(v)}</td>)}
@@ -175,6 +244,8 @@ export default function IncomeStatement() {
           </div>
         </div>
       )}
+
+      {drill && <TransactionsModal ctx={drill} onClose={() => setDrill(null)} />}
     </div>
   );
 }

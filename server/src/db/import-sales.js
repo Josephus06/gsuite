@@ -31,8 +31,17 @@ const TO = argVal('to', '2026-07-31');
 // SOs are (re)built -- used to re-sync individual orders that drifted from live post-migration.
 const ONLY = new Set(argVal('only', '').split(',').map((s) => s.trim()).filter(Boolean));
 const day = (v) => (v || '').toString().slice(0, 10);
-// Live rep name -> we match the local employee by the same name.
-const REPS = ['Michelle Riveral', 'Arjie Bayagna', 'Jocel Ann Berina', 'Catherine Jane  Langajed'];
+// Live rep name -> we match the local employee by the same name. Reps are matched by
+// normalized name (whitespace-collapsed, lowercased) so live-side double spaces / casing
+// don't matter. Presets are hardcoded here (UTF-8) to avoid command-line encoding issues
+// with names like "Cañete". Pick with --preset=sales1|sales3 (default sales1).
+const REP_PRESETS = {
+  sales1: ['Michelle Riveral', 'Arjie Bayagna', 'Jocel Ann Berina', 'Catherine Jane Langajed'],
+  sales3: ['JOJI ANN NICOLE FUENTES', 'Margie Lyn C. Cañete', 'Jerome Magale', 'Paul Adam T. Oporto', 'Vanessa Krystal Jean Garcia'],
+};
+const REPS = REP_PRESETS[argVal('preset', 'sales1')] || REP_PRESETS.sales1;
+const repNorm = (s) => (s || '').toString().replace(/\s+/g, ' ').trim().toLowerCase();
+const REP_NORM_SET = new Set(REPS.map(repNorm));
 
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
 // Live dimension fields can be "-" (not applicable); only a real number goes into a
@@ -67,6 +76,8 @@ function joStageFromSo(localStatus) {
   }[localStatus] || 'pending_for_scheduling';
 }
 function clean(s) { return (s || '').toString().trim().replace(/\s+/g, ' '); }
+// Trim to a column length (live memos/refs can exceed local VARCHAR limits).
+function trunc(s, n) { const c = clean(s); return c ? c.slice(0, n) : null; }
 
 // ---- live API ----
 async function login() {
@@ -78,7 +89,7 @@ async function login() {
   if (!body?.data?.token) throw new Error(`Login failed: ${body?.message}`);
   return body.data.token;
 }
-async function api(token, ep, payload, ms = 90000) {
+async function apiOnce(token, ep, payload, ms = 90000) {
   const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), ms);
   try {
     const r = await fetch(`${SITE}/api/${ep}`, {
@@ -87,6 +98,15 @@ async function api(token, ep, payload, ms = 90000) {
     });
     clearTimeout(t); return await r.json();
   } catch (e) { clearTimeout(t); throw new Error(`${ep} ${e.name === 'AbortError' ? 'timed out' : e.message}`); }
+}
+// The live server intermittently times out; retry with backoff before giving up.
+async function api(token, ep, payload, ms = 90000) {
+  let last;
+  for (let a = 0; a < 4; a += 1) {
+    try { return await apiOnce(token, ep, payload, ms); }
+    catch (e) { last = e; await new Promise((r) => setTimeout(r, 1500 * (a + 1))); }
+  }
+  throw last;
 }
 const listRows = (res) => (Array.isArray(res.data?.[0]) ? res.data[0] : (res.data || []));
 
@@ -128,10 +148,13 @@ async function resolveJobType(displayName) {
   return id;
 }
 async function resolveDivision(name) {
-  const key = clean(name).toLowerCase();
+  // Match ignoring spaces AND dashes so live "Sales-3" finds the app's seeded "Sales - 3"
+  // (otherwise we'd create a duplicate division and mis-attribute the department).
+  const key = clean(name).toLowerCase().replace(/[\s-]/g, '');
   if (!key) return null;
   if (cache.divisions.has(key)) return cache.divisions.get(key);
-  const [[row]] = await pool.query('SELECT id FROM sales_divisions WHERE LOWER(name) = ? LIMIT 1', [key]);
+  const [[row]] = await pool.query(
+    "SELECT id FROM sales_divisions WHERE REPLACE(REPLACE(LOWER(name),' ',''),'-','') = ? LIMIT 1", [key]);
   let id = row ? row.id : null;
   if (!id && !DRY_RUN) {
     const [r] = await pool.query('INSERT INTO sales_divisions (name, is_active) VALUES (?, 1)', [clean(name)]);
@@ -139,6 +162,20 @@ async function resolveDivision(name) {
   }
   if (!row) stats.divisionsCreated += 1;
   cache.divisions.set(key, id);
+  return id;
+}
+// The org "department" (for invoices / the Department Income Statement) lives in the
+// `departments` table, distinct from sales_divisions -- match the division name to it,
+// ignoring spaces/dashes (live "Sales-3" -> departments "Sales - 3").
+async function resolveDepartment(name) {
+  const key = clean(name).toLowerCase().replace(/[\s-]/g, '');
+  if (!key) return null;
+  if (!cache.departments) cache.departments = new Map();
+  if (cache.departments.has(key)) return cache.departments.get(key);
+  const [[row]] = await pool.query(
+    "SELECT id FROM departments WHERE REPLACE(REPLACE(LOWER(name),' ',''),'-','') = ? LIMIT 1", [key]);
+  const id = row ? row.id : null;
+  cache.departments.set(key, id);
   return id;
 }
 async function resolveRep(name) {
@@ -150,6 +187,19 @@ async function resolveRep(name) {
   const id = row ? row.id : null;
   cache.reps.set(key, id);
   return id;
+}
+
+// The sales order's contact person -> customer_contacts (create-on-miss for that customer).
+async function resolveContact(customerId, name, title, email, phone) {
+  const nm = clean(name);
+  if (!customerId || !nm) return null;
+  const [[row]] = await pool.query(
+    'SELECT id FROM customer_contacts WHERE customer_id = ? AND LOWER(contact_name) = LOWER(?) LIMIT 1', [customerId, nm]);
+  if (row) return row.id;
+  const [r] = await pool.query(
+    'INSERT INTO customer_contacts (customer_id, contact_name, title, email, phone) VALUES (?,?,?,?,?)',
+    [customerId, trunc(nm, 255), trunc(title, 100), trunc(email, 255), trunc(phone, 100)]);
+  return r.insertId;
 }
 
 // Live invoice status -> local sales_invoices.status.
@@ -189,11 +239,11 @@ async function main() {
   const [[vat]] = await pool.query("SELECT id, code FROM taxes WHERE code = 'VAT12' LIMIT 1");
   const [[headOffice]] = await pool.query("SELECT id FROM locations WHERE location_name LIKE 'Head Office%' LIMIT 1");
 
-  // Confirm the 4 reps exist locally.
-  const repIds = {};
+  // Confirm the reps exist locally; index their ids by normalized name.
+  const repIdByNorm = new Map();
   for (const name of REPS) {
     const id = await resolveRep(name);
-    repIds[name] = id;
+    repIdByNorm.set(repNorm(name), id);
     if (!id) console.warn(`!! Local employee not found for "${name}" -- their SOs will be skipped.`);
   }
 
@@ -201,14 +251,23 @@ async function main() {
   // The list is newest-first; scan back until we've passed the window's start. The cap is
   // a safety backstop -- the early-stop below is what normally ends it (a wide window like
   // 6 months means scanning many pages of all-rep orders to collect just the 4 reps').
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function fetchSoPage(off) {
+    for (let a = 0; a < 5; a += 1) {
+      const list = listRows(await api(token, 'get_sales_orders', { searchKey: '', viewAll: true, limit: 200, offset: off }));
+      if (list.length) return list;
+      await sleep(2000 * (a + 1)); // transient empty page -> retry before treating as end
+    }
+    return [];
+  }
   const salesOrders = [];
   let offset = 0;
   while (offset < 40000) {
-    const list = listRows(await api(token, 'get_sales_orders', { searchKey: '', viewAll: true, limit: 200, offset }));
+    const list = await fetchSoPage(offset);
     if (!list.length) break;
     for (const so of list) {
       const d = day(so.DateCreated_TransH);
-      if (!REPS.includes(so.Name_Empl)) continue;
+      if (!REP_NORM_SET.has(repNorm(so.Name_Empl))) continue;
       // With --only, take just the listed SOs (any date in the scan); otherwise the date window.
       if (ONLY.size ? ONLY.has(so.so_upk) : (d >= FROM && d <= TO)) salesOrders.push(so);
     }
@@ -244,7 +303,7 @@ async function main() {
   let doneSo = 0, doneLines = 0, doneJos = 0, doneInvoices = 0, skipped = 0;
 
   for (const so of salesOrders) {
-    const repId = repIds[so.Name_Empl];
+    const repId = repIdByNorm.get(repNorm(so.Name_Empl));
     if (!repId) { skipped += 1; continue; }
     try {
       // Detail: ledger lines + the SO's job orders (SysPK -> JO number).
@@ -255,8 +314,18 @@ async function main() {
 
       const customerId = await resolveCustomer(so.Name_Cust);
       const divisionId = await resolveDivision(so.Name_Dept);
+      const departmentId = await resolveDepartment(so.Name_Dept);
       const contract = clean(so.ContractDescription_TransH) || so.so_upk;
       const soDate = so.DateCreated_TransH;
+      // The contact person is on the job-order header (not the estimate header); pull it from
+      // the SO's first JO if there is one.
+      let contactSrc = est.data?.[0] || {};
+      if (joList.length) {
+        const jo0 = await api(token, 'get_job_order', { pk: joList[0].SysPK_TransH });
+        contactSrc = (Array.isArray(jo0.data) ? jo0.data[0] : null) || contactSrc;
+      }
+      const contactPersonId = await resolveContact(customerId, contactSrc.Name_ContactP, contactSrc.Title_ContactP, contactSrc.Email_ContactP, contactSrc.ContactNo_ContactP);
+      const estHeader = contactSrc;
 
       // Pre-resolve job types (also drives dry-run "to create" counts).
       for (const l of lines) await resolveJobType(l.transactionledgerjob_job?.DisplayName_Job);
@@ -297,9 +366,12 @@ async function main() {
         const stage = joStageFromSo(localSoStatus);
         const [soRes] = await conn.query(
           `INSERT INTO sales_orders (sales_order_no, estimate_id, date_created, customer_id, contract_description,
+             contact_person_id, contact_email, contact_title, contact_phone, ref_no,
              sales_rep_id, sales_division_id, office_location_id, status, subtotal, net_of_tax, tax_total, total_amount, est_gp_rate)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [so.so_upk, estimateId, soDate, customerId, contract, repId, divisionId, headOffice ? headOffice.id : null,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [so.so_upk, estimateId, soDate, customerId, contract,
+            contactPersonId, trunc(estHeader.Email_ContactP, 255), trunc(estHeader.Title_ContactP, 100), trunc(estHeader.ContactNo_ContactP, 100), trunc(so.ReferrenceNO_TransH, 100),
+            repId, divisionId, headOffice ? headOffice.id : null,
             localSoStatus, num(so.SubTotalVatEx_TransH), num(so.SubTotalVatEx_TransH), num(so.TaxAmount_TransH),
             num(so.TotalAmount_TransH), num(so.gpRate)]
         );
@@ -353,9 +425,11 @@ async function main() {
           const invLines = inv.data?.[1] || [];
           const [invRes] = await conn.query(
             `INSERT INTO sales_invoices (invoice_no, sales_order_id, date_created, date_due, term,
+               bs_si_no, po_no, memo, department_id, subtotal,
                net_of_tax, tax_amount, gross_amount, amount_due, status, sales_rep_id, office_location_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [ivHead.invc_pk, salesOrderId, h.DateCreated_TransH || soDate, h.DateDue_TransH || null, clean(h.Term_TransH),
+              trunc(h.ReferrenceNO_TransH, 60), trunc(h.PONo_TransH, 60), trunc(h.Memo_TransH, 500), departmentId, num(h.SubTotalVatEx_TransH),
               num(h.SubTotalVatEx_TransH), num(h.TaxAmount_TransH), num(h.TotalAmount_TransH),
               num(h.AmountDue_TransH), invoiceStatus(h.Status_TransH), repId, headOffice ? headOffice.id : null]
           );
