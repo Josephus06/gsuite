@@ -76,7 +76,11 @@ export default function ChatWidget() {
       pushLocal('user', text);
 
       if (mode === 'chat') {
-        const { data } = await api.post('/chatbot/ask', { message: text });
+        // Send the prior turns so the bot can answer follow-up questions in context.
+        // (localMessages here is the pre-message state -- the setState from pushLocal above
+        // hasn't applied yet -- so it's exactly the conversation before this message.)
+        const history = localMessages.map((m) => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text }));
+        const { data } = await api.post('/chatbot/ask', { message: text, history });
         pushLocal('bot', data.reply);
         if (data.isTicketTrigger) setMode('awaiting_department');
         return;

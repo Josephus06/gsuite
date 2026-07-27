@@ -77,7 +77,7 @@ async function answerAdminSupervisorLookup(userId, personName) {
 // users already reuses the exact same visibility helpers (resolveScope,
 // ticketVisibilityClause) the rest of the app trusts, so it isn't a weaker guarantee
 // than hand-written scoped queries -- just a lot more general.
-async function answerQuestion(user, message) {
+async function answerQuestion(user, message, history = []) {
   try {
     const jobOrderNo = extractJobOrderForArtistLookup(message);
     if (jobOrderNo) {
@@ -91,9 +91,10 @@ async function answerQuestion(user, message) {
       if (answer) return answer;
     }
 
-    const answer = await runSqlFallback(user, message);
+    const answer = await runSqlFallback(user, message, history);
     if (answer) return answer;
   } catch (err) {
+    console.error('[chatbot] answerQuestion failed:', err.message);
     return 'Sorry, I ran into a problem looking that up.';
   }
   return "I don't have an answer for that yet. You can also type \"create ticket\" to reach a department.";

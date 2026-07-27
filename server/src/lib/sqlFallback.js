@@ -102,6 +102,38 @@ function validateSql(sql, allowedTables) {
   return { ok: true, sql: withLimit };
 }
 
+// Pull a SELECT statement out of an LLM reply that may have wrapped it in prose ("Let me
+// look that up... SELECT ...") or a markdown code fence. Returns null when there's no real
+// query (a greeting / conversational reply), so the caller returns that text as-is.
+function extractSelect(text) {
+  const cleaned = String(text).replace(/```sql|```/gi, '').trim();
+  if (!/\bselect\b[\s\S]*\bfrom\b/i.test(cleaned)) return null;
+  return cleaned.slice(cleaned.search(/\bselect\b/i)).trim();
+}
+
+// Sanitize the client-supplied conversation history into OpenAI chat messages, so a
+// follow-up question ("what about his supervisor?", "and last month?") can be resolved
+// against what was just said. Only prior user/assistant turns, capped for prompt size.
+// Order/estimate/JO numbers referenced in the question (or recent history) that we should
+// fetch on demand -- so "who created SO-65154?" works even when that order is older than the
+// capped recent-records snapshot. Still scoped to what the user may see when fetched.
+function extractOrderRefs(text) {
+  const found = new Set((String(text).toUpperCase().match(/\b(?:SO|EST|JO)-\d+(?:-\d+)*\b/g) || []));
+  return {
+    so: [...found].filter((r) => r.startsWith('SO-')),
+    est: [...found].filter((r) => r.startsWith('EST-')),
+    jo: [...found].filter((r) => r.startsWith('JO-')),
+  };
+}
+
+function historyMessages(history) {
+  if (!Array.isArray(history)) return [];
+  return history
+    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && m.content)
+    .slice(-8)
+    .map((m) => ({ role: m.role, content: String(m.content).slice(0, 600) }));
+}
+
 async function chatCompletion(messages) {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -158,7 +190,7 @@ function findNameMatches(question, directory) {
   });
 }
 
-async function answerAsAdmin(question) {
+async function answerAsAdmin(question, history = []) {
   const directory = await fetchEmployeeDirectory();
   const namedMatches = findNameMatches(question, directory);
 
@@ -182,14 +214,23 @@ Rules:
 - Only reference the tables listed in the schema. Do not invent columns.
 - Always include a LIMIT clause (20 or fewer rows) unless the question asks for a single aggregate.
 - For name/code lookups, use LIKE '%...%' rather than an exact match unless the user gave a full, exact code -- a real item/customer/etc. is often referenced by a partial or approximate name. For status/priority columns, use an EXACT match (=) against one of the listed values -- never LIKE a human phrasing like "pending for customer approval" against the real stored value 'pending_customer_approval', map it to the exact value first.
-- Zero rows back is a perfectly good, honest answer ("no matching record"). Prefer writing a best-effort query over refusing -- only output NO_QUERY if the question is about something genuinely outside this schema entirely (e.g. asks to modify data, or about a topic no table here covers).`,
+- Zero rows back is a perfectly good, honest answer ("no matching record"). Prefer writing a best-effort query over refusing -- only output NO_QUERY if the question is about something genuinely outside this schema entirely (e.g. asks to modify data, or about a topic no table here covers).
+- This is a running conversation. Use the earlier messages to resolve follow-up questions -- "his", "that order", "and last month?", "what about the second one" refer back to what was just discussed. The warm, conversational tone applies ONLY to ANSWER:/greeting replies.
+- When you write SQL, output ONLY the SQL statement -- no sentence before or after it, no "let me look that up", no markdown. (The conversational phrasing of query results is added afterward.)
+- For a greeting or small talk ("hi", "hello", "thanks", "how are you"), just reply warmly in plain text (e.g. "Hi! How can I help?") -- do NOT write SQL or output NO_QUERY.`,
     },
+    ...historyMessages(history),
     { role: 'user', content: question },
   ]);
   if (!rawSql || rawSql === 'NO_QUERY') return null;
   if (rawSql.startsWith('ANSWER:')) return rawSql.slice('ANSWER:'.length).trim();
+  // The model should emit bare SQL, but may prepend a sentence. If the reply contains a
+  // SELECT ... FROM, treat it as SQL (dropping any preamble); otherwise it's a plain
+  // conversational reply (greeting / small talk) -- return it as-is.
+  const extracted = extractSelect(rawSql);
+  if (!extracted) return rawSql;
 
-  const { ok, sql, reason } = validateSql(rawSql, ADMIN_ALLOWED_TABLES);
+  const { ok, sql, reason } = validateSql(extracted, ADMIN_ALLOWED_TABLES);
   if (!ok) return `I couldn't safely answer that (${reason}). Try rephrasing.`;
 
   const [rows] = await pool.query(sql);
@@ -213,22 +254,31 @@ async function countByStatus(fromSql, alias, whereSql, params, statusCol = 'stat
 // Pulls exactly what resolveScope()/ticketVisibilityClause() already say this user may
 // see -- the same helpers backing the Dashboard and Tickets routes -- capped per table
 // so the prompt stays small. Nothing here is LLM-controlled.
-async function fetchOwnScopeSnapshot(user) {
+async function fetchOwnScopeSnapshot(user, contextText = '') {
   const scope = await resolveScope(user.id);
   const employeeIds = scope.employeeIds || [];
   const snapshot = {};
+  const refs = extractOrderRefs(contextText);
 
   if (employeeIds.length) {
     const placeholders = employeeIds.map(() => '?').join(', ');
     const [estimates] = await pool.query(
-      `SELECT e.estimate_no, e.date_created, e.status, e.total_amount, c.name AS customer_name
-       FROM estimates e LEFT JOIN customers c ON c.id = e.customer_id
+      `SELECT e.estimate_no, e.date_created, e.status, e.total_amount, c.name AS customer_name,
+              CONCAT(rep.first_name, ' ', rep.last_name) AS sales_rep_name
+       FROM estimates e
+       LEFT JOIN customers c ON c.id = e.customer_id
+       LEFT JOIN employees rep ON rep.id = e.sales_rep_id
        WHERE e.sales_rep_id IN (${placeholders}) ORDER BY e.date_created DESC LIMIT 150`,
       employeeIds
     );
     const [salesOrders] = await pool.query(
-      `SELECT so.sales_order_no, so.date_created, so.status, so.total_amount, c.name AS customer_name
-       FROM sales_orders so LEFT JOIN customers c ON c.id = so.customer_id
+      `SELECT so.sales_order_no, so.date_created, so.status, so.total_amount, c.name AS customer_name,
+              CONCAT(rep.first_name, ' ', rep.last_name) AS sales_rep_name,
+              COALESCE(NULLIF(CONCAT(prep.first_name, ' ', prep.last_name), ' '), CONCAT(rep.first_name, ' ', rep.last_name)) AS prepared_by_name
+       FROM sales_orders so
+       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN employees rep ON rep.id = so.sales_rep_id
+       LEFT JOIN employees prep ON prep.id = so.prepared_by_id
        WHERE so.sales_rep_id IN (${placeholders}) ORDER BY so.date_created DESC LIMIT 150`,
       employeeIds
     );
@@ -242,6 +292,48 @@ async function fetchOwnScopeSnapshot(user) {
        WHERE so.sales_rep_id IN (${placeholders}) ORDER BY jo.id DESC LIMIT 150`,
       employeeIds
     );
+    // Pull any specifically-referenced order that fell outside the recent-records cap above,
+    // still scoped to this user's own reps, and merge it in (dedup by number).
+    const mergeByNo = (list, extra, key) => {
+      const seen = new Set(list.map((r) => r[key]));
+      for (const r of extra) if (!seen.has(r[key])) list.push(r);
+    };
+    if (refs.so.length) {
+      const [rows] = await pool.query(
+        `SELECT so.sales_order_no, so.date_created, so.status, so.total_amount, c.name AS customer_name,
+                CONCAT(rep.first_name, ' ', rep.last_name) AS sales_rep_name,
+                COALESCE(NULLIF(CONCAT(prep.first_name, ' ', prep.last_name), ' '), CONCAT(rep.first_name, ' ', rep.last_name)) AS prepared_by_name
+         FROM sales_orders so
+         LEFT JOIN customers c ON c.id = so.customer_id
+         LEFT JOIN employees rep ON rep.id = so.sales_rep_id
+         LEFT JOIN employees prep ON prep.id = so.prepared_by_id
+         WHERE so.sales_order_no IN (?) AND so.sales_rep_id IN (${placeholders})`,
+        [refs.so, ...employeeIds]);
+      mergeByNo(salesOrders, rows, 'sales_order_no');
+    }
+    if (refs.est.length) {
+      const [rows] = await pool.query(
+        `SELECT e.estimate_no, e.date_created, e.status, e.total_amount, c.name AS customer_name,
+                CONCAT(rep.first_name, ' ', rep.last_name) AS sales_rep_name
+         FROM estimates e
+         LEFT JOIN customers c ON c.id = e.customer_id
+         LEFT JOIN employees rep ON rep.id = e.sales_rep_id
+         WHERE e.estimate_no IN (?) AND e.sales_rep_id IN (${placeholders})`,
+        [refs.est, ...employeeIds]);
+      mergeByNo(estimates, rows, 'estimate_no');
+    }
+    if (refs.jo.length) {
+      const [rows] = await pool.query(
+        `SELECT jo.job_order_no, jo.status, jo.sub_status, jo.description, jo.quantity, c.name AS customer_name,
+                CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name
+         FROM job_orders jo
+         JOIN sales_orders so ON so.id = jo.sales_order_id
+         LEFT JOIN customers c ON c.id = so.customer_id
+         LEFT JOIN employees ar ON ar.id = jo.artist_id
+         WHERE jo.job_order_no IN (?) AND so.sales_rep_id IN (${placeholders})`,
+        [refs.jo, ...employeeIds]);
+      mergeByNo(jobOrders, rows, 'job_order_no');
+    }
     snapshot.estimates = estimates;
     snapshot.sales_orders = salesOrders;
     snapshot.job_orders = jobOrders;
@@ -296,8 +388,11 @@ async function fetchOwnScopeSnapshot(user) {
   return snapshot;
 }
 
-async function answerFromOwnScope(user, question) {
-  const snapshot = await fetchOwnScopeSnapshot(user);
+async function answerFromOwnScope(user, question, history = []) {
+  // Include the recent history text so a follow-up ("who created that?") still surfaces the
+  // order number mentioned a turn earlier, and it gets fetched on demand.
+  const contextText = `${question}\n${historyMessages(history).map((m) => m.content).join('\n')}`;
+  const snapshot = await fetchOwnScopeSnapshot(user, contextText);
   const namedMatches = findNameMatches(question, snapshot.employee_directory);
 
   const rawReply = await chatCompletion([
@@ -320,14 +415,17 @@ Rules:
 - If the question isn't about this database at all -- general knowledge, unit conversion, plain arithmetic (e.g. "how many sqft is 2x2 ft") -- just answer it directly as plain text. Don't force it into a SQL query it was never asking for.
 - If it needs the catalog schema instead, output ONLY a SQL SELECT statement (no markdown fences, no explanation, no trailing semicolon, no write/DDL keywords, only the tables listed above, include a LIMIT of 20 or fewer unless it's a single aggregate). For name/code lookups use LIKE '%...%' rather than an exact match unless given a full, exact code. For status/priority columns use an EXACT match against a real stored value, not a LIKE against human phrasing. Zero rows back is a fine, honest answer -- prefer writing a best-effort query over refusing.
 - Never write SQL referencing estimates, sales_orders, job_orders, tickets, or users -- those come only from OWN_DATA (users isn't available anywhere).
-- If neither source can answer it, reply in plain text saying so.`,
+- If neither source can answer it, reply in plain text saying so.
+- This is a running conversation -- use the earlier messages to resolve follow-up questions ("his", "that order", "and last month?"). Keep plain-text answers warm and conversational, like a helpful colleague.`,
     },
+    ...historyMessages(history),
     { role: 'user', content: question },
   ]);
 
   const trimmed = rawReply.trim();
-  if (/^select\s/i.test(trimmed)) {
-    const { ok, sql, reason } = validateSql(trimmed, CATALOG_TABLES);
+  const extracted = extractSelect(trimmed);
+  if (extracted) {
+    const { ok, sql, reason } = validateSql(extracted, CATALOG_TABLES);
     if (!ok) return `I couldn't safely answer that (${reason}). Try rephrasing.`;
     const [rows] = await pool.query(sql);
     return formatRows(rows);
@@ -335,13 +433,13 @@ Rules:
   return trimmed;
 }
 
-async function runSqlFallback(user, question) {
+async function runSqlFallback(user, question, history = []) {
   if (!process.env.OPENAI_API_KEY) return null;
 
   const [[row]] = await pool.query('SELECT account_type FROM users WHERE id = ?', [user.id]);
   const isAdmin = row?.account_type === 'System Admin';
 
-  return isAdmin ? answerAsAdmin(question) : answerFromOwnScope(user, question);
+  return isAdmin ? answerAsAdmin(question, history) : answerFromOwnScope(user, question, history);
 }
 
 module.exports = { runSqlFallback, validateSql, ADMIN_ALLOWED_TABLES, CATALOG_TABLES };
