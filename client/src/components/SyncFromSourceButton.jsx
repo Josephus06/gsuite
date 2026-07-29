@@ -18,6 +18,16 @@ export default function SyncFromSourceButton({ module, label = 'Sync from Source
     try {
       const { data } = await api.post('/admin/sync-status', module ? { modules: [module] } : {});
       const lines = data.results.map((r) => `${r.label}: ${r.statusChanged} status change(s), ${r.updated} record(s) updated (${r.checked} checked).`);
+      if (data.quantities) {
+        const q = data.quantities;
+        lines.push(`Job Order quantities rolled up: built ${q.built}, inspected ${q.inspected}, delivered ${q.delivered}.`);
+      }
+      if (data.processes) {
+        const p = data.processes;
+        if (p.missing === 0) lines.push('Processes: all Job Orders already have processes.');
+        else if (p.backfill_started) lines.push(`Processes: backfill started in the background for ${p.missing} Job Order(s) — it runs a while; re-check later.`);
+        else lines.push(`Processes: ${p.missing} Job Order(s) missing — a backfill is already running.`);
+      }
       alert(`Sync from source complete.\n\n${lines.join('\n')}`);
       if (onDone) onDone();
     } catch (err) {
