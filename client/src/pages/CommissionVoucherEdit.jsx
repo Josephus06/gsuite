@@ -1,0 +1,240 @@
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import api from '../api/client';
+import EntityPicker from '../components/EntityPicker';
+
+function money(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00';
+}
+function formatMonth(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : ''; }
+function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
+
+// Create form for a Commission Voucher (the live #/commission_voucher_crud screen): pick an
+// employee, choose which of their unpaid/partial Commission Payables to release and how much, add
+// optional expense adjustments, pick the cash/bank account, and Save. Settles the payables and
+// posts DR 24200 / (+/- expenses) / CR cash.
+export default function CommissionVoucherEdit() {
+  const navigate = useNavigate();
+  const [employees, setEmployees] = useState([]);
+  const [employee, setEmployee] = useState(null);
+
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [dateReleased, setDateReleased] = useState('');
+  const [paymentType, setPaymentType] = useState('full');
+  const [payeeName, setPayeeName] = useState('');
+  const [refNo, setRefNo] = useState('');
+  const [memo, setMemo] = useState('');
+  const [method, setMethod] = useState(null);
+  const [cashAccount, setCashAccount] = useState(null);
+
+  const [payables, setPayables] = useState([]);       // releasable commission payables
+  const [checked, setChecked] = useState({});          // cp_id -> bool
+  const [released, setReleased] = useState({});        // cp_id -> string
+  const [expenses, setExpenses] = useState([]);        // { account, description, amount }
+  const [methods, setMethods] = useState([]);
+  const [cashAccounts, setCashAccounts] = useState([]);
+  const [expenseAccounts, setExpenseAccounts] = useState([]);
+
+  const [tab, setTab] = useState('commissions');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => { api.get('/commission-vouchers/employees').then(({ data }) => setEmployees(data)).catch(() => {}); }, []);
+
+  async function onEmployeeSelect(e) {
+    setEmployee(e); setPayables([]); setChecked({}); setReleased({});
+    if (!e) return;
+    try {
+      const { data } = await api.get(`/commission-vouchers/for-employee/${e.id}`);
+      setPayables(data.payables || []);
+      setMethods(data.payment_methods || []);
+      setCashAccounts(data.cash_accounts || []);
+      setExpenseAccounts(data.expense_accounts || []);
+      setPayeeName(e.name);
+      // Default: include every payable, releasing its full balance due.
+      const ck = {}; const rl = {};
+      (data.payables || []).forEach((p) => { ck[p.commission_payable_id] = true; rl[p.commission_payable_id] = String(p.balance_due); });
+      setChecked(ck); setReleased(rl);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not load this employee\'s commissions.');
+    }
+  }
+
+  function addExpense() { setExpenses((x) => [...x, { account: null, description: '', amount: '' }]); }
+  function setExpense(i, patch) { setExpenses((x) => x.map((e, idx) => (idx === i ? { ...e, ...patch } : e))); }
+  function removeExpense(i) { setExpenses((x) => x.filter((_, idx) => idx !== i)); }
+
+  const totalReleased = useMemo(
+    () => payables.reduce((s, p) => s + (checked[p.commission_payable_id] ? (Number(released[p.commission_payable_id]) || 0) : 0), 0),
+    [payables, checked, released]
+  );
+  const expenseSum = useMemo(() => expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0), [expenses]);
+  const totalPayments = Number((totalReleased + expenseSum).toFixed(2));
+
+  async function handleSave() {
+    setError('');
+    if (!employee) { setError('Select an employee.'); return; }
+    const lines = payables
+      .filter((p) => checked[p.commission_payable_id] && Number(released[p.commission_payable_id]) > 0)
+      .map((p) => ({ commission_payable_id: p.commission_payable_id, released_amount: Number(released[p.commission_payable_id]) }));
+    if (!lines.length) { setError('Release an amount for at least one commission.'); return; }
+    const exp = expenses.filter((e) => e.account && Number(e.amount) !== 0)
+      .map((e) => ({ account_id: e.account.id, description: e.description || null, amount: Number(e.amount) }));
+    setSaving(true);
+    try {
+      const { data } = await api.post('/commission-vouchers', {
+        employee_id: employee.id, date_created: date, date_released: dateReleased || null, payment_type: paymentType,
+        payee_name: payeeName || employee.name, reference_no: refNo || null, memo: memo || null,
+        payment_method_id: method?.id || null, cash_bank_account_id: cashAccount?.id || null, lines, expenses: exp,
+      });
+      navigate(`/commission-vouchers/${data.id}`);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Save failed.');
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div>
+      <div className="page-header">
+        <h1>Commission Voucher</h1>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-sm" onClick={() => navigate('/commission-vouchers')}>Back to Lists</button>
+          <button className="btn btn-sm btn-primary" disabled={saving} onClick={handleSave}>Save</button>
+        </div>
+      </div>
+
+      {error && <div className="error-banner">{error}</div>}
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="filter-grid">
+          <div className="field">
+            <label>Date</label>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Payment Type</label>
+            <select value={paymentType} onChange={(e) => setPaymentType(e.target.value)}>
+              <option value="full">Full</option>
+              <option value="partial">Partial</option>
+            </select>
+          </div>
+          <div className="field">
+            <label>Total Payments</label>
+            <input value={money(totalPayments)} readOnly />
+          </div>
+          <div className="field">
+            <label>Employee</label>
+            <EntityPicker
+              label="Employee" items={employees} value={employee?.id || ''} getLabel={(e) => e.name}
+              columns={[{ key: 'name', label: 'Name' }, { key: 'department_name', label: 'Department' }]}
+              searchKeys={['name', 'department_name']} placeholder="--Select--" onSelect={onEmployeeSelect}
+            />
+          </div>
+          <div className="field">
+            <label>Payment Method</label>
+            <EntityPicker
+              label="Payment Method" items={methods} value={method?.id || ''} getLabel={(m) => m.name}
+              columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']} placeholder="--Select--" onSelect={setMethod}
+            />
+          </div>
+          <div className="field">
+            <label>Cash/Bank Account</label>
+            <EntityPicker
+              label="Cash/Bank Account" items={cashAccounts} value={cashAccount?.id || ''} getLabel={(a) => `${a.account_code} ${a.account_name}`}
+              columns={[{ key: 'account_code', label: 'Code' }, { key: 'account_name', label: 'Name' }]}
+              searchKeys={['account_code', 'account_name']} placeholder="--Select--" onSelect={setCashAccount}
+            />
+          </div>
+          <div className="field">
+            <label>Payee Name</label>
+            <input value={payeeName} onChange={(e) => setPayeeName(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Ref No</label>
+            <input value={refNo} onChange={(e) => setRefNo(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Date Released</label>
+            <input type="date" value={dateReleased} onChange={(e) => setDateReleased(e.target.value)} />
+          </div>
+          <div className="field" style={{ gridColumn: '1 / -1' }}>
+            <label>Memo</label>
+            <textarea value={memo} onChange={(e) => setMemo(e.target.value)} rows={2} />
+          </div>
+        </div>
+      </div>
+
+      <div className="status-tabs" style={{ marginBottom: 12 }}>
+        <button className={`status-tab ${tab === 'commissions' ? 'active' : ''}`} onClick={() => setTab('commissions')}>Commissions</button>
+        <button className={`status-tab ${tab === 'expenses' ? 'active' : ''}`} onClick={() => setTab('expenses')}>Expenses</button>
+      </div>
+
+      {tab === 'commissions' && (
+        <div className="card">
+          <div className="table-wrap">
+            <table>
+              <thead><tr>
+                <th></th><th>Trans #</th><th>Trans Date</th><th>Commission Date</th>
+                <th style={{ textAlign: 'right' }}>Commissionable</th><th style={{ textAlign: 'right' }}>Balance Due</th><th>Released Amount</th>
+              </tr></thead>
+              <tbody>
+                {!employee && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>Select an employee to see their releasable commissions.</td></tr>}
+                {employee && payables.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>This employee has no unpaid commissions.</td></tr>}
+                {payables.map((p) => (
+                  <tr key={p.commission_payable_id}>
+                    <td><input type="checkbox" checked={!!checked[p.commission_payable_id]} onChange={(e) => setChecked((c) => ({ ...c, [p.commission_payable_id]: e.target.checked }))} /></td>
+                    <td>{p.commission_payable_no}</td>
+                    <td>{formatDate(p.date_created)}</td>
+                    <td>{formatMonth(p.period_from)}</td>
+                    <td style={{ textAlign: 'right' }}>{money(p.commissionable_amount)}</td>
+                    <td style={{ textAlign: 'right' }}>{money(p.balance_due)}</td>
+                    <td>
+                      <input type="number" min="0" step="0.01" max={p.balance_due}
+                        value={released[p.commission_payable_id] ?? ''}
+                        onChange={(e) => setReleased((r) => ({ ...r, [p.commission_payable_id]: e.target.value }))}
+                        style={{ width: 140 }} disabled={!checked[p.commission_payable_id]} />
+                    </td>
+                  </tr>
+                ))}
+                {payables.length > 0 && (
+                  <tr><td colSpan={6} style={{ textAlign: 'right' }}><strong>Total Released</strong></td>
+                    <td><strong>{money(totalReleased)}</strong></td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === 'expenses' && (
+        <div className="card">
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Account</th><th>Description</th><th style={{ textAlign: 'right' }}>Amount</th><th></th></tr></thead>
+              <tbody>
+                {expenses.length === 0 && <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 12 }}>No expenses. A negative amount credits the account; a positive amount debits it.</td></tr>}
+                {expenses.map((e, i) => (
+                  <tr key={i}>
+                    <td style={{ minWidth: 260 }}>
+                      <EntityPicker
+                        label="Account" items={expenseAccounts} value={e.account?.id || ''} getLabel={(a) => `${a.account_code} ${a.account_name}`}
+                        columns={[{ key: 'account_code', label: 'Code' }, { key: 'account_name', label: 'Name' }]}
+                        searchKeys={['account_code', 'account_name']} placeholder="--Select--" onSelect={(a) => setExpense(i, { account: a })}
+                      />
+                    </td>
+                    <td><input value={e.description} onChange={(ev) => setExpense(i, { description: ev.target.value })} style={{ width: '100%' }} /></td>
+                    <td><input type="number" step="0.01" value={e.amount} onChange={(ev) => setExpense(i, { amount: ev.target.value })} style={{ width: 140, textAlign: 'right' }} /></td>
+                    <td><button className="btn btn-sm btn-warning" onClick={() => removeExpense(i)}>✕</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <button className="btn btn-sm btn-primary" style={{ marginTop: 12 }} onClick={addExpense}>Add Expense</button>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -49,6 +49,8 @@ export default function StockLedgerReport() {
     const params = {};
     if (item) params.item_id = item.id;
     if (location) params.location_id = location.id;
+    if (period === 'period_from') { params.from = dateFrom; params.to = date; }
+    else { params.to = date; } // "As of": all movements up to the date
     const { data } = await api.get('/stock-ledger-reports', { params });
     setRows(data);
     setPage(1);

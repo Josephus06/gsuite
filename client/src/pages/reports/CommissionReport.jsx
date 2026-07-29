@@ -64,10 +64,12 @@ export default function CommissionReport() {
     expected_commission: t.expected_commission + r.expected_commission,
     confirmed_commission: t.confirmed_commission + r.confirmed_commission,
     released_commission: t.released_commission + r.released_commission,
+    expenses_deducted: t.expenses_deducted + (r.expenses_deducted || 0),
+    expenses_refunded: t.expenses_refunded + (r.expenses_refunded || 0),
     unpaid_commission: t.unpaid_commission + r.unpaid_commission,
   }), {
     weighted_sales: 0, estimated_commission: 0, passing_gp_total: 0, expected_commission: 0,
-    confirmed_commission: 0, released_commission: 0, unpaid_commission: 0,
+    confirmed_commission: 0, released_commission: 0, expenses_deducted: 0, expenses_refunded: 0, unpaid_commission: 0,
   }) : null;
 
   return (
@@ -121,17 +123,22 @@ export default function CommissionReport() {
             <table className="responsive-cards">
               <thead>
                 <tr>
-                  <th>Month</th>
-                  <th style={{ textAlign: 'right' }}>Quota</th>
-                  <th>Sales Division</th>
-                  <th style={{ textAlign: 'right' }}>Weighted Sales</th>
-                  <th style={{ textAlign: 'right' }}>%</th>
-                  <th style={{ textAlign: 'right' }}>Estimated Commission</th>
-                  <th style={{ textAlign: 'right' }}>Total Amount of JO&apos;s with Passing Rate</th>
-                  <th style={{ textAlign: 'right' }}>Expected Commission</th>
-                  <th style={{ textAlign: 'right' }}>Confirmed Commission</th>
-                  <th style={{ textAlign: 'right' }}>Released Commission</th>
-                  <th style={{ textAlign: 'right' }}>Unpaid Commission</th>
+                  <th rowSpan={2}>Month</th>
+                  <th rowSpan={2} style={{ textAlign: 'right' }}>Quota</th>
+                  <th rowSpan={2}>Sales Division</th>
+                  <th rowSpan={2} style={{ textAlign: 'right' }}>Weighted Sales</th>
+                  <th rowSpan={2} style={{ textAlign: 'right' }}>%</th>
+                  <th rowSpan={2} style={{ textAlign: 'right' }}>Estimated Commission</th>
+                  <th rowSpan={2} style={{ textAlign: 'right' }}>Total Amount of JO&apos;s with Passing Rate</th>
+                  <th rowSpan={2} style={{ textAlign: 'right' }}>Expected Commission</th>
+                  <th rowSpan={2} style={{ textAlign: 'right' }}>Confirmed Commission</th>
+                  <th rowSpan={2} style={{ textAlign: 'right' }}>Released Commission</th>
+                  <th colSpan={2} style={{ textAlign: 'center' }}>Expenses</th>
+                  <th rowSpan={2} style={{ textAlign: 'right' }}>Unpaid Commission</th>
+                </tr>
+                <tr>
+                  <th style={{ textAlign: 'right' }}>Deducted</th>
+                  <th style={{ textAlign: 'right' }}>Refunded</th>
                 </tr>
               </thead>
               <tbody>
@@ -147,6 +154,8 @@ export default function CommissionReport() {
                     <td data-label="Expected Commission" style={{ textAlign: 'right' }}>{money(r.expected_commission)}</td>
                     <td data-label="Confirmed Commission" style={{ textAlign: 'right' }}>{money(r.confirmed_commission)}</td>
                     <td data-label="Released Commission" style={{ textAlign: 'right' }}>{money(r.released_commission)}</td>
+                    <td data-label="Deducted" style={{ textAlign: 'right' }}>{r.expenses_deducted ? money(r.expenses_deducted) : ''}</td>
+                    <td data-label="Refunded" style={{ textAlign: 'right' }}>{r.expenses_refunded ? money(r.expenses_refunded) : ''}</td>
                     <td data-label="Unpaid Commission" style={{ textAlign: 'right' }}>{money(r.unpaid_commission)}</td>
                   </tr>
                 ))}
@@ -164,6 +173,8 @@ export default function CommissionReport() {
                     <td style={{ textAlign: 'right' }}>{money(totals.expected_commission)}</td>
                     <td style={{ textAlign: 'right' }}>{money(totals.confirmed_commission)}</td>
                     <td style={{ textAlign: 'right' }}>{money(totals.released_commission)}</td>
+                    <td style={{ textAlign: 'right' }}>{totals.expenses_deducted ? money(totals.expenses_deducted) : ''}</td>
+                    <td style={{ textAlign: 'right' }}>{totals.expenses_refunded ? money(totals.expenses_refunded) : ''}</td>
                     <td style={{ textAlign: 'right' }}>{money(totals.unpaid_commission)}</td>
                   </tr>
                 </tfoot>
@@ -171,7 +182,8 @@ export default function CommissionReport() {
             </table>
           </div>
           <p className="muted" style={{ marginTop: 12, fontSize: 13 }}>
-            Released Commission is not yet sourced (shown as 0), so Unpaid = Confirmed for now.
+            Released Commission is sourced from the employee&apos;s Commission Vouchers (net of expenses = each voucher&apos;s total); Unpaid = Confirmed − Released.
+            A voucher expense is a Deduction (negative) that waterfalls from the earliest month it paid, or a Refund (positive) added to it.
           </p>
         </div>
       )}

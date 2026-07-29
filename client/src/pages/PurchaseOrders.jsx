@@ -4,6 +4,7 @@ import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import SyncFromSourceButton from '../components/SyncFromSourceButton';
 
 // Mirrors the real "Saved Purchase Orders" list -- status tabs are a read-only bucket
 // derived from status + receipt_status + bill_status together (see purchaseOrders.js's
@@ -77,7 +78,10 @@ export default function PurchaseOrders() {
           <span className="muted">Lists</span>
           <button type="button" className="link-btn" onClick={() => setShowFilters((s) => !s)}>Toggle Filter</button>
         </div>
-        <button className="btn btn-primary" onClick={() => navigate('/purchase-orders/new')}>Add Purchase Order</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <SyncFromSourceButton module="purchase_orders" onDone={load} />
+          <button className="btn btn-primary" onClick={() => navigate('/purchase-orders/new')}>Add Purchase Order</button>
+        </div>
       </div>
 
       {showFilters && (

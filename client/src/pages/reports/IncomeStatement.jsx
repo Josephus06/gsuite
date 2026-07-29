@@ -19,6 +19,26 @@ const BREAKDOWN_OPTIONS = [
 function SectionRows({ sections, columns, onDrill }) {
   const numCols = columns.length;
   const rows = [];
+  // Render an account and, indented beneath it, its child accounts (the breakdown) --
+  // e.g. 30000 Revenue with 30100 Sales / 30200 Sales Discount / 30300 Returns under it.
+  const renderAccount = (a, depth) => {
+    rows.push(
+      <tr key={a.account_code}>
+        <td style={{ paddingLeft: 24 + depth * 20 }}>{a.account_code}</td>
+        <td style={depth === 0 && a.children && a.children.length ? { fontWeight: 600 } : undefined}>{a.account_name}</td>
+        {a.amounts.map((v, i) => (
+          <td key={i} style={{ textAlign: 'right' }}>
+            {v ? (
+              <button type="button" className="link-btn" style={{ color: 'var(--link, #2563eb)', textDecoration: 'underline', cursor: 'pointer' }}
+                onClick={() => onDrill(a, columns[i])}>{money(v)}</button>
+            ) : money(v)}
+            {' '}<span style={{ color: 'var(--muted, #888)', fontSize: '0.85em' }}>({a.percents ? a.percents[i] : 0}%)</span>
+          </td>
+        ))}
+      </tr>
+    );
+    for (const c of (a.children || [])) renderAccount(c, depth + 1);
+  };
   for (const s of sections) {
     rows.push(
       <tr key={`sub-${s.sub_type}`}>
@@ -26,23 +46,7 @@ function SectionRows({ sections, columns, onDrill }) {
         {Array.from({ length: numCols }).map((_, i) => <td key={i} />)}
       </tr>
     );
-    for (const a of s.accounts) {
-      rows.push(
-        <tr key={a.account_code}>
-          <td style={{ paddingLeft: 24 }}>{a.account_code}</td>
-          <td>{a.account_name}</td>
-          {a.amounts.map((v, i) => (
-            <td key={i} style={{ textAlign: 'right' }}>
-              {v ? (
-                <button type="button" className="link-btn" style={{ color: 'var(--link, #2563eb)', textDecoration: 'underline', cursor: 'pointer' }}
-                  onClick={() => onDrill(a, columns[i])}>{money(v)}</button>
-              ) : money(v)}
-              {' '}<span style={{ color: 'var(--muted, #888)', fontSize: '0.85em' }}>({a.percents[i]}%)</span>
-            </td>
-          ))}
-        </tr>
-      );
-    }
+    for (const a of s.accounts) renderAccount(a, 0);
     rows.push(
       <tr key={`subtotal-${s.sub_type}`}>
         <td /><td style={{ fontWeight: 600 }}>Total {s.sub_type}</td>

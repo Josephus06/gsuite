@@ -323,6 +323,132 @@ async function computeCreditMemoGl(cm, lines) {
   return rows;
 }
 
+// GL Impact for a Customer Refund -- returning cash a customer had paid. Reverse-engineered
+// from the live GL Impact tab (CRFND-48): debit the A/R account (Accounts Receivable Trade
+// 12100) and credit the Customer Refund clearing account (10005) for the total refunded, both
+// carried on the refund header. Voided refunds post nothing.
+async function computeCustomerRefundGl(cr) {
+  if (!cr.ar_account_id || !cr.account_id) return [];
+  const [[ar]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [cr.ar_account_id]);
+  const [[acct]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [cr.account_id]);
+  if (!ar || !acct) return [];
+  const amount = Number(cr.refund_amount) || 0;
+  if (!amount) return [];
+  return [
+    { account_code: ar.account_code, account_name: ar.account_name, debit: amount, credit: 0 },
+    { account_code: acct.account_code, account_name: acct.account_name, debit: 0, credit: amount },
+  ];
+}
+
+// GL Impact for a Commission Payable -- DR Commission Expense - Internal (the employee's
+// department) / CR Commission Payable, both booked at the full Expected Commission. The payable's
+// amount_due carries the currently-owed Commissionable Amount (confirmed commission), matching the
+// live GL Impact tab where the credit is the expected figure but only the commissionable part is
+// due now. amount_due / paid_amount are extra display fields (the reports engine reads only
+// debit/credit/account_code); they drive the view's Amount Due / Paid Amount columns.
+const cpRound = (n) => Number((Number(n) || 0).toFixed(2));
+
+// A Sales Manager / Marketing Director / SBU Head earns commission on the whole business, so their
+// commission expense is a cross-division cost the live system spreads EQUALLY across every sales
+// division. Everyone else (account officer / supervisor) charges their own department in one line.
+async function employeeIsSalesManager(employeeId) {
+  if (!employeeId) return false;
+  const [[u]] = await pool.query(
+    'SELECT is_sales_manager AS m, is_sales_marketing_director AS dir, is_sales_business_unit AS sbu FROM users WHERE employee_id = ? LIMIT 1',
+    [employeeId]
+  );
+  return !!(u && (u.m || u.dir || u.sbu));
+}
+
+// The sales divisions a manager's expense is split across (every active sales division except the
+// non-sales "Support"), each mapped to its department for the reports engine. Display name is
+// normalised to the live "Sales-N" form.
+async function salesDivisionDepartments() {
+  const [divs] = await pool.query("SELECT id, name FROM sales_divisions WHERE is_active = TRUE AND name <> 'Support' ORDER BY id");
+  const [depts] = await pool.query('SELECT id, name FROM departments');
+  const norm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const deptByNorm = new Map(depts.map((d) => [norm(d.name), d.id]));
+  return divs.map((dv) => ({ name: String(dv.name).replace(/\s*-\s*/g, '-'), department_id: deptByNorm.get(norm(dv.name)) || null }));
+}
+
+async function computeCommissionPayableGl(cp) {
+  if (!cp.expense_account_id || !cp.payable_account_id) return [];
+  const [[exp]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [cp.expense_account_id]);
+  const [[pay]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [cp.payable_account_id]);
+  if (!exp || !pay) return [];
+  const amount = cpRound(cp.expected_commission);
+  if (!amount) return [];
+  const due = cpRound(cp.commissionable_amount);
+  const paid = cpRound(cp.amount_paid);
+
+  // Credit side: always one Commission Payable line to Accounting (the whole expected commission;
+  // amount_due carries the commissionable figure, paid_amount the settled figure).
+  const [[acctDept]] = await pool.query("SELECT id, name FROM departments WHERE name = 'Accounting' LIMIT 1");
+  const creditRow = {
+    account_code: pay.account_code, account_name: pay.account_name, debit: 0, credit: amount,
+    amount_due: due, paid_amount: paid, department_id: acctDept?.id || null, department: acctDept?.name || 'Accounting',
+  };
+
+  // Debit side: split across sales divisions for a manager, else a single line to their department.
+  const debitRows = [];
+  if (await employeeIsSalesManager(cp.employee_id)) {
+    const divisions = await salesDivisionDepartments();
+    const n = divisions.length || 1;
+    let allocated = 0;
+    divisions.forEach((div, i) => {
+      const share = i === n - 1 ? cpRound(amount - allocated) : cpRound(amount / n);
+      allocated = cpRound(allocated + share);
+      debitRows.push({ account_code: exp.account_code, account_name: exp.account_name, debit: share, credit: 0, amount_due: 0, paid_amount: 0, department_id: div.department_id, department: div.name });
+    });
+  } else {
+    let deptName = null;
+    if (cp.department_id) { const [[d]] = await pool.query('SELECT name FROM departments WHERE id = ?', [cp.department_id]); deptName = d?.name || null; }
+    debitRows.push({ account_code: exp.account_code, account_name: exp.account_name, debit: amount, credit: 0, amount_due: 0, paid_amount: 0, department_id: cp.department_id || null, department: deptName });
+  }
+
+  return [creditRow, ...debitRows];
+}
+
+// GL Impact for a Commission Voucher -- the release/payment of Commission Payables. Debits
+// Commission Payable (24200) once per commission released (settling the liability), applies each
+// expense adjustment by sign (a positive amount debits its account, a negative one credits it),
+// and credits the cash/bank account for the net Total Payments (= total released + sum of
+// expenses). Voided vouchers post nothing.
+async function computeCommissionVoucherGl(cv, lines, expenses) {
+  if (cv.status === 'void') return [];
+  const rows = [];
+  const [[payAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '24200'");
+
+  let totalReleased = 0;
+  for (const l of (lines || [])) {
+    const amt = cpRound(l.released_amount);
+    if (!amt || !payAcct) continue;
+    totalReleased = cpRound(totalReleased + amt);
+    rows.push({ account_code: payAcct.account_code, account_name: payAcct.account_name, debit: amt, credit: 0 });
+  }
+
+  let expSum = 0;
+  for (const e of (expenses || [])) {
+    const amt = cpRound(e.amount);
+    if (!amt) continue;
+    expSum = cpRound(expSum + amt);
+    const [[a]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [e.account_id]);
+    if (!a) continue;
+    if (amt > 0) rows.push({ account_code: a.account_code, account_name: a.account_name, debit: amt, credit: 0 });
+    else rows.push({ account_code: a.account_code, account_name: a.account_name, debit: 0, credit: cpRound(-amt) });
+  }
+
+  const cash = cpRound(totalReleased + expSum);
+  if (cv.cash_bank_account_id && cash) {
+    const [[c]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [cv.cash_bank_account_id]);
+    if (c) {
+      if (cash >= 0) rows.push({ account_code: c.account_code, account_name: c.account_name, debit: 0, credit: cash });
+      else rows.push({ account_code: c.account_code, account_name: c.account_name, debit: cpRound(-cash), credit: 0 });
+    }
+  }
+  return rows;
+}
+
 // GL Impact for a Delivery Ticket -- the same three-account revenue-recognition shape as
 // Sales Invoice, with one deliberate difference taken straight from the real system's
 // DT screen (DT-1316: Dr 12101 280.00 / Cr 30100 250.00 / Cr 21100 30.00): the debit goes
@@ -654,6 +780,60 @@ async function getPostedGlLines({ toDate, fromDate }) {
     }
   }
 
+  // Customer Refunds (voided ones post nothing)
+  {
+    const [tbl] = await pool.query("SHOW TABLES LIKE 'customer_refunds'");
+    if (tbl.length) {
+      const { sql, params } = dateFilter('cr.date_created');
+      const [headers] = await pool.query(
+        `SELECT cr.* FROM customer_refunds cr WHERE cr.status != 'voided' AND ${sql}`, params
+      );
+      for (const cr of headers) {
+        const rows = await computeCustomerRefundGl(cr);
+        push(rows, {
+          entry_date: cr.date_created, source_type: 'customer_refund', source_no: cr.customer_refund_no, source_id: cr.id, memo: cr.memo || null,
+          location_id: cr.office_location_id || null, department_id: cr.department_id || null,
+        });
+      }
+    }
+  }
+
+  // Commission Payables (void ones post nothing)
+  {
+    const [tbl] = await pool.query("SHOW TABLES LIKE 'commission_payables'");
+    if (tbl.length) {
+      const { sql, params } = dateFilter('cp.date_created');
+      const [headers] = await pool.query(`SELECT cp.* FROM commission_payables cp WHERE cp.status != 'void' AND ${sql}`, params);
+      for (const cp of headers) {
+        const rows = await computeCommissionPayableGl(cp);
+        // No department_id in meta: each GL row carries its own (a manager's expense is split across
+        // sales divisions), and push() keeps row fields when meta omits them.
+        push(rows, {
+          entry_date: cp.date_created, source_type: 'commission_payable', source_no: cp.commission_payable_no,
+          source_id: cp.id, memo: cp.memo || null, location_id: cp.office_location_id || null,
+        });
+      }
+    }
+  }
+
+  // Commission Vouchers (void ones post nothing)
+  {
+    const [tbl] = await pool.query("SHOW TABLES LIKE 'commission_vouchers'");
+    if (tbl.length) {
+      const { sql, params } = dateFilter('cv.date_created');
+      const [headers] = await pool.query(`SELECT cv.* FROM commission_vouchers cv WHERE cv.status != 'void' AND ${sql}`, params);
+      for (const cv of headers) {
+        const [vlines] = await pool.query('SELECT * FROM commission_voucher_lines WHERE commission_voucher_id = ?', [cv.id]);
+        const [vexp] = await pool.query('SELECT * FROM commission_voucher_expenses WHERE commission_voucher_id = ?', [cv.id]);
+        const rows = await computeCommissionVoucherGl(cv, vlines, vexp);
+        push(rows, {
+          entry_date: cv.date_created, source_type: 'commission_voucher', source_no: cv.voucher_no,
+          source_id: cv.id, memo: cv.memo || null, location_id: null, department_id: null,
+        });
+      }
+    }
+  }
+
   // Delivery Tickets. Only *open* ones post: a void ticket never happened, and a
   // 'converted' one has been superseded by the Sales Invoice raised from it, which posts
   // the same revenue against AR Trade (12100). Leaving converted tickets in would
@@ -756,6 +936,9 @@ module.exports = {
   computeDeliveryTicketGl,
   computeCustomerPaymentGl,
   computeCreditMemoGl,
+  computeCustomerRefundGl,
+  computeCommissionPayableGl,
+  computeCommissionVoucherGl,
   computeVendorBillGl,
   computeInventoryAdjustmentGl,
   computeBillCreditGl,

@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import SyncFromSourceButton from '../components/SyncFromSourceButton';
 
 // Mirrors the real system's Estimates list: status tabs with counts (instead of a
 // plain flat table), a collapsible filter panel, and a "View" action per row that
@@ -105,6 +106,7 @@ export default function Estimates() {
               {syncing ? <LoadingSpinner inline size="sm" label="Syncing..." /> : 'Sync New Estimates'}
             </button>
           )}
+          <SyncFromSourceButton module="estimates" label="Refresh Status" onDone={load} />
           {can('/estimates', 'can_add') && <button className="btn btn-primary" onClick={() => navigate('/estimates/new')}>Add Estimate</button>}
         </div>
       </div>

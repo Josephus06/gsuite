@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import SyncFromSourceButton from '../components/SyncFromSourceButton';
 
 // Mirrors Estimates.jsx / the real system's "Saved Sales Orders" list -- Sales Orders
 // are only ever generated automatically (when an estimate reaches Approved), so there
@@ -75,7 +76,10 @@ export default function SalesOrders() {
     <div>
       <div className="page-header">
         <h1>Saved Sales Orders</h1>
-        <button className="btn btn-sm" onClick={() => setShowFilters((s) => !s)}>Toggle Filter</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <SyncFromSourceButton module="sales_orders" onDone={load} />
+          <button className="btn btn-sm" onClick={() => setShowFilters((s) => !s)}>Toggle Filter</button>
+        </div>
       </div>
 
       {showFilters && (

@@ -21,7 +21,11 @@ require('dotenv').config();
 const DRY_RUN = process.argv.includes('--dry-run');
 // Sales-1: Catherine(5), Arjie(7), Jocel(8), Michelle(9).
 // Sales-3: Vanessa(69), Jerome(132), Paul(240), Margie(256), Nicole(269).
-const REP_IDS = [5, 7, 8, 9, 69, 132, 240, 256, 269];
+// Sales-2: Nina(106), Arlene(251), Glenn(266), Jessa(188), Katherine(243).
+// Sales-4: Amelyn(39), Lindy(82), Claire(110), Jerusha(169).
+// Marketing: Jocelyn(67), Ronel(10).
+// Branches (Ayala + SM): Roselyn(244), Eunice(189), Cindy_AYALA(80), Cindy_SM(119), Dexter(33), Alessa(73), Precious(87).
+const REP_IDS = [5, 7, 8, 9, 69, 132, 240, 256, 269, 106, 251, 266, 188, 243, 39, 82, 110, 169, 67, 10, 244, 189, 80, 119, 33, 73, 87];
 const DEPOSIT_ACCOUNT_CODE = '11000'; // Cash in Bank
 
 async function main() {

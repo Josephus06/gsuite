@@ -114,6 +114,8 @@ export default function CommissionJoDetail() {
                   <tr>
                     <th>JO #</th>
                     <th>SO #</th>
+                    <th>DT #</th>
+                    <th>Invoice #</th>
                     <th>Customer</th>
                     <th>Sales Rep</th>
                     <th>Job Type</th>
@@ -126,12 +128,14 @@ export default function CommissionJoDetail() {
                 </thead>
                 <tbody>
                   {report.rows.length === 0 && (
-                    <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>No job orders for this rep in this month.</td></tr>
+                    <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: 20 }}>No job orders for this rep in this month.</td></tr>
                   )}
                   {report.rows.map((r, i) => (
                     <tr key={i}>
                       <td data-label="JO #">{r.job_order_no}</td>
                       <td data-label="SO #">{r.sales_order_no}</td>
+                      <td data-label="DT #">{r.dt_no || '—'}</td>
+                      <td data-label="Invoice #">{r.invoice_no || '—'}</td>
                       <td data-label="Customer">{r.customer_name}</td>
                       <td data-label="Sales Rep">{r.rep_name}</td>
                       <td data-label="Job Type">{r.job_type}</td>

@@ -831,6 +831,23 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .estimate-detail-grid .hi { font-weight: 600; opacity: 1; }
 .estimate-detail-grid span.hi { font-weight: 600; opacity: 1; }
 
+/* Commission Payable summary box: the boxed figures (Quota / Weighted Sales / ...) shown on the
+   view banner and again on the create form after computing. */
+.commission-summary-box {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 12px 14px;
+  align-self: start;
+}
+.commission-summary-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+.commission-summary-row span:last-child { font-weight: 600; }
+
 .jo-view-block { margin-bottom: 20px; }
 .jo-view-block:last-child { margin-bottom: 0; }
 .jo-view-index { font-weight: 700; color: var(--accent); margin-bottom: 6px; }

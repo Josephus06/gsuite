@@ -316,12 +316,16 @@ async function buildIncomeStatement(asOfDate, fromDateOverride, breakdown = 'tot
   const expense = buildIncomeSectionMulti(roots, 'EXPENSE', EXPENSE_SECTION_ORDER, 1, columns.length);
   const netIncome = revenue.totals.map((v, i) => round2(v - (expense.totals[i] || 0)));
 
+  // Percent-of-revenue for every account AND its descendants, so the breakdown rows
+  // (e.g. 30100 Sales under 30000 Revenue) carry their own percentage too.
+  const addPercents = (a) => ({
+    ...a,
+    percents: a.amounts.map((v, i) => (revenue.totals[i] ? round2((v / revenue.totals[i]) * 100) : 0)),
+    children: (a.children || []).map(addPercents),
+  });
   const withPercent = (sections) => sections.map((s) => ({
     ...s,
-    accounts: s.accounts.map((a) => ({
-      ...a,
-      percents: a.amounts.map((v, i) => (revenue.totals[i] ? round2((v / revenue.totals[i]) * 100) : 0)),
-    })),
+    accounts: s.accounts.map(addPercents),
   }));
 
   return {

@@ -1,4 +1,5 @@
 const pool = require('../db');
+const { releaseByMonthForEmployee } = require('./commissionRelease');
 
 // Commission report (Commission module > Reports > Commission): one sales rep, one year,
 // twelve month rows. Every figure is defined by the client:
@@ -155,7 +156,10 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
     `SELECT jo.id AS jo_id, MONTH(so.date_created) AS month,
             so.sales_division_id, sd.name AS division_name,
             COALESCE(sol.net_of_tax, 0) AS net_of_tax,
-            sol.gp_rate AS jo_gp_rate, jt.gp_rate_head AS passing_gp_rate
+            -- Some orders (esp. "... WITH INSTALLATION") carry GP only at the order level, not
+            -- per line, so sol.gp_rate lands 0; fall back to the order's actual GP so those JOs
+            -- aren't wrongly judged Below-GP (0% is impossible for a real, costed line).
+            COALESCE(NULLIF(sol.gp_rate, 0), so.actual_gp_rate) AS jo_gp_rate, jt.gp_rate_head AS passing_gp_rate
      FROM sales_order_lines sol
      JOIN sales_orders so ON so.id = sol.sales_order_id
      LEFT JOIN job_orders jo ON jo.id = sol.job_order_id
@@ -175,27 +179,11 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
     if (l.passing) passingJoIds.push(l.jo_id);
   }
 
-  // Paid portion of each passing JO, allocated from its invoices. An invoice can bill
-  // several JOs, so each JO takes its line's share of that invoice's paid fraction
-  // (gross - amount_due) / gross. Voided invoices count as nothing paid.
-  const paidByJo = new Map();
-  if (passingJoIds.length) {
-    const [invLines] = await pool.query(
-      `SELECT sil.job_order_id, COALESCE(sil.net_of_tax, 0) AS line_net,
-              si.gross_amount, si.amount_due, si.status
-       FROM sales_invoice_lines sil
-       JOIN sales_invoices si ON si.id = sil.sales_invoice_id
-       WHERE sil.job_order_id IN (?)`,
-      [passingJoIds]
-    );
-    for (const il of invLines) {
-      if (il.status === 'cancelled') continue;
-      const gross = Number(il.gross_amount) || 0;
-      const paidFraction = gross > 0 ? (gross - Number(il.amount_due)) / gross : 0;
-      const paidNet = Number(il.line_net) * paidFraction;
-      paidByJo.set(il.job_order_id, (paidByJo.get(il.job_order_id) || 0) + paidNet);
-    }
-  }
+  // Paid portion of each passing JO, from its sales order's invoice payment. Uses the same
+  // order-level attribution as the JO-detail report (computePaidByJo) so DT-converted invoices
+  // -- whose lines carry no job_order_id -- are counted; the old line-level join silently
+  // dropped them and understated Confirmed Commission.
+  const paidByJo = await computePaidByJo(passingJoIds);
 
   const [quotaRows] = await pool.query(
     'SELECT month, quota FROM employee_quotas WHERE employee_id = ? AND year = ?',
@@ -220,6 +208,11 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
     }
   }
 
+  // Released commission + voucher expense adjustments, sourced from this employee's Commission
+  // Vouchers via the shared waterfall allocation (deductions from the earliest month, refunds
+  // added, net = the voucher's total). See lib/commissionRelease.js.
+  const { releasedByMonth, deductedByMonth, refundedByMonth } = await releaseByMonthForEmployee(employeeId, year);
+
   const rows = months.map((r) => {
     const weighted = round2(r.weighted_sales);
     const passingTotal = round2(r.passing_total);
@@ -227,7 +220,9 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
     const estimated = round2(lookupCommission(brackets, weighted));
     const expected = round2(lookupCommission(brackets, passingTotal));
     const confirmed = passingTotal > 0 ? round2((paid / passingTotal) * expected) : 0;
-    const released = 0; // TODO: source not built yet
+    const released = round2(releasedByMonth[r.month]);
+    const deducted = round2(deductedByMonth[r.month]);
+    const refunded = round2(refundedByMonth[r.month]);
     const unpaid = round2(confirmed - released);
     const pct = r.quota > 0 ? round2((weighted / r.quota) * 100) : 0;
     return {
@@ -235,7 +230,8 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
       division_name: r.division_name, weighted_sales: weighted, performance_pct: pct,
       estimated_commission: estimated, passing_gp_total: passingTotal,
       expected_commission: expected, confirmed_commission: confirmed,
-      released_commission: released, unpaid_commission: unpaid,
+      released_commission: released, expenses_deducted: deducted, expenses_refunded: refunded,
+      unpaid_commission: unpaid,
     };
   });
 
@@ -249,22 +245,41 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
 // The paid (net) portion of each JO, allocated from its invoices: each invoice line takes
 // its share of that invoice's paid fraction (gross - amount_due) / gross. Voided invoices
 // count as nothing paid. Same allocation the monthly report uses, generalised to any JOs.
+// Paid-invoice amount attributable to each JO. Billing is at the sales-order level (an invoice,
+// or a Delivery Ticket that converted to one), so we work from the SO's invoice payment rather
+// than an invoice-line -> JO link: those links are only best-effort on the original importer and
+// are entirely absent on DT-converted invoices (whose lines carry no JO). For each JO we take its
+// own net-of-tax (the same figure the report commissions on) times its SO's paid fraction --
+// gross collected / gross invoiced. That way a paid-in-full invoice marks its JOs' full net as
+// paid, uniformly for original and DT-converted invoices alike.
 async function computePaidByJo(joIds) {
   const paidByJo = new Map();
   if (!joIds.length) return paidByJo;
-  const [invLines] = await pool.query(
-    `SELECT sil.job_order_id, COALESCE(sil.net_of_tax, 0) AS line_net,
-            si.gross_amount, si.amount_due, si.status
-     FROM sales_invoice_lines sil
-     JOIN sales_invoices si ON si.id = sil.sales_invoice_id
-     WHERE sil.job_order_id IN (?)`,
+  const [jos] = await pool.query(
+    `SELECT jo.id AS jo_id, jo.sales_order_id, COALESCE(sol.net_of_tax, 0) AS jo_net
+       FROM job_orders jo
+       LEFT JOIN sales_order_lines sol ON sol.id = jo.sales_order_line_id
+      WHERE jo.id IN (?)`,
     [joIds]
   );
-  for (const il of invLines) {
-    if (il.status === 'cancelled') continue;
-    const gross = Number(il.gross_amount) || 0;
-    const paidFraction = gross > 0 ? (gross - Number(il.amount_due)) / gross : 0;
-    paidByJo.set(il.job_order_id, (paidByJo.get(il.job_order_id) || 0) + Number(il.line_net) * paidFraction);
+  const soIds = [...new Set(jos.map((j) => j.sales_order_id))];
+  const fractionBySo = new Map();
+  if (soIds.length) {
+    const [inv] = await pool.query(
+      `SELECT sales_order_id, SUM(gross_amount) AS gross, SUM(gross_amount - amount_due) AS paid
+         FROM sales_invoices
+        WHERE sales_order_id IN (?) AND (status IS NULL OR status <> 'cancelled')
+        GROUP BY sales_order_id`,
+      [soIds]
+    );
+    for (const r of inv) {
+      const gross = Number(r.gross) || 0;
+      fractionBySo.set(r.sales_order_id, gross > 0 ? (Number(r.paid) / gross) : 0);
+    }
+  }
+  for (const j of jos) {
+    const frac = fractionBySo.get(j.sales_order_id) || 0;
+    if (frac) paidByJo.set(j.jo_id, (paidByJo.get(j.jo_id) || 0) + Number(j.jo_net) * frac);
   }
   return paidByJo;
 }
@@ -305,8 +320,16 @@ async function buildCommissionJoDetail(employeeId, year, month, filters = {}) {
   const [jos] = await pool.query(
     `SELECT jo.id AS jo_id, jo.job_order_no, so.sales_order_no, c.name AS customer_name,
             jt.display_name AS job_type, COALESCE(sol.net_of_tax, 0) AS net_of_tax,
-            sol.gp_rate AS jo_gp_rate, jt.gp_rate_head AS passing_gp_rate,
-            CONCAT(rep.first_name, ' ', rep.last_name) AS rep_name
+            -- Fall back to the order-level actual GP when the line has none (see buildCommissionReport).
+            COALESCE(NULLIF(sol.gp_rate, 0), so.actual_gp_rate) AS jo_gp_rate, jt.gp_rate_head AS passing_gp_rate,
+            CONCAT(rep.first_name, ' ', rep.last_name) AS rep_name,
+            -- Billing docs are at the sales-order level: a DT (internal invoice) and/or the
+            -- Sales Invoice it converts to. Show both when present (all JOs of one SO share them).
+            (SELECT dt.dt_no FROM delivery_tickets dt
+              WHERE dt.sales_order_id = so.id AND dt.status <> 'void' ORDER BY dt.id LIMIT 1) AS dt_no,
+            (SELECT si.invoice_no FROM sales_invoices si
+              WHERE si.sales_order_id = so.id AND (si.status IS NULL OR si.status <> 'cancelled')
+              ORDER BY si.id LIMIT 1) AS invoice_no
      FROM job_orders jo
      JOIN sales_orders so ON so.id = jo.sales_order_id
      LEFT JOIN sales_order_lines sol ON sol.id = jo.sales_order_line_id
@@ -337,6 +360,7 @@ async function buildCommissionJoDetail(employeeId, year, month, filters = {}) {
       job_order_no: j.job_order_no, sales_order_no: j.sales_order_no, customer_name: j.customer_name,
       rep_name: j.rep_name, job_type: j.job_type, gp_rate: j.jo_gp_rate == null ? null : Number(j.jo_gp_rate),
       passing_gp_rate: j.passing_gp_rate == null ? null : Number(j.passing_gp_rate),
+      dt_no: j.dt_no || null, invoice_no: j.invoice_no || null,
       net_of_tax: net, paid_invoice: paid, is_passing: isPassing,
     };
   });

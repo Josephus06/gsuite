@@ -18,7 +18,12 @@ require('dotenv').config();
 const SITE = 'http://gsuite.graphicstar.com.ph';
 const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
-const JO_CONCURRENCY = 5;
+// --missing-only: re-fetch just the JOs whose header enrichment (artist/location) is still
+// blank -- i.e. the ones a prior run's live-side rate-limiting dropped. Implies FORCE for
+// those JOs but leaves the already-enriched ones untouched, so a recovery run stays small.
+const MISSING_ONLY = process.argv.includes('--missing-only');
+// Live rate-limits sustained bursts; keep concurrency low on recovery runs to avoid it.
+const JO_CONCURRENCY = MISSING_ONLY ? 3 : 5;
 
 const num = (v) => { if (v === null || v === undefined || v === 'null' || v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
 const norm = (s) => (s == null ? '' : String(s).trim().toLowerCase());
@@ -70,6 +75,40 @@ async function main() {
   const [locs] = await pool.query('SELECT id, location_name, location_code FROM locations');
   const locById = new Map();
   for (const l of locs) { for (const k of [l.location_name, l.location_code]) if (k && !locById.has(norm(k))) locById.set(norm(k), l.id); }
+  // For the JO-header enrichment (artist / layout job type): resolve by name.
+  const [emps] = await pool.query("SELECT id, CONCAT(first_name, ' ', last_name) AS nm FROM employees");
+  const empById = new Map(emps.map((e) => [norm(e.nm), e.id]));
+  // The JO header's layout job type ("DESIGN-READY FILE ..." etc.) is a PMS job type: the
+  // job_orders.layout_job_type_id FK (ibfk_7) references pms_job_types, NOT the sales job_types
+  // table. These are pre-seeded and effectively complete, so resolve by name against them.
+  // Collapse internal whitespace too -- live spells some names with a double space.
+  const normWs = (s) => norm(s).replace(/\s+/g, ' ');
+  const [pjts] = await pool.query('SELECT id, display_name FROM pms_job_types');
+  const layoutById = new Map();
+  for (const j of pjts) { const k = normWs(j.display_name); if (k && !layoutById.has(k)) layoutById.set(k, j.id); }
+  let layoutCreated = 0;
+  const layoutInflight = new Map();
+  async function resolveLayoutJobType(displayName) {
+    const key = normWs(displayName);
+    if (!key) return null;
+    if (layoutById.has(key)) return layoutById.get(key);
+    if (layoutInflight.has(key)) return layoutInflight.get(key);
+    const p = (async () => {
+      let id = null;
+      if (!DRY_RUN) {
+        // Not in the seeded set -- create it in pms_job_types so the FK is satisfied and the
+        // field still populates. code is NOT NULL and should be distinct; derive from the name.
+        const base = String(displayName).replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 40) || 'LAYOUT';
+        const code = (base + '_' + (layoutCreated + 1)).slice(0, 50);
+        const [r] = await pool.query('INSERT INTO pms_job_types (code, display_name, minutes_consume) VALUES (?, ?, 0)', [code, String(displayName).trim()]);
+        id = r.insertId; layoutCreated += 1;
+      }
+      layoutById.set(key, id);
+      return id;
+    })();
+    layoutInflight.set(key, p);
+    return p;
+  }
 
   // --- local JOs (number -> id) and which SOs own them ---
   const [jos] = await pool.query(
@@ -82,7 +121,16 @@ async function main() {
   const populated = new Set(done.map((d) => d.job_order_id));
   console.log(`Local: ${joIdByNo.size} JO(s) across ${localSoNos.size} SO(s); ${populated.size} JO(s) already have processes.`);
 
-  const token = await login();
+  // --missing-only: the set of JOs whose header enrichment landed (artist or location set).
+  // Everything NOT in here is what a prior run's rate-limiting dropped -- re-fetch only those.
+  let enriched = new Set();
+  if (MISSING_ONLY) {
+    const [er] = await pool.query('SELECT id FROM job_orders WHERE artist_id IS NOT NULL OR job_location_id IS NOT NULL');
+    enriched = new Set(er.map((r) => r.id));
+    console.log(`--missing-only: ${enriched.size} JO(s) already enriched; will re-fetch the remaining ${joIdByNo.size - enriched.size}.`);
+  }
+
+  let token = await login();
 
   // --- page get_sales_orders: soNo -> live SO PK, only for SOs we imported ---
   // The viewAll listing occasionally returns an empty page transiently; retry a page a few
@@ -132,7 +180,9 @@ async function main() {
       const jrows = listRows(await apiRetry(token, 'get_job_orders_for_cert', { soPK: soPk }));
       for (const j of jrows) {
         const joNo = j.UserPK_TransH; const joId = joIdByNo.get(joNo);
-        if (joId && (FORCE || !populated.has(joId))) joTargets.push({ joNo, joId, joPk: j.SysPK_TransH });
+        if (!joId) continue;
+        if (MISSING_ONLY) { if (!enriched.has(joId)) joTargets.push({ joNo, joId, joPk: j.SysPK_TransH }); }
+        else if (FORCE || !populated.has(joId)) joTargets.push({ joNo, joId, joPk: j.SysPK_TransH });
       }
     } catch (e) { certFail += 1; }
   });
@@ -144,11 +194,42 @@ async function main() {
   }
 
   // --- per JO: fetch detail, map LdgrInvty -> job_order_processes ---
+  // Live rejects sustained bursts: it either drops the connection (apiRetry throws) OR
+  // replies 200 with no data array once the session goes stale after the long cert phase.
+  // So: get a FRESH token right before this phase, keep concurrency low with a pacing gap,
+  // and treat an empty (non-array) reply as a failure that re-logs in and retries -- never a
+  // silent skip. A single sequential fetch is reliable; it's the burst that trips the limiter.
+  // Fully sequential with a gap -- this exactly matches the pacing that tested 100% reliable;
+  // any burst wider than this trips the live limiter, which then returns 200 with an EMPTY
+  // data array (data[0] undefined), NOT a missing key -- so success must require a real header.
+  const DETAIL_CONCURRENCY = 1;
+  const DETAIL_GAP_MS = 200;
+  // A throttled/stale reply is 200 with data[0] = {} (truthy but empty), NOT a missing key --
+  // a real JO header carries dozens of fields, so require a substantial object. The retry then
+  // paces us out of the throttle window (which clears within seconds once load drops).
+  const isRealHeader = (d) => Array.isArray(d?.data) && d.data[0] && Object.keys(d.data[0]).length >= 5;
+  await sleep(5000); // cool-down so the cert-phase burst clears before the detail phase starts
+  token = await login(); // fresh session for the detail phase
+  let sinceRelogin = 0, emptyRetries = 0;
+  async function fetchDetail(t) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      let detail;
+      try { detail = await apiRetry(token, 'get_job_order', { pk: t.joPk }); }
+      catch (e) { await sleep(1000 * (attempt + 1)); token = await login(); continue; }
+      if (isRealHeader(detail)) return detail;
+      // empty/stub header => throttled/stale session; back off, refresh, retry.
+      emptyRetries += 1; await sleep(1200 * (attempt + 1)); token = await login();
+    }
+    return null;
+  }
   let processed = 0, linesInserted = 0, detailFail = 0, unresolvedProc = 0, unresolvedItem = 0;
-  await mapWithConcurrency(joTargets, JO_CONCURRENCY, async (t) => {
-    let detail;
-    try { detail = await apiRetry(token, 'get_job_order', { pk: t.joPk }); }
-    catch (e) { detailFail += 1; return; }
+  await mapWithConcurrency(joTargets, DETAIL_CONCURRENCY, async (t) => {
+    const detail = await fetchDetail(t);
+    await sleep(DETAIL_GAP_MS);
+    if (!detail) { detailFail += 1; return; }
+    // Periodic token refresh so a long run never drifts into a stale session.
+    if ((sinceRelogin += 1) >= 600) { sinceRelogin = 0; token = await login(); }
+    const header = Array.isArray(detail?.data) ? detail.data[0] : null;
     const lines = Array.isArray(detail?.data?.[2]) ? detail.data[2] : [];
     const rows = lines.map((L, i) => {
       const procId = procById.get(norm(L.Name_Proc)) ?? null;
@@ -171,25 +252,44 @@ async function main() {
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
-      await conn.query('DELETE FROM job_order_processes WHERE job_order_id = ?', [t.joId]);
-      if (rows.length) {
+      // Header enrichment: artist, layout job type, job location (kept if unresolved).
+      if (header) {
+        const layoutJtId = await resolveLayoutJobType(header.DisplayName_JobT);
         await conn.query(
-          `INSERT INTO job_order_processes
-             (job_order_id, line_no, process_id, process_qty, process_uom, category, parts, item_id, location_id,
-              artist_remarks, length, width, uom, qty, total, unit, remarks, memo,
-              process_cost, material_cost, total_cost, avg_cost, production_remarks)
-           VALUES ?`, [rows]);
-        linesInserted += rows.length;
+          `UPDATE job_orders SET artist_id = COALESCE(?, artist_id),
+             layout_job_type_id = COALESCE(?, layout_job_type_id),
+             job_location_id = COALESCE(?, job_location_id) WHERE id = ?`,
+          [empById.get(norm(header.artist_name)) ?? null, layoutJtId ?? null,
+           locById.get(norm(header.joloc_name)) ?? null, t.joId]);
+      }
+      // --missing-only is a header backfill: JOs that already have processes keep them as-is.
+      // Re-deleting them would trip assembly_build_lines' FK (those rows point at existing
+      // process ids). Only (re)write processes for JOs that don't have any yet.
+      if (!MISSING_ONLY || !populated.has(t.joId)) {
+        await conn.query('DELETE FROM job_order_processes WHERE job_order_id = ?', [t.joId]);
+        if (rows.length) {
+          await conn.query(
+            `INSERT INTO job_order_processes
+               (job_order_id, line_no, process_id, process_qty, process_uom, category, parts, item_id, location_id,
+                artist_remarks, length, width, uom, qty, total, unit, remarks, memo,
+                process_cost, material_cost, total_cost, avg_cost, production_remarks)
+             VALUES ?`, [rows]);
+          linesInserted += rows.length;
+        }
       }
       await conn.commit();
-    } catch (e) { await conn.rollback(); detailFail += 1; }
+      processed += 1;
+      if (processed % 200 === 0) console.log(`  ...${processed}/${joTargets.length} JOs (${linesInserted} lines so far)`);
+    } catch (e) {
+      await conn.rollback(); detailFail += 1;
+      if (detailFail <= 5) console.error(`  [tx error] JO ${t.joNo}: ${e.message}`);
+    }
     finally { conn.release(); }
-    processed += 1;
-    if (processed % 200 === 0) console.log(`  ...${processed}/${joTargets.length} JOs (${linesInserted} lines so far)`);
   });
 
   console.log(`\nDone. ${processed} JO(s) processed, ${linesInserted} process line(s) inserted.`);
-  console.log(`Detail-fetch failures: ${detailFail}. Unresolved process names: ${unresolvedProc}, unresolved items: ${unresolvedItem} (left NULL by design).`);
+  console.log(`Detail-fetch failures: ${detailFail} (empty/throttled retries along the way: ${emptyRetries}). Unresolved process names: ${unresolvedProc}, unresolved items: ${unresolvedItem} (left NULL by design).`);
+  console.log(`Layout job types created on demand (in pms_job_types): ${layoutCreated}.`);
   await pool.end();
 }
 main().catch((err) => { console.error('Failed:', err.message); process.exit(1); });

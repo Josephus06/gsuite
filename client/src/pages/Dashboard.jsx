@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { Sparkline, DonutChart, GaugeRing, BarList, Holo3DOrb, Holo3DBars, useCountUp } from '../components/charts';
 import Avatar from '../components/Avatar';
+import SyncFromSourceButton from '../components/SyncFromSourceButton';
 import { parseUtc } from '../utils/datetime';
 
 const STAT_TONES = ['purple', 'blue', 'green', 'lime'];
@@ -166,7 +167,11 @@ export default function Dashboard() {
           <h1>{user?.display_name}</h1>
           <div className="holo-sub">Good Day Graphicstarian </div>
         </div>
-        <span className="holo-role-badge">{ROLE_LABELS[data.role] || data.role}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {/* No `module` prop -> syncs ALL transaction types (SO/Invoice/DT/PO/Estimate) in one click. */}
+          <SyncFromSourceButton label="Sync All from Source" />
+          <span className="holo-role-badge">{ROLE_LABELS[data.role] || data.role}</span>
+        </div>
       </div>
 
       {data.role === 'admin' && <AdminDashboard data={data} user={user} navigate={navigate} />}

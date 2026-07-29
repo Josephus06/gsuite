@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import SyncFromSourceButton from '../components/SyncFromSourceButton';
 
 const PAGE_SIZE = 10;
 const STATUS_LABELS = { open: 'Open', converted: 'Converted', void: 'Void' };
@@ -47,6 +48,7 @@ export default function DeliveryTickets() {
     <div>
       <div className="page-header">
         <h1>Delivery Tickets</h1>
+        <SyncFromSourceButton module="delivery_tickets" onDone={load} />
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>

@@ -58,6 +58,15 @@ import CustomerPayments from './pages/CustomerPayments';
 import CreditMemos from './pages/CreditMemos';
 import CustomerPaymentView from './pages/CustomerPaymentView';
 import CreditMemoView from './pages/CreditMemoView';
+import CustomerRefunds from './pages/CustomerRefunds';
+import CustomerRefundEdit from './pages/CustomerRefundEdit';
+import CustomerRefundView from './pages/CustomerRefundView';
+import CommissionPayables from './pages/CommissionPayables';
+import CommissionPayableEdit from './pages/CommissionPayableEdit';
+import CommissionPayableView from './pages/CommissionPayableView';
+import CommissionVouchers from './pages/CommissionVouchers';
+import CommissionVoucherEdit from './pages/CommissionVoucherEdit';
+import CommissionVoucherView from './pages/CommissionVoucherView';
 import SalesInvoices from './pages/SalesInvoices';
 import PurchaseRequisitions from './pages/PurchaseRequisitions';
 import PurchaseRequisitionEdit from './pages/PurchaseRequisitionEdit';
@@ -193,6 +202,15 @@ function App() {
         <Route path="/customer-payments/:id" element={<CustomerPaymentView />} />
         <Route path="/credit-memos" element={<CreditMemos />} />
         <Route path="/credit-memos/:id" element={<CreditMemoView />} />
+        <Route path="/customer-refunds" element={<CustomerRefunds />} />
+        <Route path="/customer-refunds/new" element={<CustomerRefundEdit />} />
+        <Route path="/customer-refunds/:id" element={<CustomerRefundView />} />
+        <Route path="/commission-payables" element={<CommissionPayables />} />
+        <Route path="/commission-payables/new" element={<CommissionPayableEdit />} />
+        <Route path="/commission-payables/:id" element={<CommissionPayableView />} />
+        <Route path="/commission-vouchers" element={<CommissionVouchers />} />
+        <Route path="/commission-vouchers/new" element={<CommissionVoucherEdit />} />
+        <Route path="/commission-vouchers/:id" element={<CommissionVoucherView />} />
         <Route path="/purchase-requisitions" element={<PurchaseRequisitions />} />
         <Route path="/purchase-requisitions/new" element={<PurchaseRequisitionEdit />} />
         <Route path="/purchase-requisitions/:id/edit" element={<PurchaseRequisitionEdit />} />

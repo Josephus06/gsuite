@@ -28,6 +28,10 @@ const repNorm = (s) => (s || '').toString().replace(/\s+/g, ' ').trim().toLowerC
 const REP_PRESETS = {
   sales1: ['Michelle Riveral', 'Arjie Bayagna', 'Jocel Ann Berina', 'Catherine Jane Langajed'],
   sales3: ['JOJI ANN NICOLE FUENTES', 'Margie Lyn C. Cañete', 'Jerome Magale', 'Paul Adam T. Oporto', 'Vanessa Krystal Jean Garcia'],
+  sales2: ['Nina Ann Solano', 'Glenn Valencia', 'Arlene Arimbay', 'Jessa Mae Lagat', 'Katherine Benigay'],
+  sales4: ['Amelyn A. Pen', 'Lindy Casires', 'Claire Real', 'Jerusha Gwyneth Del Mar'],
+  marketing: ['Jocelyn Ybañez', 'Ronel Parreño'],
+  branches: ['ROSELYN P. TUNDAG', 'EUNICE EDAÑO GEYROZAGA', 'Cindy Marie Deniay_AYALA', 'Cindy Marie Deniay_SM', 'Dexter Bantilan', 'Alessa Pacinio', 'Precious Artista'],
 };
 const REPS = REP_PRESETS[argVal('preset', 'sales3')] || REP_PRESETS.sales3;
 const REP_NORM_SET = new Set(REPS.map(repNorm));
@@ -214,7 +218,32 @@ async function main() {
   });
 
   console.log(`\nDone. Assembly builds: ${abCount} (${abLines} lines) | QIs: ${qiCount} (${qiLines} lines) | Deliveries: ${delCount} (${delLines} lines). SO failures: ${fail}.`);
-  if (DRY_RUN) console.log('DRY RUN -- nothing written.');
+
+  // Roll the built/inspected quantities up onto the Job Order header so completed JOs don't show
+  // "Qty Built: 0" (which also hides the Sales Order's Bill button). Same logic as
+  // rollup-jo-production-qty.js; runs here so a fresh preset import is self-healing.
+  if (!DRY_RUN) {
+    const [b] = await pool.query(
+      `UPDATE job_orders jo
+       JOIN (SELECT job_order_id, SUM(quantity_built) AS qb FROM assembly_builds WHERE status <> 'cancelled' GROUP BY job_order_id) a ON a.job_order_id = jo.id
+       SET jo.quantity_built = a.qb WHERE jo.quantity_built IS NULL OR jo.quantity_built = 0`
+    );
+    const [i] = await pool.query(
+      `UPDATE job_orders jo
+       JOIN (SELECT job_order_id, SUM(passed_qty) AS pq FROM assembly_builds WHERE status <> 'cancelled' GROUP BY job_order_id) a ON a.job_order_id = jo.id
+       SET jo.quantity_inspected = a.pq
+       WHERE (jo.quantity_inspected IS NULL OR jo.quantity_inspected = 0)
+         AND EXISTS (SELECT 1 FROM quality_inspections qi WHERE qi.job_order_id = jo.id AND qi.status <> 'cancelled')`
+    );
+    const [dd] = await pool.query(
+      `UPDATE job_orders jo
+       JOIN (SELECT idl.job_order_id, SUM(idl.qty_delivered) AS qd
+             FROM item_delivery_lines idl JOIN item_deliveries d ON d.id = idl.item_delivery_id
+             WHERE d.status <> 'cancelled' GROUP BY idl.job_order_id) x ON x.job_order_id = jo.id
+       SET jo.quantity_delivered = x.qd WHERE jo.quantity_delivered IS NULL OR jo.quantity_delivered = 0`
+    );
+    console.log(`Rolled up JO qty: built ${b.affectedRows}, inspected ${i.affectedRows}, delivered ${dd.affectedRows}.`);
+  } else console.log('DRY RUN -- nothing written.');
   await pool.end();
 }
 main().catch((err) => { console.error('Failed:', err.message); process.exit(1); });

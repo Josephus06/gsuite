@@ -38,6 +38,19 @@ const day = (v) => (v || '').toString().slice(0, 10);
 const REP_PRESETS = {
   sales1: ['Michelle Riveral', 'Arjie Bayagna', 'Jocel Ann Berina', 'Catherine Jane Langajed'],
   sales3: ['JOJI ANN NICOLE FUENTES', 'Margie Lyn C. Cañete', 'Jerome Magale', 'Paul Adam T. Oporto', 'Vanessa Krystal Jean Garcia'],
+  // Sales-2 team (Arlene heads it; some of her orders sit under Sales-4). Filter is by rep, not
+  // department, so each SO still resolves to whatever department live records for it.
+  sales2: ['Nina Ann Solano', 'Glenn Valencia', 'Arlene Arimbay', 'Jessa Mae Lagat', 'Katherine Benigay'],
+  // Sales-4 division reps. Amelyn also has 2 SOs booked under "Sales-5" -- they're still hers,
+  // so rep-name filtering legitimately picks them up.
+  sales4: ['Amelyn A. Pen', 'Lindy Casires', 'Claire Real', 'Jerusha Gwyneth Del Mar'],
+  // Marketing division. Deliberately excludes Jocel Ann Berina (a Sales-1 rep with one stray
+  // Marketing SO) -- filtering by her name would wrongly drag in all her Sales-1 orders.
+  marketing: ['Jocelyn Ybañez', 'Ronel Parreño'],
+  // The two branch stores. Their reps overlap (Dexter/Roselyn/etc. sell in both), and filtering is
+  // by rep, so this one preset captures both Branch - Ayala and Branch-SM_Cebu; each SO still lands
+  // in whichever branch department live records for it.
+  branches: ['ROSELYN P. TUNDAG', 'EUNICE EDAÑO GEYROZAGA', 'Cindy Marie Deniay_AYALA', 'Cindy Marie Deniay_SM', 'Dexter Bantilan', 'Alessa Pacinio', 'Precious Artista'],
 };
 const REPS = REP_PRESETS[argVal('preset', 'sales1')] || REP_PRESETS.sales1;
 const repNorm = (s) => (s || '').toString().replace(/\s+/g, ' ').trim().toLowerCase();
