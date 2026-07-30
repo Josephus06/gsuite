@@ -29,6 +29,7 @@ const scheduledJobOrderRoutes = require('./routes/scheduledJobOrders');
 const assemblyBuildRoutes = require('./routes/assemblyBuilds');
 const dashboardRoutes = require('./routes/dashboard');
 const transferOrderRoutes = require('./routes/transferOrders');
+const officeSupplyRequisitionRoutes = require('./routes/officeSupplyRequisitions');
 const qualityInspectionRoutes = require('./routes/qualityInspections');
 const itemDeliveryRoutes = require('./routes/itemDeliveries');
 const salesInvoiceRoutes = require('./routes/salesInvoices');
@@ -36,6 +37,12 @@ const deliveryTicketRoutes = require('./routes/deliveryTickets');
 const customerPaymentRoutes = require('./routes/customerPayments');
 const creditMemoRoutes = require('./routes/creditMemos');
 const customerRefundRoutes = require('./routes/customerRefunds');
+const journalRoutes = require('./routes/journals');
+const depositRoutes = require('./routes/deposits');
+const chequeRoutes = require('./routes/cheques');
+const fundTransferRoutes = require('./routes/fundTransfers');
+const accountingPeriodRoutes = require('./routes/accountingPeriods');
+const transactionSettingsRoutes = require('./routes/transactionSettings');
 const commissionPayableRoutes = require('./routes/commissionPayables');
 const commissionVoucherRoutes = require('./routes/commissionVouchers');
 const commissionSchemeRoutes = require('./routes/commissionSchemes');
@@ -56,6 +63,10 @@ const ticketReportRoutes = require('./routes/ticketReport');
 const artistIncentiveReportRoutes = require('./routes/artistIncentiveReport');
 const notificationRoutes = require('./routes/notifications');
 const nonStandardJobOrderRoutes = require('./routes/nonStandardJobOrders');
+const nonStandardSalesOrderRoutes = require('./routes/nonStandardSalesOrders');
+const warrantyCertificateRoutes = require('./routes/warrantyCertificates');
+const rwipJobOrderRoutes = require('./routes/rwipJobOrders');
+const rfqcJobOrderRoutes = require('./routes/rfqcJobOrders');
 const { ensureAssignedAtColumn } = require('./db/ensureSchema');
 const { sendTicketReminders } = require('./scripts/ticket_reminder');
 
@@ -91,6 +102,7 @@ app.use('/api/scheduled-jo', scheduledJobOrderRoutes);
 app.use('/api/assembly-builds', assemblyBuildRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/transfer-orders', transferOrderRoutes);
+app.use('/api/office-supply-requisitions', officeSupplyRequisitionRoutes);
 app.use('/api/quality-inspections', qualityInspectionRoutes);
 app.use('/api/item-deliveries', itemDeliveryRoutes);
 app.use('/api/sales-invoices', salesInvoiceRoutes);
@@ -98,6 +110,12 @@ app.use('/api/delivery-tickets', deliveryTicketRoutes);
 app.use('/api/customer-payments', customerPaymentRoutes);
 app.use('/api/credit-memos', creditMemoRoutes);
 app.use('/api/customer-refunds', customerRefundRoutes);
+app.use('/api/journals', journalRoutes);
+app.use('/api/deposits', depositRoutes);
+app.use('/api/cheques', chequeRoutes);
+app.use('/api/fund-transfers', fundTransferRoutes);
+app.use('/api/manage-accounting-period', accountingPeriodRoutes);
+app.use('/api/transaction-settings', transactionSettingsRoutes);
 app.use('/api/commission-payables', commissionPayableRoutes);
 app.use('/api/commission-vouchers', commissionVoucherRoutes);
 app.use('/api/commission-schemes', commissionSchemeRoutes);
@@ -119,6 +137,10 @@ app.use('/api/tickets/report', ticketReportRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/non-standard-job-orders', nonStandardJobOrderRoutes);
+app.use('/api/non-standard-sales-orders', nonStandardSalesOrderRoutes);
+app.use('/api/warranty-certificates', warrantyCertificateRoutes);
+app.use('/api/rwip-job-orders', rwipJobOrderRoutes);
+app.use('/api/rfqc-job-orders', rfqcJobOrderRoutes);
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
@@ -166,8 +188,12 @@ if (fs.existsSync(clientDist)) {
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-  console.error(err);
-  res.status(500).json({ error: err.sqlMessage || err.message || 'Internal server error' });
+  // Errors may carry an intended HTTP status (e.g. a 409 period-lock from assertPeriodOpen);
+  // fall back to 500 for anything unclassified. A 4xx is an expected/validation error, so don't
+  // spam the console log with it.
+  const status = Number(err.status) || 500;
+  if (status >= 500) console.error(err);
+  res.status(status).json({ error: err.sqlMessage || err.message || 'Internal server error' });
 });
 
 const PORT = process.env.PORT || 4000;

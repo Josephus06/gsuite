@@ -225,6 +225,38 @@ label {
 .topnav-dropdown-menu a:hover { background: var(--accent-bg); }
 .topnav-dropdown-menu a.active { background: var(--accent-bg); color: var(--accent); }
 
+/* Grouped mega-menu (Accounting): columns of sections. Anchored to the right edge of its
+   trigger so a wide menu near the end of the bar stays on-screen. */
+.topnav-dropdown-menu.topnav-mega {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 28px;
+  padding: 16px 22px;
+  left: auto;
+  right: 0;
+}
+.topnav-mega-col { display: flex; flex-direction: column; gap: 2px; min-width: 180px; }
+/* Grey section header band (Warranty Certificate customer/project/coverage groups). */
+.section-band {
+  background: var(--surface-2, #eef2f7);
+  color: var(--text);
+  font-weight: 700;
+  font-size: 13px;
+  padding: 7px 12px;
+  border-radius: 4px;
+}
+
+.topnav-mega-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding: 2px 12px 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
 .topnav-user {
   margin-left: auto;
   display: flex;

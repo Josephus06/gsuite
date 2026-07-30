@@ -190,9 +190,63 @@ function findNameMatches(question, directory) {
   });
 }
 
+// Admin has no scope filter, so pull the exact referenced order(s) with the joins a human would
+// need (sales rep, prepared-by/creator, customer, status, dates) and hand them to the model as
+// authoritative data. This makes "who is the sales rep of SO-X" / "who created SO-X" deterministic
+// instead of depending on whatever SQL the model improvises (which was flaky -- right one run, empty
+// or a hard error the next).
+async function fetchReferencedOrders(contextText) {
+  const refs = extractOrderRefs(contextText);
+  const out = {};
+  if (refs.so.length) {
+    const [rows] = await pool.query(
+      `SELECT so.sales_order_no, so.date_created, so.status, so.total_amount, c.name AS customer_name,
+              CONCAT(rep.first_name, ' ', rep.last_name) AS sales_rep_name,
+              NULLIF(TRIM(CONCAT(COALESCE(prep.first_name, ''), ' ', COALESCE(prep.last_name, ''))), '') AS prepared_by_name,
+              e.estimate_no
+       FROM sales_orders so
+       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN employees rep ON rep.id = so.sales_rep_id
+       LEFT JOIN employees prep ON prep.id = so.prepared_by_id
+       LEFT JOIN estimates e ON e.id = so.estimate_id
+       WHERE so.sales_order_no IN (?)`, [refs.so]);
+    if (rows.length) out.sales_orders = rows;
+  }
+  if (refs.est.length) {
+    const [rows] = await pool.query(
+      `SELECT e.estimate_no, e.date_created, e.status, e.total_amount, c.name AS customer_name,
+              CONCAT(rep.first_name, ' ', rep.last_name) AS sales_rep_name,
+              NULLIF(TRIM(CONCAT(COALESCE(prep.first_name, ''), ' ', COALESCE(prep.last_name, ''))), '') AS prepared_by_name
+       FROM estimates e
+       LEFT JOIN customers c ON c.id = e.customer_id
+       LEFT JOIN employees rep ON rep.id = e.sales_rep_id
+       LEFT JOIN employees prep ON prep.id = e.prepared_by_id
+       WHERE e.estimate_no IN (?)`, [refs.est]);
+    if (rows.length) out.estimates = rows;
+  }
+  if (refs.jo.length) {
+    const [rows] = await pool.query(
+      `SELECT jo.job_order_no, jo.status, jo.sub_status, jo.production_stage, jo.description, jo.quantity,
+              so.sales_order_no, c.name AS customer_name,
+              CONCAT(rep.first_name, ' ', rep.last_name) AS sales_rep_name,
+              CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name
+       FROM job_orders jo
+       LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
+       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN employees rep ON rep.id = so.sales_rep_id
+       LEFT JOIN employees ar ON ar.id = jo.artist_id
+       WHERE jo.job_order_no IN (?)`, [refs.jo]);
+    if (rows.length) out.job_orders = rows;
+  }
+  return out;
+}
+
 async function answerAsAdmin(question, history = []) {
   const directory = await fetchEmployeeDirectory();
   const namedMatches = findNameMatches(question, directory);
+  const contextText = [question, ...historyMessages(history).map((m) => m.content)].join(' ');
+  const referencedOrders = await fetchReferencedOrders(contextText);
+  const hasRefs = Object.keys(referencedOrders).length > 0;
 
   const rawSql = await chatCompletion([
     {
@@ -204,6 +258,8 @@ ${OWNED_SCHEMA_DESCRIPTION}
 ${FK_NOTE}
 ${namedMatches.length ? `DIRECTLY_NAMED_EMPLOYEE(S) (extracted from the question -- this is the authoritative, exact data for them, use this over anything else for facts about them):
 ${JSON.stringify(namedMatches)}
+` : ''}${hasRefs ? `REFERENCED_ORDERS (the exact SO/EST/JO number(s) named in the question, already fetched with their sales rep, prepared-by/creator, customer, status and dates -- this is authoritative. For any question about these specific orders, e.g. "who is the sales rep of SO-X", "who created SO-X" (that's prepared_by_name), "what's the status of JO-Y", answer straight from this data with "ANSWER: " and do NOT write SQL):
+${JSON.stringify(referencedOrders)}
 ` : ''}EMPLOYEE_DIRECTORY_DATA (already fetched -- use ONLY for a question about one specific named person, e.g. "what department is X in". Do NOT use this for counts, totals, or lists spanning multiple employees -- you're prone to mis-counting a long JSON array by hand. For those, write a real SQL query against employees/departments instead, e.g. SELECT COUNT(*) FROM employees WHERE is_active = TRUE):
 ${JSON.stringify(directory)}
 Rules:

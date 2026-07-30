@@ -154,7 +154,16 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
 
-    res.json({ ...jo, processes, assembly_builds: assemblyBuilds });
+    // RWIP (rework) job orders raised off this JO -- shown on the RWIP JO tab. `open_rwip_count`
+    // is how many aren't finished yet: the mother JO can't be built until they all complete.
+    const [rwips] = await pool.query(
+      `SELECT id, job_order_no, created_at, quantity, units, status, production_stage
+       FROM job_orders WHERE parent_job_order_id = ? ORDER BY id DESC`,
+      [req.params.id]
+    );
+    const openRwipCount = rwips.filter((r) => r.status !== 'Cancelled' && !['completed', 'invoiced'].includes(r.production_stage)).length;
+
+    res.json({ ...jo, processes, assembly_builds: assemblyBuilds, rwips, open_rwip_count: openRwipCount });
   } catch (err) {
     next(err);
   }
@@ -229,6 +238,14 @@ router.put('/:id/assembly-build', requireAuth, requirePermission(ROUTE, 'can_edi
 
     const jobQty = Number(jo.quantity || 0);
     if (jobQty <= 0) return res.status(409).json({ error: 'This Job Order has no quantity to build against.' });
+
+    // A mother JO can't be built while any of its RWIP (rework) job orders is still open --
+    // the rework has to finish before the parent is assembled.
+    const [[{ open_rwip: openRwip }]] = await conn.query(
+      "SELECT COUNT(*) AS open_rwip FROM job_orders WHERE parent_job_order_id = ? AND status <> 'Cancelled' AND (production_stage IS NULL OR production_stage NOT IN ('completed','invoiced'))",
+      [req.params.id]
+    );
+    if (openRwip > 0) return res.status(409).json({ error: 'Complete the RWIP job order(s) before building this Job Order.' });
 
     // A process line doesn't always carry its own location_id -- COALESCE to the JO's
     // own job_location_id, same fallback as the on-hand/back-order figures above,
@@ -334,6 +351,102 @@ router.put('/:id/assembly-build', requireAuth, requirePermission(ROUTE, 'can_edi
   } finally {
     conn.release();
   }
+});
+
+// ---- RWIP (rework) job orders raised off a mother JO ----
+const rwipNum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const rwipTrunc = (s, n) => (s == null ? null : String(s).slice(0, n));
+const rwipDec = (v) => (v === '' || v == null || Number.isNaN(Number(v)) ? null : Number(v));
+
+async function rwipAudit(conn, jobOrderId, userId, eventType, field, oldV, newV) {
+  await conn.query(
+    `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+     VALUES ('JobOrder', ?, ?, ?, ?, ?, ?)`,
+    [jobOrderId, eventType, field, oldV == null ? null : String(oldV), newV == null ? null : String(newV), userId]
+  );
+}
+
+// Draft for the "Create RWIP" modal: the mother JO's header + its processes (pre-filled, editable).
+router.get('/:id/rwip-draft', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [[jo]] = await pool.query(
+      `SELECT jo.id, jo.job_order_no, jo.description, jo.quantity, jo.units, jo.length, jo.width, jo.height,
+              jo.job_type_id, jt.display_name AS job_type_name, jo.job_location_id, jl.location_name AS job_location_name,
+              jo.delivery_date, jo.delivery_time, so.sales_order_no, c.name AS customer_name, cc.contact_name AS contact_person_name,
+              jo.contact_phone, oloc.location_name AS office_location_name, sd.name AS sales_division_name,
+              CONCAT(sr.first_name,' ',sr.last_name) AS sales_rep_name
+       FROM job_orders jo
+       LEFT JOIN job_types jt ON jt.id = jo.job_type_id
+       LEFT JOIN locations jl ON jl.id = jo.job_location_id
+       LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
+       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN customer_contacts cc ON cc.id = so.contact_person_id
+       LEFT JOIN locations oloc ON oloc.id = so.office_location_id
+       LEFT JOIN sales_divisions sd ON sd.id = so.sales_division_id
+       LEFT JOIN employees sr ON sr.id = jo.sales_rep_id
+       WHERE jo.id = ?`,
+      [req.params.id]
+    );
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    const [processes] = await pool.query(
+      `SELECT jop.line_no, jop.process_id, p.process_name, jop.process_qty, jop.process_uom, jop.category, jop.parts,
+              jop.item_id, i.display_name AS item_name, jop.length, jop.width, jop.uom, jop.qty, jop.unit, jop.remarks
+       FROM job_order_processes jop
+       LEFT JOIN processes p ON p.id = jop.process_id
+       LEFT JOIN inventories i ON i.id = jop.item_id
+       WHERE jop.job_order_id = ? ORDER BY jop.line_no`,
+      [req.params.id]
+    );
+    res.json({ jo, processes });
+  } catch (err) { next(err); }
+});
+
+// Create an RWIP job order from a mother JO that's in process. Number RWIP-###, starts in
+// "Pending RMA Approval" (production_stage NULL). Reuses the mother's SO + line and copies its
+// header; the (edited) processes come from the modal. Only when the mother JO is in process.
+router.post('/:id/rwip', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[jo]] = await conn.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (jo.production_stage !== 'in_process') {
+      return res.status(409).json({ error: 'RWIP can only be raised while the Job Order is In-Process.' });
+    }
+    const { reason_code_id: reasonCodeId, reason, action_to_be_taken: actionTaken, delivery_date: deliveryDate, delivery_time: deliveryTime, processes } = req.body;
+    await conn.beginTransaction();
+    // RWIP-### -- next number after the highest existing RWIP.
+    const [[mx]] = await conn.query(
+      "SELECT COALESCE(MAX(CAST(SUBSTRING(job_order_no, 6) AS UNSIGNED)), 0) AS n FROM job_orders WHERE job_order_no LIKE 'RWIP-%'"
+    );
+    const jobOrderNo = `RWIP-${mx.n + 1}`;
+    const [r] = await conn.query(
+      `INSERT INTO job_orders (job_order_no, parent_job_order_id, sales_order_id, sales_order_line_id, job_type_id, job_location_id,
+         description, quantity, units, length, width, height, memo, contact_email, contact_title, contact_phone, shipping_address,
+         sales_rep_id, delivery_date, delivery_time, reason_code_id, reason, action_to_be_taken, production_stage, sub_status, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,'Pending RMA Approval')`,
+      [jobOrderNo, jo.id, jo.sales_order_id, jo.sales_order_line_id, jo.job_type_id, jo.job_location_id,
+       jo.description, rwipNum(jo.quantity), jo.units, jo.length, jo.width, jo.height, jo.memo, jo.contact_email, jo.contact_title,
+       jo.contact_phone, jo.shipping_address, jo.sales_rep_id, deliveryDate || jo.delivery_date || null, deliveryTime || jo.delivery_time || null,
+       reasonCodeId || null, rwipTrunc(reason, 500), rwipTrunc(actionTaken, 500)]
+    );
+    const rwipId = r.insertId;
+    if (Array.isArray(processes) && processes.length) {
+      let ln = 0;
+      for (const pr of processes) {
+        ln += 1;
+        await conn.query(
+          `INSERT INTO job_order_processes (job_order_id, line_no, process_id, process_qty, process_uom, category, parts, item_id, length, width, uom, qty, unit, remarks)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [rwipId, ln, pr.process_id || null, rwipNum(pr.process_qty), rwipTrunc(pr.process_uom, 50), rwipTrunc(pr.category, 100), rwipTrunc(pr.parts, 255),
+           pr.item_id || null, rwipDec(pr.length), rwipDec(pr.width), rwipTrunc(pr.uom, 50), rwipNum(pr.qty), rwipTrunc(pr.unit, 50), rwipTrunc(pr.remarks, 500)]
+        );
+      }
+    }
+    await rwipAudit(conn, rwipId, req.user.id, 'Created', 'status', null, 'Pending RMA Approval');
+    await rwipAudit(conn, jo.id, req.user.id, 'Updated', 'rwip', null, jobOrderNo);
+    await conn.commit();
+    res.status(201).json({ job_order_id: rwipId, job_order_no: jobOrderNo });
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
 module.exports = router;

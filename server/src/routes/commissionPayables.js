@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeCommissionPayableGl } = require('../lib/glImpact');
 const { buildCommissionReport } = require('../lib/commissionReport');
 const { releaseForPayable } = require('../lib/commissionRelease');
@@ -274,6 +275,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     // Recompute server-side so the stored figures are authoritative.
     const computed = await computePayable(empId, month, month);
     if (computed.error) return res.status(400).json({ error: computed.error });
+    await assertPeriodOpen(dateCreated, 'other_gl', conn);
 
     const [[exp]] = await conn.query('SELECT id FROM chart_of_accounts WHERE account_code = ?', [EXPENSE_CODE]);
     const [[pay]] = await conn.query('SELECT id FROM chart_of_accounts WHERE account_code = ?', [PAYABLE_CODE]);
@@ -337,7 +339,8 @@ router.put('/:id/pay', requireAuth, requirePermission(ROUTE, 'can_edit'), async 
 router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[cp]] = await conn.query('SELECT status FROM commission_payables WHERE id = ?', [req.params.id]);
+    const [[cp]] = await conn.query('SELECT status, date_created FROM commission_payables WHERE id = ?', [req.params.id]);
+    if (cp) await assertPeriodOpen(cp.date_created, 'other_gl', conn);
     if (!cp) return res.status(404).json({ error: 'Not found' });
     if (cp.status === 'void') return res.status(409).json({ error: 'This Commission Payable is already void.' });
     await conn.beginTransaction();

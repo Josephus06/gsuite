@@ -21,6 +21,9 @@ export default function ChatWidget() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
+  // Launcher icon is a custom GIF at /chat-icon.gif (drop it in client/public/); falls back to the
+  // 💬 emoji if that file isn't present.
+  const [iconError, setIconError] = useState(false);
   const [localMessages, setLocalMessages] = useState([{ sender: 'bot', text: GREETING, at: new Date().toISOString() }]);
   const [ticket, setTicket] = useState(null);
   const [ticketMessages, setTicketMessages] = useState([]);
@@ -126,7 +129,7 @@ export default function ChatWidget() {
       {open && (
         <div className="card" style={{ width: 320, height: 420, display: 'flex', flexDirection: 'column', marginBottom: 10, padding: 0, overflow: 'hidden', boxShadow: '0 8px 30px rgba(0,0,0,0.25)' }}>
           <div style={{ background: 'var(--accent)', color: '#fff', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <strong style={{ fontSize: 14 }}>Support Chat{ticket ? ` · ${ticket.ticket_no}` : ''}</strong>
+            <strong style={{ fontSize: 14 }}>Jot With Us{ticket ? ` · ${ticket.ticket_no}` : ''}</strong>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               {ticket && (
                 <button type="button" onClick={() => navigate(`/tickets/${ticket.id}`)} title="Open full ticket" style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 13 }}>↗</button>
@@ -166,13 +169,26 @@ export default function ChatWidget() {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        style={{
-          width: 52, height: 52, borderRadius: '50%', background: 'var(--accent)', color: '#fff',
-          border: 'none', fontSize: 22, cursor: 'pointer', boxShadow: '0 4px 14px rgba(0,0,0,0.3)',
-        }}
         title="Support chat"
+        style={open || iconError
+          // Open (or no GIF): a solid accent circle so the ✕ / 💬 reads clearly.
+          ? {
+            width: 52, height: 52, borderRadius: '50%', background: 'var(--accent)', color: '#fff',
+            border: 'none', fontSize: 22, cursor: 'pointer', boxShadow: '0 4px 14px rgba(0,0,0,0.3)',
+            padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }
+          // Closed with GIF: no circle/background -- the transparent "ASK JWU" GIF floats, sized to
+          // its taller aspect so the caption stays readable.
+          : {
+            width: 96, height: 112, borderRadius: 0, background: 'transparent',
+            border: 'none', padding: 0, cursor: 'pointer', display: 'block',
+          }}
       >
-        {open ? '✕' : '💬'}
+        {open ? '✕' : (iconError
+          ? '💬'
+          : <img src="/chat-icon.gif" alt="Support chat" onError={() => setIconError(true)}
+              style={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.3))' }} />
+        )}
       </button>
     </div>
   );

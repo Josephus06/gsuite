@@ -52,6 +52,7 @@ export default function CommissionVoucherView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(-1)}>Back to Lists</button>
+          {canEdit && isOpen && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/commission-vouchers/${id}/edit`)}>Edit</button>}
           {canEdit && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>

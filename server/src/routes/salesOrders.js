@@ -144,8 +144,11 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
       return res.status(409).json({ error: 'This line already has a Job Order' });
     }
 
+    // Job Order number: JO-<soNumber>-<sequence>-<totalLines> -- sequence is this line's position,
+    // total is how many lines the SO has (so JO-63615-2-3 reads "line 2 of 3").
     const soNumericPart = so.sales_order_no.replace(/\D/g, '');
-    const jobOrderNo = `JO-${soNumericPart}-${line.line_no}`;
+    const [[lineCount]] = await conn.query('SELECT COUNT(*) AS n FROM sales_order_lines WHERE sales_order_id = ?', [so.id]);
+    const jobOrderNo = `JO-${soNumericPart}-${line.line_no}-${lineCount.n}`;
     const [result] = await conn.query(
       `INSERT INTO job_orders
          (job_order_no, sales_order_line_id, sales_order_id, job_type_id, job_location_id, description, quantity, units,

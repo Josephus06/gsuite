@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
 
 const router = express.Router();
 // Reached from an Open Vendor Bill's "Bill Payment" button, confirmed against the real
@@ -187,6 +188,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     }
 
     const totalAmount = [...submittedApply, ...submittedDebits].reduce((s, l) => s + Number(l.applied_amount), 0);
+    await assertPeriodOpen(dateCreated, 'ap', conn);
 
     await conn.beginTransaction();
 
@@ -241,7 +243,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[bp]] = await conn.query('SELECT status FROM bill_payments WHERE id = ?', [req.params.id]);
+    const [[bp]] = await conn.query('SELECT status, date_created FROM bill_payments WHERE id = ?', [req.params.id]);
+    if (bp) await assertPeriodOpen(bp.date_created, 'ap', conn);
     if (!bp) return res.status(404).json({ error: 'Not found' });
     if (bp.status === 'voided') return res.status(409).json({ error: 'This Bill Payment is already voided.' });
 

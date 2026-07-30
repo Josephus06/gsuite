@@ -42,6 +42,7 @@ const NAV_STRUCTURE = [
       { route: '/pms-job-types', label: 'PMS Job Types' },
       { route: '/service-items', label: 'Service Items' },
       { route: '/lookups', label: 'Lookups' },
+      { route: '/transaction-settings', label: 'Transaction Settings' },
     ],
   },
   {
@@ -52,6 +53,7 @@ const NAV_STRUCTURE = [
       { route: '/transfer-orders', label: 'Transfer Orders' },
       { route: '/item-fulfillments', permRoute: '/transfer-orders', label: 'Item Fulfillment' },
       { route: '/item-receipts', permRoute: '/transfer-orders', label: 'Item Receipt' },
+      { route: '/office-supply-requisitions', label: 'Office Supply Requisition' },
       { route: '/stock-ledger-reports', label: 'Stock Ledger' },
       { route: '/bin-card-reports', label: 'Bin Card' },
     ],
@@ -62,6 +64,8 @@ const NAV_STRUCTURE = [
       { route: '/estimates', label: 'Estimates' },
       { route: '/sales-orders', label: 'Sales Orders' },
       { route: '/non-standard-job-orders', label: 'NSTDJO' },
+      { route: '/non-standard-sales-orders', label: 'NSSO' },
+      { route: '/warranty-certificates', label: 'Warranty Certificate' },
       { route: '/job-orders', label: 'Job Orders' },
     ],
   },
@@ -91,6 +95,8 @@ const NAV_STRUCTURE = [
     label: 'Production',
     children: [
       { route: '/production', label: 'Production' },
+      { route: '/rwip-job-orders', label: 'RWIP' },
+      { route: '/rfqc-job-orders', label: 'RFQC' },
       { route: '/scheduled-jo', label: 'Scheduled JO' },
       { route: '/assembly-builds', label: 'Assembly Build' },
       // Quality Inspection / Item Delivery don't have their own `pages` row -- their
@@ -103,27 +109,60 @@ const NAV_STRUCTURE = [
   },
   {
     label: 'Accounting',
-    children: [
-      { route: '/chart-of-account-types', label: 'Chart of Account Types' },
-      { route: '/chart-of-accounts', label: 'Chart of Accounts' },
-      { route: '/sales-invoices', label: 'Invoices' },
-      { route: '/delivery-tickets', label: 'Delivery Tickets' },
-      { route: '/customer-payments', label: 'Customer Payments' },
-      { route: '/credit-memos', label: 'Credit Memos' },
-      { route: '/customer-refunds', label: 'Customer Refunds' },
-      { route: '/commission-payables', label: 'Commission Payable' },
-      { route: '/commission-vouchers', label: 'Commission Voucher' },
-      { route: '/vendor-bills', label: 'Vendor Bills' },
-      { route: '/bill-payments', label: 'Bill Payments' },
-      { route: '/bill-credits', label: 'Bill Credits' },
-      { route: '/reports/trial-balance', label: 'Trial Balance' },
-      { route: '/reports/income-statement', label: 'Income Statement' },
-      { route: '/reports/balance-sheet', label: 'Balance Sheet' },
-      { route: '/reports/general-ledger', label: 'General Ledger' },
-      { route: '/reports/ar-aging', label: 'AR Aging' },
+    // Grouped mega-menu mirroring the live Accounting dropdown: Transactions / Setups / Reports
+    // columns. Only the pages this build actually has are listed under each heading.
+    sections: [
+      {
+        title: 'Transactions',
+        items: [
+          { route: '/sales-invoices', label: 'Invoice' },
+          { route: '/delivery-tickets', label: 'Delivery Ticket' },
+          { route: '/customer-payments', label: 'Customer Payments' },
+          { route: '/customer-refunds', label: 'Customer Refunds' },
+          { route: '/credit-memos', label: 'Credit Memo' },
+          { route: '/vendor-bills', label: 'Vendor Bill' },
+          { route: '/bill-payments', label: 'Bill Payment' },
+          { route: '/bill-credits', label: 'Bill Credit' },
+          { route: '/cheques', label: 'Cheque' },
+          { route: '/journals', label: 'Journal' },
+          { route: '/deposits', label: 'Deposit' },
+          { route: '/fund-transfers', label: 'Fund Transfer' },
+          { route: '/commission-payables', label: 'Commission Payable' },
+          { route: '/commission-vouchers', label: 'Commission Voucher' },
+        ],
+      },
+      {
+        title: 'Setups',
+        items: [
+          { route: '/chart-of-account-types', label: 'Chart Of Account Types' },
+          { route: '/chart-of-accounts', label: 'Chart Of Accounts' },
+        ],
+      },
+      {
+        title: 'Manage Accounting',
+        items: [
+          { route: '/manage-accounting-period', label: 'Manage Accounting Period' },
+        ],
+      },
+      {
+        title: 'Reports',
+        items: [
+          { route: '/reports/trial-balance', label: 'Trial Balance' },
+          { route: '/reports/income-statement', label: 'Income Statement' },
+          { route: '/reports/balance-sheet', label: 'Balance Sheet' },
+          { route: '/reports/ar-aging', label: 'AR Aging' },
+          { route: '/reports/general-ledger', label: 'General Ledger' },
+        ],
+      },
     ],
   },
 ];
+
+// A nav group's leaf links, whether it uses a flat `children` list or grouped `sections`.
+function childrenOf(item) {
+  if (item.sections) return item.sections.flatMap((s) => s.items);
+  return item.children || [];
+}
 
 // Flattened route -> label lookup for the browser tab title, reusing the exact same
 // labels the nav menu shows -- one source of truth instead of a second hardcoded list.
@@ -131,7 +170,7 @@ const NAV_STRUCTURE = [
 // prefix-matches its own section (/chart-of-accounts) rather than a shorter unrelated
 // route that happens to also be a prefix.
 const FLAT_ROUTES = NAV_STRUCTURE
-  .flatMap((item) => (item.children ? item.children : [item]))
+  .flatMap((item) => (item.children || item.sections ? childrenOf(item) : [item]))
   .map((c) => ({ route: c.route, label: c.label }))
   .sort((a, b) => b.route.length - a.route.length);
 
@@ -186,11 +225,23 @@ export default function Layout() {
     navigate('/login');
   }
 
+  const canSee = (c) => can(c.permRoute || c.route, 'can_view');
   const visibleStructure = NAV_STRUCTURE
-    .map((item) => (item.children
-      ? { ...item, children: item.children.filter((c) => can(c.permRoute || c.route, 'can_view')) }
-      : item))
-    .filter((item) => (item.children ? item.children.length > 0 : can(item.route, 'can_view')));
+    .map((item) => {
+      if (item.sections) {
+        const sections = item.sections
+          .map((s) => ({ ...s, items: s.items.filter(canSee) }))
+          .filter((s) => s.items.length > 0);
+        return { ...item, sections };
+      }
+      if (item.children) return { ...item, children: item.children.filter(canSee) };
+      return item;
+    })
+    .filter((item) => {
+      if (item.sections) return item.sections.length > 0;
+      if (item.children) return item.children.length > 0;
+      return can(item.route, 'can_view');
+    });
 
   return (
     <div className="app-shell">
@@ -208,21 +259,36 @@ export default function Layout() {
           <span className="topnav-brand-short">GSuite</span>
         </div>
         <nav className="topnav-menu">
-          {visibleStructure.map((item) => (item.children ? (
+          {visibleStructure.map((item) => (item.children || item.sections ? (
             <div key={item.label} className="topnav-dropdown">
               <button
                 type="button"
-                className={item.children.some((c) => location.pathname.startsWith(c.route)) ? 'active' : ''}
+                className={childrenOf(item).some((c) => location.pathname.startsWith(c.route)) ? 'active' : ''}
               >
                 {item.label} <span className="caret">▾</span>
               </button>
-              <div className="topnav-dropdown-menu">
-                {item.children.map((c) => (
-                  <NavLink key={c.route} to={c.route} className={({ isActive }) => (isActive ? 'active' : '')}>
-                    {c.label}
-                  </NavLink>
-                ))}
-              </div>
+              {item.sections ? (
+                <div className="topnav-dropdown-menu topnav-mega">
+                  {item.sections.map((s) => (
+                    <div key={s.title} className="topnav-mega-col">
+                      <div className="topnav-mega-title">{s.title}</div>
+                      {s.items.map((c) => (
+                        <NavLink key={c.route} to={c.route} className={({ isActive }) => (isActive ? 'active' : '')}>
+                          {c.label}
+                        </NavLink>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="topnav-dropdown-menu">
+                  {item.children.map((c) => (
+                    <NavLink key={c.route} to={c.route} className={({ isActive }) => (isActive ? 'active' : '')}>
+                      {c.label}
+                    </NavLink>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <NavLink key={item.route} to={item.route} className={({ isActive }) => (isActive ? 'active' : '')}>
@@ -244,11 +310,11 @@ export default function Layout() {
           {/* Click-to-expand accordion instead of the desktop menu's hover flyouts --
               hover has no equivalent on touch, so each group toggles open in place. */}
           <nav className="topnav-mobile-panel">
-            {visibleStructure.map((item) => (item.children ? (
+            {visibleStructure.map((item) => (item.children || item.sections ? (
               <div key={item.label} className="topnav-mobile-group">
                 <button
                   type="button"
-                  className={`topnav-mobile-group-toggle ${item.children.some((c) => location.pathname.startsWith(c.route)) ? 'active' : ''}`}
+                  className={`topnav-mobile-group-toggle ${childrenOf(item).some((c) => location.pathname.startsWith(c.route)) ? 'active' : ''}`}
                   onClick={() => setExpandedGroup((g) => (g === item.label ? null : item.label))}
                 >
                   {item.label}
@@ -256,7 +322,16 @@ export default function Layout() {
                 </button>
                 {expandedGroup === item.label && (
                   <div className="topnav-mobile-group-items">
-                    {item.children.map((c) => (
+                    {item.sections ? item.sections.map((s) => (
+                      <div key={s.title}>
+                        <div className="topnav-mega-title" style={{ padding: '8px 0 2px' }}>{s.title}</div>
+                        {s.items.map((c) => (
+                          <NavLink key={c.route} to={c.route} className={({ isActive }) => (isActive ? 'active' : '')}>
+                            {c.label}
+                          </NavLink>
+                        ))}
+                      </div>
+                    )) : item.children.map((c) => (
                       <NavLink key={c.route} to={c.route} className={({ isActive }) => (isActive ? 'active' : '')}>
                         {c.label}
                       </NavLink>

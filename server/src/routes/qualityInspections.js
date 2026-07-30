@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
+const { createReworkJobOrder, countOpenRework } = require('../lib/reworkJobOrder');
 
 const router = express.Router();
 // Reached from a Job Order's Production view, not its own page in the nav -- reuses
@@ -154,7 +155,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
     const { job_order_id: jobOrderId, date_created: dateCreated, memo, lines } = req.body;
     if (!jobOrderId) return res.status(400).json({ error: 'Job Order is required.' });
 
-    const [[jo]] = await conn.query('SELECT quantity, quantity_inspected, sales_order_id FROM job_orders WHERE id = ?', [jobOrderId]);
+    const [[jo]] = await conn.query('SELECT * FROM job_orders WHERE id = ?', [jobOrderId]);
     if (!jo) return res.status(404).json({ error: 'Job Order not found.' });
 
     const submitted = (Array.isArray(lines) ? lines : []).filter((l) => Number(l.pass_qty || 0) > 0 || Number(l.rma_qty || 0) > 0);
@@ -185,12 +186,20 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
     const qiId = result.insertId;
     await conn.query('UPDATE quality_inspections SET qi_no = ? WHERE id = ?', [`QI-${qiId}`, qiId]);
 
-    let totalInspected = 0;
+    let passTotal = 0;
+    let rmaTotal = 0;
+    const rmaMemos = [];
+    const rmaActions = [];
     for (const s of submitted) {
       const ab = byId.get(Number(s.assembly_build_id));
       const passQty = Number(s.pass_qty || 0);
       const rmaQty = Number(s.rma_qty || 0);
-      totalInspected += passQty + rmaQty;
+      passTotal += passQty;
+      rmaTotal += rmaQty;
+      if (rmaQty > 0) {
+        if (s.rma_memo) rmaMemos.push(String(s.rma_memo));
+        if (s.action_to_be_taken) rmaActions.push(String(s.action_to_be_taken));
+      }
 
       await conn.query('UPDATE assembly_builds SET passed_qty = passed_qty + ?, rma_qty = rma_qty + ? WHERE id = ?', [passQty, rmaQty, ab.id]);
       await conn.query(
@@ -199,16 +208,41 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
         [qiId, ab.id, ab.quantity_built, passQty, rmaQty, s.rma_memo || null, s.action_to_be_taken || null]
       );
     }
-    // A JO's own quantity is only ever "done" once every unit ordered has actually been
-    // inspected -- Assembly Build alone doesn't get there (that's just what's been made,
-    // not what's cleared). Short of that, it's "Partially Completed"; anything covering
-    // every last unit flips it to "Completed".
-    const newQuantityInspected = Number(jo.quantity_inspected || 0) + totalInspected;
-    const newStage = newQuantityInspected >= Number(jo.quantity || 0) ? 'completed' : 'partially_completed';
+
+    // The RMA (failed) qty is kicked back for rework as an RFQC job order -- a rework JO (like
+    // RWIP) sized to the RMA qty, which goes through its own approve -> build -> QI lifecycle. Only
+    // the PASSED qty counts toward this JO's quantity_inspected (what's cleared for delivery); the
+    // RMA qty is "inspected but rejected" and is tracked by the RFQC instead.
+    let rfqc = null;
+    if (rmaTotal > 0) {
+      rfqc = await createReworkJobOrder(conn, {
+        mother: jo, prefix: 'RFQC', quantity: rmaTotal,
+        reason: rmaMemos.join(' | ') || null, action: rmaActions.join(' | ') || null, userId: req.user.id,
+      });
+    }
+
+    // A JO is only "Completed" once every ordered unit has passed inspection AND no rework (RFQC/
+    // RWIP) is still open against it -- a JO with a pending RFQC can deliver its passed qty but
+    // stays "Partially Completed" until the rework is done.
+    const newQuantityInspected = Number(jo.quantity_inspected || 0) + passTotal;
+    const openRework = await countOpenRework(conn, jobOrderId);
+    const newStage = (newQuantityInspected >= Number(jo.quantity || 0) && openRework === 0) ? 'completed' : 'partially_completed';
     await conn.query(
       'UPDATE job_orders SET quantity_inspected = ?, production_stage = ?, updated_at = NOW() WHERE id = ?',
       [newQuantityInspected, newStage, jobOrderId]
     );
+
+    // If THIS JO is itself a completed RFQC (its rework passed inspection), credit its reworked qty
+    // back onto the mother JO's inspected total and re-evaluate whether the mother is now Completed.
+    if (newStage === 'completed' && jo.parent_job_order_id && String(jo.job_order_no || '').startsWith('RFQC-')) {
+      const [[mom]] = await conn.query('SELECT quantity, quantity_inspected FROM job_orders WHERE id = ?', [jo.parent_job_order_id]);
+      if (mom) {
+        const momInspected = Number(mom.quantity_inspected || 0) + Number(jo.quantity || 0);
+        const momOpen = await countOpenRework(conn, jo.parent_job_order_id);
+        const momStage = (momInspected >= Number(mom.quantity || 0) && momOpen === 0) ? 'completed' : 'partially_completed';
+        await conn.query('UPDATE job_orders SET quantity_inspected = ?, production_stage = ?, updated_at = NOW() WHERE id = ?', [momInspected, momStage, jo.parent_job_order_id]);
+      }
+    }
     // Once any one Job Order on the Sales Order has cleared inspection (fully or
     // partially), the order as a whole is ready to start shipping -- doesn't wait for
     // every other line to catch up -- but a Sales Order's status is only ever as

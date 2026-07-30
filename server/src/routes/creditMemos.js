@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeCreditMemoGl } = require('../lib/glImpact');
 
 const router = express.Router();
@@ -268,6 +269,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
         error: `Applied Amount (${appliedTotal}) exceeds this Credit Memo's own total (${grossAmount}). Add the items you're crediting, or lower what you're applying.`,
       });
     }
+    await assertPeriodOpen(dateCreated, 'ar', conn);
 
     await conn.beginTransaction();
     const [result] = await conn.query(
@@ -324,7 +326,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[cm]] = await conn.query('SELECT status FROM credit_memos WHERE id = ?', [req.params.id]);
+    const [[cm]] = await conn.query('SELECT status, date_created FROM credit_memos WHERE id = ?', [req.params.id]);
+    if (cm) await assertPeriodOpen(cm.date_created, 'ar', conn);
     if (!cm) return res.status(404).json({ error: 'Not found' });
     if (cm.status === 'voided') return res.status(409).json({ error: 'This Credit Memo is already voided.' });
 

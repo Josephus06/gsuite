@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 
@@ -16,6 +16,8 @@ function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
 // posts DR 24200 / (+/- expenses) / CR cash.
 export default function CommissionVoucherEdit() {
   const navigate = useNavigate();
+  const { id } = useParams();
+  const isEdit = !!id;
   const [employees, setEmployees] = useState([]);
   const [employee, setEmployee] = useState(null);
 
@@ -42,6 +44,41 @@ export default function CommissionVoucherEdit() {
 
   useEffect(() => { api.get('/commission-vouchers/employees').then(({ data }) => setEmployees(data)).catch(() => {}); }, []);
 
+  // Edit mode: load the voucher, pull the employee's payables (with ?voucherId so its own releases
+  // are shown and their room given back), and prefill every field.
+  useEffect(() => {
+    if (!isEdit) return;
+    (async () => {
+      try {
+        const { data: cv } = await api.get(`/commission-vouchers/${id}`);
+        setDate(formatDate(cv.date_created) || new Date().toISOString().slice(0, 10));
+        setDateReleased(formatDate(cv.date_released));
+        setPaymentType(cv.payment_type || 'full');
+        setPayeeName(cv.payee_name || cv.employee_name || '');
+        setRefNo(cv.reference_no || '');
+        setMemo(cv.memo || '');
+        setEmployee({ id: cv.employee_id, name: cv.employee_name });
+        const { data } = await api.get(`/commission-vouchers/for-employee/${cv.employee_id}?voucherId=${id}`);
+        setPayables(data.payables || []);
+        setMethods(data.payment_methods || []);
+        setCashAccounts(data.cash_accounts || []);
+        setExpenseAccounts(data.expense_accounts || []);
+        const ck = {}; const rl = {};
+        (data.payables || []).forEach((p) => { rl[p.commission_payable_id] = '0'; });
+        (cv.lines || []).forEach((l) => { ck[l.commission_payable_id] = true; rl[l.commission_payable_id] = String(l.released_amount); });
+        setChecked(ck); setReleased(rl);
+        setMethod(cv.payment_method_id ? { id: cv.payment_method_id, name: cv.payment_method_name } : null);
+        setCashAccount(cv.cash_bank_account_id ? { id: cv.cash_bank_account_id, account_code: cv.cash_account_code, account_name: cv.cash_account_name } : null);
+        setExpenses((cv.expenses || []).map((e) => ({
+          account: { id: e.account_id, account_code: e.account_code, account_name: e.account_name },
+          description: e.description || '', amount: String(e.amount),
+        })));
+      } catch (err) {
+        setError(err.response?.data?.error || 'Could not load this voucher.');
+      }
+    })();
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function onEmployeeSelect(e) {
     setEmployee(e); setPayables([]); setChecked({}); setReleased({});
     if (!e) return;
@@ -52,10 +89,11 @@ export default function CommissionVoucherEdit() {
       setCashAccounts(data.cash_accounts || []);
       setExpenseAccounts(data.expense_accounts || []);
       setPayeeName(e.name);
-      // Default: include every payable, releasing its full balance due.
-      const ck = {}; const rl = {};
-      (data.payables || []).forEach((p) => { ck[p.commission_payable_id] = true; rl[p.commission_payable_id] = String(p.balance_due); });
-      setChecked(ck); setReleased(rl);
+      // Default: nothing checked, released 0 -- the user ticks a commission and enters an amount
+      // (a refund-only voucher ticks a row, leaves it 0, and adds a positive expense).
+      const rl = {};
+      (data.payables || []).forEach((p) => { rl[p.commission_payable_id] = '0'; });
+      setChecked({}); setReleased(rl);
     } catch (err) {
       setError(err.response?.data?.error || 'Could not load this employee\'s commissions.');
     }
@@ -76,19 +114,28 @@ export default function CommissionVoucherEdit() {
     setError('');
     if (!employee) { setError('Select an employee.'); return; }
     const lines = payables
-      .filter((p) => checked[p.commission_payable_id] && Number(released[p.commission_payable_id]) > 0)
-      .map((p) => ({ commission_payable_id: p.commission_payable_id, released_amount: Number(released[p.commission_payable_id]) }));
-    if (!lines.length) { setError('Release an amount for at least one commission.'); return; }
+      .filter((p) => checked[p.commission_payable_id])
+      .map((p) => ({ commission_payable_id: p.commission_payable_id, released_amount: Number(released[p.commission_payable_id]) || 0 }));
     const exp = expenses.filter((e) => e.account && Number(e.amount) !== 0)
       .map((e) => ({ account_id: e.account.id, description: e.description || null, amount: Number(e.amount) }));
+    // A voucher needs at least a commission line OR an expense -- an expense-only voucher is a
+    // pure refund (no commission released).
+    if (!lines.length && !exp.length) { setError('Select a commission or add an expense.'); return; }
+    // A release can never exceed that commission's commissionable (its unpaid amount).
+    const over = payables.find((p) => checked[p.commission_payable_id]
+      && (Number(released[p.commission_payable_id]) || 0) > Number(p.commissionable_amount) + 0.005);
+    if (over) { setError(`Released amount for ${over.commission_payable_no} exceeds its commissionable (${money(over.commissionable_amount)}).`); return; }
     setSaving(true);
     try {
-      const { data } = await api.post('/commission-vouchers', {
+      const payload = {
         employee_id: employee.id, date_created: date, date_released: dateReleased || null, payment_type: paymentType,
         payee_name: payeeName || employee.name, reference_no: refNo || null, memo: memo || null,
         payment_method_id: method?.id || null, cash_bank_account_id: cashAccount?.id || null, lines, expenses: exp,
-      });
-      navigate(`/commission-vouchers/${data.id}`);
+      };
+      const { data } = isEdit
+        ? await api.put(`/commission-vouchers/${id}`, payload)
+        : await api.post('/commission-vouchers', payload);
+      navigate(`/commission-vouchers/${isEdit ? id : data.id}`);
     } catch (err) {
       setError(err.response?.data?.error || 'Save failed.');
       setSaving(false);
@@ -98,10 +145,10 @@ export default function CommissionVoucherEdit() {
   return (
     <div>
       <div className="page-header">
-        <h1>Commission Voucher</h1>
+        <h1>Commission Voucher{isEdit && employee ? ` · ${employee.name}` : ''}</h1>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/commission-vouchers')}>Back to Lists</button>
-          <button className="btn btn-sm btn-primary" disabled={saving} onClick={handleSave}>Save</button>
+          <button className="btn btn-sm btn-primary" disabled={saving} onClick={handleSave}>{isEdit ? 'Update' : 'Save'}</button>
         </div>
       </div>
 
@@ -127,9 +174,10 @@ export default function CommissionVoucherEdit() {
           <div className="field">
             <label>Employee</label>
             <EntityPicker
-              label="Employee" items={employees} value={employee?.id || ''} getLabel={(e) => e.name}
+              label="Employee" items={employee ? [employee, ...employees.filter((e) => e.id !== employee.id)] : employees}
+              value={employee?.id || ''} getLabel={(e) => e.name}
               columns={[{ key: 'name', label: 'Name' }, { key: 'department_name', label: 'Department' }]}
-              searchKeys={['name', 'department_name']} placeholder="--Select--" onSelect={onEmployeeSelect}
+              searchKeys={['name', 'department_name']} placeholder="--Select--" onSelect={onEmployeeSelect} disabled={isEdit}
             />
           </div>
           <div className="field">
@@ -177,11 +225,11 @@ export default function CommissionVoucherEdit() {
             <table>
               <thead><tr>
                 <th></th><th>Trans #</th><th>Trans Date</th><th>Commission Date</th>
-                <th style={{ textAlign: 'right' }}>Commissionable</th><th style={{ textAlign: 'right' }}>Balance Due</th><th>Released Amount</th>
+                <th style={{ textAlign: 'right' }}>Commissionable</th><th>Released Amount</th>
               </tr></thead>
               <tbody>
-                {!employee && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>Select an employee to see their releasable commissions.</td></tr>}
-                {employee && payables.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>This employee has no unpaid commissions.</td></tr>}
+                {!employee && <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>Select an employee to see their releasable commissions.</td></tr>}
+                {employee && payables.length === 0 && <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>This employee has no unpaid commissions.</td></tr>}
                 {payables.map((p) => (
                   <tr key={p.commission_payable_id}>
                     <td><input type="checkbox" checked={!!checked[p.commission_payable_id]} onChange={(e) => setChecked((c) => ({ ...c, [p.commission_payable_id]: e.target.checked }))} /></td>
@@ -189,9 +237,8 @@ export default function CommissionVoucherEdit() {
                     <td>{formatDate(p.date_created)}</td>
                     <td>{formatMonth(p.period_from)}</td>
                     <td style={{ textAlign: 'right' }}>{money(p.commissionable_amount)}</td>
-                    <td style={{ textAlign: 'right' }}>{money(p.balance_due)}</td>
                     <td>
-                      <input type="number" min="0" step="0.01" max={p.balance_due}
+                      <input type="number" min="0" step="0.01" max={p.commissionable_amount}
                         value={released[p.commission_payable_id] ?? ''}
                         onChange={(e) => setReleased((r) => ({ ...r, [p.commission_payable_id]: e.target.value }))}
                         style={{ width: 140 }} disabled={!checked[p.commission_payable_id]} />
@@ -199,7 +246,7 @@ export default function CommissionVoucherEdit() {
                   </tr>
                 ))}
                 {payables.length > 0 && (
-                  <tr><td colSpan={6} style={{ textAlign: 'right' }}><strong>Total Released</strong></td>
+                  <tr><td colSpan={5} style={{ textAlign: 'right' }}><strong>Total Released</strong></td>
                     <td><strong>{money(totalReleased)}</strong></td></tr>
                 )}
               </tbody>

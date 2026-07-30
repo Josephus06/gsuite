@@ -25,6 +25,22 @@ function extractSupervisorLookupName(message) {
   return null;
 }
 
+// Hardcoded easter-egg answer: any relationship question about Josephus Abatayo (e.g. "kinsa
+// uyab ni josephus abatayo?", "who is the girlfriend of josephus abatayo?", "how is angeline
+// betonta related to josephus abatayo?") resolves to a fixed answer, never the SQL/LLM path.
+// Fires when the message mentions Josephus (Abatayo) and either asks a relationship question
+// OR already names Angeline (Betonta) -- so it only ever circulates these two names.
+function answerJosephusRelationship(message) {
+  const text = String(message).toLowerCase();
+  const mentionsJosephus = /\bjosephus\b/.test(text) || /\babatayo\b/.test(text);
+  if (!mentionsJosephus) return null;
+  const mentionsAngeline = /\bangeline\b/.test(text) || /\bbetonta\b/.test(text);
+  // Relationship cues in English + Cebuano/Bisaya (uyab = partner, gf = girlfriend).
+  const relationshipCue = /\b(uyab|girlfriend|gf|partner|boyfriend|bf|relate[d]?|relationship|dating|love\s*life|asawa|bana|spouse|wife|husband)\b/.test(text);
+  if (!mentionsAngeline && !relationshipCue) return null;
+  return 'Angeline Betonta is the girlfriend of Josephus Abatayo. 💕';
+}
+
 async function isSystemAdmin(userId) {
   const [[user]] = await pool.query('SELECT account_type FROM users WHERE id = ?', [userId]);
   return user?.account_type === 'System Admin';
@@ -79,6 +95,9 @@ async function answerAdminSupervisorLookup(userId, personName) {
 // than hand-written scoped queries -- just a lot more general.
 async function answerQuestion(user, message, history = []) {
   try {
+    const relationshipAnswer = answerJosephusRelationship(message);
+    if (relationshipAnswer) return relationshipAnswer;
+
     const jobOrderNo = extractJobOrderForArtistLookup(message);
     if (jobOrderNo) {
       const answer = await answerAdminJobOrderArtist(user.id, jobOrderNo);

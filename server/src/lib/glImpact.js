@@ -263,7 +263,17 @@ async function computeTransitGl(lines, { qtyField, assetIsDebit }) {
 async function computeCustomerPaymentGl(cp, lines) {
   const [[arAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '12100'");
   if (!arAcct || !cp.deposit_account_id) return [];
-  const [[depositAcct]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [cp.deposit_account_id]);
+  // Once a payment is rolled into a Bank Deposit, its cash sits in Undeposited Funds (10006) until
+  // the deposit moves it to the bank -- so its own entry debits 10006, and the Deposit does the
+  // DR bank / CR 10006. A payment with no deposit keeps debiting its deposit account directly (this
+  // preserves historical payments, which have no deposit document).
+  let debitAcct;
+  if (cp.deposit_id) {
+    [[debitAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '10006'");
+  } else {
+    [[debitAcct]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [cp.deposit_account_id]);
+  }
+  const depositAcct = debitAcct;
   if (!depositAcct) return [];
 
   const appliedToInvoices = lines
@@ -794,6 +804,132 @@ async function getPostedGlLines({ toDate, fromDate }) {
           entry_date: cr.date_created, source_type: 'customer_refund', source_no: cr.customer_refund_no, source_id: cr.id, memo: cr.memo || null,
           location_id: cr.office_location_id || null, department_id: cr.department_id || null,
         });
+      }
+    }
+  }
+
+  // Journals (manual general-journal entries; void ones post nothing). Each line posts directly
+  // to the GL at its own account/department -- a journal's GL Impact IS its lines.
+  {
+    const [tbl] = await pool.query("SHOW TABLES LIKE 'journals'");
+    if (tbl.length) {
+      const { sql, params } = dateFilter('j.date_created');
+      const [headers] = await pool.query(`SELECT j.* FROM journals j WHERE j.status <> 'void' AND ${sql}`, params);
+      for (const j of headers) {
+        const [lines] = await pool.query(
+          `SELECT jl.debit, jl.credit, jl.department_id, coa.account_code, coa.account_name
+           FROM journal_lines jl LEFT JOIN chart_of_accounts coa ON coa.id = jl.account_id
+           WHERE jl.journal_id = ? ORDER BY jl.line_no`,
+          [j.id]
+        );
+        const rows = lines.map((l) => ({
+          account_code: l.account_code, account_name: l.account_name,
+          debit: Number(l.debit) || 0, credit: Number(l.credit) || 0, department_id: l.department_id || null,
+        }));
+        // No department_id in meta so each line keeps its own (push spreads meta over the row).
+        push(rows, { entry_date: j.date_created, source_type: 'journal', source_no: j.journal_no, source_id: j.id, memo: j.memo || null, location_id: j.location_id || null });
+      }
+    }
+  }
+
+  // Cheques -- pay expenses out of a bank account: DR each expense account (+ VAT input 14300 on
+  // tax) / CR Expanded Withholding Tax (21402) for any withheld / CR the bank account for the net.
+  {
+    const [tbl] = await pool.query("SHOW TABLES LIKE 'cheques'");
+    if (tbl.length) {
+      const { sql, params } = dateFilter('c.date_created');
+      const [headers] = await pool.query(
+        `SELECT c.*, coa.account_code AS bank_code, coa.account_name AS bank_name FROM cheques c
+         LEFT JOIN chart_of_accounts coa ON coa.id = c.account_id WHERE c.status <> 'void' AND ${sql}`, params
+      );
+      for (const c of headers) {
+        const [lines] = await pool.query(
+          `SELECT cl.amount, cl.department_id, coa.account_code, coa.account_name
+           FROM cheque_lines cl LEFT JOIN chart_of_accounts coa ON coa.id = cl.account_id
+           WHERE cl.cheque_id = ? ORDER BY cl.line_no`, [c.id]
+        );
+        const rows = lines.filter((l) => Number(l.amount)).map((l) => ({
+          account_code: l.account_code, account_name: l.account_name, debit: Number(l.amount) || 0, credit: 0, department_id: l.department_id || null,
+        }));
+        const tax = Number(c.tax_amount) || 0;
+        const wtax = Number(c.withholding_tax_amount) || 0;
+        const total = Number(c.total_amount) || 0;
+        if (tax) { const [[v]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '14300'"); if (v) rows.push({ account_code: v.account_code, account_name: v.account_name, debit: tax, credit: 0 }); }
+        if (wtax) { const [[w]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '21402'"); if (w) rows.push({ account_code: w.account_code, account_name: w.account_name, debit: 0, credit: wtax }); }
+        if (total && c.bank_code) rows.push({ account_code: c.bank_code, account_name: c.bank_name, debit: 0, credit: total });
+        push(rows, { entry_date: c.date_created, source_type: 'cheque', source_no: c.cheque_no, source_id: c.id, memo: c.memo || null, location_id: c.office_location_id || null });
+      }
+    }
+  }
+
+  // Fund Transfers -- move money between two bank accounts: DR the To account / CR the From account.
+  {
+    const [tbl] = await pool.query("SHOW TABLES LIKE 'fund_transfers'");
+    if (tbl.length) {
+      const { sql, params } = dateFilter('ft.date_created');
+      const [headers] = await pool.query(
+        `SELECT ft.*, fa.account_code AS from_code, fa.account_name AS from_name, ta.account_code AS to_code, ta.account_name AS to_name
+         FROM fund_transfers ft
+         LEFT JOIN chart_of_accounts fa ON fa.id = ft.from_account_id
+         LEFT JOIN chart_of_accounts ta ON ta.id = ft.to_account_id
+         WHERE ft.status <> 'void' AND ${sql}`, params
+      );
+      for (const ft of headers) {
+        const amt = Number(ft.amount) || 0;
+        if (!amt || !ft.from_code || !ft.to_code) continue;
+        const rows = [
+          { account_code: ft.to_code, account_name: ft.to_name, debit: amt, credit: 0 },
+          { account_code: ft.from_code, account_name: ft.from_name, debit: 0, credit: amt },
+        ];
+        push(rows, { entry_date: ft.date_created, source_type: 'fund_transfer', source_no: ft.ft_no, source_id: ft.id, memo: ft.memo || null });
+      }
+    }
+  }
+
+  // Bank Deposits -- move cash from Undeposited Funds into a bank account:
+  // DR <bank account> / CR 10006 Undeposited Funds for the deposit total. Void ones post nothing.
+  {
+    const [tbl] = await pool.query("SHOW TABLES LIKE 'bank_deposits'");
+    if (tbl.length) {
+      const { sql, params } = dateFilter('d.date_created');
+      const [headers] = await pool.query(
+        `SELECT d.*, coa.account_code, coa.account_name FROM bank_deposits d
+         LEFT JOIN chart_of_accounts coa ON coa.id = d.account_id WHERE d.status <> 'void' AND ${sql}`, params
+      );
+      if (headers.length) {
+        const [[uf]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '10006'");
+        for (const d of headers) {
+          const amt = Number(d.total_amount) || 0;
+          if (!amt || !d.account_code) continue;
+          const rows = [
+            { account_code: d.account_code, account_name: d.account_name, debit: amt, credit: 0 },
+            { account_code: uf?.account_code || '10006', account_name: uf?.account_name || 'Undeposited Funds', debit: 0, credit: amt },
+          ];
+          push(rows, { entry_date: d.date_created, source_type: 'bank_deposit', source_no: d.bd_no, source_id: d.id, memo: d.memo || null });
+        }
+      }
+    }
+  }
+
+  // OSR Fulfillments -- withdrawing office supplies expenses them out of inventory:
+  // DR 30504 Materials, Tools & Supplies / CR 15400 Supplies Inventory for the value moved.
+  {
+    const [tbl] = await pool.query("SHOW TABLES LIKE 'osr_fulfillments'");
+    if (tbl.length) {
+      const { sql, params } = dateFilter('f.date_created');
+      const [headers] = await pool.query(`SELECT f.* FROM osr_fulfillments f WHERE f.status <> 'void' AND ${sql}`, params);
+      if (headers.length) {
+        const [[dr]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '30504'");
+        const [[cr]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '15400'");
+        for (const f of headers) {
+          const amt = Number(f.total_amount) || 0;
+          if (!amt) continue;
+          const rows = [
+            { account_code: dr?.account_code || '30504', account_name: dr?.account_name || 'Materials, Tools & Supplies', debit: amt, credit: 0 },
+            { account_code: cr?.account_code || '15400', account_name: cr?.account_name || 'Supplies Inventory', debit: 0, credit: amt },
+          ];
+          push(rows, { entry_date: f.date_created, source_type: 'osr_fulfillment', source_no: f.osrf_no, source_id: f.id, memo: f.memo || null, location_id: f.transfer_to_location_id || null });
+        }
       }
     }
   }

@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeCustomerRefundGl } = require('../lib/glImpact');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
 
 const router = express.Router();
 // Customer Refund (CRFND-####): returns cash to a customer against one or more of their
@@ -160,6 +161,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     let arId = arAccountId || null;
     if (!accId) { const [[a]] = await conn.query("SELECT id FROM chart_of_accounts WHERE account_code = '10005'"); accId = a?.id || null; }
     if (!arId) { const [[a]] = await conn.query("SELECT id FROM chart_of_accounts WHERE account_code = '12100'"); arId = a?.id || null; }
+    await assertPeriodOpen(dateCreated, 'ar', conn);
 
     await conn.beginTransaction();
     const [result] = await conn.query(
@@ -200,7 +202,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[cr]] = await conn.query('SELECT status FROM customer_refunds WHERE id = ?', [req.params.id]);
+    const [[cr]] = await conn.query('SELECT status, date_created FROM customer_refunds WHERE id = ?', [req.params.id]);
+    if (cr) await assertPeriodOpen(cr.date_created, 'ar', conn);
     if (!cr) return res.status(404).json({ error: 'Not found' });
     if (cr.status === 'voided') return res.status(409).json({ error: 'This Customer Refund is already voided.' });
 

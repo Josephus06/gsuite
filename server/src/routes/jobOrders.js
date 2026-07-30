@@ -7,6 +7,28 @@ const { getArtistEmployeeScope } = require('../lib/artistVisibility');
 const router = express.Router();
 const ROUTE = '/job-orders';
 
+// The "Saved Job Orders" status tabs, mirroring the live list. A JO lands in exactly one: Hold wins
+// over everything; otherwise released JOs go by production_stage and pre-release JOs by sub_status
+// (the Design/Layout/Sales-approval workflow), with "Update JO" the catch-all for a freshly created
+// (Pending) JO. Each `cond` is a trusted literal (no user input) so it's inlined directly.
+const JO_TABS = [
+  { key: 'update_jo', label: 'Update JO', cond: "jo.is_on_hold = 0 AND jo.production_stage IS NULL AND (jo.sub_status IS NULL OR jo.sub_status NOT IN ('For Design Supervisor','For Artist','For Artist (Revision)','Sales Approval'))" },
+  { key: 'for_design_sup', label: 'For Design Sup.', cond: "jo.is_on_hold = 0 AND jo.sub_status = 'For Design Supervisor'" },
+  { key: 'for_artist', label: 'For Artist', cond: "jo.is_on_hold = 0 AND jo.sub_status = 'For Artist'" },
+  { key: 'pending_for_rev', label: 'Pending for Rev.', cond: "jo.is_on_hold = 0 AND jo.sub_status = 'For Artist (Revision)'" },
+  { key: 'for_approval', label: 'For Approval', cond: "jo.is_on_hold = 0 AND jo.sub_status = 'Sales Approval'" },
+  { key: 'pending_for_sched', label: 'Pending for Sched.', cond: "jo.is_on_hold = 0 AND jo.production_stage = 'pending_for_scheduling'" },
+  { key: 'for_rev', label: 'For Rev.', cond: "jo.is_on_hold = 0 AND jo.production_stage = 'for_revision'" },
+  { key: 'in_process_w_rev', label: 'In-Process w/ Rev.', cond: "jo.is_on_hold = 0 AND jo.production_stage = 'in_process_with_revision'" },
+  { key: 'in_process', label: 'In-Process', cond: "jo.is_on_hold = 0 AND jo.production_stage = 'in_process'" },
+  { key: 'for_qi', label: 'For QI', cond: "jo.is_on_hold = 0 AND jo.production_stage = 'for_qi'" },
+  { key: 'part_completed', label: 'Part. Completed', cond: "jo.is_on_hold = 0 AND jo.production_stage = 'partially_completed'" },
+  { key: 'completed', label: 'Completed', cond: "jo.is_on_hold = 0 AND jo.production_stage = 'completed'" },
+  { key: 'invoiced', label: 'Invoiced', cond: "jo.is_on_hold = 0 AND jo.production_stage = 'invoiced'" },
+  { key: 'hold', label: 'Hold', cond: 'jo.is_on_hold = 1' },
+];
+const JO_TAB_MAP = Object.fromEntries(JO_TABS.map((t) => [t.key, t.cond]));
+
 // Fields editable via the real system's full-page "Edit" form. Quantity/Length/Width/
 // Height are shown there as read-only labels (not inputs) even though this build
 // stores them -- matching that, they're intentionally left out of this list. Customer/
@@ -40,7 +62,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   try {
     const {
       search, sales_rep_id: salesRepId, job_location_id: jobLocationId, office_location_id: officeLocationId,
-      department_id: departmentId, customer_id: customerId, as_of: asOf, page = '1', limit = '10',
+      department_id: departmentId, customer_id: customerId, as_of: asOf, tab, page = '1', limit = '10',
     } = req.query;
 
     const where = [];
@@ -71,7 +93,14 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
         params.push(artistEmployeeId);
       }
     }
+    // The tab counts run over every filter EXCEPT the status tab itself, so each tab always shows its
+    // full total regardless of which one is active. The listing/total additionally narrow to the
+    // picked tab's condition.
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const listWhere = [...where];
+    const listParams = [...params];
+    if (tab && JO_TAB_MAP[tab]) listWhere.push(`(${JO_TAB_MAP[tab]})`);
+    const listWhereSql = listWhere.length ? `WHERE ${listWhere.join(' AND ')}` : '';
 
     const baseFrom = `FROM job_orders jo
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
@@ -85,7 +114,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN employees pb ON pb.id = so.prepared_by_id
        LEFT JOIN employees ar ON ar.id = jo.artist_id`;
 
-    const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${baseFrom} ${whereSql}`, params);
+    const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${baseFrom} ${listWhereSql}`, listParams);
 
     const pageNum = Math.max(1, Number(page) || 1);
     const limitNum = Math.min(100, Math.max(1, Number(limit) || 10));
@@ -98,13 +127,20 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               CONCAT(pb.first_name, ' ', pb.last_name) AS prepared_by_name,
               CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name
-       ${baseFrom} ${whereSql}
+       ${baseFrom} ${listWhereSql}
        ORDER BY jo.id DESC
        LIMIT ? OFFSET ?`,
-      [...params, limitNum, offset]
+      [...listParams, limitNum, offset]
     );
 
-    res.json({ rows, total, page: pageNum, limit: limitNum });
+    // One pass tallies every tab (a SUM/CASE per tab), so the counts are always consistent with the
+    // same conditions used to filter the listing.
+    const countSelect = JO_TABS.map((t) => `SUM(CASE WHEN ${t.cond} THEN 1 ELSE 0 END) AS ${t.key}`).join(', ');
+    const [[countRow]] = await pool.query(`SELECT COUNT(*) AS all_count, ${countSelect} ${baseFrom} ${whereSql}`, params);
+    const counts = { all: Number(countRow.all_count) || 0 };
+    JO_TABS.forEach((t) => { counts[t.key] = Number(countRow[t.key]) || 0; });
+
+    res.json({ rows, total, page: pageNum, limit: limitNum, counts });
   } catch (err) {
     next(err);
   }
@@ -124,7 +160,10 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
               oloc.location_name AS office_location_name, sd.name AS sales_division_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name,
-              ljt.display_name AS layout_job_type_name
+              ljt.display_name AS layout_job_type_name,
+              nsso.nsso_no, rc.name AS reason_code_name,
+              CONCAT(rap.first_name, ' ', rap.last_name) AS rma_approved_by_name,
+              pjo.job_order_no AS parent_job_order_no
        FROM job_orders jo
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
        LEFT JOIN sales_order_lines sol ON sol.id = jo.sales_order_line_id
@@ -137,6 +176,10 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
        LEFT JOIN employees sr ON sr.id = jo.sales_rep_id
        LEFT JOIN employees ar ON ar.id = jo.artist_id
        LEFT JOIN pms_job_types ljt ON ljt.id = jo.layout_job_type_id
+       LEFT JOIN non_standard_sales_orders nsso ON nsso.id = jo.nsso_id
+       LEFT JOIN reasons rc ON rc.id = jo.reason_code_id
+       LEFT JOIN employees rap ON rap.id = jo.rma_approved_by_id
+       LEFT JOIN job_orders pjo ON pjo.id = jo.parent_job_order_id
        WHERE jo.id = ?`,
       [req.params.id]
     );
@@ -164,10 +207,92 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
 
-    res.json({ ...jo, processes });
+    // RWIP (rework) job orders raised off this JO -- listed on the RWIP JO tab.
+    const [rwips] = await pool.query(
+      `SELECT id, job_order_no, created_at, quantity, units, status, production_stage
+       FROM job_orders WHERE parent_job_order_id = ? ORDER BY id DESC`,
+      [req.params.id]
+    );
+
+    res.json({ ...jo, processes, rwips });
   } catch (err) {
     next(err);
   }
+});
+
+// Approve RMA -- releases an NSSO-spawned job order from "Pending RMA Approval" into the normal
+// production flow. Gated by the NSSO page's can_approve permission (the same "NSSO Can Approve"
+// right that lets a user approve the Non-Standard Sales Order also approves its rework JOs).
+router.put('/:id/approve-rma', requireAuth, requirePermission('/non-standard-sales-orders', 'can_approve'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[jo]] = await conn.query('SELECT id, nsso_id, rma_approved_at FROM job_orders WHERE id = ?', [req.params.id]);
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!jo.nsso_id) return res.status(409).json({ error: 'This job order is not an RMA job order.' });
+    if (jo.rma_approved_at) return res.status(409).json({ error: 'This RMA job order is already approved.' });
+    const [[u]] = await conn.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
+    await conn.beginTransaction();
+    // Approving the RMA moves it to "Planned - Pending for BOM" but NOT yet into production --
+    // an NSJO has no design/layout step, so from here the only remaining action is the explicit
+    // "Forward to Production" (below), which Releases it. production_stage stays NULL until then.
+    await conn.query(
+      "UPDATE job_orders SET rma_approved_at = NOW(), rma_approved_by_id = ?, status = 'Planned - Pending for BOM' WHERE id = ?",
+      [u?.employee_id || null, req.params.id]
+    );
+    await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Approved', fieldName: 'status', oldValue: 'Pending RMA Approval', newValue: 'Planned - Pending for BOM' });
+    await conn.commit();
+    const [[updated]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
+    res.json(updated);
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
+// Forward an approved RMA job order to production. NSJOs skip the whole design/layout/scheduling
+// chain a standard JO goes through -- this single step Releases it straight into production
+// (status "Released / Approved", production_stage in_process) so it's immediately buildable and
+// quality-inspectable like any other production JO. Gated by the same NSSO "Can Approve" right.
+router.put('/:id/forward-to-production', requireAuth, requirePermission('/non-standard-sales-orders', 'can_approve'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[jo]] = await conn.query('SELECT id, nsso_id, rma_approved_at, status FROM job_orders WHERE id = ?', [req.params.id]);
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!jo.nsso_id) return res.status(409).json({ error: 'This job order is not an RMA job order.' });
+    if (!jo.rma_approved_at) return res.status(409).json({ error: 'Approve the RMA before forwarding to production.' });
+    if (jo.status === 'Released') return res.status(409).json({ error: 'Already forwarded to production.' });
+    if (jo.status === 'Cancelled') return res.status(409).json({ error: 'This job order is cancelled.' });
+    await conn.beginTransaction();
+    await conn.query(
+      "UPDATE job_orders SET status = 'Released', sub_status = 'Approved', production_stage = 'in_process', date_forwarded = NOW(), updated_at = NOW() WHERE id = ?",
+      [req.params.id]
+    );
+    await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'status', oldValue: jo.status, newValue: 'Released' });
+    await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'sub_status', newValue: 'Approved' });
+    await conn.commit();
+    const [[updated]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
+    res.json(updated);
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
+// Approve an RWIP (rework) job order -- gated by the PRODUCTION page's can_approve ("who can approve
+// RWIP"), distinct from NSSO approval. One step: "Pending RMA Approval" -> Released / In-Process, so
+// it lands on the production floor to be worked and completed.
+router.put('/:id/approve-rwip', requireAuth, requirePermission('/production', 'can_approve'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[jo]] = await conn.query('SELECT id, parent_job_order_id, status FROM job_orders WHERE id = ?', [req.params.id]);
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!jo.parent_job_order_id) return res.status(409).json({ error: 'This job order is not an RWIP.' });
+    if (jo.status !== 'Pending RMA Approval') return res.status(409).json({ error: 'This RWIP is not pending approval.' });
+    const [[u]] = await conn.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
+    await conn.beginTransaction();
+    await conn.query(
+      "UPDATE job_orders SET rma_approved_at = NOW(), rma_approved_by_id = ?, status = 'Released', sub_status = 'Approved', production_stage = 'in_process', date_forwarded = NOW(), updated_at = NOW() WHERE id = ?",
+      [u?.employee_id || null, req.params.id]
+    );
+    await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Approved', fieldName: 'status', oldValue: 'Pending RMA Approval', newValue: 'Released' });
+    await conn.commit();
+    const [[updated]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
+    res.json(updated);
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
 router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {

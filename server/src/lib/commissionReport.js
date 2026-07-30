@@ -159,7 +159,8 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
             -- Some orders (esp. "... WITH INSTALLATION") carry GP only at the order level, not
             -- per line, so sol.gp_rate lands 0; fall back to the order's actual GP so those JOs
             -- aren't wrongly judged Below-GP (0% is impossible for a real, costed line).
-            COALESCE(NULLIF(sol.gp_rate, 0), so.actual_gp_rate) AS jo_gp_rate, jt.gp_rate_head AS passing_gp_rate
+            COALESCE(NULLIF(sol.gp_rate, 0), so.actual_gp_rate) AS jo_gp_rate, jt.gp_rate_head AS passing_gp_rate,
+            sol.is_approved_low_gp
      FROM sales_order_lines sol
      JOIN sales_orders so ON so.id = sol.sales_order_id
      LEFT JOIN job_orders jo ON jo.id = sol.job_order_id
@@ -174,8 +175,10 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
   // -- it still counts in weighted sales, just not in the passing-rate total.
   const passingJoIds = [];
   for (const l of lines) {
-    l.passing = l.jo_id != null && l.jo_gp_rate != null && l.passing_gp_rate != null
-      && Number(l.jo_gp_rate) >= Number(l.passing_gp_rate);
+    // Normally a line passes on GP rate; but an Admin/GM low-GP approval (is_approved_low_gp) forces
+    // it to count as passing regardless of the rate, as long as it has a job order.
+    const meetsGp = l.jo_gp_rate != null && l.passing_gp_rate != null && Number(l.jo_gp_rate) >= Number(l.passing_gp_rate);
+    l.passing = l.jo_id != null && (Number(l.is_approved_low_gp) === 1 || meetsGp);
     if (l.passing) passingJoIds.push(l.jo_id);
   }
 
@@ -223,7 +226,9 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
     const released = round2(releasedByMonth[r.month]);
     const deducted = round2(deductedByMonth[r.month]);
     const refunded = round2(refundedByMonth[r.month]);
-    const unpaid = round2(confirmed - released);
+    // Unpaid = Confirmed − (Released + Deducted): the deduction lowers what's still owed, and a
+    // later refund that cancels the deduction restores it (released goes up, deducted goes to 0).
+    const unpaid = round2(confirmed - (released + deducted));
     const pct = r.quota > 0 ? round2((weighted / r.quota) * 100) : 0;
     return {
       month: r.month, month_name: r.month_name, quota: round2(r.quota),

@@ -13,6 +13,27 @@ import LoadingSpinner from '../components/LoadingSpinner';
 const ASSIGNABLE_STATUS = 'Planned - Pending for BOM';
 const ASSIGNABLE_SUB_STATUS = 'For Design Supervisor';
 
+// Status tabs mirroring the live "Saved Job Orders" list. Pre-release JOs split by their Design/
+// Layout/Sales-approval sub_status; released JOs by production_stage; plus a cross-cutting Hold. Keys
+// match the backend's JO_TABS. All tabs are always shown (even at 0), like the live page.
+const STATUS_TABS = [
+  { key: '', label: 'All', countKey: 'all' },
+  { key: 'update_jo', label: 'Update JO' },
+  { key: 'for_design_sup', label: 'For Design Sup.' },
+  { key: 'for_artist', label: 'For Artist' },
+  { key: 'pending_for_rev', label: 'Pending for Rev.' },
+  { key: 'for_approval', label: 'For Approval' },
+  { key: 'pending_for_sched', label: 'Pending for Sched.' },
+  { key: 'for_rev', label: 'For Rev.' },
+  { key: 'in_process_w_rev', label: 'In-Process w/ Rev.' },
+  { key: 'in_process', label: 'In-Process' },
+  { key: 'for_qi', label: 'For QI' },
+  { key: 'part_completed', label: 'Part. Completed' },
+  { key: 'completed', label: 'Completed' },
+  { key: 'invoiced', label: 'Invoiced' },
+  { key: 'hold', label: 'Hold' },
+];
+
 // Mirrors the real system's "Saved Job Orders" list -- a flat filterable table (no
 // status tabs, unlike Estimates/Sales Orders), since Job Orders don't move through a
 // small fixed set of approval-style stages. Design Supervisors additionally get a
@@ -26,6 +47,8 @@ export default function JobOrders() {
 
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
+  const [counts, setCounts] = useState({});
+  const [tab, setTab] = useState('');
   const [loading, setLoading] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
 
@@ -62,9 +85,11 @@ export default function JobOrders() {
     if (officeLocationId) params.office_location_id = officeLocationId;
     if (customerId) params.customer_id = customerId;
     if (asOf) params.as_of = asOf;
+    if (tab) params.tab = tab;
     const { data } = await api.get('/job-orders', { params });
     setRows(data.rows);
     setTotal(data.total);
+    setCounts(data.counts || {});
     setLoading(false);
   }
 
@@ -82,7 +107,13 @@ export default function JobOrders() {
     // -- otherwise a permitted viewer's very first render would wrongly skip these.
   }, [permissions]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { load(); }, [page]);
+  useEffect(() => { load(); }, [page, tab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function selectTab(t) {
+    setSelectedIds(new Set());
+    setPage(1);
+    setTab(t);
+  }
 
   function runSearch() {
     setPage(1);
@@ -221,6 +252,14 @@ export default function JobOrders() {
           <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>
         </div>
       )}
+
+      <div className="status-tabs" style={{ marginBottom: 12, flexWrap: 'wrap' }}>
+        {STATUS_TABS.map((t) => (
+          <button key={t.key} type="button" className={`status-tab ${tab === t.key ? 'active' : ''}`} onClick={() => selectTab(t.key)}>
+            {t.label} <span className="badge badge-muted">{counts[t.countKey || t.key] ?? 0}</span>
+          </button>
+        ))}
+      </div>
 
       <div className="card">
         {loading ? <LoadingSpinner /> : (

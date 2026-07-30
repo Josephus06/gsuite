@@ -99,10 +99,12 @@ async function generateSalesOrderFromEstimate(conn, estimateId) {
 
   for (const jo of jobOrders) {
     const lineValues = SALES_ORDER_LINE_FIELDS.map((f) => jo[f]);
+    // Carry the Admin/GM low-GP approval flag onto the SO line -- that's where the commission
+    // report reads it, so an approved-below-GP line still counts toward passing-GP commission.
     await conn.query(
-      `INSERT INTO sales_order_lines (sales_order_id, line_no, estimate_job_order_id, ${SALES_ORDER_LINE_FIELDS.join(', ')})
-       VALUES (?, ?, ?, ${SALES_ORDER_LINE_FIELDS.map(() => '?').join(', ')})`,
-      [salesOrderId, jo.line_no, jo.id, ...lineValues]
+      `INSERT INTO sales_order_lines (sales_order_id, line_no, estimate_job_order_id, is_approved_low_gp, ${SALES_ORDER_LINE_FIELDS.join(', ')})
+       VALUES (?, ?, ?, ?, ${SALES_ORDER_LINE_FIELDS.map(() => '?').join(', ')})`,
+      [salesOrderId, jo.line_no, jo.id, jo.is_approved_low_gp ? 1 : 0, ...lineValues]
     );
   }
 
@@ -404,6 +406,32 @@ router.post('/:id/replicate', requireAuth, requirePermission(ROUTE, 'can_add'), 
   }
 });
 
+// Lines for the approval modal: each estimate job line with its GP rate vs the job type's passing
+// rate (gp_rate_head), whether it passed, and whether it's already been low-GP-approved. Also tells
+// the client whether this user (Admin / General Manager) may tick below-GP lines.
+router.get('/:id/approval-lines', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [lines] = await pool.query(
+      `SELECT ejo.id, ejo.line_no, jt.display_name AS job_type_name, ejo.description, ejo.quantity, ejo.units,
+              ejo.price_per_unit, ejo.subtotal, ejo.disc_amount, ejo.disc_price_per_unit, ejo.net_of_tax,
+              t.code AS tax_code, ejo.gross_amount, ejo.length, ejo.width, ejo.height, ejo.uom,
+              ejo.gp_rate, jt.gp_rate_head AS passing_gp_rate, ejo.is_approved_low_gp
+       FROM estimate_job_orders ejo
+       LEFT JOIN job_types jt ON jt.id = ejo.job_type_id
+       LEFT JOIN taxes t ON t.id = ejo.tax_code_id
+       WHERE ejo.estimate_id = ? ORDER BY ejo.line_no`,
+      [req.params.id]
+    );
+    for (const l of lines) {
+      // A line passes when its GP rate meets the job type's passing threshold (when both are known).
+      l.passed = l.passing_gp_rate != null && l.gp_rate != null && Number(l.gp_rate) >= Number(l.passing_gp_rate);
+    }
+    const [[u]] = await pool.query('SELECT account_type FROM users WHERE id = ?', [req.user.id]);
+    const canApproveLowGp = ['System Admin', 'General Manager'].includes(u?.account_type);
+    res.json({ lines, can_approve_low_gp: canApproveLowGp });
+  } catch (err) { next(err); }
+});
+
 // Dedicated status-only update for the Approve/Disapprove actions on the read-only
 // view -- a plain field update rather than routing through the full-header PUT, which
 // expects every HEADER_FIELDS value re-sent in the exact shape the DB column wants
@@ -441,6 +469,19 @@ router.put('/:id/status', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
         await conn.query('UPDATE estimates SET approved_by_id = ? WHERE id = ?', [approvingUser.employee_id, req.params.id]);
       }
     }
+    // Low-GP override: only an Admin or General Manager may approve individual below-GP job lines
+    // so they still count toward commission. The checked estimate-line ids arrive as
+    // approved_low_gp_line_ids; anyone else sending them is rejected outright.
+    const lowGpIds = [...new Set((Array.isArray(req.body.approved_low_gp_line_ids) ? req.body.approved_low_gp_line_ids : []).map(Number).filter(Boolean))];
+    if (lowGpIds.length) {
+      const [[u]] = await conn.query('SELECT account_type FROM users WHERE id = ?', [req.user.id]);
+      if (!['System Admin', 'General Manager'].includes(u?.account_type)) {
+        await conn.rollback();
+        return res.status(403).json({ error: 'Only an Admin or General Manager can approve below-GP job lines.' });
+      }
+      await conn.query('UPDATE estimate_job_orders SET is_approved_low_gp = 1 WHERE estimate_id = ? AND id IN (?)', [req.params.id, lowGpIds]);
+    }
+
     await conn.query('UPDATE estimates SET status = ?, updated_at = NOW() WHERE id = ?', [req.body.status, req.params.id]);
     await logAudit(conn, {
       estimateId: req.params.id, userId: req.user.id, eventType: 'Updated',

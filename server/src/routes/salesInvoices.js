@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
 const { computeSalesInvoiceGl } = require('../lib/glImpact');
 
@@ -281,6 +282,7 @@ async function billDeliveryTicket(req, res, conn) {
   const grossAmount = sum('gross_amount');
   const ewtAmount = Number((netOfTax * (Number(withholdingTaxPct || 0) / 100)).toFixed(2));
   const amountDue = Number((grossAmount - ewtAmount).toFixed(2));
+  await assertPeriodOpen(dateCreated, 'ar', conn);
 
   await conn.beginTransaction();
   const [result] = await conn.query(
@@ -406,6 +408,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
     const grossAmount = lines.reduce((s, l) => s + Number(l.gross_amount || 0), 0);
     const ewtAmount = netOfTax * (Number(withholdingTaxPct || 0) / 100);
     const amountDue = grossAmount - ewtAmount;
+    await assertPeriodOpen(dateCreated, 'ar', conn);
 
     await conn.beginTransaction();
     const [result] = await conn.query(
@@ -472,7 +475,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
 router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[si]] = await conn.query('SELECT status, sales_order_id, delivery_ticket_id FROM sales_invoices WHERE id = ?', [req.params.id]);
+    const [[si]] = await conn.query('SELECT status, sales_order_id, delivery_ticket_id, date_created FROM sales_invoices WHERE id = ?', [req.params.id]);
+    if (si) await assertPeriodOpen(si.date_created, 'ar', conn);
     if (!si) return res.status(404).json({ error: 'Not found' });
     if (si.status === 'cancelled') return res.status(409).json({ error: 'This Sales Invoice is already cancelled.' });
 

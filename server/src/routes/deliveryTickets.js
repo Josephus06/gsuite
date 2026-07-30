@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeDeliveryTicketGl } = require('../lib/glImpact');
 
 const router = express.Router();
@@ -283,6 +284,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
     const netOfTax = sum('net_of_tax');
     const taxAmount = sum('tax_amount');
     const grossAmount = sum('gross_amount');
+    await assertPeriodOpen(dateCreated, 'ar', conn);
 
     await conn.beginTransaction();
     const [result] = await conn.query(
@@ -337,7 +339,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
 router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[dt]] = await conn.query('SELECT status FROM delivery_tickets WHERE id = ?', [req.params.id]);
+    const [[dt]] = await conn.query('SELECT status, date_created FROM delivery_tickets WHERE id = ?', [req.params.id]);
+    if (dt) await assertPeriodOpen(dt.date_created, 'ar', conn);
     if (!dt) return res.status(404).json({ error: 'Not found' });
     if (dt.status === 'void') return res.status(409).json({ error: 'This Delivery Ticket is already void.' });
 

@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import QualityInspectionModal from '../components/QualityInspectionModal';
+import RwipCreateModal from '../components/RwipCreateModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { isNonStockItem } from '../utils/itemTypes';
 
@@ -325,6 +326,7 @@ export default function ProductionJobOrderView() {
   const [completingProcess, setCompletingProcess] = useState(null);
   const [showAssemblyBuild, setShowAssemblyBuild] = useState(false);
   const [showQualityInspection, setShowQualityInspection] = useState(false);
+  const [showRwip, setShowRwip] = useState(false);
 
   function load() {
     return api.get(`/production/${id}`).then(({ data }) => { setJo(data); setLoading(false); });
@@ -400,8 +402,12 @@ export default function ProductionJobOrderView() {
   if (loading || !jo) return <LoadingSpinner />;
 
   const canEdit = can('/job-orders', 'can_edit');
+  const canCreateRwip = can('/production', 'can_edit');
   const isTerminal = jo.status === 'Completed' || jo.status === 'Cancelled';
   const isOnHold = !!jo.is_on_hold;
+  // RWIP can only be raised while the JO is in process; open RWIPs block building the mother JO.
+  const isInProcess = jo.production_stage === 'in_process';
+  const openRwipCount = jo.open_rwip_count || 0;
   const hasUninspectedBuilds = (jo.assembly_builds || []).some(
     (ab) => ab.status !== 'cancelled' && num(ab.quantity_built) - num(ab.passed_qty) - num(ab.rma_qty) > 0
   );
@@ -425,7 +431,11 @@ export default function ProductionJobOrderView() {
           <button className="btn btn-sm" onClick={() => navigate('/production')}>Back to Lists</button>
           {canEdit && jo.status !== 'Cancelled' && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/job-orders/${id}/edit`, { state: { from: 'production' } })}>Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
-          {canEdit && !isTerminal && <button className="btn btn-sm btn-primary" onClick={() => setShowAssemblyBuild(true)}>Assembly Build</button>}
+          {canEdit && !isTerminal && (
+            <button className="btn btn-sm btn-primary" disabled={openRwipCount > 0}
+              title={openRwipCount > 0 ? 'Complete the RWIP job order(s) before building this Job Order.' : 'Assembly Build'}
+              onClick={() => setShowAssemblyBuild(true)}>Assembly Build</button>
+          )}
           {canEdit && hasUninspectedBuilds && <button className="btn btn-sm btn-primary" onClick={() => setShowQualityInspection(true)}>Quality Inspection</button>}
           {canEdit && !isOnHold && !isTerminal && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleHold}>Hold</button>}
           {canEdit && isOnHold && !isTerminal && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleResume}>Resume</button>}
@@ -618,12 +628,26 @@ export default function ProductionJobOrderView() {
         <div className="card">
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Date</th><th>Transaction #</th><th>Qty</th><th>Unit</th><th>Status</th></tr></thead>
+              <thead><tr><th>Date</th><th>Transaction #</th><th style={{ textAlign: 'right' }}>Qty</th><th>Unit</th><th>Status</th></tr></thead>
               <tbody>
-                <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>No RWIP transactions.</td></tr>
+                {(jo.rwips || []).length === 0 && (
+                  <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>No RWIP transactions.</td></tr>
+                )}
+                {(jo.rwips || []).map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.created_at ? String(r.created_at).slice(0, 10) : ''}</td>
+                    <td><button type="button" className="link-btn" onClick={() => navigate(r.production_stage ? `/production/${r.id}` : `/job-orders/${r.id}`)}>{r.job_order_no}</button></td>
+                    <td style={{ textAlign: 'right' }}>{Number(r.quantity)}</td>
+                    <td>{r.units}</td>
+                    <td>{STAGE_LABELS[r.production_stage] || r.status}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
+          {canCreateRwip && isInProcess && (
+            <button type="button" className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => setShowRwip(true)}>Add</button>
+          )}
         </div>
       )}
 
@@ -669,6 +693,14 @@ export default function ProductionJobOrderView() {
           jobOrderId={id}
           onClose={() => setShowQualityInspection(false)}
           onSaved={async (qi) => { setShowQualityInspection(false); await load(); navigate(`/quality-inspections/${qi.id}`); }}
+        />
+      )}
+
+      {showRwip && (
+        <RwipCreateModal
+          jobOrderId={id}
+          onClose={() => setShowRwip(false)}
+          onSaved={async () => { setShowRwip(false); await load(); setTab('rwip'); }}
         />
       )}
     </div>

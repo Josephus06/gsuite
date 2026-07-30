@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeInventoryAdjustmentGl } = require('../lib/glImpact');
 
 const router = express.Router();
@@ -114,6 +115,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   const conn = await pool.getConnection();
   try {
     const { date_created: dateCreated, adjustment_account_id: adjustmentAccountId, memo } = req.body;
+    await assertPeriodOpen(dateCreated, 'non_gl', conn);
     await conn.beginTransaction();
     const [result] = await conn.query(
       `INSERT INTO inventory_adjustments (adjustment_no, date_created, adjustment_account_id, memo, created_by_user_id)
@@ -136,12 +138,13 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
-    const [[adj]] = await pool.query('SELECT status FROM inventory_adjustments WHERE id = ?', [req.params.id]);
+    const [[adj]] = await pool.query('SELECT status, date_created FROM inventory_adjustments WHERE id = ?', [req.params.id]);
     if (!adj) return res.status(404).json({ error: 'Not found' });
     if (adj.status !== 'pending_approval') {
       return res.status(409).json({ error: 'Only a Pending Approval adjustment can be edited.' });
     }
     const { date_created: dateCreated, adjustment_account_id: adjustmentAccountId, memo } = req.body;
+    await assertPeriodOpen([adj.date_created, dateCreated], 'non_gl');
     await pool.query(
       'UPDATE inventory_adjustments SET date_created = ?, adjustment_account_id = ?, memo = ?, updated_at = NOW() WHERE id = ?',
       [dateCreated, adjustmentAccountId || null, memo || null, req.params.id]
@@ -173,7 +176,8 @@ async function recomputeTotal(conn, adjustmentId) {
 router.post('/:id/lines', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[adj]] = await conn.query('SELECT status FROM inventory_adjustments WHERE id = ?', [req.params.id]);
+    const [[adj]] = await conn.query('SELECT status, date_created FROM inventory_adjustments WHERE id = ?', [req.params.id]);
+    if (adj) await assertPeriodOpen(adj.date_created, 'non_gl', conn);
     if (!adj) { return res.status(404).json({ error: 'Not found' }); }
     if (adj.status !== 'pending_approval') { return res.status(409).json({ error: 'Only a Pending Approval adjustment can be edited.' }); }
 
@@ -219,7 +223,8 @@ router.post('/:id/lines', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
 router.put('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[adj]] = await conn.query('SELECT status FROM inventory_adjustments WHERE id = ?', [req.params.id]);
+    const [[adj]] = await conn.query('SELECT status, date_created FROM inventory_adjustments WHERE id = ?', [req.params.id]);
+    if (adj) await assertPeriodOpen(adj.date_created, 'non_gl', conn);
     if (!adj) { return res.status(404).json({ error: 'Not found' }); }
     if (adj.status !== 'pending_approval') { return res.status(409).json({ error: 'Only a Pending Approval adjustment can be edited.' }); }
 
@@ -291,7 +296,8 @@ router.put('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_edit
 router.delete('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[adj]] = await conn.query('SELECT status FROM inventory_adjustments WHERE id = ?', [req.params.id]);
+    const [[adj]] = await conn.query('SELECT status, date_created FROM inventory_adjustments WHERE id = ?', [req.params.id]);
+    if (adj) await assertPeriodOpen(adj.date_created, 'non_gl', conn);
     if (!adj) { return res.status(404).json({ error: 'Not found' }); }
     if (adj.status !== 'pending_approval') { return res.status(409).json({ error: 'Only a Pending Approval adjustment can be edited.' }); }
 
@@ -313,7 +319,8 @@ router.delete('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_e
 router.put('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[adj]] = await conn.query('SELECT status FROM inventory_adjustments WHERE id = ?', [req.params.id]);
+    const [[adj]] = await conn.query('SELECT status, date_created FROM inventory_adjustments WHERE id = ?', [req.params.id]);
+    if (adj) await assertPeriodOpen(adj.date_created, 'non_gl', conn);
     if (!adj) { return res.status(404).json({ error: 'Not found' }); }
     if (adj.status !== 'pending_approval') { return res.status(409).json({ error: 'Only a Pending Approval adjustment can be approved.' }); }
 
@@ -350,7 +357,8 @@ router.put('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve'),
 router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[adj]] = await conn.query('SELECT status FROM inventory_adjustments WHERE id = ?', [req.params.id]);
+    const [[adj]] = await conn.query('SELECT status, date_created FROM inventory_adjustments WHERE id = ?', [req.params.id]);
+    if (adj) await assertPeriodOpen(adj.date_created, 'non_gl', conn);
     if (!adj) { return res.status(404).json({ error: 'Not found' }); }
     if (adj.status !== 'pending_approval') { return res.status(409).json({ error: 'Only a Pending Approval adjustment can be cancelled.' }); }
 

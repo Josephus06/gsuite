@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
+import EstimateApprovalModal from '../components/EstimateApprovalModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 // Read-only counterpart to EstimateWizard (which stays the create/edit form): mirrors
@@ -92,6 +93,7 @@ export default function EstimateView() {
   const [tab, setTab] = useState('job');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [showApproval, setShowApproval] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -118,10 +120,11 @@ export default function EstimateView() {
     }
   }
 
-  async function handleApprove() {
-    if (estimate.status === 'pending_supervisor_approval') return setStatus('pending_customer_approval');
-    if (estimate.status === 'pending_customer_approval') return setStatus('approved');
-  }
+  // Approving opens the GP-review modal (below-GP lines can be overridden by an Admin/GM there),
+  // which posts the status change itself with any low-GP approvals.
+  const nextStatus = estimate?.status === 'pending_supervisor_approval' ? 'pending_customer_approval'
+    : (estimate?.status === 'pending_customer_approval' ? 'approved' : null);
+  function handleApprove() { if (nextStatus) setShowApproval(true); }
 
   async function handleReplicate() {
     if (!confirm('Replicate this estimate into a new draft?')) return;
@@ -334,6 +337,15 @@ export default function EstimateView() {
         <div><span className="muted">Tax</span><div className="hi-lg">{money(taxTotal)}</div></div>
         <div><span className="muted">Total Amount</span><div className="hi-lg">{money(totalAmount)}</div></div>
       </div>
+
+      {showApproval && nextStatus && (
+        <EstimateApprovalModal
+          estimateId={id}
+          nextStatus={nextStatus}
+          onClose={() => setShowApproval(false)}
+          onApproved={async () => { setShowApproval(false); await load(); }}
+        />
+      )}
     </div>
   );
 }

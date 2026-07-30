@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeCustomerPaymentGl } = require('../lib/glImpact');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
 
 const router = express.Router();
 // Reached from an Open Invoice's "Accept Payment" button -- the AR mirror of Bill
@@ -203,6 +204,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     if (!submittedApply.length && !submittedCredits.length) {
       return res.status(400).json({ error: 'Apply at least one amount to an invoice or credit.' });
     }
+    await assertPeriodOpen(dateCreated, 'ar', conn);
 
     // Re-check every credit against its fresh remaining balance before writing anything.
     for (const l of submittedCredits) {
@@ -288,7 +290,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[cp]] = await conn.query('SELECT status FROM customer_payments WHERE id = ?', [req.params.id]);
+    const [[cp]] = await conn.query('SELECT status, date_created FROM customer_payments WHERE id = ?', [req.params.id]);
+    if (cp) await assertPeriodOpen(cp.date_created, 'ar', conn);
     if (!cp) return res.status(404).json({ error: 'Not found' });
     if (cp.status === 'voided') return res.status(409).json({ error: 'This Customer Payment is already voided.' });
     const priorStatus = cp.status;

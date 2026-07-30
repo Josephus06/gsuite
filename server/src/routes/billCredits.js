@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeBillCreditGl } = require('../lib/glImpact');
 
 const router = express.Router();
@@ -221,6 +222,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     if (totalApplied > totalAmount + 1e-9) {
       return res.status(409).json({ error: `Total Applied Amount (${totalApplied.toFixed(2)}) exceeds this credit's Total Amount (${totalAmount.toFixed(2)}).` });
     }
+    await assertPeriodOpen(dateCreated, 'ap', conn);
 
     await conn.beginTransaction();
 
@@ -273,7 +275,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[bc]] = await conn.query('SELECT status FROM bill_credits WHERE id = ?', [req.params.id]);
+    const [[bc]] = await conn.query('SELECT status, date_created FROM bill_credits WHERE id = ?', [req.params.id]);
+    if (bc) await assertPeriodOpen(bc.date_created, 'ap', conn);
     if (!bc) return res.status(404).json({ error: 'Not found' });
     if (bc.status === 'voided') return res.status(409).json({ error: 'This Bill Credit is already voided.' });
 

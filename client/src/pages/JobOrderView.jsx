@@ -153,10 +153,41 @@ export default function JobOrderView() {
     try { await api.put(`/job-orders/${id}/request-revision`); await load(); } finally { setBusy(false); }
   }
 
+  async function handleApproveRma() {
+    setBusy(true);
+    try { await api.put(`/job-orders/${id}/approve-rma`); await load(); } finally { setBusy(false); }
+  }
+
+  async function handleForwardToProduction() {
+    setBusy(true);
+    try { await api.put(`/job-orders/${id}/forward-to-production`); await load(); } finally { setBusy(false); }
+  }
+
+  async function handleApproveRwip() {
+    setBusy(true);
+    try { await api.put(`/job-orders/${id}/approve-rwip`); await load(); } finally { setBusy(false); }
+  }
+
   if (loading || !jo) return <LoadingSpinner />;
 
   const canEdit = can('/job-orders', 'can_edit');
   const canApprove = can('/job-orders', 'can_approve');
+  // An NSSO-spawned (RMA) job order has its own two-step flow -- no design/layout/artist chain:
+  // Pending RMA Approval -> Approve RMA -> Planned - Pending for BOM -> Forward to Production ->
+  // Released / Approved. Both actions need the NSSO "Can Approve" right.
+  const isNsjo = !!jo.nsso_id;
+  // An RWIP (rework) job order is raised off a mother JO in production; it carries the same rework
+  // context (Cause of Error / Action) and "Pending RMA Approval" state, but its own approval is
+  // governed by the Production page's can_approve, and once approved it's completed (not forwarded).
+  const isRwip = !!jo.parent_job_order_id;
+  const isRfqc = String(jo.job_order_no || '').startsWith('RFQC-');
+  // RMA / RMA-Installation / Sample / RWIP / RFQC all show rework context; only Internal (INT) is plain.
+  const isRmaType = isRwip || /-(RMA|INST|SAM)-/.test(jo.nsso_no || jo.job_order_no || '');
+  const canApproveRma = can('/non-standard-sales-orders', 'can_approve');
+  const isPendingRma = isNsjo && !jo.rma_approved_at;
+  const canForwardProduction = isNsjo && !!jo.rma_approved_at && jo.status !== 'Released' && jo.status !== 'Cancelled';
+  const canApproveRwipPerm = can('/production', 'can_approve');
+  const rwipPendingApproval = isRwip && jo.status === 'Pending RMA Approval';
   const isTerminal = jo.status === 'Completed' || jo.status === 'Cancelled';
   const isOnHold = !!jo.is_on_hold;
   // The artist a JO is assigned to needs to be able to send their own completed layout
@@ -170,6 +201,13 @@ export default function JobOrderView() {
   // managers, matching the backend's own dual-check on these two routes.
   const isOwningSalesRep = !!user?.employee_id && jo.sales_rep_id === user.employee_id;
   const isDesignSupervisor = !!user?.is_design_supervisor;
+  // The Design/Layout/Artist workflow is pre-release ONLY and applies to standard JOs alone.
+  // Once a JO has a production_stage it's been released into production (design/layout is done --
+  // it already has its artist + PMS job type), and NSJO/RWIP job orders skip the design chain
+  // entirely. Gating on production_stage is also case-safe, unlike a `status !== 'Released'` check
+  // (migrated JOs store status lowercase 'released'), which was leaking these buttons through.
+  const isSpecialJo = isNsjo || isRwip;
+  const inDesignPhase = !isSpecialJo && !jo.production_stage && jo.status !== 'Cancelled';
 
   const processes = jo.processes || [];
   const totalCost = processes.reduce((s, p) => s + num(p.total_cost), 0);
@@ -187,18 +225,21 @@ export default function JobOrderView() {
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/job-orders')}>Back to Lists</button>
           {canEdit && jo.status !== 'Cancelled' && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/job-orders/${id}/edit`)}>Edit</button>}
-          {(isOwningSalesRep || canEdit) && jo.sub_status === 'Pending' && (
+          {isPendingRma && canApproveRma && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApproveRma}>{isRmaType ? 'Approve RMA' : 'Approve'}</button>}
+          {canForwardProduction && canApproveRma && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleForwardToProduction}>Forward to Production</button>}
+          {rwipPendingApproval && canApproveRwipPerm && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApproveRwip}>{isRfqc ? 'Approve RFQC' : 'Approve RWIP'}</button>}
+          {inDesignPhase && (isOwningSalesRep || canEdit) && jo.sub_status === 'Pending' && (
             <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleForwardToDesign}>Forward to Design Supervisor</button>
           )}
-          {(isDesignSupervisor || canEdit) && jo.status !== 'Released' && jo.status !== 'Cancelled' && (
+          {inDesignPhase && (isDesignSupervisor || canEdit) && (
             <button className="btn btn-sm btn-primary" onClick={openAssign}>
               {jo.artist_id ? 'Reassign Artist' : 'Assign Layout Job Type / Artist'}
             </button>
           )}
-          {(canEdit || isAssignedArtist) && (jo.sub_status === 'For Artist' || jo.sub_status === 'For Artist (Revision)') && (
+          {inDesignPhase && (canEdit || isAssignedArtist) && (jo.sub_status === 'For Artist' || jo.sub_status === 'For Artist (Revision)') && (
             <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleSalesApproval}>Sales Approval</button>
           )}
-          {canApprove && jo.sub_status === 'Sales Approval' && (
+          {inDesignPhase && canApprove && jo.sub_status === 'Sales Approval' && (
             <>
               <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApproveSales}>Approved</button>
               <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleRequestRevision}>For Revision</button>
@@ -217,6 +258,16 @@ export default function JobOrderView() {
         <div className="estimate-status">
           {jo.status} <span style={{ opacity: 0.7 }}>{STAGE_LABELS[jo.production_stage] || jo.sub_status}</span>
           {isOnHold && <span className="estimate-so-link" style={{ background: 'rgba(245, 159, 0, 0.35)' }}>On Hold</span>}
+          {jo.nsso_no && (
+            <button type="button" className="estimate-so-link" onClick={() => navigate(`/non-standard-sales-orders/${jo.nsso_id}`)}>
+              {jo.nsso_no}
+            </button>
+          )}
+          {isRwip && jo.parent_job_order_no && (
+            <button type="button" className="estimate-so-link" onClick={() => navigate(`/job-orders/${jo.parent_job_order_id}`)}>
+              {jo.parent_job_order_no}
+            </button>
+          )}
           <button type="button" className="estimate-so-link" onClick={() => navigate(`/sales-orders/${jo.sales_order_id}`)}>
             {jo.sales_order_no}
           </button>
@@ -249,6 +300,9 @@ export default function JobOrderView() {
             <div>Qty : <span className="hi">{jo.quantity} {jo.units}</span> Qty Built: <span className="hi">{jo.quantity_built} {jo.units}</span> Qty Inspected: <span className="hi">{jo.quantity_inspected} {jo.units}</span></div>
             <div>Length : <span className="hi">{jo.length ?? 0}</span> Width : <span className="hi">{jo.width ?? 0}</span> Height : <span className="hi">{jo.height ?? ''}</span></div>
             <div>Memo : <span className="hi">{jo.memo}</span></div>
+            {isRmaType && <div>Cause of Error : <span className="hi">{jo.reason_code_name || jo.reason}</span></div>}
+            {isRmaType && <div>Action/s to be taken : <span className="hi">{jo.action_to_be_taken}</span></div>}
+            {jo.nsso_id && jo.rma_approved_by_name && jo.rma_approved_by_name.trim() && <div>RMA Approved By : <span className="hi">{jo.rma_approved_by_name}</span></div>}
           </div>
         </div>
       </div>
@@ -286,9 +340,20 @@ export default function JobOrderView() {
         <div className="card">
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Date</th><th>Transaction #</th><th>Qty</th><th>Unit</th><th>Status</th></tr></thead>
+              <thead><tr><th>Date</th><th>Transaction #</th><th style={{ textAlign: 'right' }}>Qty</th><th>Unit</th><th>Status</th></tr></thead>
               <tbody>
-                <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>No RWIP transactions.</td></tr>
+                {(jo.rwips || []).length === 0 && (
+                  <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>No RWIP transactions.</td></tr>
+                )}
+                {(jo.rwips || []).map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.created_at ? String(r.created_at).slice(0, 10) : ''}</td>
+                    <td><button type="button" className="link-btn" onClick={() => navigate(r.production_stage ? `/production/${r.id}` : `/job-orders/${r.id}`)}>{r.job_order_no}</button></td>
+                    <td style={{ textAlign: 'right' }}>{Number(r.quantity)}</td>
+                    <td>{r.units}</td>
+                    <td>{STAGE_LABELS[r.production_stage] || r.status}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

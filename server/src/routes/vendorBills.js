@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeVendorBillGl } = require('../lib/glImpact');
 
 const router = express.Router();
@@ -243,6 +244,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const submitted = (Array.isArray(submittedLines) ? submittedLines : [])
       .filter((l) => l.purchase_order_line_id && Number(l.qty) > 0);
     if (!submitted.length) return res.status(400).json({ error: 'Include at least one item.' });
+    await assertPeriodOpen(dateCreated, 'ap', conn);
 
     const lineIds = submitted.map((l) => Number(l.purchase_order_line_id));
     const [poLines] = await conn.query(
@@ -352,7 +354,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[vb]] = await conn.query('SELECT status, purchase_order_id FROM vendor_bills WHERE id = ?', [req.params.id]);
+    const [[vb]] = await conn.query('SELECT status, purchase_order_id, date_created FROM vendor_bills WHERE id = ?', [req.params.id]);
+    if (vb) await assertPeriodOpen(vb.date_created, 'ap', conn);
     if (!vb) return res.status(404).json({ error: 'Not found' });
     if (vb.status === 'cancelled') return res.status(409).json({ error: 'This Vendor Bill is already cancelled.' });
 

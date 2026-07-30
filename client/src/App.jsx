@@ -33,6 +33,8 @@ import ArtistIncentiveReport from './pages/reports/ArtistIncentiveReport';
 import AssignedJobOrderRun from './pages/AssignedJobOrderRun';
 import Production from './pages/Production';
 import ProductionJobOrderView from './pages/ProductionJobOrderView';
+import RwipJobOrders from './pages/RwipJobOrders';
+import RfqcJobOrders from './pages/RfqcJobOrders';
 import StockLedgerReport from './pages/StockLedgerReport';
 import BinCardReport from './pages/BinCardReport';
 import InventoryAdjustments from './pages/InventoryAdjustments';
@@ -41,6 +43,10 @@ import InventoryAdjustmentView from './pages/InventoryAdjustmentView';
 import TransferOrders from './pages/TransferOrders';
 import TransferOrderEdit from './pages/TransferOrderEdit';
 import TransferOrderView from './pages/TransferOrderView';
+import OfficeSupplyRequisitions from './pages/OfficeSupplyRequisitions';
+import OfficeSupplyRequisitionForm from './pages/OfficeSupplyRequisitionForm';
+import OfficeSupplyRequisitionView from './pages/OfficeSupplyRequisitionView';
+import OsrFulfillmentView from './pages/OsrFulfillmentView';
 import ReallocateItems from './pages/ReallocateItems';
 import ItemFulfillments from './pages/ItemFulfillments';
 import ItemFulfillmentView from './pages/ItemFulfillmentView';
@@ -61,6 +67,19 @@ import CreditMemoView from './pages/CreditMemoView';
 import CustomerRefunds from './pages/CustomerRefunds';
 import CustomerRefundEdit from './pages/CustomerRefundEdit';
 import CustomerRefundView from './pages/CustomerRefundView';
+import Journals from './pages/Journals';
+import JournalForm from './pages/JournalForm';
+import JournalView from './pages/JournalView';
+import Deposits from './pages/Deposits';
+import DepositForm from './pages/DepositForm';
+import DepositView from './pages/DepositView';
+import Cheques from './pages/Cheques';
+import ChequeForm from './pages/ChequeForm';
+import ChequeView from './pages/ChequeView';
+import FundTransfers from './pages/FundTransfers';
+import FundTransferForm from './pages/FundTransferForm';
+import FundTransferView from './pages/FundTransferView';
+import ManageAccountingPeriod from './pages/ManageAccountingPeriod';
 import CommissionPayables from './pages/CommissionPayables';
 import CommissionPayableEdit from './pages/CommissionPayableEdit';
 import CommissionPayableView from './pages/CommissionPayableView';
@@ -104,6 +123,7 @@ import CommissionReport from './pages/reports/CommissionReport';
 import CommissionJoDetail from './pages/reports/CommissionJoDetail';
 import TicketSummary from './pages/reports/TicketSummary';
 import Lookups from './pages/Lookups';
+import TransactionSettings from './pages/TransactionSettings';
 import ProcessCosting from './pages/ProcessCosting';
 import MaterialCosting from './pages/MaterialCosting';
 import ScheduledJobOrders from './pages/ScheduledJobOrders';
@@ -115,11 +135,20 @@ import Tickets from './pages/Tickets';
 import TicketView from './pages/TicketView';
 import NonStandardJobOrders from './pages/NonStandardJobOrders';
 import NonStandardJobOrderView from './pages/NonStandardJobOrderView';
+import NonStandardSalesOrders from './pages/NonStandardSalesOrders';
+import WarrantyCertificates from './pages/WarrantyCertificates';
+import WarrantyCertificateForm from './pages/WarrantyCertificateForm';
+import WarrantyCertificateView from './pages/WarrantyCertificateView';
+import WarrantyCertificatePrint from './pages/WarrantyCertificatePrint';
+import NonStandardSalesOrderWizard from './pages/NonStandardSalesOrderWizard';
+import NonStandardSalesOrderView from './pages/NonStandardSalesOrderView';
 
 function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* Standalone printable certificate -- protected but rendered without the app chrome. */}
+      <Route path="/warranty-certificates/:id/print" element={<ProtectedRoute><WarrantyCertificatePrint /></ProtectedRoute>} />
       <Route
         element={
           <ProtectedRoute>
@@ -154,6 +183,14 @@ function App() {
         <Route path="/sales-orders/:id" element={<SalesOrderView />} />
         <Route path="/non-standard-job-orders" element={<NonStandardJobOrders />} />
         <Route path="/non-standard-job-orders/:id" element={<NonStandardJobOrderView />} />
+        <Route path="/non-standard-sales-orders" element={<NonStandardSalesOrders />} />
+        <Route path="/non-standard-sales-orders/new" element={<NonStandardSalesOrderWizard />} />
+        <Route path="/non-standard-sales-orders/:id/edit" element={<NonStandardSalesOrderWizard />} />
+        <Route path="/non-standard-sales-orders/:id" element={<NonStandardSalesOrderView />} />
+        <Route path="/warranty-certificates" element={<WarrantyCertificates />} />
+        <Route path="/warranty-certificates/new" element={<WarrantyCertificateForm />} />
+        <Route path="/warranty-certificates/:id/edit" element={<WarrantyCertificateForm />} />
+        <Route path="/warranty-certificates/:id" element={<WarrantyCertificateView />} />
         <Route path="/job-orders" element={<JobOrders />} />
         <Route path="/job-orders/:id" element={<JobOrderView />} />
         <Route path="/job-orders/:id/edit" element={<JobOrderEdit />} />
@@ -169,6 +206,8 @@ function App() {
         <Route path="/assigned-jo/:id" element={<AssignedJobOrderRun />} />
         <Route path="/production" element={<Production />} />
         <Route path="/production/:id" element={<ProductionJobOrderView />} />
+        <Route path="/rwip-job-orders" element={<RwipJobOrders />} />
+        <Route path="/rfqc-job-orders" element={<RfqcJobOrders />} />
         <Route path="/scheduled-jo" element={<ScheduledJobOrders />} />
         <Route path="/scheduled-jo/process/:id" element={<ScheduledJobOrderRun />} />
         <Route path="/scheduled-jo/:id" element={<ScheduledJobOrderTasks />} />
@@ -187,6 +226,11 @@ function App() {
         <Route path="/transfer-orders/:id/lines/:lineId/reallocate" element={<ReallocateItems />} />
         <Route path="/transfer-orders/item-fulfillments/:fulfillmentId" element={<ItemFulfillmentView />} />
         <Route path="/transfer-orders/item-receipts/:receiptId" element={<ItemReceiptView />} />
+        <Route path="/office-supply-requisitions" element={<OfficeSupplyRequisitions />} />
+        <Route path="/office-supply-requisitions/new" element={<OfficeSupplyRequisitionForm />} />
+        <Route path="/office-supply-requisitions/fulfillments/:id" element={<OsrFulfillmentView />} />
+        <Route path="/office-supply-requisitions/:id/edit" element={<OfficeSupplyRequisitionForm />} />
+        <Route path="/office-supply-requisitions/:id" element={<OfficeSupplyRequisitionView />} />
         <Route path="/item-fulfillments" element={<ItemFulfillments />} />
         <Route path="/item-receipts" element={<ItemReceipts />} />
         <Route path="/quality-inspections" element={<QualityInspections />} />
@@ -205,11 +249,25 @@ function App() {
         <Route path="/customer-refunds" element={<CustomerRefunds />} />
         <Route path="/customer-refunds/new" element={<CustomerRefundEdit />} />
         <Route path="/customer-refunds/:id" element={<CustomerRefundView />} />
+        <Route path="/journals" element={<Journals />} />
+        <Route path="/journals/new" element={<JournalForm />} />
+        <Route path="/journals/:id" element={<JournalView />} />
+        <Route path="/deposits" element={<Deposits />} />
+        <Route path="/deposits/new" element={<DepositForm />} />
+        <Route path="/deposits/:id" element={<DepositView />} />
+        <Route path="/cheques" element={<Cheques />} />
+        <Route path="/cheques/new" element={<ChequeForm />} />
+        <Route path="/cheques/:id" element={<ChequeView />} />
+        <Route path="/fund-transfers" element={<FundTransfers />} />
+        <Route path="/fund-transfers/new" element={<FundTransferForm />} />
+        <Route path="/fund-transfers/:id" element={<FundTransferView />} />
+        <Route path="/manage-accounting-period" element={<ManageAccountingPeriod />} />
         <Route path="/commission-payables" element={<CommissionPayables />} />
         <Route path="/commission-payables/new" element={<CommissionPayableEdit />} />
         <Route path="/commission-payables/:id" element={<CommissionPayableView />} />
         <Route path="/commission-vouchers" element={<CommissionVouchers />} />
         <Route path="/commission-vouchers/new" element={<CommissionVoucherEdit />} />
+        <Route path="/commission-vouchers/:id/edit" element={<CommissionVoucherEdit />} />
         <Route path="/commission-vouchers/:id" element={<CommissionVoucherView />} />
         <Route path="/purchase-requisitions" element={<PurchaseRequisitions />} />
         <Route path="/purchase-requisitions/new" element={<PurchaseRequisitionEdit />} />
@@ -249,6 +307,7 @@ function App() {
         <Route path="/commission-jo-detail" element={<CommissionJoDetail />} />
         <Route path="/reports/ticket-summary" element={<TicketSummary />} />
         <Route path="/lookups" element={<Lookups />} />
+        <Route path="/transaction-settings" element={<TransactionSettings />} />
         <Route path="/process-costing" element={<ProcessCosting />} />
         <Route path="/material-costing" element={<MaterialCosting />} />
       </Route>

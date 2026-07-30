@@ -71,6 +71,10 @@ export default function CustomerPaymentView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(-1)}>Back</button>
+          {can('/deposits', 'can_add') && cp.status === 'not_deposited' && (
+            <button className="btn btn-sm btn-primary" onClick={() => navigate('/deposits/new', { state: { preselectPaymentId: cp.id } })}>Deposit</button>
+          )}
+          {cp.deposit_id && <button className="btn btn-sm" onClick={() => navigate(`/deposits/${cp.deposit_id}`)}>View Deposit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           {canEdit && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
@@ -210,6 +214,7 @@ export default function CustomerPaymentView() {
           />
         </div>
       )}
+
     </div>
   );
 }
