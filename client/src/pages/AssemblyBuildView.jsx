@@ -69,7 +69,7 @@ export default function AssemblyBuildView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/assembly-builds')}>Back to Lists</button>
-          <button className="btn btn-sm" disabled title="Editing a saved Assembly Build isn't implemented in this build">Edit</button>
+          {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Assembly Build isn't implemented in this build">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           {canEdit && !isCancelled && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
         </div>

@@ -67,7 +67,7 @@ export default function QualityInspectionView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(`/production/${qi.job_order_id}`)}>Back</button>
-          <button className="btn btn-sm" disabled title="Editing a saved Quality Inspection isn't implemented in this build">Edit</button>
+          {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Quality Inspection isn't implemented in this build">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           {canEdit && isSaved && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
         </div>

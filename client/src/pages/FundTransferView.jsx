@@ -43,6 +43,7 @@ export default function FundTransferView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/fund-transfers')}>Back to Lists</button>
+          {can('/fund-transfers', 'can_edit') && ft.status !== 'void' && <button className="btn btn-sm" disabled title="Editing a posted Fund Transfer isn't implemented in this build -- void and re-enter instead">Edit</button>}
           {can('/fund-transfers', 'can_edit') && ft.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>

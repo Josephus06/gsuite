@@ -62,6 +62,7 @@ export default function CustomerRefundView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(-1)}>Back to Lists</button>
+          {canEdit && isOpen && <button className="btn btn-sm" disabled title="Editing a posted Customer Refund isn't implemented in this build -- void and re-enter instead">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           {canEdit && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>

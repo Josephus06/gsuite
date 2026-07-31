@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'; }
@@ -12,6 +13,7 @@ function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { mo
 export default function OsrFulfillmentView() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { can } = useAuth();
   const [f, setF] = useState(null);
   const [tab, setTab] = useState('items');
   const [loading, setLoading] = useState(true);
@@ -23,12 +25,17 @@ export default function OsrFulfillmentView() {
   const gl = f.gl || [];
   const totalDebit = gl.reduce((s, l) => s + num(l.debit), 0);
   const totalCredit = gl.reduce((s, l) => s + num(l.credit), 0);
+  // No permission page of its own -- inherits the OSR's edit right.
+  const canEdit = can('/office-supply-requisitions', 'can_edit');
 
   return (
     <div>
       <div className="page-header">
         <div />
-        <button className="btn btn-sm" onClick={() => navigate(`/office-supply-requisitions/${f.osr_id}`)}>Back</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-sm" onClick={() => navigate(`/office-supply-requisitions/${f.osr_id}`)}>Back</button>
+          {canEdit && <button className="btn btn-sm" disabled title="Editing a saved OSR Fulfillment isn't implemented in this build">Edit</button>}
+        </div>
       </div>
 
       <div className="estimate-banner">

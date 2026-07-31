@@ -68,6 +68,7 @@ export default function CreditMemoView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(`/sales-invoices/${cm.sales_invoice_id}`)}>Back</button>
+          {canEdit && isOpen && <button className="btn btn-sm" disabled title="Editing a posted Credit Memo isn't implemented in this build -- void and re-enter instead">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           {canEdit && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>

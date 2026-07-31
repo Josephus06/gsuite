@@ -67,6 +67,7 @@ export default function CommissionPayableView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(-1)}>Back to Lists</button>
+          {canEdit && isOpen && <button className="btn btn-sm" disabled title="Editing a posted Commission Payable isn't implemented in this build -- void and re-generate instead">Edit</button>}
           {canEdit && isOpen && cp.status === 'unpaid' && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => handlePay(true)}>Mark Paid</button>}
           {canEdit && isOpen && cp.status === 'paid' && <button className="btn btn-sm" disabled={busy} onClick={() => handlePay(false)}>Mark Unpaid</button>}
           {canEdit && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}

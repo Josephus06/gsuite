@@ -21,8 +21,8 @@ export default function ChatWidget() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
-  // Launcher icon is a custom GIF at /chat-icon.gif (drop it in client/public/); falls back to the
-  // 💬 emoji if that file isn't present.
+  // Launcher icon is the full-body mascot GIF at /chat-icon.gif (drop it in client/public/); falls
+  // back to the 💬 emoji if that file isn't present.
   const [iconError, setIconError] = useState(false);
   const [localMessages, setLocalMessages] = useState([{ sender: 'bot', text: GREETING, at: new Date().toISOString() }]);
   const [ticket, setTicket] = useState(null);
@@ -177,10 +177,10 @@ export default function ChatWidget() {
             border: 'none', fontSize: 22, cursor: 'pointer', boxShadow: '0 4px 14px rgba(0,0,0,0.3)',
             padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
           }
-          // Closed with GIF: no circle/background -- the transparent "ASK JWU" GIF floats, sized to
-          // its taller aspect so the caption stays readable.
+          // Closed: no circle/background -- the transparent full-body mascot floats. Square box so the
+          // standing figure shows at full height without letterboxing.
           : {
-            width: 96, height: 112, borderRadius: 0, background: 'transparent',
+            width: 112, height: 112, borderRadius: 0, background: 'transparent',
             border: 'none', padding: 0, cursor: 'pointer', display: 'block',
           }}
       >

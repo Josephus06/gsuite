@@ -93,7 +93,7 @@ export default function SalesInvoiceView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(`/sales-orders/${si.sales_order_id}`)}>Back</button>
-          <button className="btn btn-sm" disabled title="Editing a saved Invoice isn't implemented in this build">Edit</button>
+          {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Invoice isn't implemented in this build">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           {canEdit && isSettleable && <button className="btn btn-sm btn-primary" onClick={() => setShowPaymentModal(true)}>Accept Payment</button>}
           {canEdit && isSettleable && <button className="btn btn-sm btn-primary" onClick={() => setShowCreditMemoModal(true)}>Credit Memo</button>}

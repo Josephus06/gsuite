@@ -81,7 +81,7 @@ export default function DeliveryTicketView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(`/sales-orders/${dt.sales_order_id}`)}>Back</button>
-          <button className="btn btn-sm" disabled title="Editing a saved Delivery Ticket isn't implemented in this build">Edit</button>
+          {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Delivery Ticket isn't implemented in this build">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           <button className="btn btn-sm" disabled title="Credit Memos aren't implemented in this build">Credit Memo</button>
           {/* Bill on a Delivery Ticket raises the official Sales Invoice from it and

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 function qty(v) {
@@ -20,6 +21,7 @@ function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { mo
 export default function ItemFulfillmentView() {
   const { fulfillmentId } = useParams();
   const navigate = useNavigate();
+  const { can } = useAuth();
   const [data, setData] = useState(null);
   const [tab, setTab] = useState('items');
   const [receipts, setReceipts] = useState([]);
@@ -37,13 +39,17 @@ export default function ItemFulfillmentView() {
 
   if (loading || !data) return <LoadingSpinner />;
 
+  // Item Fulfillment has no permission page of its own -- it hangs off the Transfer
+  // Order, so it inherits the TO's edit right.
+  const canEdit = can('/transfer-orders', 'can_edit');
+
   return (
     <div>
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(`/transfer-orders/${data.transfer_order_id}`)}>Back</button>
-          <button className="btn btn-sm" disabled title="Editing a saved Item Fulfillment isn't implemented in this build">Edit</button>
+          {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Item Fulfillment isn't implemented in this build">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
         </div>
       </div>

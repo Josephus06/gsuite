@@ -1356,3 +1356,107 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
   .holo-dashboard { margin: -16px; padding: 16px; }
   .holo-barlist-row { grid-template-columns: 80px 1fr auto; }
 }
+
+/* ---------------------------------------------------------------------------
+   Process Flow (/process-flow)
+   A fixed-size virtual canvas (see data/processFlow.js) scaled to fit the
+   viewport. Nodes are absolutely positioned buttons; the connectors are one SVG
+   layer underneath them.
+   --------------------------------------------------------------------------- */
+.pf-legend {
+  display: flex; flex-wrap: wrap; gap: 14px;
+  margin-top: 12px; font-size: 12px; color: var(--text);
+}
+.pf-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.pf-swatch {
+  width: 14px; height: 14px; border-radius: 4px;
+  border: 1px solid var(--pf-border); background: var(--pf-fill);
+}
+.pf-swatch.pf-decision { border-radius: 3px; transform: rotate(45deg) scale(0.8); }
+
+.pf-card { padding: 8px; }
+.pf-viewport { overflow: auto; width: 100%; }
+.pf-canvas { position: relative; transform-origin: top left; }
+
+.pf-edges { position: absolute; inset: 0; pointer-events: none; }
+.pf-edge path { fill: none; stroke: var(--border); stroke-width: 1.6; }
+.pf-edge { color: var(--border); }
+.pf-edge text {
+  font-size: 11px; font-weight: 600; fill: var(--text);
+  opacity: 0.75; paint-order: stroke; stroke: var(--surface); stroke-width: 3px;
+}
+.pf-arrow-plain path { fill: var(--border); }
+.pf-arrow-yes path { fill: var(--success); }
+.pf-arrow-no path { fill: var(--danger); }
+.pf-arrow-lit path { fill: var(--accent); }
+.pf-edge-yes { color: var(--success); }
+.pf-edge-yes path { stroke: var(--success); }
+.pf-edge-yes text { fill: var(--success); opacity: 1; }
+.pf-edge-no { color: var(--danger); }
+.pf-edge-no path { stroke: var(--danger); }
+.pf-edge-no text { fill: var(--danger); opacity: 1; }
+.pf-edge.is-lit { color: var(--accent); }
+.pf-edge.is-lit path { stroke: var(--accent); stroke-width: 2.6; }
+.pf-edge.is-lit text { fill: var(--accent); opacity: 1; }
+
+.pf-node {
+  position: absolute; display: flex; align-items: center; justify-content: center;
+  padding: 6px 10px; margin: 0; cursor: pointer; text-align: center;
+  font: inherit; font-size: 12.5px; font-weight: 600; line-height: 1.25;
+  color: var(--pf-text); background: var(--pf-fill);
+  border: 1.5px solid var(--pf-border); border-radius: 8px;
+  box-shadow: var(--shadow);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.pf-node:hover, .pf-node:focus-visible, .pf-node.is-hot {
+  transform: translateY(-2px);
+  box-shadow: 0 0 0 3px var(--accent-bg), var(--shadow);
+  outline: none;
+}
+.pf-node-label { position: relative; z-index: 1; max-width: 100%; }
+
+/* Decision nodes: the visible diamond is an inner square rotated 45deg, sized
+   1/sqrt(2) of the box so the rotated corners land exactly on the box edges --
+   which is what makes the port geometry in ProcessFlow.jsx line up. The label
+   stays upright on top of it. */
+.pf-node.is-decision {
+  background: none; border: none; box-shadow: none;
+}
+.pf-node.is-decision .pf-node-label { max-width: 82px; font-size: 11.5px; }
+.pf-diamond {
+  position: absolute; left: 14.65%; top: 14.65%; width: 70.7%; height: 70.7%;
+  background: var(--pf-fill); border: 1.5px solid var(--pf-border);
+  border-radius: 6px; transform: rotate(45deg); box-shadow: var(--shadow);
+}
+
+.pf-sales      { --pf-fill: #fdf0d5; --pf-border: #d9a441; --pf-text: #6b4a10; }
+.pf-design     { --pf-fill: #fbe0e6; --pf-border: #d9748f; --pf-text: #7a2740; }
+.pf-production { --pf-fill: #fdf0d5; --pf-border: #d9a441; --pf-text: #6b4a10; }
+.pf-procurement{ --pf-fill: #e2f0e6; --pf-border: #66a67e; --pf-text: #1f5133; }
+.pf-accounting { --pf-fill: #e4ecfa; --pf-border: #6d8fd0; --pf-text: #22406f; }
+.pf-decision   { --pf-fill: #f6f2fb; --pf-border: #9d7cc9; --pf-text: #4a2f70; }
+
+@media (prefers-color-scheme: dark) {
+  .pf-sales      { --pf-fill: #3a2f18; --pf-border: #a8802f; --pf-text: #f0dcae; }
+  .pf-design     { --pf-fill: #3c2029; --pf-border: #b06178; --pf-text: #f4cdd8; }
+  .pf-production { --pf-fill: #3a2f18; --pf-border: #a8802f; --pf-text: #f0dcae; }
+  .pf-procurement{ --pf-fill: #1d3327; --pf-border: #4f8767; --pf-text: #c3e6d1; }
+  .pf-accounting { --pf-fill: #1e2b42; --pf-border: #5878b3; --pf-text: #cbdcf7; }
+  .pf-decision   { --pf-fill: #2c2438; --pf-border: #8c6cb8; --pf-text: #ddcef2; }
+}
+
+.pf-guide-meta {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+  padding: 12px 14px; margin-bottom: 14px;
+  background: var(--accent-bg); border-radius: 8px; font-size: 13px;
+}
+.pf-guide-meta .muted { display: block; margin-bottom: 2px; }
+.pf-guide-summary { font-size: 14px; margin: 0 0 18px; }
+.pf-guide h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; margin: 18px 0 8px; }
+.pf-steps, .pf-notes { margin: 0; padding-left: 22px; font-size: 13.5px; }
+.pf-steps li { margin-bottom: 9px; }
+.pf-notes li { margin-bottom: 7px; }
+
+@media (max-width: 720px) {
+  .pf-guide-meta { grid-template-columns: 1fr; gap: 10px; }
+}

@@ -77,7 +77,7 @@ export default function VendorBillView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(`/purchase-orders/${vb.purchase_order_id}`)}>Back</button>
-          <button className="btn btn-sm" disabled title="Editing a saved Vendor Bill isn't implemented in this build">Edit</button>
+          {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Vendor Bill isn't implemented in this build">Edit</button>}
           {isOpen && <button className="btn btn-sm btn-primary" onClick={() => setShowBillPaymentModal(true)}>Bill Payment</button>}
           {isOpen && <button className="btn btn-sm btn-primary" onClick={() => setShowBillCreditModal(true)}>Bill Credit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>

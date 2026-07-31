@@ -82,6 +82,7 @@ export default function JournalView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/journals')}>Back to Lists</button>
+          {can('/journals', 'can_edit') && j.status !== 'void' && <button className="btn btn-sm" disabled title="Editing a posted Journal isn't implemented in this build -- void and re-enter instead">Edit</button>}
           {can('/journals', 'can_edit') && j.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>

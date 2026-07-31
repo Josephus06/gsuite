@@ -71,6 +71,7 @@ export default function CustomerPaymentView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(-1)}>Back</button>
+          {canEdit && isOpen && <button className="btn btn-sm" disabled title="Editing a posted Customer Payment isn't implemented in this build -- void and re-enter instead">Edit</button>}
           {can('/deposits', 'can_add') && cp.status === 'not_deposited' && (
             <button className="btn btn-sm btn-primary" onClick={() => navigate('/deposits/new', { state: { preselectPaymentId: cp.id } })}>Deposit</button>
           )}

@@ -133,6 +133,7 @@ import AssemblyBuilds from './pages/AssemblyBuilds';
 import AssemblyBuildView from './pages/AssemblyBuildView';
 import Tickets from './pages/Tickets';
 import TicketView from './pages/TicketView';
+import ProcessFlow from './pages/ProcessFlow';
 import NonStandardJobOrders from './pages/NonStandardJobOrders';
 import NonStandardJobOrderView from './pages/NonStandardJobOrderView';
 import NonStandardSalesOrders from './pages/NonStandardSalesOrders';
@@ -159,6 +160,7 @@ function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/tickets" element={<Tickets />} />
         <Route path="/tickets/:id" element={<TicketView />} />
+        <Route path="/process-flow" element={<ProcessFlow />} />
         <Route path="/employees" element={<Employees />} />
         <Route path="/users" element={<Users />} />
         <Route path="/users/new" element={<UserWizard />} />

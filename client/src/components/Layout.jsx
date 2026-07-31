@@ -12,6 +12,9 @@ import NotificationBell from './NotificationBell';
 const NAV_STRUCTURE = [
   { route: '/dashboard', label: 'Dashboard' },
   { route: '/tickets', label: 'Tickets' },
+  // The clickable order-to-cash chart -- a guide to the other modules rather than a
+  // module of its own, so it sits at top level next to Dashboard.
+  { route: '/process-flow', label: 'Process Flow' },
   {
     label: 'CRM',
     children: [

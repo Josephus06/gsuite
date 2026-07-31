@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 function qty(v) {
@@ -19,6 +20,7 @@ function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { mo
 export default function PurchaseReturnView() {
   const { returnId } = useParams();
   const navigate = useNavigate();
+  const { can } = useAuth();
   const [data, setData] = useState(null);
   const [tab, setTab] = useState('items');
   const [loading, setLoading] = useState(true);
@@ -29,13 +31,16 @@ export default function PurchaseReturnView() {
 
   if (loading || !data) return <LoadingSpinner />;
 
+  // No permission page of its own -- inherits the Purchase Order's edit right.
+  const canEdit = can('/purchase-orders', 'can_edit');
+
   return (
     <div>
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(`/purchase-orders/${data.purchase_order_id}`)}>Back</button>
-          <button className="btn btn-sm" disabled title="Editing a saved Vendor Return isn't implemented in this build">Edit</button>
+          {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Vendor Return isn't implemented in this build">Edit</button>}
         </div>
       </div>
 
