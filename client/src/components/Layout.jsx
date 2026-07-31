@@ -4,6 +4,7 @@ import { useAuth } from '../context/useAuth';
 import Avatar from './Avatar';
 import ChatWidget from './ChatWidget';
 import NotificationBell from './NotificationBell';
+import { resolveTheme, setTheme, watchSystemTheme } from '../utils/theme';
 
 // Mirrors the real GraphicStar system's topbar arrangement: a row of category
 // dropdowns (Master Lists, Inventory, Sales, Costing, ...) instead of a left
@@ -209,6 +210,16 @@ export default function Layout() {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [expandedGroup, setExpandedGroup] = useState(null);
+  // Seeded from whatever index.html already resolved before paint, so this never disagrees
+  // with what's on screen.
+  const [theme, setThemeState] = useState(resolveTheme);
+
+  // Only fires while the user hasn't picked a side -- see watchSystemTheme.
+  useEffect(() => watchSystemTheme(setThemeState), []);
+
+  function toggleTheme() {
+    setThemeState(setTheme(theme === 'dark' ? 'light' : 'dark'));
+  }
 
   // Closing on every route change covers both a leaf-link tap (goes straight to the new
   // page) and the browser back/forward buttons -- either way the mobile panel shouldn't
@@ -300,6 +311,29 @@ export default function Layout() {
           )))}
         </nav>
         <div className="topnav-user">
+          <button
+            type="button"
+            className={`theme-toggle ${theme === 'dark' ? 'is-night' : 'is-day'}`}
+            onClick={toggleTheme}
+            title={theme === 'dark' ? 'Switch to day mode' : 'Switch to night mode'}
+            aria-label={theme === 'dark' ? 'Switch to day mode' : 'Switch to night mode'}
+            aria-pressed={theme === 'dark'}
+          >
+            <span className="theme-toggle-label">{theme === 'dark' ? 'NIGHT MODE' : 'DAY MODE'}</span>
+            <span className="theme-toggle-knob" aria-hidden="true">
+              {theme === 'dark' ? (
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a7 7 0 1 0 10.5 10.5Z" />
+                  <path d="M16.5 4.2v2.2M15.4 5.3h2.2M19.4 7.6v1.5M18.6 8.4h1.5" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+                  <circle cx="12" cy="12" r="4.2" />
+                  <path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4 17 7M7 17l-1.6 1.6" />
+                </svg>
+              )}
+            </span>
+          </button>
           <NotificationBell />
           <Avatar user={user} size={28} />
           <span className="muted topnav-user-name">{user?.display_name}</span>

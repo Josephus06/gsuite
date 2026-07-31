@@ -17,6 +17,41 @@ function formatTime(v) {
   return v ? new Date(v).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
 }
 
+const POS_KEY = 'chatWidgetPos';
+const DEFAULT_POS = { right: 20, bottom: 20 };
+const DRAG_THRESHOLD = 4; // px of movement before a press counts as a drag rather than a click
+
+// The open panel's footprint, used to keep it on screen no matter where the launcher was
+// dropped. Must match the card's inline width/height/marginBottom below and the 52px
+// open-state button.
+const PANEL_W = 320;
+const PANEL_H = 420;
+const PANEL_GAP = 10;
+const OPEN_BTN_H = 52;
+
+// While the panel is open the anchor may have to move inward so the card stays fully
+// visible. The stored drag position is deliberately left untouched, so closing the chat
+// returns the mascot to exactly where it was dropped.
+function anchorFor(pos, open) {
+  if (!open) return pos;
+  const maxRight = Math.max(0, window.innerWidth - PANEL_W);
+  const maxBottom = Math.max(0, window.innerHeight - (PANEL_H + PANEL_GAP + OPEN_BTN_H));
+  return { right: Math.min(pos.right, maxRight), bottom: Math.min(pos.bottom, maxBottom) };
+}
+
+// Keeps the launcher fully on screen. Measures the widget when it can; falls back to the
+// 112px mascot box on the first render, before the ref is attached.
+function clampPos({ right, bottom }, el) {
+  const w = el?.offsetWidth || 112;
+  const h = el?.offsetHeight || 112;
+  const maxRight = Math.max(0, window.innerWidth - w);
+  const maxBottom = Math.max(0, window.innerHeight - h);
+  return {
+    right: Math.min(Math.max(0, right), maxRight),
+    bottom: Math.min(Math.max(0, bottom), maxBottom),
+  };
+}
+
 export default function ChatWidget() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -33,6 +68,65 @@ export default function ChatWidget() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const bottomRef = useRef(null);
+
+  // Draggable launcher. Position is stored as a distance from the RIGHT/BOTTOM edges so the
+  // widget keeps its corner-relative spot when the window is resized -- the same reason the
+  // default is `right: 20, bottom: 20` rather than absolute coordinates.
+  const [pos, setPos] = useState(() => {
+    try {
+      const raw = localStorage.getItem(POS_KEY);
+      if (raw) {
+        const p = JSON.parse(raw);
+        if (Number.isFinite(p?.right) && Number.isFinite(p?.bottom)) return p;
+      }
+    } catch { /* corrupt or blocked storage -- fall through to the default corner */ }
+    return DEFAULT_POS;
+  });
+  const dragRef = useRef(null);
+  // Distinguishes a click (open the chat) from a drag (move it). Without this every drop
+  // would also toggle the panel open.
+  const [dragging, setDragging] = useState(false);
+  const movedRef = useRef(false);
+  const wrapRef = useRef(null);
+
+  // Keep the launcher on screen when the window shrinks -- otherwise a position set on a wide
+  // monitor can strand it off-canvas on a laptop, with no way to grab it back.
+  useEffect(() => {
+    const onResize = () => setPos((p) => clampPos(p, wrapRef.current));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  function handlePointerDown(e) {
+    // Left button / touch only, and never while the panel is open (the X must stay a button).
+    if (open || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    movedRef.current = false;
+    dragRef.current = { startX: e.clientX, startY: e.clientY, right: pos.right, bottom: pos.bottom };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+
+  function handlePointerMove(e) {
+    const d = dragRef.current;
+    if (!d) return;
+    const dx = e.clientX - d.startX;
+    const dy = e.clientY - d.startY;
+    // A few pixels of slop so a slightly shaky click still counts as a click.
+    if (!movedRef.current && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+    movedRef.current = true;
+    setDragging(true);
+    // Dragging right/down must DECREASE the right/bottom offsets.
+    setPos(clampPos({ right: d.right - dx, bottom: d.bottom - dy }, wrapRef.current));
+  }
+
+  function handlePointerUp(e) {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    setDragging(false);
+    if (movedRef.current) {
+      try { localStorage.setItem(POS_KEY, JSON.stringify(pos)); } catch { /* position is per-session then */ }
+    }
+    if (e.currentTarget.hasPointerCapture?.(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+  }
 
   useEffect(() => {
     if (open && departments.length === 0) {
@@ -115,6 +209,8 @@ export default function ChatWidget() {
     }
   }
 
+  const anchor = anchorFor(pos, open);
+
   const combined = [
     ...localMessages,
     ...ticketMessages.map((m) => ({
@@ -125,7 +221,7 @@ export default function ChatWidget() {
   ];
 
   return (
-    <div style={{ position: 'fixed', right: 20, bottom: 20, zIndex: 200 }}>
+    <div ref={wrapRef} style={{ position: 'fixed', right: anchor.right, bottom: anchor.bottom, zIndex: 200 }}>
       {open && (
         <div className="card" style={{ width: 320, height: 420, display: 'flex', flexDirection: 'column', marginBottom: 10, padding: 0, overflow: 'hidden', boxShadow: '0 8px 30px rgba(0,0,0,0.25)' }}>
           <div style={{ background: 'var(--accent)', color: '#fff', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -168,8 +264,12 @@ export default function ChatWidget() {
       )}
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
-        title="Support chat"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onClick={() => { if (!movedRef.current) setOpen((o) => !o); }}
+        title={open ? 'Close chat' : 'Support chat -- drag to move'}
         style={open || iconError
           // Open (or no GIF): a solid accent circle so the ✕ / 💬 reads clearly.
           ? {
@@ -181,12 +281,14 @@ export default function ChatWidget() {
           // standing figure shows at full height without letterboxing.
           : {
             width: 112, height: 112, borderRadius: 0, background: 'transparent',
-            border: 'none', padding: 0, cursor: 'pointer', display: 'block',
+            border: 'none', padding: 0, display: 'block',
+            cursor: dragging ? 'grabbing' : 'grab',
+            touchAction: 'none', userSelect: 'none',
           }}
       >
         {open ? '✕' : (iconError
           ? '💬'
-          : <img src="/chat-icon.gif" alt="Support chat" onError={() => setIconError(true)}
+          : <img src="/chat-icon.gif" alt="Support chat" draggable={false} onError={() => setIconError(true)}
               style={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.3))' }} />
         )}
       </button>

@@ -14,26 +14,28 @@
   --warning-bg: rgba(245, 159, 0, 0.1);
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --shadow: rgba(0, 0, 0, 0.08) 0 4px 14px -2px;
-  color-scheme: light dark;
+  /* color-scheme is set per-theme on <html> by src/utils/theme.js. */
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #d1d0d6;
-    --text-h: #f3f4f6;
-    --bg: #121218;
-    --surface: #1a1a22;
-    --border: #2e2d38;
-    --accent: #a78bfa;
-    --accent-hover: #c4b5fd;
-    --accent-bg: rgba(167, 139, 250, 0.12);
-    --danger: #f87171;
-    --danger-bg: rgba(248, 113, 113, 0.12);
-    --success: #4ade80;
-    --warning: #fbbf24;
-    --warning-bg: rgba(251, 191, 36, 0.14);
-    --shadow: rgba(0, 0, 0, 0.4) 0 4px 14px -2px;
-  }
+/* Dark palette. Driven by the data-theme attribute rather than a prefers-color-scheme
+   media query, so the topbar toggle can override the OS in BOTH directions -- a light-mode
+   user can force dark and vice versa. index.html sets the attribute before first paint;
+   src/utils/theme.js keeps it in step. */
+:root[data-theme="dark"] {
+  --text: #d1d0d6;
+  --text-h: #f3f4f6;
+  --bg: #121218;
+  --surface: #1a1a22;
+  --border: #2e2d38;
+  --accent: #a78bfa;
+  --accent-hover: #c4b5fd;
+  --accent-bg: rgba(167, 139, 250, 0.12);
+  --danger: #f87171;
+  --danger-bg: rgba(248, 113, 113, 0.12);
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --warning-bg: rgba(251, 191, 36, 0.14);
+  --shadow: rgba(0, 0, 0, 0.4) 0 4px 14px -2px;
 }
 
 * {
@@ -1468,14 +1470,12 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .pf-accounting { --pf-fill: #e4ecfa; --pf-border: #6d8fd0; --pf-text: #22406f; }
 .pf-decision   { --pf-fill: #f6f2fb; --pf-border: #9d7cc9; --pf-text: #4a2f70; }
 
-@media (prefers-color-scheme: dark) {
-  .pf-sales      { --pf-fill: #3a2f18; --pf-border: #a8802f; --pf-text: #f0dcae; }
-  .pf-design     { --pf-fill: #3c2029; --pf-border: #b06178; --pf-text: #f4cdd8; }
-  .pf-production { --pf-fill: #3a2f18; --pf-border: #a8802f; --pf-text: #f0dcae; }
-  .pf-procurement{ --pf-fill: #1d3327; --pf-border: #4f8767; --pf-text: #c3e6d1; }
-  .pf-accounting { --pf-fill: #1e2b42; --pf-border: #5878b3; --pf-text: #cbdcf7; }
-  .pf-decision   { --pf-fill: #2c2438; --pf-border: #8c6cb8; --pf-text: #ddcef2; }
-}
+:root[data-theme="dark"] .pf-sales      { --pf-fill: #3a2f18; --pf-border: #a8802f; --pf-text: #f0dcae; }
+:root[data-theme="dark"] .pf-design     { --pf-fill: #3c2029; --pf-border: #b06178; --pf-text: #f4cdd8; }
+:root[data-theme="dark"] .pf-production { --pf-fill: #3a2f18; --pf-border: #a8802f; --pf-text: #f0dcae; }
+:root[data-theme="dark"] .pf-procurement{ --pf-fill: #1d3327; --pf-border: #4f8767; --pf-text: #c3e6d1; }
+:root[data-theme="dark"] .pf-accounting { --pf-fill: #1e2b42; --pf-border: #5878b3; --pf-text: #cbdcf7; }
+:root[data-theme="dark"] .pf-decision   { --pf-fill: #2c2438; --pf-border: #8c6cb8; --pf-text: #ddcef2; }
 
 .pf-guide-meta {
   display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
@@ -1491,4 +1491,86 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 
 @media (max-width: 720px) {
   .pf-guide-meta { grid-template-columns: 1fr; gap: 10px; }
+}
+
+/* ---------------------------------------------------------------------------
+   Day / Night pill toggle in the topbar.
+   Knob sits on the RIGHT in day mode and slides LEFT for night, matching the
+   reference design. The pill's own colours are literal (light grey / black)
+   rather than themed: each state is only ever visible in its own theme, so
+   they stay self-consistent without needing dark-mode overrides.
+   --------------------------------------------------------------------------- */
+.theme-toggle {
+  --tt-w: 128px;
+  --tt-h: 32px;
+  --tt-pad: 3px;
+  --tt-knob: calc(var(--tt-h) - (var(--tt-pad) * 2));
+  position: relative;
+  flex: none;
+  width: var(--tt-w);
+  height: var(--tt-h);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+  font: inherit;
+  overflow: hidden;
+  transition: background 0.25s ease, border-color 0.25s ease;
+}
+.theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.theme-toggle-label {
+  display: block;
+  line-height: var(--tt-h);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  white-space: nowrap;
+  transition: color 0.25s ease, padding 0.25s ease;
+}
+
+.theme-toggle-knob {
+  position: absolute;
+  top: var(--tt-pad);
+  width: var(--tt-knob);
+  height: var(--tt-knob);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  color: #111;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+  transition: left 0.25s ease;
+}
+
+/* Day: grey track, label left, knob parked on the right. */
+.theme-toggle.is-day { background: #e4e4e8; border-color: #d6d6dc; }
+.theme-toggle.is-day .theme-toggle-label {
+  color: #16151a;
+  text-align: left;
+  padding-left: 14px;
+  padding-right: calc(var(--tt-knob) + 8px);
+}
+.theme-toggle.is-day .theme-toggle-knob { left: calc(var(--tt-w) - var(--tt-knob) - var(--tt-pad)); }
+
+/* Night: black track, knob slides to the left, label sits on the right. */
+.theme-toggle.is-night { background: #0b0b0f; border-color: #33333d; }
+.theme-toggle.is-night .theme-toggle-label {
+  color: #fff;
+  text-align: right;
+  padding-right: 14px;
+  padding-left: calc(var(--tt-knob) + 8px);
+}
+.theme-toggle.is-night .theme-toggle-knob { left: var(--tt-pad); }
+
+/* Narrow screens: drop the wording and keep just the sliding knob, so the pill
+   doesn't crowd out the user name and Log out button. */
+@media (max-width: 900px) {
+  .theme-toggle { --tt-w: 52px; }
+  .theme-toggle-label { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .theme-toggle, .theme-toggle-label, .theme-toggle-knob { transition: none; }
 }
