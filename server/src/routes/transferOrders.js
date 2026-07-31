@@ -3,6 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeTransitGl } = require('../lib/glImpact');
 const { isNonStockItem } = require('../lib/itemTypes');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
 
 const router = express.Router();
 const ROUTE = '/transfer-orders';
@@ -314,10 +315,12 @@ router.post('/item-fulfillments/:fulfillmentId/item-receipts', requireAuth, requ
   const conn = await pool.getConnection();
   try {
     const [[f]] = await conn.query(
-      `SELECT f.transfer_order_id, t.transfer_to_location_id, t.status FROM item_fulfillments f
+      `SELECT f.transfer_order_id, f.date_created, t.transfer_to_location_id, t.status FROM item_fulfillments f
        JOIN transfer_orders t ON t.id = f.transfer_order_id WHERE f.id = ?`,
       [req.params.fulfillmentId]
     );
+    // Receiving lands stock at the destination -- block it if the fulfillment's period is shut.
+    if (f) await assertPeriodOpen([f.date_created, req.body.date_created], 'non_gl', conn);
     if (!f) return res.status(404).json({ error: 'Not found' });
     if (f.status === 'cancelled') return res.status(409).json({ error: 'This transfer order has been cancelled.' });
 
@@ -491,12 +494,13 @@ router.post('/lines/:lineId/reallocate', requireAuth, requirePermission(ROUTE, '
   const conn = await pool.getConnection();
   try {
     const [[line]] = await conn.query(
-      `SELECT tol.item_id, t.withdraw_from_location_id, i.item_type FROM transfer_order_lines tol
+      `SELECT tol.item_id, t.date_created, t.withdraw_from_location_id, i.item_type FROM transfer_order_lines tol
        JOIN transfer_orders t ON t.id = tol.transfer_order_id
        LEFT JOIN inventories i ON i.id = tol.item_id WHERE tol.id = ?`,
       [req.params.lineId]
     );
     if (!line) return res.status(404).json({ error: 'Not found' });
+    await assertPeriodOpen(line.date_created, 'non_gl', conn);
     if (isNonStockItem(line.item_type)) {
       return res.status(409).json({ error: 'This is a Service item -- it holds no stock, so there is nothing to reallocate. It can be fulfilled directly.' });
     }
@@ -590,6 +594,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     if (!withdrawFromId || !transferToId) {
       return res.status(400).json({ error: 'Withdraw From and Transfer To locations are required.' });
     }
+    await assertPeriodOpen(dateCreated, 'non_gl', conn);
 
     await conn.beginTransaction();
     const [result] = await conn.query(
@@ -638,7 +643,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
-    const [[t]] = await pool.query('SELECT status FROM transfer_orders WHERE id = ?', [req.params.id]);
+    const [[t]] = await pool.query('SELECT status, date_created FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
     if (t.status !== 'pending_fulfillment') return res.status(409).json({ error: 'Only a transfer order with nothing fulfilled yet can be edited.' });
 
@@ -647,6 +652,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       withdraw_from_location_id: withdrawFromId, transfer_to_location_id: transferToId,
       requestor_id: requestorId, memo,
     } = req.body;
+    // Both dates: you can't edit out of a closed period, nor move a document into one.
+    await assertPeriodOpen([t.date_created, dateCreated], 'non_gl');
     await pool.query(
       `UPDATE transfer_orders SET date_created = ?, date_needed = ?, withdraw_from_location_id = ?,
               transfer_to_location_id = ?, requestor_id = ?, memo = ?, updated_at = NOW() WHERE id = ?`,
@@ -662,9 +669,10 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 router.post('/:id/lines', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[t]] = await conn.query('SELECT status, withdraw_from_location_id, job_order_id FROM transfer_orders WHERE id = ?', [req.params.id]);
+    const [[t]] = await conn.query('SELECT status, date_created, withdraw_from_location_id, job_order_id FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
     if (t.status !== 'pending_fulfillment') return res.status(409).json({ error: 'Only a transfer order with nothing fulfilled yet can be edited.' });
+    await assertPeriodOpen(t.date_created, 'non_gl', conn);
 
     const { item_id: itemId, qty, uom, unit, memo } = req.body;
     if (!itemId || !qty) return res.status(400).json({ error: 'Item and Qty are required.' });
@@ -697,9 +705,10 @@ router.post('/:id/lines', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
 
 router.put('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
-    const [[t]] = await pool.query('SELECT status FROM transfer_orders WHERE id = ?', [req.params.id]);
+    const [[t]] = await pool.query('SELECT status, date_created FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
     if (t.status !== 'pending_fulfillment') return res.status(409).json({ error: 'Only a transfer order with nothing fulfilled yet can be edited.' });
+    await assertPeriodOpen(t.date_created, 'non_gl');
 
     const { qty, adjusted_qty: adjustedQty, memo } = req.body;
     await pool.query(
@@ -716,9 +725,10 @@ router.put('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_edit
 
 router.delete('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
-    const [[t]] = await pool.query('SELECT status FROM transfer_orders WHERE id = ?', [req.params.id]);
+    const [[t]] = await pool.query('SELECT status, date_created FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
     if (t.status !== 'pending_fulfillment') return res.status(409).json({ error: 'Only a transfer order with nothing fulfilled yet can be edited.' });
+    await assertPeriodOpen(t.date_created, 'non_gl');
 
     await pool.query('DELETE FROM transfer_order_lines WHERE id = ? AND transfer_order_id = ?', [req.params.lineId, req.params.id]);
     res.status(204).send();
@@ -748,6 +758,8 @@ router.post('/:id/item-fulfillments', requireAuth, requirePermission(ROUTE, 'can
     const { date_created: dateCreated, memo, lines } = req.body;
     const submitted = (Array.isArray(lines) ? lines : []).filter((l) => Number(l.qty_to_fulfill) > 0);
     if (!submitted.length) return res.status(400).json({ error: 'Enter a Qty to Fulfill for at least one item.' });
+    // Fulfilling releases stock from the source location.
+    await assertPeriodOpen(dateCreated, 'non_gl', conn);
 
     const [toLines] = await conn.query(
       `SELECT tol.*, i.item_code, i.item_type FROM transfer_order_lines tol
@@ -847,8 +859,9 @@ router.post('/:id/item-fulfillments', requireAuth, requirePermission(ROUTE, 'can
 router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[t]] = await conn.query('SELECT status FROM transfer_orders WHERE id = ?', [req.params.id]);
+    const [[t]] = await conn.query('SELECT status, date_created FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
+    await assertPeriodOpen(t.date_created, 'non_gl', conn);
     if (t.status === 'received' || t.status === 'cancelled') {
       return res.status(409).json({ error: `A transfer order that's already ${t.status === 'received' ? 'Received' : 'Cancelled'} can't be cancelled.` });
     }
@@ -871,8 +884,9 @@ router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
 router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[t]] = await conn.query('SELECT status FROM transfer_orders WHERE id = ?', [req.params.id]);
+    const [[t]] = await conn.query('SELECT status, date_created FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
+    await assertPeriodOpen(t.date_created, 'non_gl', conn);
     // Once anything's actually been fulfilled/received, deleting the TO would orphan
     // real stock-moving Item Fulfillment/Receipt records -- only a completely untouched
     // order can be hard-deleted; anything further along should be Cancelled instead.

@@ -3,6 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
 const { computeItemDeliveryGl } = require('../lib/glImpact');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
 
 const router = express.Router();
 // Reached from a Sales Order's Item Delivery button, not its own page in the nav --
@@ -171,6 +172,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
   try {
     const { sales_order_id: salesOrderId, date_created: dateCreated, memo, lines } = req.body;
     if (!salesOrderId) return res.status(400).json({ error: 'Sales Order is required.' });
+    await assertPeriodOpen(dateCreated, 'non_gl', conn);
 
     const submitted = (Array.isArray(lines) ? lines : []).filter((l) => Number(l.qty_to_deliver || 0) > 0);
     if (!submitted.length) return res.status(400).json({ error: 'Enter a Qty to Deliver for at least one item.' });
@@ -240,9 +242,10 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
 router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[d]] = await conn.query('SELECT status, sales_order_id FROM item_deliveries WHERE id = ?', [req.params.id]);
+    const [[d]] = await conn.query('SELECT status, sales_order_id, date_created FROM item_deliveries WHERE id = ?', [req.params.id]);
     if (!d) return res.status(404).json({ error: 'Not found' });
     if (d.status === 'cancelled') return res.status(409).json({ error: 'This Item Delivery is already cancelled.' });
+    await assertPeriodOpen(d.date_created, 'non_gl', conn);
 
     const [lines] = await conn.query('SELECT job_order_id, qty_delivered FROM item_delivery_lines WHERE item_delivery_id = ?', [req.params.id]);
 

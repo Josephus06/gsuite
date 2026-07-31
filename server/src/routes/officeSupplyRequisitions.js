@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { isNonStockItem } = require('../lib/itemTypes');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
 
 const router = express.Router();
 // Office Supply Requisition (OSR-####): a transfer-order-like withdrawal restricted to items flagged
@@ -157,6 +158,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   try {
     const { date_created: dateCreated, date_needed: dateNeeded, location_id: locationId, transfer_to_location_id: transferToId, requestor_id: requestorId, department_id: departmentId, memo, lines } = req.body;
     if (!(await assertOfficeSupplyItems(conn, lines || []))) return res.status(400).json({ error: 'Only office-supply items can be requisitioned here.' });
+    await assertPeriodOpen(dateCreated, 'non_gl', conn);
     await conn.beginTransaction();
     const [r] = await conn.query(
       `INSERT INTO office_supply_requisitions (osr_no, date_created, date_needed, location_id, transfer_to_location_id, requestor_id, department_id, memo, status, created_by_user_id)
@@ -176,11 +178,12 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[o]] = await conn.query('SELECT status FROM office_supply_requisitions WHERE id = ?', [req.params.id]);
+    const [[o]] = await conn.query('SELECT status, date_created FROM office_supply_requisitions WHERE id = ?', [req.params.id]);
     if (!o) return res.status(404).json({ error: 'Not found' });
     if (o.status === 'served' || o.status === 'cancelled') return res.status(409).json({ error: 'This requisition can no longer be edited.' });
     const { date_created: dateCreated, date_needed: dateNeeded, location_id: locationId, transfer_to_location_id: transferToId, requestor_id: requestorId, department_id: departmentId, memo, lines } = req.body;
     if (!(await assertOfficeSupplyItems(conn, lines || []))) return res.status(400).json({ error: 'Only office-supply items can be requisitioned here.' });
+    await assertPeriodOpen([o.date_created, dateCreated], 'non_gl', conn);
     await conn.beginTransaction();
     await conn.query(
       'UPDATE office_supply_requisitions SET date_created = ?, date_needed = ?, location_id = ?, transfer_to_location_id = ?, requestor_id = ?, department_id = ?, memo = ?, updated_at = NOW() WHERE id = ?',
@@ -205,6 +208,8 @@ router.post('/:id/fulfill', requireAuth, requirePermission(ROUTE, 'can_approve')
 
     const submitted = (Array.isArray(req.body?.lines) ? req.body.lines : []).filter((l) => num(l.qty_to_serve) > 0);
     if (!submitted.length) return res.status(400).json({ error: 'Enter a Qty to Serve for at least one item.' });
+    // Fulfilling deducts on-hand stock and posts DR 30504 / CR 15400.
+    await assertPeriodOpen([o.date_created, req.body?.date_created], 'non_gl', conn);
 
     const [lines] = await conn.query(
       `SELECT l.*, i.item_code, i.item_type, i.average_cost, i.material_cost, i.last_purchase_price
@@ -282,9 +287,10 @@ router.post('/:id/fulfill', requireAuth, requirePermission(ROUTE, 'can_approve')
 router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[o]] = await conn.query('SELECT status FROM office_supply_requisitions WHERE id = ?', [req.params.id]);
+    const [[o]] = await conn.query('SELECT status, date_created FROM office_supply_requisitions WHERE id = ?', [req.params.id]);
     if (!o) return res.status(404).json({ error: 'Not found' });
     if (o.status === 'cancelled') return res.status(409).json({ error: 'Already cancelled.' });
+    await assertPeriodOpen(o.date_created, 'non_gl', conn);
     await conn.beginTransaction();
     await conn.query("UPDATE office_supply_requisitions SET status = 'cancelled', cancelled_at = NOW() WHERE id = ?", [req.params.id]);
     await logAudit(conn, { osrId: req.params.id, userId: req.user.id, eventType: 'Cancelled', fieldName: 'status', oldValue: o.status, newValue: 'cancelled' });

@@ -2,6 +2,11 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { isNonStockItem } = require('../lib/itemTypes');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
+
+// Completing a process and building both move stock dated today (the Assembly Build row
+// is inserted with CURDATE()), so today's period is what has to be open for them.
+const today = () => new Date().toISOString().slice(0, 10);
 
 const router = express.Router();
 const ROUTE = '/production';
@@ -187,6 +192,7 @@ router.put('/:id/processes/:processId/complete', requireAuth, requirePermission(
       [req.params.processId, req.params.id]
     );
     if (!proc) return res.status(404).json({ error: 'Not found' });
+    await assertPeriodOpen(today(), 'non_gl');
 
     const amount = Number(req.body.amount || 0);
     if (amount <= 0) return res.status(400).json({ error: 'Enter an amount greater than 0.' });
@@ -235,6 +241,7 @@ router.put('/:id/assembly-build', requireAuth, requirePermission(ROUTE, 'can_edi
   try {
     const [[jo]] = await conn.query('SELECT quantity, quantity_built, production_stage, job_location_id FROM job_orders WHERE id = ?', [req.params.id]);
     if (!jo) return res.status(404).json({ error: 'Not found' });
+    await assertPeriodOpen(today(), 'non_gl', conn);
 
     const jobQty = Number(jo.quantity || 0);
     if (jobQty <= 0) return res.status(409).json({ error: 'This Job Order has no quantity to build against.' });

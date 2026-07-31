@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
 
 const router = express.Router();
 const ROUTE = '/purchase-orders';
@@ -177,6 +178,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const { date_created: dateCreated, ref_no: refNo, memo, lines } = req.body;
     const submitted = (Array.isArray(lines) ? lines : []).filter((l) => l.item_id && l.supplier_id && Number(l.qty) > 0);
     if (!submitted.length) return res.status(400).json({ error: 'Add at least one line with a Supplier and Qty greater than 0.' });
+    await assertPeriodOpen(dateCreated, 'non_gl', conn);
 
     const prLineIds = [...new Set(submitted.map((l) => l.purchase_requisition_line_id).filter(Boolean))];
     const prLineById = new Map();
@@ -366,6 +368,7 @@ router.post('/:id/landed-costs', requireAuth, requirePermission(ROUTE, 'can_add'
     if (parent.status !== 'approved') return res.status(409).json({ error: 'The parent Purchase Order must be Approved before adding a Landed Cost.' });
 
     const { date_created: dateCreated, supplier_id: supplierId, term_id: termId, memo, lines } = req.body;
+    await assertPeriodOpen(dateCreated, 'non_gl', conn);
     const submitted = (Array.isArray(lines) ? lines : []).filter((l) => l.item_id && Number(l.qty) > 0);
     if (!supplierId) return res.status(400).json({ error: 'Select a Supplier.' });
     if (!submitted.length) return res.status(400).json({ error: 'Add at least one line with a Qty greater than 0.' });
@@ -563,6 +566,8 @@ router.post('/:id/receipts', requireAuth, requirePermission(ROUTE, 'can_edit'), 
     const { date_created: dateCreated, ref_no: refNo, memo, is_on_hold: isOnHold, lines } = req.body;
     const submitted = (Array.isArray(lines) ? lines : []).filter((l) => l.purchase_order_line_id && Number(l.qty_received) > 0);
     if (!submitted.length) return res.status(400).json({ error: 'Enter a Qty Received greater than 0 for at least one line.' });
+    // Receiving lands stock and makes the line billable.
+    await assertPeriodOpen(dateCreated, 'non_gl', conn);
 
     const lineIds = submitted.map((l) => l.purchase_order_line_id);
     // conversion_factor: PO Qty (and Rec. Qty here) is always in Purchase Unit -- the
@@ -725,6 +730,8 @@ router.post('/:id/returns', requireAuth, requirePermission(ROUTE, 'can_edit'), a
     const { date_created: dateCreated, ref_no: refNo, memo, lines } = req.body;
     const submitted = (Array.isArray(lines) ? lines : []).filter((l) => l.purchase_order_line_id && Number(l.qty_returned) > 0);
     if (!submitted.length) return res.status(400).json({ error: 'Enter a Qty to Return greater than 0 for at least one line.' });
+    // Returning to the supplier takes the stock back out again.
+    await assertPeriodOpen(dateCreated, 'non_gl', conn);
 
     const lineIds = submitted.map((l) => l.purchase_order_line_id);
     // Same Purchase Unit -> Base Unit scaling as receiving (see POST /:id/receipts) --
@@ -840,6 +847,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (!['pending_approval', 'pending_approval_gm'].includes(po.status)) {
       return res.status(409).json({ error: 'Only a Purchase Order that is still Pending Approval can be edited.' });
     }
+    await assertPeriodOpen([po.date_created, req.body.date_created], 'non_gl', conn);
 
     const {
       date_created: dateCreated, need_by_date: needByDate, supplier_id: supplierId,
@@ -958,9 +966,10 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[po]] = await conn.query('SELECT status FROM purchase_orders WHERE id = ?', [req.params.id]);
+    const [[po]] = await conn.query('SELECT status, date_created FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!po) return res.status(404).json({ error: 'Not found' });
     if (po.status === 'cancelled') return res.status(409).json({ error: 'This PO is already cancelled.' });
+    await assertPeriodOpen(po.date_created, 'non_gl', conn);
 
     const [lines] = await conn.query('SELECT purchase_requisition_line_id, qty FROM purchase_order_lines WHERE purchase_order_id = ?', [req.params.id]);
 

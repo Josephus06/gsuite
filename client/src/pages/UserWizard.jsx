@@ -58,6 +58,12 @@ export default function UserWizard() {
   const [allUsers, setAllUsers] = useState([]);
   const [pages, setPages] = useState([]);
   const [permSearch, setPermSearch] = useState('');
+  // Default permission matrices per account type, keyed by type name. Applied on demand from
+  // the Permissions step rather than the moment an account type is picked -- an admin who has
+  // just hand-ticked a dozen boxes shouldn't lose them to a dropdown change.
+  const [templates, setTemplates] = useState({});
+  const [templateType, setTemplateType] = useState('');
+  const [templateNote, setTemplateNote] = useState('');
 
   useEffect(() => { init(); }, [id]);
 
@@ -72,6 +78,12 @@ export default function UserWizard() {
       api.get('/users/meta/pages'),
       api.get('/users'),
     ]);
+    // Non-fatal: if the templates table hasn't been migrated yet the wizard still works,
+    // it just has nothing to apply.
+    try {
+      const tpl = await api.get('/account-type-permissions');
+      setTemplates(tpl.data || {});
+    } catch { setTemplates({}); }
     setEmployees(emp.data);
     setLocations(loc.data);
     setDepartments(dept.data);
@@ -103,6 +115,7 @@ export default function UserWizard() {
       const map = {};
       for (const p of data.permissions) map[p.page_id] = p;
       setPermMap(map);
+      setTemplateType(data.account_type || '');
     }
     setLoading(false);
   }
@@ -135,6 +148,32 @@ export default function UserWizard() {
       const current = prev[pageId] || { page_id: pageId, can_view: false, can_add: false, can_edit: false, can_delete: false, can_approve: false };
       return { ...prev, [pageId]: { ...current, [key]: !current[key] } };
     });
+  }
+
+  // Replaces the whole matrix with the template rather than merging into it: "apply the Sales
+  // template" should leave you with exactly Sales access, not Sales plus whatever was ticked
+  // before. Anything extra is added back by hand afterwards.
+  function applyTemplate() {
+    const rows = templates[templateType] || [];
+    const map = {};
+    rows.forEach((r) => {
+      map[r.page_id] = {
+        page_id: r.page_id,
+        can_view: !!r.can_view,
+        can_add: !!r.can_add,
+        can_edit: !!r.can_edit,
+        can_delete: !!r.can_delete,
+        can_approve: !!r.can_approve,
+      };
+    });
+    setPermMap(map);
+    const grants = rows.reduce(
+      (n, r) => n + ['can_view', 'can_add', 'can_edit', 'can_delete', 'can_approve'].filter((a) => r[a]).length,
+      0
+    );
+    setTemplateNote(rows.length
+      ? `Applied the ${templateType} template -- ${rows.length} page(s), ${grants} permission(s). Adjust below before saving.`
+      : `The ${templateType} template is empty, so every box was cleared. Set it up under Users & Permissions > Permission Templates.`);
   }
 
   async function handleSave() {
@@ -300,6 +339,22 @@ export default function UserWizard() {
         {step === 3 && (
           <div>
             <h3 className="subsection" style={{ marginTop: 0, borderTop: 'none', paddingTop: 0 }}>Define User Permission and Restrictions</h3>
+            <div className="perm-template-bar">
+              <label htmlFor="perm-template">Start from an account type</label>
+              <select id="perm-template" value={templateType} onChange={(e) => { setTemplateType(e.target.value); setTemplateNote(''); }}>
+                <option value="">Select...</option>
+                {ACCOUNT_TYPE_OPTIONS.map((o) => (
+                  <option key={o} value={o}>
+                    {o}{(templates[o]?.length || 0) === 0 ? ' (empty)' : ''}
+                  </option>
+                ))}
+              </select>
+              <button type="button" className="btn btn-primary" disabled={!templateType} onClick={applyTemplate}>
+                Apply template
+              </button>
+              <span className="muted">Fills the boxes below with that role's defaults, replacing what's ticked now.</span>
+            </div>
+            {templateNote && <div className="perm-template-note">{templateNote}</div>}
             <div className="field" style={{ maxWidth: 320 }}>
               <input placeholder="Search..." value={permSearch} onChange={(e) => setPermSearch(e.target.value)} />
             </div>
@@ -349,7 +404,7 @@ export default function UserWizard() {
             </div>
             <div className="field">
               <label>Account Type</label>
-              <select value={accountType.account_type} onChange={(e) => setAccountType({ ...accountType, account_type: e.target.value })}>
+              <select value={accountType.account_type} onChange={(e) => { setAccountType({ ...accountType, account_type: e.target.value }); setTemplateType(e.target.value); }}>
                 <option value="">Select...</option>
                 {ACCOUNT_TYPE_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
               </select>

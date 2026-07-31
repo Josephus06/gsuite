@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeAssemblyBuildGl } = require('../lib/glImpact');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
 
 const router = express.Router();
 const ROUTE = '/assembly-builds';
@@ -136,9 +137,12 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
 router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[ab]] = await conn.query('SELECT status, job_order_id, quantity_built FROM assembly_builds WHERE id = ?', [req.params.id]);
+    const [[ab]] = await conn.query('SELECT status, job_order_id, quantity_built, date_created FROM assembly_builds WHERE id = ?', [req.params.id]);
     if (!ab) { return res.status(404).json({ error: 'Not found' }); }
     if (ab.status === 'cancelled') { return res.status(409).json({ error: 'This Assembly Build is already cancelled.' }); }
+    // Cancelling puts the consumed material back and unwinds the built qty -- a stock
+    // movement dated in the original build's period, so the same lock applies.
+    await assertPeriodOpen(ab.date_created, 'non_gl', conn);
 
     const [lines] = await conn.query(
       'SELECT job_order_process_id, item_id, location_id, total_qty_to_build FROM assembly_build_lines WHERE assembly_build_id = ?',

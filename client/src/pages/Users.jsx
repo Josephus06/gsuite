@@ -4,12 +4,21 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
+import PermissionTemplateModal from '../components/PermissionTemplateModal';
+
+// Kept in step with ACCOUNT_TYPE_OPTIONS in UserWizard.jsx -- both feed the same
+// account_type column and the same set of permission templates.
+const ACCOUNT_TYPE_OPTIONS = [
+  'Sales', 'Production', 'Costing', 'Logistics', 'Accounts Receivable',
+  'Account Manager', 'Artist', 'General Manager', 'System Admin',
+];
 
 export default function Users() {
   const { can } = useAuth();
   const navigate = useNavigate();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [showTemplates, setShowTemplates] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -44,7 +53,12 @@ export default function Users() {
     <div>
       <div className="page-header">
         <h1>Users</h1>
-        {can('/users', 'can_add') && <button className="btn btn-primary" onClick={() => navigate('/users/new')}>Add User</button>}
+        <div style={{ display: 'flex', gap: 8 }}>
+          {can('/users', 'can_view') && (
+            <button className="btn" onClick={() => setShowTemplates(true)}>Permission Templates</button>
+          )}
+          {can('/users', 'can_add') && <button className="btn btn-primary" onClick={() => navigate('/users/new')}>Add User</button>}
+        </div>
       </div>
       <div className="card">
         {loading ? <LoadingSpinner /> : (
@@ -61,6 +75,14 @@ export default function Users() {
           />
         )}
       </div>
+
+      {showTemplates && (
+        <PermissionTemplateModal
+          accountTypes={ACCOUNT_TYPE_OPTIONS}
+          canEdit={can('/users', 'can_edit')}
+          onClose={() => setShowTemplates(false)}
+        />
+      )}
     </div>
   );
 }

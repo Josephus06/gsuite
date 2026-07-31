@@ -3,6 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
 const { createReworkJobOrder, countOpenRework } = require('../lib/reworkJobOrder');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
 
 const router = express.Router();
 // Reached from a Job Order's Production view, not its own page in the nav -- reuses
@@ -154,6 +155,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
   try {
     const { job_order_id: jobOrderId, date_created: dateCreated, memo, lines } = req.body;
     if (!jobOrderId) return res.status(400).json({ error: 'Job Order is required.' });
+    await assertPeriodOpen(dateCreated, 'non_gl', conn);
 
     const [[jo]] = await conn.query('SELECT * FROM job_orders WHERE id = ?', [jobOrderId]);
     if (!jo) return res.status(404).json({ error: 'Job Order not found.' });
@@ -279,9 +281,10 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
 router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[qi]] = await conn.query('SELECT status, job_order_id FROM quality_inspections WHERE id = ?', [req.params.id]);
+    const [[qi]] = await conn.query('SELECT status, job_order_id, date_created FROM quality_inspections WHERE id = ?', [req.params.id]);
     if (!qi) return res.status(404).json({ error: 'Not found' });
     if (qi.status === 'cancelled') return res.status(409).json({ error: 'This Quality Inspection is already cancelled.' });
+    await assertPeriodOpen(qi.date_created, 'non_gl', conn);
 
     const [lines] = await conn.query('SELECT assembly_build_id, pass_qty, rma_qty FROM quality_inspection_lines WHERE quality_inspection_id = ?', [req.params.id]);
     const [[jo]] = await conn.query('SELECT quantity, quantity_inspected FROM job_orders WHERE id = ?', [qi.job_order_id]);
