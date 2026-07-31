@@ -227,16 +227,16 @@ label {
 .topnav-dropdown-menu a:hover { background: var(--accent-bg); }
 .topnav-dropdown-menu a.active { background: var(--accent-bg); color: var(--accent); }
 
-/* Grouped mega-menu (Accounting): columns of sections. Anchored to the right edge of its
-   trigger so a wide menu near the end of the bar stays on-screen. */
+/* Grouped mega-menu (Inventory, Accounting): columns of sections. Opens under its trigger by
+   default; groups near the end of the bar add .topnav-mega-right so a wide menu doesn't run
+   off the right edge of the window. */
 .topnav-dropdown-menu.topnav-mega {
   flex-direction: row;
   align-items: flex-start;
   gap: 28px;
   padding: 16px 22px;
-  left: auto;
-  right: 0;
 }
+.topnav-dropdown-menu.topnav-mega-right { left: auto; right: 0; }
 .topnav-mega-col { display: flex; flex-direction: column; gap: 2px; min-width: 180px; }
 /* Grey section header band (Warranty Certificate customer/project/coverage groups). */
 .section-band {

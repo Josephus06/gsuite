@@ -44,6 +44,7 @@ const NAV_STRUCTURE = [
       { route: '/suppliers', label: 'Suppliers' },
       { route: '/job-types', label: 'Job Types' },
       { route: '/pms-job-types', label: 'PMS Job Types' },
+      { route: '/inventory', label: 'Inventory Items' },
       { route: '/service-items', label: 'Service Items' },
       { route: '/lookups', label: 'Lookups' },
       { route: '/transaction-settings', label: 'Transaction Settings' },
@@ -51,15 +52,33 @@ const NAV_STRUCTURE = [
   },
   {
     label: 'Inventory',
-    children: [
-      { route: '/inventory', label: 'Inventory Items' },
-      { route: '/inventory-adjustments', label: 'Inventory Adjustments' },
-      { route: '/transfer-orders', label: 'Transfer Orders' },
-      { route: '/item-fulfillments', permRoute: '/transfer-orders', label: 'Item Fulfillment' },
-      { route: '/item-receipts', permRoute: '/transfer-orders', label: 'Item Receipt' },
-      { route: '/office-supply-requisitions', label: 'Office Supply Requisition' },
-      { route: '/stock-ledger-reports', label: 'Stock Ledger' },
-      { route: '/bin-card-reports', label: 'Bin Card' },
+    // Two-column mega-menu mirroring the live Inventory dropdown: documents you post on the
+    // left, things you read on the right. Inventory Items moved to Master Lists, next to
+    // Service Items -- it's a master record, not an inventory transaction or report.
+    //
+    // The live menu also lists Reallocate Items, RMI, Office Supply Requisition Fulfillment,
+    // Inventory Reports, Approved Inventory Adjustments, Fulfilled/Received Transfer Orders,
+    // Fulfilled Office Supply Requisitions, Received RMIs and Monthly Output. Those aren't
+    // pages in this build (Reallocate and OSR Fulfillment exist only as sub-routes reached
+    // from their parent document), so they're left out rather than added as dead links.
+    sections: [
+      {
+        title: 'Transactions',
+        items: [
+          { route: '/inventory-adjustments', label: 'Inventory Adjustments' },
+          { route: '/transfer-orders', label: 'Transfer Orders' },
+          { route: '/item-fulfillments', permRoute: '/transfer-orders', label: 'Item Fulfillments' },
+          { route: '/item-receipts', permRoute: '/transfer-orders', label: 'Item Receipts' },
+          { route: '/office-supply-requisitions', label: 'Office Supply Requisition' },
+        ],
+      },
+      {
+        title: 'Reports',
+        items: [
+          { route: '/stock-ledger-reports', label: 'Stock Ledger' },
+          { route: '/bin-card-reports', label: 'Bin Card' },
+        ],
+      },
     ],
   },
   {
@@ -113,6 +132,8 @@ const NAV_STRUCTURE = [
   },
   {
     label: 'Accounting',
+    // Last group on the bar, so its (wide) menu is right-anchored to stay on screen.
+    alignRight: true,
     // Grouped mega-menu mirroring the live Accounting dropdown: Transactions / Setups / Reports
     // columns. Only the pages this build actually has are listed under each heading.
     sections: [
@@ -282,7 +303,7 @@ export default function Layout() {
                 {item.label} <span className="caret">▾</span>
               </button>
               {item.sections ? (
-                <div className="topnav-dropdown-menu topnav-mega">
+                <div className={`topnav-dropdown-menu topnav-mega ${item.alignRight ? 'topnav-mega-right' : ''}`}>
                   {item.sections.map((s) => (
                     <div key={s.title} className="topnav-mega-col">
                       <div className="topnav-mega-title">{s.title}</div>
