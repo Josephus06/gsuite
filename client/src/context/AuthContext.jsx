@@ -43,6 +43,10 @@ export function AuthProvider({ children }) {
   }
 
   function logout() {
+    // Tell the server first (the token is still in localStorage for the interceptor to
+    // attach) so the presence heartbeat is cleared and the user drops off the feed's
+    // Contacts rail right away. Best-effort: a failed call must never block signing out.
+    api.post('/auth/logout').catch(() => {});
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     setUser(null);

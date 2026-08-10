@@ -17,6 +17,10 @@ function notificationTypeLabel(type) {
     case 'ticket_approved': return 'Approved';
     case 'ticket_resolved': return 'Resolved';
     case 'gm_approval_needed': return 'GM Approval';
+    case 'feed_post': return 'New Post';
+    case 'feed_reaction': return 'Reaction';
+    case 'feed_comment': return 'Comment';
+    case 'feed_reply': return 'Reply';
     default:
       if (!type) return '';
       return type.replace(/_/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase());
@@ -96,6 +100,12 @@ export default function NotificationBell() {
       }
     }
     if (n.related_type === 'Ticket' && n.related_id) navigate(`/tickets/${n.related_id}`);
+    // Feed posts live on the dashboard's Feed tab; the hash is what Feed.jsx anchors each
+    // post card with, so the browser scrolls straight to it.
+    if (n.related_type === 'FeedPost' && n.related_id) {
+      localStorage.setItem('dashboard.tab', 'feed');
+      navigate(`/dashboard#post-${n.related_id}`);
+    }
   }
 
   async function markAllRead() {
