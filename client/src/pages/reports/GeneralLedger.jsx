@@ -19,7 +19,9 @@ const SOURCE_LABELS = {
 // payload is trivial), so "expand" here is just a local show/hide toggle, not a
 // second request.
 export default function GeneralLedger() {
+  const [filterType, setFilterType] = useState('as_of');
   const [asOf, setAsOf] = useState(today());
+  const [fromDate, setFromDate] = useState(today());
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -29,7 +31,9 @@ export default function GeneralLedger() {
     setLoading(true);
     setError('');
     try {
-      const { data } = await api.get('/reports/general-ledger', { params: { asOf } });
+      const params = { asOf };
+      if (filterType === 'period_from') params.from = fromDate;
+      const { data } = await api.get('/reports/general-ledger', { params });
       setReport(data);
       setOpen(new Set());
     } catch (err) {
@@ -56,7 +60,20 @@ export default function GeneralLedger() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="filter-grid">
           <div className="field">
-            <label>Date as of</label>
+            <label>Date</label>
+            <select value={filterType} onChange={(e) => setFilterType(e.target.value)}>
+              <option value="as_of">As of</option>
+              <option value="period_from">Period from</option>
+            </select>
+          </div>
+          {filterType === 'period_from' && (
+            <div className="field">
+              <label>From</label>
+              <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+            </div>
+          )}
+          <div className="field">
+            <label>{filterType === 'period_from' ? 'To' : 'Date as of'}</label>
             <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
           </div>
         </div>
@@ -71,7 +88,9 @@ export default function GeneralLedger() {
 
       {!loading && report && (
         <div className="card">
-          <div style={{ marginBottom: 12 }}><strong>As of {report.as_of}</strong></div>
+          <div style={{ marginBottom: 12 }}>
+            <strong>{report.from_date ? `${report.from_date} to ${report.as_of}` : `As of ${report.as_of}`}</strong>
+          </div>
           <div className="table-wrap">
             <table className="responsive-cards">
               <thead>
@@ -86,10 +105,13 @@ export default function GeneralLedger() {
                 )}
                 {report.rows.map((r) => {
                   const isOpen = open.has(r.account_code);
+                  // In period mode an account can have no activity in the window but still
+                  // carry an opening balance worth seeing, so it stays expandable.
+                  const expandable = r.ledgers.length > 0 || (!!report.from_date && !!r.opening_balance);
                   return (
                     <Fragment key={r.account_code}>
-                      <tr onClick={() => r.ledgers.length > 0 && toggle(r.account_code)} style={{ cursor: r.ledgers.length ? 'pointer' : 'default' }}>
-                        <td>{r.ledgers.length > 0 ? (isOpen ? '▾' : '▸') : ''}</td>
+                      <tr onClick={() => expandable && toggle(r.account_code)} style={{ cursor: expandable ? 'pointer' : 'default' }}>
+                        <td>{expandable ? (isOpen ? '▾' : '▸') : ''}</td>
                         <td>{r.account_code}</td>
                         <td>{r.account_name}</td>
                         <td style={{ textAlign: 'right' }}>{money(r.balance)}</td>
@@ -108,6 +130,13 @@ export default function GeneralLedger() {
                                 </tr>
                               </thead>
                               <tbody>
+                                {report.from_date && (
+                                  <tr>
+                                    <td colSpan={3} style={{ fontStyle: 'italic' }}>Opening balance</td>
+                                    <td /><td />
+                                    <td style={{ textAlign: 'right', fontStyle: 'italic' }}>{money(r.opening_balance)}</td>
+                                  </tr>
+                                )}
                                 {r.ledgers.map((l, idx) => (
                                   <tr key={idx}>
                                     <td>{formatDate(l.entry_date)}</td>

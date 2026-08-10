@@ -1,5 +1,101 @@
 const pool = require('../db');
 
+// ---------------------------------------------------------------------------------------
+// Run-scoped reference-data cache.
+//
+// The compute*Gl functions below each re-read the same reference rows -- the chart of
+// accounts, tax codes, process cost brackets -- once per source document. That is invisible
+// when they're called one document at a time, which is how the per-transaction GL Impact
+// tabs call them. But a report run walks tens of thousands of documents, and those repeated
+// reads were ~60% of its queries (e.g. 2,732 identical lookups of account 12100 for a single
+// month of data). All three tables are tiny (276 accounts, 1 tax, 2,147 brackets), so one
+// snapshot serves an entire run.
+//
+// The snapshot exists ONLY while a getPostedGlLines run is in flight. Outside a run these
+// helpers read straight through to the DB, so the GL Impact tabs never see a cached row and
+// an edited account or cost bracket takes effect immediately. Nested/overlapping runs are
+// refcounted, and the in-flight promise is shared so concurrent runs load it once.
+let refRuns = 0;
+let refSnapshotPromise = null;
+
+async function loadRefSnapshot() {
+  const [coa] = await pool.query('SELECT id, account_code, account_name FROM chart_of_accounts');
+  const [taxes] = await pool.query('SELECT code, tax_account_id FROM taxes');
+  const [brackets] = await pool.query('SELECT * FROM process_cost_brackets WHERE is_active = TRUE ORDER BY qty_min');
+  const bracketsByProcess = new Map();
+  for (const b of brackets) {
+    if (!bracketsByProcess.has(b.process_id)) bracketsByProcess.set(b.process_id, []);
+    bracketsByProcess.get(b.process_id).push(b);
+  }
+  return {
+    coaById: new Map(coa.map((c) => [c.id, c])),
+    coaByCode: new Map(coa.map((c) => [c.account_code, c])),
+    taxByCode: new Map(taxes.map((t) => [t.code, t])),
+    bracketsByProcess,
+  };
+}
+
+async function beginRefRun() {
+  refRuns += 1;
+  if (!refSnapshotPromise) refSnapshotPromise = loadRefSnapshot();
+  try { await refSnapshotPromise; } catch (e) { endRefRun(); throw e; }
+}
+function endRefRun() {
+  refRuns -= 1;
+  if (refRuns <= 0) { refRuns = 0; refSnapshotPromise = null; }
+}
+// Non-null only while a run is active -- that's what makes read-through the default.
+async function snapshot() {
+  return refRuns && refSnapshotPromise ? refSnapshotPromise : null;
+}
+
+// Reference-data accessors. Each returns the same shape its original inline query did, so
+// callers are unchanged apart from swapping the query for the helper. `db` lets a caller
+// pass a transaction connection for the read-through path.
+async function coaByCode(code, db = pool) {
+  const snap = await snapshot();
+  if (snap) return snap.coaByCode.get(code) || null;
+  const [[r]] = await db.query('SELECT id, account_code, account_name FROM chart_of_accounts WHERE account_code = ?', [code]);
+  return r || null;
+}
+async function coaById(id, db = pool) {
+  if (!id) return null;
+  const snap = await snapshot();
+  if (snap) return snap.coaById.get(id) || null;
+  const [[r]] = await db.query('SELECT id, account_code, account_name FROM chart_of_accounts WHERE id = ?', [id]);
+  return r || null;
+}
+async function coaByIds(ids, db = pool) {
+  if (!ids || !ids.length) return [];
+  const snap = await snapshot();
+  if (snap) return ids.map((id) => snap.coaById.get(id)).filter(Boolean);
+  const [rows] = await db.query('SELECT id, account_code, account_name FROM chart_of_accounts WHERE id IN (?)', [ids]);
+  return rows;
+}
+async function taxByCode(code, db = pool) {
+  const snap = await snapshot();
+  if (snap) return snap.taxByCode.get(code) || null;
+  const [[r]] = await db.query('SELECT tax_account_id FROM taxes WHERE code = ?', [code]);
+  return r || null;
+}
+async function bracketsForProcesses(processIds, db = pool) {
+  const byProcess = new Map();
+  if (!processIds || !processIds.length) return byProcess;
+  const snap = await snapshot();
+  if (snap) {
+    for (const pid of processIds) if (snap.bracketsByProcess.has(pid)) byProcess.set(pid, snap.bracketsByProcess.get(pid));
+    return byProcess;
+  }
+  const [brackets] = await db.query(
+    'SELECT * FROM process_cost_brackets WHERE process_id IN (?) AND is_active = TRUE ORDER BY qty_min', [processIds]);
+  for (const b of brackets) {
+    if (!byProcess.has(b.process_id)) byProcess.set(b.process_id, []);
+    byProcess.get(b.process_id).push(b);
+  }
+  return byProcess;
+}
+// ---------------------------------------------------------------------------------------
+
 // GL Impact: standard revenue-recognition entry, reverse-engineered directly from the
 // real system's sandbox (10 real invoices checked across different customers/amounts --
 // always the exact same 3 accounts, no per-customer or per-item variation): debit
@@ -11,8 +107,8 @@ const pool = require('../db');
 // snapshot, not a FK) and a future second tax code should route correctly rather than
 // silently landing on the wrong account.
 async function computeSalesInvoiceGl(si, lines) {
-  const [[arAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '12100'");
-  const [[salesAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '30100'");
+  const arAcct = await coaByCode('12100');
+  const salesAcct = await coaByCode('30100');
   if (!arAcct || !salesAcct) return [];
 
   const rows = [];
@@ -32,16 +128,10 @@ async function computeSalesInvoiceGl(si, lines) {
   for (const [code, amt] of taxTotals) {
     let acct = null;
     if (code) {
-      const [[t]] = await pool.query('SELECT tax_account_id FROM taxes WHERE code = ?', [code]);
-      if (t?.tax_account_id) {
-        const [[a]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [t.tax_account_id]);
-        acct = a;
-      }
+      const t = await taxByCode(code);
+      if (t?.tax_account_id) acct = await coaById(t.tax_account_id);
     }
-    if (!acct) {
-      const [[fallback]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '21100'");
-      acct = fallback;
-    }
+    if (!acct) acct = await coaByCode('21100');
     if (acct) rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: 0, credit: Number(amt.toFixed(2)) });
   }
   return rows;
@@ -74,30 +164,16 @@ const ASSEMBLY_BUILD_FIXED_GL_CODES = {
 async function computeAssemblyBuildGl(conn, ab, lines) {
   if (!ab.fg_account_id) return [];
 
-  const [coaRows] = await conn.query(
-    'SELECT id, account_code, account_name FROM chart_of_accounts WHERE id = ? OR account_code IN (?)',
-    [ab.fg_account_id, Object.values(ASSEMBLY_BUILD_FIXED_GL_CODES)]
-  );
-  const itemAccountIds = [...new Set(lines.map((l) => l.item_asset_account_id).filter(Boolean))];
-  if (itemAccountIds.length) {
-    const [itemCoaRows] = await conn.query('SELECT id, account_code, account_name FROM chart_of_accounts WHERE id IN (?)', [itemAccountIds]);
-    coaRows.push(...itemCoaRows);
-  }
-  const coaById = new Map(coaRows.map((c) => [c.id, c]));
-  const coaByCode = new Map(coaRows.map((c) => [c.account_code, c]));
+  const coaRows = [
+    await coaById(ab.fg_account_id, conn),
+    ...await Promise.all(Object.values(ASSEMBLY_BUILD_FIXED_GL_CODES).map((c) => coaByCode(c, conn))),
+    ...await coaByIds([...new Set(lines.map((l) => l.item_asset_account_id).filter(Boolean))], conn),
+  ].filter(Boolean);
+  const acctById = new Map(coaRows.map((c) => [c.id, c]));
+  const acctByCode = new Map(coaRows.map((c) => [c.account_code, c]));
 
-  const processIds = [...new Set(lines.map((l) => l.process_id).filter(Boolean))];
-  const bracketsByProcess = new Map();
-  if (processIds.length) {
-    const [brackets] = await conn.query(
-      'SELECT * FROM process_cost_brackets WHERE process_id IN (?) AND is_active = TRUE ORDER BY qty_min',
-      [processIds]
-    );
-    for (const b of brackets) {
-      if (!bracketsByProcess.has(b.process_id)) bracketsByProcess.set(b.process_id, []);
-      bracketsByProcess.get(b.process_id).push(b);
-    }
-  }
+  const bracketsByProcess = await bracketsForProcesses(
+    [...new Set(lines.map((l) => l.process_id).filter(Boolean))], conn);
 
   const credits = new Map(); // account_id -> amount
   function credit(accountId, amount) {
@@ -111,8 +187,8 @@ async function computeAssemblyBuildGl(conn, ab, lines) {
 
     const materialCost = Number(line.material_cost) || 0;
     if (materialCost) {
-      const acct = line.item_asset_account_id ? coaById.get(line.item_asset_account_id) : null;
-      credit(acct ? acct.id : coaByCode.get(ASSEMBLY_BUILD_FIXED_GL_CODES.directMaterials)?.id, materialCost);
+      const acct = line.item_asset_account_id ? acctById.get(line.item_asset_account_id) : null;
+      credit(acct ? acct.id : acctByCode.get(ASSEMBLY_BUILD_FIXED_GL_CODES.directMaterials)?.id, materialCost);
     }
 
     const processCost = Number(line.process_cost) || 0;
@@ -135,24 +211,24 @@ async function computeAssemblyBuildGl(conn, ab, lines) {
       if (componentTotal > 0) {
         for (const [code, amount] of Object.entries(components)) {
           if (!amount) continue;
-          credit(coaByCode.get(code)?.id, processCost * (amount / componentTotal));
+          credit(acctByCode.get(code)?.id, processCost * (amount / componentTotal));
         }
       } else {
         // No bracket found (or every component is zero) -- can't split, so don't
         // silently drop the cost: land it all on Direct Labor as the single most
         // common component rather than fabricating a breakdown we don't have data for.
-        credit(coaByCode.get(ASSEMBLY_BUILD_FIXED_GL_CODES.directLabor)?.id, processCost);
+        credit(acctByCode.get(ASSEMBLY_BUILD_FIXED_GL_CODES.directLabor)?.id, processCost);
       }
     }
   }
 
   const rows = [];
   for (const [accountId, amount] of credits) {
-    const acct = coaById.get(accountId);
+    const acct = acctById.get(accountId);
     if (!acct) continue;
     rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: 0, credit: Number(amount.toFixed(2)) });
   }
-  const fgAcct = coaById.get(ab.fg_account_id);
+  const fgAcct = acctById.get(ab.fg_account_id);
   if (fgAcct && debitTotal) {
     rows.unshift({ account_code: fgAcct.account_code, account_name: fgAcct.account_name, debit: Number(debitTotal.toFixed(2)), credit: 0 });
   }
@@ -176,8 +252,7 @@ async function computeAssemblyBuildGl(conn, ab, lines) {
 async function computeItemDeliveryGl(lines) {
   const accountIds = [...new Set(lines.flatMap((l) => [l.cogs_account_id, l.asset_account_id]).filter(Boolean))];
   if (!accountIds.length) return [];
-  const [coaRows] = await pool.query('SELECT id, account_code, account_name FROM chart_of_accounts WHERE id IN (?)', [accountIds]);
-  const coaById = new Map(coaRows.map((c) => [c.id, c]));
+  const acctById = new Map((await coaByIds(accountIds)).map((c) => [c.id, c]));
 
   const debits = new Map();
   const credits = new Map();
@@ -194,11 +269,11 @@ async function computeItemDeliveryGl(lines) {
 
   const rows = [];
   for (const [id, amt] of debits) {
-    const acct = coaById.get(id);
+    const acct = acctById.get(id);
     if (acct) rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: Number(amt.toFixed(2)), credit: 0 });
   }
   for (const [id, amt] of credits) {
-    const acct = coaById.get(id);
+    const acct = acctById.get(id);
     if (acct) rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: 0, credit: Number(amt.toFixed(2)) });
   }
   return rows;
@@ -218,7 +293,7 @@ async function computeItemDeliveryGl(lines) {
 // `qtyField`/`assetIsDebit` let one function serve both (Fulfillment: qty_fulfilled,
 // asset account credited; Receipt: qty_received, asset account debited).
 async function computeTransitGl(lines, { qtyField, assetIsDebit }) {
-  const [[transitAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '15900'");
+  const transitAcct = await coaByCode('15900');
   if (!transitAcct) return [];
 
   const assetAmounts = new Map(); // account_id -> amount
@@ -231,7 +306,7 @@ async function computeTransitGl(lines, { qtyField, assetIsDebit }) {
   }
   if (!assetAmounts.size) return [];
 
-  const [assetAccts] = await pool.query('SELECT id, account_code, account_name FROM chart_of_accounts WHERE id IN (?)', [[...assetAmounts.keys()]]);
+  const assetAccts = await coaByIds([...assetAmounts.keys()]);
   const rows = [];
   for (const acct of assetAccts) {
     const amount = Number((assetAmounts.get(acct.id) || 0).toFixed(2));
@@ -261,19 +336,15 @@ async function computeTransitGl(lines, { qtyField, assetIsDebit }) {
 // double-count. Unapplied cash likewise doesn't touch AR; it sits as an on-account
 // balance this build tracks on the payment itself rather than in the ledger.
 async function computeCustomerPaymentGl(cp, lines) {
-  const [[arAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '12100'");
+  const arAcct = await coaByCode('12100');
   if (!arAcct || !cp.deposit_account_id) return [];
   // Once a payment is rolled into a Bank Deposit, its cash sits in Undeposited Funds (10006) until
   // the deposit moves it to the bank -- so its own entry debits 10006, and the Deposit does the
   // DR bank / CR 10006. A payment with no deposit keeps debiting its deposit account directly (this
   // preserves historical payments, which have no deposit document).
-  let debitAcct;
-  if (cp.deposit_id) {
-    [[debitAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '10006'");
-  } else {
-    [[debitAcct]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [cp.deposit_account_id]);
-  }
-  const depositAcct = debitAcct;
+  const depositAcct = cp.deposit_id
+    ? await coaByCode('10006')
+    : await coaById(cp.deposit_account_id);
   if (!depositAcct) return [];
 
   const appliedToInvoices = lines
@@ -296,8 +367,8 @@ async function computeCustomerPaymentGl(cp, lines) {
 // VAT is routed per line tax code via taxes.tax_account_id, same as the invoice's own
 // entry, so a credit reverses tax onto exactly the account the sale put it on.
 async function computeCreditMemoGl(cm, lines) {
-  const [[arAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '12100'");
-  const [[salesAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '30100'");
+  const arAcct = await coaByCode('12100');
+  const salesAcct = await coaByCode('30100');
   if (!arAcct || !salesAcct) return [];
 
   const rows = [];
@@ -316,16 +387,10 @@ async function computeCreditMemoGl(cm, lines) {
   for (const [code, amt] of taxTotals) {
     let acct = null;
     if (code) {
-      const [[t]] = await pool.query('SELECT tax_account_id FROM taxes WHERE code = ?', [code]);
-      if (t?.tax_account_id) {
-        const [[a]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [t.tax_account_id]);
-        acct = a;
-      }
+      const t = await taxByCode(code);
+      if (t?.tax_account_id) acct = await coaById(t.tax_account_id);
     }
-    if (!acct) {
-      const [[fallback]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '21100'");
-      acct = fallback;
-    }
+    if (!acct) acct = await coaByCode('21100');
     if (acct) rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: Number(amt.toFixed(2)), credit: 0 });
   }
 
@@ -339,8 +404,8 @@ async function computeCreditMemoGl(cm, lines) {
 // carried on the refund header. Voided refunds post nothing.
 async function computeCustomerRefundGl(cr) {
   if (!cr.ar_account_id || !cr.account_id) return [];
-  const [[ar]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [cr.ar_account_id]);
-  const [[acct]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [cr.account_id]);
+  const ar = await coaById(cr.ar_account_id);
+  const acct = await coaById(cr.account_id);
   if (!ar || !acct) return [];
   const amount = Number(cr.refund_amount) || 0;
   if (!amount) return [];
@@ -383,8 +448,8 @@ async function salesDivisionDepartments() {
 
 async function computeCommissionPayableGl(cp) {
   if (!cp.expense_account_id || !cp.payable_account_id) return [];
-  const [[exp]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [cp.expense_account_id]);
-  const [[pay]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [cp.payable_account_id]);
+  const exp = await coaById(cp.expense_account_id);
+  const pay = await coaById(cp.payable_account_id);
   if (!exp || !pay) return [];
   const amount = cpRound(cp.expected_commission);
   if (!amount) return [];
@@ -427,7 +492,7 @@ async function computeCommissionPayableGl(cp) {
 async function computeCommissionVoucherGl(cv, lines, expenses) {
   if (cv.status === 'void') return [];
   const rows = [];
-  const [[payAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '24200'");
+  const payAcct = await coaByCode('24200');
 
   let totalReleased = 0;
   for (const l of (lines || [])) {
@@ -442,7 +507,7 @@ async function computeCommissionVoucherGl(cv, lines, expenses) {
     const amt = cpRound(e.amount);
     if (!amt) continue;
     expSum = cpRound(expSum + amt);
-    const [[a]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [e.account_id]);
+    const a = await coaById(e.account_id);
     if (!a) continue;
     if (amt > 0) rows.push({ account_code: a.account_code, account_name: a.account_name, debit: amt, credit: 0 });
     else rows.push({ account_code: a.account_code, account_name: a.account_name, debit: 0, credit: cpRound(-amt) });
@@ -450,7 +515,7 @@ async function computeCommissionVoucherGl(cv, lines, expenses) {
 
   const cash = cpRound(totalReleased + expSum);
   if (cv.cash_bank_account_id && cash) {
-    const [[c]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [cv.cash_bank_account_id]);
+    const c = await coaById(cv.cash_bank_account_id);
     if (c) {
       if (cash >= 0) rows.push({ account_code: c.account_code, account_name: c.account_name, debit: 0, credit: cash });
       else rows.push({ account_code: c.account_code, account_name: c.account_name, debit: cpRound(-cash), credit: 0 });
@@ -471,8 +536,8 @@ async function computeCommissionVoucherGl(cv, lines, expenses) {
 // -- so a future second tax code lands on its own account rather than silently on VAT on
 // Sales.
 async function computeDeliveryTicketGl(dt, lines) {
-  const [[arUnbilled]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '12101'");
-  const [[salesAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '30100'");
+  const arUnbilled = await coaByCode('12101');
+  const salesAcct = await coaByCode('30100');
   if (!arUnbilled || !salesAcct) return [];
 
   const rows = [];
@@ -492,16 +557,10 @@ async function computeDeliveryTicketGl(dt, lines) {
   for (const [code, amt] of taxTotals) {
     let acct = null;
     if (code) {
-      const [[t]] = await pool.query('SELECT tax_account_id FROM taxes WHERE code = ?', [code]);
-      if (t?.tax_account_id) {
-        const [[a]] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE id = ?', [t.tax_account_id]);
-        acct = a;
-      }
+      const t = await taxByCode(code);
+      if (t?.tax_account_id) acct = await coaById(t.tax_account_id);
     }
-    if (!acct) {
-      const [[fallback]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '21100'");
-      acct = fallback;
-    }
+    if (!acct) acct = await coaByCode('21100');
     if (acct) rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: 0, credit: Number(amt.toFixed(2)) });
   }
   return rows;
@@ -523,8 +582,8 @@ async function computeDeliveryTicketGl(dt, lines) {
 // genuinely separate sales vs. purchase tax codes, `taxes` would need its own second
 // account field for the purchase side -- not guessing that shape now.
 async function computeVendorBillGl(vb, lines) {
-  const [[apAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '20100'");
-  const [[vatAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '14300'");
+  const apAcct = await coaByCode('20100');
+  const vatAcct = await coaByCode('14300');
   if (!apAcct) return [];
 
   const rows = [];
@@ -558,7 +617,7 @@ async function computeInventoryAdjustmentGl(adj, lines) {
   }
   if (!itemAccountAmounts.size) return [];
 
-  const [itemAccts] = await pool.query('SELECT id, account_code, account_name FROM chart_of_accounts WHERE id IN (?)', [[...itemAccountAmounts.keys()]]);
+  const itemAccts = await coaByIds([...itemAccountAmounts.keys()]);
   const rows = [];
   for (const acct of itemAccts) {
     const amount = Number((itemAccountAmounts.get(acct.id) || 0).toFixed(2));
@@ -607,7 +666,7 @@ async function computeBillCreditGl(bc, lines) {
 
   const taxTotal = lines.reduce((s, l) => s + (Number(l.tax_amount) || 0), 0);
   if (taxTotal) {
-    const [[vatAcct]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '14300'");
+    const vatAcct = await coaByCode('14300');
     if (vatAcct) rows.push({ account_code: vatAcct.account_code, account_name: vatAcct.account_name, debit: 0, credit: Number(taxTotal.toFixed(2)) });
   }
   return rows;
@@ -619,6 +678,22 @@ async function computeBillCreditGl(bc, lines) {
 // the reports can never drift from what those tabs show -- no persisted ledger table,
 // computed fresh on every request. `toDate` is required (all 4 reports are "as of"
 // reports); `fromDate` is optional (Income Statement uses it for its YTD period).
+// Fetches a whole document type's lines in chunked `IN (...)` queries and groups them by
+// parent id, so each type costs a handful of queries instead of one per document. `sql` must
+// select the parent column and end in `IN (?)`. Chunked so a window holding tens of thousands
+// of documents doesn't build one enormous statement (or blow max_allowed_packet).
+async function linesByParent(sql, parentCol, ids, chunkSize = 1000) {
+  const byParent = new Map();
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const [rows] = await pool.query(sql, [ids.slice(i, i + chunkSize)]);
+    for (const r of rows) {
+      if (!byParent.has(r[parentCol])) byParent.set(r[parentCol], []);
+      byParent.get(r[parentCol]).push(r);
+    }
+  }
+  return byParent;
+}
+
 async function getPostedGlLines({ toDate, fromDate }) {
   const dateFilter = (col) => {
     const clauses = [`${col} <= ?`];
@@ -635,14 +710,21 @@ async function getPostedGlLines({ toDate, fromDate }) {
     }
   };
 
+  // Hold the reference-data snapshot open for the whole run (see top of file).
+  await beginRefRun();
+  try {
+
   // Sales Invoices
   {
     const { sql, params } = dateFilter('si.date_created');
     const [headers] = await pool.query(
       `SELECT si.* FROM sales_invoices si WHERE si.status != 'cancelled' AND ${sql}`, params
     );
+    const linesBy = await linesByParent(
+      'SELECT * FROM sales_invoice_lines WHERE sales_invoice_id IN (?)', 'sales_invoice_id',
+      headers.map((h) => h.id));
     for (const si of headers) {
-      const [lines] = await pool.query('SELECT * FROM sales_invoice_lines WHERE sales_invoice_id = ?', [si.id]);
+      const lines = linesBy.get(si.id) || [];
       const rows = await computeSalesInvoiceGl(si, lines);
       push(rows, {
         entry_date: si.date_created, source_type: 'sales_invoice', source_no: si.invoice_no, source_id: si.id, memo: si.memo || null,
@@ -665,13 +747,13 @@ async function getPostedGlLines({ toDate, fromDate }) {
        LEFT JOIN job_types jt ON jt.id = jo.job_type_id
        WHERE ab.status != 'cancelled' AND ${sql}`, params
     );
-    for (const ab of headers) {
-      const [lines] = await pool.query(
-        `SELECT abl.*, i.asset_account_id AS item_asset_account_id
+    const linesBy = await linesByParent(
+      `SELECT abl.*, i.asset_account_id AS item_asset_account_id
          FROM assembly_build_lines abl
          LEFT JOIN inventories i ON i.id = abl.item_id
-         WHERE abl.assembly_build_id = ?`, [ab.id]
-      );
+        WHERE abl.assembly_build_id IN (?)`, 'assembly_build_id', headers.map((h) => h.id));
+    for (const ab of headers) {
+      const lines = linesBy.get(ab.id) || [];
       const rows = await computeAssemblyBuildGl(pool, ab, lines);
       push(rows, {
         entry_date: ab.date_created, source_type: 'assembly_build', source_no: ab.ab_no, source_id: ab.id, memo: ab.memo || null,
@@ -694,16 +776,16 @@ async function getPostedGlLines({ toDate, fromDate }) {
                 WHERE so.id = del.sales_order_id LIMIT 1) AS dept_id
        FROM item_deliveries del WHERE del.status != 'cancelled' AND ${sql}`, params
     );
-    for (const d of headers) {
-      const [lines] = await pool.query(
-        `SELECT idl.*, jo.quantity AS jo_quantity,
-                jt.cogs_account_id, jt.asset_account_id,
-                (SELECT COALESCE(SUM(total_cost), 0) FROM job_order_processes WHERE job_order_id = jo.id) AS jo_total_cost
+    const linesBy = await linesByParent(
+      `SELECT idl.*, jo.quantity AS jo_quantity,
+              jt.cogs_account_id, jt.asset_account_id,
+              (SELECT COALESCE(SUM(total_cost), 0) FROM job_order_processes WHERE job_order_id = jo.id) AS jo_total_cost
          FROM item_delivery_lines idl
          LEFT JOIN job_orders jo ON jo.id = idl.job_order_id
          LEFT JOIN job_types jt ON jt.id = jo.job_type_id
-         WHERE idl.item_delivery_id = ?`, [d.id]
-      );
+        WHERE idl.item_delivery_id IN (?)`, 'item_delivery_id', headers.map((h) => h.id));
+    for (const d of headers) {
+      const lines = linesBy.get(d.id) || [];
       const rows = await computeItemDeliveryGl(lines);
       push(rows, {
         entry_date: d.date_created, source_type: 'item_delivery', source_no: d.delivery_no, source_id: d.id, memo: d.memo || null,
@@ -720,13 +802,13 @@ async function getPostedGlLines({ toDate, fromDate }) {
        JOIN transfer_orders t ON t.id = f.transfer_order_id
        WHERE t.status != 'cancelled' AND ${sql}`, params
     );
-    for (const f of headers) {
-      const [lines] = await pool.query(
-        `SELECT ifl.*, i.average_cost, i.asset_account_id
+    const linesBy = await linesByParent(
+      `SELECT ifl.*, i.average_cost, i.asset_account_id
          FROM item_fulfillment_lines ifl
          LEFT JOIN inventories i ON i.id = ifl.item_id
-         WHERE ifl.item_fulfillment_id = ?`, [f.id]
-      );
+        WHERE ifl.item_fulfillment_id IN (?)`, 'item_fulfillment_id', headers.map((h) => h.id));
+    for (const f of headers) {
+      const lines = linesBy.get(f.id) || [];
       const rows = await computeTransitGl(lines, { qtyField: 'qty_fulfilled', assetIsDebit: false });
       push(rows, {
         entry_date: f.date_created, source_type: 'item_fulfillment', source_no: f.fulfillment_no, source_id: f.id, memo: f.memo || null,
@@ -743,13 +825,13 @@ async function getPostedGlLines({ toDate, fromDate }) {
        JOIN transfer_orders t ON t.id = r.transfer_order_id
        WHERE t.status != 'cancelled' AND ${sql}`, params
     );
-    for (const r of headers) {
-      const [lines] = await pool.query(
-        `SELECT rl.*, i.average_cost, i.asset_account_id
+    const linesBy = await linesByParent(
+      `SELECT rl.*, i.average_cost, i.asset_account_id
          FROM item_receipt_lines rl
          LEFT JOIN inventories i ON i.id = rl.item_id
-         WHERE rl.item_receipt_id = ?`, [r.id]
-      );
+        WHERE rl.item_receipt_id IN (?)`, 'item_receipt_id', headers.map((h) => h.id));
+    for (const r of headers) {
+      const lines = linesBy.get(r.id) || [];
       const rows = await computeTransitGl(lines, { qtyField: 'qty_received', assetIsDebit: true });
       push(rows, {
         entry_date: r.date_created, source_type: 'item_receipt', source_no: r.receipt_no, source_id: r.id, memo: r.memo || null,
@@ -764,8 +846,11 @@ async function getPostedGlLines({ toDate, fromDate }) {
     const [headers] = await pool.query(
       `SELECT cp.* FROM customer_payments cp WHERE cp.status != 'voided' AND ${sql}`, params
     );
+    const linesBy = await linesByParent(
+      'SELECT * FROM customer_payment_lines WHERE customer_payment_id IN (?)', 'customer_payment_id',
+      headers.map((h) => h.id));
     for (const cp of headers) {
-      const [lines] = await pool.query('SELECT * FROM customer_payment_lines WHERE customer_payment_id = ?', [cp.id]);
+      const lines = linesBy.get(cp.id) || [];
       const rows = await computeCustomerPaymentGl(cp, lines);
       push(rows, {
         entry_date: cp.date_created, source_type: 'customer_payment', source_no: cp.customer_payment_no, source_id: cp.id, memo: cp.memo || null,
@@ -780,8 +865,11 @@ async function getPostedGlLines({ toDate, fromDate }) {
     const [headers] = await pool.query(
       `SELECT cm.* FROM credit_memos cm WHERE cm.status != 'voided' AND ${sql}`, params
     );
+    const linesBy = await linesByParent(
+      'SELECT * FROM credit_memo_lines WHERE credit_memo_id IN (?)', 'credit_memo_id',
+      headers.map((h) => h.id));
     for (const cm of headers) {
-      const [lines] = await pool.query('SELECT * FROM credit_memo_lines WHERE credit_memo_id = ?', [cm.id]);
+      const lines = linesBy.get(cm.id) || [];
       const rows = await computeCreditMemoGl(cm, lines);
       push(rows, {
         entry_date: cm.date_created, source_type: 'credit_memo', source_no: cm.credit_memo_no, source_id: cm.id, memo: cm.memo || null,
@@ -815,13 +903,12 @@ async function getPostedGlLines({ toDate, fromDate }) {
     if (tbl.length) {
       const { sql, params } = dateFilter('j.date_created');
       const [headers] = await pool.query(`SELECT j.* FROM journals j WHERE j.status <> 'void' AND ${sql}`, params);
-      for (const j of headers) {
-        const [lines] = await pool.query(
-          `SELECT jl.debit, jl.credit, jl.department_id, coa.account_code, coa.account_name
+      const linesBy = await linesByParent(
+        `SELECT jl.journal_id, jl.debit, jl.credit, jl.department_id, coa.account_code, coa.account_name
            FROM journal_lines jl LEFT JOIN chart_of_accounts coa ON coa.id = jl.account_id
-           WHERE jl.journal_id = ? ORDER BY jl.line_no`,
-          [j.id]
-        );
+          WHERE jl.journal_id IN (?) ORDER BY jl.line_no`, 'journal_id', headers.map((h) => h.id));
+      for (const j of headers) {
+        const lines = linesBy.get(j.id) || [];
         const rows = lines.map((l) => ({
           account_code: l.account_code, account_name: l.account_name,
           debit: Number(l.debit) || 0, credit: Number(l.credit) || 0, department_id: l.department_id || null,
@@ -842,20 +929,20 @@ async function getPostedGlLines({ toDate, fromDate }) {
         `SELECT c.*, coa.account_code AS bank_code, coa.account_name AS bank_name FROM cheques c
          LEFT JOIN chart_of_accounts coa ON coa.id = c.account_id WHERE c.status <> 'void' AND ${sql}`, params
       );
-      for (const c of headers) {
-        const [lines] = await pool.query(
-          `SELECT cl.amount, cl.department_id, coa.account_code, coa.account_name
+      const linesBy = await linesByParent(
+        `SELECT cl.cheque_id, cl.amount, cl.department_id, coa.account_code, coa.account_name
            FROM cheque_lines cl LEFT JOIN chart_of_accounts coa ON coa.id = cl.account_id
-           WHERE cl.cheque_id = ? ORDER BY cl.line_no`, [c.id]
-        );
+          WHERE cl.cheque_id IN (?) ORDER BY cl.line_no`, 'cheque_id', headers.map((h) => h.id));
+      for (const c of headers) {
+        const lines = linesBy.get(c.id) || [];
         const rows = lines.filter((l) => Number(l.amount)).map((l) => ({
           account_code: l.account_code, account_name: l.account_name, debit: Number(l.amount) || 0, credit: 0, department_id: l.department_id || null,
         }));
         const tax = Number(c.tax_amount) || 0;
         const wtax = Number(c.withholding_tax_amount) || 0;
         const total = Number(c.total_amount) || 0;
-        if (tax) { const [[v]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '14300'"); if (v) rows.push({ account_code: v.account_code, account_name: v.account_name, debit: tax, credit: 0 }); }
-        if (wtax) { const [[w]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '21402'"); if (w) rows.push({ account_code: w.account_code, account_name: w.account_name, debit: 0, credit: wtax }); }
+        if (tax) { const v = await coaByCode('14300'); if (v) rows.push({ account_code: v.account_code, account_name: v.account_name, debit: tax, credit: 0 }); }
+        if (wtax) { const w = await coaByCode('21402'); if (w) rows.push({ account_code: w.account_code, account_name: w.account_name, debit: 0, credit: wtax }); }
         if (total && c.bank_code) rows.push({ account_code: c.bank_code, account_name: c.bank_name, debit: 0, credit: total });
         push(rows, { entry_date: c.date_created, source_type: 'cheque', source_no: c.cheque_no, source_id: c.id, memo: c.memo || null, location_id: c.office_location_id || null });
       }
@@ -897,7 +984,7 @@ async function getPostedGlLines({ toDate, fromDate }) {
          LEFT JOIN chart_of_accounts coa ON coa.id = d.account_id WHERE d.status <> 'void' AND ${sql}`, params
       );
       if (headers.length) {
-        const [[uf]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '10006'");
+        const uf = await coaByCode('10006');
         for (const d of headers) {
           const amt = Number(d.total_amount) || 0;
           if (!amt || !d.account_code) continue;
@@ -919,8 +1006,8 @@ async function getPostedGlLines({ toDate, fromDate }) {
       const { sql, params } = dateFilter('f.date_created');
       const [headers] = await pool.query(`SELECT f.* FROM osr_fulfillments f WHERE f.status <> 'void' AND ${sql}`, params);
       if (headers.length) {
-        const [[dr]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '30504'");
-        const [[cr]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '15400'");
+        const dr = await coaByCode('30504');
+        const cr = await coaByCode('15400');
         for (const f of headers) {
           const amt = Number(f.total_amount) || 0;
           if (!amt) continue;
@@ -958,10 +1045,13 @@ async function getPostedGlLines({ toDate, fromDate }) {
     if (tbl.length) {
       const { sql, params } = dateFilter('cv.date_created');
       const [headers] = await pool.query(`SELECT cv.* FROM commission_vouchers cv WHERE cv.status != 'void' AND ${sql}`, params);
+      const cvIds = headers.map((h) => h.id);
+      const vlinesBy = await linesByParent(
+        'SELECT * FROM commission_voucher_lines WHERE commission_voucher_id IN (?)', 'commission_voucher_id', cvIds);
+      const vexpBy = await linesByParent(
+        'SELECT * FROM commission_voucher_expenses WHERE commission_voucher_id IN (?)', 'commission_voucher_id', cvIds);
       for (const cv of headers) {
-        const [vlines] = await pool.query('SELECT * FROM commission_voucher_lines WHERE commission_voucher_id = ?', [cv.id]);
-        const [vexp] = await pool.query('SELECT * FROM commission_voucher_expenses WHERE commission_voucher_id = ?', [cv.id]);
-        const rows = await computeCommissionVoucherGl(cv, vlines, vexp);
+        const rows = await computeCommissionVoucherGl(cv, vlinesBy.get(cv.id) || [], vexpBy.get(cv.id) || []);
         push(rows, {
           entry_date: cv.date_created, source_type: 'commission_voucher', source_no: cv.voucher_no,
           source_id: cv.id, memo: cv.memo || null, location_id: null, department_id: null,
@@ -981,8 +1071,11 @@ async function getPostedGlLines({ toDate, fromDate }) {
        JOIN sales_orders so ON so.id = dt.sales_order_id
        WHERE dt.status = 'open' AND ${sql}`, params
     );
+    const linesBy = await linesByParent(
+      'SELECT * FROM delivery_ticket_lines WHERE delivery_ticket_id IN (?)', 'delivery_ticket_id',
+      headers.map((h) => h.id));
     for (const dt of headers) {
-      const [lines] = await pool.query('SELECT * FROM delivery_ticket_lines WHERE delivery_ticket_id = ?', [dt.id]);
+      const lines = linesBy.get(dt.id) || [];
       const rows = await computeDeliveryTicketGl(dt, lines);
       push(rows, {
         entry_date: dt.date_created, source_type: 'delivery_ticket', source_no: dt.dt_no, source_id: dt.id, memo: dt.memo || null,
@@ -1020,14 +1113,14 @@ async function getPostedGlLines({ toDate, fromDate }) {
        LEFT JOIN chart_of_accounts coa ON coa.id = ia.adjustment_account_id
        WHERE ia.status = 'approved' AND ${sql}`, params
     );
-    for (const adj of headers) {
-      const [lines] = await pool.query(
-        `SELECT l.*, i.asset_account_id,
-                l.est_unit_cost / COALESCE(NULLIF(i.conversion_factor, 0), 1) AS est_unit_cost_base
+    const linesBy = await linesByParent(
+      `SELECT l.*, i.asset_account_id,
+              l.est_unit_cost / COALESCE(NULLIF(i.conversion_factor, 0), 1) AS est_unit_cost_base
          FROM inventory_adjustment_lines l
          LEFT JOIN inventories i ON i.id = l.item_id
-         WHERE l.inventory_adjustment_id = ?`, [adj.id]
-      );
+        WHERE l.inventory_adjustment_id IN (?)`, 'inventory_adjustment_id', headers.map((h) => h.id));
+    for (const adj of headers) {
+      const lines = linesBy.get(adj.id) || [];
       const rows = await computeInventoryAdjustmentGl(adj, lines);
       push(rows, {
         entry_date: adj.date_created, source_type: 'inventory_adjustment', source_no: adj.adjustment_no, source_id: adj.id, memo: adj.memo || null,
@@ -1046,13 +1139,13 @@ async function getPostedGlLines({ toDate, fromDate }) {
        LEFT JOIN chart_of_accounts apcoa ON apcoa.id = bc.ap_account_id
        WHERE ${sql}`, params
     );
-    for (const bc of headers) {
-      const [lines] = await pool.query(
-        `SELECT bcl.*, coa.account_code, coa.account_name
+    const linesBy = await linesByParent(
+      `SELECT bcl.*, coa.account_code, coa.account_name
          FROM bill_credit_lines bcl
          LEFT JOIN chart_of_accounts coa ON coa.id = bcl.account_id
-         WHERE bcl.bill_credit_id = ?`, [bc.id]
-      );
+        WHERE bcl.bill_credit_id IN (?)`, 'bill_credit_id', headers.map((h) => h.id));
+    for (const bc of headers) {
+      const lines = linesBy.get(bc.id) || [];
       const rows = await computeBillCreditGl(bc, lines);
       push(rows, {
         entry_date: bc.date_created, source_type: 'bill_credit', source_no: bc.bill_credit_no, source_id: bc.id, memo: bc.memo || null,
@@ -1062,6 +1155,9 @@ async function getPostedGlLines({ toDate, fromDate }) {
   }
 
   return out;
+  } finally {
+    endRefRun();
+  }
 }
 
 module.exports = {

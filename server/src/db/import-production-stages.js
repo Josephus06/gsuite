@@ -10,11 +10,16 @@
 //
 //   node src/db/import-production-stages.js --preset=sales3 --from=2026-01-01 --to=2026-07-31 --dry-run
 //   node src/db/import-production-stages.js --preset=sales3 --from=2026-01-01 --to=2026-07-31
+//   node src/db/import-production-stages.js --preset=all --from=2021-01-01 --to=2021-12-31
+//
+// VOID / CANCELLED builds, inspections and deliveries are skipped, never migrated.
 const pool = require('../db');
 require('dotenv').config();
+const { fetchWindow, isVoidOrCancelled } = require('./lib/liveWindow');
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
 const DRY_RUN = process.argv.includes('--dry-run');
+const REFRESH = process.argv.includes('--refresh');
 const DELIVERIES_ONLY = process.argv.includes('--deliveries-only'); // re-do only item deliveries
 function argVal(name, def) { const a = process.argv.find((x) => x.startsWith(`--${name}=`)); return a ? a.split('=')[1] : def; }
 const FROM = argVal('from', '2026-01-01');
@@ -33,7 +38,9 @@ const REP_PRESETS = {
   marketing: ['Jocelyn Ybañez', 'Ronel Parreño'],
   branches: ['ROSELYN P. TUNDAG', 'EUNICE EDAÑO GEYROZAGA', 'Cindy Marie Deniay_AYALA', 'Cindy Marie Deniay_SM', 'Dexter Bantilan', 'Alessa Pacinio', 'Precious Artista'],
 };
-const REPS = REP_PRESETS[argVal('preset', 'sales3')] || REP_PRESETS.sales3;
+const PRESET = argVal('preset', 'sales3');
+const ALL_REPS = PRESET === 'all'; // whole-company: every SO in the window, not one division
+const REPS = ALL_REPS ? [] : (REP_PRESETS[PRESET] || REP_PRESETS.sales3);
 const REP_NORM_SET = new Set(REPS.map(repNorm));
 
 async function login() {
@@ -44,7 +51,9 @@ async function apiOnce(token, ep, payload, ms = 60000) {
   const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), ms);
   try {
     const r = await fetch(`${SITE}/api/${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(payload), signal: ctl.signal });
-    clearTimeout(t); return await r.json();
+    // Clear the abort timer only after the body is read: headers can arrive and then the
+    // stream stall, and clearing on headers alone leaves that read with no timeout at all.
+    const j = await r.json(); clearTimeout(t); return j;
   } catch (e) { clearTimeout(t); throw new Error(`${ep} ${e.name === 'AbortError' ? 'timed out' : e.message}`); }
 }
 async function api(token, ep, payload, ms = 60000) {
@@ -64,7 +73,7 @@ async function mapWithConcurrency(items, limit, fn) {
 
 async function main() {
   console.log(`Local DB: ${process.env.DB_NAME} on ${process.env.DB_HOST}`);
-  console.log(`Preset: ${argVal('preset', 'sales3')} | window ${FROM}..${TO}`);
+  console.log(`Preset: ${PRESET}${ALL_REPS ? ' (every rep)' : ''} | window ${FROM}..${TO}`);
   console.log(DRY_RUN ? 'DRY RUN -- fetch + report only.\n' : 'APPLYING.\n');
 
   // Local lookups.
@@ -82,25 +91,26 @@ async function main() {
 
   const token = await login();
 
-  // Collect target SOs (rep preset + date window), with their live PK + cert JOs.
-  async function fetchPage(off) {
-    for (let a = 0; a < 5; a += 1) { const l = listRows(await api(token, 'get_sales_orders', { searchKey: '', viewAll: true, limit: 200, offset: off })); if (l.length) return l; await sleep(2000 * (a + 1)); }
-    return [];
-  }
+  // Collect target SOs (rep preset + date window), with their live PK + cert JOs. Reuses the
+  // same on-disk window cache import-sales.js built, so this doesn't re-page the live list.
+  const soRows = await fetchWindow(token, {
+    endpoint: 'get_sales_orders', from: FROM, to: TO, keyField: 'so_upk',
+    extra: { viewAll: true }, refresh: REFRESH, onProgress: (m) => console.log(m),
+  });
   const targetSos = [];
-  for (let off = 0; off < 80000; off += 200) {
-    const list = await fetchPage(off);
-    if (!list.length) break;
-    for (const so of list) {
-      const d = day(so.DateCreated_TransH);
-      if (d >= FROM && d <= TO && REP_NORM_SET.has(repNorm(so.Name_Empl))) targetSos.push({ soNo: so.so_upk, soPk: so.so_pk });
-    }
-    if (list.every((so) => day(so.DateCreated_TransH) < FROM)) break;
-    if (off % 4000 === 0) process.stdout.write(`  paged ${off}...\n`);
+  const seenSo = new Set();
+  for (const so of soRows) {
+    if (isVoidOrCancelled(so.Status_TransH)) continue;
+    if (!ALL_REPS && !REP_NORM_SET.has(repNorm(so.Name_Empl))) continue;
+    if (seenSo.has(so.so_upk)) continue;
+    seenSo.add(so.so_upk);
+    targetSos.push({ soNo: so.so_upk, soPk: so.so_pk });
   }
   console.log(`\n${targetSos.length} target SO(s).`);
 
   let abCount = 0, abLines = 0, qiCount = 0, qiLines = 0, delCount = 0, delLines = 0, fail = 0, processed = 0;
+  // Live documents skipped because their number is already taken locally by an unrelated record.
+  const numberCollisions = [];
 
   await mapWithConcurrency(targetSos, CONCURRENCY, async (t) => {
     try {
@@ -116,8 +126,11 @@ async function main() {
       for (const j of DELIVERIES_ONLY ? [] : cert) {
         const localJo = joByNo.get(j.UserPK_TransH);
         if (!localJo) continue;
-        const abs = rowsOf(await api(token, 'get_transactions', { where: { SysFK_TransHJO_TransH: j.SysPK_TransH, Module_TransH: 'ASSMBUILD' } }));
-        const qis = rowsOf(await api(token, 'get_transactions', { where: { SysFK_TransHJO_TransH: j.SysPK_TransH, Module_TransH: 'QI' } }));
+        // Voided / cancelled builds and inspections are dropped -- they never happened.
+        const abs = rowsOf(await api(token, 'get_transactions', { where: { SysFK_TransHJO_TransH: j.SysPK_TransH, Module_TransH: 'ASSMBUILD' } }))
+          .filter((ab) => !isVoidOrCancelled(ab.Status_TransH));
+        const qis = rowsOf(await api(token, 'get_transactions', { where: { SysFK_TransHJO_TransH: j.SysPK_TransH, Module_TransH: 'QI' } }))
+          .filter((qi) => !isVoidOrCancelled(qi.Status_TransH));
         if (!abs.length && !qis.length) continue;
 
         if (!DRY_RUN) {
@@ -137,6 +150,13 @@ async function main() {
 
             const localAbIds = [];
             for (const ab of abs) {
+              // ab_no/qi_no/delivery_no are UNIQUE. This job order's own builds were just
+              // deleted above, so a surviving row with the same number belongs to an unrelated
+              // record -- typically one the app created itself under its own low numbering,
+              // which collides with live's historic numbers. Skip just that document instead of
+              // letting the duplicate-key error roll back the whole order's production import.
+              const [[dupAb]] = await conn.query('SELECT id FROM assembly_builds WHERE ab_no = ? LIMIT 1', [ab.UserPK_TransH]);
+              if (dupAb) { numberCollisions.push(`AB ${ab.UserPK_TransH} (${localJo.job_order_no})`); continue; }
               const [r] = await conn.query(
                 `INSERT INTO assembly_builds (ab_no, job_order_id, date_created, quantity_built, total_amount, status, memo, created_by_user_id, passed_qty, rma_qty)
                  VALUES (?,?,?,?,?,?,?,?,?,?)`,
@@ -161,6 +181,8 @@ async function main() {
             abByJo.set(localJo.id, localAbIds);
 
             for (const qi of qis) {
+              const [[dupQi]] = await conn.query('SELECT id FROM quality_inspections WHERE qi_no = ? LIMIT 1', [qi.UserPK_TransH]);
+              if (dupQi) { numberCollisions.push(`QI ${qi.UserPK_TransH} (${localJo.job_order_no})`); continue; }
               const [r] = await conn.query(
                 `INSERT INTO quality_inspections (qi_no, job_order_id, date_created, memo, status, created_by_user_id)
                  VALUES (?,?,?,?,?,?)`,
@@ -182,7 +204,8 @@ async function main() {
       }
 
       // --- Per-SO: item deliveries ---
-      const dels = rowsOf(await api(token, 'get_transactions', { where: { SysFK_TransHSO_TransH: t.soPk, Module_TransH: 'ITEMD' } }));
+      const dels = rowsOf(await api(token, 'get_transactions', { where: { SysFK_TransHSO_TransH: t.soPk, Module_TransH: 'ITEMD' } }))
+        .filter((d) => !isVoidOrCancelled(d.Status_TransH));
       if (dels.length && !DRY_RUN) {
         const conn = await pool.getConnection();
         try {
@@ -191,6 +214,8 @@ async function main() {
           if (oldD.length) await conn.query('DELETE FROM item_delivery_lines WHERE item_delivery_id IN (?)', [oldD.map((d) => d.id)]);
           await conn.query('DELETE FROM item_deliveries WHERE sales_order_id = ?', [localSoId]);
           for (const del of dels) {
+            const [[dupD]] = await conn.query('SELECT id FROM item_deliveries WHERE delivery_no = ? LIMIT 1', [del.UserPK_TransH]);
+            if (dupD) { numberCollisions.push(`ID ${del.UserPK_TransH} (${t.soNo})`); continue; }
             const [r] = await conn.query(
               `INSERT INTO item_deliveries (delivery_no, sales_order_id, date_created, memo, status, created_by_user_id)
                VALUES (?,?,?,?,?,?)`,
@@ -212,12 +237,21 @@ async function main() {
           await conn.commit();
         } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
       } else if (dels.length) { delCount += dels.length; }
-    } catch (e) { fail += 1; }
+    } catch (e) {
+      // Don't swallow the reason -- a bare failure counter makes a reproducible per-order bug
+      // indistinguishable from a transient live-API blip.
+      fail += 1;
+      console.warn(`  !! ${t.soNo} failed: ${e.message}`);
+    }
     processed += 1;
     if (processed % 100 === 0) console.log(`  ...${processed}/${targetSos.length} SOs | AB ${abCount} QI ${qiCount} DEL ${delCount}`);
   });
 
   console.log(`\nDone. Assembly builds: ${abCount} (${abLines} lines) | QIs: ${qiCount} (${qiLines} lines) | Deliveries: ${delCount} (${delLines} lines). SO failures: ${fail}.`);
+  if (numberCollisions.length) {
+    console.log(`\n!! ${numberCollisions.length} live document(s) skipped -- their number is already used locally by an unrelated record:`);
+    console.log(`   ${numberCollisions.slice(0, 40).join(', ')}${numberCollisions.length > 40 ? ', ...' : ''}`);
+  }
 
   // Roll the built/inspected quantities up onto the Job Order header so completed JOs don't show
   // "Qty Built: 0" (which also hides the Sales Order's Bill button). Same logic as

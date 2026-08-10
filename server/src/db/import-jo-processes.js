@@ -12,12 +12,21 @@
 //   node src/db/import-jo-processes.js --dry-run     # discover + report, no writes
 //   node src/db/import-jo-processes.js               # backfill (skips already-populated JOs)
 //   node src/db/import-jo-processes.js --force       # re-fetch and replace every JO's processes
+//   node src/db/import-jo-processes.js --from=2021-01-01 --to=2021-12-31   # one year's JOs only
 const pool = require('../db');
 require('dotenv').config();
+const { fetchWindow } = require('./lib/liveWindow');
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
 const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE = process.argv.includes('--force');
+const REFRESH = process.argv.includes('--refresh');
+// Restrict to the JOs of sales orders dated in this window. Without it every local SO's live
+// PK has to be rediscovered by paging the whole list from offset 0 -- once several years are
+// migrated that is the entire table, on every run.
+const argValJ = (n, d) => { const a = process.argv.find((x) => x.startsWith(`--${n}=`)); return a ? a.split('=')[1] : d; };
+const FROM = argValJ('from', null);
+const TO = argValJ('to', null);
 // --missing-only: re-fetch just the JOs whose header enrichment (artist/location) is still
 // blank -- i.e. the ones a prior run's live-side rate-limiting dropped. Implies FORCE for
 // those JOs but leaves the already-enriched ones untouched, so a recovery run stays small.
@@ -39,7 +48,9 @@ async function api(token, ep, payload, ms = 60000) {
     const r = await fetch(`${SITE}/api/${ep}`, { method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload), signal: ctl.signal });
-    clearTimeout(t); return await r.json();
+    // Clear the abort timer only after the body is read: headers can arrive and then the
+    // stream stall, and clearing on headers alone leaves that read with no timeout at all.
+    const j = await r.json(); clearTimeout(t); return j;
   } catch (e) { clearTimeout(t); throw new Error(`${ep} ${e.name === 'AbortError' ? 'timed out' : e.message}`); }
 }
 const listRows = (res) => (Array.isArray(res?.data?.[0]) ? res.data[0] : (res?.data || []));
@@ -111,9 +122,14 @@ async function main() {
   }
 
   // --- local JOs (number -> id) and which SOs own them ---
-  const [jos] = await pool.query(
-    `SELECT jo.id, jo.job_order_no, so.sales_order_no
-       FROM job_orders jo JOIN sales_orders so ON so.id = jo.sales_order_id`);
+  const [jos] = FROM && TO
+    ? await pool.query(
+      `SELECT jo.id, jo.job_order_no, so.sales_order_no
+         FROM job_orders jo JOIN sales_orders so ON so.id = jo.sales_order_id
+        WHERE so.date_created BETWEEN ? AND ?`, [FROM, TO])
+    : await pool.query(
+      `SELECT jo.id, jo.job_order_no, so.sales_order_no
+         FROM job_orders jo JOIN sales_orders so ON so.id = jo.sales_order_id`);
   const joIdByNo = new Map(jos.map((j) => [j.job_order_no, j.id]));
   const localSoNos = new Set(jos.map((j) => j.sales_order_no));
   // JOs already populated (for resume)
@@ -145,18 +161,29 @@ async function main() {
   }
   const soPkByNo = new Map();
   const soGpByNo = new Map(); // so_upk -> live SO-level actual GP (gpRate)
-  for (let offset = 0; offset < 80000; offset += 200) {
-    const list = await fetchPage(offset);
-    if (offset === 0) console.log(`  first page rows: ${list.length}` + (list[0] ? `, sample so_upk=${list[0].so_upk}, has so_pk=${list[0].so_pk != null}` : ''));
-    if (!list.length) break;
+  const collect = (list) => {
     for (const so of list) {
       if (localSoNos.has(so.so_upk) && !soPkByNo.has(so.so_upk)) {
         soPkByNo.set(so.so_upk, so.so_pk ?? so.SysPK_TransH);
         if (so.gpRate != null && so.gpRate !== '') soGpByNo.set(so.so_upk, Number(so.gpRate));
       }
     }
-    if (soPkByNo.size >= localSoNos.size) break;
-    if (list.length < 200) break;
+  };
+  if (FROM && TO) {
+    // Windowed: binary-search straight to the window and reuse the cache the other importers built.
+    collect(await fetchWindow(token, {
+      endpoint: 'get_sales_orders', from: FROM, to: TO, keyField: 'so_upk',
+      extra: { viewAll: true }, refresh: REFRESH, onProgress: (m) => console.log(m),
+    }));
+  } else {
+    for (let offset = 0; offset < 80000; offset += 200) {
+      const list = await fetchPage(offset);
+      if (offset === 0) console.log(`  first page rows: ${list.length}` + (list[0] ? `, sample so_upk=${list[0].so_upk}, has so_pk=${list[0].so_pk != null}` : ''));
+      if (!list.length) break;
+      collect(list);
+      if (soPkByNo.size >= localSoNos.size) break;
+      if (list.length < 200) break;
+    }
   }
   console.log(`Resolved live PK for ${soPkByNo.size}/${localSoNos.size} local SO(s).`);
   if (soPkByNo.size === 0) { console.error('No SO PKs resolved -- live listing returned nothing usable. Aborting (nothing written).'); await pool.end(); process.exit(1); }

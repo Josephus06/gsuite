@@ -12,13 +12,17 @@
 // customers imported with the 4 reps' sales). Idempotent: re-running replaces a payment
 // matched by its number.
 //
+// VOIDED payments are skipped outright rather than imported with status 'voided'.
+//
 //   node src/db/import-customer-payments.js --from=2026-01-01 --to=2026-07-31 --dry-run
 //   node src/db/import-customer-payments.js --from=2026-01-01 --to=2026-07-31
 const pool = require('../db');
 require('dotenv').config();
+const { fetchWindow, isVoidOrCancelled } = require('./lib/liveWindow');
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
 const DRY_RUN = process.argv.includes('--dry-run');
+const REFRESH = process.argv.includes('--refresh');
 function argVal(name, def) {
   const a = process.argv.find((x) => x.startsWith(`--${name}=`));
   return a ? a.split('=')[1] : def;
@@ -38,17 +42,7 @@ async function login() {
   if (!b?.data?.token) throw new Error(`Login failed: ${b?.message}`);
   return b.data.token;
 }
-async function api(token, ep, payload, ms = 60000) {
-  const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), ms);
-  try {
-    const r = await fetch(`${SITE}/api/${ep}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(payload), signal: ctl.signal,
-    });
-    clearTimeout(t); return await r.json();
-  } catch (e) { clearTimeout(t); throw new Error(`${ep} ${e.name === 'AbortError' ? 'timed out' : e.message}`); }
-}
-const listRows = (res) => (Array.isArray(res.data?.[0]) ? res.data[0] : (res.data || []));
+// Paging + retries now live in lib/liveWindow.js (fetchWindow); this script only needs login.
 
 // Only import payments for customers we already have locally (the imported sales customers).
 const customerCache = new Map();
@@ -79,25 +73,25 @@ async function main() {
   const [locations] = await pool.query('SELECT id, location_name FROM locations');
   const locByName = new Map(locations.map((l) => [clean(l.location_name).toLowerCase(), l.id]));
 
-  // Paginate newest-first until past the window start.
+  // Pull the window's payments (binary-searched + cached on disk).
+  const rows = await fetchWindow(token, {
+    endpoint: 'get_customer_payments', from: FROM, to: TO, keyField: 'cp_pk',
+    refresh: REFRESH, onProgress: (m) => console.log(m),
+  });
   const payments = [];
-  let offset = 0, scanned = 0, skippedNoCustomer = 0;
-  while (offset < 60000) {
-    const list = listRows(await api(token, 'get_customer_payments', { searchKey: '', limit: 200, offset }));
-    if (!list.length) break;
-    for (const p of list) {
-      const d = day(p.DateCreated_TransH);
-      if (d < FROM || d > TO) continue;
-      scanned += 1;
-      const custId = await localCustomerId(p.Name_Cust);
-      if (!custId) { skippedNoCustomer += 1; continue; }
-      payments.push({ ...p, _customerId: custId });
-    }
-    if (list.every((p) => day(p.DateCreated_TransH) < FROM)) break;
-    offset += 200;
+  const seenNo = new Set();
+  let scanned = 0, skippedNoCustomer = 0, voidSkipped = 0;
+  for (const p of rows) {
+    if (isVoidOrCancelled(p.Status_TransH)) { voidSkipped += 1; continue; }
+    if (!p.cp_pk || seenNo.has(p.cp_pk)) continue; // one local payment per number
+    seenNo.add(p.cp_pk);
+    scanned += 1;
+    const custId = await localCustomerId(p.Name_Cust);
+    if (!custId) { skippedNoCustomer += 1; continue; }
+    payments.push({ ...p, _customerId: custId });
   }
-  console.log(`In ${FROM}..${TO}: ${scanned} payment(s) scanned, ${payments.length} for local customers ` +
-    `(${skippedNoCustomer} skipped -- customer not imported).`);
+  console.log(`In ${FROM}..${TO}: ${scanned} live payment(s) (${voidSkipped} void/cancelled skipped), ` +
+    `${payments.length} for local customers (${skippedNoCustomer} skipped -- customer not imported).`);
 
   if (DRY_RUN) {
     const total = payments.reduce((s, p) => s + num(p.TotalAmount_TransH), 0);

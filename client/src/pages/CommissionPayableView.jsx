@@ -56,6 +56,17 @@ export default function CommissionPayableView() {
   const canEdit = can('/commission-payables', 'can_edit');
   const isOpen = cp.status !== 'void';
 
+  // Mirrors the server's PUT guards: a payable that has been paid, or that a live Commission
+  // Voucher has already released against, backs a settlement -- recomputing it would strand those
+  // released amounts, so it must be reopened/voided first.
+  const releasedAgainst = (cp.vouchers || []).some((v) => v.status !== 'void');
+  const editBlockedReason = cp.status === 'paid' || Number(cp.amount_paid) > 0
+    ? 'Mark this Commission Payable unpaid before editing.'
+    : releasedAgainst
+      ? 'A Commission Voucher has already released against this payable -- void that voucher first.'
+      : null;
+  const isEditable = !editBlockedReason;
+
   const summary = [
     ['Quota', cp.quota], ['Weighted Sales', cp.weighted_sales], ['JO with Passing GP Rate', cp.passing_jos],
     ['Expected Commission', cp.expected_commission], ['Commissionable Amount', cp.commissionable_amount],
@@ -67,7 +78,14 @@ export default function CommissionPayableView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(-1)}>Back to Lists</button>
-          {canEdit && isOpen && <button className="btn btn-sm" disabled title="Editing a posted Commission Payable isn't implemented in this build -- void and re-generate instead">Edit</button>}
+          {canEdit && isOpen && (
+            <button
+              className="btn btn-sm"
+              disabled={!isEditable}
+              title={isEditable ? undefined : editBlockedReason}
+              onClick={() => navigate(`/commission-payables/${id}/edit`)}
+            >Edit</button>
+          )}
           {canEdit && isOpen && cp.status === 'unpaid' && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => handlePay(true)}>Mark Paid</button>}
           {canEdit && isOpen && cp.status === 'paid' && <button className="btn btn-sm" disabled={busy} onClick={() => handlePay(false)}>Mark Unpaid</button>}
           {canEdit && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}

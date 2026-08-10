@@ -9,14 +9,21 @@
 //        (a line's SysFK_LdgrInvtyPO_LdgrInvty = the PO line pk we stored as live_line_pk)
 //
 // Resumable (skips bills already imported by bill_no) + idempotent. Low concurrency.
+// VOID / CANCELLED bills are skipped, never migrated.
+//
 //   node src/db/import-vendor-bills.js --limit=100   (first 100 local POs)
+//   node src/db/import-vendor-bills.js --from=2021-01-01 --to=2021-12-31   (that year's POs only)
 //   node src/db/import-vendor-bills.js
 const pool = require('../db');
 require('dotenv').config();
+const { isVoidOrCancelled } = require('./lib/liveWindow');
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
 function argVal(name, def) { const a = process.argv.find((x) => x.startsWith(`--${name}=`)); return a ? a.split('=')[1] : def; }
 const LIMIT = argVal('limit', null) ? Number(argVal('limit', null)) : null;
+// Walk only the POs dated in this window (see import-purchasing-related.js).
+const FROM = argVal('from', null);
+const TO = argVal('to', null);
 const CONCURRENCY = 3;
 
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
@@ -37,7 +44,9 @@ async function api(token, ep, payload, ms = 60000) {
     const r = await fetch(`${SITE}/api/${ep}`, { method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload), signal: ctl.signal });
-    clearTimeout(t); return await r.json();
+    // Clear the abort timer only after the body is read: headers can arrive and then the
+    // stream stall, and clearing on headers alone leaves that read with no timeout at all.
+    const j = await r.json(); clearTimeout(t); return j;
   } catch (e) { clearTimeout(t); throw new Error(`${ep} ${e.name === 'AbortError' ? 'timed out' : e.message}`); }
 }
 async function apiRetry(token, ep, payload, attempts = 4) {
@@ -65,7 +74,9 @@ async function main() {
   console.log(`Local DB: ${process.env.DB_NAME} on ${process.env.DB_HOST}`);
   console.log(`Vendor Bills (PO-anchored)${LIMIT ? ` | LIMIT ${LIMIT} POs` : ''}\n`);
 
-  const [pos] = await pool.query('SELECT id, po_no, live_pk FROM purchase_orders WHERE live_pk IS NOT NULL');
+  const [pos] = FROM && TO
+    ? await pool.query('SELECT id, po_no, live_pk FROM purchase_orders WHERE live_pk IS NOT NULL AND date_created BETWEEN ? AND ?', [FROM, TO])
+    : await pool.query('SELECT id, po_no, live_pk FROM purchase_orders WHERE live_pk IS NOT NULL');
   const [plines] = await pool.query('SELECT id, live_line_pk, item_id FROM purchase_order_lines WHERE live_line_pk IS NOT NULL');
   const lineByLivePk = new Map(plines.map((l) => [l.live_line_pk, l]));
   const [sups] = await pool.query('SELECT id, name FROM suppliers');
@@ -81,11 +92,15 @@ async function main() {
   let done = 0, lineCount = 0, unmatched = 0, failed = 0, poDone = 0;
   await mapWithConcurrency(targets, CONCURRENCY, async (po) => {
     let bills;
-    try { bills = listRows(await apiRetry(token, 'get_transactions', { where: { Module_TransH: 'VENDORBILL', SysFK_TransHSL_TransH: po.live_pk } })); }
-    catch (e) { failed += 1; return; }
+    try {
+      bills = listRows(await apiRetry(token, 'get_transactions', { where: { Module_TransH: 'VENDORBILL', SysFK_TransHSL_TransH: po.live_pk } }))
+        .filter((b) => !isVoidOrCancelled(b.Status_TransH));
+    } catch (e) { failed += 1; return; }
 
     for (const vb of bills) {
+      // One local bill per number; claim it before the await so concurrent workers can't race.
       if (haveVB.has(vb.UserPK_TransH)) continue;
+      haveVB.add(vb.UserPK_TransH);
       let lines = [];
       try { lines = listRows(await apiRetry(token, 'get_transaction_ledger_invtys', { where: { SysFK_TransH_LdgrInvty: vb.SysPK_TransH } })); }
       catch (e) { /* header still worth keeping */ }
@@ -119,7 +134,6 @@ async function main() {
           n += 1;
         }
         await conn.commit();
-        haveVB.add(vb.UserPK_TransH);
         done += 1; lineCount += n;
       } catch (e) { await conn.rollback(); failed += 1; if (failed <= 5) console.error(`  [error] ${vb.UserPK_TransH}: ${e.message}`); }
       finally { conn.release(); }
