@@ -339,9 +339,17 @@ async function buildIncomeStatement(asOfDate, fromDateOverride, breakdown = 'tot
 // General Ledger: a flat per-account list (not the parent/child tree TB/BS use), each
 // row carrying its own `ledgers` array of the raw GL lines that produced its balance
 // (source type/no, date, memo, debit, credit, running balance) -- the real system
-// fetches this on-demand via a separate "Expand" click; ours includes it inline since
-// this clone's data volumes are small enough that the extra payload is trivial.
-async function buildGeneralLedger(asOfDate) {
+// fetches this on-demand via a separate "Expand" click; ours includes it inline.
+//
+// `fromDate` mirrors the "Period from" mode the other reports' Date filter offers. Unlike
+// the Income Statement (a flow report, where a period simply narrows the window), the GL
+// is a balance report -- so a period must NOT restart the running balance at zero or the
+// Balance column stops meaning "this account's balance". Instead, everything posted before
+// `fromDate` folds into a single opening balance and the period's own lines run on from
+// there, the standard opening/activity/closing shape. That also means period mode costs no
+// more than "as of" (the same single pass through asOfDate feeds both) while returning far
+// fewer ledger lines.
+async function buildGeneralLedger(asOfDate, fromDate = null) {
   const [coaRows, glLines] = await Promise.all([loadCoa(), getPostedGlLines({ toDate: asOfDate })]);
 
   const linesByCode = new Map();
@@ -359,20 +367,25 @@ async function buildGeneralLedger(asOfDate) {
       .sort((a, b) => new Date(a.entry_date) - new Date(b.entry_date) || a.source_id - b.source_id);
 
     let running = 0;
-    const ledgers = own.map((l) => {
+    let opening = 0;
+    const ledgers = [];
+    for (const l of own) {
       running += ((Number(l.debit) || 0) - (Number(l.credit) || 0)) * sign;
-      return {
+      // Pre-period activity is carried as the opening balance, not listed line by line.
+      if (fromDate && String(l.entry_date).slice(0, 10) < fromDate) { opening = running; continue; }
+      ledgers.push({
         entry_date: l.entry_date, source_type: l.source_type, source_no: l.source_no,
         memo: l.memo, debit: round2(l.debit), credit: round2(l.credit), balance: round2(running),
-      };
-    });
+      });
+    }
 
     rows.push({
       account_code: acct.account_code, account_name: acct.account_name,
-      normal_balance: acct.normal_balance, balance: round2(running), ledgers,
+      normal_balance: acct.normal_balance,
+      opening_balance: round2(opening), balance: round2(running), ledgers,
     });
   }
-  return { as_of: asOfDate, rows };
+  return { as_of: asOfDate, from_date: fromDate, rows };
 }
 
 // The party name shown per GL line in the drill-down (customer for sales-side sources).

@@ -91,7 +91,7 @@ router.get('/balance-sheet', requireAuth, requirePermission('/reports/balance-sh
 
 router.get('/general-ledger', requireAuth, requirePermission('/reports/general-ledger', 'can_view'), async (req, res, next) => {
   try {
-    res.json(await buildGeneralLedger(req.query.asOf || today()));
+    res.json(await buildGeneralLedger(req.query.asOf || today(), req.query.from || null));
   } catch (err) {
     next(err);
   }

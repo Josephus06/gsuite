@@ -16,11 +16,16 @@
 // Scoped to a rep preset + date window, matched to already-imported SOs. Idempotent by dt_no.
 //   node src/db/import-delivery-tickets.js --preset=sales2 --from=2026-01-01 --to=2026-07-31 --dry-run
 //   node src/db/import-delivery-tickets.js --preset=sales2 --from=2026-01-01 --to=2026-07-31
+//   node src/db/import-delivery-tickets.js --preset=all --from=2021-01-01 --to=2021-12-31
+//
+// VOID tickets are skipped outright (they used to import with status 'void').
 const pool = require('../db');
 require('dotenv').config();
+const { fetchWindow, isVoidOrCancelled } = require('./lib/liveWindow');
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
 const DRY_RUN = process.argv.includes('--dry-run');
+const REFRESH = process.argv.includes('--refresh');
 function argVal(name, def) { const a = process.argv.find((x) => x.startsWith(`--${name}=`)); return a ? a.split('=')[1] : def; }
 const FROM = argVal('from', '2026-01-01');
 const TO = argVal('to', '2026-07-31');
@@ -33,7 +38,9 @@ const REP_PRESETS = {
   marketing: ['Jocelyn Ybañez', 'Ronel Parreño'],
   branches: ['ROSELYN P. TUNDAG', 'EUNICE EDAÑO GEYROZAGA', 'Cindy Marie Deniay_AYALA', 'Cindy Marie Deniay_SM', 'Dexter Bantilan', 'Alessa Pacinio', 'Precious Artista'],
 };
-const REPS = REP_PRESETS[argVal('preset', 'sales2')] || REP_PRESETS.sales2;
+const PRESET = argVal('preset', 'sales2');
+const ALL_REPS = PRESET === 'all'; // scope to every locally-imported SO, not one division's
+const REPS = ALL_REPS ? [] : (REP_PRESETS[PRESET] || REP_PRESETS.sales2);
 const repNorm = (s) => (s || '').toString().replace(/\s+/g, ' ').trim().toLowerCase();
 const REP_NORM_SET = new Set(REPS.map(repNorm));
 
@@ -55,7 +62,9 @@ async function api(token, ep, payload, ms = 60000) {
     const r = await fetch(`${SITE}/api/${ep}`, { method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload), signal: ctl.signal });
-    clearTimeout(t); return await r.json();
+    // Clear the abort timer only after the body is read: headers can arrive and then the
+    // stream stall, and clearing on headers alone leaves that read with no timeout at all.
+    const j = await r.json(); clearTimeout(t); return j;
   } catch (e) { clearTimeout(t); throw new Error(`${ep} ${e.name === 'AbortError' ? 'timed out' : e.message}`); }
 }
 async function apiRetry(token, ep, payload, attempts = 4) {
@@ -81,21 +90,26 @@ function invoiceStatus(live) {
 
 async function main() {
   console.log(`Local DB: ${process.env.DB_NAME} on ${process.env.DB_HOST}`);
-  console.log(`Preset: ${argVal('preset', 'sales2')} | window ${FROM}..${TO}`);
+  console.log(`Preset: ${PRESET}${ALL_REPS ? ' (every local SO)' : ''} | window ${FROM}..${TO}`);
   console.log(DRY_RUN ? 'DRY RUN -- nothing written.\n' : 'APPLYING.\n');
 
-  // Local SOs for the preset reps -> their id + attribution fields, keyed by SO number.
-  const [sos] = await pool.query(
-    `SELECT so.id, so.sales_order_no, so.sales_rep_id, so.office_location_id,
-            (SELECT dept.id FROM sales_divisions sd
+  // Local SOs -> their id + attribution fields, keyed by SO number. With --preset=all the
+  // scope is every locally-imported order; otherwise just the preset reps'.
+  const deptSubquery = `(SELECT dept.id FROM sales_divisions sd
                JOIN departments dept ON REPLACE(REPLACE(LOWER(dept.name),' ',''),'-','') = REPLACE(REPLACE(LOWER(sd.name),' ',''),'-','')
-              WHERE sd.id = so.sales_division_id LIMIT 1) AS department_id
-       FROM sales_orders so
-       JOIN employees e ON e.id = so.sales_rep_id
-      WHERE LOWER(CONCAT(e.first_name, ' ', e.last_name)) IN (?)`,
-    [REPS.map((r) => r.toLowerCase())]);
+              WHERE sd.id = so.sales_division_id LIMIT 1) AS department_id`;
+  const [sos] = ALL_REPS
+    ? await pool.query(
+      `SELECT so.id, so.sales_order_no, so.sales_rep_id, so.office_location_id, ${deptSubquery}
+         FROM sales_orders so`)
+    : await pool.query(
+      `SELECT so.id, so.sales_order_no, so.sales_rep_id, so.office_location_id, ${deptSubquery}
+         FROM sales_orders so
+         JOIN employees e ON e.id = so.sales_rep_id
+        WHERE LOWER(CONCAT(e.first_name, ' ', e.last_name)) IN (?)`,
+      [REPS.map((r) => r.toLowerCase())]);
   const soByNo = new Map(sos.map((s) => [s.sales_order_no, s]));
-  console.log(`Local SOs for these reps: ${soByNo.size}`);
+  console.log(`Local SOs in scope: ${soByNo.size}`);
 
   // Resolve local item ids for DT lines (best-effort by item code / description).
   const [invs] = await pool.query('SELECT id, item_code, display_name, sales_description FROM inventories');
@@ -104,29 +118,27 @@ async function main() {
 
   const token = await login();
 
-  // Page delivery tickets newest-first; keep those whose SO we imported and whose rep is in
-  // the preset, within the window.
+  // Pull the window's delivery tickets (cached on disk) and keep those whose SO we imported.
+  const dtRows = await fetchWindow(token, {
+    endpoint: 'get_delivery_tickets', from: FROM, to: TO, keyField: 'dt_pk',
+    refresh: REFRESH, onProgress: (m) => console.log(m),
+  });
   const tickets = [];
   const seenDt = new Set();
-  for (let offset = 0; offset < 60000; offset += 200) {
-    let list;
-    try { list = listRows(await apiRetry(token, 'get_delivery_tickets', { searchKey: '', limit: 200, offset })); }
-    catch (e) { console.warn(`  page ${offset} failed: ${e.message}`); break; }
-    if (!list.length) break;
-    for (const dt of list) {
-      const d = day(dt.DateCreated_TransH);
-      if (d < FROM || d > TO) continue;
-      // Scope is the SO set (already rep+window filtered when it was imported). The DT's own
-      // Name_Empl can differ from the order's sales rep, so don't filter on it -- that would
-      // drop legitimate tickets for these SOs.
-      if (!soByNo.has(dt.sl_pk)) continue;
-      if (seenDt.has(dt.dt_pk)) continue;
-      seenDt.add(dt.dt_pk);
-      tickets.push(dt);
-    }
-    if (list.every((dt) => day(dt.DateCreated_TransH) < FROM)) break;
+  let voidSkipped = 0, noSo = 0;
+  for (const dt of dtRows) {
+    // A voided ticket never billed anything -- don't migrate it.
+    if (isVoidOrCancelled(dt.Status_TransH)) { voidSkipped += 1; continue; }
+    // Scope is the SO set (already rep+window filtered when it was imported). The DT's own
+    // Name_Empl can differ from the order's sales rep, so don't filter on it -- that would
+    // drop legitimate tickets for these SOs.
+    if (!soByNo.has(dt.sl_pk)) { noSo += 1; continue; }
+    if (seenDt.has(dt.dt_pk)) continue; // one local ticket per DT number
+    seenDt.add(dt.dt_pk);
+    tickets.push(dt);
   }
-  console.log(`Matched ${tickets.length} delivery ticket(s) for the preset reps in window.`);
+  console.log(`Matched ${tickets.length} delivery ticket(s) in window ` +
+    `(${voidSkipped} void/cancelled skipped, ${noSo} whose sales order isn't local).`);
 
   if (DRY_RUN) {
     const byStatus = {};
@@ -160,9 +172,12 @@ async function main() {
       try {
         const cand = listRows(await apiRetry(token, 'get_invoices', { searchKey: dt.dt_pk, limit: 20, offset: 0 }))
           .find((iv) => iv.sl_pk === dt.dt_pk);
-        if (cand) {
+        if (cand && !isVoidOrCancelled(cand.Status_TransH)) {
           const det = await apiRetry(token, 'get_invoice', { pk: cand.SysPK_TransH });
-          convertedInvoice = { no: cand.invc_pk, header: (det?.data?.[0] || cand), lines: Array.isArray(det?.data?.[1]) ? det.data[1] : [] };
+          const header = det?.data?.[0] || cand;
+          if (!isVoidOrCancelled(header.Status_TransH)) {
+            convertedInvoice = { no: cand.invc_pk, header, lines: Array.isArray(det?.data?.[1]) ? det.data[1] : [] };
+          }
         }
       } catch (e) { /* fall through: DT header still records the billing */ }
       if (!convertedInvoice) convNoInvoice += 1;

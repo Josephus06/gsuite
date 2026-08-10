@@ -266,6 +266,7 @@ function App() {
         <Route path="/manage-accounting-period" element={<ManageAccountingPeriod />} />
         <Route path="/commission-payables" element={<CommissionPayables />} />
         <Route path="/commission-payables/new" element={<CommissionPayableEdit />} />
+        <Route path="/commission-payables/:id/edit" element={<CommissionPayableEdit />} />
         <Route path="/commission-payables/:id" element={<CommissionPayableView />} />
         <Route path="/commission-vouchers" element={<CommissionVouchers />} />
         <Route path="/commission-vouchers/new" element={<CommissionVoucherEdit />} />

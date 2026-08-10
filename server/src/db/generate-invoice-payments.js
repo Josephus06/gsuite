@@ -15,10 +15,17 @@
 //
 //   node src/db/generate-invoice-payments.js --dry-run
 //   node src/db/generate-invoice-payments.js
+//   node src/db/generate-invoice-payments.js --all-reps --from=2021-01-01 --to=2021-12-31
 const pool = require('../db');
 require('dotenv').config();
 
 const DRY_RUN = process.argv.includes('--dry-run');
+const argVal = (n, d) => { const a = process.argv.find((x) => x.startsWith(`--${n}=`)); return a ? a.split('=')[1] : d; };
+// The REP_IDS list below only covers the divisions migrated one at a time. A whole-year,
+// whole-company migration has no such list -- use --all-reps so no invoice is silently skipped.
+const ALL_REPS = process.argv.includes('--all-reps');
+const FROM = argVal('from', null);
+const TO = argVal('to', null);
 // Sales-1: Catherine(5), Arjie(7), Jocel(8), Michelle(9).
 // Sales-3: Vanessa(69), Jerome(132), Paul(240), Margie(256), Nicole(269).
 // Sales-2: Nina(106), Arlene(251), Glenn(266), Jessa(188), Katherine(243).
@@ -35,16 +42,23 @@ async function main() {
   const [[deposit]] = await pool.query('SELECT id FROM chart_of_accounts WHERE account_code = ? LIMIT 1', [DEPOSIT_ACCOUNT_CODE]);
   const [[cashMethod]] = await pool.query("SELECT id FROM payment_methods WHERE name = 'CASH' LIMIT 1");
 
+  const where = ["si.status <> 'cancelled'", '(si.gross_amount - si.amount_due) > 0.005'];
+  const params = [];
+  if (!ALL_REPS) { where.push('so.sales_rep_id IN (?)'); params.push(REP_IDS); }
+  // Scope by the SALES ORDER's date, not the invoice's: an order from late in the window is
+  // routinely billed after it closes, and filtering on the invoice date would leave those
+  // orders' settlements ungenerated.
+  if (FROM && TO) { where.push('so.date_created BETWEEN ? AND ?'); params.push(FROM, TO); }
   const [invoices] = await pool.query(
     `SELECT si.id, si.invoice_no, si.date_created, si.gross_amount, si.amount_due,
             so.customer_id, si.office_location_id
      FROM sales_invoices si
      JOIN sales_orders so ON so.id = si.sales_order_id
-     WHERE so.sales_rep_id IN (?) AND si.status <> 'cancelled'
-       AND (si.gross_amount - si.amount_due) > 0.005`,
-    [REP_IDS]
+     WHERE ${where.join(' AND ')}`,
+    params
   );
-  console.log(`${invoices.length} paid invoice(s) to record a payment for.`);
+  console.log(`${invoices.length} paid invoice(s) to record a payment for` +
+    `${ALL_REPS ? ' (all reps)' : ` (${REP_IDS.length} preset reps)`}${FROM && TO ? ` in ${FROM}..${TO}` : ''}.`);
 
   if (DRY_RUN) {
     const total = invoices.reduce((s, i) => s + (Number(i.gross_amount) - Number(i.amount_due)), 0);

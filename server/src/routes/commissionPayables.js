@@ -317,6 +317,91 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   } finally { conn.release(); }
 });
 
+// Edit an existing payable: re-pick the commission month / date / memo and recompute. The employee
+// is fixed once raised -- retargeting a payable at someone else is a different document, so change
+// it by voiding and re-generating. Only an untouched payable can be edited: once a Commission
+// Voucher has released against it, or it has been marked paid, the stored figures back a settlement
+// and changing them would strand the released amounts.
+router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const cpId = Number(req.params.id);
+    const [[existing]] = await conn.query('SELECT * FROM commission_payables WHERE id = ?', [cpId]);
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+
+    const meta = await getUserMeta(req.user.id);
+    if (!meta.isAdmin && Number(existing.employee_id) !== Number(meta.employeeId)) {
+      return res.status(403).json({ error: 'You can only edit your own commission payables.' });
+    }
+    if (existing.status === 'void') return res.status(409).json({ error: 'A void Commission Payable cannot be edited.' });
+    if (existing.status === 'paid' || round2(existing.amount_paid) > 0) {
+      return res.status(409).json({ error: 'This Commission Payable has been paid -- mark it unpaid before editing.' });
+    }
+    const [vtbl] = await conn.query("SHOW TABLES LIKE 'commission_voucher_lines'");
+    if (vtbl.length) {
+      const [[used]] = await conn.query(
+        `SELECT COUNT(*) AS c FROM commission_voucher_lines cvl
+         JOIN commission_vouchers cv ON cv.id = cvl.commission_voucher_id
+         WHERE cvl.commission_payable_id = ? AND cv.status <> 'void'`,
+        [cpId]
+      );
+      if (used.c > 0) {
+        return res.status(409).json({ error: 'A Commission Voucher has already released against this payable -- void that voucher first.' });
+      }
+    }
+
+    const { date_created: dateCreated, month, memo } = req.body;
+    const computed = await computePayable(existing.employee_id, month, month);
+    if (computed.error) return res.status(400).json({ error: computed.error });
+
+    // Both the period it currently sits in and the one it is moving to must be open.
+    await assertPeriodOpen(existing.date_created, 'other_gl', conn);
+    await assertPeriodOpen(dateCreated || existing.date_created, 'other_gl', conn);
+
+    const ctx = await resolveEmployeeContext(existing.employee_id);
+    const t = computed.totals;
+    const periodFrom = computed.lines[0].line_month;
+    const periodTo = computed.lines[computed.lines.length - 1].line_month;
+
+    await conn.beginTransaction();
+    await conn.query(
+      `UPDATE commission_payables SET date_created = ?, office_location_id = ?, department_id = ?,
+              period_from = ?, period_to = ?, quota = ?, weighted_sales = ?, passing_jos = ?,
+              expected_commission = ?, commissionable_amount = ?, memo = ?, updated_at = NOW()
+       WHERE id = ?`,
+      [
+        dateCreated || existing.date_created, ctx?.office_location?.id || null, computed.department_id || null,
+        periodFrom, periodTo, t.quota, t.weighted_sales, t.passing_jos, t.expected_commission,
+        t.commissionable_amount, memo || null, cpId,
+      ]
+    );
+    // Lines are wholly derived from the recomputed month range -- replace rather than reconcile.
+    await conn.query('DELETE FROM commission_payable_lines WHERE commission_payable_id = ?', [cpId]);
+    for (const l of computed.lines) {
+      await conn.query(
+        `INSERT INTO commission_payable_lines (commission_payable_id, line_month, quota, weighted, passing_jos, expected, confirmed, released, commission)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [cpId, l.line_month, l.quota, l.weighted, l.passing_jos, l.expected, l.confirmed, l.released, l.commission]
+      );
+    }
+    await logAudit(conn, {
+      cpId, userId: req.user.id, eventType: 'Updated', fieldName: 'commissionable_amount',
+      oldValue: existing.commissionable_amount, newValue: t.commissionable_amount,
+    });
+    if (String(existing.period_from) !== String(periodFrom)) {
+      await logAudit(conn, { cpId, userId: req.user.id, eventType: 'Updated', fieldName: 'period_from', oldValue: existing.period_from, newValue: periodFrom });
+    }
+    await conn.commit();
+
+    const [[row]] = await pool.query('SELECT * FROM commission_payables WHERE id = ?', [cpId]);
+    res.json(row);
+  } catch (err) {
+    await conn.rollback();
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  } finally { conn.release(); }
+});
+
 // Mark paid / unpaid. Paid sets amount_paid to the commissionable amount, matching the live
 // UNPAID -> PAID transition.
 router.put('/:id/pay', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {

@@ -14,12 +14,30 @@
 //
 //   node src/db/import-sales.js --from=2026-01-01 --to=2026-06-30 --dry-run
 //   node src/db/import-sales.js --from=2026-01-01 --to=2026-06-30
+//   node src/db/import-sales.js --preset=all --from=2021-01-01 --to=2021-12-31   (whole year, every rep)
 // Defaults to July 2026 if --from/--to are omitted.
+//
+// VOID / CANCELLED sales orders and invoices are never migrated -- they are skipped outright
+// rather than imported with a 'cancelled' status.
 const pool = require('../db');
 require('dotenv').config();
+const { fetchWindow, isVoidOrCancelled } = require('./lib/liveWindow');
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
 const DRY_RUN = process.argv.includes('--dry-run');
+const REFRESH = process.argv.includes('--refresh'); // ignore the on-disk live-window cache
+// Recovery mode: leave already-imported sales orders completely alone and only add invoices
+// they are missing. Needed because the normal path replaces the order wholesale, which a
+// foreign key blocks once the order has production records (assembly builds reference its job
+// order processes). Those orders would otherwise never pick up an invoice cut after their
+// original import.
+const INVOICES_ONLY = process.argv.includes('--invoices-only');
+// A handful of historic orders reference a customer that has since been deleted on live, so
+// Name_Cust comes back null and the order can't satisfy the NOT NULL customer_id. With this
+// flag they are imported against a clearly-labelled placeholder instead of being dropped --
+// the name makes the source defect obvious wherever the order surfaces in reports.
+const PLACEHOLDER_CUSTOMER = process.argv.includes('--placeholder-customer');
+const PLACEHOLDER_CUSTOMER_NAME = '(Unknown - live customer record deleted)';
 function argVal(name, def) {
   const a = process.argv.find((x) => x.startsWith(`--${name}=`));
   return a ? a.split('=')[1] : def;
@@ -52,9 +70,19 @@ const REP_PRESETS = {
   // in whichever branch department live records for it.
   branches: ['ROSELYN P. TUNDAG', 'EUNICE EDAÑO GEYROZAGA', 'Cindy Marie Deniay_AYALA', 'Cindy Marie Deniay_SM', 'Dexter Bantilan', 'Alessa Pacinio', 'Precious Artista'],
 };
-const REPS = REP_PRESETS[argVal('preset', 'sales1')] || REP_PRESETS.sales1;
+// --preset=all imports EVERY rep's orders in the window (whole-company migration of a year)
+// instead of one division's. Reps with no local employee are created on the fly, so nothing
+// is silently dropped.
+const PRESET = argVal('preset', 'sales1');
+const ALL_REPS = PRESET === 'all';
+const REPS = ALL_REPS ? [] : (REP_PRESETS[PRESET] || REP_PRESETS.sales1);
 const repNorm = (s) => (s || '').toString().replace(/\s+/g, ' ').trim().toLowerCase();
 const REP_NORM_SET = new Set(REPS.map(repNorm));
+// Invoices for a window's orders are often cut after the window closes (a December order
+// billed in January). Index invoices out to this date so those orders don't look unbilled.
+const INVOICE_TO = argVal('invoice-to', (() => {
+  const d = new Date(`${TO}T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() + 6); return d.toISOString().slice(0, 10);
+})());
 
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
 // Live dimension fields can be "-" (not applicable); only a real number goes into a
@@ -109,7 +137,9 @@ async function apiOnce(token, ep, payload, ms = 90000) {
       method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload), signal: ctl.signal,
     });
-    clearTimeout(t); return await r.json();
+    // Clear the abort timer only after the body is read: headers can arrive and then the
+    // stream stall, and clearing on headers alone leaves that read with no timeout at all.
+    const j = await r.json(); clearTimeout(t); return j;
   } catch (e) { clearTimeout(t); throw new Error(`${ep} ${e.name === 'AbortError' ? 'timed out' : e.message}`); }
 }
 // The live server intermittently times out; retry with backoff before giving up.
@@ -125,10 +155,15 @@ const listRows = (res) => (Array.isArray(res.data?.[0]) ? res.data[0] : (res.dat
 
 // ---- local FK resolvers (cached; create-on-miss per the chosen policy) ----
 const cache = { customers: new Map(), jobTypes: new Map(), divisions: new Map(), reps: new Map() };
-const stats = { customersCreated: 0, jobTypesCreated: 0, divisionsCreated: 0, jobTypesMissingGp: [] };
+const stats = { customersCreated: 0, jobTypesCreated: 0, divisionsCreated: 0, repsCreated: 0, placeholderCustomerUsed: 0, jobTypesMissingGp: [] };
 
 async function resolveCustomer(name) {
-  const key = clean(name).toLowerCase();
+  let key = clean(name).toLowerCase();
+  if (!key && PLACEHOLDER_CUSTOMER) {
+    name = PLACEHOLDER_CUSTOMER_NAME;
+    key = name.toLowerCase();
+    stats.placeholderCustomerUsed += 1;
+  }
   if (!key) return null;
   if (cache.customers.has(key)) return cache.customers.get(key);
   const [[row]] = await pool.query('SELECT id FROM customers WHERE LOWER(name) = ? LIMIT 1', [key]);
@@ -191,13 +226,31 @@ async function resolveDepartment(name) {
   cache.departments.set(key, id);
   return id;
 }
-async function resolveRep(name) {
+async function resolveRep(name, createIfMissing = false) {
   const key = clean(name).toLowerCase();
+  if (!key) return null;
   if (cache.reps.has(key)) return cache.reps.get(key);
   const [[row]] = await pool.query(
     "SELECT id FROM employees WHERE LOWER(CONCAT(first_name,' ',last_name)) = ? LIMIT 1", [key]
   );
-  const id = row ? row.id : null;
+  let id = row ? row.id : null;
+  // Historic years contain reps who have since left and are gone from the live employee
+  // directory, so import-all-employees.js can't supply them. Create a minimal inactive
+  // record rather than dropping their sales orders.
+  if (!id && createIfMissing && !DRY_RUN) {
+    const full = clean(name);
+    const parts = full.split(' ').filter(Boolean);
+    // employee_code is UNIQUE -- take the next free HIST-#### rather than a timestamp, which
+    // two reps resolved in the same millisecond would collide on.
+    const [[mx]] = await pool.query(
+      "SELECT COALESCE(MAX(CAST(SUBSTRING(employee_code,6) AS UNSIGNED)),0)+1 AS n FROM employees WHERE employee_code LIKE 'HIST-%'");
+    const [r] = await pool.query(
+      'INSERT INTO employees (employee_code, first_name, last_name, is_active) VALUES (?,?,?,0)',
+      [`HIST-${String(mx.n).padStart(4, '0')}`, parts[0] || full, parts.slice(1).join(' ') || '-']
+    );
+    id = r.insertId;
+    stats.repsCreated += 1;
+  }
   cache.reps.set(key, id);
   return id;
 }
@@ -252,7 +305,8 @@ async function main() {
   const [[vat]] = await pool.query("SELECT id, code FROM taxes WHERE code = 'VAT12' LIMIT 1");
   const [[headOffice]] = await pool.query("SELECT id FROM locations WHERE location_name LIKE 'Head Office%' LIMIT 1");
 
-  // Confirm the reps exist locally; index their ids by normalized name.
+  // Confirm the preset's reps exist locally; index their ids by normalized name. With
+  // --preset=all the rep is resolved per sales order instead (created on miss).
   const repIdByNorm = new Map();
   for (const name of REPS) {
     const id = await resolveRep(name);
@@ -260,64 +314,125 @@ async function main() {
     if (!id) console.warn(`!! Local employee not found for "${name}" -- their SOs will be skipped.`);
   }
 
-  // 1) Collect the 4 reps' July SOs (paginate newest-first until past July).
-  // The list is newest-first; scan back until we've passed the window's start. The cap is
-  // a safety backstop -- the early-stop below is what normally ends it (a wide window like
-  // 6 months means scanning many pages of all-rep orders to collect just the 4 reps').
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  async function fetchSoPage(off) {
-    for (let a = 0; a < 5; a += 1) {
-      const list = listRows(await api(token, 'get_sales_orders', { searchKey: '', viewAll: true, limit: 200, offset: off }));
-      if (list.length) return list;
-      await sleep(2000 * (a + 1)); // transient empty page -> retry before treating as end
-    }
-    return [];
-  }
+  // 1) Collect the window's sales orders. fetchWindow binary-searches to the window instead of
+  // paging from offset 0 (2021 starts around offset 70,000) and caches the raw rows on disk.
+  const soRows = await fetchWindow(token, {
+    endpoint: 'get_sales_orders', from: FROM, to: TO, keyField: 'so_upk',
+    extra: { viewAll: true }, refresh: REFRESH, onProgress: (m) => console.log(m),
+  });
+  let voidSkipped = 0;
   const salesOrders = [];
-  let offset = 0;
-  while (offset < 40000) {
-    const list = await fetchSoPage(offset);
-    if (!list.length) break;
-    for (const so of list) {
-      const d = day(so.DateCreated_TransH);
-      if (!REP_NORM_SET.has(repNorm(so.Name_Empl))) continue;
-      // With --only, take just the listed SOs (any date in the scan); otherwise the date window.
-      if (ONLY.size ? ONLY.has(so.so_upk) : (d >= FROM && d <= TO)) salesOrders.push(so);
-    }
-    if (list.every((so) => day(so.DateCreated_TransH) < FROM)) break;
-    offset += 200;
+  const seenSoNo = new Set();
+  for (const so of soRows) {
+    // --only narrows to specific orders; pass a --from/--to that covers their dates.
+    if (ONLY.size && !ONLY.has(so.so_upk)) continue;
+    // Never migrate voided / cancelled orders.
+    if (isVoidOrCancelled(so.Status_TransH)) { voidSkipped += 1; continue; }
+    if (!ALL_REPS && !REP_NORM_SET.has(repNorm(so.Name_Empl))) continue;
+    // One local record per document number, even if live hands us the row twice.
+    if (seenSoNo.has(so.so_upk)) continue;
+    seenSoNo.add(so.so_upk);
+    salesOrders.push(so);
   }
   console.log(ONLY.size
     ? `Found ${salesOrders.length}/${ONLY.size} requested SO(s) for re-sync.`
-    : `Found ${salesOrders.length} sales order(s) for the 4 reps in ${FROM}..${TO}.`);
+    : `Found ${salesOrders.length} sales order(s) in ${FROM}..${TO} for ${ALL_REPS ? 'ALL reps' : `preset ${PRESET}`} ` +
+      `(${voidSkipped} void/cancelled skipped).`);
 
-  // 2) Index invoices by SO number. An invoice for a window SO may be billed any time from
-  // the window start onward, so index everything dated >= FROM (extra invoices are just
-  // ignored when their SO isn't in the import set).
+  // 2) Index invoices by SO number, out to INVOICE_TO so orders billed after the window still
+  // get their invoice. On the invoice LIST the SO reference lives in sl_pk (e.g. "SO-70399")
+  // and the invoice number in invc_pk -- the list uses different field names than the detail.
+  const invRows = await fetchWindow(token, {
+    endpoint: 'get_invoices', from: FROM, to: INVOICE_TO, keyField: 'invc_pk',
+    refresh: REFRESH, onProgress: (m) => console.log(m),
+  });
   const invoicesBySo = new Map();
-  offset = 0;
-  while (offset < 40000) {
-    const list = listRows(await api(token, 'get_invoices', { searchKey: '', limit: 200, offset }));
-    if (!list.length) break;
-    for (const iv of list) {
-      if (day(iv.DateCreated_TransH) < FROM) continue;
-      // On the invoice LIST the SO reference lives in sl_pk (e.g. "SO-70399") and the
-      // invoice number in invc_pk -- the list uses different field names than the detail.
-      const soNo = iv.sl_pk;
-      if (!soNo) continue;
-      if (!invoicesBySo.has(soNo)) invoicesBySo.set(soNo, []);
-      invoicesBySo.get(soNo).push(iv);
-    }
-    if (list.every((iv) => day(iv.DateCreated_TransH) < FROM)) break;
-    offset += 200;
+  let voidInvoices = 0;
+  for (const iv of invRows) {
+    if (isVoidOrCancelled(iv.Status_TransH)) { voidInvoices += 1; continue; }
+    const soNo = iv.sl_pk;
+    if (!soNo) continue;
+    if (!invoicesBySo.has(soNo)) invoicesBySo.set(soNo, []);
+    invoicesBySo.get(soNo).push(iv);
   }
-  console.log(`Indexed invoices for ${invoicesBySo.size} sales order(s).\n`);
+  console.log(`Indexed invoices (${FROM}..${INVOICE_TO}) for ${invoicesBySo.size} sales order(s); ${voidInvoices} void/cancelled skipped.\n`);
 
   let doneSo = 0, doneLines = 0, doneJos = 0, doneInvoices = 0, skipped = 0;
+  const startedAt = Date.now();
+  let seen = 0;
+
+  // ---- recovery mode: add only the invoices an already-imported order is missing ----
+  if (INVOICES_ONLY) {
+    let added = 0, touched = 0, noLocal = 0;
+    for (const so of salesOrders) {
+      const wanted = invoicesBySo.get(so.so_upk) || [];
+      if (!wanted.length) continue;
+      const [[local]] = await pool.query(
+        `SELECT so.id, so.sales_rep_id, so.office_location_id,
+                (SELECT d.id FROM sales_divisions sd
+                   JOIN departments d ON REPLACE(REPLACE(LOWER(d.name),' ',''),'-','') = REPLACE(REPLACE(LOWER(sd.name),' ',''),'-','')
+                  WHERE sd.id = so.sales_division_id LIMIT 1) AS department_id
+           FROM sales_orders so WHERE so.sales_order_no = ?`, [so.so_upk]);
+      if (!local) { noLocal += 1; continue; }
+      for (const ivHead of wanted) {
+        const [[dup]] = await pool.query('SELECT id FROM sales_invoices WHERE invoice_no = ?', [ivHead.invc_pk]);
+        if (dup) continue;
+        const inv = await api(token, 'get_invoice', { pk: ivHead.SysPK_TransH });
+        const h = inv.data?.[0] || ivHead;
+        if (isVoidOrCancelled(h.Status_TransH)) continue;
+        if (DRY_RUN) { added += 1; continue; }
+        const conn = await pool.getConnection();
+        try {
+          await conn.beginTransaction();
+          const [invRes] = await conn.query(
+            `INSERT INTO sales_invoices (invoice_no, sales_order_id, date_created, date_due, term,
+               bs_si_no, po_no, memo, department_id, subtotal,
+               net_of_tax, tax_amount, gross_amount, amount_due, status, sales_rep_id, office_location_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [ivHead.invc_pk, local.id, h.DateCreated_TransH || so.DateCreated_TransH, h.DateDue_TransH || null,
+              clean(h.Term_TransH), trunc(h.ReferrenceNO_TransH, 60), trunc(h.PONo_TransH, 60), trunc(h.Memo_TransH, 500),
+              local.department_id, num(h.SubTotalVatEx_TransH), num(h.SubTotalVatEx_TransH), num(h.TaxAmount_TransH),
+              num(h.TotalAmount_TransH), num(h.AmountDue_TransH), invoiceStatus(h.Status_TransH),
+              local.sales_rep_id, local.office_location_id]);
+          for (const il of (inv.data?.[1] || [])) {
+            await conn.query(
+              `INSERT INTO sales_invoice_lines (sales_invoice_id, job_order_id, description, quantity, units,
+                 price_per_unit, subtotal, net_of_tax, tax_code, tax_amount, gross_amount)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [invRes.insertId, null, clean(il.DisplayDescription_LdgrInvty), num(il.Qty_LdgrInvty),
+                il.UnitOfMeasure_LdgrInvty || null, num(il.Price_LdgrInvty), num(il.SubTotalAmountOut_LdgrInvty),
+                num(il.SubTotalAmountOut_LdgrInvty), il.TaxCode_LdgrInvty || null, num(il.TaxAmount_LdgrInvty),
+                num(il.TotalAmountOut_LdgrInvty)]);
+          }
+          await conn.commit();
+          added += 1;
+        } catch (e) { await conn.rollback(); console.warn(`!! ${ivHead.invc_pk} failed: ${e.message}`); }
+        finally { conn.release(); }
+      }
+      touched += 1;
+    }
+    console.log(`\n--invoices-only: ${added} invoice(s) ${DRY_RUN ? 'would be' : ''} added across ${touched} existing order(s); ` +
+      `${noLocal} order(s) not present locally.`);
+    await pool.end();
+    return;
+  }
 
   for (const so of salesOrders) {
-    const repId = repIdByNorm.get(repNorm(so.Name_Empl));
-    if (!repId) { skipped += 1; continue; }
+    // Whole-year runs process thousands of orders one at a time -- report progress and an ETA
+    // so a long run is monitorable instead of silent until the end.
+    seen += 1;
+    if (seen % 100 === 0) {
+      const mins = (Date.now() - startedAt) / 60000;
+      const eta = mins / seen * (salesOrders.length - seen);
+      console.log(`  ...${seen}/${salesOrders.length} SOs | ${doneSo} imported, ${doneJos} JOs, ${doneInvoices} invoices, ` +
+        `${skipped} skipped | ${mins.toFixed(1)}m elapsed, ~${eta.toFixed(0)}m left`);
+    }
+    const repId = ALL_REPS
+      ? await resolveRep(so.Name_Empl, true)
+      : repIdByNorm.get(repNorm(so.Name_Empl));
+    // In a dry run the missing employee isn't actually created, so don't count the order as
+    // skipped -- the real run would create the rep and import it.
+    if (!repId && !(DRY_RUN && ALL_REPS)) { skipped += 1; continue; }
     try {
       // Detail: ledger lines + the SO's job orders (SysPK -> JO number).
       const est = await api(token, 'get_estimate', { pk: so.so_pk });
@@ -433,9 +548,15 @@ async function main() {
 
         // Invoices for this SO.
         for (const ivHead of invoicesBySo.get(so.so_upk) || []) {
+          // One local invoice per number. deleteExistingSalesOrder only clears invoices tied to
+          // THIS order, so an invoice already imported against another parent (e.g. by the
+          // delivery-ticket importer, which links converted DTs) must not be inserted again.
+          const [[dupInv]] = await conn.query('SELECT id FROM sales_invoices WHERE invoice_no = ?', [ivHead.invc_pk]);
+          if (dupInv) continue;
           const inv = await api(token, 'get_invoice', { pk: ivHead.SysPK_TransH });
           const h = inv.data?.[0] || ivHead;
           const invLines = inv.data?.[1] || [];
+          if (isVoidOrCancelled(h.Status_TransH)) continue;
           const [invRes] = await conn.query(
             `INSERT INTO sales_invoices (invoice_no, sales_order_id, date_created, date_due, term,
                bs_si_no, po_no, memo, department_id, subtotal,
@@ -481,7 +602,7 @@ async function main() {
   console.log(`\n${DRY_RUN ? 'WOULD IMPORT' : 'Imported'}: ${doneSo} sales order(s), ${doneLines} line(s), ${doneJos} job order(s), ${doneInvoices} invoice(s).`);
   if (skipped) console.log(`Skipped ${skipped} sales order(s).`);
   console.log(`Refs -> customers ${DRY_RUN ? 'to create' : 'created'}: ${stats.customersCreated}, ` +
-    `job types: ${stats.jobTypesCreated}, sales divisions: ${stats.divisionsCreated}.`);
+    `job types: ${stats.jobTypesCreated}, sales divisions: ${stats.divisionsCreated}, employees: ${stats.repsCreated}.`);
   if (stats.jobTypesMissingGp.length) {
     console.log(`\n!! ${stats.jobTypesMissingGp.length} job type(s) had no local match and get gp_rate_head=0 ` +
       '(their lines never count as passing GP until set):');

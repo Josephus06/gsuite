@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { Sparkline, DonutChart, GaugeRing, BarList, Holo3DOrb, Holo3DBars, useCountUp } from '../components/charts';
 import Avatar from '../components/Avatar';
 import SyncFromSourceButton from '../components/SyncFromSourceButton';
 import { parseUtc } from '../utils/datetime';
+import Feed from './Feed';
+import '../styles/feed.css';
 
 const STAT_TONES = ['purple', 'blue', 'green', 'lime'];
 
@@ -143,7 +145,47 @@ function ProfileCard({ user, roleLabel, rings, activity }) {
   );
 }
 
+// /dashboard hosts two things now: the company newsfeed (default) and the role dashboards
+// that used to live here on their own. The choice sticks per browser so someone who works
+// out of the metrics view isn't sent back to the feed on every navigation.
+const TAB_KEY = 'dashboard.tab';
+
 export default function Dashboard() {
+  const location = useLocation();
+  const [tab, setTab] = useState(() => localStorage.getItem(TAB_KEY) || 'feed');
+
+  // A #post-123 hash means someone opened a feed notification. Force the Feed tab even if
+  // they were last on the dashboard -- and do it on every hash change, since clicking a
+  // second notification while already on /dashboard doesn't remount this component.
+  useEffect(() => {
+    if (location.hash.startsWith('#post-')) setTab('feed');
+  }, [location.hash, location.key]);
+
+  function pick(next) {
+    setTab(next);
+    localStorage.setItem(TAB_KEY, next);
+  }
+
+  return (
+    <>
+      <div className={`fbfeed${tab === 'dashboard' ? ' plain' : ''}`} style={{ marginBottom: tab === 'dashboard' ? 0 : -16 }}>
+        <div className="fb-tabs">
+          <button type="button" className={`fb-tab${tab === 'feed' ? ' active' : ''}`} onClick={() => pick('feed')}>
+            📰 Feed
+          </button>
+          <button type="button" className={`fb-tab${tab === 'dashboard' ? ' active' : ''}`} onClick={() => pick('dashboard')}>
+            📊 My Dashboard
+          </button>
+        </div>
+      </div>
+      {tab === 'feed' ? <Feed /> : <RoleDashboard />}
+    </>
+  );
+}
+
+// The original dashboard, unchanged apart from being mounted behind the tab. Its /dashboard
+// request only fires when the tab is actually opened, so the feed doesn't pay for it.
+function RoleDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [data, setData] = useState(null);

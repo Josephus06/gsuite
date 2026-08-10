@@ -2,7 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, clearPresence } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -45,6 +45,17 @@ router.post('/login', async (req, res, next) => {
         account_type: user.account_type,
       },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Tokens are stateless, so this doesn't invalidate anything -- it just clears the presence
+// heartbeat so the user drops off the feed's Contacts rail the moment they sign out.
+router.post('/logout', requireAuth, async (req, res, next) => {
+  try {
+    await clearPresence(req.user.id);
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

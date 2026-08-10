@@ -11,14 +11,22 @@
 //        as purchase_order_lines.live_line_pk -- that's how a receipt/return line finds its PO line.
 //
 // Resumable (skips receipts/returns already imported by number) + idempotent. Low concurrency.
+// VOID / CANCELLED receipts and returns are skipped, never migrated.
+//
 //   node src/db/import-purchasing-related.js --limit=50   (test on first 50 local POs)
+//   node src/db/import-purchasing-related.js --from=2021-01-01 --to=2021-12-31   (that year's POs only)
 //   node src/db/import-purchasing-related.js
 const pool = require('../db');
 require('dotenv').config();
+const { isVoidOrCancelled } = require('./lib/liveWindow');
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
 function argVal(name, def) { const a = process.argv.find((x) => x.startsWith(`--${name}=`)); return a ? a.split('=')[1] : def; }
 const LIMIT = argVal('limit', null) ? Number(argVal('limit', null)) : null;
+// Walk only the POs dated in this window. Without it every local PO is re-queried against
+// live on each run -- two API calls per PO, for years already migrated.
+const FROM = argVal('from', null);
+const TO = argVal('to', null);
 const CONCURRENCY = 3;
 
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
@@ -38,7 +46,9 @@ async function api(token, ep, payload, ms = 60000) {
     const r = await fetch(`${SITE}/api/${ep}`, { method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload), signal: ctl.signal });
-    clearTimeout(t); return await r.json();
+    // Clear the abort timer only after the body is read: headers can arrive and then the
+    // stream stall, and clearing on headers alone leaves that read with no timeout at all.
+    const j = await r.json(); clearTimeout(t); return j;
   } catch (e) { clearTimeout(t); throw new Error(`${ep} ${e.name === 'AbortError' ? 'timed out' : e.message}`); }
 }
 async function apiRetry(token, ep, payload, attempts = 4) {
@@ -60,7 +70,9 @@ async function main() {
   console.log(`Receiving Reports + Vendor Returns${LIMIT ? ` | LIMIT ${LIMIT} POs` : ''}\n`);
 
   // Local POs with a live pk, and each PO's lines keyed by their live line pk.
-  const [pos] = await pool.query('SELECT id, po_no, live_pk FROM purchase_orders WHERE live_pk IS NOT NULL');
+  const [pos] = FROM && TO
+    ? await pool.query('SELECT id, po_no, live_pk FROM purchase_orders WHERE live_pk IS NOT NULL AND date_created BETWEEN ? AND ?', [FROM, TO])
+    : await pool.query('SELECT id, po_no, live_pk FROM purchase_orders WHERE live_pk IS NOT NULL');
   const [plines] = await pool.query('SELECT id, purchase_order_id, live_line_pk, item_id FROM purchase_order_lines WHERE live_line_pk IS NOT NULL');
   const lineByLivePk = new Map(plines.map((l) => [l.live_line_pk, l]));
   console.log(`Local: ${pos.length} PO(s), ${plines.length} PO line(s) with live pk.`);
@@ -130,13 +142,17 @@ async function main() {
   await mapWithConcurrency(targets, CONCURRENCY, async (po) => {
     let rrs, vrs;
     try {
-      rrs = listRows(await apiRetry(token, 'get_transactions', { where: { Module_TransH: 'PURCHASEREC', SysFK_TransHSL_TransH: po.live_pk } }));
-      vrs = listRows(await apiRetry(token, 'get_transactions', { where: { Module_TransH: 'PURCHASERETURN', SysFK_TransHSL_TransH: po.live_pk } }));
+      rrs = listRows(await apiRetry(token, 'get_transactions', { where: { Module_TransH: 'PURCHASEREC', SysFK_TransHSL_TransH: po.live_pk } }))
+        .filter((r) => !isVoidOrCancelled(r.Status_TransH));
+      vrs = listRows(await apiRetry(token, 'get_transactions', { where: { Module_TransH: 'PURCHASERETURN', SysFK_TransHSL_TransH: po.live_pk } }))
+        .filter((r) => !isVoidOrCancelled(r.Status_TransH));
     } catch (e) { failed += 1; return; }
 
     for (const [kind, docs, have] of [['RR', rrs, haveRR], ['VR', vrs, haveVR]]) {
       for (const head of docs) {
+        // `have` is seeded from the DB and updated as we go, so a number is only ever imported once.
         if (have.has(head.UserPK_TransH)) continue;
+        have.add(head.UserPK_TransH); // claim it now: concurrent workers must not race on the same number
         let lines = [];
         try { lines = listRows(await apiRetry(token, 'get_transaction_ledger_invtys', { where: { SysFK_TransH_LdgrInvty: head.SysPK_TransH } })); }
         catch (e) { /* import header with no lines rather than lose it */ }
@@ -145,7 +161,6 @@ async function main() {
           await conn.beginTransaction();
           const n = await insertDoc(conn, kind, po.id, head, lines);
           await conn.commit();
-          have.add(head.UserPK_TransH);
           if (kind === 'RR') { rrCount += 1; rrLines += n; } else { vrCount += 1; vrLines += n; }
         } catch (e) { await conn.rollback(); failed += 1; if (failed <= 5) console.error(`  [error] ${head.UserPK_TransH}: ${e.message}`); }
         finally { conn.release(); }

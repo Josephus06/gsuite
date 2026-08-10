@@ -14,12 +14,16 @@
 //
 // Resumable (skips POs already imported by po_no) + idempotent per PO. Low concurrency to stay
 // under the live rate limiter.
+// VOID / CANCELLED purchase orders are skipped, never migrated.
+//
 //   node src/db/import-purchase-orders.js --from=2026-01-01 --to=2026-07-31 --limit=20   (test)
 //   node src/db/import-purchase-orders.js --from=2026-01-01 --to=2026-07-31
 const pool = require('../db');
 require('dotenv').config();
+const { fetchWindow, isVoidOrCancelled } = require('./lib/liveWindow');
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
+const REFRESH = process.argv.includes('--refresh');
 function argVal(name, def) { const a = process.argv.find((x) => x.startsWith(`--${name}=`)); return a ? a.split('=')[1] : def; }
 const FROM = argVal('from', '2026-01-01');
 const TO = argVal('to', '2026-07-31');
@@ -47,7 +51,9 @@ async function api(token, ep, payload, ms = 60000) {
     const r = await fetch(`${SITE}/api/${ep}`, { method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload), signal: ctl.signal });
-    clearTimeout(t); return await r.json();
+    // Clear the abort timer only after the body is read: headers can arrive and then the
+    // stream stall, and clearing on headers alone leaves that read with no timeout at all.
+    const j = await r.json(); clearTimeout(t); return j;
   } catch (e) { clearTimeout(t); throw new Error(`${ep} ${e.name === 'AbortError' ? 'timed out' : e.message}`); }
 }
 async function apiRetry(token, ep, payload, attempts = 4) {
@@ -137,20 +143,21 @@ async function main() {
 
   const token = await login();
 
-  // Page the PO list (newest-first) and keep those in the window.
+  // Pull the window's PO list (binary-searched to the window + cached on disk).
+  const poRows = await fetchWindow(token, {
+    endpoint: 'get_purchase_orders', from: FROM, to: TO, keyField: 'UserPK_TransH',
+    extra: { viewAll: true }, refresh: REFRESH, onProgress: (m) => console.log(m),
+  });
   const pos = [];
-  for (let offset = 0; offset < 80000; offset += 200) {
-    let list;
-    try { list = listRows(await apiRetry(token, 'get_purchase_orders', { viewAll: true, limit: 200, offset })); }
-    catch (e) { console.warn(`  page ${offset} failed: ${e.message}`); break; }
-    if (!list.length) break;
-    for (const po of list) {
-      const d = day(po.DateCreated_TransH);
-      if (d >= FROM && d <= TO) pos.push(po);
-    }
-    if (list.every((po) => day(po.DateCreated_TransH) < FROM)) break;
+  const seenPo = new Set();
+  let voidSkipped = 0;
+  for (const po of poRows) {
+    if (isVoidOrCancelled(po.Status_TransH)) { voidSkipped += 1; continue; }
+    if (!po.UserPK_TransH || seenPo.has(po.UserPK_TransH)) continue; // one local PO per number
+    seenPo.add(po.UserPK_TransH);
+    pos.push(po);
   }
-  console.log(`Found ${pos.length} purchase order(s) in window.`);
+  console.log(`Found ${pos.length} purchase order(s) in window (${voidSkipped} void/cancelled skipped).`);
 
   // Resume: skip POs already imported (unless --force).
   const [existing] = await pool.query('SELECT po_no FROM purchase_orders');

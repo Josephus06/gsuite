@@ -3,3 +3,10 @@ dist/
 .env
 *.log
 .claude/
+# Cached raw live-API window pulls used by the migration importers (server/src/db/lib/liveWindow.js)
+.live-cache/
+# Database dumps. server/db/schema.sql (structure only) is tracked on purpose; full data
+# dumps are not -- they are hundreds of MB and contain live business data.
+*-backup.sql
+*.dump.sql
+gsuite_erp*.sql
