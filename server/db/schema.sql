@@ -220,6 +220,9 @@ CREATE TABLE users (
     default_branch_id BIGINT NULL REFERENCES locations(id),
     is_active BOOLEAN DEFAULT TRUE,
     last_login_at DATETIME NULL,
+    -- Presence heartbeat for the newsfeed Contacts rail. Touched by requireAuth (throttled)
+    -- and cleared on logout. Existing databases get this via src/db/add-user-presence.js.
+    last_seen_at DATETIME NULL,
     -- "Account Type" tab fields (mirrors the real system's 4th user-creation step)
     user_group_id BIGINT NULL REFERENCES user_groups(id),
     account_type VARCHAR(50),
@@ -2391,4 +2394,58 @@ CREATE TABLE user_sales_divisions (
     sales_division_id BIGINT NOT NULL REFERENCES sales_divisions(id),
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_user_division (user_id, sales_division_id)
+);
+
+-- ---------------------------------------------------------------------------------------
+-- Company newsfeed (/dashboard Feed tab). Existing databases get these via
+-- src/db/add-newsfeed.js; they are here so a fresh install is complete.
+-- Audience: 'public' = everyone, 'department' = the author's user_group at post time,
+-- 'private' = author only. Enforced server-side in src/routes/feed.js.
+-- ---------------------------------------------------------------------------------------
+CREATE TABLE feed_posts (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    body TEXT,
+    image_data MEDIUMTEXT NULL,
+    audience ENUM('public','department','private') NOT NULL DEFAULT 'public',
+    audience_group_id BIGINT NULL,
+    is_deleted TINYINT(1) NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
+    edited_at DATETIME NULL,
+    INDEX idx_feed_posts_created (is_deleted, created_at DESC, id DESC),
+    INDEX idx_feed_posts_user (user_id)
+);
+
+CREATE TABLE feed_post_reactions (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    post_id BIGINT NOT NULL REFERENCES feed_posts(id),
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    type ENUM('like','love','care','haha','wow','sad','angry') NOT NULL DEFAULT 'like',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_feed_post_reaction (post_id, user_id),
+    INDEX idx_fpr_post (post_id)
+);
+
+CREATE TABLE feed_comments (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    post_id BIGINT NOT NULL REFERENCES feed_posts(id),
+    parent_comment_id BIGINT NULL REFERENCES feed_comments(id),
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    body TEXT NOT NULL,
+    is_deleted TINYINT(1) NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    edited_at DATETIME NULL,
+    INDEX idx_fc_post (post_id, is_deleted, created_at),
+    INDEX idx_fc_parent (parent_comment_id)
+);
+
+CREATE TABLE feed_comment_reactions (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    comment_id BIGINT NOT NULL REFERENCES feed_comments(id),
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    type ENUM('like','love','care','haha','wow','sad','angry') NOT NULL DEFAULT 'like',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_feed_comment_reaction (comment_id, user_id),
+    INDEX idx_fcr_comment (comment_id)
 );
