@@ -10,13 +10,31 @@ const PERMISSION_ACTIONS = new Set(['can_view', 'can_add', 'can_edit', 'can_dele
 const PRESENCE_THROTTLE_MS = 60_000;
 const lastTouched = new Map();
 
+// Presence writes must never be able to exhaust the connection pool.
+//
+// The throttle alone is not enough: if the database stops completing writes (a full disk, a
+// metadata lock held by a schema change), every user's next beat still fires a fresh UPDATE
+// that hangs. At pool.connectionLimit = 10 that wedges the entire API within minutes -- real
+// queries then queue behind stuck "who's online" updates. Capping in-flight beats at one
+// bounds the damage to a single connection no matter how long the database stays stuck.
+// A skipped beat costs nothing; the user's next request tries again.
+let presenceInFlight = 0;
+const MAX_PRESENCE_IN_FLIGHT = 1;
+
 function touchPresence(userId) {
   const now = Date.now();
   const prev = lastTouched.get(userId);
   if (prev && now - prev < PRESENCE_THROTTLE_MS) return;
+  if (presenceInFlight >= MAX_PRESENCE_IN_FLIGHT) return;
+
+  // Stamped only once the write is actually issued, so a skipped beat retries immediately
+  // rather than waiting out another full throttle window.
   lastTouched.set(userId, now);
+  presenceInFlight += 1;
   // Fire-and-forget: presence is never worth failing or delaying a real request over.
-  pool.query('UPDATE users SET last_seen_at = NOW() WHERE id = ?', [userId]).catch(() => {});
+  pool.query('UPDATE users SET last_seen_at = NOW() WHERE id = ?', [userId])
+    .catch(() => {})
+    .finally(() => { presenceInFlight -= 1; });
 }
 
 function requireAuth(req, res, next) {

@@ -734,3 +734,146 @@
 /* The dashboard tab hosts the app's own holo-* cards, which bring their own background --
    drop the FB canvas so they don't sit on grey. */
 .fbfeed.plain { background: transparent; padding-bottom: 0; }
+
+/* ------------------------------------------------------------------------- profile */
+
+.fb-profile-head {
+  background: var(--fb-card);
+  box-shadow: var(--fb-shadow);
+  margin: -16px 0 16px;
+}
+.fb-profile-inner { max-width: 940px; margin: 0 auto; padding: 0 16px; }
+
+.fb-cover {
+  position: relative;
+  height: 348px;
+  max-height: 40vw;
+  border-radius: 0 0 8px 8px;
+  overflow: hidden;
+  background: linear-gradient(120deg, #d8dade, #b9bdc4);
+}
+:root[data-theme='dark'] .fb-cover { background: linear-gradient(120deg, #3a3b3c, #2a2b2c); }
+.fb-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.fb-cover-btn {
+  position: absolute;
+  right: 16px; bottom: 16px;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 12px;
+  border: 0; border-radius: 6px;
+  background: var(--fb-card);
+  color: var(--fb-text);
+  font-weight: 600; font-size: 14px;
+  cursor: pointer;
+  box-shadow: var(--fb-shadow);
+  font-family: inherit;
+}
+.fb-cover-btn:hover { background: var(--fb-hover); }
+
+/* Avatar overlaps the cover, as on FB. */
+.fb-profile-id {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 0 16px 16px;
+  margin-top: -36px;
+}
+.fb-profile-avatar {
+  border-radius: 50%;
+  border: 4px solid var(--fb-card);
+  background: var(--fb-card);
+  flex: none;
+  position: relative;
+}
+.fb-profile-nameblock { padding-bottom: 8px; min-width: 0; }
+.fb-profile-name { font-size: 32px; font-weight: 700; line-height: 1.2; }
+.fb-profile-tagline { color: var(--fb-text-2); font-size: 15px; font-weight: 600; margin-top: 2px; }
+.fb-profile-bio { color: var(--fb-text-2); font-size: 15px; margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fb-profile-actions { margin-left: auto; padding-bottom: 12px; display: flex; gap: 8px; flex: none; }
+
+.fb-profile-tabs {
+  display: flex;
+  gap: 4px;
+  border-top: 1px solid var(--fb-divider);
+  padding: 4px 8px;
+}
+.fb-profile-tab {
+  padding: 12px 16px;
+  border: 0; background: none;
+  border-bottom: 3px solid transparent;
+  color: var(--fb-text-2);
+  font-weight: 600; font-size: 15px;
+  cursor: pointer; font-family: inherit;
+  border-radius: 6px 6px 0 0;
+}
+.fb-profile-tab:hover { background: var(--fb-hover); }
+.fb-profile-tab.active { color: var(--fb-blue); border-bottom-color: var(--fb-blue); border-radius: 0; }
+
+/* Two columns below the header: sticky About on the left, posts on the right. */
+.fb-profile-body {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 16px;
+  max-width: 940px;
+  margin: 0 auto;
+  padding: 0 16px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .fb-profile-body { grid-template-columns: minmax(0, 1fr); }
+  .fb-profile-name { font-size: 24px; }
+  .fb-profile-id { flex-direction: column; align-items: flex-start; }
+  .fb-profile-actions { margin-left: 0; }
+}
+
+.fb-about-card { padding: 16px; }
+.fb-about-title { font-size: 20px; font-weight: 700; margin-bottom: 12px; }
+.fb-about-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 7px 0;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.fb-about-row .ico { width: 20px; text-align: center; flex: none; color: var(--fb-text-2); }
+.fb-about-row .val { color: var(--fb-text); }
+.fb-about-row .lab { color: var(--fb-text-2); }
+.fb-about-empty { color: var(--fb-text-2); font-size: 15px; }
+
+.fb-bio-editor { width: 100%; }
+.fb-bio-editor textarea {
+  width: 100%;
+  border: 1px solid var(--fb-divider);
+  border-radius: 8px;
+  background: var(--fb-input);
+  color: var(--fb-text);
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 15px;
+  resize: vertical;
+  min-height: 72px;
+  outline: none;
+}
+.fb-bio-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+.fb-btn-secondary {
+  padding: 8px 12px;
+  border: 0; border-radius: 6px;
+  background: var(--fb-input);
+  color: var(--fb-text);
+  font-weight: 600; font-size: 15px;
+  cursor: pointer; font-family: inherit;
+}
+.fb-btn-secondary:hover { background: var(--fb-input-hover); }
+
+/* A name/avatar that opens a profile. */
+.fb-link { cursor: pointer; }
+.fb-link:hover { text-decoration: underline; }
+
+.fb-profile-online {
+  position: absolute;
+  right: 8px; bottom: 8px;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: #31a24c;
+  border: 3px solid var(--fb-card);
+}

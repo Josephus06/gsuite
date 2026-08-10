@@ -3,6 +3,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
+import Profile from './pages/Profile';
 import Employees from './pages/Employees';
 import Users from './pages/Users';
 import UserWizard from './pages/UserWizard';
@@ -158,6 +159,7 @@ function App() {
         }
       >
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/profile/:id" element={<Profile />} />
         <Route path="/tickets" element={<Tickets />} />
         <Route path="/tickets/:id" element={<TicketView />} />
         <Route path="/process-flow" element={<ProcessFlow />} />

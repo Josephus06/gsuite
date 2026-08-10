@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../../api/client';
 import Avatar from '../Avatar';
 import ReactionButton from './ReactionButton';
@@ -18,6 +19,7 @@ export default function PostCard({ post, user, viewer, onChanged, onDeleted, onE
   const [expanded, setExpanded] = useState(false);
   const [lightbox, setLightbox] = useState(false);
   const menuRef = useRef(null);
+  const navigate = useNavigate();
 
   useEffect(() => setState(post), [post]);
 
@@ -60,9 +62,13 @@ export default function PostCard({ post, user, viewer, onChanged, onDeleted, onE
   return (
     <div className="fb-card" style={{ position: 'relative' }}>
       <div className="fb-post-head">
-        <Avatar user={state.author} size={40} />
+        <span className="fb-link" onClick={() => navigate(`/profile/${state.author.id}`)}>
+          <Avatar user={state.author} size={40} />
+        </span>
         <div className="fb-post-headmeta">
-          <div className="fb-post-author">{state.author.display_name}</div>
+          <div className="fb-post-author" onClick={() => navigate(`/profile/${state.author.id}`)}>
+            {state.author.display_name}
+          </div>
           <div className="fb-post-sub">
             <span title={fbTimeFull(state.created_at)}>{fbTime(state.created_at)}</span>
             {state.edited_at && <><span className="dot">·</span><span>Edited</span></>}
