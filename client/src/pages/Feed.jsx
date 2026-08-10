@@ -168,11 +168,10 @@ export default function Feed() {
       <div className="fb-shell">
         {/* ------------------------------------------------------------ left rail */}
         <aside className="fb-rail fb-rail-left">
-          {/* Identity row, not a link -- this app has no per-user profile page to open. */}
-          <div className="fb-rail-item" style={{ cursor: 'default' }}>
+          <button type="button" className="fb-rail-item" onClick={() => navigate(`/profile/${user?.id}`)}>
             <Avatar user={user} size={36} />
             <span>{user?.display_name}</span>
-          </div>
+          </button>
           <div className="fb-rail-sep" />
           <div className="fb-rail-title">Shortcuts</div>
           {SHORTCUTS.map((s) => (
@@ -255,7 +254,13 @@ export default function Feed() {
           {/* Everyone in this list is online by construction -- the server only returns users
               whose heartbeat is inside the window -- so the green dot is always accurate. */}
           {contacts.map((c) => (
-            <button key={c.id} type="button" className="fb-rail-item" title={c.group_name || c.account_type || ''}>
+            <button
+              key={c.id}
+              type="button"
+              className="fb-rail-item"
+              title={c.group_name || c.account_type || ''}
+              onClick={() => navigate(`/profile/${c.id}`)}
+            >
               <span className="fb-rail-avatar-wrap">
                 <Avatar user={c} size={36} />
                 <span className="fb-online-dot" />

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../../api/client';
 import Avatar from '../Avatar';
 import ReactionButton from './ReactionButton';
@@ -58,6 +59,7 @@ function CommentBox({ user, placeholder, autoFocus, onSubmit, onCancel }) {
 }
 
 function CommentItem({ comment, user, depth, onReply, onDelete, onReact }) {
+  const navigate = useNavigate();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(comment.body);
   const [replying, setReplying] = useState(false);
@@ -75,7 +77,9 @@ function CommentItem({ comment, user, depth, onReply, onDelete, onReact }) {
   return (
     <div>
       <div className="fb-comment-row">
-        <Avatar user={comment.author} size={32} />
+        <span className="fb-link" onClick={() => navigate(`/profile/${comment.author.id}`)}>
+          <Avatar user={comment.author} size={32} />
+        </span>
         <div className="fb-comment-main">
           {editing ? (
             <div className="fb-comment-input-wrap">
@@ -95,7 +99,9 @@ function CommentItem({ comment, user, depth, onReply, onDelete, onReact }) {
           ) : (
             <div className="fb-comment-bubble-wrap">
               <div className="fb-comment-bubble">
-                <span className="fb-comment-author">{comment.author.display_name}</span>
+                <span className="fb-comment-author" onClick={() => navigate(`/profile/${comment.author.id}`)}>
+                  {comment.author.display_name}
+                </span>
                 <div className="fb-comment-text">{comment.body}</div>
               </div>
               {comment.reaction_total > 0 && (

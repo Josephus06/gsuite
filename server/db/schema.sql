@@ -217,6 +217,9 @@ CREATE TABLE users (
     email VARCHAR(150) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     display_name VARCHAR(150) NOT NULL,
+    -- Profile "Intro" blurb the user writes; everything else on the About panel is derived
+    -- from employees/user_groups/locations. Existing DBs: src/db/add-user-profile.js.
+    bio VARCHAR(500) NULL,
     default_branch_id BIGINT NULL REFERENCES locations(id),
     is_active BOOLEAN DEFAULT TRUE,
     last_login_at DATETIME NULL,
@@ -242,6 +245,8 @@ CREATE TABLE users (
     -- is ephemeral across redeploys, so the DB (already the durable store for everything
     -- else) is the only place a file would reliably survive there.
     avatar_data MEDIUMTEXT NULL,
+    -- Profile cover photo, stored inline as a data URL exactly like avatar_data.
+    cover_data MEDIUMTEXT NULL,
     -- Purchasing Supervisor: the first-tier approver for PO1/PO2 Purchase Orders (see
     -- purchaseOrders.js's approve route). Deliberately a separate flag from is_supervisor
     -- (that one is Sales-Supervisor-specific, relied on by dashboard.js's resolveScope and
