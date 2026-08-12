@@ -142,6 +142,7 @@ import WarrantyCertificates from './pages/WarrantyCertificates';
 import WarrantyCertificateForm from './pages/WarrantyCertificateForm';
 import WarrantyCertificateView from './pages/WarrantyCertificateView';
 import WarrantyCertificatePrint from './pages/WarrantyCertificatePrint';
+import SalesInvoicePrint from './pages/SalesInvoicePrint';
 import NonStandardSalesOrderWizard from './pages/NonStandardSalesOrderWizard';
 import NonStandardSalesOrderView from './pages/NonStandardSalesOrderView';
 
@@ -151,6 +152,9 @@ function App() {
       <Route path="/login" element={<Login />} />
       {/* Standalone printable certificate -- protected but rendered without the app chrome. */}
       <Route path="/warranty-certificates/:id/print" element={<ProtectedRoute><WarrantyCertificatePrint /></ProtectedRoute>} />
+      {/* Pre-printed Billing Statement overlay -- no app chrome, since anything else on the
+          page would print on top of the form. */}
+      <Route path="/sales-invoices/:id/print" element={<ProtectedRoute><SalesInvoicePrint /></ProtectedRoute>} />
       <Route
         element={
           <ProtectedRoute>

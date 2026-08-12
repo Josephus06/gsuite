@@ -6,6 +6,7 @@ import DataTable from '../components/DataTable';
 import CustomerPaymentModal from '../components/CustomerPaymentModal';
 import CreditMemoModal from '../components/CreditMemoModal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import ButtonMenu from '../components/ButtonMenu';
 
 function qty(v) {
   const n = Number(v);
@@ -94,7 +95,13 @@ export default function SalesInvoiceView() {
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(`/sales-orders/${si.sales_order_id}`)}>Back</button>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Invoice isn't implemented in this build">Edit</button>}
-          <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
+          <ButtonMenu
+            label="Print"
+            options={[
+              { label: 'Type 1', hint: 'Pre-printed Service Invoice form', onClick: () => window.open(`/sales-invoices/${id}/print`, '_blank') },
+              { label: 'Type 2', hint: 'Plain paper, full invoice', onClick: () => window.open(`/sales-invoices/${id}/print?type=2`, '_blank') },
+            ]}
+          />
           {canEdit && isSettleable && <button className="btn btn-sm btn-primary" onClick={() => setShowPaymentModal(true)}>Accept Payment</button>}
           {canEdit && isSettleable && <button className="btn btn-sm btn-primary" onClick={() => setShowCreditMemoModal(true)}>Credit Memo</button>}
           {canEdit && isSaved && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Void</button>}

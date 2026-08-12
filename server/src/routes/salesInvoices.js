@@ -200,8 +200,18 @@ router.get('/by-sales-order/:salesOrderId', requireAuth, requirePermission(ROUTE
 
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
+    // customer_tin / customer_address feed the pre-printed Billing Statement form, whose
+    // header blanks sit above the line items. The address falls back to any address on file
+    // when no BILLING one is flagged default, since most customers carry only one.
     const [[si]] = await pool.query(
       `SELECT si.*, so.sales_order_no, c.name AS customer_name, dt.dt_no,
+              c.tin AS customer_tin, c.company_name AS customer_company,
+              COALESCE(
+                (SELECT ca.address_line FROM customer_addresses ca
+                  WHERE ca.customer_id = c.id AND ca.address_type = 'BILLING' AND ca.is_default = TRUE LIMIT 1),
+                (SELECT ca.address_line FROM customer_addresses ca
+                  WHERE ca.customer_id = c.id ORDER BY ca.is_default DESC, ca.id LIMIT 1)
+              ) AS customer_address,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               loc.location_name AS office_location_name, d.name AS department_name,
               u.display_name AS created_by_name
@@ -218,9 +228,16 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     );
     if (!si) return res.status(404).json({ error: 'Not found' });
 
+    // item_code comes from the line's job type -- this ERP's product code, which the Type 2
+    // invoice print has an Item Code column for. It is resolved through the job order first
+    // and the sales-order line only as a fallback: sales_order_line_id is set on just 4 of
+    // ~118,000 invoice lines, while job_order_id is set on ~88% of them.
     const [lines] = await pool.query(
-      `SELECT sil.*, jo.job_order_no FROM sales_invoice_lines sil
+      `SELECT sil.*, jo.job_order_no, jt.item_code
+       FROM sales_invoice_lines sil
        LEFT JOIN job_orders jo ON jo.id = sil.job_order_id
+       LEFT JOIN sales_order_lines sol ON sol.id = sil.sales_order_line_id
+       LEFT JOIN job_types jt ON jt.id = COALESCE(jo.job_type_id, sol.job_type_id)
        WHERE sil.sales_invoice_id = ?`,
       [req.params.id]
     );
