@@ -1574,3 +1574,40 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 @media (prefers-reduced-motion: reduce) {
   .theme-toggle, .theme-toggle-label, .theme-toggle-knob { transition: none; }
 }
+
+/* Button with a drop-down of alternatives (see components/ButtonMenu.jsx) -- used for
+   Print, where the action is one thing but the format is a choice. */
+.btn-menu { position: relative; display: inline-flex; }
+.btn-menu-caret { font-size: 10px; opacity: 0.7; margin-left: 2px; }
+.btn-menu-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.btn-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.btn-menu-item:hover { background: var(--accent-bg); color: var(--accent); }
+.btn-menu-item small { font-size: 11px; color: var(--muted); }
+.btn-menu-item:hover small { color: inherit; opacity: 0.8; }
