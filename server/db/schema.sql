@@ -277,10 +277,32 @@ CREATE TABLE user_page_permissions (
     can_edit BOOLEAN DEFAULT FALSE,
     can_delete BOOLEAN DEFAULT FALSE,
     can_approve BOOLEAN DEFAULT FALSE,
+    -- Printing is granted separately from viewing: a printed Job Order is the sheet that
+    -- goes to the production floor. Non-admins additionally need the JO to have an artist
+    -- assigned; System Admin prints any JO at any status.
+    can_print BOOLEAN NOT NULL DEFAULT FALSE,
     UNIQUE KEY uq_user_page (user_id, page_id)
 );
 
 ALTER TABLE audit_logs ADD CONSTRAINT fk_audit_user FOREIGN KEY (set_by_user_id) REFERENCES users(id);
+
+-- Artist Attachments: the PDFs an artist produces for a job order (perspective drawing,
+-- Cutting List / Bill of Materials). Held as a blob because Railway app containers have no
+-- persistent disk of their own -- a file written to the filesystem is gone on the next deploy.
+-- A JO cannot move to Sales Approval until at least one of these exists.
+CREATE TABLE job_order_attachments (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    job_order_id BIGINT NOT NULL,
+    kind VARCHAR(40) NOT NULL DEFAULT 'Perspective',
+    file_name VARCHAR(255) NOT NULL,
+    mime_type VARCHAR(100) NOT NULL,
+    size_bytes INT NOT NULL,
+    file_data LONGBLOB NOT NULL,
+    uploaded_by_user_id BIGINT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_joa_job_order (job_order_id),
+    CONSTRAINT fk_joa_job_order FOREIGN KEY (job_order_id) REFERENCES job_orders(id)
+);
 
 -- =====================================================================
 -- SECTION 3: CUSTOMERS & SUPPLIERS

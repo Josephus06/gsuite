@@ -98,6 +98,7 @@ import PurchaseOrderCreate from './pages/PurchaseOrderCreate';
 import PurchaseOrderEdit from './pages/PurchaseOrderEdit';
 import LandedCostEdit from './pages/LandedCostEdit';
 import ReceivingReportEdit from './pages/ReceivingReportEdit';
+import ReceivingReports from './pages/ReceivingReports';
 import ReceivingReportView from './pages/ReceivingReportView';
 import PurchaseReturnEdit from './pages/PurchaseReturnEdit';
 import PurchaseReturnView from './pages/PurchaseReturnView';
@@ -143,6 +144,7 @@ import WarrantyCertificateForm from './pages/WarrantyCertificateForm';
 import WarrantyCertificateView from './pages/WarrantyCertificateView';
 import WarrantyCertificatePrint from './pages/WarrantyCertificatePrint';
 import SalesInvoicePrint from './pages/SalesInvoicePrint';
+import JobOrderPrint from './pages/JobOrderPrint';
 import NonStandardSalesOrderWizard from './pages/NonStandardSalesOrderWizard';
 import NonStandardSalesOrderView from './pages/NonStandardSalesOrderView';
 
@@ -155,6 +157,8 @@ function App() {
       {/* Pre-printed Billing Statement overlay -- no app chrome, since anything else on the
           page would print on top of the form. */}
       <Route path="/sales-invoices/:id/print" element={<ProtectedRoute><SalesInvoicePrint /></ProtectedRoute>} />
+      {/* Printable production sheet. Standalone so the app chrome never lands on the page. */}
+      <Route path="/job-orders/:id/print" element={<ProtectedRoute><JobOrderPrint /></ProtectedRoute>} />
       <Route
         element={
           <ProtectedRoute>
@@ -289,6 +293,8 @@ function App() {
         <Route path="/purchase-orders/:id/landed-cost/new" element={<LandedCostEdit />} />
         <Route path="/purchase-orders/:id/receive" element={<ReceivingReportEdit />} />
         <Route path="/purchase-orders/receipts/:receiptId" element={<ReceivingReportView />} />
+        <Route path="/receiving-reports" element={<ReceivingReports />} />
+        <Route path="/receiving-reports/:receiptId" element={<ReceivingReportView />} />
         <Route path="/purchase-orders/:id/return" element={<PurchaseReturnEdit />} />
         <Route path="/purchase-orders/returns/:returnId" element={<PurchaseReturnView />} />
         <Route path="/purchase-orders/:id" element={<PurchaseOrderView />} />

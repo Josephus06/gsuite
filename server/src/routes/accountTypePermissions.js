@@ -17,7 +17,7 @@ const ROUTE = '/users';
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      'SELECT account_type, page_id, can_view, can_add, can_edit, can_delete, can_approve FROM account_type_permissions'
+      'SELECT account_type, page_id, can_view, can_add, can_edit, can_delete, can_approve, can_print FROM account_type_permissions'
     );
     const byType = {};
     rows.forEach((r) => {
@@ -41,18 +41,18 @@ router.put('/:accountType', requireAuth, requirePermission(ROUTE, 'can_edit'), a
     await conn.query('DELETE FROM account_type_permissions WHERE account_type = ?', [accountType]);
     for (const p of permissions) {
       if (!p.page_id) continue;
-      if (!p.can_view && !p.can_add && !p.can_edit && !p.can_delete && !p.can_approve) continue;
+      if (!p.can_view && !p.can_add && !p.can_edit && !p.can_delete && !p.can_approve && !p.can_print) continue;
       await conn.query(
         `INSERT INTO account_type_permissions
-           (account_type, page_id, can_view, can_add, can_edit, can_delete, can_approve, updated_at, updated_by_user_id)
+           (account_type, page_id, can_view, can_add, can_edit, can_delete, can_approve, can_print, updated_at, updated_by_user_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?)`,
-        [accountType, p.page_id, !!p.can_view, !!p.can_add, !!p.can_edit, !!p.can_delete, !!p.can_approve, req.user.id]
+        [accountType, p.page_id, !!p.can_view, !!p.can_add, !!p.can_edit, !!p.can_delete, !!p.can_approve, !!p.can_print, req.user.id]
       );
     }
     await conn.commit();
 
     const [rows] = await pool.query(
-      'SELECT account_type, page_id, can_view, can_add, can_edit, can_delete, can_approve FROM account_type_permissions WHERE account_type = ?',
+      'SELECT account_type, page_id, can_view, can_add, can_edit, can_delete, can_approve, can_print FROM account_type_permissions WHERE account_type = ?',
       [accountType]
     );
     res.json(rows);

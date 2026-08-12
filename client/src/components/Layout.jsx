@@ -112,6 +112,7 @@ const NAV_STRUCTURE = [
       { route: '/purchase-requisitions', label: 'Purchase Requisitions' },
       { route: '/place-order-form', label: 'Place Order Form' },
       { route: '/purchase-orders', label: 'Purchase Orders' },
+      { route: '/receiving-reports', label: 'Receiving Report' },
     ],
   },
   {

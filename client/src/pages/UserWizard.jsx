@@ -20,6 +20,9 @@ const PERMISSION_ACTIONS = [
   { key: 'can_edit', label: 'Can Update' },
   { key: 'can_delete', label: 'Can Delete' },
   { key: 'can_approve', label: 'Can Approve' },
+  // Printing a Job Order is granted separately from viewing one -- the printed sheet is what
+  // goes to the production floor, so it is handed out deliberately.
+  { key: 'can_print', label: 'Can Print' },
 ];
 
 const EMPTY_ACCOUNT = {
@@ -145,7 +148,7 @@ export default function UserWizard() {
 
   function togglePerm(pageId, key) {
     setPermMap((prev) => {
-      const current = prev[pageId] || { page_id: pageId, can_view: false, can_add: false, can_edit: false, can_delete: false, can_approve: false };
+      const current = prev[pageId] || { page_id: pageId, can_view: false, can_add: false, can_edit: false, can_delete: false, can_approve: false, can_print: false };
       return { ...prev, [pageId]: { ...current, [key]: !current[key] } };
     });
   }
@@ -164,11 +167,12 @@ export default function UserWizard() {
         can_edit: !!r.can_edit,
         can_delete: !!r.can_delete,
         can_approve: !!r.can_approve,
+        can_print: !!r.can_print,
       };
     });
     setPermMap(map);
     const grants = rows.reduce(
-      (n, r) => n + ['can_view', 'can_add', 'can_edit', 'can_delete', 'can_approve'].filter((a) => r[a]).length,
+      (n, r) => n + PERMISSION_ACTIONS.map((a) => a.key).filter((a) => r[a]).length,
       0
     );
     setTemplateNote(rows.length

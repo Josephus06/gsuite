@@ -96,7 +96,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
     user.default_branch = defaultBranch || null;
 
     const [permissions] = await pool.query(
-      `SELECT p.route, upp.can_view, upp.can_add, upp.can_edit, upp.can_delete, upp.can_approve
+      `SELECT p.route, upp.can_view, upp.can_add, upp.can_edit, upp.can_delete, upp.can_approve, upp.can_print
        FROM user_page_permissions upp
        JOIN pages p ON p.id = upp.page_id
        WHERE upp.user_id = ?`,

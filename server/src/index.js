@@ -50,6 +50,7 @@ const commissionSchemeRoutes = require('./routes/commissionSchemes');
 const employeeQuotaRoutes = require('./routes/employeeQuotas');
 const purchaseRequisitionRoutes = require('./routes/purchaseRequisitions');
 const purchaseOrderRoutes = require('./routes/purchaseOrders');
+const receivingReportRoutes = require('./routes/receivingReports');
 const vendorBillRoutes = require('./routes/vendorBills');
 const billPaymentRoutes = require('./routes/billPayments');
 const billCreditRoutes = require('./routes/billCredits');
@@ -76,6 +77,16 @@ const { sendTicketReminders } = require('./scripts/ticket_reminder');
 const app = express();
 
 app.use(cors());
+// Artist attachments are PDFs sent as base64, which inflates them by a third -- a 10MB
+// drawing arrives as ~13.4MB of JSON. Scoped to that one endpoint rather than raising the
+// global ceiling, so no other route can be handed a 14MB body. It runs first; the general
+// parser below then sees req._body already set and skips the request.
+const attachmentUploadJson = express.json({ limit: '14mb' });
+app.use((req, res, next) => (
+  req.method === 'POST' && /^\/api\/job-orders\/\d+\/attachments\/?$/.test(req.path)
+    ? attachmentUploadJson(req, res, next)
+    : next()
+));
 app.use(express.json({ limit: '2mb' })); // room for the base64 profile-picture payload
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
@@ -126,6 +137,7 @@ app.use('/api/commission-schemes', commissionSchemeRoutes);
 app.use('/api/employee-quotas', employeeQuotaRoutes);
 app.use('/api/purchase-requisitions', purchaseRequisitionRoutes);
 app.use('/api/purchase-orders', purchaseOrderRoutes);
+app.use('/api/receiving-reports', receivingReportRoutes);
 app.use('/api/vendor-bills', vendorBillRoutes);
 app.use('/api/bill-payments', billPaymentRoutes);
 app.use('/api/bill-credits', billCreditRoutes);

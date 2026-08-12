@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } = require('../lib/designSupervisorVisibility');
 const { getArtistEmployeeScope } = require('../lib/artistVisibility');
 
@@ -581,6 +581,21 @@ router.put('/:id/sales-approval', requireAuth, async (req, res, next) => {
       await conn.rollback();
       return res.status(409).json({ error: 'This Job Order is not ready for Sales Approval.' });
     }
+
+    // Sales approve against the artist's drawings, so there has to be something to approve.
+    // Enforced here rather than only in the UI: the button is one way in, but the endpoint
+    // is the rule.
+    const [[att]] = await conn.query(
+      'SELECT COUNT(*) AS n FROM job_order_attachments WHERE job_order_id = ?',
+      [req.params.id]
+    );
+    if (!att.n) {
+      await conn.rollback();
+      return res.status(409).json({
+        error: 'Attach the perspective and Bill of Materials before requesting Sales Approval.',
+        reason: 'no_attachment',
+      });
+    }
     await conn.query("UPDATE job_orders SET sub_status = 'Sales Approval', updated_at = NOW() WHERE id = ?", [req.params.id]);
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'sub_status', oldValue: jo.sub_status, newValue: 'Sales Approval' });
     await conn.commit();
@@ -727,6 +742,220 @@ router.delete('/:id/processes/:procId', requireAuth, requirePermission(ROUTE, 'c
     next(err);
   } finally {
     conn.release();
+  }
+});
+
+// ---------------------------------------------------------------------------------------
+// Artist Attachments -- the artist's perspective drawing and Cutting List / Bill of Materials
+// ---------------------------------------------------------------------------------------
+//
+// Any file type is accepted. Uploads are base64 in a JSON body (see the scoped body parser
+// in index.js). The size cap is deliberate: these rows live in the database, so an unbounded
+// upload grows the same volume that everything else writes to.
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const ATTACHMENT_KINDS = ['Perspective', 'Bill of Materials', 'Other'];
+
+// Uploading is the assigned artist's job; anyone with can_edit on Job Orders (design
+// supervisors, admins) can also attach on their behalf. Removal is stricter -- see the
+// DELETE handler.
+async function canManageAttachments(conn, userId, jobOrderId) {
+  const [[jo]] = await conn.query('SELECT artist_id FROM job_orders WHERE id = ?', [jobOrderId]);
+  if (!jo) return { ok: false, missing: true };
+  const [[me]] = await conn.query('SELECT employee_id FROM users WHERE id = ?', [userId]);
+  if (me?.employee_id && jo.artist_id === me.employee_id) return { ok: true };
+  const [[page]] = await conn.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
+  const [[perm]] = await conn.query(
+    'SELECT can_edit AS allowed FROM user_page_permissions WHERE user_id = ? AND page_id = ?',
+    [userId, page?.id]
+  );
+  return { ok: !!perm?.allowed };
+}
+
+// Metadata only -- the blob would make the JO view's payload enormous for no benefit.
+router.get('/:id/attachments', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT a.id, a.kind, a.file_name, a.mime_type, a.size_bytes, a.created_at,
+              u.display_name AS uploaded_by_name
+         FROM job_order_attachments a
+         LEFT JOIN users u ON u.id = a.uploaded_by_user_id
+        WHERE a.job_order_id = ?
+        ORDER BY a.created_at DESC, a.id DESC`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/:id/attachments', requireAuth, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const access = await canManageAttachments(conn, req.user.id, req.params.id);
+    if (access.missing) return res.status(404).json({ error: 'Not found' });
+    if (!access.ok) return res.status(403).json({ error: 'Only the assigned artist can attach files to this Job Order' });
+
+    const { file_name: fileName, kind, data, mime_type: mimeType } = req.body || {};
+    if (!fileName || !data) return res.status(400).json({ error: 'file_name and data are required' });
+    if (!ATTACHMENT_KINDS.includes(kind)) {
+      return res.status(400).json({ error: `kind must be one of: ${ATTACHMENT_KINDS.join(', ')}` });
+    }
+
+    // Accepts either a bare base64 string or a full data: URL, since the browser's FileReader
+    // hands back the latter.
+    const base64 = String(data).includes(',') ? String(data).split(',').pop() : String(data);
+    let buf;
+    try {
+      buf = Buffer.from(base64, 'base64');
+    } catch {
+      return res.status(400).json({ error: 'data is not valid base64' });
+    }
+    if (!buf.length) return res.status(400).json({ error: 'The uploaded file is empty' });
+    if (buf.length > MAX_UPLOAD_BYTES) {
+      return res.status(413).json({ error: `Files must be ${MAX_UPLOAD_BYTES / 1024 / 1024}MB or smaller` });
+    }
+
+    // Any file type is accepted -- artists attach drawings, spreadsheets and images as well
+    // as PDFs. The browser's reported type is stored only to serve the download back with a
+    // sensible Content-Type; it is never trusted to decide anything.
+    const safeMime = /^[\w.+-]+\/[\w.+-]+$/.test(String(mimeType || ''))
+      ? String(mimeType).slice(0, 100)
+      : 'application/octet-stream';
+
+    const [result] = await conn.query(
+      `INSERT INTO job_order_attachments (job_order_id, kind, file_name, mime_type, size_bytes, file_data, uploaded_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [req.params.id, kind, String(fileName).slice(0, 255), safeMime, buf.length, buf, req.user.id]
+    );
+    const [[row]] = await conn.query(
+      `SELECT id, kind, file_name, mime_type, size_bytes, created_at FROM job_order_attachments WHERE id = ?`,
+      [result.insertId]
+    );
+    res.status(201).json(row);
+  } catch (err) {
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+router.get('/:id/attachments/:attachmentId/file', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [[row]] = await pool.query(
+      'SELECT file_name, mime_type, file_data FROM job_order_attachments WHERE id = ? AND job_order_id = ?',
+      [req.params.attachmentId, req.params.id]
+    );
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
+    // PDFs and images open in a tab; anything else the browser cannot render is offered as a
+    // download rather than dumped as text.
+    const inline = /^(application\/pdf|image\/)/.test(row.mime_type || '');
+    res.setHeader(
+      'Content-Disposition',
+      `${inline ? 'inline' : 'attachment'}; filename="${row.file_name.replace(/"/g, '')}"`
+    );
+    res.send(row.file_data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Removal is System Admin only -- deliberately narrower than upload. An attachment is what
+// Sales approved against, so an artist replacing or deleting one after the fact would change
+// the record behind the approval. Artists add; only an admin takes away.
+router.delete('/:id/attachments/:attachmentId', requireAuth, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!(await isSystemAdmin(req.user.id))) {
+      return res.status(403).json({ error: 'Only a System Admin can remove an attachment' });
+    }
+
+    const [r] = await conn.query(
+      'DELETE FROM job_order_attachments WHERE id = ? AND job_order_id = ?',
+      [req.params.attachmentId, req.params.id]
+    );
+    if (!r.affectedRows) return res.status(404).json({ error: 'Not found' });
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// ---------------------------------------------------------------------------------------
+// Printable Job Order (the production sheet: header + jobs + specifications + logistics slip)
+// ---------------------------------------------------------------------------------------
+//
+// Who may print:
+//   System Admin  -- any JO, at any status, assigned or not.
+//   Everyone else -- needs can_print on /job-orders AND a JO that has an artist assigned.
+//
+// The artist rule is the point of the gate: an unassigned JO has not been through design, so
+// its sheet would send work to the floor that nobody has been made responsible for. Admins
+// are exempt because they need to be able to reprint anything, including historical JOs from
+// before assignment was tracked.
+router.get('/:id/print', requireAuth, async (req, res, next) => {
+  try {
+    const [[jo]] = await pool.query(
+      `SELECT jo.*, so.sales_order_no, so.contract_description, so.credit_term, so.date_created AS so_date,
+              so.shipping_address AS so_shipping_address, so.memo AS so_memo,
+              c.name AS customer_name,
+              jt.display_name AS job_type_name,
+              sd.name AS sales_division_name,
+              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
+              CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name,
+              cc.contact_name
+         FROM job_orders jo
+         JOIN sales_orders so ON so.id = jo.sales_order_id
+         LEFT JOIN customers c ON c.id = so.customer_id
+         LEFT JOIN job_types jt ON jt.id = jo.job_type_id
+         LEFT JOIN sales_divisions sd ON sd.id = so.sales_division_id
+         LEFT JOIN employees sr ON sr.id = so.sales_rep_id
+         LEFT JOIN employees ar ON ar.id = jo.artist_id
+         LEFT JOIN customer_contacts cc ON cc.id = so.contact_person_id
+        WHERE jo.id = ?`,
+      [req.params.id]
+    );
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+
+    if (!(await isSystemAdmin(req.user.id))) {
+      const [[page]] = await pool.query("SELECT id FROM pages WHERE route = ?", [ROUTE]);
+      if (!page) return res.status(500).json({ error: `Page not registered: ${ROUTE}` });
+      const [[perm]] = await pool.query(
+        'SELECT can_print FROM user_page_permissions WHERE user_id = ? AND page_id = ?',
+        [req.user.id, page.id]
+      );
+      if (!perm || !perm.can_print) {
+        return res.status(403).json({ error: 'You do not have permission to print a Job Order' });
+      }
+      // Reported separately from the permission failure: "ask your admin for access" and
+      // "assign an artist first" are different problems with different fixes.
+      if (!jo.artist_id) {
+        return res.status(403).json({
+          error: 'This Job Order has no artist assigned yet, so it cannot be printed.',
+          reason: 'no_artist',
+        });
+      }
+    }
+
+    const [processes] = await pool.query(
+      `SELECT jop.line_no, jop.qty, jop.length, jop.width, jop.uom, jop.unit,
+              jop.remarks, jop.memo, jop.artist_remarks,
+              pr.process_name,
+              i.display_name AS item_name
+         FROM job_order_processes jop
+         LEFT JOIN processes pr ON pr.id = jop.process_id
+         LEFT JOIN inventories i ON i.id = jop.item_id
+        WHERE jop.job_order_id = ?
+        ORDER BY jop.line_no, jop.id`,
+      [req.params.id]
+    );
+
+    res.json({ ...jo, processes });
+  } catch (err) {
+    next(err);
   }
 });
 

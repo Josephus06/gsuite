@@ -45,15 +45,28 @@ export default function SalesInvoiceView() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
+  // The two related-record lists sit behind their OWN page permissions (/customer-payments
+  // and /credit-memos each require can_view), which invoice viewers are not automatically
+  // granted. Batching all three in one Promise.all meant a single 403 rejected the batch,
+  // setLoading(false) never ran, and the page sat on "Loading..." forever -- indistinguishable
+  // from a hung request, and unfixable by granting invoice permission. They are supporting
+  // detail, so each degrades to an empty list on its own; only the invoice itself is fatal.
+  const optional = (p) => p.then((r) => r.data).catch(() => []);
+
   function load() {
     return Promise.all([
       api.get(`/sales-invoices/${id}`),
-      api.get(`/customer-payments/by-invoice/${id}`),
-      api.get(`/credit-memos/by-invoice/${id}`),
-    ]).then(([siRes, payRes, cmRes]) => {
+      optional(api.get(`/customer-payments/by-invoice/${id}`)),
+      optional(api.get(`/credit-memos/by-invoice/${id}`)),
+    ]).then(([siRes, pay, cm]) => {
       setSi(siRes.data);
-      setPayments(payRes.data);
-      setCreditMemos(cmRes.data);
+      setPayments(pay);
+      setCreditMemos(cm);
+      setLoading(false);
+    }).catch((err) => {
+      setError(err.response?.status === 403
+        ? "You don't have permission to view this invoice."
+        : err.response?.data?.error || 'Could not load this invoice.');
       setLoading(false);
     });
   }
@@ -80,7 +93,20 @@ export default function SalesInvoiceView() {
     }
   }
 
-  if (loading || !si) return <LoadingSpinner />;
+  if (loading) return <LoadingSpinner />;
+  // A failed load leaves si null. Without this the "loading || !si" guard spun forever on
+  // an error instead of saying what went wrong.
+  if (!si) {
+    return (
+      <div>
+        <div className="page-header">
+          <div />
+          <button className="btn btn-sm" onClick={() => navigate(-1)}>Back</button>
+        </div>
+        <div className="error-banner">{error || 'Could not load this invoice.'}</div>
+      </div>
+    );
+  }
 
   const canEdit = can('/sales-invoices', 'can_edit');
   const isSaved = si.status === 'saved';

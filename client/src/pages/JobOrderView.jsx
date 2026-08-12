@@ -6,6 +6,7 @@ import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
+import ArtistAttachments from '../components/ArtistAttachments';
 
 // Deliberately minimal Job Order detail -- mirrors the real system's layout (banner +
 // grouped info fields + Processes/RWIP JO/Sub Con/Related Records/System Info tabs +
@@ -77,6 +78,11 @@ export default function JobOrderView() {
   const [busy, setBusy] = useState(false);
   const [auditLogs, setAuditLogs] = useState([]);
 
+  // Kept on the page rather than inside the tab: the tab label shows the count and the Sales
+  // Approval button is disabled without one, and neither can wait for the tab to be opened.
+  const [attachmentCount, setAttachmentCount] = useState(0);
+  const [actionError, setActionError] = useState('');
+
   const [showAssign, setShowAssign] = useState(false);
   const [pmsJobTypes, setPmsJobTypes] = useState([]);
   const [artists, setArtists] = useState([]);
@@ -87,7 +93,13 @@ export default function JobOrderView() {
     return api.get(`/job-orders/${id}`).then(({ data }) => { setJo(data); setLoading(false); });
   }
 
-  useEffect(() => { load(); }, [id]);
+  function loadAttachmentCount() {
+    return api.get(`/job-orders/${id}/attachments`)
+      .then(({ data }) => setAttachmentCount(data.length))
+      .catch(() => setAttachmentCount(0));
+  }
+
+  useEffect(() => { load(); loadAttachmentCount(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (tab === 'system') {
@@ -140,7 +152,18 @@ export default function JobOrderView() {
 
   async function handleSalesApproval() {
     setBusy(true);
-    try { await api.put(`/job-orders/${id}/sales-approval`); await load(); } finally { setBusy(false); }
+    setActionError('');
+    try {
+      await api.put(`/job-orders/${id}/sales-approval`);
+      await load();
+    } catch (err) {
+      // The server refuses this when nothing is attached. Swallowing it silently left the
+      // button looking broken, so surface whatever reason came back.
+      setActionError(err.response?.data?.error || 'Could not send this Job Order for Sales Approval.');
+      await loadAttachmentCount();
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleApproveSales() {
@@ -224,6 +247,12 @@ export default function JobOrderView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/job-orders')}>Back to Lists</button>
+          {/* The server decides whether this JO may actually be printed (System Admin any
+              time; everyone else needs an assigned artist), so the button only checks that
+              the user holds the print permission at all. */}
+          {can('/job-orders', 'can_print') && (
+            <button className="btn btn-sm" onClick={() => window.open(`/job-orders/${id}/print`, '_blank')}>Print</button>
+          )}
           {canEdit && jo.status !== 'Cancelled' && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/job-orders/${id}/edit`)}>Edit</button>}
           {isPendingRma && canApproveRma && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApproveRma}>{isRmaType ? 'Approve RMA' : 'Approve'}</button>}
           {canForwardProduction && canApproveRma && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleForwardToProduction}>Forward to Production</button>}
@@ -237,7 +266,16 @@ export default function JobOrderView() {
             </button>
           )}
           {inDesignPhase && (canEdit || isAssignedArtist) && (jo.sub_status === 'For Artist' || jo.sub_status === 'For Artist (Revision)') && (
-            <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleSalesApproval}>Sales Approval</button>
+            <button
+              className="btn btn-sm btn-primary"
+              disabled={busy || attachmentCount === 0}
+              title={attachmentCount === 0
+                ? 'Attach the perspective and Bill of Materials first — see the Artist Attachment tab'
+                : undefined}
+              onClick={handleSalesApproval}
+            >
+              Sales Approval
+            </button>
           )}
           {inDesignPhase && canApprove && jo.sub_status === 'Sales Approval' && (
             <>
@@ -249,6 +287,8 @@ export default function JobOrderView() {
           {canEdit && isOnHold && !isTerminal && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleResume}>Resume</button>}
         </div>
       </div>
+
+      {actionError && <div className="error-banner">{actionError}</div>}
 
       <div className="estimate-banner">
         <div className="estimate-banner-title">
@@ -311,6 +351,9 @@ export default function JobOrderView() {
         <button className={`status-tab ${tab === 'processes' ? 'active' : ''}`} onClick={() => setTab('processes')}>Processes</button>
         <button className={`status-tab ${tab === 'rwip' ? 'active' : ''}`} onClick={() => setTab('rwip')}>RWIP JO</button>
         <button className={`status-tab ${tab === 'subcon' ? 'active' : ''}`} onClick={() => setTab('subcon')}>Sub Con</button>
+        <button className={`status-tab ${tab === 'attachments' ? 'active' : ''}`} onClick={() => setTab('attachments')}>
+          Artist Attachment{attachmentCount ? ` (${attachmentCount})` : ''}
+        </button>
         <button className={`status-tab ${tab === 'related' ? 'active' : ''}`} onClick={() => setTab('related')}>Related Records</button>
         <button className={`status-tab ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}>System Info</button>
       </div>
@@ -372,6 +415,15 @@ export default function JobOrderView() {
           </div>
           <button type="button" className="btn" style={{ marginTop: 12 }} disabled>Add Material</button>
         </div>
+      )}
+
+      {tab === 'attachments' && (
+        <ArtistAttachments
+          jobOrderId={id}
+          canUpload={isAssignedArtist || canEdit}
+          canDelete={user?.account_type === 'System Admin'}
+          onChange={loadAttachmentCount}
+        />
       )}
 
       {tab === 'related' && (

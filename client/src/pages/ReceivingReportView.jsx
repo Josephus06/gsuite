@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -20,13 +20,16 @@ function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { mo
 export default function ReceivingReportView() {
   const { receiptId } = useParams();
   const navigate = useNavigate();
+  const fromModule = useLocation().pathname.startsWith('/receiving-reports');
   const { can } = useAuth();
   const [data, setData] = useState(null);
   const [tab, setTab] = useState('items');
   const [loading, setLoading] = useState(true);
 
+  // Served by the Receiving Report module, which accepts either that page's view permission
+  // or the Purchase Order's -- this view is reached from both.
   useEffect(() => {
-    api.get(`/purchase-orders/receipts/${receiptId}`).then(({ data: d }) => { setData(d); setLoading(false); });
+    api.get(`/receiving-reports/${receiptId}`).then(({ data: d }) => { setData(d); setLoading(false); });
   }, [receiptId]);
 
   if (loading || !data) return <LoadingSpinner />;
@@ -39,7 +42,13 @@ export default function ReceivingReportView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(`/purchase-orders/${data.purchase_order_id}`)}>Back</button>
+          {/* Back goes where the user came from: the module list, or the PO that raised it. */}
+          <button
+            className="btn btn-sm"
+            onClick={() => navigate(fromModule ? '/receiving-reports' : `/purchase-orders/${data.purchase_order_id}`)}
+          >
+            Back
+          </button>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Receiving Report isn't implemented in this build">Edit</button>}
         </div>
       </div>

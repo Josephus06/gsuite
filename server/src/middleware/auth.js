@@ -1,7 +1,16 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../db');
 
-const PERMISSION_ACTIONS = new Set(['can_view', 'can_add', 'can_edit', 'can_delete', 'can_approve']);
+const PERMISSION_ACTIONS = new Set(['can_view', 'can_add', 'can_edit', 'can_delete', 'can_approve', 'can_print']);
+
+// System Admin is the one role defined by the account itself rather than by a permission
+// row -- create-account-type-permissions.js seeds it full access on every page. The JWT
+// carries only id/username/display_name, so the account type is read fresh; that also means
+// demoting someone takes effect immediately rather than at their next login.
+async function isSystemAdmin(userId) {
+  const [[u]] = await pool.query('SELECT account_type FROM users WHERE id = ?', [userId]);
+  return u?.account_type === 'System Admin';
+}
 
 // Presence heartbeat for the newsfeed's Contacts rail. Every authenticated request would be
 // one UPDATE per request, which is far more writes than "who's online" is worth -- so each
@@ -85,4 +94,4 @@ function requirePermission(route, action = 'can_view') {
   };
 }
 
-module.exports = { requireAuth, requirePermission, clearPresence };
+module.exports = { requireAuth, requirePermission, clearPresence, isSystemAdmin };
