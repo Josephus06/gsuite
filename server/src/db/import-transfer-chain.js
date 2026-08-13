@@ -143,6 +143,27 @@ async function main() {
     return localId;
   }
 
+  // Live JO pk -> local job_orders.id, cached the same way items are. A transfer order line
+  // says which job order it is for, and that is what the Items tab's "JO #" column shows.
+  let joLookups = 0;
+  const joUnresolvable = new Set();
+  const joByLivePk = new Map();
+  async function resolveJobOrder(pk) {
+    if (!pk) return null;
+    if (joByLivePk.has(pk)) return joByLivePk.get(pk);
+    if (joUnresolvable.has(pk)) return null;
+    joLookups += 1;
+    let no = null;
+    try {
+      const rows = listRows(await api(token, 'get_transactions', { where: { SysPK_TransH: pk }, limit: 1 }, 3));
+      no = rows[0]?.UserPK_TransH || null;
+    } catch { /* fall through */ }
+    const localId = no ? (joByNo.get(no) || null) : null;
+    if (!localId) { joUnresolvable.add(pk); return null; }
+    joByLivePk.set(pk, localId);
+    return localId;
+  }
+
   const stats = { to: 0, toLines: 0, if: 0, ifLines: 0, ir: 0, irLines: 0 };
   const skipped = { noParentTo: 0, noParentIf: 0, noToLine: 0, noIfLine: 0, noItem: 0, noLocation: 0, failed: 0 };
 
@@ -214,10 +235,14 @@ async function main() {
           live_pk: l.SysPK_LdgrInvty,
           line_no: i + 1,
           item_id: itemId,
-          job_order_id: null, // resolved below from the JO pk when we hold that JO
-          job_order_pk: l.SysFK_TransHJO_LdgrInvty || null,
-          to_count: num(l.QtyIn_LdgrInvty) || num(l.QtyOut_LdgrInvty),
-          qty: num(l.QtyIn_LdgrInvty) || num(l.QtyOut_LdgrInvty),
+          // The line names its job order only by live pk. resolveJobOrder looks it up once
+          // and caches it -- the ledger-invty endpoint has no JO include to piggyback on.
+          job_order_id: await resolveJobOrder(l.SysFK_TransHJO_LdgrInvty),
+          // The ordered quantity is POQty. QtyIn/QtyOut are the MOVEMENT, so both are 0
+          // until the order is fulfilled -- reading them left qty at 0 on every pending line
+          // (3,741 of 65,933), while live showed the real figure.
+          to_count: num(l.POQty_LdgrInvty) || num(l.QtyIn_LdgrInvty) || num(l.QtyOut_LdgrInvty),
+          qty: num(l.POQty_LdgrInvty) || num(l.QtyIn_LdgrInvty) || num(l.QtyOut_LdgrInvty),
           uom: l.UnitOfMeasure_LdgrInvty || null,
           unit: l.Unit_LdgrInvty || null,
           committed: num(l.CommittedQty_LdgrInvty),
@@ -247,15 +272,17 @@ async function main() {
                                         transfer_to_location_id, requestor_id, memo, status, created_by_user_id)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [toNo, dc, dOrNull(h.DeliveryDate_TransH), from, to,
-            empByName.get(norm(h.PreparedBy_TransH)) || null, h.Memo_TransH || null,
+            // The requestor is the employee on the header (transaction_employee), NOT
+            // PreparedBy_TransH -- that field is empty on transfer orders.
+            empByName.get(norm(h.transaction_employee?.Name_Empl)) || null, h.Memo_TransH || null,
             mapToStatus(h.Status_TransH), userByName.get(norm(h.PreparedBy_TransH)) || null]
         );
         for (const l of lines) {
           const [lr] = await conn.query(
-            `INSERT INTO transfer_order_lines (transfer_order_id, line_no, item_id, qty, to_count, uom, unit,
+            `INSERT INTO transfer_order_lines (transfer_order_id, line_no, item_id, job_order_id, qty, to_count, uom, unit,
                                                committed, fulfilled, received, qty_on_hand, memo, live_pk)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [r.insertId, l.line_no, l.item_id, l.qty, l.to_count, l.uom, l.unit,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [r.insertId, l.line_no, l.item_id, l.job_order_id, l.qty, l.to_count, l.uom, l.unit,
               l.committed, l.fulfilled, l.received, l.qty_on_hand, l.memo, l.live_pk]
           );
           if (l.live_pk) toLineByLivePk.set(l.live_pk, lr.insertId);
@@ -268,7 +295,7 @@ async function main() {
         console.warn(`  !! ${toNo} failed: ${e.message}`);
       } finally { conn.release(); }
       if (stats.to % 2000 === 0) console.log(`  ...${seen} seen, ${stats.to} imported`);
-    });
+    }, ['transaction_employee']);
     console.log(`Transfer Orders: ${stats.to} imported (${stats.toLines} lines) of ${seen} seen.\n`);
   }
 
@@ -408,6 +435,7 @@ async function main() {
   console.log(`Item Fulfillments : ${stats.if} (${stats.ifLines} lines)`);
   console.log(`Item Receipts     : ${stats.ir} (${stats.irLines} lines)`);
   console.log(`\nItem pk lookups against live: ${itemLookups}, newly mapped: ${itemLearned}, still unresolvable: ${itemUnresolvable.size}.`);
+  console.log(`Job order pk lookups: ${joLookups}, resolved: ${joByLivePk.size}, unresolvable: ${joUnresolvable.size}.`);
   console.log(`live_item_pk_map now holds ${itemByLivePk.size} item(s).`);
   console.log(`Skipped -- parent TO missing: ${skipped.noParentTo}, parent IF missing: ${skipped.noParentIf}, ` +
     `TO line missing: ${skipped.noToLine}, IF line missing: ${skipped.noIfLine}, ` +
