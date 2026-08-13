@@ -20,8 +20,11 @@ require('dotenv').config();
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
 function argVal(name, def) { const a = process.argv.find((x) => x.startsWith(`--${name}=`)); return a ? a.split('=')[1] : def; }
-const FROM = argVal('from', '2026-01-01');
-const TO = argVal('to', '2026-07-31');
+// Defaults to everything. The original run was scoped to Jan-Jul 2026 and left the other
+// years unimported; a window this wide is a no-op filter, and the date args remain for
+// re-running a single period.
+const FROM = argVal('from', '2000-01-01');
+const TO = argVal('to', '2099-12-31');
 const CONCURRENCY = 3;
 const DEFAULT_BASE_UNIT = 1;
 
@@ -116,14 +119,25 @@ async function main() {
   const haveAdj = new Set(have.map((r) => r.adjustment_no));
 
   // Page adjustment headers in the window.
+  //
+  // Paged to exhaustion, and a failed page is skipped rather than ending the walk. Both
+  // matter: live returns a short page transiently under load, and stopping on the first one
+  // silently truncates the import while still reporting a clean finish -- that cost 23,000
+  // item receipts before it was caught. A single failed page used to `break` here, which
+  // would drop every remaining adjustment for one timeout.
   const adjs = [];
-  for (let offset = 0; offset < 60000; offset += 200) {
-    let list;
+  let emptyStreak = 0;
+  for (let offset = 0; offset < 120000; offset += 200) {
+    let list = [];
     try { list = listRows(await apiRetry(token, 'get_inventory_adjustments', { searchKey: '', limit: 200, offset })); }
-    catch (e) { console.warn(`  page ${offset} failed: ${e.message}`); break; }
-    if (!list.length) break;
+    catch (e) { console.warn(`  page ${offset} failed: ${e.message}`); }
+    if (!list.length) {
+      emptyStreak += 1;
+      if (emptyStreak >= 2) break;
+      continue;
+    }
+    emptyStreak = 0;
     for (const a of list) { const d = day(a.DateCreated_TransH); if (d >= FROM && d <= TO) adjs.push(a); }
-    if (list.length < 200) break;
   }
   const targets = adjs.filter((a) => !haveAdj.has(a.UserPK_TransH));
   console.log(`Found ${adjs.length} adjustment(s) in window; ${targets.length} to import.\n`);
