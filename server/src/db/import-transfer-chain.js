@@ -41,6 +41,22 @@ const norm = (s) => (s || '').toString().replace(/\s+/g, ' ').trim().toLowerCase
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const listRows = (res) => (Array.isArray(res?.data?.[0]) ? res.data[0] : (Array.isArray(res?.data) ? res.data : []));
 
+// Live labels a transfer order for display ("Pending Fulfillment", "CANCELLED"); this app
+// filters on the snake_case keys in TransferOrders.jsx STATUS_TABS. Storing live's string
+// verbatim leaves every tab except Received empty, because 'received' is the only value that
+// happens to coincide -- 1,896 orders were invisible in the list until this map existed.
+const TO_STATUS = new Map([
+  ['pending fulfillment', 'pending_fulfillment'],
+  ['pending', 'pending_fulfillment'], // nothing fulfilled yet, so it belongs in the first tab
+  ['partially fulfilled', 'partially_fulfilled'],
+  ['pending receipt', 'pending_receipt'],
+  ['pending receipt / partially fulfilled', 'pending_receipt_partially_fulfilled'],
+  ['received', 'received'],
+  ['cancelled', 'cancelled'],
+  ['canceled', 'cancelled'],
+]);
+const mapToStatus = (s) => TO_STATUS.get(norm(s)) || 'pending_fulfillment';
+
 async function login() {
   const r = await fetch(`${SITE}/api/login`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -232,7 +248,7 @@ async function main() {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [toNo, dc, dOrNull(h.DeliveryDate_TransH), from, to,
             empByName.get(norm(h.PreparedBy_TransH)) || null, h.Memo_TransH || null,
-            h.Status_TransH || 'Pending', userByName.get(norm(h.PreparedBy_TransH)) || null]
+            mapToStatus(h.Status_TransH), userByName.get(norm(h.PreparedBy_TransH)) || null]
         );
         for (const l of lines) {
           const [lr] = await conn.query(
