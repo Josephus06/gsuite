@@ -90,16 +90,21 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     );
 
     // GL Impact (matches the live tab): DR expenses (+VAT input) / CR EWT / CR bank.
-    let gl = [];
-    if (c.status !== 'void') {
-      gl = computeGl(c, lines);
-      const tax = round2(c.tax_amount);
-      const wtax = round2(c.withholding_tax_amount);
-      const total = round2(c.total_amount);
-      if (tax) { const [[v]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '14300'"); if (v) gl.push({ account_code: v.account_code, account_name: v.account_name, debit: tax, credit: 0 }); }
-      if (wtax) { const [[w]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '21402'"); if (w) gl.push({ account_code: w.account_code, account_name: w.account_name, debit: 0, credit: wtax }); }
-      if (total && c.account_code) gl.push({ account_code: c.account_code, account_name: c.account_name, debit: 0, credit: total });
-    }
+    //
+    // Shown for voided cheques too. This tab documents what THIS cheque posted, and a void
+    // does not un-post it: live keeps the original entries and reverses them with a separate
+    // journal, which appears under Related Records. Blanking the tab on void hid the entries
+    // for all 690 imported voided cheques even though their reversal is right there.
+    // (Note: this app's own /void handler only flips the status -- it posts no reversal
+    // journal the way live does. Cheques voided in-app therefore show a posting with nothing
+    // reversing it, which is a gap in that handler rather than a reason to hide the truth.)
+    const gl = computeGl(c, lines);
+    const tax = round2(c.tax_amount);
+    const wtax = round2(c.withholding_tax_amount);
+    const total = round2(c.total_amount);
+    if (tax) { const [[v]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '14300'"); if (v) gl.push({ account_code: v.account_code, account_name: v.account_name, debit: tax, credit: 0 }); }
+    if (wtax) { const [[w]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '21402'"); if (w) gl.push({ account_code: w.account_code, account_name: w.account_name, debit: 0, credit: wtax }); }
+    if (total && c.account_code) gl.push({ account_code: c.account_code, account_name: c.account_name, debit: 0, credit: total });
     res.json({ ...c, lines, gl });
   } catch (err) { next(err); }
 });
