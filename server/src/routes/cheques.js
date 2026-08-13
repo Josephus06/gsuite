@@ -115,6 +115,23 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
   } catch (err) { next(err); }
 });
 
+// Related Records: the journals raised against this cheque -- in practice the REVERSAL
+// journal posted when it was voided. Live keeps no foreign key for this; the link is
+// reconstructed at import time from the reversal's memo ("Voided from CHK-####") into
+// journals.source_type/source_id, which is what this reads.
+router.get('/:id/related', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT j.id, j.journal_no, j.date_created, j.status, j.memo, j.total_debit AS amount
+         FROM journals j
+        WHERE j.source_type = 'cheque' AND j.source_id = ?
+        ORDER BY j.date_created DESC, j.id DESC`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
 function normalizeLines(lines) {
   return (Array.isArray(lines) ? lines : [])
     .filter((l) => l.account_id && (num(l.amount) !== 0 || num(l.tax_amount) !== 0))

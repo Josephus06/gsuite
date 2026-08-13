@@ -16,6 +16,7 @@ export default function ChequeView() {
   const [c, setC] = useState(null);
   const [tab, setTab] = useState('expenses');
   const [auditLogs, setAuditLogs] = useState([]);
+  const [related, setRelated] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -23,6 +24,9 @@ export default function ChequeView() {
   function load() { return api.get(`/cheques/${id}`).then(({ data }) => { setC(data); setLoading(false); }); }
   useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (tab === 'system') api.get(`/cheques/${id}/audit-logs`).then(({ data }) => setAuditLogs(data)); }, [tab, id]);
+  // Loaded up front rather than on tab click so the tab can show its own count, and because
+  // a voided cheque's reversal journal is the first thing anyone opens this record to find.
+  useEffect(() => { api.get(`/cheques/${id}/related`).then(({ data }) => setRelated(data)).catch(() => setRelated([])); }, [id]);
 
   async function handleVoid() {
     if (!confirm('Void this Cheque?')) return;
@@ -94,6 +98,9 @@ export default function ChequeView() {
         <button className={`status-tab ${tab === 'expenses' ? 'active' : ''}`} onClick={() => setTab('expenses')}>Expenses</button>
         <button className={`status-tab ${tab === 'wtax' ? 'active' : ''}`} onClick={() => setTab('wtax')}>Withholding Tax</button>
         <button className={`status-tab ${tab === 'gl' ? 'active' : ''}`} onClick={() => setTab('gl')}>GL Impact</button>
+        <button className={`status-tab ${tab === 'related' ? 'active' : ''}`} onClick={() => setTab('related')}>
+          Related Records{related.length ? ` (${related.length})` : ''}
+        </button>
         <button className={`status-tab ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}>System Info</button>
       </div>
 
@@ -159,6 +166,29 @@ export default function ChequeView() {
                 {gl.map((l, i) => <tr key={i}><td>{l.account_code}</td><td>{l.account_name}</td><td style={{ textAlign: 'right' }}>{money(l.debit)}</td><td style={{ textAlign: 'right' }}>{money(l.credit)}</td></tr>)}
               </tbody>
               <tfoot><tr style={{ fontWeight: 700 }}><td colSpan={2} style={{ textAlign: 'right' }}>Total</td><td style={{ textAlign: 'right' }}>{money(totalDebit)}</td><td style={{ textAlign: 'right' }}>{money(totalCredit)}</td></tr></tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === 'related' && (
+        <div className="card">
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Date</th><th>Transaction #</th><th style={{ textAlign: 'right' }}>Amount</th><th>Status</th></tr></thead>
+              <tbody>
+                {related.length === 0 && (
+                  <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>No related records.</td></tr>
+                )}
+                {related.map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.date_created ? String(r.date_created).slice(0, 10) : ''}</td>
+                    <td><button type="button" className="link-btn" onClick={() => navigate(`/journals/${r.id}`)}>{r.journal_no}</button></td>
+                    <td style={{ textAlign: 'right' }}>{money(r.amount)}</td>
+                    <td>{r.status}</td>
+                  </tr>
+                ))}
+              </tbody>
             </table>
           </div>
         </div>
