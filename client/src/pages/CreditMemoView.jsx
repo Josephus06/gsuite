@@ -91,8 +91,13 @@ export default function CreditMemoView() {
         <div className="estimate-detail-grid">
           <div>
             <div>Customer : <span className="hi">{cm.customer_name}</span></div>
+            <div>Sales Rep : <span className="hi">{cm.sales_rep_name || '—'}</span></div>
             <div>Date : <span className="hi">{formatDate(cm.date_created)}</span></div>
-            <div>Created From : <button type="button" className="link-btn" onClick={() => navigate(`/sales-invoices/${cm.sales_invoice_id}`)}>{cm.invoice_no}</button></div>
+            {/* An imported memo can apply to several invoices at once, so there is no single
+                "created from" -- the Apply tab lists them all. */}
+            {cm.sales_invoice_id && (
+              <div>Created From : <button type="button" className="link-btn" onClick={() => navigate(`/sales-invoices/${cm.sales_invoice_id}`)}>{cm.invoice_no}</button></div>
+            )}
           </div>
           <div>
             <div>Office Location : <span className="hi">{cm.office_location_name || '—'}</span></div>
@@ -181,17 +186,35 @@ export default function CreditMemoView() {
         <div className="card">
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Invoice #</th><th>Date Created</th><th>Original Amount</th><th>Applied Amount</th></tr></thead>
+              {/* Mirrors live's Apply tab: what the invoice originally billed, what it still
+                  owed when this credit hit it, and what remains after. */}
+              <thead>
+                <tr>
+                  <th>Invoice #</th><th>Date Created</th>
+                  <th style={{ textAlign: 'right' }}>Original Amount</th>
+                  <th style={{ textAlign: 'right' }}>Original Amount Due</th>
+                  <th style={{ textAlign: 'right' }}>Amount Due</th>
+                  <th style={{ textAlign: 'right' }}>Applied Amount</th>
+                </tr>
+              </thead>
               <tbody>
                 {cm.applications.length === 0 && (
-                  <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>Not applied to any invoice yet.</td></tr>
+                  <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>Not applied to any invoice yet.</td></tr>
                 )}
                 {cm.applications.map((a) => (
                   <tr key={a.id}>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/sales-invoices/${a.sales_invoice_id}`)}>{a.invoice_no}</button></td>
+                    {/* Not every applied invoice exists in this database; show the number
+                        live recorded rather than a link that would 404. */}
+                    <td>
+                      {a.sales_invoice_id
+                        ? <button type="button" className="link-btn" onClick={() => navigate(`/sales-invoices/${a.sales_invoice_id}`)}>{a.invoice_no}</button>
+                        : <span title="This invoice is not in this database">{a.invoice_no || '—'}</span>}
+                    </td>
                     <td>{formatDate(a.invoice_date)}</td>
-                    <td>{money(a.invoice_gross)}</td>
-                    <td>{money(a.applied_amount)}</td>
+                    <td style={{ textAlign: 'right' }}>{money(a.invoice_gross)}</td>
+                    <td style={{ textAlign: 'right' }}>{money(a.original_amount_due)}</td>
+                    <td style={{ textAlign: 'right' }}>{money(Number(a.original_amount_due || 0) - Number(a.applied_amount || 0))}</td>
+                    <td style={{ textAlign: 'right' }}>{money(a.applied_amount)}</td>
                   </tr>
                 ))}
               </tbody>

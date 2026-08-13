@@ -366,10 +366,32 @@ async function computeCustomerPaymentGl(cp, lines) {
 //
 // VAT is routed per line tax code via taxes.tax_account_id, same as the invoice's own
 // entry, so a credit reverses tax onto exactly the account the sale put it on.
-async function computeCreditMemoGl(cm, lines) {
+async function computeCreditMemoGl(cm, lines, applications = []) {
   const arAcct = await coaByCode('12100');
   const salesAcct = await coaByCode('30100');
   if (!arAcct || !salesAcct) return [];
+
+  // Imported memos carry the account live actually debited, and have no item lines -- a
+  // credit memo there is an amount applied against invoices, not a list of returned goods.
+  // Reproduce live's shape: one debit for the whole memo, then one A/R credit per invoice it
+  // was applied to. Assuming 30100 (Sales) here would be wrong for most of them: CM-5290
+  // debits 14200 Creditable Withholding Tax, because the customer withheld tax.
+  if (cm.source_account_id && !lines.length) {
+    const src = await coaById(cm.source_account_id);
+    const gross = Number(cm.gross_amount) || 0;
+    const rows = [];
+    if (src && gross) rows.push({ account_code: src.account_code, account_name: src.account_name, debit: gross, credit: 0 });
+    const applied = applications.filter((a) => Number(a.applied_amount));
+    if (applied.length) {
+      for (const a of applied) {
+        rows.push({ account_code: arAcct.account_code, account_name: arAcct.account_name, debit: 0, credit: Number(a.applied_amount) });
+      }
+    } else if (gross) {
+      // Nothing applied yet -- the credit still sits against A/R as a single balance.
+      rows.push({ account_code: arAcct.account_code, account_name: arAcct.account_name, debit: 0, credit: gross });
+    }
+    return rows;
+  }
 
   const rows = [];
   const netOfTax = Number(cm.net_of_tax) || 0;
@@ -868,9 +890,14 @@ async function getPostedGlLines({ toDate, fromDate }) {
     const linesBy = await linesByParent(
       'SELECT * FROM credit_memo_lines WHERE credit_memo_id IN (?)', 'credit_memo_id',
       headers.map((h) => h.id));
+    // Imported memos have no lines and post one A/R credit per applied invoice, so the
+    // ledger needs the applications for the same reason the document view does.
+    const appsBy = await linesByParent(
+      'SELECT * FROM credit_memo_applications WHERE credit_memo_id IN (?)', 'credit_memo_id',
+      headers.map((h) => h.id));
     for (const cm of headers) {
       const lines = linesBy.get(cm.id) || [];
-      const rows = await computeCreditMemoGl(cm, lines);
+      const rows = await computeCreditMemoGl(cm, lines, appsBy.get(cm.id) || []);
       push(rows, {
         entry_date: cm.date_created, source_type: 'credit_memo', source_no: cm.credit_memo_no, source_id: cm.id, memo: cm.memo || null,
         location_id: cm.office_location_id || null, department_id: null,

@@ -152,9 +152,11 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     const [[cm]] = await pool.query(
       `SELECT cm.*, c.name AS customer_name, si.invoice_no, loc.location_name AS office_location_name,
               coa.account_code AS ar_account_code, coa.account_name AS ar_account_name,
-              u.display_name AS created_by_name
+              u.display_name AS created_by_name,
+              CONCAT(e.first_name, ' ', e.last_name) AS sales_rep_name
        FROM credit_memos cm
        LEFT JOIN customers c ON c.id = cm.customer_id
+       LEFT JOIN employees e ON e.id = cm.sales_rep_id
        LEFT JOIN sales_invoices si ON si.id = cm.sales_invoice_id
        LEFT JOIN locations loc ON loc.id = cm.office_location_id
        LEFT JOIN chart_of_accounts coa ON coa.id = cm.ar_account_id
@@ -174,14 +176,17 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     );
 
     const [applications] = await pool.query(
-      `SELECT cma.*, si.invoice_no, si.date_created AS invoice_date, si.gross_amount AS invoice_gross
+      // COALESCE: an application may point at an invoice this database does not hold, in
+      // which case only the number live recorded is available.
+      `SELECT cma.*, COALESCE(si.invoice_no, cma.invoice_no) AS invoice_no,
+              si.date_created AS invoice_date, si.gross_amount AS invoice_gross
        FROM credit_memo_applications cma
        LEFT JOIN sales_invoices si ON si.id = cma.sales_invoice_id
        WHERE cma.credit_memo_id = ?`,
       [req.params.id]
     );
 
-    const glImpact = await computeCreditMemoGl(cm, lines);
+    const glImpact = await computeCreditMemoGl(cm, lines, applications);
     res.json({ ...cm, lines, applications, gl_impact: glImpact });
   } catch (err) {
     next(err);
