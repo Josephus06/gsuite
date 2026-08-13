@@ -287,6 +287,14 @@ async function main() {
           );
           if (l.live_pk) toLineByLivePk.set(l.live_pk, lr.insertId);
         }
+        // The list page and its search read the HEADER job order, not the lines. Live has
+        // no such FK, so derive it: an order raised for a single job order carries it.
+        // Orders whose lines span several are left blank -- showing one of many would be
+        // worse than showing none, and the detail page lists each line's own anyway.
+        const distinctJos = [...new Set(lines.map((l) => l.job_order_id).filter(Boolean))];
+        if (distinctJos.length === 1) {
+          await conn.query('UPDATE transfer_orders SET job_order_id = ? WHERE id = ?', [distinctJos[0], r.insertId]);
+        }
         await conn.commit();
         toByNo.set(toNo, r.insertId);
         stats.to += 1; stats.toLines += lines.length;
