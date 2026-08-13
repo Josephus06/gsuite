@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
+import Pagination from '../components/Pagination';
 
 function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
 function locationLabel(l) { return l ? l.location_name : ''; }
@@ -17,6 +18,9 @@ function employeeLabel(e) { return e ? `${e.first_name} ${e.last_name}` : ''; }
 export default function ItemFulfillments() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const limit = 10;
 
   const [search, setSearch] = useState('');
   const [withdrawFrom, setWithdrawFrom] = useState(null);
@@ -34,16 +38,30 @@ export default function ItemFulfillments() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Re-fetch when the page changes. runSearch resets to page 1, which fires this too --
+  // guarded there so a search from page 1 still reloads.
+  const firstRender = useRef(true);
+  useEffect(() => {
+    if (firstRender.current) { firstRender.current = false; return; }
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
+
+  function runSearch() {
+    if (page === 1) load(); else setPage(1);
+  }
+
   async function load() {
     setLoading(true);
-    const params = {};
+    const params = { page, limit };
     if (search) params.search = search;
     if (withdrawFrom) params.withdraw_from = withdrawFrom.id;
     if (transferTo) params.transfer_to = transferTo.id;
     if (requestor) params.requestor_id = requestor.id;
     if (asOf) params.as_of = asOf;
     const { data } = await api.get('/transfer-orders/item-fulfillments', { params });
-    setRows(data);
+    setRows(data.rows);
+    setTotal(data.total);
     setLoading(false);
   }
 
@@ -59,7 +77,7 @@ export default function ItemFulfillments() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} placeholder="IF No. or TO No..." />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="IF No. or TO No..." />
           </div>
           <div className="field">
             <label>Withdraw From</label>
@@ -105,7 +123,7 @@ export default function ItemFulfillments() {
             <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
           </div>
         </div>
-        <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={load}>Search</button>
+        <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>
       </div>
 
       <div className="card">
@@ -145,6 +163,14 @@ export default function ItemFulfillments() {
               </tbody>
             </table>
           </div>
+        )}
+        {!loading && (
+          <>
+            <div className="muted" style={{ marginTop: 12 }}>
+              {total.toLocaleString()} item fulfillment{total === 1 ? '' : 's'}
+            </div>
+            <Pagination page={page} totalPages={Math.max(1, Math.ceil(total / limit))} onChange={setPage} />
+          </>
         )}
       </div>
     </div>

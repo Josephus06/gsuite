@@ -127,9 +127,12 @@ function locationRequestorFilters(where, params, query, toAlias) {
   return asOf;
 }
 
+// Paginated: this list holds 41,001 fulfilments after the transfer-order migration, and it
+// used to return every one of them, with a second query fanning out to all their lines to
+// derive a status.
 router.get('/item-fulfillments', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { search } = req.query;
+    const { search, page = '1', limit = '10' } = req.query;
     const where = [];
     const params = [];
     const asOf = locationRequestorFilters(where, params, req.query, 't');
@@ -137,18 +140,26 @@ router.get('/item-fulfillments', requireAuth, requirePermission(ROUTE, 'can_view
     if (search) { where.push('(f.fulfillment_no LIKE ? OR t.to_no LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
+    const baseFrom = `FROM item_fulfillments f
+       JOIN transfer_orders t ON t.id = f.transfer_order_id`;
+    const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${baseFrom} ${whereSql}`, params);
+
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, Number(limit) || 10));
+    const offset = (pageNum - 1) * limitNum;
+
     const [rows] = await pool.query(
       `SELECT f.id, f.fulfillment_no, f.date_created, f.memo, t.to_no,
               wf.location_name AS withdraw_from_name, tt.location_name AS transfer_to_name,
               CONCAT(e.first_name, ' ', e.last_name) AS requestor_name
-       FROM item_fulfillments f
-       JOIN transfer_orders t ON t.id = f.transfer_order_id
+       ${baseFrom}
        LEFT JOIN locations wf ON wf.id = t.withdraw_from_location_id
        LEFT JOIN locations tt ON tt.id = t.transfer_to_location_id
        LEFT JOIN employees e ON e.id = t.requestor_id
        ${whereSql}
-       ORDER BY f.id DESC`,
-      params
+       ORDER BY f.id DESC
+       LIMIT ? OFFSET ?`,
+      [...params, limitNum, offset]
     );
 
     if (rows.length) {
@@ -166,15 +177,16 @@ router.get('/item-fulfillments', requireAuth, requirePermission(ROUTE, 'can_view
         r.status = lines.length && lines.every((l) => Number(l.received || 0) >= Number(l.qty_fulfilled || 0)) ? 'CLOSED' : 'OPEN';
       }
     }
-    res.json(rows);
+    res.json({ rows, total, page: pageNum, limit: limitNum });
   } catch (err) {
     next(err);
   }
 });
 
+// Paginated for the same reason as the fulfilments list above: 40,584 receipts.
 router.get('/item-receipts', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { search } = req.query;
+    const { search, page = '1', limit = '10' } = req.query;
     const where = [];
     const params = [];
     const asOf = locationRequestorFilters(where, params, req.query, 't');
@@ -182,21 +194,29 @@ router.get('/item-receipts', requireAuth, requirePermission(ROUTE, 'can_view'), 
     if (search) { where.push('(r.receipt_no LIKE ? OR t.to_no LIKE ? OR f.fulfillment_no LIKE ?)'); params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
+    const baseFrom = `FROM item_receipts r
+       JOIN transfer_orders t ON t.id = r.transfer_order_id
+       JOIN item_fulfillments f ON f.id = r.item_fulfillment_id`;
+    const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${baseFrom} ${whereSql}`, params);
+
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, Number(limit) || 10));
+    const offset = (pageNum - 1) * limitNum;
+
     const [rows] = await pool.query(
       `SELECT r.id, r.receipt_no, r.date_created, r.memo, t.to_no, f.fulfillment_no,
               wf.location_name AS withdraw_from_name, tt.location_name AS transfer_to_name,
               CONCAT(e.first_name, ' ', e.last_name) AS requestor_name
-       FROM item_receipts r
-       JOIN transfer_orders t ON t.id = r.transfer_order_id
-       JOIN item_fulfillments f ON f.id = r.item_fulfillment_id
+       ${baseFrom}
        LEFT JOIN locations wf ON wf.id = t.withdraw_from_location_id
        LEFT JOIN locations tt ON tt.id = t.transfer_to_location_id
        LEFT JOIN employees e ON e.id = t.requestor_id
        ${whereSql}
-       ORDER BY r.id DESC`,
-      params
+       ORDER BY r.id DESC
+       LIMIT ? OFFSET ?`,
+      [...params, limitNum, offset]
     );
-    res.json(rows);
+    res.json({ rows, total, page: pageNum, limit: limitNum });
   } catch (err) {
     next(err);
   }
