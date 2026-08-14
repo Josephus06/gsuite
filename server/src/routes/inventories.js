@@ -71,12 +71,21 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     if (status && STATUS_FILTERS[status]) { where.push(STATUS_FILTERS[status]); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
+    // The stock / purchase / sales units and the expense account are joined here as well as on
+    // the detail route, because the Non-Inventories list shows all four unit columns and the
+    // expense account the way live's does.
     const baseFrom = `FROM inventories i
        LEFT JOIN inventory_categories c ON c.id = i.category_id
-       LEFT JOIN units_of_measure u ON u.id = i.base_unit_id`;
+       LEFT JOIN units_of_measure u ON u.id = i.base_unit_id
+       LEFT JOIN units_of_measure su ON su.id = i.stock_unit_id
+       LEFT JOIN units_of_measure pu ON pu.id = i.purchase_unit_id
+       LEFT JOIN units_of_measure slu ON slu.id = i.sales_unit_id
+       LEFT JOIN chart_of_accounts ea ON ea.id = i.expense_account_id`;
 
     const [rows] = await pool.query(
       `SELECT i.*, c.name AS category_name, u.code AS base_unit_code, u.title AS base_unit_title,
+              su.code AS stock_unit_code, pu.code AS purchase_unit_code, slu.code AS sales_unit_code,
+              ea.account_name AS expense_account_name,
               COALESCE((SELECT SUM(il.qty_on_hand) FROM inventory_locations il WHERE il.inventory_id = i.id), 0) AS total_qty_on_hand
        ${baseFrom} ${whereSql}
        ORDER BY i.id DESC`,

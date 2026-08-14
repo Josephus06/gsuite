@@ -1,3 +1,12 @@
+// SUPERSEDED for non_inventories and service_items -- see import-item-master-details.js.
+//
+// This put Non-Inventory and Service items into the thin four-column lookup tables. That was
+// the wrong home: live treats both as full item master records (units, expense account, JO/PO
+// flags, last purchase price) and every purchase order, receipt and vendor bill line points at
+// `inventories`. They now live in `inventories` under item_type, with their own Master Lists
+// pages, and the two lookup tabs have been removed. Only the landed_costs and discount_items
+// parts of this script still back a live screen.
+//
 // Populates the Master Lists > Lookups item tabs, which were all empty:
 //
 //   non_inventories   <- live Module_Invty='NONINVTY'    (2,096)

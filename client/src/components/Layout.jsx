@@ -46,6 +46,7 @@ const NAV_STRUCTURE = [
       { route: '/pms-job-types', label: 'PMS Job Types' },
       { route: '/inventory', label: 'Inventory Items' },
       { route: '/service-items', label: 'Service Items' },
+      { route: '/non-inventories', label: 'Non-Inventories' },
       { route: '/lookups', label: 'Lookups' },
       { route: '/transaction-settings', label: 'Transaction Settings' },
     ],

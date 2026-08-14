@@ -100,18 +100,11 @@ const CONFIG = [
     { name: 'allocation_method', label: 'Allocation Method', type: 'select', options: ['By Value', 'By Quantity', 'By Weight'] },
     { name: 'is_active', label: 'Active', type: 'checkbox' },
   ] },
-  { key: 'non-inventories', label: 'Non-Inventory Items', fields: [
-    { name: 'item_code', label: 'Item Code', type: 'text', required: true },
-    { name: 'display_name', label: 'Display Name', type: 'text', required: true },
-    { name: 'unit_price', label: 'Unit Price', type: 'number', step: '0.0001' },
-    { name: 'is_active', label: 'Active', type: 'checkbox' },
-  ] },
-  { key: 'service-items', label: 'Service Items', fields: [
-    { name: 'item_code', label: 'Item Code', type: 'text', required: true },
-    { name: 'display_name', label: 'Display Name', type: 'text', required: true },
-    { name: 'unit_price', label: 'Unit Price', type: 'number', step: '0.0001' },
-    { name: 'is_active', label: 'Active', type: 'checkbox' },
-  ] },
+  // Non-Inventory Items and Service Items used to be thin four-column tabs here. They are full
+  // item master records in live -- units, expense account, JO/PO flags, last purchase price --
+  // and purchase order, receipt and vendor bill lines all reference `inventories`, so they live
+  // there and have their own Master Lists pages (/non-inventories, /service-items). Keeping a
+  // second, poorer copy of the same items in a lookup table only invited them to disagree.
   { key: 'items', label: 'Costing Items', fields: [
     { name: 'item_name', label: 'Item Name', type: 'text', required: true },
     { name: 'item_type', label: 'Type', type: 'select', options: ['Material', 'Labor', 'Service'], required: true },
