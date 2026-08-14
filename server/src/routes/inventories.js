@@ -50,13 +50,22 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       commonWhere.push('(i.item_code LIKE ? OR i.display_name LIKE ? OR i.sales_description LIKE ?)');
       commonParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
-    // Default (no ?item_type=) excludes Service Items -- they get their own Master
-    // Lists > Service Items page. Pass ?item_type=Service to fetch just those instead.
+    // Default (no ?item_type=) returns only items that carry stock. Live keeps its item
+    // master in five modules -- inventory, non-inventory, service, landed cost and discount --
+    // and gives each its own page; they all live in this table here, told apart by item_type.
+    // Only the inventory kinds belong in the Inventory Items list or the Stock Ledger's item
+    // picker: a landed cost or a discount has no quantity to report on.
+    //
+    // This used to exclude 'Service' alone, which was enough while Service was the only
+    // non-stock type present. Importing the other three modules (2,114 rows) made that
+    // exclusion too narrow and they started appearing in both places.
+    //
+    // Pass ?item_type=Service (or Non-Inventory / Landed Cost / Discount) to fetch one kind.
     if (itemType) {
       commonWhere.push('i.item_type = ?');
       commonParams.push(itemType);
     } else {
-      commonWhere.push("(i.item_type IS NULL OR i.item_type != 'Service')");
+      commonWhere.push("(i.item_type IS NULL OR i.item_type NOT IN ('Service', 'Non-Inventory', 'Landed Cost', 'Discount'))");
     }
     const where = [...commonWhere];
     if (status && STATUS_FILTERS[status]) { where.push(STATUS_FILTERS[status]); }

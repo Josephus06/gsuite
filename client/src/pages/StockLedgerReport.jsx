@@ -6,14 +6,15 @@ import LoadingSpinner from '../components/LoadingSpinner';
 
 const PAGE_SIZE = 10;
 
-// Mirrors the real system's "Inventory > Inventory Reports > Stock Ledger" screen: per
-// Item + Location, Beginning balance / Input / Output / Ending balance. The real report
-// derives Beginning/Input/Output from actual stock transactions (Item Receipts,
-// Transfer Orders, Item Fulfillments, ...) over the selected period -- none of those
-// transactional modules exist in this build, so there's no movement history to sum.
-// Those columns are always blank here; Ending Qty On-hand/Ave Cost/Value are the real
-// live snapshot from Inventory, grouped the same way the real report groups rows (an
-// Item header row followed by one row per Location).
+// "Inventory > Inventory Reports > Stock Ledger": per Item + Location, Beginning balance /
+// Input / Output / Ending balance, grouped as an Item header row followed by one row per
+// Location.
+//
+// Beginning / Input / Output are now summed from this app's own stock movements -- receiving
+// reports, item receipts and fulfillments, purchase returns, inventory adjustments and assembly
+// builds -- so the Date filter genuinely selects a period instead of being decorative, and a
+// receiving report entered here shows up. Clicking a Location row lists the documents behind
+// its figures.
 function qtyFmt(v) {
   if (v === null || v === undefined || v === '') return '';
   const n = Number(v);
@@ -38,23 +39,53 @@ export default function StockLedgerReport() {
   const [rows, setRows] = useState(null);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
+  // The period the rows on screen were generated for, so the drill-down asks about the same one
+  // even after the filter inputs have been changed but not re-generated.
+  const [shownPeriod, setShownPeriod] = useState(null);
+  const [openCell, setOpenCell] = useState(null); // `${inventory_id}-${location_id}`
+  const [movements, setMovements] = useState({});
 
   useEffect(() => {
     api.get('/inventory').then(({ data }) => setInventoryItems(data));
     api.get('/lookups/locations').then(({ data }) => setLocations(data));
   }, []);
 
+  function currentParams() {
+    const params = {};
+    if (period === 'period_from') { params.from = dateFrom; params.to = date; }
+    else { params.to = date; } // "As of": everything up to the date
+    return params;
+  }
+
   async function generate() {
     setLoading(true);
-    const params = {};
+    setOpenCell(null);
+    setMovements({});
+    const params = currentParams();
     if (item) params.item_id = item.id;
     if (location) params.location_id = location.id;
-    if (period === 'period_from') { params.from = dateFrom; params.to = date; }
-    else { params.to = date; } // "As of": all movements up to the date
     const { data } = await api.get('/stock-ledger-reports', { params });
     setRows(data);
+    setShownPeriod(currentParams());
     setPage(1);
     setLoading(false);
+  }
+
+  // Expand a Location row into the documents that produced its Input and Output.
+  async function toggleCell(r) {
+    const key = `${r.inventory_id}-${r.location_id}`;
+    if (openCell === key) { setOpenCell(null); return; }
+    setOpenCell(key);
+    if (movements[key]) return;
+    setMovements((m) => ({ ...m, [key]: 'loading' }));
+    try {
+      const { data } = await api.get('/stock-ledger-reports/movements', {
+        params: { ...(shownPeriod || {}), item_id: r.inventory_id, location_id: r.location_id },
+      });
+      setMovements((m) => ({ ...m, [key]: data }));
+    } catch {
+      setMovements((m) => ({ ...m, [key]: [] }));
+    }
   }
 
   // Group flat rows by item for the header-row + location-sub-rows layout.
@@ -171,23 +202,66 @@ export default function StockLedgerReport() {
                       <td>{g.unit_title}</td>
                       <td colSpan={10}></td>
                     </tr>
-                    {g.locations.map((r) => (
-                      <tr key={`${g.item_code}-${r.location_id}`}>
-                        <td></td>
-                        <td>{r.location_name}</td>
-                        <td></td>
-                        <td>{qtyFmt(r.beg_qty)}</td>
-                        <td>{moneyFmt(r.beg_cost)}</td>
-                        <td>{moneyFmt(r.beg_value)}</td>
-                        <td>{r.input || ''}</td>
-                        <td>{r.value_of_inputs ? moneyFmt(r.value_of_inputs) : ''}</td>
-                        <td>{r.output || ''}</td>
-                        <td>{r.value_of_outputs ? moneyFmt(r.value_of_outputs) : ''}</td>
-                        <td>{qtyFmt(r.ending_qty)}</td>
-                        <td>{moneyFmt(r.ending_cost)}</td>
-                        <td>{moneyFmt(r.ending_value)}</td>
-                      </tr>
-                    ))}
+                    {g.locations.map((r) => {
+                      const key = `${r.inventory_id}-${r.location_id}`;
+                      const open = openCell === key;
+                      const detail = movements[key];
+                      return (
+                        <Fragment key={key}>
+                          <tr
+                            onClick={() => toggleCell(r)}
+                            style={{ cursor: 'pointer' }}
+                            title="Show the documents behind these figures"
+                          >
+                            <td></td>
+                            <td>{open ? '▾ ' : '▸ '}{r.location_name}</td>
+                            <td></td>
+                            <td>{qtyFmt(r.beg_qty)}</td>
+                            <td>{moneyFmt(r.beg_cost)}</td>
+                            <td>{moneyFmt(r.beg_value)}</td>
+                            <td>{r.input || ''}</td>
+                            <td>{r.value_of_inputs ? moneyFmt(r.value_of_inputs) : ''}</td>
+                            <td>{r.output || ''}</td>
+                            <td>{r.value_of_outputs ? moneyFmt(r.value_of_outputs) : ''}</td>
+                            <td>{qtyFmt(r.ending_qty)}</td>
+                            <td>{moneyFmt(r.ending_cost)}</td>
+                            <td>{moneyFmt(r.ending_value)}</td>
+                          </tr>
+                          {open && (
+                            <tr>
+                              <td colSpan={13} style={{ padding: '8px 24px', background: 'rgba(127,127,127,0.06)' }}>
+                                {detail === 'loading' && <span className="muted">Loading movements...</span>}
+                                {detail !== 'loading' && (!detail || detail.length === 0) && (
+                                  <span className="muted">No movements in this period. The Beginning balance is the opening figure carried forward.</span>
+                                )}
+                                {detail !== 'loading' && detail && detail.length > 0 && (
+                                  <table style={{ width: 'auto', minWidth: 520 }}>
+                                    <thead>
+                                      <tr>
+                                        <th>Date</th><th>Source</th><th>Document</th>
+                                        <th style={{ textAlign: 'right' }}>In</th>
+                                        <th style={{ textAlign: 'right' }}>Out</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {detail.map((m, i) => (
+                                        <tr key={`${m.source}-${m.doc_id}-${i}`}>
+                                          <td>{String(m.move_date || '').slice(0, 10)}</td>
+                                          <td>{m.source}</td>
+                                          <td>{m.doc_no}</td>
+                                          <td style={{ textAlign: 'right' }}>{m.direction === 'in' ? qtyFmt(m.qty) : ''}</td>
+                                          <td style={{ textAlign: 'right' }}>{m.direction === 'out' ? qtyFmt(m.qty) : ''}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
                   </Fragment>
                 ))}
               </tbody>

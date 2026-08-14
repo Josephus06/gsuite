@@ -1,53 +1,81 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const {
+  movementsQuery, ledgerQuery, shapeLedgerRow, SOURCES, SNAPSHOT_FROM, today,
+} = require('../lib/stockMovements');
 
 const router = express.Router();
 const ROUTE = '/stock-ledger-reports';
 
-// "Inventory > Inventory Reports > Stock Ledger". Served verbatim from the live report, which
-// is imported into live_stock_ledger by src/db/import-stock-ledger.js (generate_stock_ledger_v2).
-// That gives the exact live figures per item + location -- Beginning / Input / Output / Ending
-// with values -- including the Beginning balances that can't be derived from the migrated
-// transactions alone. The imported snapshot covers one fixed period (the import window), so the
-// on-screen Date filter is informational; Item/Location filters apply.
+// "Inventory > Inventory Reports > Stock Ledger", computed from this app's own stock movements.
+//
+// It used to be served verbatim from `live_stock_ledger`, a frozen snapshot of live's report for
+// 2026-01-01..2026-07-28. Nothing here ever posted to it, so receiving reports never showed up
+// and the date filter did nothing. Now:
+//
+//   Beginning = the snapshot's beg_qty (the only source for balances predating the migration)
+//               plus every movement from the snapshot date up to the day before `from`
+//   Input / Output = movements inside [from, to], from src/lib/stockMovements.js
+//   Ending    = Beginning + Input - Output
+//
+// The snapshot is kept strictly as the opening balance. Its own Input/Output columns are no
+// longer served, because they describe live's window rather than the one being asked for.
+//
+// Only stock-carrying items appear: services, non-inventory items, landed costs and discounts
+// are excluded, as they have no quantity on hand to ledger.
+//
+// A KNOWN LIMIT, stated rather than hidden. Reconciled against the snapshot over its own window,
+// the computed Input matches live on 97% of item+location cells and Output on 88%. The gap is
+// production consumption: assembly_build_lines.qty is the job order's material requirement
+// repeated on every build of that order, so multi-build job orders overstate the draw. Receipts,
+// transfers, returns and adjustments are exact. `/movements` shows the documents behind any
+// figure, which is how to check one.
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { item_id: itemId, location_id: locationId } = req.query;
-    const where = [];
-    const params = [];
-    if (itemId) { where.push('sl.inventory_id = ?'); params.push(itemId); }
-    if (locationId) { where.push('sl.location_id = ?'); params.push(locationId); }
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-
-    const [rows] = await pool.query(
-      `SELECT sl.inventory_id, sl.item_pk, sl.item_code, sl.unit_title,
-              sl.location_id, sl.location_pk, sl.location,
-              sl.beg_qty, sl.beg_cost, sl.beg_value,
-              sl.input, sl.input_value, sl.output, sl.output_value,
-              sl.ending_qty, sl.ending_cost, sl.ending_value
-         FROM live_stock_ledger sl
-         ${whereSql}
-        ORDER BY sl.item_code, sl.location`,
-      params
-    );
-
-    // Shape for the report (item header + per-location rows). Fall back to the live pk for
-    // grouping/keys when an item or location didn't resolve to a local id.
-    res.json(rows.map((r) => ({
-      inventory_id: r.inventory_id || r.item_pk,
-      item_code: r.item_code,
-      unit_title: r.unit_title,
-      location_id: r.location_id || r.location_pk,
-      location_name: r.location,
-      beg_qty: r.beg_qty, beg_cost: r.beg_cost, beg_value: r.beg_value,
-      input: r.input, value_of_inputs: r.input_value,
-      output: r.output, value_of_outputs: r.output_value,
-      ending_qty: r.ending_qty, ending_cost: r.ending_cost, ending_value: r.ending_value,
-    })));
+    // "As of" sends only `to`, meaning everything up to that date -- so the period opens at the
+    // snapshot date, which is as far back as the data goes.
+    const { sql, params } = ledgerQuery({
+      itemId: req.query.item_id || null,
+      locationId: req.query.location_id || null,
+      from: req.query.from || null,
+      to: req.query.to || null,
+    });
+    const [rows] = await pool.query(sql, params);
+    res.json(rows.map(shapeLedgerRow));
   } catch (err) {
     next(err);
   }
+});
+
+// The documents behind a cell -- every movement for one item + location over the period, newest
+// first. This is what makes a figure checkable: a receiving report that raised stock is now a row
+// you can point at, which was the whole complaint about the old frozen report.
+router.get('/movements', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const itemId = req.query.item_id || null;
+    if (!itemId) return res.status(400).json({ message: 'item_id is required' });
+    const to = req.query.to || today();
+    const from = req.query.from && req.query.from > SNAPSHOT_FROM ? req.query.from : SNAPSHOT_FROM;
+
+    const mv = movementsQuery({ itemId, locationId: req.query.location_id || null, from, to });
+    const [rows] = await pool.query(
+      `SELECT m.*, l.location_name
+         FROM (${mv.sql}) m
+         LEFT JOIN locations l ON l.id = m.location_id
+        ORDER BY m.move_date DESC, m.source
+        LIMIT 500`,
+      mv.params
+    );
+    return res.json(rows);
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// Lets the UI name the sources it is summing without hard-coding them a second time.
+router.get('/sources', requireAuth, requirePermission(ROUTE, 'can_view'), (_req, res) => {
+  res.json(SOURCES.map((s) => ({ key: s.key, label: s.label })));
 });
 
 module.exports = router;
