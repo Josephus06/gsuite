@@ -1112,6 +1112,14 @@ async function getPostedGlLines({ toDate, fromDate }) {
   }
 
   // Vendor Bills
+  //
+  // Prefer live's own posted entries where they were imported (live_gl_entries, filled by
+  // src/db/import-vendor-bill-gl.js). computeVendorBillGl cannot reproduce these: the expense
+  // account sits on live's GL line rather than the bill header, so vendor_bills.account_id is
+  // null on 19,162 of 19,164 bills and the debit leg was being dropped while the Accounts
+  // Payable credit still posted -- 212,383,275.57 of one-sided entries, 88% of the trial
+  // balance's imbalance. Bills with no imported entries still fall back to the computed rows,
+  // so a newly created bill keeps working.
   {
     const { sql, params } = dateFilter('vb.date_created');
     const [headers] = await pool.query(
@@ -1120,8 +1128,30 @@ async function getPostedGlLines({ toDate, fromDate }) {
        LEFT JOIN chart_of_accounts coa ON coa.id = vb.account_id
        WHERE vb.status != 'cancelled' AND ${sql}`, params
     );
+    const { sql: leSql, params: leParams } = dateFilter('vb.date_created');
+    // Tolerate the table being absent: a deploy can reach here before add-live-gl-entries.js has
+    // run, and the reports should degrade to the computed rows rather than 500.
+    let imported = [];
+    try {
+      [imported] = await pool.query(
+        `SELECT le.source_id, le.account_code, le.account_name, le.debit, le.credit
+           FROM live_gl_entries le
+           JOIN vendor_bills vb ON vb.id = le.source_id
+          WHERE le.source_type = 'vendor_bill' AND vb.status != 'cancelled' AND ${leSql}`, leParams
+      );
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE') throw e;
+    }
+    const importedBy = new Map();
+    for (const e of imported) {
+      if (!importedBy.has(e.source_id)) importedBy.set(e.source_id, []);
+      importedBy.get(e.source_id).push({
+        account_code: e.account_code, account_name: e.account_name,
+        debit: Number(e.debit) || 0, credit: Number(e.credit) || 0,
+      });
+    }
     for (const vb of headers) {
-      const rows = await computeVendorBillGl(vb, []);
+      const rows = importedBy.get(vb.id) || await computeVendorBillGl(vb, []);
       push(rows, {
         entry_date: vb.date_created, source_type: 'vendor_bill', source_no: vb.bill_no, source_id: vb.id, memo: vb.memo || null,
         location_id: vb.office_location_id || null, department_id: null,
