@@ -181,10 +181,7 @@ async function computeAssemblyBuildGl(conn, ab, lines) {
     credits.set(accountId, (credits.get(accountId) || 0) + amount);
   }
 
-  let debitTotal = 0;
   for (const line of lines) {
-    debitTotal += Number(line.total_cost) || 0;
-
     const materialCost = Number(line.material_cost) || 0;
     if (materialCost) {
       const acct = line.item_asset_account_id ? acctById.get(line.item_asset_account_id) : null;
@@ -223,14 +220,36 @@ async function computeAssemblyBuildGl(conn, ab, lines) {
   }
 
   const rows = [];
+  let creditTotal = 0;
   for (const [accountId, amount] of credits) {
     const acct = acctById.get(accountId);
     if (!acct) continue;
-    rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: 0, credit: Number(amount.toFixed(2)) });
+    const rounded = Number(amount.toFixed(2));
+    creditTotal += rounded;
+    rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: 0, credit: rounded });
   }
+  // The Finished Goods debit is the sum of what was actually credited, NOT the lines' own
+  // total_cost column.
+  //
+  // This entry is cost absorption: what goes INTO finished goods is exactly what came OUT of
+  // materials plus what was absorbed from labour and overhead. Those are the credits above, so
+  // the debit follows them by construction and the entry cannot be one-sided.
+  //
+  // total_cost was being used instead, and it disagrees with material_cost + process_cost on
+  // 156,247 of 412,181 lines -- 21,157,949.59 against 48,729,560.85 across the table, which was
+  // 27,529,468.80 of the trial balance's imbalance and 94% of what remained after vendor bills.
+  // Neither figure reconciles to assembly_builds.total_amount either (28,203 builds match the
+  // one, 22,562 the other, out of 124,496), so total_cost is not a more authoritative total --
+  // it is a third number.
+  //
+  // Scaling the credits down to total_cost instead was the alternative and is worse: the material
+  // leg credits each item's own asset account, so it has to equal the inventory that actually
+  // left. Bending it to fit a summary column would misstate inventory to make a total tie out.
+  // Item Delivery already depends on this reading -- it credits Finished Goods for "the exact
+  // account Assembly Build debited when the cost first went INTO inventory".
   const fgAcct = acctById.get(ab.fg_account_id);
-  if (fgAcct && debitTotal) {
-    rows.unshift({ account_code: fgAcct.account_code, account_name: fgAcct.account_name, debit: Number(debitTotal.toFixed(2)), credit: 0 });
+  if (fgAcct && creditTotal) {
+    rows.unshift({ account_code: fgAcct.account_code, account_name: fgAcct.account_name, debit: Number(creditTotal.toFixed(2)), credit: 0 });
   }
   return rows;
 }
@@ -732,6 +751,29 @@ async function getPostedGlLines({ toDate, fromDate }) {
     }
   };
 
+  // Live's own posted GL, for the documents whose entries this app cannot correctly re-derive
+  // (see src/db/add-live-gl-entries.js). Loaded once and keyed by source_type|source_id; each
+  // document type below prefers its imported entries and falls back to the computed ones, so a
+  // newly created document still posts normally.
+  const importedGl = new Map();
+  try {
+    const [rows] = await pool.query(
+      'SELECT source_type, source_id, account_code, account_name, debit, credit FROM live_gl_entries'
+    );
+    for (const r of rows) {
+      const k = `${r.source_type}|${r.source_id}`;
+      if (!importedGl.has(k)) importedGl.set(k, []);
+      importedGl.get(k).push({
+        account_code: r.account_code, account_name: r.account_name,
+        debit: Number(r.debit) || 0, credit: Number(r.credit) || 0,
+      });
+    }
+  } catch (e) {
+    // A deploy can reach here before add-live-gl-entries.js has run; degrade to computed rows.
+    if (e.code !== 'ER_NO_SUCH_TABLE') throw e;
+  }
+  const glFor = (sourceType, sourceId, computed) => importedGl.get(`${sourceType}|${sourceId}`) || computed;
+
   // Hold the reference-data snapshot open for the whole run (see top of file).
   await beginRefRun();
   try {
@@ -897,7 +939,7 @@ async function getPostedGlLines({ toDate, fromDate }) {
       headers.map((h) => h.id));
     for (const cm of headers) {
       const lines = linesBy.get(cm.id) || [];
-      const rows = await computeCreditMemoGl(cm, lines, appsBy.get(cm.id) || []);
+      const rows = glFor('credit_memo', cm.id, await computeCreditMemoGl(cm, lines, appsBy.get(cm.id) || []));
       push(rows, {
         entry_date: cm.date_created, source_type: 'credit_memo', source_no: cm.credit_memo_no, source_id: cm.id, memo: cm.memo || null,
         location_id: cm.office_location_id || null, department_id: null,
@@ -936,10 +978,10 @@ async function getPostedGlLines({ toDate, fromDate }) {
           WHERE jl.journal_id IN (?) ORDER BY jl.line_no`, 'journal_id', headers.map((h) => h.id));
       for (const j of headers) {
         const lines = linesBy.get(j.id) || [];
-        const rows = lines.map((l) => ({
+        const rows = glFor('journal', j.id, lines.map((l) => ({
           account_code: l.account_code, account_name: l.account_name,
           debit: Number(l.debit) || 0, credit: Number(l.credit) || 0, department_id: l.department_id || null,
-        }));
+        })));
         // No department_id in meta so each line keeps its own (push spreads meta over the row).
         push(rows, { entry_date: j.date_created, source_type: 'journal', source_no: j.journal_no, source_id: j.id, memo: j.memo || null, location_id: j.location_id || null });
       }
@@ -971,7 +1013,7 @@ async function getPostedGlLines({ toDate, fromDate }) {
         if (tax) { const v = await coaByCode('14300'); if (v) rows.push({ account_code: v.account_code, account_name: v.account_name, debit: tax, credit: 0 }); }
         if (wtax) { const w = await coaByCode('21402'); if (w) rows.push({ account_code: w.account_code, account_name: w.account_name, debit: 0, credit: wtax }); }
         if (total && c.bank_code) rows.push({ account_code: c.bank_code, account_name: c.bank_name, debit: 0, credit: total });
-        push(rows, { entry_date: c.date_created, source_type: 'cheque', source_no: c.cheque_no, source_id: c.id, memo: c.memo || null, location_id: c.office_location_id || null });
+        push(glFor('cheque', c.id, rows), { entry_date: c.date_created, source_type: 'cheque', source_no: c.cheque_no, source_id: c.id, memo: c.memo || null, location_id: c.office_location_id || null });
       }
     }
   }
@@ -1128,30 +1170,8 @@ async function getPostedGlLines({ toDate, fromDate }) {
        LEFT JOIN chart_of_accounts coa ON coa.id = vb.account_id
        WHERE vb.status != 'cancelled' AND ${sql}`, params
     );
-    const { sql: leSql, params: leParams } = dateFilter('vb.date_created');
-    // Tolerate the table being absent: a deploy can reach here before add-live-gl-entries.js has
-    // run, and the reports should degrade to the computed rows rather than 500.
-    let imported = [];
-    try {
-      [imported] = await pool.query(
-        `SELECT le.source_id, le.account_code, le.account_name, le.debit, le.credit
-           FROM live_gl_entries le
-           JOIN vendor_bills vb ON vb.id = le.source_id
-          WHERE le.source_type = 'vendor_bill' AND vb.status != 'cancelled' AND ${leSql}`, leParams
-      );
-    } catch (e) {
-      if (e.code !== 'ER_NO_SUCH_TABLE') throw e;
-    }
-    const importedBy = new Map();
-    for (const e of imported) {
-      if (!importedBy.has(e.source_id)) importedBy.set(e.source_id, []);
-      importedBy.get(e.source_id).push({
-        account_code: e.account_code, account_name: e.account_name,
-        debit: Number(e.debit) || 0, credit: Number(e.credit) || 0,
-      });
-    }
     for (const vb of headers) {
-      const rows = importedBy.get(vb.id) || await computeVendorBillGl(vb, []);
+      const rows = glFor('vendor_bill', vb.id, await computeVendorBillGl(vb, []));
       push(rows, {
         entry_date: vb.date_created, source_type: 'vendor_bill', source_no: vb.bill_no, source_id: vb.id, memo: vb.memo || null,
         location_id: vb.office_location_id || null, department_id: null,
