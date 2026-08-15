@@ -6,6 +6,7 @@ const cors = require('cors');
 
 const authRoutes = require('./routes/auth');
 const lookupRoutes = require('./routes/lookups');
+const publicQuoteRoutes = require('./routes/publicQuotes');
 const employeeRoutes = require('./routes/employees');
 const userRoutes = require('./routes/users');
 const accountTypePermissionRoutes = require('./routes/accountTypePermissions');
@@ -93,6 +94,8 @@ app.get('/api/health', (req, res) => res.json({ ok: true }));
 
 app.use('/api/auth', authRoutes);
 app.use('/api/lookups', lookupRoutes);
+// Unauthenticated: the customer-facing quote site is the only caller. See routes/publicQuotes.js.
+app.use('/api/public', publicQuoteRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/account-type-permissions', accountTypePermissionRoutes);
