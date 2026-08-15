@@ -29,6 +29,10 @@ const num = (v) => (v === null || v === undefined || v === '' ? 0 : Number(v));
 // when it is missing or not a number. A quote request is public input: it gets bounded here
 // rather than trusted.
 function clamp(value, fallback, min, max) {
+  // null and '' both coerce to 0 through Number(), which is finite -- so without this check a
+  // field the caller simply did not send became a real zero and was clamped up to the minimum,
+  // quietly replacing the product's default. The menu defaulted to 10 instead of 40 that way.
+  if (value === null || value === undefined || value === '') return num(fallback);
   const n = Number(value);
   if (!Number.isFinite(n)) return num(fallback);
   let out = n;
@@ -39,9 +43,12 @@ function clamp(value, fallback, min, max) {
 
 async function loadProduct(slug) {
   const [[product]] = await pool.query(
-    `SELECT p.*, jt.display_name AS job_type_name
+    `SELECT p.*, jt.display_name AS job_type_name,
+            loc.location_name, t.code AS tax_code, t.rate AS tax_rate
        FROM web_products p
        LEFT JOIN job_types jt ON jt.id = p.job_type_id
+       LEFT JOIN locations loc ON loc.id = p.office_location_id
+       LEFT JOIN taxes t ON t.id = p.tax_id
       WHERE p.slug = ? AND p.is_published = 1`, [slug]
   );
   if (!product) return null;
@@ -59,7 +66,7 @@ async function loadProduct(slug) {
 
 // Prices one configuration of a product. Returns per-line prices and a total, and nothing about
 // what any of it costs to make.
-async function priceConfiguration(product, lines, requested) {
+async function priceConfiguration(product, lines, requested, headerQty) {
   const { computeAutoPricing } = await costing();
   const byLineId = new Map((Array.isArray(requested) ? requested : []).map((r) => [Number(r.line_id), r]));
 
@@ -93,8 +100,14 @@ async function priceConfiguration(product, lines, requested) {
     total += linePrice;
     priced.push({
       line_id: line.id,
+      line_no: line.line_no,
       label: line.label || line.process_name || line.item_name,
-      process_name: line.process_name || null,
+      // Process names in the master carry embedded newlines; collapse them so the table stays on
+      // one row per line.
+      process_name: (line.process_name || '').replace(/\s+/g, ' ').trim() || null,
+      process_uom: line.uom || null,
+      category: null,
+      parts: null,
       item_name: line.item_name || null,
       unit: line.uom || line.item_unit_code || null,
       allow_qty: !!line.allow_qty,
@@ -108,7 +121,35 @@ async function priceConfiguration(product, lines, requested) {
     });
   }
 
-  return { lines: priced, total: round2(total) };
+  // The header block, laid out like the ERP's own estimate table so a customer and the sales team
+  // are reading the same document. Qty is the finished-piece count the customer asks for; the
+  // per-unit price falls out of the work, it is not a rate anyone types in.
+  const qty = clamp(headerQty, product.default_qty, product.min_qty, product.max_qty) || 1;
+  const subtotal = round2(total);
+  const taxRate = Number(product.tax_rate || 0);
+  const taxAmount = round2(subtotal * taxRate / 100);
+
+  return {
+    lines: priced,
+    total: subtotal,
+    header: {
+      job_type: product.job_type_name || null,
+      description: product.name,
+      qty,
+      units: 'PC/S',
+      price_per_unit: round2(subtotal / qty),
+      subtotal,
+      // No discounting on a self-service quote -- a discount is a decision someone makes, so the
+      // columns are shown at zero rather than being offered to the customer.
+      disc_percent: 0,
+      disc_amount: 0,
+      disc_price_per_unit: round2(subtotal / qty),
+      net_of_tax: subtotal,
+      tax_code: product.tax_code || null,
+      tax_amount: taxAmount,
+      gross_amount: round2(subtotal + taxAmount),
+    },
+  };
 }
 
 // --- catalog -----------------------------------------------------------------------------
@@ -130,7 +171,7 @@ router.get('/products/:slug', async (req, res, next) => {
   try {
     const found = await loadProduct(req.params.slug);
     if (!found) return res.status(404).json({ error: 'Product not found' });
-    const priced = await priceConfiguration(found.product, found.lines, []);
+    const priced = await priceConfiguration(found.product, found.lines, [], null);
     const { product } = found;
     return res.json({
       slug: product.slug, name: product.name, tagline: product.tagline,
@@ -147,7 +188,7 @@ router.post('/products/:slug/price', async (req, res, next) => {
   try {
     const found = await loadProduct(req.params.slug);
     if (!found) return res.status(404).json({ error: 'Product not found' });
-    const priced = await priceConfiguration(found.product, found.lines, req.body?.lines);
+    const priced = await priceConfiguration(found.product, found.lines, req.body?.lines, req.body?.qty);
     return res.json(priced);
   } catch (err) { return next(err); }
 });
@@ -172,7 +213,7 @@ router.post('/quotes', async (req, res, next) => {
 
     const found = await loadProduct(slug);
     if (!found) return res.status(404).json({ error: 'Product not found' });
-    const priced = await priceConfiguration(found.product, found.lines, lines);
+    const priced = await priceConfiguration(found.product, found.lines, lines, req.body?.qty);
     const { product } = found;
 
     await conn.beginTransaction();
