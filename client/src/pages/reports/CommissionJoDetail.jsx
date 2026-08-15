@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/client';
+import { useAuth } from '../../context/useAuth';
 import EntityPicker from '../../components/EntityPicker';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import { money } from './CoaTreeRows';
@@ -16,6 +17,7 @@ function pct(v) {
 // their job type's passing GP rate and those below it. This is the line-by-line backing
 // behind the monthly Commission report's passing-GP total and Confirmed figure.
 export default function CommissionJoDetail() {
+  const { can } = useAuth();
   const [salesRep, setSalesRep] = useState(null);
   const [division, setDivision] = useState(null);
   const [year, setYear] = useState(currentYear());
@@ -25,6 +27,28 @@ export default function CommissionJoDetail() {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [savingLine, setSavingLine] = useState(null);
+
+  const canApprove = can('/commission-report', 'can_approve');
+
+  // Add a below-GP job order to the rep's commission (or take it back out). The totals and the
+  // GP Status column both move, so the report is regenerated rather than patched in place --
+  // it keeps this screen honest about what the monthly Commission report will now say.
+  async function toggleCommission(row, include) {
+    if (!row.sales_order_line_id) return;
+    setSavingLine(row.sales_order_line_id);
+    setError('');
+    try {
+      await api.post('/reports/commission/jo-detail/add-to-commission', {
+        sales_order_line_id: row.sales_order_line_id, include,
+      });
+      await generate();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not update this job order.');
+    } finally {
+      setSavingLine(null);
+    }
+  }
 
   useEffect(() => {
     Promise.all([
@@ -124,11 +148,12 @@ export default function CommissionJoDetail() {
                     <th style={{ textAlign: 'right' }}>Net of Tax</th>
                     <th style={{ textAlign: 'right' }}>Paid Invoice</th>
                     <th>GP Status</th>
+                    {canApprove && <th></th>}
                   </tr>
                 </thead>
                 <tbody>
                   {report.rows.length === 0 && (
-                    <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: 20 }}>No job orders for this rep in this month.</td></tr>
+                    <tr><td colSpan={canApprove ? 13 : 12} className="muted" style={{ textAlign: 'center', padding: 20 }}>No job orders for this rep in this month.</td></tr>
                   )}
                   {report.rows.map((r, i) => (
                     <tr key={i}>
@@ -147,7 +172,37 @@ export default function CommissionJoDetail() {
                         <span style={{ color: r.is_passing ? '#15803d' : '#b91c1c', fontWeight: 600 }}>
                           {r.is_passing ? 'Passing' : 'Below GP'}
                         </span>
+                        {/* A JO that only passes because it was added is marked, so nobody reads
+                            the green "Passing" as if it had earned the GP rate on its own. */}
+                        {r.is_approved_low_gp && !r.meets_gp && (
+                          <div className="muted" style={{ fontSize: '0.85em' }}>added to commission</div>
+                        )}
                       </td>
+                      {canApprove && (
+                        <td>
+                          {/* Only a below-GP JO needs adding; one that already meets the rate
+                              counts anyway, so there is nothing to offer. */}
+                          {!r.meets_gp && r.sales_order_line_id && (
+                            r.is_approved_low_gp ? (
+                              <button
+                                className="btn btn-sm"
+                                disabled={savingLine === r.sales_order_line_id}
+                                onClick={() => toggleCommission(r, false)}
+                              >
+                                {savingLine === r.sales_order_line_id ? 'Saving...' : 'Remove'}
+                              </button>
+                            ) : (
+                              <button
+                                className="btn btn-sm btn-primary"
+                                disabled={savingLine === r.sales_order_line_id}
+                                onClick={() => toggleCommission(r, true)}
+                              >
+                                {savingLine === r.sales_order_line_id ? 'Saving...' : 'Add to Commission'}
+                              </button>
+                            )
+                          )}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>

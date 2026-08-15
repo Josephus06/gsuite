@@ -216,4 +216,40 @@ router.get('/commission/jo-detail', requireAuth, requirePermission(COMMISSION_RO
   }
 });
 
+// "Add to Commission" on the JO Detail screen: count this job order toward the rep's
+// passing-GP total even though its GP rate is below the job type's threshold.
+//
+// It sets the same sales_order_lines.is_approved_low_gp flag the estimate-approval path already
+// writes, which both the monthly Commission report and the JO Detail read, so an added JO is
+// treated as passing everywhere rather than only on the screen it was added from.
+//
+// Gated on can_approve, not can_edit: this is the low-GP concession that used to require an
+// Admin/GM decision, and it moves real money into a rep's commission.
+router.post('/commission/jo-detail/add-to-commission', requireAuth, requirePermission(COMMISSION_ROUTE, 'can_approve'), async (req, res, next) => {
+  try {
+    const lineId = Number(req.body?.sales_order_line_id);
+    const include = req.body?.include !== false; // default: add. false takes it back out.
+    if (!lineId) return res.status(400).json({ error: 'sales_order_line_id is required.' });
+
+    const [[line]] = await pool.query(
+      `SELECT sol.id, sol.is_approved_low_gp, so.status AS so_status,
+              jo.id AS jo_id, jo.job_order_no
+         FROM sales_order_lines sol
+         JOIN sales_orders so ON so.id = sol.sales_order_id
+         LEFT JOIN job_orders jo ON jo.sales_order_line_id = sol.id
+        WHERE sol.id = ?`, [lineId]
+    );
+    if (!line) return res.status(404).json({ error: 'Sales order line not found.' });
+    // The commission report only ever counts a line that reached a job order, so adding one
+    // that has none would look like it worked and change nothing.
+    if (!line.jo_id) return res.status(409).json({ error: 'This line has no job order yet, so it cannot be added to commission.' });
+    if (line.so_status === 'cancelled') return res.status(409).json({ error: 'A cancelled sales order cannot be added to commission.' });
+
+    await pool.query('UPDATE sales_order_lines SET is_approved_low_gp = ? WHERE id = ?', [include ? 1 : 0, lineId]);
+    return res.json({ sales_order_line_id: lineId, job_order_no: line.job_order_no, is_approved_low_gp: include });
+  } catch (err) {
+    return next(err);
+  }
+});
+
 module.exports = router;

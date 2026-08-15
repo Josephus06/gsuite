@@ -327,6 +327,7 @@ async function buildCommissionJoDetail(employeeId, year, month, filters = {}) {
             jt.display_name AS job_type, COALESCE(sol.net_of_tax, 0) AS net_of_tax,
             -- Fall back to the order-level actual GP when the line has none (see buildCommissionReport).
             COALESCE(NULLIF(sol.gp_rate, 0), so.actual_gp_rate) AS jo_gp_rate, jt.gp_rate_head AS passing_gp_rate,
+            sol.id AS sales_order_line_id, sol.is_approved_low_gp,
             CONCAT(rep.first_name, ' ', rep.last_name) AS rep_name,
             -- Billing docs are at the sales-order level: a DT (internal invoice) and/or the
             -- Sales Invoice it converts to. Show both when present (all JOs of one SO share them).
@@ -353,8 +354,14 @@ async function buildCommissionJoDetail(employeeId, year, month, filters = {}) {
     below: { net_of_tax: 0, paid_invoice: 0, count: 0 },
   };
   const rows = jos.map((j) => {
-    const isPassing = j.jo_gp_rate != null && j.passing_gp_rate != null
+    // Same rule the monthly report uses: a JO passes on its GP rate, OR because someone added
+    // it to commission explicitly (is_approved_low_gp). This detail used to judge on the rate
+    // alone, so an added JO still read "Below GP" here while already counting toward the
+    // month's passing total -- the two screens disagreed about the same job order.
+    const meetsGp = j.jo_gp_rate != null && j.passing_gp_rate != null
       && Number(j.jo_gp_rate) >= Number(j.passing_gp_rate);
+    const addedManually = Number(j.is_approved_low_gp) === 1;
+    const isPassing = meetsGp || addedManually;
     const net = round2(j.net_of_tax);
     const paid = round2(paidByJo.get(j.jo_id) || 0);
     const bucket = isPassing ? totals.passing : totals.below;
@@ -367,6 +374,10 @@ async function buildCommissionJoDetail(employeeId, year, month, filters = {}) {
       passing_gp_rate: j.passing_gp_rate == null ? null : Number(j.passing_gp_rate),
       dt_no: j.dt_no || null, invoice_no: j.invoice_no || null,
       net_of_tax: net, paid_invoice: paid, is_passing: isPassing,
+      // The UI needs to tell "passed on its own GP" apart from "was added": only the latter
+      // can be taken back out, and only a JO that has a line can be added in the first place.
+      meets_gp: meetsGp, is_approved_low_gp: addedManually,
+      sales_order_line_id: j.sales_order_line_id || null,
     };
   });
 
