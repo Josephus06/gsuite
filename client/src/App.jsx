@@ -18,6 +18,7 @@ import InventoryView from './pages/InventoryView';
 import InventoryEdit from './pages/InventoryEdit';
 import ServiceItems from './pages/ServiceItems';
 import NonInventories from './pages/NonInventories';
+import WebProducts from './pages/WebProducts';
 import Estimates from './pages/Estimates';
 import EstimateView from './pages/EstimateView';
 import EstimateWizard from './pages/EstimateWizard';
@@ -188,6 +189,7 @@ function App() {
         <Route path="/inventory/:id" element={<InventoryView />} />
         <Route path="/service-items" element={<ServiceItems />} />
         <Route path="/non-inventories" element={<NonInventories />} />
+        <Route path="/web-products" element={<WebProducts />} />
         <Route path="/estimates" element={<Estimates />} />
         <Route path="/estimates/new" element={<EstimateWizard />} />
         <Route path="/estimates/:id/edit" element={<EstimateWizard />} />

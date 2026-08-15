@@ -47,6 +47,7 @@ const NAV_STRUCTURE = [
       { route: '/inventory', label: 'Inventory Items' },
       { route: '/service-items', label: 'Service Items' },
       { route: '/non-inventories', label: 'Non-Inventories' },
+      { route: '/web-products', label: 'Website Products' },
       { route: '/lookups', label: 'Lookups' },
       { route: '/transaction-settings', label: 'Transaction Settings' },
     ],

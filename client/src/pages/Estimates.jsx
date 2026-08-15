@@ -47,6 +47,13 @@ export default function Estimates() {
   const [employees, setEmployees] = useState([]);
   const [locations, setLocations] = useState([]);
 
+  // For CSA Assignment only: one rep picker for the tab rather than one per row, since the queue
+  // is worked a few at a time and re-choosing the same person for each is busywork.
+  const [assignRepId, setAssignRepId] = useState('');
+  const [assigning, setAssigning] = useState(null);
+  const isCsaTab = status === 'for_csa_assignment';
+  const canAssign = can('/estimates-csa-assignment', 'can_approve');
+
   async function load() {
     setLoading(true);
     const params = { status, page, limit };
@@ -71,6 +78,25 @@ export default function Estimates() {
   function runSearch() {
     setPage(1);
     load();
+  }
+
+  // Assigning a rep to a website quote. It is the transition as well as the assignment -- the
+  // server moves the estimate to Pending Customer Approval in the same step -- so the row leaves
+  // this tab once it succeeds, which is why the whole list reloads afterwards.
+  async function handleAssign(row) {
+    const rep = employees.find((e) => String(e.id) === String(assignRepId));
+    if (!rep) { alert('Choose a sales rep first.'); return; }
+    if (!confirm(`Assign ${rep.name || `${rep.first_name} ${rep.last_name}`} to ${row.estimate_no}?\n\nIt moves to Pending Customer Approval.`)) return;
+    setAssigning(row.id);
+    try {
+      await api.put(`/estimates/${row.id}/assign-csa`, { sales_rep_id: assignRepId });
+      setAssignRepId('');
+      await load();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Could not assign that estimate.');
+    } finally {
+      setAssigning(null);
+    }
   }
 
   async function handleDelete(row) {
@@ -156,6 +182,34 @@ export default function Estimates() {
         ))}
       </div>
 
+      {/* Quotes raised on the website arrive with no sales rep. Pick who takes it, then Assign on
+          the row -- which also moves it to Pending Customer Approval, so it leaves this tab. */}
+      {isCsaTab && (
+        <div className="card" style={{ marginTop: 16, marginBottom: 16 }}>
+          {canAssign ? (
+            <div className="filter-grid" style={{ alignItems: 'end' }}>
+              <div className="field" style={{ marginBottom: 0 }}>
+                <label>Assign these to</label>
+                <select value={assignRepId} onChange={(e) => setAssignRepId(e.target.value)}>
+                  <option value="">— choose a sales rep —</option>
+                  {employees.map((e) => (
+                    <option key={e.id} value={e.id}>{e.name || `${e.first_name} ${e.last_name}`}</option>
+                  ))}
+                </select>
+                <div className="muted" style={{ fontSize: '0.85em', marginTop: 6 }}>
+                  Assigning also moves the estimate to Pending Customer Approval.
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="muted" style={{ margin: 0 }}>
+              These quotations came from the website and have no sales rep yet. Assigning one is
+              restricted — ask the Marketing Manager to pick up this queue.
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="card">
         {loading ? <LoadingSpinner /> : (
           <>
@@ -191,6 +245,16 @@ export default function Estimates() {
                       <td>
                         <div style={{ display: 'flex', gap: 6 }}>
                           <Link className="btn btn-sm btn-primary" to={`/estimates/${row.id}`}>View</Link>
+                          {isCsaTab && canAssign && (
+                            <button
+                              className="btn btn-sm"
+                              disabled={!assignRepId || assigning === row.id}
+                              title={assignRepId ? undefined : 'Choose a sales rep above first'}
+                              onClick={() => handleAssign(row)}
+                            >
+                              {assigning === row.id ? 'Assigning…' : 'Assign'}
+                            </button>
+                          )}
                           {can('/estimates', 'can_delete') && <button className="btn btn-sm btn-danger" onClick={() => handleDelete(row)}>Delete</button>}
                         </div>
                       </td>

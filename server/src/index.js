@@ -7,6 +7,7 @@ const cors = require('cors');
 const authRoutes = require('./routes/auth');
 const lookupRoutes = require('./routes/lookups');
 const publicQuoteRoutes = require('./routes/publicQuotes');
+const webProductRoutes = require('./routes/webProducts');
 const employeeRoutes = require('./routes/employees');
 const userRoutes = require('./routes/users');
 const accountTypePermissionRoutes = require('./routes/accountTypePermissions');
@@ -77,7 +78,38 @@ const { sendTicketReminders } = require('./scripts/ticket_reminder');
 
 const app = express();
 
-app.use(cors());
+// CORS was wide open, which was defensible while every route demanded a bearer token -- a
+// cross-origin request without one got nothing. /api/public changed that: it is unauthenticated
+// by design, so an open policy let any site on the internet read the catalogue and post quotes
+// into the estimate queue from a visitor's browser.
+//
+// ALLOWED_ORIGINS is a comma-separated list, e.g.
+//   ALLOWED_ORIGINS=https://v2.graphicstar.ph,https://gsuitev2.graphicstar.ph
+//
+// Left unset it falls back to allowing everything, so an existing deployment does not break the
+// moment this ships -- but it logs once at boot, because silently staying open is how a setting
+// like this gets forgotten.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',').map((s) => s.trim().replace(/\/$/, '')).filter(Boolean);
+
+if (!ALLOWED_ORIGINS.length) {
+  console.warn('[cors] ALLOWED_ORIGINS is not set -- allowing every origin. '
+    + 'Set it to the site and ERP domains before this is public.');
+}
+
+app.use(cors({
+  origin(origin, callback) {
+    // No Origin header means a same-origin request, curl, or a server-to-server call -- none of
+    // which CORS is protecting against. Only a browser sends Origin cross-site.
+    if (!origin || !ALLOWED_ORIGINS.length) return callback(null, true);
+    const clean = origin.replace(/\/$/, '');
+    if (ALLOWED_ORIGINS.includes(clean)) return callback(null, true);
+    // Reject by refusing the header rather than throwing: an error here becomes a 500, which
+    // reads like the API is broken instead of the request being disallowed.
+    return callback(null, false);
+  },
+  credentials: true,
+}));
 // Artist attachments are PDFs sent as base64, which inflates them by a third -- a 10MB
 // drawing arrives as ~13.4MB of JSON. Scoped to that one endpoint rather than raising the
 // global ceiling, so no other route can be handed a 14MB body. It runs first; the general
@@ -96,6 +128,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/lookups', lookupRoutes);
 // Unauthenticated: the customer-facing quote site is the only caller. See routes/publicQuotes.js.
 app.use('/api/public', publicQuoteRoutes);
+app.use('/api/web-products', webProductRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/account-type-permissions', accountTypePermissionRoutes);
