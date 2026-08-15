@@ -5,6 +5,9 @@ const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 
 const router = express.Router();
 const ROUTE = '/estimates';
+// Its own page so assigning a rep to a website quote can be granted independently of estimate
+// approval -- see src/db/add-estimate-csa-assignment.js.
+const CSA_ROUTE = '/estimates-csa-assignment';
 
 const HEADER_FIELDS = [
   'date_created', 'customer_id', 'contact_person_id', 'contact_email', 'contact_title', 'contact_phone',
@@ -151,7 +154,7 @@ async function logFieldDiffs(conn, { estimateId, userId, fields, oldRow, newValu
 
 // --- Estimate header ---------------------------------------------------
 
-const STATUS_VALUES = ['pending_supervisor_approval', 'pending_customer_approval', 'approved', 'cancelled', 'disapproved'];
+const STATUS_VALUES = ['for_csa_assignment', 'pending_supervisor_approval', 'pending_customer_approval', 'approved', 'cancelled', 'disapproved'];
 
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
@@ -728,6 +731,57 @@ router.delete('/:id/job-orders/:joId/processes/:procId', requireAuth, requirePer
   } catch (err) {
     await conn.rollback();
     next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// Assign a sales rep to an estimate waiting in For CSA Assignment, and move it on.
+//
+// A quote raised on the customer-facing website has no sales rep -- nobody took the enquiry --
+// so it cannot start at Pending Customer Approval: there would be nobody to send it to or chase
+// it. Assigning the rep IS the transition; the estimate becomes Pending Customer Approval in the
+// same step, so an assigned estimate can never be left sitting in the queue.
+//
+// Gated on can_approve for /estimates-csa-assignment rather than /estimates, so handing work out
+// can be granted to the Marketing Manager alone without also giving them approval over every
+// other estimate in the system.
+router.put('/:id/assign-csa', requireAuth, requirePermission(CSA_ROUTE, 'can_approve'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const salesRepId = Number(req.body?.sales_rep_id) || null;
+    if (!salesRepId) return res.status(400).json({ error: 'Select a sales rep to assign.' });
+
+    const [[est]] = await conn.query('SELECT id, estimate_no, status, sales_division_id FROM estimates WHERE id = ?', [req.params.id]);
+    if (!est) return res.status(404).json({ error: 'Not found' });
+    if (est.status !== 'for_csa_assignment') {
+      return res.status(409).json({ error: `${est.estimate_no} is not awaiting CSA assignment (it is ${est.status.replace(/_/g, ' ')}).` });
+    }
+
+    const [[rep]] = await conn.query('SELECT id FROM employees WHERE id = ?', [salesRepId]);
+    if (!rep) return res.status(400).json({ error: 'That sales rep no longer exists.' });
+
+    await conn.beginTransaction();
+    await conn.query(
+      `UPDATE estimates
+          SET sales_rep_id = ?, prepared_by_id = COALESCE(prepared_by_id, ?),
+              status = 'pending_customer_approval',
+              csa_assigned_by_user_id = ?, csa_assigned_at = NOW()
+        WHERE id = ?`,
+      [salesRepId, salesRepId, req.user.id, req.params.id]
+    );
+    await conn.commit();
+
+    const [[row]] = await pool.query(
+      `SELECT e.id, e.estimate_no, e.status, e.sales_rep_id,
+              CONCAT(emp.first_name, ' ', emp.last_name) AS sales_rep_name, e.csa_assigned_at
+         FROM estimates e LEFT JOIN employees emp ON emp.id = e.sales_rep_id
+        WHERE e.id = ?`, [req.params.id]
+    );
+    return res.json(row);
+  } catch (err) {
+    await conn.rollback();
+    return next(err);
   } finally {
     conn.release();
   }

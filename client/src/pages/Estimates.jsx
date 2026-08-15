@@ -10,6 +10,9 @@ import SyncFromSourceButton from '../components/SyncFromSourceButton';
 // plain flat table), a collapsible filter panel, and a "View" action per row that
 // opens a read-only detail page rather than jumping straight into edit.
 const STATUS_TABS = [
+  // Quotes raised on the customer-facing website arrive with no sales rep -- nobody took the
+  // enquiry -- so they wait here until the Marketing Manager assigns one.
+  { key: 'for_csa_assignment', label: 'For CSA Assignment' },
   { key: 'pending_supervisor_approval', label: 'Pending Supervisor Approval' },
   { key: 'pending_customer_approval', label: 'Pending Customer Approval' },
   { key: 'approved', label: 'Approved' },
