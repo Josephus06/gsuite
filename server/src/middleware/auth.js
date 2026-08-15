@@ -94,4 +94,20 @@ function requirePermission(route, action = 'can_view') {
   };
 }
 
-module.exports = { requireAuth, requirePermission, clearPresence, isSystemAdmin };
+// The same check requirePermission makes, as a plain call, for routes that need to branch on a
+// permission rather than refuse outright -- e.g. letting can_approve override a guard that stops
+// everyone else. System Admin is seeded full access on every page, so it short-circuits true and
+// does not depend on that seeding having run.
+async function userCan(userId, route, action = 'can_view') {
+  if (!PERMISSION_ACTIONS.has(action)) throw new Error(`Unknown permission action: ${action}`);
+  if (await isSystemAdmin(userId)) return true;
+  const [[page]] = await pool.query('SELECT id FROM pages WHERE route = ?', [route]);
+  if (!page) return false;
+  const [[perm]] = await pool.query(
+    `SELECT ${action} AS allowed FROM user_page_permissions WHERE user_id = ? AND page_id = ?`,
+    [userId, page.id]
+  );
+  return !!(perm && perm.allowed);
+}
+
+module.exports = { requireAuth, requirePermission, clearPresence, isSystemAdmin, userCan };

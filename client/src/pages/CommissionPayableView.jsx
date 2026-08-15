@@ -58,18 +58,34 @@ export default function CommissionPayableView() {
 
   // Mirrors the server's PUT guards: a payable that has been paid, or that a live Commission
   // Voucher has already released against, backs a settlement -- recomputing it would strand those
-  // released amounts, so it must be reopened/voided first.
+  // released amounts. can_approve overrides both (the server checks the same thing), so the lock
+  // is a prompt for a deliberate decision rather than a dead end.
   const releasedAgainst = (cp.vouchers || []).some((v) => v.status !== 'void');
-  const editBlockedReason = cp.status === 'paid' || Number(cp.amount_paid) > 0
+  const lockReason = cp.status === 'paid' || Number(cp.amount_paid) > 0
     ? 'Mark this Commission Payable unpaid before editing.'
     : releasedAgainst
       ? 'A Commission Voucher has already released against this payable -- void that voucher first.'
       : null;
-  const isEditable = !editBlockedReason;
+  const isEditable = !lockReason || cp.can_override_edit_lock;
+  const editTitle = !lockReason ? undefined
+    : cp.can_override_edit_lock
+      ? `${lockReason} You may edit it anyway -- recomputing can strand amounts already released.`
+      : lockReason;
 
+  // PAID is only offered once the commission has actually been released in full. Short of that
+  // the document would claim to be settled while still owing the rep the difference.
+  const releasedAmount = Number(cp.released_commission || 0);
+  const shortfall = Number(cp.expected_commission || 0) - releasedAmount;
+  const payTitle = cp.fully_released ? undefined
+    : `Released ${money(releasedAmount)} of an Expected Commission of ${money(cp.expected_commission)} `
+      + `-- release the remaining ${money(shortfall)} through a Commission Voucher first.`;
+
+  // Released sits next to Expected because the gap between them is what decides whether this
+  // payable can be marked paid -- without it on screen the disabled button looks arbitrary.
   const summary = [
     ['Quota', cp.quota], ['Weighted Sales', cp.weighted_sales], ['JO with Passing GP Rate', cp.passing_jos],
-    ['Expected Commission', cp.expected_commission], ['Commissionable Amount', cp.commissionable_amount],
+    ['Expected Commission', cp.expected_commission], ['Released Commission', releasedAmount],
+    ['Commissionable Amount', cp.commissionable_amount],
   ];
 
   return (
@@ -82,11 +98,18 @@ export default function CommissionPayableView() {
             <button
               className="btn btn-sm"
               disabled={!isEditable}
-              title={isEditable ? undefined : editBlockedReason}
+              title={editTitle}
               onClick={() => navigate(`/commission-payables/${id}/edit`)}
             >Edit</button>
           )}
-          {canEdit && isOpen && cp.status === 'unpaid' && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => handlePay(true)}>Mark Paid</button>}
+          {canEdit && isOpen && cp.status !== 'paid' && (
+            <button
+              className="btn btn-sm btn-primary"
+              disabled={busy || !cp.fully_released}
+              title={payTitle}
+              onClick={() => handlePay(true)}
+            >Mark Paid</button>
+          )}
           {canEdit && isOpen && cp.status === 'paid' && <button className="btn btn-sm" disabled={busy} onClick={() => handlePay(false)}>Mark Unpaid</button>}
           {canEdit && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>

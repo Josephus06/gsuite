@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeCommissionPayableGl } = require('../lib/glImpact');
 const { buildCommissionReport } = require('../lib/commissionReport');
@@ -17,6 +17,8 @@ const EXPENSE_CODE = '30611';
 const PAYABLE_CODE = '24200';
 
 const round2 = (n) => Number((Number(n) || 0).toFixed(2));
+// Amounts inside error messages, so the user is told the actual shortfall rather than "not allowed".
+const money = (n) => round2(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 // 'YYYY-MM' -> {year, month}. Returns null when malformed.
 function parseMonth(s) {
   const m = /^(\d{4})-(\d{2})$/.exec(String(s || '').trim());
@@ -246,7 +248,15 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     lines.forEach((l) => { l.released = released; l.commission = round2(Number(l.confirmed || 0) - released); });
 
     const glImpact = await computeCommissionPayableGl(cp);
-    res.json({ ...cp, lines, gl_impact: glImpact, vouchers });
+    // The view needs to know whether this user may edit a settled payable and whether the
+    // commission is fully released, so it can offer or withhold the buttons rather than letting
+    // the server refuse after the click.
+    const mayOverride = await userCan(req.user.id, ROUTE, 'can_approve');
+    const fullyReleased = round2(released) + 0.005 >= round2(cp.expected_commission);
+    res.json({
+      ...cp, lines, gl_impact: glImpact, vouchers,
+      can_override_edit_lock: mayOverride, fully_released: fullyReleased,
+    });
   } catch (err) { next(err); }
 });
 
@@ -319,9 +329,12 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
 // Edit an existing payable: re-pick the commission month / date / memo and recompute. The employee
 // is fixed once raised -- retargeting a payable at someone else is a different document, so change
-// it by voiding and re-generating. Only an untouched payable can be edited: once a Commission
-// Voucher has released against it, or it has been marked paid, the stored figures back a settlement
-// and changing them would strand the released amounts.
+// it by voiding and re-generating.
+//
+// A payable that has been paid, or that a live Commission Voucher has released against, backs a
+// settlement, so recomputing it can strand those released amounts. That is a reason to ask for a
+// deliberate decision, not to make the document permanently uneditable: can_approve overrides both
+// guards. Without that permission the old behaviour stands -- reopen it or void the voucher first.
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
@@ -333,12 +346,15 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (!meta.isAdmin && Number(existing.employee_id) !== Number(meta.employeeId)) {
       return res.status(403).json({ error: 'You can only edit your own commission payables.' });
     }
+    // Void is absolute -- there is no document left to recompute.
     if (existing.status === 'void') return res.status(409).json({ error: 'A void Commission Payable cannot be edited.' });
-    if (existing.status === 'paid' || round2(existing.amount_paid) > 0) {
+
+    const mayOverride = await userCan(req.user.id, ROUTE, 'can_approve');
+    if (!mayOverride && (existing.status === 'paid' || round2(existing.amount_paid) > 0)) {
       return res.status(409).json({ error: 'This Commission Payable has been paid -- mark it unpaid before editing.' });
     }
     const [vtbl] = await conn.query("SHOW TABLES LIKE 'commission_voucher_lines'");
-    if (vtbl.length) {
+    if (vtbl.length && !mayOverride) {
       const [[used]] = await conn.query(
         `SELECT COUNT(*) AS c FROM commission_voucher_lines cvl
          JOIN commission_vouchers cv ON cv.id = cvl.commission_voucher_id
@@ -402,15 +418,36 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
   } finally { conn.release(); }
 });
 
-// Mark paid / unpaid. Paid sets amount_paid to the commissionable amount, matching the live
-// UNPAID -> PAID transition.
+// Mark paid / unpaid.
+//
+// PAID means the commission has actually been released in full: the Commission Vouchers raised
+// against this payable have released at least its Expected Commission. It used to be a plain
+// flag anyone could set on an untouched payable, which is how CP-1 came to read PAID with
+// 20,240.00 expected against 3,546.43 released -- a settled-looking document that still owed the
+// rep 16,693.57.
+//
+// Marking unpaid is always allowed: it reopens the document, it does not claim anything.
 router.put('/:id/pay', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[cp]] = await conn.query('SELECT status, commissionable_amount FROM commission_payables WHERE id = ?', [req.params.id]);
+    const [[cp]] = await conn.query('SELECT status, expected_commission, commissionable_amount FROM commission_payables WHERE id = ?', [req.params.id]);
     if (!cp) return res.status(404).json({ error: 'Not found' });
     if (cp.status === 'void') return res.status(409).json({ error: 'This Commission Payable is void.' });
     const makePaid = req.body?.paid !== false;
+
+    if (makePaid) {
+      const { released } = await releaseForPayable(req.params.id);
+      const expected = round2(cp.expected_commission);
+      // Half a centavo of tolerance, so a released amount that ties out to the last displayed
+      // digit is not rejected over floating-point dust.
+      if (round2(released) + 0.005 < expected) {
+        return res.status(409).json({
+          error: `This Commission Payable cannot be marked paid: ${money(released)} has been released against an Expected Commission of ${money(expected)}. `
+            + `Release the remaining ${money(round2(expected - released))} through a Commission Voucher first.`,
+        });
+      }
+    }
+
     await conn.beginTransaction();
     await conn.query('UPDATE commission_payables SET status = ?, amount_paid = ?, updated_at = NOW() WHERE id = ?',
       [makePaid ? 'paid' : 'unpaid', makePaid ? cp.commissionable_amount : 0, req.params.id]);
