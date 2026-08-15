@@ -83,6 +83,30 @@ function monthRange() {
   return start;
 }
 
+// Half-open [start, end) bounds for a month, as plain YYYY-MM-DD strings.
+//
+// Built from the local date parts rather than toISOString(): at UTC+8 a local first-of-month
+// midnight serialises as the previous month's last day in UTC, which would shift every boundary
+// a day earlier and put the 1st's work in the wrong month.
+const pad2 = (n) => String(n).padStart(2, '0');
+function monthBounds(ym) {
+  const now = new Date();
+  let year = now.getFullYear();
+  let month = now.getMonth(); // 0-based
+  if (/^\d{4}-\d{2}$/.test(String(ym || ''))) {
+    const [y, m] = String(ym).split('-').map(Number);
+    if (m >= 1 && m <= 12) { year = y; month = m - 1; }
+  }
+  const startY = year; const startM = month;
+  const endY = month === 11 ? year + 1 : year;
+  const endM = month === 11 ? 0 : month + 1;
+  return {
+    month: `${startY}-${pad2(startM + 1)}`,
+    start: `${startY}-${pad2(startM + 1)}-01`,
+    end: `${endY}-${pad2(endM + 1)}-01`,
+  };
+}
+
 // Last 6 months of sales_orders total_amount, oldest first -- feeds the stat-card
 // sparklines. `employeeIds` narrows to specific reps; omit/empty for the org-wide trend.
 async function salesTrend(employeeIds) {
@@ -359,9 +383,89 @@ async function designSupervisorMetrics() {
   };
 }
 
+// This month's artist incentive, by the same rules as Reports > Artist Incentive, so the
+// dashboard figure and the payout sheet can never disagree:
+//   Job Order      -- a flat 7.50 per unit of layout work (7.50 x layout_qty), earned when the
+//                     artist stops the timer (layout_ended_at).
+//   Non-Standard JO -- the incentive stored per materials line when the order was saved, and only
+//                     once Sales have signed it off (status COMPLETED).
+// Both are dated by when the layout actually finished, not when the order was raised.
+const JO_INCENTIVE_AMOUNT = 7.5;
+const NSTDJO_COMPLETED_STATUS = 'COMPLETED';
+
+async function artistIncentiveForMonth(employeeId, monthStart, monthEnd) {
+  const [[jo]] = await pool.query(
+    `SELECT COALESCE(SUM(ROUND(${JO_INCENTIVE_AMOUNT} * COALESCE(NULLIF(jo.layout_qty, 0), 1), 2)), 0) AS amount,
+            COUNT(*) AS jobs
+       FROM job_orders jo
+      WHERE jo.artist_id = ? AND jo.layout_ended_at >= ? AND jo.layout_ended_at < ?`,
+    [employeeId, monthStart, monthEnd]
+  );
+
+  // The NSTDJO tables are not present in every build -- fall back to the Job Order side alone
+  // rather than failing the whole dashboard.
+  let nstd = { amount: 0, jobs: 0 };
+  const [tbl] = await pool.query("SHOW TABLES LIKE 'non_standard_job_orders'");
+  if (tbl.length) {
+    const [[row]] = await pool.query(
+      `SELECT COALESCE(SUM(ROUND(COALESCE((
+                SELECT SUM(m.artist_incentive) FROM non_standard_job_order_materials m
+                 WHERE m.non_standard_job_order_id = n.id), 0), 2)), 0) AS amount,
+              COUNT(*) AS jobs
+         FROM non_standard_job_orders n
+        WHERE n.artist_employee_id = ? AND n.status = ?
+          AND n.layout_ended_at >= ? AND n.layout_ended_at < ?`,
+      [employeeId, NSTDJO_COMPLETED_STATUS, monthStart, monthEnd]
+    );
+    nstd = { amount: Number(row.amount || 0), jobs: Number(row.jobs || 0) };
+  }
+
+  return {
+    amount: Number((Number(jo.amount || 0) + nstd.amount).toFixed(2)),
+    jobs: Number(jo.jobs || 0) + nstd.jobs,
+  };
+}
+
+// The artist's scheduled work for one month, as day -> job orders, for the dashboard calendar.
+// A job order lands on its planned start date; one with no planned start has nothing to sit on
+// and is returned separately so it is not silently dropped from the month.
+async function artistCalendar(employeeId, monthStart, monthEnd) {
+  const [rows] = await pool.query(
+    `SELECT jo.id, jo.job_order_no, jo.description, jo.sub_status,
+            jo.planned_start_at, jo.planned_end_at, jo.layout_ended_at,
+            c.name AS customer_name,
+            EXISTS(SELECT 1 FROM job_order_layout_sessions s
+                    WHERE s.job_order_id = jo.id AND s.ended_at IS NULL) AS is_running
+       FROM job_orders jo
+       LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
+       LEFT JOIN customers c ON c.id = so.customer_id
+      WHERE jo.artist_id = ?
+        AND jo.planned_start_at >= ? AND jo.planned_start_at < ?
+      ORDER BY jo.planned_start_at`,
+    [employeeId, monthStart, monthEnd]
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    jobOrderNo: r.job_order_no,
+    description: r.description,
+    subStatus: r.sub_status,
+    customerName: r.customer_name,
+    plannedStartAt: r.planned_start_at,
+    plannedEndAt: r.planned_end_at,
+    // The calendar colours a day by what is on it, so it needs to know what state each job is in.
+    done: !!r.layout_ended_at,
+    running: !!Number(r.is_running),
+    day: r.planned_start_at ? String(r.planned_start_at).slice(0, 10) : null,
+  }));
+}
+
 async function artistMetrics(employeeId) {
   if (!employeeId) {
-    return { active: 0, notStarted: 0, completedThisMonth: 0, avgPerformance: null, schedule: [], rings: [] };
+    return {
+      active: 0, notStarted: 0, completedThisMonth: 0, avgPerformance: null,
+      incentiveThisMonth: 0, incentiveJobs: 0, calendar: [], calendarMonth: null,
+      schedule: [], rings: [],
+    };
   }
 
   const [[active]] = await pool.query(
@@ -411,11 +515,21 @@ async function artistMetrics(employeeId) {
   const activeCount = Number(active.count);
   const notStartedCount = Number(notStarted.count);
 
+  // The dashboard opens on the current month; the calendar can be paged from the client via
+  // GET /dashboard/artist-calendar without refetching everything else.
+  const bounds = monthBounds(null);
+  const incentive = await artistIncentiveForMonth(employeeId, bounds.start, bounds.end);
+  const calendar = await artistCalendar(employeeId, bounds.start, bounds.end);
+
   return {
     active: activeCount,
     notStarted: notStartedCount,
     completedThisMonth: Number(completedThisMonth.count),
     avgPerformance,
+    incentiveThisMonth: incentive.amount,
+    incentiveJobs: incentive.jobs,
+    calendar,
+    calendarMonth: bounds.month,
     schedule,
     rings: [
       ...(avgPerformance !== null ? [{ label: 'Avg Performance', value: Math.max(0, Math.min(100, Math.round(avgPerformance))), color: '#7c6fe8' }] : []),
@@ -457,6 +571,29 @@ router.get('/', requireAuth, async (req, res, next) => {
     res.json({ role: scope.role, summary, byRep });
   } catch (err) {
     next(err);
+  }
+});
+
+// Lets the artist dashboard's calendar page to another month without refetching the whole
+// dashboard. Scoped to the caller's own employee record -- an artist only ever sees their own
+// schedule, and there is no artist_id parameter to point somewhere else.
+router.get('/artist-calendar', requireAuth, async (req, res, next) => {
+  try {
+    const scope = await resolveScope(req.user.id);
+    const employeeId = scope.employeeIds && scope.employeeIds[0];
+    const bounds = monthBounds(req.query.month);
+    if (!employeeId) {
+      return res.json({ month: bounds.month, calendar: [], incentive: 0, incentiveJobs: 0 });
+    }
+    const [calendar, incentive] = await Promise.all([
+      artistCalendar(employeeId, bounds.start, bounds.end),
+      artistIncentiveForMonth(employeeId, bounds.start, bounds.end),
+    ]);
+    return res.json({
+      month: bounds.month, calendar, incentive: incentive.amount, incentiveJobs: incentive.jobs,
+    });
+  } catch (err) {
+    return next(err);
   }
 });
 

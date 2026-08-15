@@ -519,6 +519,96 @@ function DesignSupervisorDashboard({ data, user, navigate }) {
   );
 }
 
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
+
+// A month grid of the artist's scheduled job orders, replacing the old performance orb -- an
+// artist needs to know what is coming and when, which a single averaged percentage cannot say.
+//
+// Days are keyed by the plain YYYY-MM-DD the server sends, never by parsing it into a Date and
+// reading it back: at UTC+8 `new Date('2026-08-01')` is 8am local, and formatting it in another
+// timezone slides the job onto the previous day.
+function ScheduleCalendar({ month, jobs, loading, onMonth, navigate }) {
+  const [year, monthNo] = String(month || '').split('-').map(Number);
+  const valid = Number.isFinite(year) && Number.isFinite(monthNo);
+  const first = valid ? new Date(year, monthNo - 1, 1) : new Date();
+  const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+  const leading = first.getDay();
+
+  const byDay = new Map();
+  for (const j of jobs || []) {
+    if (!j.day) continue;
+    if (!byDay.has(j.day)) byDay.set(j.day, []);
+    byDay.get(j.day).push(j);
+  }
+
+  const pad = (n) => String(n).padStart(2, '0');
+  const todayKey = (() => {
+    const t = new Date();
+    return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
+  })();
+
+  const cells = [];
+  for (let i = 0; i < leading; i += 1) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d += 1) {
+    cells.push(`${first.getFullYear()}-${pad(first.getMonth() + 1)}-${pad(d)}`);
+  }
+
+  const shift = (delta) => {
+    const base = new Date(first.getFullYear(), first.getMonth() + delta, 1);
+    onMonth(`${base.getFullYear()}-${pad(base.getMonth() + 1)}`);
+  };
+
+  return (
+    <div className="artist-calendar">
+      <div className="artist-calendar-head">
+        <button type="button" className="btn btn-sm" onClick={() => shift(-1)} disabled={loading}>‹</button>
+        <strong>{valid ? `${MONTH_NAMES[monthNo - 1]} ${year}` : ''}</strong>
+        <button type="button" className="btn btn-sm" onClick={() => shift(1)} disabled={loading}>›</button>
+        <span className="muted artist-calendar-count">
+          {loading ? 'Loading...' : `${(jobs || []).length} scheduled`}
+        </span>
+      </div>
+
+      <div className="artist-calendar-grid">
+        {WEEKDAYS.map((w) => <div key={w} className="artist-calendar-weekday">{w}</div>)}
+        {cells.map((key, i) => {
+          if (!key) return <div key={`pad-${i}`} className="artist-calendar-day is-empty" />;
+          const dayJobs = byDay.get(key) || [];
+          const dayNo = Number(key.slice(8, 10));
+          return (
+            <div
+              key={key}
+              className={`artist-calendar-day${key === todayKey ? ' is-today' : ''}${dayJobs.length ? ' has-jobs' : ''}`}
+            >
+              <span className="artist-calendar-daynum">{dayNo}</span>
+              {dayJobs.slice(0, 3).map((j) => {
+                const state = j.done ? 'Completed' : j.running ? 'Running' : 'Not Started';
+                return (
+                  <button
+                    key={j.id}
+                    type="button"
+                    className="artist-calendar-chip"
+                    style={TIMER_STATUS_STYLE[state]}
+                    title={`${j.jobOrderNo} · ${j.customerName || '—'} · ${state}`}
+                    onClick={() => navigate(`/assigned-jo/${j.id}`)}
+                  >
+                    {j.jobOrderNo}
+                  </button>
+                );
+              })}
+              {dayJobs.length > 3 && (
+                <span className="artist-calendar-more">+{dayJobs.length - 3} more</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ArtistDashboard({ data, user, navigate }) {
   const activity = data.schedule.slice(0, 4).map((r) => ({
     title: `${r.jobOrderNo} · ${r.customerName || '—'}`,
@@ -526,11 +616,40 @@ function ArtistDashboard({ data, user, navigate }) {
     onClick: () => navigate(`/assigned-jo/${r.id}`),
   }));
 
+  // The calendar pages independently of the rest of the dashboard, so moving to another month
+  // is one small request rather than rebuilding every figure on the screen.
+  const [month, setMonth] = useState(data.calendarMonth);
+  const [calendar, setCalendar] = useState(data.calendar || []);
+  const [incentive, setIncentive] = useState({ amount: data.incentiveThisMonth, jobs: data.incentiveJobs });
+  const [calLoading, setCalLoading] = useState(false);
+
+  async function loadMonth(ym) {
+    setCalLoading(true);
+    try {
+      const { data: d } = await api.get('/dashboard/artist-calendar', { params: { month: ym } });
+      setMonth(d.month);
+      setCalendar(d.calendar || []);
+      setIncentive({ amount: d.incentive, jobs: d.incentiveJobs });
+    } catch {
+      // Leave the month showing what it had rather than blanking the calendar on a hiccup.
+    } finally {
+      setCalLoading(false);
+    }
+  }
+
+  const isCurrentMonth = month === data.calendarMonth;
+
   return (
     <>
       <StatRow cards={[
         { label: 'Active Job Orders', value: data.active, icon: '🎨' },
-        { label: 'Not Yet Started', value: data.notStarted, icon: '⏸️' },
+        {
+          // Incentive earned from the job orders actually finished in the month being viewed --
+          // the same 7.50-per-layout / NSTDJO-per-line rules as Reports > Artist Incentive.
+          label: isCurrentMonth ? 'Incentive This Month' : `Incentive · ${month}`,
+          value: `₱${money(incentive.amount ?? 0)}`,
+          icon: '💰',
+        },
         { label: 'Completed This Month', value: data.completedThisMonth, icon: '✅' },
         { label: 'Avg. Performance', value: data.avgPerformance === null ? '—' : `${data.avgPerformance}%`, icon: '⚡' },
       ]} />
@@ -538,10 +657,14 @@ function ArtistDashboard({ data, user, navigate }) {
       <div className="dash-main-grid">
         <ProfileCard user={user} roleLabel={ROLE_LABELS.artist} rings={data.rings} activity={activity} />
         <div className="holo-card dash-chart-card">
-          <h3>Performance</h3>
-          <div className="holo-tile-dark">
-            <Holo3DOrb value={data.avgPerformance ?? 0} max={100} color="var(--holo-amber)" sub="avg. performance" />
-          </div>
+          <h3>Scheduled Job Orders</h3>
+          <ScheduleCalendar
+            month={month}
+            jobs={calendar}
+            loading={calLoading}
+            onMonth={loadMonth}
+            navigate={navigate}
+          />
         </div>
       </div>
 
