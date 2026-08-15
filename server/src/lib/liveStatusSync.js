@@ -136,6 +136,100 @@ const MODULES = {
     status: (r) => estimateStatus(r.Status_TransH),
     totals: (r) => ({ subtotal: money(r.SubTotalVatEx_TransH), net_of_tax: money(r.SubTotalVatEx_TransH), tax_total: money(r.TaxAmount_TransH), total_amount: money(r.TotalAmount_TransH) }),
   },
+
+  // ---- the rest of the transaction types -------------------------------------------------
+  //
+  // Every mapping below was read off live before it was written, not assumed. Getting this wrong
+  // is the most repeated defect in this migration: cheques stored 'voided' where the app tests
+  // 'void' and 690 rows rendered as OPEN; transfer orders stored live's display labels and 1,896
+  // of them became invisible to the list filters. A status that does not match the local
+  // vocabulary does not error -- it just quietly hides the record.
+  //
+  // Live values actually observed, per module, are noted on each mapping.
+
+  cheques: {
+    // live: OPEN, FULLY APPLIED, VOID     local: open, void
+    label: 'Cheques', table: 'cheques', keyCol: 'cheque_no', statusCol: 'status',
+    endpoint: 'get_transactions', payload: { where: { Module_TransH: 'CHEQUE' } }, liveKey: 'UserPK_TransH',
+    // FULLY APPLIED is a settlement state, not a cancellation -- the cheque is still live, so it
+    // maps to open rather than being invented as a third local status.
+    status: (r) => (String(r.Status_TransH).toUpperCase() === 'VOID' ? 'void' : 'open'),
+    totals: (r) => ({ subtotal: money(r.SubTotal_TransH), net_of_tax: money(r.SubTotalVatEx_TransH), tax_amount: money(r.TaxAmount_TransH), gross_amount: money(r.TotalAmount_TransH), total_amount: money(r.TotalAmount_TransH) }),
+  },
+
+  vendor_bills: {
+    // live: PAID IN FULL, OPEN            local: paid, open, paid_in_full
+    label: 'Vendor Bills', table: 'vendor_bills', keyCol: 'bill_no', statusCol: 'status',
+    endpoint: 'get_transactions', payload: { where: { Module_TransH: 'VENDORBILL' } }, liveKey: 'UserPK_TransH',
+    status: (r) => {
+      const s = String(r.Status_TransH || '').toUpperCase();
+      if (s === 'PAID IN FULL') return 'paid';
+      if (s === 'OPEN') return 'open';
+      return null; // anything unrecognised leaves the local status alone rather than guessing
+    },
+    totals: (r) => ({ subtotal: money(r.SubTotal_TransH), net_of_tax: money(r.SubTotalVatEx_TransH), tax_amount: money(r.TaxAmount_TransH), gross_amount: money(r.TotalAmount_TransH), amount_due: money(r.AmountDue_TransH) }),
+  },
+
+  transfer_orders: {
+    // live: Received, CANCELLED, Pending Fulfillment, Pending Receipt, Partially Fulfilled
+    // local: the same, snake_cased -- which is exactly the mismatch that hid 1,896 orders.
+    label: 'Transfer Orders', table: 'transfer_orders', keyCol: 'to_no', statusCol: 'status',
+    endpoint: 'get_transactions', payload: { where: { Module_TransH: 'TRANSFERORDER' } }, liveKey: 'UserPK_TransH',
+    status: (r) => {
+      const s = String(r.Status_TransH || '').trim();
+      if (!s || s === 'null') return null;
+      return s.toLowerCase().replace(/\s+/g, '_');
+    },
+  },
+
+  bank_deposits: {
+    // live: OPEN, VOID                    local: open, void
+    label: 'Deposits', table: 'bank_deposits', keyCol: 'bd_no', statusCol: 'status',
+    endpoint: 'get_transactions', payload: { where: { Module_TransH: 'DEPOSIT' } }, liveKey: 'UserPK_TransH',
+    status: (r) => (String(r.Status_TransH).toUpperCase() === 'VOID' ? 'void' : 'open'),
+    totals: (r) => ({ total_amount: money(r.TotalAmount_TransH) }),
+  },
+
+  fund_transfers: {
+    // live: null (a live transfer), VOID  local: open, void
+    label: 'Fund Transfers', table: 'fund_transfers', keyCol: 'ft_no', statusCol: 'status',
+    endpoint: 'get_transactions', payload: { where: { Module_TransH: 'FUNDTRANSFER' } }, liveKey: 'UserPK_TransH',
+    status: (r) => (String(r.Status_TransH).toUpperCase() === 'VOID' ? 'void' : 'open'),
+    totals: (r) => ({ amount: money(r.TotalAmount_TransH) }),
+  },
+
+  customer_payments: {
+    // live: DEPOSITED, OPEN, VOID, APPLIED   local: deposited, not_deposited
+    label: 'Customer Payments', table: 'customer_payments', keyCol: 'customer_payment_no', statusCol: 'status',
+    endpoint: 'get_transactions', payload: { where: { Module_TransH: 'CUSTPAYMENT' } }, liveKey: 'UserPK_TransH',
+    status: (r) => {
+      const s = String(r.Status_TransH || '').toUpperCase();
+      if (s === 'DEPOSITED') return 'deposited';
+      if (s === 'OPEN') return 'not_deposited';
+      // VOID and APPLIED have no local equivalent. Forcing them into deposited/not_deposited
+      // would misreport whether the money is in the bank, so the local status is left as it is.
+      return null;
+    },
+    totals: (r) => ({ payment_amount: money(r.TotalAmount_TransH), applied_amount: money(r.AppliedPayments_TransH), unapplied_amount: money(r.UnappliedPayments_TransH) }),
+  },
+
+  credit_memos: {
+    // live carries no status on this module at all -- every sampled row came back null -- so this
+    // syncs totals only and never touches the local status.
+    label: 'Credit Memos', table: 'credit_memos', keyCol: 'credit_memo_no', statusCol: 'status',
+    endpoint: 'get_transactions', payload: { where: { Module_TransH: 'CREDITMEMO' } }, liveKey: 'UserPK_TransH',
+    status: () => null,
+    totals: (r) => ({ subtotal: money(r.SubTotal_TransH), net_of_tax: money(r.SubTotalVatEx_TransH), tax_amount: money(r.TaxAmount_TransH), gross_amount: money(r.TotalAmount_TransH) }),
+  },
+
+  journals: {
+    // live: OPEN, REVERSAL. Local stores these verbatim in upper case (alongside PAID IN FULL,
+    // CLOSING ENTRY and SAVED, which live did not return in the sample), so it passes through
+    // rather than being normalised into an enum this table does not have.
+    label: 'Journals', table: 'journals', keyCol: 'journal_no', statusCol: 'status',
+    endpoint: 'get_transactions', payload: { where: { Module_TransH: 'JOURNAL' } }, liveKey: 'UserPK_TransH',
+    status: (r) => (r.Status_TransH ? trunc(String(r.Status_TransH).trim(), 30) : null),
+  },
 };
 
 const SYNCABLE = Object.keys(MODULES);
@@ -143,10 +237,14 @@ const SYNCABLE = Object.keys(MODULES);
 async function syncModule(token, key) {
   const cfg = MODULES[key];
   if (!cfg) throw new Error(`Unknown module "${key}"`);
-  const totalCols = Object.keys(cfg.totals({}));
+  // Not every document type carries money -- a transfer order moves stock, not value -- so a
+  // module may legitimately define no totals at all. Both the column list and the SELECT have to
+  // cope with that, or the query ends in a trailing comma and the sync dies on a syntax error.
+  const totals = cfg.totals || (() => ({}));
+  const totalCols = Object.keys(totals({}));
   const [[{ minDate }]] = await pool.query(`SELECT MIN(date_created) AS minDate FROM \`${cfg.table}\``);
   const [locals] = await pool.query(
-    `SELECT id, \`${cfg.keyCol}\` AS k, \`${cfg.statusCol}\` AS status, ${totalCols.map((c) => `\`${c}\``).join(', ')} FROM \`${cfg.table}\``
+    `SELECT id, \`${cfg.keyCol}\` AS k, \`${cfg.statusCol}\` AS status${totalCols.length ? `, ${totalCols.map((c) => `\`${c}\``).join(', ')}` : ''} FROM \`${cfg.table}\``
   );
   if (!locals.length) return { module: key, label: cfg.label, checked: 0, updated: 0, statusChanged: 0, unchanged: 0, notInLive: 0, changes: [] };
 

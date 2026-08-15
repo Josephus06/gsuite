@@ -17,7 +17,21 @@ export default function SyncFromSourceButton({ module, label = 'Sync from Source
     setSyncing(true);
     try {
       const { data } = await api.post('/admin/sync-status', module ? { modules: [module] } : {});
-      const lines = data.results.map((r) => `${r.label}: ${r.statusChanged} status change(s), ${r.updated} record(s) updated (${r.checked} checked).`);
+
+      // Thirteen document types now sync, so listing every one makes the changes that matter hard
+      // to find. What actually changed goes first and in full; the rest is one summary line.
+      const changed = data.results.filter((r) => r.updated > 0);
+      const clean = data.results.filter((r) => r.updated === 0);
+      const lines = changed.map((r) => `${r.label}: ${r.statusChanged} status change(s), ${r.updated} record(s) updated (${r.checked} checked).`);
+      if (clean.length) {
+        const checked = clean.reduce((s, r) => s + r.checked, 0);
+        lines.push(`${clean.length} other module(s) already up to date (${checked.toLocaleString()} records checked).`);
+      }
+      // A record present here but absent from live is worth surfacing -- it usually means the
+      // document was raised in this system and has no counterpart to sync against.
+      const orphans = data.results.reduce((s, r) => s + (r.notInLive || 0), 0);
+      if (orphans) lines.push(`${orphans.toLocaleString()} record(s) had no match in the source system.`);
+      if (!changed.length) lines.unshift('Nothing had changed in the source.');
       if (data.quantities) {
         const q = data.quantities;
         lines.push(`Job Order quantities rolled up: built ${q.built}, inspected ${q.inspected}, delivered ${q.delivered}.`);
