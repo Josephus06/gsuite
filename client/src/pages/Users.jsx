@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
@@ -19,6 +19,7 @@ export default function Users() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [search, setSearch] = useState('');
 
   async function load() {
     setLoading(true);
@@ -38,6 +39,16 @@ export default function Users() {
       alert(err.response?.data?.error || 'Delete failed');
     }
   }
+
+  // Filtered in the browser rather than round-tripping: /users returns the whole list already,
+  // and it is small enough that typing should filter as you type.
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => [
+      r.username, r.account_type, r.display_name, r.email, r.default_branch_name,
+    ].filter(Boolean).join(' ').toLowerCase().includes(q));
+  }, [rows, search]);
 
   const columns = [
     { key: 'username', label: 'Username' },
@@ -60,12 +71,26 @@ export default function Users() {
           {can('/users', 'can_add') && <button className="btn btn-primary" onClick={() => navigate('/users/new')}>Add User</button>}
         </div>
       </div>
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="filter-grid">
+          <div className="field">
+            <label>Search</label>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Username, account type, name, email, branch..."
+            />
+          </div>
+        </div>
+      </div>
+
       <div className="card">
         {loading ? <LoadingSpinner /> : (
           <DataTable
             paginate
             columns={columns}
-            rows={rows}
+            rows={filteredRows}
+            emptyLabel={search ? 'No users match this search.' : 'No users yet.'}
             actions={(row) => (
               <>
                 {can('/users', 'can_edit') && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/users/${row.id}/edit`)}>Edit</button>}
