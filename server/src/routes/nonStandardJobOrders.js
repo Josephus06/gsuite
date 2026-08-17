@@ -4,6 +4,7 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } = require('../lib/designSupervisorVisibility');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { getArtistEmployeeScope } = require('../lib/artistVisibility');
+const { notifyDesignSupervisors, notifyAssignedArtist } = require('../lib/designNotifications');
 
 const router = express.Router();
 const ROUTE = '/non-standard-job-orders';
@@ -358,7 +359,10 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 router.post('/:id/forward', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[row]] = await conn.query('SELECT id, status, sub_status, forwarded_at FROM non_standard_job_orders WHERE id = ?', [req.params.id]);
+    const [[row]] = await conn.query(
+      'SELECT id, nstdjo_no, description, status, sub_status, forwarded_at FROM non_standard_job_orders WHERE id = ?',
+      [req.params.id],
+    );
     if (!row) return res.status(404).json({ error: 'Non-standard job order not found.' });
     if (TERMINAL_STATUSES.includes(row.status)) {
       return res.status(409).json({ error: `This job order is ${row.status} and can no longer be forwarded.` });
@@ -387,6 +391,15 @@ router.post('/:id/forward', requireAuth, requirePermission(ROUTE, 'can_edit'), a
     await logAudit(conn, {
       id: req.params.id, userId: req.user.id, eventType: 'Status Change',
       fieldName: 'sub_status', oldValue: row.sub_status, newValue: SUB_FOR_DESIGN,
+    });
+    // The order has just landed in the design queue with no artist on it -- tell the
+    // supervisors it is waiting rather than relying on someone refreshing the list.
+    await notifyDesignSupervisors(conn, {
+      title: `${row.nstdjo_no} needs an artist assigned`,
+      message: row.description ? String(row.description).slice(0, 500) : null,
+      relatedType: 'NonStandardJobOrder',
+      relatedId: req.params.id,
+      excludeUserId: req.user.id,
     });
     await conn.commit();
     res.json({ id: Number(req.params.id), status: row.status, sub_status: SUB_FOR_DESIGN });
@@ -758,7 +771,7 @@ router.put('/:id/assign-artist', requireAuth, async (req, res, next) => {
   try {
     await conn.beginTransaction();
     const [[row]] = await conn.query(
-      `SELECT status, sub_status, artist_employee_id, job_type_id, layout_job_type_id
+      `SELECT nstdjo_no, description, status, sub_status, artist_employee_id, job_type_id, layout_job_type_id
          FROM non_standard_job_orders WHERE id = ?`, [req.params.id],
     );
     if (!row) { await conn.rollback(); return res.status(404).json({ error: 'Non-standard job order not found.' }); }
@@ -818,6 +831,15 @@ router.put('/:id/assign-artist', requireAuth, async (req, res, next) => {
         fieldName: 'sub_status', oldValue: row.sub_status, newValue: SUB_FOR_ARTIST,
       });
     }
+    // Tell the artist the work is theirs. Sent on a reassignment too -- the new artist
+    // needs telling just as much as the first one did.
+    await notifyAssignedArtist(conn, {
+      artistEmployeeId: artistId,
+      title: `${row.nstdjo_no} has been assigned to you`,
+      message: row.description ? String(row.description).slice(0, 500) : null,
+      relatedType: 'NonStandardJobOrder',
+      relatedId: req.params.id,
+    });
     await conn.commit();
     res.json({
       id: Number(req.params.id), artist_employee_id: Number(artistId),

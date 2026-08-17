@@ -3,6 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } = require('../lib/designSupervisorVisibility');
 const { getArtistEmployeeScope } = require('../lib/artistVisibility');
+const { notifyDesignSupervisors, notifyAssignedArtist } = require('../lib/designNotifications');
 
 const router = express.Router();
 const ROUTE = '/job-orders';
@@ -442,7 +443,7 @@ router.put('/:id/forward-to-design', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [[jo]] = await conn.query('SELECT sub_status, sales_rep_id FROM job_orders WHERE id = ?', [req.params.id]);
+    const [[jo]] = await conn.query('SELECT job_order_no, description, sub_status, sales_rep_id FROM job_orders WHERE id = ?', [req.params.id]);
     if (!jo) { await conn.rollback(); return res.status(404).json({ error: 'Not found' }); }
 
     const [[me]] = await conn.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
@@ -462,6 +463,15 @@ router.put('/:id/forward-to-design', requireAuth, async (req, res, next) => {
     }
     await conn.query("UPDATE job_orders SET sub_status = 'For Design Supervisor', updated_at = NOW() WHERE id = ?", [req.params.id]);
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'sub_status', oldValue: 'Pending', newValue: 'For Design Supervisor' });
+    // Just landed in the design queue with no artist on it -- tell the supervisors rather
+    // than relying on someone refreshing the list. Same hand-off as the NSTDJO forward.
+    await notifyDesignSupervisors(conn, {
+      title: `${jo.job_order_no} needs an artist assigned`,
+      message: jo.description ? String(jo.description).slice(0, 500) : null,
+      relatedType: 'JobOrder',
+      relatedId: req.params.id,
+      excludeUserId: req.user.id,
+    });
     await conn.commit();
     const [[row]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
     res.json(row);
@@ -505,7 +515,7 @@ router.put('/:id/assign-design', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [[jo]] = await conn.query('SELECT status, sub_status, artist_id FROM job_orders WHERE id = ?', [req.params.id]);
+    const [[jo]] = await conn.query('SELECT job_order_no, description, status, sub_status, artist_id FROM job_orders WHERE id = ?', [req.params.id]);
     if (!jo) { await conn.rollback(); return res.status(404).json({ error: 'Not found' }); }
     if (jo.status === 'Released' || jo.status === 'Cancelled') {
       await conn.rollback();
@@ -540,6 +550,15 @@ router.put('/:id/assign-design', requireAuth, async (req, res, next) => {
     if (isReassignment) {
       await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'artist_reassigned', oldValue: jo.artist_id, newValue: artist_id });
     }
+    // Tell the artist the work is theirs. Sent on a reassignment too -- the new artist
+    // needs telling just as much as the first one did.
+    await notifyAssignedArtist(conn, {
+      artistEmployeeId: artist_id,
+      title: `${jo.job_order_no} has been assigned to you`,
+      message: jo.description ? String(jo.description).slice(0, 500) : null,
+      relatedType: 'JobOrder',
+      relatedId: req.params.id,
+    });
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);

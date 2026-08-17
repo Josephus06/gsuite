@@ -100,6 +100,17 @@ export default function NotificationBell() {
       }
     }
     if (n.related_type === 'Ticket' && n.related_id) navigate(`/tickets/${n.related_id}`);
+    // Design hand-off notifications. An artist told the work is theirs goes straight to the
+    // run screen where they start the timer; everyone else (the supervisor who has to assign
+    // it, Sales chasing an approval) goes to the order itself.
+    if (n.related_type === 'JobOrder' && n.related_id) {
+      navigate(n.type === 'design_artist_assigned' ? `/assigned-jo/${n.related_id}` : `/job-orders/${n.related_id}`);
+    }
+    if (n.related_type === 'NonStandardJobOrder' && n.related_id) {
+      navigate(n.type === 'design_artist_assigned'
+        ? `/assigned-jo/nstdjo/${n.related_id}`
+        : `/non-standard-job-orders/${n.related_id}`);
+    }
     // Feed posts live on the dashboard's Feed tab; the hash is what Feed.jsx anchors each
     // post card with, so the browser scrolls straight to it.
     if (n.related_type === 'FeedPost' && n.related_id) {
