@@ -17,7 +17,8 @@
 #   2. There is no MySQL 9.4 in the repository. The 9.x line is 9.7 LTS. That matters: replication
 #      flows from older to newer only, so a 9.7 cloud cannot feed a 9.4 office, and office -> cloud
 #      is precisely the channel that carries offline work back up. Both sides run 9.7.
-set -euo pipefail
+set -uo pipefail
+trap 'echo ""; echo "FAILED at line $LINENO. Nothing further was run."; exit 1' ERR
 
 CLOUD_IP="146.190.103.165"
 MYSQL_SERIES="mysql-9.7-lts"
@@ -29,12 +30,28 @@ apt-get install -y -qq gnupg dirmngr curl ufw > /dev/null
 
 echo "== 2/6  MySQL signing key"
 install -d -m 0755 /etc/apt/keyrings
-# B7B3B788A8D3785C is MySQL's release key. The copy Oracle bundles has expired; the keyserver
-# holds the same key with its expiry extended.
-gpg --no-default-keyring --keyring /tmp/mysql-ks.gpg \
-    --keyserver keyserver.ubuntu.com --recv-keys B7B3B788A8D3785C > /dev/null 2>&1
-gpg --no-default-keyring --keyring /tmp/mysql-ks.gpg --export > /etc/apt/keyrings/mysql-ks.gpg
-echo "   key imported"
+# B7B3B788A8D3785C is MySQL's release key. The copy Oracle bundles has expired; a keyserver holds
+# the same key with its expiry extended.
+#
+# Fetched over HTTPS rather than with --recv-keys. The keyserver protocol runs on port 11371,
+# which office firewalls routinely block outbound -- and under `set -e` that failure aborts the
+# whole script before anything is installed, which is exactly what happened on the first run.
+# Port 443 is open anywhere this machine can reach GitHub.
+KEY_URL="https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0xB7B3B788A8D3785C"
+if curl -fsSL "$KEY_URL" -o /tmp/mysql-key.asc && [ -s /tmp/mysql-key.asc ]; then
+  gpg --dearmor < /tmp/mysql-key.asc > /etc/apt/keyrings/mysql-ks.gpg
+  echo "   key imported over HTTPS"
+else
+  # Fall back to the keyserver protocol in case HTTPS is the thing that is blocked.
+  echo "   HTTPS fetch failed, trying the keyserver protocol..."
+  gpg --no-default-keyring --keyring /tmp/mysql-ks.gpg \
+      --keyserver keyserver.ubuntu.com --recv-keys B7B3B788A8D3785C
+  gpg --no-default-keyring --keyring /tmp/mysql-ks.gpg --export > /etc/apt/keyrings/mysql-ks.gpg
+  echo "   key imported from keyserver"
+fi
+# Refuse to continue with an empty keyring -- apt would then reject the repository with an error
+# that reads like a network fault.
+[ -s /etc/apt/keyrings/mysql-ks.gpg ] || { echo "ERROR: could not obtain the MySQL signing key"; exit 1; }
 
 echo "== 3/6  MySQL 9.7 LTS"
 . /etc/os-release
