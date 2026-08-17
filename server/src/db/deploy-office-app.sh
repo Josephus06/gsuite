@@ -52,7 +52,20 @@ if [ -f "$APP_DIR/server/.env" ] && grep -q DB_PASSWORD "$APP_DIR/server/.env"; 
   echo "   server/.env already present, left alone"
 else
   read -rsp "   MySQL password for ${DB_USER}@localhost: " DBPW; echo
-  JWT=$(openssl rand -base64 48 | tr -d '/+=' | head -c 48)
+  # THE JWT SECRET MUST MATCH THE CLOUD'S.
+  #
+  # One hostname resolves to both servers, so a browser can be served by the cloud for one request
+  # and the office for the next. A session is a signed token; if the two servers sign with
+  # different secrets, each rejects the other's tokens and users are logged out at random -- which
+  # looks like a flaky application rather than a configuration mismatch.
+  #
+  # Retrieve it from the cloud with:
+  #   ssh root@146.190.103.165 cat /root/.jwt_shared
+  read -rp "   JWT secret from the cloud (blank to generate a NEW one, which breaks shared sessions): " JWT
+  if [ -z "$JWT" ]; then
+    JWT=$(openssl rand -base64 48 | tr -d '/+=' | head -c 48)
+    echo "   !! generated a fresh secret -- sessions will NOT carry between the two servers"
+  fi
   cat > "$APP_DIR/server/.env" <<ENVEOF
 PORT=${PORT}
 # 127.0.0.1, never the cloud: this instance exists to work when the internet does not.
