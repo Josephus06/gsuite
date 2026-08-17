@@ -112,7 +112,16 @@ async function main() {
   // Live documents skipped because their number is already taken locally by an unrelated record.
   const numberCollisions = [];
 
-  await mapWithConcurrency(targetSos, CONCURRENCY, async (t) => {
+  // The CONCURRENCY workers delete+reinsert rows for different SOs whose builds/QIs/deliveries
+  // share index pages, so InnoDB hands out ER_LOCK_DEADLOCK during normal operation. Without a
+  // retry the loser's production rows are simply dropped for the run -- and because the per-SO
+  // body is one transaction, the rollback leaves the SO's *previous* rows in place, so it still
+  // looks populated afterwards. That makes it silent data loss, which is why this retries rather
+  // than just reporting. FK failures are permanent (an existing build pins the job order) and
+  // must never be retried -- there are thousands of them and each retry is pure wall clock.
+  let deadlockReplays = 0;
+  const RETRYABLE = new Set(['ER_LOCK_DEADLOCK', 'ER_LOCK_WAIT_TIMEOUT']);
+  const runSo = async (t, attempt = 1) => {
     try {
       const localSoId = soByNo.get(t.soNo);
       if (!localSoId) return;
@@ -238,16 +247,29 @@ async function main() {
         } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
       } else if (dels.length) { delCount += dels.length; }
     } catch (e) {
+      // Exponential backoff, 200ms -> 3.2s over 5 attempts: long enough for the holder to commit,
+      // short enough that a genuinely stuck SO doesn't stall the whole run.
+      if (RETRYABLE.has(e.code) && attempt < 5) {
+        deadlockReplays += 1;
+        await new Promise((r) => setTimeout(r, 200 * 2 ** (attempt - 1)));
+        return runSo(t, attempt + 1);
+      }
       // Don't swallow the reason -- a bare failure counter makes a reproducible per-order bug
       // indistinguishable from a transient live-API blip.
       fail += 1;
-      console.warn(`  !! ${t.soNo} failed: ${e.message}`);
+      console.warn(`  !! ${t.soNo} failed: ${e.message}${attempt > 1 ? ` (after ${attempt} attempts)` : ''}`);
     }
+  };
+
+  await mapWithConcurrency(targetSos, CONCURRENCY, async (t) => {
+    await runSo(t);
     processed += 1;
     if (processed % 100 === 0) console.log(`  ...${processed}/${targetSos.length} SOs | AB ${abCount} QI ${qiCount} DEL ${delCount}`);
   });
 
-  console.log(`\nDone. Assembly builds: ${abCount} (${abLines} lines) | QIs: ${qiCount} (${qiLines} lines) | Deliveries: ${delCount} (${delLines} lines). SO failures: ${fail}.`);
+  // Read `SO failures` here, not just the replay count: an SO that exhausts all 5 attempts rolls
+  // back whole and keeps its old rows, so it will not show up as empty in any after-the-fact check.
+  console.log(`\nDone. Assembly builds: ${abCount} (${abLines} lines) | QIs: ${qiCount} (${qiLines} lines) | Deliveries: ${delCount} (${delLines} lines). SO failures: ${fail}. Deadlock replays: ${deadlockReplays}.`);
   if (numberCollisions.length) {
     console.log(`\n!! ${numberCollisions.length} live document(s) skipped -- their number is already used locally by an unrelated record:`);
     console.log(`   ${numberCollisions.slice(0, 40).join(', ')}${numberCollisions.length > 40 ? ', ...' : ''}`);
