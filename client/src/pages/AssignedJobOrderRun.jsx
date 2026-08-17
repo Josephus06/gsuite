@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
+import Modal from '../components/Modal';
 import { parseUtc } from '../utils/datetime';
 
-// Where the artist actually runs the layout timer for one assigned JO (Play/Hold/Stop
+// Where the artist actually runs the layout timer for one assigned JO (Play/Hold/Done
 // live here, not on the Assigned JO list) -- shows a countdown from the PMS Job Type's
-// allotted minutes_consume, and a Session Log of every Play/Hold/Resume/Stop so it's
-// clear when the clock was running vs held.
+// allotted minutes_consume, and a Session Log of every Play/Hold/Resume/Done so it's
+// clear when the clock was running vs held. Done is confirmed behind a dialog because
+// it is irreversible; Play and Hold are freely repeatable, so they fire immediately.
 function formatDuration(totalSeconds) {
   const sign = totalSeconds < 0 ? '-' : '';
   const abs = Math.round(Math.abs(totalSeconds));
@@ -34,6 +36,9 @@ export default function AssignedJobOrderRun({ kind = 'JO' }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [now, setNow] = useState(Date.now());
+  // Finishing is one-way -- it stamps Actual End and there is no endpoint to reopen the
+  // timer -- so Done asks before it fires rather than acting on the first click.
+  const [confirmDone, setConfirmDone] = useState(false);
 
   function load() {
     return api.get(basePath).then(({ data }) => { setJo(data); setLoading(false); });
@@ -61,6 +66,13 @@ export default function AssignedJobOrderRun({ kind = 'JO' }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  // Closes the dialog before firing so a failure surfaces in the page's error banner
+  // rather than behind the overlay.
+  async function confirmFinish() {
+    setConfirmDone(false);
+    await runAction('finish-layout');
   }
 
   // Lives on the NSTDJO route rather than /assigned-jo -- that endpoint accepts the
@@ -114,7 +126,7 @@ export default function AssignedJobOrderRun({ kind = 'JO' }) {
       {error && <div className="error-banner">{error}</div>}
       {nearingLimit && (
         <div className="warning-banner timer-notice-pulse">
-          ⚠ Less than 30 seconds remaining on this Job Order — Hold or Stop it now.
+          ⚠ Less than 30 seconds remaining on this Job Order — Hold it or mark it Done now.
         </div>
       )}
       {pastLimit && (
@@ -167,7 +179,7 @@ export default function AssignedJobOrderRun({ kind = 'JO' }) {
             <button type="button" className="btn btn-warning" disabled={busy} onClick={() => runAction('hold-layout')}>⏸ Hold</button>
           )}
           {!isCompleted && !notStarted && (
-            <button type="button" className="btn btn-danger" disabled={busy} onClick={() => runAction('finish-layout')}>■ Stop</button>
+            <button type="button" className="btn btn-danger" disabled={busy} onClick={() => setConfirmDone(true)}>■ Done</button>
           )}
           {isCompleted && <span className="badge badge-success">Completed</span>}
         </div>
@@ -223,6 +235,22 @@ export default function AssignedJobOrderRun({ kind = 'JO' }) {
           </table>
         </div>
       </div>
+
+      {confirmDone && (
+        <Modal title="Are you sure?" onClose={() => !busy && setConfirmDone(false)}>
+          <p>
+            Mark <strong>{jo.job_order_no}</strong> as done?
+          </p>
+          <p className="muted">
+            This records <strong>{formatDuration(actualSeconds)}</strong> as the actual time consumed and
+            stamps Actual End. The timer cannot be restarted afterwards.
+          </p>
+          <div className="modal-actions">
+            <button type="button" className="btn" disabled={busy} onClick={() => setConfirmDone(false)}>No</button>
+            <button type="button" className="btn btn-danger" disabled={busy} onClick={confirmFinish}>Yes, mark as Done</button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
