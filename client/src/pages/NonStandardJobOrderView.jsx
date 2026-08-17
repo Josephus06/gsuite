@@ -179,10 +179,11 @@ export default function NonStandardJobOrderView() {
   // Forward only becomes available once the order is sitting on SBU Approved (or was
   // never gated). Approval unlocks the handoff; pressing Forward is what performs it.
   const sbuCleared = FORWARDABLE.includes(order.sub_status);
-  // Editing is open only while an approver has it parked in Sales Revision -- once
-  // approved, the details it was signed off against must not shift -- and only to the
-  // person who raised it. A supervisor can see a subordinate's order but not change it.
-  const canRevise = inRevision && !isCancelled && canEdit && !!order.is_mine;
+  // Editing stays open until the SBU gate is cleared -- while the order is queued for its
+  // approver(s), and while an approver has parked it back in Sales Revision. Once approved
+  // the details it was signed off against must not shift. Only the person who raised it
+  // may edit: a supervisor can see a subordinate's order but not change it.
+  const canRevise = (awaitingApproval || inRevision) && !isCancelled && canEdit && !!order.is_mine;
   // Picking the artist belongs to the Design Supervisor alone -- edit rights on this page
   // (which Sales has) deliberately do not offer it. The server keeps a can_edit fallback
   // so an admin who isn't personally flagged can still unstick an order, but nobody else

@@ -5,7 +5,8 @@ import Modal from './Modal';
 import { computeProcessCosting, selectBracket } from '../utils/costing';
 
 // The one Non-Standard Job Order form, shared by "Add New" on the list and the rework a
-// Sales user does after an approver bounces the order back (Sub Status "Sales Revision").
+// Sales user does before the order clears the SBU gate -- either while it is still queued
+// for its approver(s) ("SBU Approval") or after one bounces it back ("Sales Revision").
 // Shared rather than duplicated so the two can't drift apart -- the pricing cascade, the
 // SITE INSPECTION relabelling and the materials grid all have to behave identically
 // whether the order is being raised or revised.

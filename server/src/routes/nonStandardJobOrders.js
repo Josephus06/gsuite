@@ -32,6 +32,11 @@ const SUB_SALES_REVISION = 'Sales Revision';
 const SUB_SBU_APPROVED = 'SBU Approved';
 const SUB_FOR_DESIGN = 'For Design Supervisor';
 const SUB_FOR_ARTIST = 'For Artist';
+// The window in which Sales may still change an order: while it is queued for its
+// approver(s), and while an approver has parked it back with them for changes. Approval
+// closes the window -- from "SBU Approved" onward the details an approver signed off
+// against must not shift underneath the order.
+const EDITABLE_SUB_STATUSES = [SUB_SBU_APPROVAL, SUB_SALES_REVISION];
 // The artist sends their finished layout to Sales, who sign it off. Where a Job Order
 // would go to "Released" and on into production, a Non-Standard Job Order has nothing
 // downstream of the layout -- so Sales sign-off is the end of its life: COMPLETED.
@@ -416,11 +421,12 @@ router.post('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), as
   } finally { conn.release(); }
 });
 
-// Sales reworks an order an approver bounced back. Deliberately only open while the order
-// sits in Sales Revision -- once approved it is on its way to Design and the details it
-// was approved against must not shift underneath. Saving the rework sends it back round to
-// SBU Approval, so an approver signs off on what actually changed rather than on the
-// version they already rejected.
+// Sales changes an order that has not cleared the SBU gate yet -- either still queued for
+// its approver(s), or bounced back to them for rework. Deliberately closed once approved:
+// from there the order is on its way to Design and the details it was approved against
+// must not shift underneath. Saving always (re)parks the order on SBU Approval and clears
+// any recorded approval, so an approver signs off on what actually changed rather than on
+// a version that has since been edited out from under them.
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
@@ -431,8 +437,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     );
     if (!row) return res.status(404).json({ error: 'Non-standard job order not found.' });
     if (row.status === CANCELLED_STATUS) return res.status(409).json({ error: 'This job order has been cancelled.' });
-    if (row.sub_status !== SUB_SALES_REVISION) {
-      return res.status(409).json({ error: 'This job order can only be edited while it is in Sales Revision.' });
+    if (!EDITABLE_SUB_STATUSES.includes(row.sub_status)) {
+      return res.status(409).json({ error: `This job order is ${row.sub_status} and can no longer be edited.` });
     }
     // Only the person who raised it may change it. A supervisor can see a subordinate's
     // order but not edit it; System Admin keeps its usual override.
@@ -498,12 +504,19 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     }
 
     await logAudit(conn, { id: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'revised' });
-    await logAudit(conn, {
-      id: req.params.id, userId: req.user.id, eventType: 'Status Change',
-      fieldName: 'sub_status', oldValue: SUB_SALES_REVISION, newValue: SUB_SBU_APPROVAL,
-    });
+    // Only a real move gets a Status Change entry -- editing an order that is already
+    // sitting on SBU Approval leaves it there, and logging "SBU Approval -> SBU Approval"
+    // would just be noise in the System Info tab.
+    if (row.sub_status !== SUB_SBU_APPROVAL) {
+      await logAudit(conn, {
+        id: req.params.id, userId: req.user.id, eventType: 'Status Change',
+        fieldName: 'sub_status', oldValue: row.sub_status, newValue: SUB_SBU_APPROVAL,
+      });
+    }
 
-    // Re-notify the approvers -- the order is back in their queue with new details.
+    // Re-notify the approvers on every save, including one that leaves the order sitting
+    // where it already was. An approver who has read the order but not yet acted on it
+    // would otherwise approve a version that has changed since they looked at it.
     const [approvers] = await conn.query(
       'SELECT user_id FROM non_standard_job_order_approvers WHERE non_standard_job_order_id = ?', [req.params.id],
     );
