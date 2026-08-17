@@ -429,6 +429,11 @@ async function artistIncentiveForMonth(employeeId, monthStart, monthEnd) {
 // The artist's scheduled work for one month, as day -> job orders, for the dashboard calendar.
 // A job order lands on its planned start date; one with no planned start has nothing to sit on
 // and is returned separately so it is not silently dropped from the month.
+//
+// Covers both Job Orders and Non-Standard Job Orders: an artist's month is whatever they were
+// scheduled for, and a calendar showing only half of it misrepresents their workload. Each row
+// carries `kind` so the client can send a click to the right run screen -- the two have separate
+// timer endpoints and separate routes.
 async function artistCalendar(employeeId, monthStart, monthEnd) {
   const [rows] = await pool.query(
     `SELECT jo.id, jo.job_order_no, jo.description, jo.sub_status,
@@ -444,8 +449,31 @@ async function artistCalendar(employeeId, monthStart, monthEnd) {
       ORDER BY jo.planned_start_at`,
     [employeeId, monthStart, monthEnd]
   );
-  return rows.map((r) => ({
+
+  // Same guard artistIncentiveForMonth uses -- the NSTDJO tables are not present in every
+  // build, and a missing table must degrade to a Job-Orders-only calendar rather than take
+  // the whole dashboard down.
+  let nstdjoRows = [];
+  const [tbl] = await pool.query("SHOW TABLES LIKE 'non_standard_job_orders'");
+  if (tbl.length) {
+    [nstdjoRows] = await pool.query(
+      `SELECT n.id, n.nstdjo_no AS job_order_no, n.description, n.sub_status,
+              n.planned_start_at, n.planned_end_at, n.layout_ended_at,
+              c.name AS customer_name,
+              EXISTS(SELECT 1 FROM non_standard_job_order_layout_sessions s
+                      WHERE s.non_standard_job_order_id = n.id AND s.ended_at IS NULL) AS is_running
+         FROM non_standard_job_orders n
+         LEFT JOIN customers c ON c.id = n.customer_id
+        WHERE n.artist_employee_id = ?
+          AND n.planned_start_at >= ? AND n.planned_start_at < ?
+        ORDER BY n.planned_start_at`,
+      [employeeId, monthStart, monthEnd]
+    );
+  }
+
+  const shape = (kind) => (r) => ({
     id: r.id,
+    kind,
     jobOrderNo: r.job_order_no,
     description: r.description,
     subStatus: r.sub_status,
@@ -456,7 +484,12 @@ async function artistCalendar(employeeId, monthStart, monthEnd) {
     done: !!r.layout_ended_at,
     running: !!Number(r.is_running),
     day: r.planned_start_at ? String(r.planned_start_at).slice(0, 10) : null,
-  }));
+  });
+
+  // Re-sorted across both sources so a day's chips read in the order the artist is meant to
+  // work them, rather than all the JOs and then all the NSTDJOs.
+  return [...rows.map(shape('JO')), ...nstdjoRows.map(shape('NSTDJO'))]
+    .sort((a, b) => new Date(a.plannedStartAt) - new Date(b.plannedStartAt));
 }
 
 async function artistMetrics(employeeId) {

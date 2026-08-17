@@ -523,8 +523,10 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 
-// A month grid of the artist's scheduled job orders, replacing the old performance orb -- an
-// artist needs to know what is coming and when, which a single averaged percentage cannot say.
+// A month grid of the artist's scheduled work, replacing the old performance orb -- an artist
+// needs to know what is coming and when, which a single averaged percentage cannot say.
+// Carries both Job Orders and Non-Standard Job Orders; each chip's tooltip gives the planned
+// start -> end window, and clicking it opens that document's own run screen.
 //
 // Days are keyed by the plain YYYY-MM-DD the server sends, never by parsing it into a Date and
 // reading it back: at UTC+8 `new Date('2026-08-01')` is 8am local, and formatting it in another
@@ -585,14 +587,17 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate }) {
               <span className="artist-calendar-daynum">{dayNo}</span>
               {dayJobs.slice(0, 3).map((j) => {
                 const state = j.done ? 'Completed' : j.running ? 'Running' : 'Not Started';
+                // A Job Order and a Non-Standard Job Order can share an id, so the key has to
+                // carry the kind -- and each has its own run screen to open.
+                const runPath = j.kind === 'NSTDJO' ? `/assigned-jo/nstdjo/${j.id}` : `/assigned-jo/${j.id}`;
                 return (
                   <button
-                    key={j.id}
+                    key={`${j.kind || 'JO'}-${j.id}`}
                     type="button"
                     className="artist-calendar-chip"
                     style={TIMER_STATUS_STYLE[state]}
-                    title={`${j.jobOrderNo} · ${j.customerName || '—'} · ${state}`}
-                    onClick={() => navigate(`/assigned-jo/${j.id}`)}
+                    title={`${j.jobOrderNo} · ${j.customerName || '—'} · ${state} · Planned ${formatDateTime(j.plannedStartAt)} → ${formatDateTime(j.plannedEndAt)}`}
+                    onClick={() => navigate(runPath)}
                   >
                     {j.jobOrderNo}
                   </button>
@@ -657,7 +662,7 @@ function ArtistDashboard({ data, user, navigate }) {
       <div className="dash-main-grid">
         <ProfileCard user={user} roleLabel={ROLE_LABELS.artist} rings={data.rings} activity={activity} />
         <div className="holo-card dash-chart-card">
-          <h3>Scheduled Job Orders</h3>
+          <h3>Scheduled JO / NSTDJO</h3>
           <ScheduleCalendar
             month={month}
             jobs={calendar}
