@@ -10,3 +10,6 @@ dist/
 *-backup.sql
 *.dump.sql
 gsuite_erp*.sql
+
+# Database dumps -- hundreds of MB of live financial data. Never in git.
+backups/
