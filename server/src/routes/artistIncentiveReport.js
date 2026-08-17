@@ -34,7 +34,12 @@ function jobOrderIncentiveExpression() {
 // earned when the work is done.
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { from = '', to = '', artist_id: artistId = '' } = req.query;
+    const { from = '', to = '', artist_id: artistId = '', source = '' } = req.query;
+    // Extract one document type only. Anything other than the two known values is treated
+    // as "both" rather than rejected -- a stale bookmark should show the whole report, not
+    // an error page.
+    const wantJo = source !== 'NSTDJO';
+    const wantNstdjo = source !== 'JO';
 
     // What makes an incentive earned differs by source:
     //  - a Job Order counts as soon as the artist stops the timer on their Assigned JO
@@ -59,10 +64,13 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       nWhere.push('n.artist_employee_id = ?'); nParams.push(artistEmployeeId);
     }
 
-    const [joRows] = await pool.query(
+    // A Job Order's own sales_rep_id is the authority, but it is not always populated on
+    // older rows -- fall back to the Sales Order it came from, which always carries one.
+    const [joRows] = wantJo ? await pool.query(
       `SELECT 'JO' AS source, jo.id, jo.job_order_no AS doc_no, jo.description,
               jo.layout_ended_at AS actual_end, jo.artist_id AS artist_employee_id,
               CONCAT(e.first_name, ' ', e.last_name) AS artist_name,
+              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               c.name AS customer_name,
               pjt.display_name AS layout_job_type_name,
               COALESCE(NULLIF(jo.layout_qty, 0), 1) AS layout_qty,
@@ -71,16 +79,18 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
          FROM job_orders jo
          LEFT JOIN employees e ON e.id = jo.artist_id
          LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
+         LEFT JOIN employees sr ON sr.id = COALESCE(jo.sales_rep_id, so.sales_rep_id)
          LEFT JOIN customers c ON c.id = so.customer_id
          LEFT JOIN pms_job_types pjt ON pjt.id = jo.layout_job_type_id
         WHERE ${joWhere.join(' AND ')}`,
       joParams,
-    );
+    ) : [[]];
 
-    const [nRows] = await pool.query(
+    const [nRows] = wantNstdjo ? await pool.query(
       `SELECT 'NSTDJO' AS source, n.id, n.nstdjo_no AS doc_no, n.description,
               n.layout_ended_at AS actual_end, n.artist_employee_id,
               CONCAT(e.first_name, ' ', e.last_name) AS artist_name,
+              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               c.name AS customer_name,
               pjt.display_name AS layout_job_type_name,
               COALESCE(NULLIF(n.layout_qty, 0), 1) AS layout_qty,
@@ -91,11 +101,12 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
               ), 0), 2) AS incentive_amount
          FROM non_standard_job_orders n
          LEFT JOIN employees e ON e.id = n.artist_employee_id
+         LEFT JOIN employees sr ON sr.id = n.sales_rep_id
          LEFT JOIN customers c ON c.id = n.customer_id
          LEFT JOIN pms_job_types pjt ON pjt.id = n.layout_job_type_id
         WHERE ${nWhere.join(' AND ')}`,
       nParams,
-    );
+    ) : [[]];
 
     const rows = [...joRows, ...nRows]
       .map((r) => ({ ...r, incentive_amount: Number(r.incentive_amount || 0) }))
@@ -130,7 +141,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       summary,
       grand_total: Number(rows.reduce((sum, r) => sum + r.incentive_amount, 0).toFixed(2)),
       jo_incentive_amount: JO_INCENTIVE_AMOUNT,
-      filters: { from, to, artist_id: artistId },
+      filters: { from, to, artist_id: artistId, source },
     });
   } catch (err) { next(err); }
 });

@@ -394,6 +394,12 @@ tbody tr:hover { background: var(--accent-bg); }
 .table-wrap th, .table-wrap td { white-space: normal; }
 .table-wrap .btn { white-space: nowrap; }
 
+/* Tally/payout sheets (Reports > Artist Incentive) centre every column, headers and totals
+   included, so each figure sits under its own label instead of the text hugging the left
+   edge and the money the right. Declared on the table itself rather than per cell so the
+   footer totals row cannot drift out of alignment with the body. */
+.table-centered th, .table-centered td { text-align: center; }
+
 .badge {
   display: inline-flex;
   padding: 2px 8px;

@@ -25,6 +25,8 @@ export default function ArtistIncentiveReport() {
   const [from, setFrom] = useState(monthStart);
   const [to, setTo] = useState(today);
   const [artistId, setArtistId] = useState('');
+  // '' = both document types; 'JO' / 'NSTDJO' extract one on its own.
+  const [source, setSource] = useState('');
   const [artists, setArtists] = useState([]);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -32,12 +34,12 @@ export default function ArtistIncentiveReport() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data: result } = await api.get(ROUTE, { params: { from, to, artist_id: artistId } });
+      const { data: result } = await api.get(ROUTE, { params: { from, to, artist_id: artistId, source } });
       setData(result);
     } finally {
       setLoading(false);
     }
-  }, [from, to, artistId]);
+  }, [from, to, artistId, source]);
 
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { api.get(`${ROUTE}/artists`).then(({ data: rows }) => setArtists(rows)); }, []);
@@ -71,6 +73,14 @@ export default function ArtistIncentiveReport() {
               {artists.map((artist) => <option key={artist.id} value={artist.id}>{artist.name}</option>)}
             </select>
           </div>
+          <div className="field">
+            <label>Source</label>
+            <select value={source} onChange={(event) => setSource(event.target.value)}>
+              <option value="">JO and NSTDJO</option>
+              <option value="JO">Job Orders only</option>
+              <option value="NSTDJO">Non-Standard JOs only</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -80,28 +90,28 @@ export default function ArtistIncentiveReport() {
         <div className="card" style={{ marginBottom: 16 }}>
           <h3 className="subsection" style={{ marginTop: 0 }}>Summary by Artist</h3>
           <div className="table-wrap">
-            <table>
-              <thead><tr><th>Artist</th><th>JO Count</th><th style={{ textAlign: 'right' }}>JO Incentive</th><th>NSTDJO Count</th><th style={{ textAlign: 'right' }}>NSTDJO Incentive</th><th style={{ textAlign: 'right' }}>Total</th></tr></thead>
+            <table className="table-centered">
+              <thead><tr><th>Artist</th><th>JO Count</th><th>JO Incentive</th><th>NSTDJO Count</th><th>NSTDJO Incentive</th><th>Total</th></tr></thead>
               <tbody>
                 {data.summary.length === 0 && (
-                  <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>No incentives in this period.</td></tr>
+                  <tr><td colSpan={6} className="muted" style={{ padding: 20 }}>No incentives in this period.</td></tr>
                 )}
                 {data.summary.map((row) => (
                   <tr key={row.artist_employee_id}>
                     <td>{row.artist_name}</td>
                     <td>{row.jo_count}</td>
-                    <td style={{ textAlign: 'right' }}>{money(row.jo_amount)}</td>
+                    <td>{money(row.jo_amount)}</td>
                     <td>{row.nstdjo_count}</td>
-                    <td style={{ textAlign: 'right' }}>{money(row.nstdjo_amount)}</td>
-                    <td style={{ textAlign: 'right' }}><strong>{money(row.total)}</strong></td>
+                    <td>{money(row.nstdjo_amount)}</td>
+                    <td><strong>{money(row.total)}</strong></td>
                   </tr>
                 ))}
               </tbody>
               {data.summary.length > 0 && (
                 <tfoot>
                   <tr>
-                    <th colSpan={5} style={{ textAlign: 'right' }}>Grand Total</th>
-                    <th style={{ textAlign: 'right' }}>{money(data.grand_total)}</th>
+                    <th colSpan={5}>Grand Total</th>
+                    <th>{money(data.grand_total)}</th>
                   </tr>
                 </tfoot>
               )}
@@ -112,11 +122,11 @@ export default function ArtistIncentiveReport() {
         <div className="card">
           <h3 className="subsection" style={{ marginTop: 0 }}>Detail</h3>
           <div className="table-wrap">
-            <table>
-              <thead><tr><th>Source</th><th>Doc #</th><th>Artist</th><th>Customer</th><th>Job Desc</th><th>Layout - Job Type</th><th>Actual End</th><th>Basis</th><th style={{ textAlign: 'right' }}>Incentive</th></tr></thead>
+            <table className="table-centered">
+              <thead><tr><th>Source</th><th>Doc #</th><th>Artist</th><th>Customer</th><th>Sales Rep</th><th>Job Desc</th><th>Layout - Job Type</th><th>Actual End</th><th>Basis</th><th>Incentive</th></tr></thead>
               <tbody>
                 {data.rows.length === 0 && (
-                  <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 20 }}>No completed layouts in this period.</td></tr>
+                  <tr><td colSpan={10} className="muted" style={{ padding: 20 }}>No completed layouts in this period.</td></tr>
                 )}
                 {data.rows.map((row) => (
                   <tr key={`${row.source}-${row.id}`}>
@@ -124,13 +134,14 @@ export default function ArtistIncentiveReport() {
                     <td>{row.doc_no}</td>
                     <td>{row.artist_name}</td>
                     <td>{row.customer_name || ''}</td>
+                    <td>{row.sales_rep_name || ''}</td>
                     <td>{row.description}</td>
                     <td>{row.layout_job_type_name || ''}</td>
                     <td>{day(row.actual_end)}</td>
                     {/* A JO shows its flat amount x layout qty; an NSTDJO's incentive is
                         spread across its materials lines, so there is no single figure. */}
                     <td>{row.incentive_basis}</td>
-                    <td style={{ textAlign: 'right' }}>{money(row.incentive_amount)}</td>
+                    <td>{money(row.incentive_amount)}</td>
                   </tr>
                 ))}
               </tbody>
