@@ -19,6 +19,39 @@ const pool = require('../db');
 // Aging basis: an invoice ages by how far past its DUE date the as-of date is; credits and
 // overpayments have no due date, so they age by their document date. Current = not yet due.
 
+// How much of a payment is still sitting on account as unapplied cash.
+//
+// Two sources, because the migration left customer payments in two different states:
+//
+//   with application lines -> measured from them, as this report always did. This covers the
+//     reconstructed CPAY-INV-#### payments generate-invoice-payments.js created, which do
+//     carry lines.
+//
+//   without any lines -> taken from the unapplied_amount the LIVE system itself reported at
+//     import time (stored by import-customer-payments.js). The live API exposes no endpoint
+//     returning WHICH invoices a payment settled -- see that importer's header -- so ~58,700
+//     real PAY-#### payments arrived as headers only. Deriving their unapplied figure from
+//     lines that were never imported reported every one of them as 100% unapplied cash: about
+//     460M of settled receivable resurfacing as credit, which is what drove customers to large
+//     negative balances (23 APPLES INC. showed -901,898.17, exactly the sum of its real
+//     payments).
+//
+// Trusting the header here does not leave an invoice looking unpaid: the invoices those real
+// payments settled are already discharged locally by the reconstructed CPAY-INV-#### payments,
+// which is precisely why those were generated. It does mean this report cannot say WHICH
+// invoice a real payment settled -- that needs the lines themselves, and they do not exist yet.
+function unappliedCash(payment, cashAppliedFromLines) {
+  if (cashAppliedFromLines !== null && cashAppliedFromLines !== undefined) {
+    return Number(payment.payment_amount) - Number(cashAppliedFromLines);
+  }
+  // A header-only payment whose live unapplied figure never came across is treated as fully
+  // unapplied, the old behaviour -- better to over-report a credit than to silently drop one.
+  if (payment.unapplied_amount === null || payment.unapplied_amount === undefined) {
+    return Number(payment.payment_amount);
+  }
+  return Number(payment.unapplied_amount);
+}
+
 function daysBetween(fromStr, toStr) {
   const a = new Date(`${String(fromStr).slice(0, 10)}T00:00:00Z`);
   const b = new Date(`${String(toStr).slice(0, 10)}T00:00:00Z`);
@@ -119,7 +152,8 @@ async function buildArAging(asOf, filters = {}) {
 
   const payLoc = locationClause('cp', filters);
   const [payments] = await pool.query(
-    `SELECT cp.id, cp.customer_id, c.name AS customer_name, cp.date_created, cp.payment_amount
+    `SELECT cp.id, cp.customer_id, c.name AS customer_name, cp.date_created, cp.payment_amount,
+            cp.unapplied_amount
      FROM customer_payments cp
      JOIN customers c ON c.id = cp.customer_id
      WHERE cp.status != 'voided' AND cp.date_created <= ?${payLoc.sql}${nameClause}`,
@@ -159,7 +193,9 @@ async function buildArAging(asOf, filters = {}) {
     addToBucket(customerRow(cm.customer_id, cm.customer_name), -remaining, cm.date_created, asOf);
   }
   for (const cp of payments) {
-    const unapplied = Number(cp.payment_amount) - (cashAppliedByPayment.get(cp.id) || 0);
+    // .has(), not `|| 0` -- only payments that actually have lines appear in this map, so this
+    // is what separates "applied nothing" from "its lines were never imported".
+    const unapplied = unappliedCash(cp, cashAppliedByPayment.has(cp.id) ? cashAppliedByPayment.get(cp.id) : null);
     if (unapplied < 0.005) continue;
     addToBucket(customerRow(cp.customer_id, cp.customer_name), -unapplied, cp.date_created, asOf);
   }
@@ -241,15 +277,18 @@ async function buildArAgingCustomerDetails(customerId, asOf) {
   }
 
   const [payments] = await pool.query(
-    `SELECT cp.id, cp.customer_payment_no, cp.date_created, cp.payment_amount,
+    `SELECT cp.id, cp.customer_payment_no, cp.date_created, cp.payment_amount, cp.unapplied_amount,
             COALESCE((SELECT SUM(cpl.applied_amount) FROM customer_payment_lines cpl
-                      WHERE cpl.customer_payment_id = cp.id AND cpl.sales_invoice_id IS NOT NULL), 0) AS cash_applied
+                      WHERE cpl.customer_payment_id = cp.id AND cpl.sales_invoice_id IS NOT NULL), 0) AS cash_applied,
+            (SELECT COUNT(*) FROM customer_payment_lines cpl WHERE cpl.customer_payment_id = cp.id) AS line_count
      FROM customer_payments cp
      WHERE cp.customer_id = ? AND cp.status != 'voided' AND cp.date_created <= ?`,
     [customerId, asOf]
   );
   for (const cp of payments) {
-    const unapplied = Number(cp.payment_amount) - Number(cp.cash_applied);
+    // The COUNT is what the SUM cannot tell us: it returns 0 both for a payment that applied
+    // nothing and for one whose lines were never imported, and those need opposite treatment.
+    const unapplied = unappliedCash(cp, Number(cp.line_count) > 0 ? cp.cash_applied : null);
     if (unapplied < 0.005) continue;
     items.push({
       type: 'Unapplied Payment', reference: cp.customer_payment_no, id: cp.id, date: cp.date_created,
