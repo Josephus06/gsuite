@@ -17,6 +17,13 @@ const SUB_PENDING = 'Pending';
 const SUB_SBU_APPROVAL = 'SBU Approval';
 // Bounced back by an approver. Sales can edit freely here; saving returns it to approval.
 const SUB_SALES_REVISION = 'Sales Revision';
+// The same, but sent back by the Design Supervisor from their own queue rather than by an
+// approver at the SBU gate. Sales edit it identically; the separate name is so everyone
+// downstream can tell which side asked for the change.
+const SUB_SALES_REVISION_DESIGN = 'Sales Revision (Design)';
+// Status stays on this for the whole design stage -- it is sub_status that moves. The
+// supervisor's Sales Revision button is gated on both.
+const DESIGN_STAGE_STATUS = 'Planned - Pending for BOM';
 // Approved but not yet handed over -- this is where Forward becomes available. Pending
 // covers orders whose department has no approvers, so there was never a gate to clear.
 const SUB_SBU_APPROVED = 'SBU Approved';
@@ -70,6 +77,8 @@ export default function NonStandardJobOrderView() {
   const [assignForm, setAssignForm] = useState({ layout_job_type_id: '', artist_employee_id: '', layout_qty: 1, planned_start_at: '' });
   const [revisionOpen, setRevisionOpen] = useState(false);
   const [revisionRemarks, setRevisionRemarks] = useState('');
+  const [designRevisionOpen, setDesignRevisionOpen] = useState(false);
+  const [designRevisionRemarks, setDesignRevisionRemarks] = useState('');
   // Kept separate from the SBU revision state above: they are two different decisions, made
   // by two different people at two different stages, and sharing the state would let remarks
   // typed for one turn up prefilled in the other.
@@ -130,6 +139,24 @@ export default function NonStandardJobOrderView() {
       await load();
     } catch (err) {
       setError(err.response?.data?.error || 'Could not send this job order back for revision.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // The Design Supervisor bouncing an unassigned order back to Sales, rather than handing
+  // it to an artist. Sales edit it and it goes back round the SBU gate before it can
+  // return to the design queue.
+  async function designRequestRevision() {
+    setBusy(true);
+    setError('');
+    try {
+      await api.put(`${ROUTE}/${id}/design-request-revision`, { remarks: designRevisionRemarks });
+      setDesignRevisionOpen(false);
+      setDesignRevisionRemarks('');
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not send this job order back to Sales.');
     } finally {
       setBusy(false);
     }
@@ -214,7 +241,9 @@ export default function NonStandardJobOrderView() {
   const isCancelled = order.status === CANCELLED;
   // Nothing moves toward Design until an SBU approver signs off.
   const awaitingApproval = order.sub_status === SUB_SBU_APPROVAL;
-  const inRevision = order.sub_status === SUB_SALES_REVISION;
+  // Either bounce leaves the order editable by Sales -- the approver's and the design
+  // supervisor's park it in the same place as far as Sales is concerned.
+  const inRevision = [SUB_SALES_REVISION, SUB_SALES_REVISION_DESIGN].includes(order.sub_status);
   const canApprove = awaitingApproval && !isCancelled && !!order.is_my_approval;
   // Sales signing off the finished layout -- this is what completes the order.
   const canApproveSales = order.sub_status === SUB_SALES_APPROVAL && !isCancelled && can(ROUTE, 'can_approve');
@@ -243,6 +272,14 @@ export default function NonStandardJobOrderView() {
   const canAssignArtist = !isCancelled
     && !!user?.is_design_supervisor
     && [SUB_FOR_DESIGN, SUB_FOR_ARTIST, SUB_FOR_ARTIST_REVISION].includes(order.sub_status);
+  // Sending it back to Sales instead, and only while it is still waiting for an artist:
+  // once one is assigned there is layout time and incentive accruing against the order, and
+  // the artist-revision loop is the tool for that. Status is checked as well as sub status
+  // because an order can only be bounced from within the design stage.
+  const canDesignRequestRevision = !isCancelled
+    && !!user?.is_design_supervisor
+    && order.status === DESIGN_STAGE_STATUS
+    && order.sub_status === SUB_FOR_DESIGN;
 
   const plannedEnd = (() => {
     const minutes = layoutJobTypes.find((j) => String(j.id) === String(assignForm.layout_job_type_id))?.minutes_consume;
@@ -283,6 +320,13 @@ export default function NonStandardJobOrderView() {
           {canAssignArtist && (
             <button className="btn btn-sm btn-primary" disabled={busy} onClick={openAssign}>
               {order.artist_employee_id ? 'Reassign Artist' : 'Assign Artist'}
+            </button>
+          )}
+          {/* The supervisor's other option on an order waiting for an artist: send it back
+              to Sales rather than start work on a spec that is wrong. */}
+          {canDesignRequestRevision && (
+            <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setDesignRevisionOpen(true)}>
+              Sales Revision
             </button>
           )}
           <button className="btn btn-sm" onClick={() => window.print()}>Print</button>
@@ -412,6 +456,29 @@ export default function NonStandardJobOrderView() {
             <button type="button" className="btn" disabled={busy} onClick={() => setRevisionOpen(false)}>Cancel</button>
             <button type="button" className="btn btn-warning" disabled={busy} onClick={requestRevision}>
               {busy ? 'Sending…' : 'Send for Revision'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {designRevisionOpen && (
+        <Modal title="Send Back to Sales for Revision" onClose={() => !busy && setDesignRevisionOpen(false)}>
+          <p className="muted" style={{ marginTop: 0 }}>
+            This returns the job order to Sales for changes. It goes back through SBU approval
+            before it can return to the design queue for an artist.
+          </p>
+          <div className="field">
+            <label>Remarks <span className="muted">(optional — sent to the raiser)</span></label>
+            <textarea
+              autoFocus rows={4} value={designRevisionRemarks}
+              placeholder="What needs to change before an artist can start?"
+              onChange={(event) => setDesignRevisionRemarks(event.target.value)}
+            />
+          </div>
+          <div className="modal-actions">
+            <button type="button" className="btn" disabled={busy} onClick={() => setDesignRevisionOpen(false)}>Cancel</button>
+            <button type="button" className="btn btn-warning" disabled={busy} onClick={designRequestRevision}>
+              {busy ? 'Sending…' : 'Send to Sales'}
             </button>
           </div>
         </Modal>

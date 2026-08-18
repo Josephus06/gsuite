@@ -26,6 +26,12 @@ const SUB_SBU_APPROVAL = 'SBU Approval';
 // Bounced back by an approver for changes. Sales can edit the order freely here; saving
 // those edits sends it back round to SBU Approval.
 const SUB_SALES_REVISION = 'Sales Revision';
+// The Design Supervisor's own bounce-back, from their queue rather than from the SBU gate.
+// Deliberately a DIFFERENT sub-status from the approver's "Sales Revision", for the same
+// reason "For Artist (Revision)" is distinct from "For Artist": Sales and the approvers
+// should see at a glance that Design sent this one back, not an approver. It behaves
+// identically otherwise -- editable by Sales, and out of every queue until re-approved.
+const SUB_SALES_REVISION_DESIGN = 'Sales Revision (Design)';
 // Cleared by an approver but not yet handed over. Approval only unlocks the handoff --
 // Sales still chooses when the order actually goes to Design by pressing Forward, which
 // is what moves it to "For Design Supervisor". Deliberately NOT in
@@ -50,7 +56,7 @@ const MAX_SALES_REVISIONS = 3;
 // approver(s), and while an approver has parked it back with them for changes. Approval
 // closes the window -- from "SBU Approved" onward the details an approver signed off
 // against must not shift underneath the order.
-const EDITABLE_SUB_STATUSES = [SUB_SBU_APPROVAL, SUB_SALES_REVISION];
+const EDITABLE_SUB_STATUSES = [SUB_SBU_APPROVAL, SUB_SALES_REVISION, SUB_SALES_REVISION_DESIGN];
 // The artist sends their finished layout to Sales, who sign it off. Where a Job Order
 // would go to "Released" and on into production, a Non-Standard Job Order has nothing
 // downstream of the layout -- so Sales sign-off is the end of its life: COMPLETED.
@@ -385,7 +391,7 @@ router.post('/:id/forward', requireAuth, requirePermission(ROUTE, 'can_edit'), a
     if (row.sub_status === SUB_SBU_APPROVAL) {
       return res.status(409).json({ error: 'This job order is still pending SBU approval.' });
     }
-    if (row.sub_status === SUB_SALES_REVISION) {
+    if (row.sub_status === SUB_SALES_REVISION || row.sub_status === SUB_SALES_REVISION_DESIGN) {
       return res.status(409).json({ error: 'This job order was sent back for revision and must be re-approved first.' });
     }
     // Checked before the general state guard below so a second Forward gets the specific
@@ -756,22 +762,98 @@ router.put('/:id/request-revision', requireAuth, async (req, res, next) => {
   } finally { conn.release(); }
 });
 
-// A Design Supervisor picks the artist for an order sitting in their queue, which hands
-// it on to that artist (Sub Status -> "For Artist"). Gated on the is_design_supervisor
-// role flag, with generic can_edit as the fallback for admins/managers who aren't
-// personally flagged -- the same shape as /job-orders/:id/assign-design. Reassignment
-// stays open while the order is still in the design queue.
-router.put('/:id/assign-artist', requireAuth, async (req, res, next) => {
-  const [[user]] = await pool.query('SELECT is_design_supervisor FROM users WHERE id = ?', [req.user.id]);
-  if (!user?.is_design_supervisor) {
-    const [[page]] = await pool.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
-    const [[perm]] = await pool.query(
-      'SELECT can_edit AS allowed FROM user_page_permissions WHERE user_id = ? AND page_id = ?',
-      [req.user.id, page?.id],
+// The Design Supervisor gate: the role flag, with generic can_edit as the fallback for
+// admins/managers who are not personally flagged -- the same shape as
+// /job-orders/:id/assign-design. Shared by the two things a supervisor does with an order
+// sitting in their queue: hand it to an artist, or send it back to Sales.
+async function isDesignSupervisor(userId) {
+  const [[user]] = await pool.query('SELECT is_design_supervisor FROM users WHERE id = ?', [userId]);
+  if (user?.is_design_supervisor) return true;
+  const [[page]] = await pool.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
+  const [[perm]] = await pool.query(
+    'SELECT can_edit AS allowed FROM user_page_permissions WHERE user_id = ? AND page_id = ?',
+    [userId, page?.id],
+  );
+  return !!perm?.allowed;
+}
+
+// The Design Supervisor sends an order in their queue back to Sales instead of assigning
+// an artist -- the spec is wrong or incomplete and no artist should start on it. The
+// mirror of the approver's /request-revision, one step further down the workflow.
+//
+// Only from "For Design Supervisor", i.e. before anyone has been handed the work. Once an
+// artist is on it there are layout timestamps and incentive figures accruing against the
+// order, and pulling it out from under them is a different decision with different
+// consequences -- the artist-revision loop already exists for that.
+//
+// forwarded_at IS CLEARED, and that is what makes the round trip work at all. Forward is a
+// once-only action guarded by that column, so an order bounced back to Sales with it still
+// set could be edited and re-approved but never handed to Design again -- it would strand
+// on "SBU Approved" with no button able to move it. Clearing it returns the order to the
+// pre-forward state, which is exactly what it now is.
+router.put('/:id/design-request-revision', requireAuth, async (req, res, next) => {
+  if (!await isDesignSupervisor(req.user.id)) {
+    return res.status(403).json({ error: 'Only a Design Supervisor can send a job order back to Sales.' });
+  }
+  const conn = await pool.getConnection();
+  try {
+    const [[row]] = await conn.query(
+      'SELECT id, nstdjo_no, status, sub_status, created_by_user_id FROM non_standard_job_orders WHERE id = ?',
+      [req.params.id],
     );
-    if (!perm?.allowed) {
-      return res.status(403).json({ error: 'Only a Design Supervisor can assign an artist.' });
+    if (!row) return res.status(404).json({ error: 'Non-standard job order not found.' });
+    if (row.status === CANCELLED_STATUS) return res.status(409).json({ error: 'This job order has been cancelled.' });
+    // Status carries the design stage, sub_status the position within it. Both are checked:
+    // either one being wrong means this is not an order the supervisor may bounce.
+    if (row.status !== DESIGN_QUEUE_STATUS) {
+      return res.status(409).json({ error: `This job order is ${row.status} and is not in the design stage.` });
     }
+    if (row.sub_status !== SUB_FOR_DESIGN) {
+      return res.status(409).json({
+        error: 'Only a job order waiting for an artist can be sent back to Sales for revision.',
+      });
+    }
+
+    const remarks = (req.body?.remarks || '').trim();
+    await conn.beginTransaction();
+    await conn.query(
+      'UPDATE non_standard_job_orders SET sub_status = ?, forwarded_at = NULL, updated_at = NOW() WHERE id = ?',
+      [SUB_SALES_REVISION_DESIGN, req.params.id],
+    );
+    // The raiser is who edits it next, so the raiser is who gets told. Reuses the approver's
+    // notification type: to Sales it means the same thing either way -- their order needs
+    // changes before it can go anywhere -- and the title says who sent it back.
+    await conn.query(
+      `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
+       VALUES (?, 'nstdjo_for_revision', ?, ?, 'NonStandardJobOrder', ?)`,
+      [row.created_by_user_id, `${row.nstdjo_no} was sent back by the design supervisor`,
+        remarks || 'Your non-standard job order needs changes before an artist can be assigned.',
+        req.params.id],
+    );
+    await logAudit(conn, {
+      id: req.params.id, userId: req.user.id, eventType: 'Status Change',
+      fieldName: 'sub_status', oldValue: row.sub_status, newValue: SUB_SALES_REVISION_DESIGN,
+    });
+    if (remarks) {
+      await logAudit(conn, {
+        id: req.params.id, userId: req.user.id, eventType: 'Updated',
+        fieldName: 'revision_remarks', newValue: remarks,
+      });
+    }
+    await conn.commit();
+    res.json({ id: Number(req.params.id), status: row.status, sub_status: SUB_SALES_REVISION_DESIGN });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally { conn.release(); }
+});
+
+// A Design Supervisor picks the artist for an order sitting in their queue, which hands
+// it on to that artist (Sub Status -> "For Artist"). Reassignment stays open while the
+// order is still in the design queue.
+router.put('/:id/assign-artist', requireAuth, async (req, res, next) => {
+  if (!await isDesignSupervisor(req.user.id)) {
+    return res.status(403).json({ error: 'Only a Design Supervisor can assign an artist.' });
   }
 
   const { artist_employee_id: artistId, layout_job_type_id: layoutJobTypeId, planned_start_at: plannedStartAt } = req.body || {};
