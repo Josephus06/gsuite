@@ -392,6 +392,10 @@ async function designSupervisorMetrics() {
 // Both are dated by when the layout actually finished, not when the order was raised.
 const JO_INCENTIVE_AMOUNT = 7.5;
 const NSTDJO_COMPLETED_STATUS = 'COMPLETED';
+// A Non-Standard Job Order holds this status for its whole design stage -- it is sub_status
+// that advances through it -- so "still in the artist's hands" is this status plus
+// sub_status 'For Artist'.
+const NSTDJO_ACTIVE_STATUS = 'Planned - Pending for BOM';
 
 async function artistIncentiveForMonth(employeeId, monthStart, monthEnd) {
   const [[jo]] = await pool.query(
@@ -495,7 +499,7 @@ async function artistCalendar(employeeId, monthStart, monthEnd) {
 async function artistMetrics(employeeId) {
   if (!employeeId) {
     return {
-      active: 0, notStarted: 0, completedThisMonth: 0, avgPerformance: null,
+      active: 0, activeJo: 0, activeNstdjo: 0, notStarted: 0, completedThisMonth: 0, avgPerformance: null,
       incentiveThisMonth: 0, incentiveJobs: 0, calendar: [], calendarMonth: null,
       schedule: [], rings: [],
     };
@@ -510,6 +514,24 @@ async function artistMetrics(employeeId) {
      WHERE artist_id = ? AND sub_status IN ('For Artist', 'For Artist (Revision)') AND layout_started_at IS NULL`,
     [employeeId]
   );
+
+  // The artist's active Non-Standard Job Orders, on exactly the terms the Assigned JO
+  // worklist uses (server/src/routes/assignedJobOrders.js) so this count and that list can
+  // never disagree: still in the artist's hands, not yet handed to Sales. Guarded like the
+  // incentive figure -- not every build has these tables.
+  let activeNstdjo = 0;
+  let notStartedNstdjo = 0;
+  const [nstdjoTbl] = await pool.query("SHOW TABLES LIKE 'non_standard_job_orders'");
+  if (nstdjoTbl.length) {
+    const [[n]] = await pool.query(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(layout_started_at IS NULL), 0) AS not_started
+         FROM non_standard_job_orders
+        WHERE artist_employee_id = ? AND status = ? AND sub_status = 'For Artist'`,
+      [employeeId, NSTDJO_ACTIVE_STATUS]
+    );
+    activeNstdjo = Number(n.count || 0);
+    notStartedNstdjo = Number(n.not_started || 0);
+  }
   const monthStart = monthRange();
   const [[completedThisMonth]] = await pool.query(
     `SELECT COUNT(*) AS count FROM job_orders WHERE artist_id = ? AND layout_ended_at >= ?`,
@@ -545,8 +567,11 @@ async function artistMetrics(employeeId) {
     [employeeId]
   );
 
-  const activeCount = Number(active.count);
-  const notStartedCount = Number(notStarted.count);
+  // Both totals span the two document types, so the Started Ratio ring stays coherent with
+  // the Active card above it rather than measuring a different population.
+  const activeJoCount = Number(active.count);
+  const activeCount = activeJoCount + activeNstdjo;
+  const notStartedCount = Number(notStarted.count) + notStartedNstdjo;
 
   // The dashboard opens on the current month; the calendar can be paged from the client via
   // GET /dashboard/artist-calendar without refetching everything else.
@@ -556,6 +581,8 @@ async function artistMetrics(employeeId) {
 
   return {
     active: activeCount,
+    activeJo: activeJoCount,
+    activeNstdjo,
     notStarted: notStartedCount,
     completedThisMonth: Number(completedThisMonth.count),
     avgPerformance,

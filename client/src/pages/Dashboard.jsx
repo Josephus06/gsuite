@@ -78,7 +78,7 @@ function last6MonthLabels() {
 // animated count-up on mount/update; omit them and pass a pre-formatted `value` for the
 // old static behavior. `tone` picks one of the 4 solid-color card backgrounds (cycled
 // automatically by <StatRow> below) -- text/icon/sparkline all render in white on top.
-function StatCard({ label, value, numericValue, format, icon, tone = 'purple', trend }) {
+function StatCard({ label, value, numericValue, format, icon, tone = 'purple', trend, detail }) {
   const animated = useCountUp(numericValue ?? 0);
   const displayValue = numericValue !== undefined ? (format ? format(animated) : Math.round(animated)) : value;
   return (
@@ -87,6 +87,9 @@ function StatCard({ label, value, numericValue, format, icon, tone = 'purple', t
         <div>
           <div className="holo-stat-label">{label}</div>
           <div className="holo-stat-value">{displayValue}</div>
+          {/* Breaks the headline figure down without splitting it into a second card --
+              the total is still the number the artist reads first. */}
+          {detail && <div className="holo-stat-detail">{detail}</div>}
         </div>
         {icon && <div className="holo-stat-icon">{icon}</div>}
       </div>
@@ -647,7 +650,15 @@ function ArtistDashboard({ data, user, navigate }) {
   return (
     <>
       <StatRow cards={[
-        { label: 'Active Job Orders', value: data.active, icon: '🎨' },
+        {
+          // Both document types are the artist's active work, so the card totals them and
+          // shows the split underneath -- an artist carrying five NSTDJOs and no JOs was
+          // previously shown a bare "0".
+          label: 'Active Job Orders',
+          value: data.active,
+          detail: `JO ${data.activeJo ?? 0} · NSTDJO ${data.activeNstdjo ?? 0}`,
+          icon: '🎨',
+        },
         {
           // Incentive earned from the job orders actually finished in the month being viewed --
           // the same 7.50-per-layout / NSTDJO-per-line rules as Reports > Artist Incentive.
