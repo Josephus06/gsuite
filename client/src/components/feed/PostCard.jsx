@@ -4,6 +4,7 @@ import api from '../../api/client';
 import Avatar from '../Avatar';
 import ReactionButton from './ReactionButton';
 import CommentThread from './CommentThread';
+import Linkify from './Linkify';
 import { REACTION_BY_KEY, reactionSummary, topReactionKeys } from './reactions';
 import { audienceMeta } from './audience';
 import { fbTime, fbTimeFull } from './time';
@@ -95,7 +96,7 @@ export default function PostCard({ post, user, viewer, onChanged, onDeleted, onE
 
       {state.body && (
         <div className={`fb-post-body${bigText ? ' big' : ''}`}>
-          {shownBody}
+          <Linkify text={shownBody} />
           {long && !expanded && (
             <button
               type="button"

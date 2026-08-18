@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../api/client';
 import Avatar from '../Avatar';
 import ReactionButton from './ReactionButton';
+import Linkify from './Linkify';
 import { REACTION_BY_KEY, topReactionKeys } from './reactions';
 import { fbTime, fbTimeFull } from './time';
 
@@ -102,7 +103,7 @@ function CommentItem({ comment, user, depth, onReply, onDelete, onReact }) {
                 <span className="fb-comment-author" onClick={() => navigate(`/profile/${comment.author.id}`)}>
                   {comment.author.display_name}
                 </span>
-                <div className="fb-comment-text">{comment.body}</div>
+                <div className="fb-comment-text"><Linkify text={comment.body} /></div>
               </div>
               {comment.reaction_total > 0 && (
                 <div className="fb-comment-reacts">

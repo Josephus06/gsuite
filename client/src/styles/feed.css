@@ -869,6 +869,18 @@
 .fb-link { cursor: pointer; }
 .fb-link:hover { text-decoration: underline; }
 
+/* URLs typed into a post or comment, linkified by Linkify.jsx. .fb-link alone only sets the
+   cursor -- as a real anchor these also need to read as links. `anywhere` because a long
+   address with no spaces in it would otherwise push the card wider than the column. */
+.fb-post-body a,
+.fb-comment-text a {
+  color: var(--fb-blue);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.fb-post-body a:hover,
+.fb-comment-text a:hover { text-decoration: underline; }
+
 .fb-profile-online {
   position: absolute;
   right: 8px; bottom: 8px;
