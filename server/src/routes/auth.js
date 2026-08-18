@@ -231,6 +231,62 @@ router.put('/me/avatar', requireAuth, async (req, res, next) => {
   }
 });
 
+// Self-service password change. Until this existed the only way a password changed was an
+// admin editing it on Users & Permissions, so passwords were handed over verbally and never
+// rotated.
+const MIN_PASSWORD_LENGTH = 8;
+
+router.put('/me/password', requireAuth, async (req, res, next) => {
+  try {
+    // An impersonating admin must not be able to change the password of the account they are
+    // standing in -- that would turn "Log in as" into a permanent, unattributed takeover,
+    // which is the exact hole impersonation was designed to avoid. Admins can still reset
+    // anyone's password from Users & Permissions, where it is recorded against them.
+    if (req.user.impersonated_by) {
+      return res.status(403).json({
+        error: 'You cannot change a password while signed in as another user. Use Users & Permissions instead.',
+      });
+    }
+
+    const { current_password: currentPassword, new_password: newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Your current password and a new password are both required.' });
+    }
+    if (String(newPassword).length < MIN_PASSWORD_LENGTH) {
+      return res.status(400).json({ error: `Your new password must be at least ${MIN_PASSWORD_LENGTH} characters.` });
+    }
+    if (currentPassword === newPassword) {
+      return res.status(400).json({ error: 'Your new password must be different from your current one.' });
+    }
+
+    const [[user]] = await pool.query(
+      'SELECT id, password_hash FROM users WHERE id = ? AND is_active = TRUE', [req.user.id]
+    );
+    if (!user) return res.status(404).json({ error: 'User not found.' });
+
+    // Verified, never assumed: without this a borrowed unlocked screen is enough to lock the
+    // real owner out of their own account.
+    const ok = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!ok) return res.status(403).json({ error: 'Your current password is incorrect.' });
+
+    await pool.query(
+      'UPDATE users SET password_hash = ?, updated_at = NOW() WHERE id = ?',
+      [await bcrypt.hash(newPassword, 10), user.id]
+    );
+    // The value is deliberately a description, never the password or its hash -- audit_logs
+    // is readable from the System Info tab on several pages.
+    await pool.query(
+      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, new_value, set_by_user_id)
+       VALUES ('User', ?, 'Updated', 'password', 'changed by the account owner', ?)`,
+      [user.id, user.id]
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.delete('/me/avatar', requireAuth, async (req, res, next) => {
   try {
     await pool.query('UPDATE users SET avatar_data = NULL WHERE id = ?', [req.user.id]);

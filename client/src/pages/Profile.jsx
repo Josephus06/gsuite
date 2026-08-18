@@ -22,6 +22,91 @@ function plainDate(v) {
     .toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
+// Self-service password change, shown only on your own profile. Hidden entirely while an
+// admin is impersonating: the server refuses it, and offering a control that always fails is
+// worse than not offering it.
+function ChangePasswordCard() {
+  const { impersonating } = useAuth();
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ current_password: '', new_password: '', confirm: '' });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [done, setDone] = useState(false);
+
+  if (impersonating) return null;
+
+  function close() {
+    setOpen(false);
+    setForm({ current_password: '', new_password: '', confirm: '' });
+    setError('');
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    setError('');
+    // Checked here as well as on the server so a typo in the confirmation is caught before
+    // the current password is sent anywhere.
+    if (form.new_password !== form.confirm) return setError('The two new passwords do not match.');
+    setBusy(true);
+    try {
+      await api.put('/auth/me/password', {
+        current_password: form.current_password,
+        new_password: form.new_password,
+      });
+      close();
+      setDone(true);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not change your password.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fb-card fb-about-card">
+      <div className="fb-about-title">Password</div>
+      {done && !open && <div className="fb-about-empty">Your password was changed.</div>}
+      {!open ? (
+        <button type="button" className="btn btn-sm" onClick={() => { setDone(false); setOpen(true); }}>
+          Change password
+        </button>
+      ) : (
+        <form onSubmit={submit}>
+          {error && <div className="fb-error">{error}</div>}
+          <div className="field">
+            <label>Current password</label>
+            <input
+              type="password" autoComplete="current-password" required value={form.current_password}
+              onChange={(e) => setForm({ ...form, current_password: e.target.value })}
+            />
+          </div>
+          <div className="field">
+            <label>New password</label>
+            <input
+              type="password" autoComplete="new-password" required minLength={8} value={form.new_password}
+              onChange={(e) => setForm({ ...form, new_password: e.target.value })}
+            />
+          </div>
+          <div className="field">
+            <label>Confirm new password</label>
+            <input
+              type="password" autoComplete="new-password" required minLength={8} value={form.confirm}
+              onChange={(e) => setForm({ ...form, confirm: e.target.value })}
+            />
+          </div>
+          <div className="fb-about-empty" style={{ marginBottom: 8 }}>At least 8 characters.</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="submit" className="btn btn-sm btn-primary" disabled={busy}>
+              {busy ? 'Saving…' : 'Save'}
+            </button>
+            <button type="button" className="btn btn-sm" disabled={busy} onClick={close}>Cancel</button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
 function AboutRow({ icon, children }) {
   return (
     <div className="fb-about-row">
@@ -283,6 +368,8 @@ export default function Profile() {
               <div className="fb-about-empty">No profile details on file.</div>
             )}
           </div>
+
+          {profile.is_self && <ChangePasswordCard />}
         </aside>
 
         <main>
