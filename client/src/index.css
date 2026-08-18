@@ -103,8 +103,14 @@ body {
    .holo-dashboard is the one page-wide wash left alone on purpose. It is fixed-light by
    design (see the Dashboard section below): its text stays dark whatever the theme is, so
    dropping its background would leave dark text over the dark base colour in night mode.
-   It keeps its wash and behaves like one big card. */
-:root[data-bg='on'] .fbfeed { background: transparent; }
+   It keeps its wash and behaves like one big card.
+
+   .fb-profile-head is the same case as the feed wash: a full-bleed band behind the cover
+   photo and name, not a card anyone reads text off. Its own --fb-card fill would otherwise
+   mask the wallpaper across the whole top of the profile page. Everything sitting on it --
+   the cover image, the avatar, the About and Posts cards below -- keeps its own surface. */
+:root[data-bg='on'] .fbfeed,
+:root[data-bg='on'] .fb-profile-head { background: transparent; }
 
 h1, h2, h3 {
   color: var(--text-h);
