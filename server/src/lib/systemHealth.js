@@ -121,13 +121,31 @@ async function replicationHealth() {
     );
     if (!rows.length) return { configured: false, channels: [] };
 
-    const [lag] = await pool.query(
-      `SELECT CHANNEL_NAME AS name,
-              TIMESTAMPDIFF(SECOND, LAST_APPLIED_TRANSACTION_ORIGINAL_COMMIT_TIMESTAMP, NOW()) AS behind
-         FROM performance_schema.replication_applier_status_by_worker
-        WHERE LAST_APPLIED_TRANSACTION_ORIGINAL_COMMIT_TIMESTAMP > 0`
-    );
-    const lagBy = new Map(lag.map((l) => [l.name, l.behind]));
+    // TRUE LAG, NOT TIME-SINCE-LAST-WRITE.
+    //
+    // The obvious query -- now() minus the last applied transaction's commit time -- measures how
+    // long ago the source last wrote anything. On an idle channel that grows without bound: this
+    // reported "75713s behind" on a perfectly healthy link simply because the office had been
+    // quiet overnight. A monitor that screams during normal quiet periods is worse than none.
+    //
+    // SECONDS_BEHIND_SOURCE is the metric that means what we want: how far behind the replica is
+    // right now, and NULL when it is caught up and waiting. Idle reads as caught up, because it is.
+    const lagBy = new Map();
+    for (const r of rows) {
+      try {
+        const name = r.name || '';
+        // A channel name cannot be bound as a placeholder in SHOW REPLICA STATUS, so it is
+        // escaped and inlined. The value comes from performance_schema, never from user input.
+        const sql = name
+          ? `SHOW REPLICA STATUS FOR CHANNEL ${pool.escape(name)}`
+          : 'SHOW REPLICA STATUS';
+        const [st] = await pool.query(sql);
+        const row = Array.isArray(st) ? st[0] : null;
+        if (row) lagBy.set(r.name, row.Seconds_Behind_Source ?? null);
+      } catch {
+        // Leave it unknown rather than inventing a number.
+      }
+    }
 
     const channels = rows.map((r) => ({
       name: r.name || '(default)',

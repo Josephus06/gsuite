@@ -87,18 +87,25 @@ async function checkSide(side) {
       if (ch.sql_error) say(`      SQL error: ${String(ch.sql_error).slice(0, 140)}`);
     }
 
-    // Lag, read per channel. SECONDS_BEHIND_SOURCE lives in a different table and is null when
-    // the applier is idle, which is the healthy case rather than an error.
-    const [lag] = await conn.query(
-      `SELECT CHANNEL_NAME AS name,
-              TIMESTAMPDIFF(SECOND, LAST_APPLIED_TRANSACTION_ORIGINAL_COMMIT_TIMESTAMP, NOW()) AS behind
-         FROM performance_schema.replication_applier_status_by_worker
-        WHERE LAST_APPLIED_TRANSACTION_ORIGINAL_COMMIT_TIMESTAMP > 0`
-    );
-    for (const l of lag) {
-      if (l.behind !== null && l.behind > LAG_WARN_SECONDS) {
-        problems.push(`${side.label} channel "${l.name || '(default)'}" is ${l.behind}s behind`);
-        say(`   channel ${String(l.name || '(default)').padEnd(12)} ${l.behind}s behind`);
+    // TRUE LAG, NOT TIME-SINCE-LAST-WRITE. The obvious query -- now() minus the last applied
+    // transaction's commit time -- measures how long ago the source last wrote anything, so an
+    // idle channel appears to fall further behind by the second. It reported 75,713s on a
+    // perfectly healthy link that had simply been quiet overnight, and would have alarmed every
+    // night. Seconds_Behind_Source means what we actually want, and is NULL when caught up.
+    for (const ch of chans) {
+      try {
+        const name = ch.name || '';
+        const sql = name
+          ? `SHOW REPLICA STATUS FOR CHANNEL ${conn.escape(name)}`
+          : 'SHOW REPLICA STATUS';
+        const [st] = await conn.query(sql);
+        const behind = st[0] ? st[0].Seconds_Behind_Source : null;
+        if (behind !== null && behind > LAG_WARN_SECONDS) {
+          problems.push(`${side.label} channel "${name || '(default)'}" is ${behind}s behind`);
+          say(`   channel ${String(name || '(default)').padEnd(12)} ${behind}s behind`);
+        }
+      } catch {
+        // Unknown lag is not the same as bad lag; say nothing rather than guess.
       }
     }
 
