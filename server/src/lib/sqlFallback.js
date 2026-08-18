@@ -117,12 +117,15 @@ function extractSelect(text) {
 // Order/estimate/JO numbers referenced in the question (or recent history) that we should
 // fetch on demand -- so "who created SO-65154?" works even when that order is older than the
 // capped recent-records snapshot. Still scoped to what the user may see when fetched.
+// NSTDJO is listed first so the alternation prefers it, though the leading \b already stops
+// "NSTDJO-171" from also matching as "JO-171" (there is no word boundary between D and J).
 function extractOrderRefs(text) {
-  const found = new Set((String(text).toUpperCase().match(/\b(?:SO|EST|JO)-\d+(?:-\d+)*\b/g) || []));
+  const found = new Set((String(text).toUpperCase().match(/\b(?:NSTDJO|SO|EST|JO)-\d+(?:-\d+)*\b/g) || []));
   return {
     so: [...found].filter((r) => r.startsWith('SO-')),
     est: [...found].filter((r) => r.startsWith('EST-')),
     jo: [...found].filter((r) => r.startsWith('JO-')),
+    nstdjo: [...found].filter((r) => r.startsWith('NSTDJO-')),
   };
 }
 
@@ -237,6 +240,23 @@ async function fetchReferencedOrders(contextText) {
        LEFT JOIN employees ar ON ar.id = jo.artist_id
        WHERE jo.job_order_no IN (?)`, [refs.jo]);
     if (rows.length) out.job_orders = rows;
+  }
+  if (refs.nstdjo.length) {
+    // Guarded like the dashboard's NSTDJO figures -- these tables are not in every build.
+    const [tbl] = await pool.query("SHOW TABLES LIKE 'non_standard_job_orders'");
+    if (tbl.length) {
+      const [rows] = await pool.query(
+        `SELECT n.nstdjo_no, n.status, n.sub_status, n.description, n.quantity, n.delivery_date,
+                c.name AS customer_name,
+                CONCAT(rep.first_name, ' ', rep.last_name) AS sales_rep_name,
+                CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name
+         FROM non_standard_job_orders n
+         LEFT JOIN customers c ON c.id = n.customer_id
+         LEFT JOIN employees rep ON rep.id = n.sales_rep_id
+         LEFT JOIN employees ar ON ar.id = n.artist_employee_id
+         WHERE n.nstdjo_no IN (?)`, [refs.nstdjo]);
+      if (rows.length) out.non_standard_job_orders = rows;
+    }
   }
   return out;
 }
@@ -399,6 +419,26 @@ async function fetchOwnScopeSnapshot(user, contextText = '') {
       'job_orders jo JOIN sales_orders so ON so.id = jo.sales_order_id', 'jo',
       `so.sales_rep_id IN (${placeholders})`, employeeIds
     );
+
+    // Weighted sales = SUM(sales_orders.total_amount) by the month the order was created,
+    // the same definition the Dashboard's own figure uses (repMetrics in routes/dashboard.js),
+    // so the assistant and the dashboard can never quote different numbers.
+    //
+    // Pre-computed per month rather than left to the model to add up the array above: that
+    // array is capped at the 150 most recent orders, so a question about an older month would
+    // silently under-report, and hand-summing a long list is exactly the failure the
+    // *_count_by_status objects already exist to avoid.
+    const [weightedByMonth] = await pool.query(
+      `SELECT DATE_FORMAT(so.date_created, '%Y-%m') AS month, COUNT(*) AS orders,
+              COALESCE(SUM(so.total_amount), 0) AS amount
+         FROM sales_orders so
+        WHERE so.sales_rep_id IN (${placeholders}) AND so.date_created IS NOT NULL
+        GROUP BY month ORDER BY month DESC LIMIT 36`,
+      employeeIds
+    );
+    snapshot.my_weighted_sales_by_month = weightedByMonth.map((r) => ({
+      month: r.month, orders: Number(r.orders), amount: Number(r.amount),
+    }));
   }
 
   // Sales-rep scope (above) doesn't cover an artist's own assigned work -- job_orders
@@ -450,15 +490,25 @@ async function answerFromOwnScope(user, question, history = []) {
   const contextText = `${question}\n${historyMessages(history).map((m) => m.content).join('\n')}`;
   const snapshot = await fetchOwnScopeSnapshot(user, contextText);
   const namedMatches = findNameMatches(question, snapshot.employee_directory);
+  // Looking up a document the user names by number is deliberately NOT scoped to what they
+  // own. "What is the status of JO-61829-1" is the same question whoever asks it, and the
+  // answer is already on the Job Orders / NSTDJO pages every one of these users can open --
+  // a Design Supervisor could see the order on screen and not through the assistant, which
+  // read as the assistant being broken. Ownership still governs OWN_DATA below, so "my"
+  // questions and every total stay personal; this only covers documents asked for by name.
+  const referencedOrders = await fetchReferencedOrders(contextText);
+  const hasRefs = Object.keys(referencedOrders).length > 0;
 
   const rawReply = await chatCompletion([
     {
       role: 'system',
       content: `You answer questions about an ERP user's own data. Two sources are available:
 
-1. OWN_DATA below -- this user's own estimates/sales_orders/job_orders/tickets (or their team's, if they're a supervisor), plus a general employee_directory (name/department/position/active-status for any employee, not personal) for looking up ONE specific named person. This is fixed, already-fetched data -- use it directly, don't write SQL for it, and never claim to know anything about these topics beyond what's here. For "how many of my X are status Y" questions, use the matching *_count_by_status object (e.g. estimates_count_by_status) -- it's an exact, pre-computed breakdown, so use it instead of counting the estimates/sales_orders/job_orders/tickets arrays by hand, which you're prone to getting wrong on a long list. Status values there are the real stored values (e.g. 'pending_customer_approval'), not English phrasing -- match the closest one.
+1. OWN_DATA below -- this user's own estimates/sales_orders/job_orders/tickets (or their team's, if they're a supervisor), plus a general employee_directory (name/department/position/active-status for any employee, not personal) for looking up ONE specific named person. This is fixed, already-fetched data -- use it directly, don't write SQL for it, and never claim to know anything about these topics beyond what's here. For "how many of my X are status Y" questions, use the matching *_count_by_status object (e.g. estimates_count_by_status) -- it's an exact, pre-computed breakdown, so use it instead of counting the estimates/sales_orders/job_orders/tickets arrays by hand, which you're prone to getting wrong on a long list. Status values there are the real stored values (e.g. 'pending_customer_approval'), not English phrasing -- match the closest one. For "my weighted sales" in a given month or year, use my_weighted_sales_by_month (months are 'YYYY-MM', amount is the peso total) -- it is exact and complete, whereas the sales_orders array is capped at the 150 most recent and would under-report an older month. Sum the relevant months for a year or a range.
 ${namedMatches.length ? `DIRECTLY_NAMED_EMPLOYEE(S) (extracted from the question -- this is the authoritative, exact data for them within employee_directory, use this over anything else for facts about them):
 ${JSON.stringify(namedMatches)}
+` : ''}${hasRefs ? `REFERENCED_DOCUMENTS (the exact order(s) named in the question, looked up directly -- authoritative, and NOT limited to what this user owns. Use this over OWN_DATA for facts about these documents, and answer from it even when the document is not in OWN_DATA):
+${JSON.stringify(referencedOrders)}
 ` : ''}OWN_DATA:
 ${JSON.stringify(snapshot)}
 
@@ -467,10 +517,12 @@ ${CATALOG_SCHEMA_DESCRIPTION}
 ${FK_NOTE}
 
 Rules:
-- If OWN_DATA (or DIRECTLY_NAMED_EMPLOYEE(S)) answers the question, reply with plain text (one or two sentences, no markdown, no prefix).
+- If REFERENCED_DOCUMENTS, OWN_DATA, or DIRECTLY_NAMED_EMPLOYEE(S) answers the question, reply with plain text (one or two sentences, no markdown, no prefix).
+- A question naming a specific document (e.g. "what is the status of JO-1234-1", "who is the artist of NSTDJO-171") is answered from REFERENCED_DOCUMENTS. Do not refuse it or call it unavailable because it is absent from OWN_DATA -- OWN_DATA only lists this user's own recent records, and REFERENCED_DOCUMENTS is the authoritative lookup. If a named document is missing from REFERENCED_DOCUMENTS too, then it genuinely does not exist -- say the number was not found.
+- "My"/"our"/"mine" questions, and every count or total, come from OWN_DATA only. Never total up REFERENCED_DOCUMENTS as though it were the user's own book of work.
 - If the question isn't about this database at all -- general knowledge, unit conversion, plain arithmetic (e.g. "how many sqft is 2x2 ft") -- just answer it directly as plain text. Don't force it into a SQL query it was never asking for.
 - If it needs the catalog schema instead, output ONLY a SQL SELECT statement (no markdown fences, no explanation, no trailing semicolon, no write/DDL keywords, only the tables listed above, include a LIMIT of 20 or fewer unless it's a single aggregate). For name/code lookups use LIKE '%...%' rather than an exact match unless given a full, exact code. For status/priority columns use an EXACT match against a real stored value, not a LIKE against human phrasing. Zero rows back is a fine, honest answer -- prefer writing a best-effort query over refusing.
-- Never write SQL referencing estimates, sales_orders, job_orders, tickets, or users -- those come only from OWN_DATA (users isn't available anywhere).
+- Never write SQL referencing estimates, sales_orders, job_orders, non_standard_job_orders, tickets, or users -- those come only from OWN_DATA and REFERENCED_DOCUMENTS (users isn't available anywhere).
 - If neither source can answer it, reply in plain text saying so.
 - This is a running conversation -- use the earlier messages to resolve follow-up questions ("his", "that order", "and last month?"). Keep plain-text answers warm and conversational, like a helpful colleague.`,
     },
