@@ -29,8 +29,16 @@ router.post('/login', async (req, res, next) => {
       return res.status(400).json({ error: 'username and password are required' });
     }
 
+    // Named columns rather than SELECT *: users carries three MEDIUMTEXT image blobs
+    // (avatar_data, cover_data, bg_data -- the last one a full-screen wallpaper), and a
+    // star here drags all of them across the wire on every single sign-in to read a
+    // password hash and ten flags. This list is exactly what the handler below uses:
+    // password_hash for the bcrypt compare, and the rest for the token and the response.
     const [[user]] = await pool.query(
-      'SELECT * FROM users WHERE (username = ? OR email = ?) AND is_active = TRUE',
+      `SELECT id, username, email, display_name, password_hash, default_branch_id,
+              account_type, can_approve_sales_estimate, is_design_supervisor,
+              is_supervisor, is_purchasing_supervisor
+         FROM users WHERE (username = ? OR email = ?) AND is_active = TRUE`,
       [username, username]
     );
     if (!user) return res.status(401).json({ error: 'Invalid credentials' });

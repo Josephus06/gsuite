@@ -1,10 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import Avatar from './Avatar';
 import ChatWidget from './ChatWidget';
 import NotificationBell from './NotificationBell';
+import ButtonMenu from './ButtonMenu';
+import api from '../api/client';
+import { fileToScaledDataUrl } from '../utils/image';
 import { resolveTheme, setTheme, watchSystemTheme } from '../utils/theme';
+import { clearBackground, currentBackground, setBackground, subscribeBackground } from '../utils/background';
 
 // Mirrors the real GraphicStar system's topbar arrangement: a row of category
 // dropdowns (Master Lists, Inventory, Sales, Costing, ...) instead of a left
@@ -277,6 +281,69 @@ export default function Layout() {
     setThemeState(setTheme(theme === 'dark' ? 'light' : 'dark'));
   }
 
+  // ---- Personal site background -------------------------------------------------
+  // Sits with the Day/Night toggle because it is the same kind of setting: how the app
+  // looks to this one person, changed from wherever they happen to be rather than from a
+  // settings page they would have to go find.
+  const bgInputRef = useRef(null);
+  const [hasBackground, setHasBackground] = useState(() => !!currentBackground());
+  const [bgBusy, setBgBusy] = useState(false);
+  const [bgNote, setBgNote] = useState('');
+
+  // subscribeBackground reports the current value on subscribe as well as on every change,
+  // so this is correct whether the server copy arrived before or after the topbar mounted.
+  useEffect(() => subscribeBackground((v) => setHasBackground(!!v)), []);
+
+  useEffect(() => {
+    if (!bgNote) return undefined;
+    const t = setTimeout(() => setBgNote(''), 4000);
+    return () => clearTimeout(t);
+  }, [bgNote]);
+
+  async function pickBackground(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';  // so picking the same file again still fires onChange
+    if (!file) return;
+    setBgBusy(true);
+    setBgNote('');
+    try {
+      // Resized in the browser like every other image this app stores (utils/image.js),
+      // which is what lets it travel as JSON and live in a column instead of needing an
+      // upload directory. 1600px and a lower quality than a cover photo gets: this one is
+      // drawn at about a third opacity behind the UI, where compression artefacts are
+      // invisible, and the smaller payload has to clear the 2mb request limit and fit in
+      // the localStorage cache that paints it before React mounts.
+      const bgData = await fileToScaledDataUrl(file, 1600, 0.72);
+      await api.put('/profiles/me/background', { bg_data: bgData });
+      setBackground(bgData);
+    } catch (err) {
+      setBgNote(err.response?.data?.error || 'Could not set that image as your background.');
+    } finally {
+      setBgBusy(false);
+    }
+  }
+
+  async function removeBackground() {
+    setBgNote('');
+    try {
+      await api.put('/profiles/me/background', { bg_data: null });
+      clearBackground();
+    } catch (err) {
+      setBgNote(err.response?.data?.error || 'Could not remove your background.');
+    }
+  }
+
+  const backgroundOptions = [
+    {
+      label: hasBackground ? 'Change image...' : 'Upload image...',
+      hint: 'JPEG, PNG or WebP -- shown behind the whole site',
+      onClick: () => bgInputRef.current?.click(),
+    },
+    ...(hasBackground
+      ? [{ label: 'Remove background', hint: 'Back to the plain theme colour', onClick: removeBackground }]
+      : []),
+  ];
+
   // Closing on every route change covers both a leaf-link tap (goes straight to the new
   // page) and the browser back/forward buttons -- either way the mobile panel shouldn't
   // still be covering the screen afterward.
@@ -391,6 +458,29 @@ export default function Layout() {
               )}
             </span>
           </button>
+          <ButtonMenu
+            className="btn btn-sm topnav-bg-btn"
+            title="Site background"
+            disabled={bgBusy}
+            label={(
+              <>
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="3" y="4" width="18" height="16" rx="2" />
+                  <circle cx="8.5" cy="9.5" r="1.6" />
+                  <path d="m4 17 4.5-4.5a1.6 1.6 0 0 1 2.2 0L15 17M14 14l1.8-1.8a1.6 1.6 0 0 1 2.2 0L20 14" />
+                </svg>
+                <span className="topnav-bg-label">{bgBusy ? 'Saving...' : 'Background'}</span>
+              </>
+            )}
+            options={backgroundOptions}
+          />
+          <input
+            ref={bgInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            onChange={pickBackground}
+            style={{ display: 'none' }}
+          />
           <NotificationBell />
           <Avatar user={user} size={28} />
           <span className="muted topnav-user-name">{user?.display_name}</span>
@@ -447,6 +537,10 @@ export default function Layout() {
           <Outlet />
         </div>
       </div>
+
+      {/* Uploads fail for reasons the user can act on (file too big, offline), and the
+          control that starts them lives in the topbar where there is no room to say so. */}
+      {bgNote && <div className="app-toast">{bgNote}</div>}
 
       <ChatWidget />
     </div>

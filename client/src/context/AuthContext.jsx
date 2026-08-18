@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import api from '../api/client';
 import AuthContext from './auth-context';
+import { clearBackground, setBackground } from '../utils/background';
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
@@ -21,6 +22,16 @@ export function AuthProvider({ children }) {
       setUser(data.user);
       setPermissions(data.permissions);
       localStorage.setItem('user', JSON.stringify(data.user));
+
+      // The user's site background, deliberately a second request and deliberately not
+      // awaited: it is a wallpaper-sized payload that must not sit between sign-in and
+      // the first render, and index.html has already painted the cached copy. This is
+      // what corrects that copy -- on a machine the user has never signed in on there is
+      // nothing cached, and after a change made elsewhere the cache is a version behind.
+      // A failure here leaves the cached background alone, which is the right outcome.
+      api.get('/profiles/me/background')
+        .then(({ data: bg }) => setBackground(bg.bg_data || null))
+        .catch(() => {});
     } catch {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
@@ -49,6 +60,9 @@ export function AuthProvider({ children }) {
     api.post('/auth/logout').catch(() => {});
     localStorage.removeItem('token');
     localStorage.removeItem('user');
+    // The background belongs to the account, not the browser: without this the next
+    // person to sign in on a shared machine gets the last one's wallpaper.
+    clearBackground();
     setUser(null);
     setPermissions([]);
   }

@@ -139,4 +139,43 @@ router.put('/me/cover', requireAuth, async (req, res, next) => {
   }
 });
 
+// ---- Personal site background -------------------------------------------------------
+//
+// The wallpaper a user sets for their own view of the app (topbar control, next to the
+// Day/Night toggle). Private to that user, so there is deliberately no route to read
+// anyone else's -- both handlers work off req.user.id and ignore any id in the request.
+//
+// Kept off GET /auth/me on purpose: that response is fetched on every page load and its
+// user object is cached in localStorage, so hanging a megabyte-scale image on it would
+// bloat both. The client fetches this once and caches the image under its own key.
+const MAX_BG_CHARS = 1_500_000;
+
+// GET /api/profiles/me/background -> { bg_data }
+router.get('/me/background', requireAuth, async (req, res, next) => {
+  try {
+    const [[row]] = await pool.query('SELECT bg_data FROM users WHERE id = ?', [req.user.id]);
+    res.json({ bg_data: row?.bg_data || null });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /api/profiles/me/background  { bg_data } -- send null to go back to the plain theme.
+router.put('/me/background', requireAuth, async (req, res, next) => {
+  try {
+    const bg = req.body.bg_data || null;
+    if (bg && typeof bg !== 'string') return res.status(400).json({ error: 'Invalid image.' });
+    if (bg && !bg.startsWith('data:image/')) return res.status(400).json({ error: 'Invalid image.' });
+    // Smaller than the feed's MAX_IMAGE_CHARS because this one has two extra ceilings to
+    // clear: the 2mb express.json body limit these routes are mounted under, and the
+    // browser's ~5mb localStorage quota, where the client caches it for a flash-free paint.
+    if (bg && bg.length > MAX_BG_CHARS) return res.status(400).json({ error: 'Image is too large.' });
+
+    await pool.query('UPDATE users SET bg_data = ? WHERE id = ?', [bg, req.user.id]);
+    res.json({ ok: true, bg_data: bg });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;

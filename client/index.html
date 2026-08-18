@@ -17,6 +17,15 @@
             : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
           document.documentElement.dataset.theme = theme;
           document.documentElement.style.colorScheme = theme;
+          // Same pre-paint reasoning for the user's uploaded background: applied from the
+          // cached copy here so it is already on screen at first paint instead of dropping
+          // in after React mounts. Mirrors applyBackground() in src/utils/background.js;
+          // the server copy replaces this one once /me/background answers.
+          var bg = localStorage.getItem('app-background');
+          if (bg && bg.indexOf('data:image/') === 0 && /^[A-Za-z0-9+/=:;,.-]+$/.test(bg)) {
+            document.documentElement.style.setProperty('--app-bg-image', 'url("' + bg + '")');
+            document.documentElement.dataset.bg = 'on';
+          }
         } catch (e) {
           document.documentElement.dataset.theme = 'light';
         }

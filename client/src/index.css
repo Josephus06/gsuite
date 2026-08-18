@@ -53,6 +53,59 @@ body {
   min-height: 100vh;
 }
 
+/* ---- Personal site background ("wallpaper") -------------------------------------------
+   The image the user uploads from the topbar, painted as one fixed layer behind the whole
+   app. src/utils/background.js puts the image in --app-bg-image and flips data-bg on
+   <html>; everything about how it LOOKS is decided here.
+
+   Why a pseudo-element and not simply background-image on body: the image has to sit at a
+   partial opacity over the theme base colour, and opacity on body would fade the entire
+   app along with it. A separate layer is the only way to fade the picture alone.
+
+   The layer is a negative-z child of body, so painting order puts it above the canvas
+   colour and below every bit of content -- which only works if body itself stops painting
+   an opaque background over it. Hence the two rules below: <html> takes over the base
+   colour (it propagates to the canvas) and body goes transparent. */
+:root[data-bg='on'] { background-color: var(--bg); }
+:root[data-bg='on'] body { background-color: transparent; }
+
+:root[data-bg='on'] body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  /* Fixed rather than scrolling with .content: a wallpaper sliding around under the cards
+     reads as a rendering fault, and .content is the scroller here anyway. */
+  z-index: -1;
+  background-image: var(--app-bg-image);
+  background-size: cover;
+  background-position: center center;
+  background-repeat: no-repeat;
+  opacity: var(--app-bg-opacity);
+  pointer-events: none;
+}
+
+/* The balance the whole feature turns on. At full strength the photo swallows the UI: text
+   greys out against it and the purple accents stop reading. Much fainter and the upload
+   looks like it did nothing. These two values are where the picture is clearly itself and
+   the app is still comfortably legible on top of it.
+
+   Night mode gets less because the image sits on near-black instead of near-white: the
+   same opacity there glares, and a pale photo washes out a dark UI far faster than it does
+   a light one. */
+:root { --app-bg-opacity: 0.32; }
+:root[data-theme='dark'] { --app-bg-opacity: 0.2; }
+
+/* A surface that paints its own opaque page-wide background hides the wallpaper entirely.
+   Cards, menus and the topbar deliberately keep theirs -- that opacity is exactly what
+   keeps content readable over the image -- but the feed wash steps aside so the picture
+   shows through the wide margins either side of the column.
+
+   .holo-dashboard is the one page-wide wash left alone on purpose. It is fixed-light by
+   design (see the Dashboard section below): its text stays dark whatever the theme is, so
+   dropping its background would leave dark text over the dark base colour in night mode.
+   It keeps its wash and behaves like one big card. */
+:root[data-bg='on'] .fbfeed { background: transparent; }
+
 h1, h2, h3 {
   color: var(--text-h);
   font-weight: 600;
@@ -1637,6 +1690,36 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 
 @media (prefers-reduced-motion: reduce) {
   .theme-toggle, .theme-toggle-label, .theme-toggle-knob { transition: none; }
+}
+
+/* Background picker, sat next to the Day/Night toggle -- both are "how the app looks to
+   me" controls, so they belong together rather than one being buried in a settings page.
+   Reuses ButtonMenu (components/ButtonMenu.jsx) for the drop-down. */
+.topnav-bg-btn { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Same trade as the theme toggle, but taken earlier: an account that can see every nav
+   group already fills the bar on a 1440px screen, so this control drops its wording
+   first and keeps just the icon. The button's title attribute carries the meaning from
+   there. */
+@media (max-width: 1200px) {
+  .topnav-bg-label { display: none; }
+}
+
+/* Brief message for an action started from the topbar, where there is no room to explain
+   a failure in place. Fixed to the bottom so it cannot push the layout around. */
+.app-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 60;
+  max-width: min(90vw, 460px);
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: var(--text-h);
+  color: var(--surface);
+  font-size: 13px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
 }
 
 /* Button with a drop-down of alternatives (see components/ButtonMenu.jsx) -- used for

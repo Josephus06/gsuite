@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 // A page-header button that opens a small menu under itself -- the "Print ⌄" pattern, where
 // one action has several formats behind it. Click-driven (not hover like the top nav), since
 // these sit next to destructive buttons and a hover menu is too easy to open by accident.
-export default function ButtonMenu({ label, options, className = 'btn btn-sm', disabled = false }) {
+export default function ButtonMenu({ label, options, className = 'btn btn-sm', disabled = false, title }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -21,7 +21,7 @@ export default function ButtonMenu({ label, options, className = 'btn btn-sm', d
 
   return (
     <div className="btn-menu" ref={ref}>
-      <button type="button" className={className} disabled={disabled} onClick={() => setOpen((v) => !v)}>
+      <button type="button" className={className} title={title} disabled={disabled} onClick={() => setOpen((v) => !v)}>
         {label} <span className="btn-menu-caret">▾</span>
       </button>
       {open && (
