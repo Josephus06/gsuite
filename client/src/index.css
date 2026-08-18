@@ -400,6 +400,26 @@ tbody tr:hover { background: var(--accent-bg); }
    footer totals row cannot drift out of alignment with the body. */
 .table-centered th, .table-centered td { text-align: center; }
 
+/* Admin "Log in as" banner. Sticky and high-contrast on purpose -- the one real hazard of
+   impersonation is forgetting you are in it, so it must survive scrolling and never blend
+   into the page it sits above. */
+.impersonation-banner {
+  position: sticky;
+  top: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 16px;
+  background: repeating-linear-gradient(45deg, #b45309, #b45309 12px, #92400e 12px, #92400e 24px);
+  color: #fff;
+  font-size: 13px;
+}
+.impersonation-banner strong { color: #fff; }
+.impersonation-banner .btn { background: #fff; color: #92400e; border-color: #fff; font-weight: 600; }
+
 .badge {
   display: inline-flex;
   padding: 2px 8px;

@@ -54,7 +54,10 @@ function requireAuth(req, res, next) {
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     req.user = payload;
-    touchPresence(payload.id);
+    // Never beat presence for an impersonated session: the user is not actually online, and
+    // showing them on the feed's Contacts rail because an admin opened their account would
+    // be plainly wrong -- and would keep them "online" indefinitely while the admin worked.
+    if (!payload.impersonated_by) touchPresence(payload.id);
     next();
   } catch (err) {
     return res.status(401).json({ error: 'Invalid or expired token' });

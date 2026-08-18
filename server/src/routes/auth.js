@@ -2,9 +2,25 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../db');
-const { requireAuth, clearPresence } = require('../middleware/auth');
+const { requireAuth, clearPresence, isSystemAdmin } = require('../middleware/auth');
 
 const router = express.Router();
+
+// One place that mints tokens, so an impersonation session carries exactly the same claims a
+// real login does -- plus `impersonated_by` when one admin is acting as someone else.
+function signToken(user, impersonatedBy = null) {
+  const payload = { id: user.id, username: user.username, display_name: user.display_name };
+  if (impersonatedBy) {
+    payload.impersonated_by = {
+      id: impersonatedBy.id,
+      username: impersonatedBy.username,
+      display_name: impersonatedBy.display_name,
+    };
+  }
+  return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '8h' });
+}
+
+const label = (u) => u.display_name || u.username;
 
 router.post('/login', async (req, res, next) => {
   try {
@@ -24,11 +40,7 @@ router.post('/login', async (req, res, next) => {
 
     await pool.query('UPDATE users SET last_login_at = NOW() WHERE id = ?', [user.id]);
 
-    const token = jwt.sign(
-      { id: user.id, username: user.username, display_name: user.display_name },
-      process.env.JWT_SECRET,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
-    );
+    const token = signToken(user);
 
     res.json({
       token,
@@ -45,6 +57,88 @@ router.post('/login', async (req, res, next) => {
         account_type: user.account_type,
       },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---------------------------------------------------------------------------------
+// Admin "Log in as" -- an admin needs to see and fix things as the user actually sees
+// them, and asking for the user's password does not work: they can change it, and a
+// shared master password would make an admin's session indistinguishable from the real
+// user's in every audit row, which in a system carrying estimate approvals, NSTDJO
+// sign-offs and commission payouts destroys attribution for the user's genuine actions
+// as much as for the admin's.
+//
+// So the admin authenticates as themselves and switches. The target's own password is
+// never involved, which is exactly why this keeps working whatever they later set it to,
+// and there is no new secret to leak. The issued token carries `impersonated_by`: the
+// banner reads off it, /auth/me returns it, and both ends of the session are written to
+// audit_logs against the target user, so the window is reconstructable afterwards.
+// ---------------------------------------------------------------------------------
+router.post('/impersonate/:userId', requireAuth, async (req, res, next) => {
+  try {
+    // Refuse while already impersonating. Without this an admin could hop admin -> admin
+    // -> user, and the second token would name only the middle account as the actor,
+    // losing whoever actually started the chain.
+    if (req.user.impersonated_by) {
+      return res.status(409).json({ error: 'You are already signed in as another user. Return to your own account first.' });
+    }
+    if (!await isSystemAdmin(req.user.id)) {
+      return res.status(403).json({ error: 'Only a System Admin can sign in as another user.' });
+    }
+
+    const targetId = Number(req.params.userId);
+    if (!Number.isInteger(targetId) || targetId <= 0) return res.status(400).json({ error: 'Invalid user.' });
+    if (targetId === Number(req.user.id)) return res.status(400).json({ error: 'That is already your own account.' });
+
+    // Inactive accounts are refused for the same reason /login refuses them -- an admin
+    // should not be able to act as somebody who has been switched off.
+    const [[target]] = await pool.query(
+      'SELECT id, username, display_name FROM users WHERE id = ? AND is_active = TRUE', [targetId]
+    );
+    if (!target) return res.status(404).json({ error: 'User not found, or their account is inactive.' });
+
+    const [[admin]] = await pool.query(
+      'SELECT id, username, display_name FROM users WHERE id = ?', [req.user.id]
+    );
+
+    await pool.query(
+      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, new_value, set_by_user_id)
+       VALUES ('User', ?, 'Impersonation', 'started', ?, ?)`,
+      [target.id, `${label(admin)} signed in as ${label(target)}`, admin.id]
+    );
+
+    res.json({ token: signToken(target, admin), impersonating: target, impersonated_by: admin });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Hands the admin back their own session. Authorised by the token's own `impersonated_by`
+// rather than by re-checking admin rights: whoever holds this token demonstrably started
+// as that admin, and an admin demoted mid-session must still be able to get back out.
+router.post('/stop-impersonating', requireAuth, async (req, res, next) => {
+  try {
+    const origin = req.user.impersonated_by;
+    if (!origin) return res.status(400).json({ error: 'You are not signed in as another user.' });
+
+    const [[admin]] = await pool.query(
+      'SELECT id, username, display_name, is_active FROM users WHERE id = ?', [origin.id]
+    );
+    if (!admin || !admin.is_active) {
+      return res.status(403).json({ error: 'Your own account is no longer active. Please sign in again.' });
+    }
+
+    await pool.query(
+      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, new_value, set_by_user_id)
+       VALUES ('User', ?, 'Impersonation', 'ended', ?, ?)`,
+      [req.user.id, `${label(admin)} returned to their own account`, admin.id]
+    );
+    // The impersonated user drops off the Contacts rail -- the admin was never really them.
+    await clearPresence(req.user.id);
+
+    res.json({ token: signToken(admin) });
   } catch (err) {
     next(err);
   }
@@ -102,6 +196,11 @@ router.get('/me', requireAuth, async (req, res, next) => {
        WHERE upp.user_id = ?`,
       [user.id]
     );
+
+    // Read off the token, not the database -- being impersonated is a property of this
+    // session, not of the account. Two admins can be acting as the same user at once, and
+    // only their own tokens know it.
+    user.impersonated_by = req.user.impersonated_by || null;
 
     res.json({ user, permissions });
   } catch (err) {

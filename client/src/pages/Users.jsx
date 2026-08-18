@@ -14,12 +14,29 @@ const ACCOUNT_TYPE_OPTIONS = [
 ];
 
 export default function Users() {
-  const { can } = useAuth();
+  const { can, user, impersonate } = useAuth();
   const navigate = useNavigate();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showTemplates, setShowTemplates] = useState(false);
   const [search, setSearch] = useState('');
+  const [busyId, setBusyId] = useState(null);
+  const isAdmin = user?.account_type === 'System Admin';
+
+  // Lands on the dashboard rather than staying here: this page needs can_view on /users,
+  // which the target user probably does not have, so remaining would just 403.
+  async function loginAs(row) {
+    if (!confirm(`Sign in as "${row.display_name || row.username}"?\n\nYou will see the system exactly as they do. This is recorded against their account, and you can return at any time from the banner.`)) return;
+    setBusyId(row.id);
+    try {
+      await impersonate(row.id);
+      navigate('/dashboard');
+    } catch (err) {
+      alert(err.response?.data?.error || 'Could not sign in as that user.');
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -94,6 +111,13 @@ export default function Users() {
             actions={(row) => (
               <>
                 {can('/users', 'can_edit') && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/users/${row.id}/edit`)}>Edit</button>}
+                {/* System Admin only, and never on your own row or a switched-off account --
+                    the server refuses both regardless. */}
+                {isAdmin && row.is_active && row.id !== user?.id && (
+                  <button className="btn btn-sm" disabled={busyId === row.id} onClick={() => loginAs(row)}>
+                    {busyId === row.id ? 'Switching…' : 'Log in as'}
+                  </button>
+                )}
                 {can('/users', 'can_delete') && <button className="btn btn-sm btn-danger" onClick={() => handleDelete(row)}>Delete</button>}
               </>
             )}

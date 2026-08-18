@@ -228,8 +228,39 @@ function deriveTitle(pathname) {
   return `${match.label} | ${suffix}`;
 }
 
+// Sits above the top nav on every page while an admin is signed in as someone else. It is
+// deliberately loud and unmissable: the whole risk of impersonation is forgetting you are in
+// it and taking an action that lands in the user's name.
+function ImpersonationBanner() {
+  const { user, impersonating, stopImpersonating } = useAuth();
+  const [busy, setBusy] = useState(false);
+  if (!impersonating) return null;
+
+  async function returnToSelf() {
+    setBusy(true);
+    try {
+      await stopImpersonating();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="impersonation-banner">
+      <span>
+        Signed in as <strong>{user?.display_name || user?.username}</strong> — admin access by{' '}
+        <strong>{impersonating.display_name || impersonating.username}</strong>. Anything you do here is recorded.
+      </span>
+      <button type="button" className="btn btn-sm" disabled={busy} onClick={returnToSelf}>
+        {busy ? 'Returning…' : 'Return to my account'}
+      </button>
+    </div>
+  );
+}
+
 export default function Layout() {
   const { user, logout, can } = useAuth();
+
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -283,6 +314,7 @@ export default function Layout() {
 
   return (
     <div className="app-shell">
+      <ImpersonationBanner />
       <header className="topnav">
         <button
           type="button"

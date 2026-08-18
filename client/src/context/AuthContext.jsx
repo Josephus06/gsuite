@@ -58,8 +58,27 @@ export function AuthProvider({ children }) {
     return !!perm?.[action];
   }
 
+  // Admin "Log in as". Swapping the token and reloading /auth/me is enough -- every page
+  // reads its data through the same client, so the whole app re-renders as the target user
+  // with their permissions, not the admin's.
+  async function impersonate(userId) {
+    const { data } = await api.post(`/auth/impersonate/${userId}`);
+    localStorage.setItem('token', data.token);
+    await loadMe();
+  }
+
+  async function stopImpersonating() {
+    const { data } = await api.post('/auth/stop-impersonating');
+    localStorage.setItem('token', data.token);
+    await loadMe();
+  }
+
   return (
-    <AuthContext.Provider value={{ user, permissions, loading, login, logout, can, refresh: loadMe }}>
+    <AuthContext.Provider value={{
+      user, permissions, loading, login, logout, can, refresh: loadMe,
+      impersonating: user?.impersonated_by || null,
+      impersonate, stopImpersonating,
+    }}>
       {children}
     </AuthContext.Provider>
   );
