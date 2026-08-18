@@ -75,6 +75,7 @@ const rwipJobOrderRoutes = require('./routes/rwipJobOrders');
 const rfqcJobOrderRoutes = require('./routes/rfqcJobOrders');
 const { ensureAssignedAtColumn } = require('./db/ensureSchema');
 const { sendTicketReminders } = require('./scripts/ticket_reminder');
+const { startSampling } = require('./lib/systemHealth');
 
 const app = express();
 
@@ -255,6 +256,12 @@ const PORT = process.env.PORT || 4000;
 async function startServer() {
   try {
     await ensureAssignedAtColumn();
+    // Begin sampling at boot rather than on first page view -- a graph that only starts
+
+    // collecting when someone opens it shows nothing at the moment it is actually needed.
+
+    startSampling();
+
     app.listen(PORT, () => console.log(`GSUITE ERP API listening on http://localhost:${PORT}`));
   } catch (error) {
     console.error('Failed to ensure database schema:', error);

@@ -50,6 +50,7 @@ const NAV_STRUCTURE = [
       { route: '/web-products', label: 'Website Products' },
       { route: '/lookups', label: 'Lookups' },
       { route: '/transaction-settings', label: 'Transaction Settings' },
+      { route: '/system-health', label: 'System Health' },
     ],
   },
   {

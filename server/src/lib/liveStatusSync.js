@@ -54,6 +54,18 @@ const ESTIMATE_STATUS = {
   approved: 'approved', cancelled: 'cancelled', disapproved: 'disapproved',
 };
 function estimateStatus(live) { return ESTIMATE_STATUS[String(live || '').trim().toLowerCase()] || null; }
+// Transfer order statuses, keyed by the live spelling lower-cased. Kept identical to the map in
+// import-transfer-chain.js so the sync and the importer can never disagree about a status.
+const TO_STATUS = new Map([
+  ['pending fulfillment', 'pending_fulfillment'],
+  ['pending', 'pending_fulfillment'], // nothing fulfilled yet, so it belongs in the first tab
+  ['partially fulfilled', 'partially_fulfilled'],
+  ['pending receipt', 'pending_receipt'],
+  ['pending receipt / partially fulfilled', 'pending_receipt_partially_fulfilled'],
+  ['received', 'received'],
+  ['cancelled', 'cancelled'],
+  ['canceled', 'cancelled'],
+]);
 
 // ---- live API ----
 async function login() {
@@ -171,15 +183,17 @@ const MODULES = {
   },
 
   transfer_orders: {
-    // live: Received, CANCELLED, Pending Fulfillment, Pending Receipt, Partially Fulfilled
-    // local: the same, snake_cased -- which is exactly the mismatch that hid 1,896 orders.
+    // live: Received, CANCELLED, Pending Fulfillment, Pending Receipt, Partially Fulfilled,
+    // Pending Receipt / Partially Fulfilled. local: the same, snake_cased -- which is exactly the
+    // mismatch that hid 1,896 orders.
     label: 'Transfer Orders', table: 'transfer_orders', keyCol: 'to_no', statusCol: 'status',
     endpoint: 'get_transactions', payload: { where: { Module_TransH: 'TRANSFERORDER' } }, liveKey: 'UserPK_TransH',
-    status: (r) => {
-      const s = String(r.Status_TransH || '').trim();
-      if (!s || s === 'null') return null;
-      return s.toLowerCase().replace(/\s+/g, '_');
-    },
+    // Must be the same table import-transfer-chain.js uses, not a generic slugifier: lower-casing
+    // and replacing whitespace turns "Pending Receipt / Partially Fulfilled" into
+    // "pending_receipt_/_partially_fulfilled", keeping the slash. That is not the local enum value
+    // (`pending_receipt_partially_fulfilled`), so those orders drop out of the TransferOrders tab
+    // filter and lose their Fulfill/Receive buttons, which gate on the canonical spelling.
+    status: (r) => TO_STATUS.get(String(r.Status_TransH || '').trim().toLowerCase()) || null,
   },
 
   bank_deposits: {
@@ -258,7 +272,7 @@ async function syncModule(token, key) {
       const live = liveMap.get(String(row.k));
       if (!live) { notInLive += 1; continue; }
       const newStatus = cfg.status(live);
-      const newTotals = cfg.totals(live);
+      const newTotals = totals(live);
 
       const sets = []; const vals = [];
       const statusWillChange = newStatus != null && String(newStatus) !== String(row.status);

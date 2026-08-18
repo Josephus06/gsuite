@@ -5,6 +5,7 @@ const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { syncNewEstimates } = require('../lib/liveEstimateSync');
 const { syncStatuses, SYNCABLE } = require('../lib/liveStatusSync');
+const { collect } = require('../lib/systemHealth');
 const { rollupJoQuantities } = require('../lib/joProductionRollup');
 
 const router = express.Router();
@@ -74,6 +75,15 @@ router.post('/sync-status', requireAuth, requireSystemAdmin, async (req, res, ne
 
 router.get('/sync-status/modules', requireAuth, requireSystemAdmin, (req, res) => {
   res.json({ modules: SYNCABLE });
+});
+
+// Admin > System Health. What this machine and its database are doing right now, plus a short
+// rolling history so a spike is visible rather than just a number that happens to be high at the
+// moment you looked. Restricted to System Admin: it reports host, disk and database internals.
+router.get('/system-health', requireAuth, requireSystemAdmin, async (req, res, next) => {
+  try {
+    res.json(await collect());
+  } catch (err) { next(err); }
 });
 
 module.exports = router;
