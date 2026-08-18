@@ -26,7 +26,7 @@ const OPENAI_MODEL = 'gpt-4o-mini';
 
 const CATALOG_TABLES = [
   'customers', 'suppliers', 'departments', 'inventories', 'inventory_locations',
-  'chart_of_accounts', 'service_items', 'employees',
+  'chart_of_accounts', 'service_items', 'employees', 'sales_divisions',
 ];
 const OWNED_TABLES = [
   'estimates', 'sales_orders', 'job_orders', 'tickets', 'purchase_orders',
@@ -51,6 +51,7 @@ inventory_locations(id, inventory_id -> inventories.id, location_id, qty_on_hand
 chart_of_accounts(id, account_code, account_name, account_type, is_active)
 service_items(id, item_code, display_name, unit_price, is_active)
 employees(id, employee_code, first_name, last_name, department_id -> departments.id, position_title, is_active)
+sales_divisions(id, name, is_active)
 `.trim();
 
 // Status/priority columns are stored as underscore_case machine values, not the
@@ -330,6 +331,101 @@ async function countByStatus(fromSql, alias, whereSql, params, statusCol = 'stat
 // Pulls exactly what resolveScope()/ticketVisibilityClause() already say this user may
 // see -- the same helpers backing the Dashboard and Tickets routes -- capped per table
 // so the prompt stays small. Nothing here is LLM-controlled.
+// Weighted sales totalled per sales division, with a deliberate access rule:
+//
+//   System Admin / is_sales_manager -> every division
+//   everyone else                   -> only divisions they are actually in
+//   nobody who qualifies for neither -> nothing at all
+//
+// "Divisions they are in" is the union of two things, because neither alone is reliable:
+// the SBU divisions explicitly assigned to them (user_sales_divisions, which is only ever
+// populated for business-unit owners), and the divisions their own sales orders actually
+// sit in -- which is what makes this work for an ordinary account officer who has no SBU
+// row at all.
+//
+// Divisions outside that set are never queried, so the model cannot leak a figure it was
+// merely instructed not to mention. It is told the difference between "no such division"
+// and "not yours to see", so a rep asking about another division gets an honest refusal
+// rather than being told the division does not exist.
+// Only assembled when the question is actually about divisions. The full breakdown is ~500
+// rows (11 divisions x ~45 months) and would otherwise be pasted into the prompt on every
+// unrelated question, crowding out OWN_DATA and costing tokens for nothing.
+//
+// Division names in the data are inconsistently spaced -- "Sales-1" sits beside "Sales - 2"
+// -- so both the mention test here and the matching instruction given to the model strip
+// everything but letters and digits before comparing.
+const normalizeDivision = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const BY_MONTH_CAP = 36;
+
+async function fetchDivisionWeightedSales(user, employeeIds, contextText) {
+  const [divisionRows] = await pool.query('SELECT id, name FROM sales_divisions');
+  const ctx = normalizeDivision(contextText);
+  const mentionsDivision = /division|sbu|weighted/i.test(contextText)
+    || divisionRows.some((d) => d.name && ctx.includes(normalizeDivision(d.name)));
+  if (!mentionsDivision) return null;
+
+  const [[me]] = await pool.query(
+    'SELECT account_type, is_sales_manager FROM users WHERE id = ?', [user.id]
+  );
+  const seesAll = me?.account_type === 'System Admin' || !!me?.is_sales_manager;
+
+  let allowedIds = null; // null means unrestricted
+  if (!seesAll) {
+    const [owned] = await pool.query(
+      'SELECT sales_division_id AS id FROM user_sales_divisions WHERE user_id = ?', [user.id]
+    );
+    const ids = new Set(owned.map((r) => Number(r.id)).filter(Boolean));
+    if (employeeIds.length) {
+      const placeholders = employeeIds.map(() => '?').join(', ');
+      const [fromOwnOrders] = await pool.query(
+        `SELECT DISTINCT so.sales_division_id AS id FROM sales_orders so
+          WHERE so.sales_rep_id IN (${placeholders}) AND so.sales_division_id IS NOT NULL`,
+        employeeIds
+      );
+      for (const r of fromOwnOrders) ids.add(Number(r.id));
+    }
+    allowedIds = [...ids];
+    if (!allowedIds.length) return { access: 'none', divisions: [] };
+  }
+
+  const where = allowedIds
+    ? `WHERE so.date_created IS NOT NULL AND so.sales_division_id IN (${allowedIds.map(() => '?').join(', ')})`
+    : 'WHERE so.date_created IS NOT NULL';
+  const [rows] = await pool.query(
+    `SELECT sd.name AS division, DATE_FORMAT(so.date_created, '%Y-%m') AS month,
+            COUNT(*) AS orders, COALESCE(SUM(so.total_amount), 0) AS amount
+       FROM sales_orders so
+       JOIN sales_divisions sd ON sd.id = so.sales_division_id
+       ${where}
+      GROUP BY sd.name, month
+      ORDER BY sd.name, month DESC`,
+    allowedIds || []
+  );
+
+  const byDivision = new Map();
+  for (const r of rows) {
+    if (!byDivision.has(r.division)) {
+      byDivision.set(r.division, { division: r.division, orders: 0, amount: 0, by_month: [] });
+    }
+    const bucket = byDivision.get(r.division);
+    bucket.orders += Number(r.orders);
+    bucket.amount += Number(r.amount);
+    bucket.by_month.push({ month: r.month, orders: Number(r.orders), amount: Number(r.amount) });
+  }
+  return {
+    access: seesAll ? 'all' : 'own',
+    // `amount`/`orders` are all-time and exact; by_month is trimmed to the most recent
+    // months so an 11-division breakdown stays a sane size in the prompt. Trimming the list
+    // rather than the query is what keeps the all-time total honest.
+    note: `amount and orders are all-time totals; by_month covers the most recent ${BY_MONTH_CAP} months only`,
+    divisions: [...byDivision.values()].map((d) => ({
+      ...d,
+      amount: Number(d.amount.toFixed(2)),
+      by_month: d.by_month.slice(0, BY_MONTH_CAP),
+    })),
+  };
+}
+
 async function fetchOwnScopeSnapshot(user, contextText = '') {
   const scope = await resolveScope(user.id);
   const employeeIds = scope.employeeIds || [];
@@ -480,6 +576,8 @@ async function fetchOwnScopeSnapshot(user, contextText = '') {
   // asking "what department is X in" or "is X still active". No email/phone here
   // since this path, unlike the Employees page itself, has no page-permission gate.
   snapshot.employee_directory = await fetchEmployeeDirectory();
+  const divisionSales = await fetchDivisionWeightedSales(user, employeeIds, contextText);
+  if (divisionSales) snapshot.weighted_sales_by_division = divisionSales;
 
   return snapshot;
 }
@@ -519,7 +617,9 @@ ${FK_NOTE}
 Rules:
 - If REFERENCED_DOCUMENTS, OWN_DATA, or DIRECTLY_NAMED_EMPLOYEE(S) answers the question, reply with plain text (one or two sentences, no markdown, no prefix).
 - A question naming a specific document (e.g. "what is the status of JO-1234-1", "who is the artist of NSTDJO-171") is answered from REFERENCED_DOCUMENTS. Do not refuse it or call it unavailable because it is absent from OWN_DATA -- OWN_DATA only lists this user's own recent records, and REFERENCED_DOCUMENTS is the authoritative lookup. If a named document is missing from REFERENCED_DOCUMENTS too, then it genuinely does not exist -- say the number was not found.
-- "My"/"our"/"mine" questions, and every count or total, come from OWN_DATA only. Never total up REFERENCED_DOCUMENTS as though it were the user's own book of work.
+- "My"/"our"/"mine" questions, and every personal count or total, come from OWN_DATA only. Never total up REFERENCED_DOCUMENTS as though it were the user's own book of work.
+- For weighted sales of a named sales division (e.g. "total weighted sales of SALES-1"), use OWN_DATA.weighted_sales_by_division. Match the division name case-insensitively and ignore spacing/hyphens ("SALES-1", "Sales 1" and "sales-1" are the same division). Use its \`amount\` for an all-time total, or its \`by_month\` entries ('YYYY-MM') for a specific month or year. This is a whole-division figure covering every rep in it -- do not confuse it with the user's own my_weighted_sales_by_month.
+- weighted_sales_by_division.access says what this user may see: 'all' = every division; 'own' = only the divisions listed, which are the ones they belong to; 'none' = they are in no division. If they ask about a division that is NOT in the list, say plainly that they do not have access to that division's figures -- do NOT say it doesn't exist, do NOT guess, and do NOT answer with a different division's number. If weighted_sales_by_division is absent entirely, you have no division figures at all -- say so rather than improvising one from the sales_orders array.
 - If the question isn't about this database at all -- general knowledge, unit conversion, plain arithmetic (e.g. "how many sqft is 2x2 ft") -- just answer it directly as plain text. Don't force it into a SQL query it was never asking for.
 - If it needs the catalog schema instead, output ONLY a SQL SELECT statement (no markdown fences, no explanation, no trailing semicolon, no write/DDL keywords, only the tables listed above, include a LIMIT of 20 or fewer unless it's a single aggregate). For name/code lookups use LIKE '%...%' rather than an exact match unless given a full, exact code. For status/priority columns use an EXACT match against a real stored value, not a LIKE against human phrasing. Zero rows back is a fine, honest answer -- prefer writing a best-effort query over refusing.
 - Never write SQL referencing estimates, sales_orders, job_orders, non_standard_job_orders, tickets, or users -- those come only from OWN_DATA and REFERENCED_DOCUMENTS (users isn't available anywhere).
