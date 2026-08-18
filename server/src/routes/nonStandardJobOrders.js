@@ -33,6 +33,19 @@ const SUB_SALES_REVISION = 'Sales Revision';
 const SUB_SBU_APPROVED = 'SBU Approved';
 const SUB_FOR_DESIGN = 'For Design Supervisor';
 const SUB_FOR_ARTIST = 'For Artist';
+// Sent back by Sales from the sign-off queue. Deliberately a DIFFERENT sub-status from the
+// ordinary "For Artist" so the artist's worklist shows at a glance that this one is rework.
+// Same wording Job Orders already use for the same moment, so both halves of the workflow
+// read identically to an artist who runs both.
+const SUB_FOR_ARTIST_REVISION = 'For Artist (Revision)';
+// The states in which the order is in the artist's hands. Everything that used to test for
+// "For Artist" alone has to test this instead -- an order that vanishes from the artist's
+// queue the moment it is sent back for revision is worse than having no revision at all.
+const ARTIST_WORKING_SUB_STATUSES = [SUB_FOR_ARTIST, SUB_FOR_ARTIST_REVISION];
+// Three per order, then the button stops. Without a ceiling, "send it back" becomes a
+// substitute for deciding what is wanted, and the artist absorbs the cost of every lap.
+// The counter is per order and never resets.
+const MAX_SALES_REVISIONS = 3;
 // The window in which Sales may still change an order: while it is queued for its
 // approver(s), and while an approver has parked it back with them for changes. Approval
 // closes the window -- from "SBU Approved" onward the details an approver signed off
@@ -625,7 +638,7 @@ router.put('/:id/sales-approval', requireAuth, async (req, res, next) => {
     }
 
     if (row.status === CANCELLED_STATUS) return res.status(409).json({ error: 'This job order has been cancelled.' });
-    if (row.sub_status !== SUB_FOR_ARTIST) {
+    if (!ARTIST_WORKING_SUB_STATUSES.includes(row.sub_status)) {
       return res.status(409).json({ error: 'This job order is not ready for Sales Approval.' });
     }
 
@@ -863,6 +876,293 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
       [req.params.id],
     );
     res.json(rows);
+  } catch (err) { next(err); }
+});
+
+
+// Sales sends the layout back for changes instead of signing it off. The other half of the
+// Sales Approval decision, and the mirror of /job-orders/:id/request-revision.
+//
+// Named "sales-request-revision" and not "request-revision" because this module already has a
+// /request-revision: that one is the SBU approver bouncing a *brand-new* order back to Sales
+// before any design work has happened. This one is Sales bouncing a *finished layout* back to
+// the artist. Two different people, two different stages -- so two different routes.
+//
+// THE TIMER IS NOT RESET, and this is where it deliberately diverges from Job Orders. The JO
+// version clears layout_started_at/layout_ended_at and deletes the Play/Hold sessions so the
+// artist's clock restarts. Here the timestamps are left exactly as they are: an NSTDJO artist's
+// incentive and performance figures are derived from them, and wiping them on a revision would
+// quietly erase work already done and already earned. A revision notifies; it does not rewrite
+// what the artist has already put in.
+router.put('/:id/sales-request-revision', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[row]] = await conn.query(
+      `SELECT id, nstdjo_no, status, sub_status, artist_employee_id, sales_revision_count
+         FROM non_standard_job_orders WHERE id = ?`,
+      [req.params.id],
+    );
+    if (!row) return res.status(404).json({ error: 'Non-standard job order not found.' });
+    if (row.status === CANCELLED_STATUS) return res.status(409).json({ error: 'This job order has been cancelled.' });
+    if (row.sub_status !== SUB_SALES_APPROVAL) {
+      return res.status(409).json({ error: 'This job order is not pending Sales Approval.' });
+    }
+    const used = Number(row.sales_revision_count) || 0;
+    if (used >= MAX_SALES_REVISIONS) {
+      return res.status(409).json({
+        error: `This job order has already used all ${MAX_SALES_REVISIONS} revisions. Approve it, or cancel it and raise a new one.`,
+      });
+    }
+    // A revision with no reason is just a refusal, and the artist is left guessing at what to
+    // change -- which is exactly the situation this feature exists to end.
+    const remarks = String(req.body?.remarks || '').trim();
+    if (!remarks) return res.status(400).json({ error: 'Say what needs changing so the artist knows what to alter.' });
+
+    await conn.beginTransaction();
+    const revisionNo = used + 1;
+    await conn.query(
+      `UPDATE non_standard_job_orders
+          SET sub_status = ?, sales_revision_count = ?, last_revision_at = NOW(),
+              last_revision_note = ?, updated_at = NOW()
+        WHERE id = ?`,
+      [SUB_FOR_ARTIST_REVISION, revisionNo, remarks.slice(0, 500), req.params.id],
+    );
+    // Told to the artist, not to the raiser -- they are the one who has to act on it.
+    await notifyAssignedArtist(conn, {
+      artistEmployeeId: row.artist_employee_id,
+      title: `${row.nstdjo_no} needs a revision`,
+      message: `Sales asked for changes (revision ${revisionNo} of ${MAX_SALES_REVISIONS}): ${remarks.slice(0, 300)}`,
+      relatedType: 'NonStandardJobOrder',
+      relatedId: Number(req.params.id),
+    });
+    await logAudit(conn, {
+      id: req.params.id, userId: req.user.id, eventType: 'Status Change',
+      fieldName: 'sub_status', oldValue: row.sub_status, newValue: SUB_FOR_ARTIST_REVISION,
+    });
+    await logAudit(conn, {
+      id: req.params.id, userId: req.user.id, eventType: 'Updated',
+      fieldName: `revision_remarks (${revisionNo} of ${MAX_SALES_REVISIONS})`, newValue: remarks,
+    });
+    await conn.commit();
+    res.json({
+      id: Number(req.params.id), status: row.status, sub_status: SUB_FOR_ARTIST_REVISION,
+      sales_revision_count: revisionNo, revisions_remaining: MAX_SALES_REVISIONS - revisionNo,
+    });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally { conn.release(); }
+});
+
+// Copy an order into a new one, whatever state the original is in.
+//
+// Repeat work is ordinary here -- the same job for the same customer next month -- and re-keying
+// every material and process line by hand is where mistakes get made. Allowed from any status,
+// including Cancelled and COMPLETED, because those are the two people most often want to copy:
+// a finished job worth repeating, or a cancelled one worth raising again properly.
+//
+// The copy is a NEW order raised by whoever pressed the button, not a clone of the original's
+// progress. It starts at the beginning of the workflow and goes through the presser's own
+// department approvers -- copying the original's approvers would send it to the wrong people
+// when the two raisers sit in different departments. Nothing about the artist assignment,
+// timers, approvals or audit history is carried across; only the customer, job details and the
+// material/process lines, which are the reason anyone replicates an order at all.
+router.post('/:id/replicate', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[src]] = await conn.query('SELECT * FROM non_standard_job_orders WHERE id = ?', [req.params.id]);
+    if (!src) return res.status(404).json({ error: 'Non-standard job order not found.' });
+
+    const branch = await defaultBranch(req.user.id);
+    if (!branch.employee_id) return res.status(400).json({ error: 'Your user account needs an assigned employee before a non-standard job order can be saved.' });
+    if (!branch.sales_division_id) return res.status(400).json({ error: 'Your default User Branch needs a department before a non-standard job order can be saved.' });
+
+    const [approvers] = await conn.query(
+      `SELECT dta.user_id FROM users u
+         JOIN employees e ON e.id = u.employee_id
+         JOIN departments d ON d.id = e.department_id
+         JOIN department_ticket_approvers dta ON dta.department_id = d.id
+        WHERE u.id = ?`,
+      [req.user.id],
+    );
+    const initialSubStatus = approvers.length ? SUB_SBU_APPROVAL : SUB_PENDING;
+
+    await conn.beginTransaction();
+    const [result] = await conn.query(
+      `INSERT INTO non_standard_job_orders
+       (nstdjo_no, customer_id, contact_person_id, contact_email, contact_title, contact_phone, memo, date_created,
+        job_location_id, job_type_id, job_type, site_inspection_subtype, pms_job_type_id, description, quantity,
+        shipping_address, delivery_date, delivery_time, sales_rep_id, sales_division_id,
+        status, sub_status, created_by_user_id)
+       VALUES ('PENDING', ?, ?, ?, ?, ?, ?, CURDATE(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [src.customer_id, src.contact_person_id, src.contact_email, src.contact_title, src.contact_phone,
+        src.memo, branch.location_id || src.job_location_id, src.job_type_id, src.job_type,
+        src.site_inspection_subtype, src.pms_job_type_id, src.description, src.quantity,
+        src.shipping_address, src.delivery_date, src.delivery_time, branch.employee_id, branch.sales_division_id,
+        INITIAL_STATUS, initialSubStatus, req.user.id],
+    );
+    const newId = result.insertId;
+    const nstdjoNo = `NSTDJO-${newId}`;
+    await conn.query('UPDATE non_standard_job_orders SET nstdjo_no = ? WHERE id = ?', [nstdjoNo, newId]);
+
+    // Copied verbatim, artist_incentive included: it was priced off the process price when the
+    // original was saved, and the same lines at the same prices must earn the same figure.
+    const [mats] = await conn.query(
+      'SELECT * FROM non_standard_job_order_materials WHERE non_standard_job_order_id = ? ORDER BY line_no, id',
+      [req.params.id],
+    );
+    for (const m of mats) {
+      await conn.query(
+        `INSERT INTO non_standard_job_order_materials
+         (non_standard_job_order_id, line_no, process_id, process_qty, process_price, artist_incentive,
+          item_id, artist_remarks, length, width, uom, qty, total, unit, sales_remarks)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [newId, m.line_no, m.process_id, m.process_qty, m.process_price, m.artist_incentive,
+          m.item_id, m.artist_remarks, m.length, m.width, m.uom, m.qty, m.total, m.unit, m.sales_remarks],
+      );
+    }
+
+    for (const { user_id: approverUserId } of approvers) {
+      await conn.query(
+        'INSERT INTO non_standard_job_order_approvers (non_standard_job_order_id, user_id) VALUES (?, ?)',
+        [newId, approverUserId],
+      );
+      await conn.query(
+        `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
+         VALUES (?, 'nstdjo_pending_approval', ?, ?, 'NonStandardJobOrder', ?)`,
+        [approverUserId, `${nstdjoNo} needs your approval`, String(src.description || '').slice(0, 500), newId],
+      );
+    }
+
+    // Recorded on the copy so its origin is never a guess -- a replicated order is otherwise
+    // indistinguishable from one keyed by hand.
+    await logAudit(conn, {
+      id: newId, userId: req.user.id, eventType: 'Created',
+      fieldName: 'nstdjo_no', newValue: `${nstdjoNo} (replicated from ${src.nstdjo_no})`,
+    });
+    await conn.commit();
+    res.status(201).json({
+      id: newId, nstdjo_no: nstdjoNo, replicated_from: src.nstdjo_no,
+      status: INITIAL_STATUS, sub_status: initialSubStatus, lines: mats.length,
+    });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally { conn.release(); }
+});
+
+
+// Approve several job orders in one go.
+//
+// Deliberately ONE endpoint covering both gates rather than one per gate. An approver looking
+// at the list sees a single queue of "things waiting on me" -- some sitting at SBU Approval,
+// some at Sales Approval -- and asking them to sort their own selection into two piles by a
+// distinction the list barely shows is a good way to get the wrong button pressed. Each order
+// is approved through whichever gate its own sub_status calls for, with that gate's own
+// authorisation checked on that order.
+//
+// Each order commits in its OWN transaction. One rejected order must not undo the approvals of
+// the others -- a batch that silently rolls back nineteen good approvals because the twentieth
+// was already cancelled is far worse than a batch that reports one failure. Nothing is skipped
+// silently: every id comes back either approved or with the reason it was not.
+const MAX_BULK_APPROVE = 100;
+
+router.post('/bulk-approve', requireAuth, async (req, res, next) => {
+  try {
+    // Positive integers only. Number(null) is 0 and Number([]) is 0, both of which pass
+    // Number.isInteger -- so a selection of junk would arrive as a request to approve order 0
+    // rather than as the empty selection it actually is.
+    const ids = Array.isArray(req.body?.ids)
+      ? [...new Set(req.body.ids.map(Number).filter((n) => Number.isInteger(n) && n > 0))]
+      : [];
+    if (!ids.length) return res.status(400).json({ error: 'Select at least one job order to approve.' });
+    if (ids.length > MAX_BULK_APPROVE) {
+      return res.status(400).json({ error: `Approve at most ${MAX_BULK_APPROVE} job orders at a time.` });
+    }
+
+    // Whether this user holds page-level approval rights, which is what the Sales gate tests.
+    // Read once rather than per order -- it cannot change mid-batch.
+    const [[page]] = await pool.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
+    const [[perm]] = await pool.query(
+      'SELECT can_approve AS allowed FROM user_page_permissions WHERE user_id = ? AND page_id = ?',
+      [req.user.id, page?.id],
+    );
+    const canApproveSales = !!perm?.allowed;
+
+    const approved = [];
+    const skipped = [];
+
+    for (const id of ids) {
+      const conn = await pool.getConnection();
+      try {
+        const [[row]] = await conn.query(
+          `SELECT id, nstdjo_no, status, sub_status, approved_at, artist_employee_id, created_by_user_id
+             FROM non_standard_job_orders WHERE id = ?`,
+          [id],
+        );
+        if (!row) { skipped.push({ id, nstdjo_no: null, reason: 'No longer exists.' }); continue; }
+        const ref = { id, nstdjo_no: row.nstdjo_no };
+        if (row.status === CANCELLED_STATUS) { skipped.push({ ...ref, reason: 'Cancelled.' }); continue; }
+
+        if (row.sub_status === SUB_SBU_APPROVAL) {
+          if (row.approved_at) { skipped.push({ ...ref, reason: 'Already approved.' }); continue; }
+          const [[isApprover]] = await conn.query(
+            'SELECT 1 AS x FROM non_standard_job_order_approvers WHERE non_standard_job_order_id = ? AND user_id = ?',
+            [id, req.user.id],
+          );
+          if (!isApprover) { skipped.push({ ...ref, reason: 'You are not a designated approver for this one.' }); continue; }
+
+          await conn.beginTransaction();
+          await conn.query(
+            'UPDATE non_standard_job_orders SET approved_by_user_id = ?, approved_at = NOW(), sub_status = ?, updated_at = NOW() WHERE id = ?',
+            [req.user.id, SUB_SBU_APPROVED, id],
+          );
+          await conn.query(
+            `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
+             VALUES (?, 'nstdjo_approved', ?, ?, 'NonStandardJobOrder', ?)`,
+            [row.created_by_user_id, `${row.nstdjo_no} has been approved`,
+              `Your non-standard job order ${row.nstdjo_no} is approved and can now be forwarded to the Design Supervisor.`, id],
+          );
+          await logAudit(conn, { id, userId: req.user.id, eventType: 'Approved', fieldName: 'approved_at', newValue: 'approved' });
+          await logAudit(conn, {
+            id, userId: req.user.id, eventType: 'Status Change',
+            fieldName: 'sub_status', oldValue: row.sub_status, newValue: SUB_SBU_APPROVED,
+          });
+          await conn.commit();
+          approved.push({ ...ref, gate: 'SBU', status: row.status, sub_status: SUB_SBU_APPROVED });
+          continue;
+        }
+
+        if (row.sub_status === SUB_SALES_APPROVAL) {
+          if (!canApproveSales) { skipped.push({ ...ref, reason: 'You do not have approval rights on this page.' }); continue; }
+
+          await conn.beginTransaction();
+          await conn.query(
+            'UPDATE non_standard_job_orders SET status = ?, sub_status = ?, updated_at = NOW() WHERE id = ?',
+            [COMPLETED_STATUS, SUB_APPROVED, id],
+          );
+          await logAudit(conn, {
+            id, userId: req.user.id, eventType: 'Approved',
+            fieldName: 'status', oldValue: row.status, newValue: COMPLETED_STATUS,
+          });
+          await logAudit(conn, {
+            id, userId: req.user.id, eventType: 'Status Change',
+            fieldName: 'sub_status', oldValue: row.sub_status, newValue: SUB_APPROVED,
+          });
+          await conn.commit();
+          approved.push({ ...ref, gate: 'Sales', status: COMPLETED_STATUS, sub_status: SUB_APPROVED });
+          continue;
+        }
+
+        skipped.push({ ...ref, reason: `Not awaiting approval (${row.sub_status}).` });
+      } catch (err) {
+        await conn.rollback();
+        // One order failing is reported against that order; the rest of the batch continues.
+        skipped.push({ id, nstdjo_no: null, reason: err.sqlMessage || err.message || 'Could not be approved.' });
+      } finally { conn.release(); }
+    }
+
+    res.json({ approved, skipped, requested: ids.length });
   } catch (err) { next(err); }
 });
 

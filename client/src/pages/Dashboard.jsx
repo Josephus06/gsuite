@@ -222,7 +222,7 @@ function RoleDashboard() {
       {data.role === 'admin' && <AdminDashboard data={data} user={user} navigate={navigate} />}
       {data.role === 'design_supervisor' && <DesignSupervisorDashboard data={data} user={user} navigate={navigate} />}
       {data.role === 'artist' && <ArtistDashboard data={data} user={user} navigate={navigate} />}
-      {!['admin', 'design_supervisor', 'artist'].includes(data.role) && <SalesDashboard data={data} user={user} />}
+      {!['admin', 'design_supervisor', 'artist'].includes(data.role) && <SalesDashboard data={data} user={user} navigate={navigate} />}
     </div>
   );
 }
@@ -320,8 +320,27 @@ function AdminDashboard({ data, user, navigate }) {
   );
 }
 
-function SalesDashboard({ data, user }) {
+function SalesDashboard({ data, user, navigate }) {
   const { summary, byRep, role } = data;
+
+  // Pages on its own, like the artist calendar, so changing month is one small request rather
+  // than rebuilding every figure on the dashboard.
+  const [month, setMonth] = useState(data.calendarMonth);
+  const [calendar, setCalendar] = useState(data.calendar || []);
+  const [calLoading, setCalLoading] = useState(false);
+
+  async function loadMonth(ym) {
+    setCalLoading(true);
+    try {
+      const { data: d } = await api.get('/dashboard/sales-calendar', { params: { month: ym } });
+      setMonth(d.month);
+      setCalendar(d.calendar || []);
+    } catch {
+      // Leave the month showing what it had rather than blanking the calendar on a hiccup.
+    } finally {
+      setCalLoading(false);
+    }
+  }
   const pipelineSegments = summary.pipeline.map((p) => ({ label: p.status.replaceAll('_', ' '), value: p.count, color: PIPELINE_COLORS[p.status] || '#8d90c4' }));
   const pipelineTotal = summary.pipeline.reduce((s, p) => s + p.count, 0);
   const activity = summary.pipeline.map((p) => ({
@@ -341,24 +360,25 @@ function SalesDashboard({ data, user }) {
       <div className="dash-main-grid">
         <ProfileCard user={user} roleLabel={ROLE_LABELS[role] || role} rings={summary.rings} activity={activity} />
         <div className="holo-card dash-chart-card">
-          <h3>KPI · Win Rate &amp; Weighted Sales Trend</h3>
-          <div className="holo-tile-dark">
-            <Holo3DOrb value={summary.kpi.winRate} max={100} color="var(--holo-cyan)" sub="win rate" />
-            <div style={{ display: 'flex', gap: 24, marginTop: 14, fontSize: 12.5 }}>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ color: 'var(--holo-text-dim)' }}>Estimates Created</div>
-                <div style={{ fontWeight: 700, color: '#fff' }}>{summary.kpi.estimatesCreated}</div>
-              </div>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ color: 'var(--holo-text-dim)' }}>Approved</div>
-                <div style={{ fontWeight: 700, color: '#fff' }}>{summary.kpi.estimatesApproved}</div>
-              </div>
-            </div>
-            <div style={{ padding: '10px 0', display: 'flex', justifyContent: 'center' }}>
-              <Holo3DBars data={summary.trend} color="#22d3ee" width={260} height={90} labels={last6MonthLabels()} />
-            </div>
-            <div className="holo-sub" style={{ textAlign: 'center' }}>Last 6 months, sales orders created</div>
-          </div>
+          <h3>Scheduled JO / NSTDJO</h3>
+          {/* Jobs sit on their delivery date -- what the rep promised the customer -- not on
+              the artist's layout schedule. Clicking a chip opens the document itself rather
+              than the artist's run screen, which sales has no business driving. */}
+          <ScheduleCalendar
+            month={month}
+            jobs={calendar}
+            loading={calLoading}
+            onMonth={loadMonth}
+            navigate={navigate}
+            pathFor={(j) => (j.kind === 'NSTDJO' ? `/non-standard-job-orders/${j.id}` : `/job-orders/${j.id}`)}
+            tooltipFor={(j) => [
+              j.jobOrderNo,
+              j.customerName || '—',
+              j.anchor === 'delivery' ? `Delivery ${String(j.day)}` : `No delivery date — planned start ${String(j.day)}`,
+              j.subStatus || j.status,
+              j.artistName ? `Artist: ${j.artistName}` : 'No artist assigned',
+            ].join(' · ')}
+          />
         </div>
       </div>
 
@@ -534,7 +554,7 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
 // Days are keyed by the plain YYYY-MM-DD the server sends, never by parsing it into a Date and
 // reading it back: at UTC+8 `new Date('2026-08-01')` is 8am local, and formatting it in another
 // timezone slides the job onto the previous day.
-function ScheduleCalendar({ month, jobs, loading, onMonth, navigate }) {
+function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, tooltipFor }) {
   const [year, monthNo] = String(month || '').split('-').map(Number);
   const valid = Number.isFinite(year) && Number.isFinite(monthNo);
   const first = valid ? new Date(year, monthNo - 1, 1) : new Date();
@@ -592,14 +612,18 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate }) {
                 const state = j.done ? 'Completed' : j.running ? 'Running' : 'Not Started';
                 // A Job Order and a Non-Standard Job Order can share an id, so the key has to
                 // carry the kind -- and each has its own run screen to open.
-                const runPath = j.kind === 'NSTDJO' ? `/assigned-jo/nstdjo/${j.id}` : `/assigned-jo/${j.id}`;
+                const runPath = pathFor
+                  ? pathFor(j)
+                  : (j.kind === 'NSTDJO' ? `/assigned-jo/nstdjo/${j.id}` : `/assigned-jo/${j.id}`);
                 return (
                   <button
                     key={`${j.kind || 'JO'}-${j.id}`}
                     type="button"
                     className="artist-calendar-chip"
                     style={TIMER_STATUS_STYLE[state]}
-                    title={`${j.jobOrderNo} · ${j.customerName || '—'} · ${state} · Planned ${formatDateTime(j.plannedStartAt)} → ${formatDateTime(j.plannedEndAt)}`}
+                    title={tooltipFor
+                      ? tooltipFor(j)
+                      : `${j.jobOrderNo} · ${j.customerName || '—'} · ${state} · Planned ${formatDateTime(j.plannedStartAt)} → ${formatDateTime(j.plannedEndAt)}`}
                     onClick={() => navigate(runPath)}
                   >
                     {j.jobOrderNo}

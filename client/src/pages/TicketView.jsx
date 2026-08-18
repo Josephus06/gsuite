@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import EntityPicker from '../components/EntityPicker';
+import TicketAttachments from '../components/TicketAttachments';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 const STATUS_LABELS = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Closed' };
@@ -230,6 +231,10 @@ export default function TicketView() {
           </div>
         )}
       </div>
+
+      {/* Above the conversation rather than below it: the picture is usually the point of
+          the ticket, and burying it under a thread means it is read last. */}
+      <TicketAttachments ticketId={id} currentUserId={user?.id} isAdmin={user?.account_type === 'System Admin'} />
 
       <div className="card">
         <h3 style={{ marginTop: 0 }}>Conversation</h3>

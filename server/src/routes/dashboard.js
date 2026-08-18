@@ -526,7 +526,8 @@ async function artistMetrics(employeeId) {
     const [[n]] = await pool.query(
       `SELECT COUNT(*) AS count, COALESCE(SUM(layout_started_at IS NULL), 0) AS not_started
          FROM non_standard_job_orders
-        WHERE artist_employee_id = ? AND status = ? AND sub_status = 'For Artist'`,
+        WHERE artist_employee_id = ? AND status = ?
+          AND sub_status IN ('For Artist', 'For Artist (Revision)')`,
       [employeeId, NSTDJO_ACTIVE_STATUS]
     );
     activeNstdjo = Number(n.count || 0);
@@ -598,6 +599,89 @@ async function artistMetrics(employeeId) {
   };
 }
 
+// The sales equivalent of artistCalendar. Two things differ, and both follow from who is
+// looking at it.
+//
+// FIRST, the anchor date. The artist's calendar sits jobs on planned_start_at -- the day they
+// are meant to pick the work up. A sales rep is not doing the layout; what they carry is what
+// they promised the customer, so a job sits on its DELIVERY date. Anchoring their calendar on
+// the layout schedule would show them a month that answers a question they were not asking.
+// Where a job has no delivery date yet, it falls back to the planned start rather than
+// disappearing from the month altogether -- an invisible job order is the one failure mode a
+// calendar must not have -- and the chip says which date it is sitting on.
+//
+// SECOND, the scope. employeeIds comes from resolveScope, so an account officer sees their own
+// jobs and a supervisor or manager sees their team's, exactly as every other figure on this
+// dashboard is scoped. There is no rep parameter to point somewhere else.
+async function salesCalendar(employeeIds, monthStart, monthEnd) {
+  if (!employeeIds.length) return [];
+  const placeholders = employeeIds.map(() => '?').join(', ');
+
+  const [rows] = await pool.query(
+    `SELECT jo.id, jo.job_order_no, jo.description, jo.status, jo.sub_status,
+            jo.delivery_date, jo.planned_start_at, jo.planned_end_at, jo.layout_ended_at,
+            c.name AS customer_name,
+            CONCAT(a.first_name, ' ', a.last_name) AS artist_name
+       FROM job_orders jo
+       LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
+       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN employees a ON a.id = jo.artist_id
+      WHERE jo.sales_rep_id IN (${placeholders})
+        AND COALESCE(jo.delivery_date, jo.planned_start_at) >= ?
+        AND COALESCE(jo.delivery_date, jo.planned_start_at) < ?
+      ORDER BY COALESCE(jo.delivery_date, jo.planned_start_at)`,
+    [...employeeIds, monthStart, monthEnd],
+  );
+
+  // Same guard artistCalendar uses -- the NSTDJO tables are not present in every build, and a
+  // missing table must degrade to a Job-Orders-only calendar rather than take the dashboard down.
+  let nstdjoRows = [];
+  const [tbl] = await pool.query("SHOW TABLES LIKE 'non_standard_job_orders'");
+  if (tbl.length) {
+    [nstdjoRows] = await pool.query(
+      `SELECT n.id, n.nstdjo_no AS job_order_no, n.description, n.status, n.sub_status,
+              n.delivery_date, n.planned_start_at, n.planned_end_at, n.layout_ended_at,
+              c.name AS customer_name,
+              CONCAT(a.first_name, ' ', a.last_name) AS artist_name
+         FROM non_standard_job_orders n
+         LEFT JOIN customers c ON c.id = n.customer_id
+         LEFT JOIN employees a ON a.id = n.artist_employee_id
+        WHERE n.sales_rep_id IN (${placeholders})
+          AND COALESCE(n.delivery_date, n.planned_start_at) >= ?
+          AND COALESCE(n.delivery_date, n.planned_start_at) < ?
+        ORDER BY COALESCE(n.delivery_date, n.planned_start_at)`,
+      [...employeeIds, monthStart, monthEnd],
+    );
+  }
+
+  const shape = (kind) => (r) => {
+    const anchor = r.delivery_date || r.planned_start_at;
+    return {
+      id: r.id,
+      kind,
+      jobOrderNo: r.job_order_no,
+      description: r.description,
+      status: r.status,
+      subStatus: r.sub_status,
+      customerName: r.customer_name,
+      artistName: r.artist_name,
+      deliveryDate: r.delivery_date,
+      plannedStartAt: r.planned_start_at,
+      plannedEndAt: r.planned_end_at,
+      // Which date this chip is actually sitting on, so the tooltip can say so rather than
+      // leaving the rep to guess why a job is on the day it is.
+      anchor: r.delivery_date ? 'delivery' : 'planned',
+      done: !!r.layout_ended_at,
+      // Sliced off the string rather than parsed into a Date: at UTC+8 a DATE column read back
+      // through new Date() lands at 08:00 and can format onto the previous day.
+      day: anchor ? String(anchor).slice(0, 10) : null,
+    };
+  };
+
+  return [...rows.map(shape('JO')), ...nstdjoRows.map(shape('NSTDJO'))]
+    .sort((a, b) => String(a.day || '').localeCompare(String(b.day || '')));
+}
+
 router.get('/', requireAuth, async (req, res, next) => {
   try {
     const scope = await resolveScope(req.user.id);
@@ -628,7 +712,12 @@ router.get('/', requireAuth, async (req, res, next) => {
       })));
     }
 
-    res.json({ role: scope.role, summary, byRep });
+    // The dashboard opens on the current month; the calendar pages from the client via
+    // GET /dashboard/sales-calendar without refetching every figure on the screen.
+    const bounds = monthBounds(null);
+    const calendar = await salesCalendar(scope.employeeIds, bounds.start, bounds.end);
+
+    res.json({ role: scope.role, summary, byRep, calendar, calendarMonth: bounds.month });
   } catch (err) {
     next(err);
   }
@@ -652,6 +741,20 @@ router.get('/artist-calendar', requireAuth, async (req, res, next) => {
     return res.json({
       month: bounds.month, calendar, incentive: incentive.amount, incentiveJobs: incentive.jobs,
     });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// Lets the sales dashboard's calendar page to another month on its own. Scoped through
+// resolveScope exactly as the dashboard itself is, so paging the calendar can never widen what
+// a rep is allowed to see.
+router.get('/sales-calendar', requireAuth, async (req, res, next) => {
+  try {
+    const scope = await resolveScope(req.user.id);
+    const bounds = monthBounds(req.query.month);
+    const calendar = await salesCalendar(scope.employeeIds || [], bounds.start, bounds.end);
+    return res.json({ month: bounds.month, calendar });
   } catch (err) {
     return next(err);
   }

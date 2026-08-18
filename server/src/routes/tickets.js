@@ -438,4 +438,164 @@ router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async
   }
 });
 
+
+// ---------------------------------------------------------------------------------------
+// Ticket attachments -- the screenshot or scanned document behind the complaint
+// ---------------------------------------------------------------------------------------
+//
+// A ticket is usually about something the person can see. Uploads are base64 in a JSON body,
+// matching /job-orders/:id/attachments -- there is no multipart handler on this server, and
+// index.js mounts a larger body parser on this one path to fit them.
+//
+// The 10MB cap is deliberate: these rows live in the database, so an unbounded upload grows
+// the same volume every other write shares.
+const MAX_TICKET_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+// Images and PDFs only, and the file's OWN BYTES decide -- not the browser's Content-Type,
+// which is attacker-chosen and in any case merely a guess taken from the file extension.
+// Renaming payload.exe to shot.png would otherwise be enough to get it into the ticket queue
+// for the next person to open.
+const MAGIC = [
+  { mime: 'application/pdf', bytes: [0x25, 0x50, 0x44, 0x46] },                  // %PDF
+  { mime: 'image/png', bytes: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] },
+  { mime: 'image/jpeg', bytes: [0xff, 0xd8, 0xff] },
+  { mime: 'image/gif', bytes: [0x47, 0x49, 0x46, 0x38] },                        // GIF8
+  { mime: 'image/bmp', bytes: [0x42, 0x4d] },                                    // BM
+];
+
+// WEBP and HEIC carry their marker after a 4-byte length field rather than at offset 0, so
+// they are matched on the container tag instead of a flat prefix.
+function sniff(buf) {
+  for (const { mime, bytes } of MAGIC) {
+    if (buf.length >= bytes.length && bytes.every((b, i) => buf[i] === b)) return mime;
+  }
+  if (buf.length >= 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') {
+    return 'image/webp';
+  }
+  if (buf.length >= 12 && buf.toString('ascii', 4, 8) === 'ftyp' && /^(heic|heix|hevc|mif1|msf1)/.test(buf.toString('ascii', 8, 12))) {
+    return 'image/heic';
+  }
+  return null;
+}
+
+// Anyone who can see the ticket can attach to it and read what is attached. That is the same
+// test the conversation itself uses -- an attachment is part of the conversation, and a
+// ticket you may read but whose evidence you may not is of no use to anybody.
+async function ticketIVisible(userId, ticketId) {
+  const { sql, params } = await ticketVisibilityClause(userId);
+  const [[row]] = await pool.query(`SELECT t.id FROM tickets t WHERE t.id = ? AND ${sql}`, [ticketId, ...params]);
+  return !!row;
+}
+
+// Metadata only -- the blobs would make the ticket view's payload enormous for no benefit.
+router.get('/:id/attachments', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await ticketIVisible(req.user.id, req.params.id))) return res.status(404).json({ error: 'Not found' });
+    const [rows] = await pool.query(
+      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.uploaded_by_user_id,
+              u.display_name AS uploaded_by_name
+         FROM ticket_attachments a
+         LEFT JOIN users u ON u.id = a.uploaded_by_user_id
+        WHERE a.ticket_id = ?
+        ORDER BY a.created_at ASC, a.id ASC`,
+      [req.params.id],
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+router.post('/:id/attachments', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await ticketIVisible(req.user.id, req.params.id))) return res.status(404).json({ error: 'Not found' });
+
+    const { file_name: fileName, data } = req.body || {};
+    if (!fileName || !data) return res.status(400).json({ error: 'file_name and data are required.' });
+
+    // Accepts either a bare base64 string or a full data: URL, since the browser's FileReader
+    // hands back the latter.
+    const base64 = String(data).includes(',') ? String(data).split(',').pop() : String(data);
+    let buf;
+    try {
+      buf = Buffer.from(base64, 'base64');
+    } catch {
+      return res.status(400).json({ error: 'data is not valid base64.' });
+    }
+    if (!buf.length) return res.status(400).json({ error: 'That file is empty.' });
+    if (buf.length > MAX_TICKET_UPLOAD_BYTES) {
+      return res.status(413).json({ error: `Files must be ${MAX_TICKET_UPLOAD_BYTES / 1024 / 1024}MB or smaller.` });
+    }
+
+    // The stored type is the one read off the bytes, never the one the browser claimed, so
+    // what gets served back later is what the file actually is.
+    const detected = sniff(buf);
+    if (!detected) {
+      return res.status(415).json({ error: 'Only images (PNG, JPEG, GIF, BMP, WEBP, HEIC) and PDF files can be attached.' });
+    }
+
+    const [result] = await pool.query(
+      `INSERT INTO ticket_attachments (ticket_id, file_name, mime_type, size_bytes, file_data, uploaded_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [req.params.id, String(fileName).slice(0, 255), detected, buf.length, buf, req.user.id],
+    );
+    // Bumped so a ticket with a new attachment sorts as recently active, exactly as a new
+    // message does -- otherwise adding the evidence someone asked for leaves the ticket
+    // looking untouched.
+    await pool.query('UPDATE tickets SET updated_at = NOW() WHERE id = ?', [req.params.id]);
+
+    const [[row]] = await pool.query(
+      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.uploaded_by_user_id,
+              u.display_name AS uploaded_by_name
+         FROM ticket_attachments a LEFT JOIN users u ON u.id = a.uploaded_by_user_id
+        WHERE a.id = ?`,
+      [result.insertId],
+    );
+    res.status(201).json(row);
+  } catch (err) { next(err); }
+});
+
+router.get('/:id/attachments/:attachmentId/file', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await ticketIVisible(req.user.id, req.params.id))) return res.status(404).json({ error: 'Not found' });
+    const [[row]] = await pool.query(
+      'SELECT file_name, mime_type, file_data FROM ticket_attachments WHERE id = ? AND ticket_id = ?',
+      [req.params.attachmentId, req.params.id],
+    );
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
+    // Only ever images and PDFs get here, both of which the browser renders, so they open in
+    // a tab rather than downloading.
+    res.setHeader('Content-Disposition', `inline; filename="${String(row.file_name).replace(/"/g, '')}"`);
+    // The type was decided from the file's own bytes on upload, but nosniff costs nothing and
+    // stops a browser second-guessing it.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.send(row.file_data);
+  } catch (err) { next(err); }
+});
+
+// The person who attached it can take it back -- a wrong screenshot is a mistake anyone can
+// make, and having to ask an admin to undo it is out of proportion. A System Admin can remove
+// any of them. Nobody else can, including the person the ticket is assigned to: evidence
+// someone else attached is not theirs to delete.
+router.delete('/:id/attachments/:attachmentId', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await ticketIVisible(req.user.id, req.params.id))) return res.status(404).json({ error: 'Not found' });
+    const [[row]] = await pool.query(
+      'SELECT uploaded_by_user_id FROM ticket_attachments WHERE id = ? AND ticket_id = ?',
+      [req.params.attachmentId, req.params.id],
+    );
+    if (!row) return res.status(404).json({ error: 'Not found' });
+
+    const [[me]] = await pool.query('SELECT account_type FROM users WHERE id = ?', [req.user.id]);
+    const mine = String(row.uploaded_by_user_id) === String(req.user.id);
+    if (!mine && me?.account_type !== 'System Admin') {
+      return res.status(403).json({ error: 'Only the person who attached this file, or a System Admin, can remove it.' });
+    }
+
+    const [r] = await pool.query('DELETE FROM ticket_attachments WHERE id = ? AND ticket_id = ?',
+      [req.params.attachmentId, req.params.id]);
+    if (!r.affectedRows) return res.status(404).json({ error: 'Not found' });
+    res.status(204).send();
+  } catch (err) { next(err); }
+});
+
 module.exports = router;

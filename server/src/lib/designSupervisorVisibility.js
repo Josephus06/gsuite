@@ -13,7 +13,7 @@ const pool = require('../db');
 //            accounts).
 //   true  -> caller should add the DESIGN_QUEUE_STATUS/DESIGN_QUEUE_SUB_STATUSES filter.
 const DESIGN_QUEUE_STATUS = 'Planned - Pending for BOM';
-const DESIGN_QUEUE_SUB_STATUSES = ['For Design Supervisor', 'For Artist'];
+const DESIGN_QUEUE_SUB_STATUSES = ['For Design Supervisor', 'For Artist', 'For Artist (Revision)'];
 
 async function isScopedToDesignQueue(userId) {
   const [[user]] = await pool.query('SELECT account_type, is_design_supervisor FROM users WHERE id = ?', [userId]);

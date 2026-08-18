@@ -64,7 +64,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN customers c ON c.id = n.customer_id
        LEFT JOIN pms_job_types pjt ON pjt.id = n.layout_job_type_id
        WHERE n.artist_employee_id = ?
-         AND n.status = 'Planned - Pending for BOM' AND n.sub_status = 'For Artist'
+         AND n.status = 'Planned - Pending for BOM'
+         AND n.sub_status IN ('For Artist', 'For Artist (Revision)')
        ORDER BY n.id DESC`,
       [me.employee_id]
     );
@@ -114,6 +115,7 @@ router.get('/nstdjo/:id', requireAuth, requirePermission(ROUTE, 'can_view'), asy
       `SELECT n.id, n.nstdjo_no AS job_order_no, n.status, n.sub_status, n.description, n.quantity,
               n.planned_start_at, n.planned_end_at, n.layout_started_at, n.layout_ended_at, n.layout_qty,
               n.artist_employee_id, c.name AS customer_name, n.job_type,
+              n.sales_revision_count, n.last_revision_at, n.last_revision_note,
               pjt.id AS pms_job_type_id, pjt.code AS pms_job_type_code, pjt.display_name AS pms_job_type_name,
               pjt.minutes_consume
          FROM non_standard_job_orders n
@@ -140,7 +142,7 @@ router.put('/nstdjo/:id/start-layout', requireAuth, requirePermission(ROUTE, 'ca
     await conn.beginTransaction();
     const { row, error } = await getOwnedNstdjo(conn, req.params.id, req.user.id);
     if (error) { await conn.rollback(); return res.status(error[0]).json({ error: error[1] }); }
-    if (row.sub_status !== 'For Artist') {
+    if (row.sub_status !== 'For Artist' && row.sub_status !== 'For Artist (Revision)') {
       await conn.rollback();
       return res.status(409).json({ error: 'This Non-Standard Job Order is not ready for layouting.' });
     }

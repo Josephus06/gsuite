@@ -186,12 +186,18 @@ export default function AssignedJobOrderRun({ kind = 'JO' }) {
         {/* Once a Non-Standard Job Order's layout is done, the artist hands it to Sales
             from here -- they work in this screen and may not have rights on the NSTDJO
             page itself. Job Orders keep offering this from the Job Order view instead. */}
-        {jo.kind === 'NSTDJO' && isCompleted && jo.sub_status === 'For Artist' && (
+        {jo.kind === 'NSTDJO' && isCompleted && (jo.sub_status === 'For Artist' || jo.sub_status === 'For Artist (Revision)') && (
           <div style={{ marginTop: 16 }}>
             <button type="button" className="btn btn-primary" disabled={busy} onClick={sendForSalesApproval}>
               Sales Approval
             </button>
             <div className="muted" style={{ marginTop: 6 }}>Sends this layout to Sales for sign-off.</div>
+          </div>
+        )}
+        {jo.kind === 'NSTDJO' && jo.sub_status === 'For Artist (Revision)' && jo.last_revision_note && (
+          <div className="error-banner" style={{ marginTop: 16 }}>
+            <strong>Sales asked for a revision</strong>
+            <div style={{ marginTop: 4 }}>{jo.last_revision_note}</div>
           </div>
         )}
         {jo.kind === 'NSTDJO' && jo.sub_status === 'Sales Approval' && (

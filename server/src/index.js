@@ -117,7 +117,9 @@ app.use(cors({
 // parser below then sees req._body already set and skips the request.
 const attachmentUploadJson = express.json({ limit: '14mb' });
 app.use((req, res, next) => (
-  req.method === 'POST' && /^\/api\/job-orders\/\d+\/attachments\/?$/.test(req.path)
+  req.method === 'POST'
+    && (/^\/api\/job-orders\/\d+\/attachments\/?$/.test(req.path)
+      || /^\/api\/tickets\/\d+\/attachments\/?$/.test(req.path))
     ? attachmentUploadJson(req, res, next)
     : next()
 ));
