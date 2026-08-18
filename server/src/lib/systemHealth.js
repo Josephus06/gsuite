@@ -139,9 +139,19 @@ async function replicationHealth() {
       error: r.ioError || r.sqlError || null,
     }));
     return { configured: true, channels, healthy: channels.every((c) => c.healthy) };
-  } catch {
-    // performance_schema can be disabled; that is a configuration choice, not an outage.
-    return { configured: false, channels: [], unavailable: true };
+  } catch (err) {
+    // A denial is NOT the same as having no replication, and conflating them is dangerous: the
+    // page would confidently report "not configured" on a server that is replicating fine, so a
+    // real break would look identical to a standalone install. Say which it is.
+    const denied = /denied|access/i.test(err.message || '');
+    return {
+      configured: false,
+      channels: [],
+      unreadable: true,
+      reason: denied
+        ? 'The application database user cannot read replication status. Grant it REPLICATION CLIENT and SELECT on performance_schema.'
+        : 'Replication status is unavailable: ' + (err.message || 'unknown error'),
+    };
   }
 }
 

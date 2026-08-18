@@ -133,10 +133,17 @@ export default function SystemHealth() {
         <div className="card">
           <h3>Replication</h3>
           {!rep.configured ? (
-            <p className="muted" style={{ margin: 0 }}>
-              This server is not part of a replication pair. That is not a fault — a standalone
-              install has nothing to replicate with.
-            </p>
+            // Two very different situations, so they must not read the same. Unreadable means we
+            // are blind and cannot say whether replication is healthy; not configured means there
+            // is genuinely nothing to report.
+            rep.unreadable ? (
+              <p style={{ margin: 0, color: '#b45309' }}>Cannot read replication status — {rep.reason}</p>
+            ) : (
+              <p className="muted" style={{ margin: 0 }}>
+                This server is not part of a replication pair. That is not a fault — a standalone
+                install has nothing to replicate with.
+              </p>
+            )
           ) : (
             <>
               <div style={{ marginBottom: 10 }}>
