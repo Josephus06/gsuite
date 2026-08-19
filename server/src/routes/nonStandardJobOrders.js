@@ -135,6 +135,17 @@ router.get('/contacts', requireAuth, requirePermission(ROUTE, 'can_view'), async
   } catch (err) { next(err); }
 });
 
+// The SBU tabs on their own, deliberately NOT part of /meta. /meta carries the form's whole
+// reference set -- 21k customers and 6.5k items on the live database -- so a tab strip reading
+// from it does not render until megabytes have arrived. That made the tabs look missing on a
+// first visit and appear on the second, once the browser had the payload cached.
+router.get('/meta/sbu-groups', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const scope = await getSbuScope(req.user.id);
+    res.json({ groups: scope ? scope.groups.map((g) => ({ index: g.index, label: g.label, name: g.displayName })) : [] });
+  } catch (err) { next(err); }
+});
+
 // Add a contact person without leaving the NSTDJO form. Writes to customer_contacts, the
 // same table Master Lists > Customer reads, so a contact added here is immediately part of
 // that customer's details rather than a copy local to this order.

@@ -82,8 +82,21 @@ export default function NonStandardJobOrders() {
 
   useEffect(() => { load(); }, [page, sbuTab, approvalTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // A search always starts from page 1. setPage is async, so calling load() straight after it
+  // would fetch with the page we are LEAVING -- searching from page 4 would request page 4 of
+  // the new result set and come back empty. When the page actually changes, the effect above
+  // does the fetch; only when we are already on page 1 does this have to fetch itself.
+  function runSearch() {
+    if (page === 1) load();
+    else setPage(1);
+  }
+
+  // Its own endpoint rather than /meta: /meta carries the form's entire reference set (21k
+  // customers, 6.5k items), so reading the tabs from it left them unrendered until all of
+  // that had downloaded -- which looked like the tabs were missing on a first visit and
+  // present on the second, once the browser had it cached.
   useEffect(() => {
-    api.get(`${ROUTE}/meta`).then(({ data }) => setSbuGroups(data.sbuGroups || []));
+    api.get(`${ROUTE}/meta/sbu-groups`).then(({ data }) => setSbuGroups(data.groups || []));
   }, []);
 
   return (
@@ -98,7 +111,7 @@ export default function NonStandardJobOrders() {
               </button>{' '}
             </>
           )}
-          <button className="btn btn-sm" onClick={() => { setPage(1); load(); }}>Search</button>{' '}
+          <button className="btn btn-sm" onClick={runSearch}>Search</button>{' '}
           <button className="btn btn-primary" onClick={() => setOpen(true)}>Add New</button>
         </div>
       </div>
@@ -140,7 +153,18 @@ export default function NonStandardJobOrders() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="field">
           <label>General Searching</label>
-          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="JO #, customer, or job description" />
+          {/* Enter searches. The field is not inside a <form>, so without this the key does
+              nothing and the only way to search is the button in the header. */}
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter') return;
+              event.preventDefault();
+              runSearch();
+            }}
+            placeholder="JO #, customer, or job description"
+          />
         </div>
       </div>
 
