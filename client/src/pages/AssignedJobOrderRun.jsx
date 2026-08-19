@@ -40,8 +40,15 @@ export default function AssignedJobOrderRun({ kind = 'JO' }) {
   // timer -- so Done asks before it fires rather than acting on the first click.
   const [confirmDone, setConfirmDone] = useState(false);
 
+  // A failed load has to clear `loading` too. Without the catch this returned a spinner
+  // that never resolved -- which is what an artist saw for every assigned NSTDJO while the
+  // sales-revision columns were missing from the database: a 500 on every attempt, and a
+  // screen that simply span. A visible error is worth more than a hidden one.
   function load() {
-    return api.get(basePath).then(({ data }) => { setJo(data); setLoading(false); });
+    return api.get(basePath)
+      .then(({ data }) => { setJo(data); })
+      .catch((err) => { setError(err.response?.data?.error || 'Could not open this job order.'); })
+      .finally(() => setLoading(false));
   }
 
   useEffect(() => { load(); }, [id, kind]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -90,7 +97,20 @@ export default function AssignedJobOrderRun({ kind = 'JO' }) {
     }
   }
 
-  if (loading || !jo) return <LoadingSpinner />;
+  if (loading) return <LoadingSpinner />;
+  // Loaded, but there is nothing to show: say so, and leave a way back to the queue rather
+  // than stranding the artist on a blank screen.
+  if (!jo) {
+    return (
+      <div>
+        <div className="page-header"><h1>Assigned JO</h1></div>
+        <div className="card">
+          <div className="error-banner">{error || 'This job order could not be opened.'}</div>
+          <button className="btn" style={{ marginTop: 12 }} onClick={() => navigate('/assigned-jo')}>Back to Assigned JO</button>
+        </div>
+      </div>
+    );
+  }
 
   const sessions = jo.sessions || [];
   const closedSeconds = sessions
