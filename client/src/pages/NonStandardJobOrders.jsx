@@ -22,6 +22,10 @@ export default function NonStandardJobOrders() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
+  // SBU 1 / SBU 2 tabs. Empty list for anyone who is not an SBU, so the strip stays hidden
+  // for them; '' is the "both groups" tab an SBU lands on.
+  const [sbuGroups, setSbuGroups] = useState([]);
+  const [sbuTab, setSbuTab] = useState('');
 
   const canApproveSales = can(ROUTE, 'can_approve');
 
@@ -59,7 +63,7 @@ export default function NonStandardJobOrders() {
   }
 
   async function load() {
-    const { data } = await api.get(ROUTE, { params: { page, limit: 10, search } });
+    const { data } = await api.get(ROUTE, { params: { page, limit: 10, search, sbu: sbuTab || undefined } });
     setRows(data.rows);
     setTotal(data.total);
     // Selection is per page of results. Carrying ticks across a page change would let
@@ -67,7 +71,11 @@ export default function NonStandardJobOrders() {
     setSelected([]);
   }
 
-  useEffect(() => { load(); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [page, sbuTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    api.get(`${ROUTE}/meta`).then(({ data }) => setSbuGroups(data.sbuGroups || []));
+  }, []);
 
   return (
     <div>
@@ -87,6 +95,22 @@ export default function NonStandardJobOrders() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+
+      {/* Both SBUs see both groups -- these tabs separate whose group an order belongs to,
+          they do not grant or remove access. Hidden for everyone who is not an SBU. */}
+      {sbuGroups.length > 1 && (
+        <div className="status-tabs" style={{ marginBottom: 12, flexWrap: 'wrap' }}>
+          <button type="button" className={`status-tab ${sbuTab === '' ? 'active' : ''}`}
+            onClick={() => { setSbuTab(''); setPage(1); }}>All SBUs</button>
+          {sbuGroups.map((group) => (
+            <button key={group.index} type="button" title={group.name}
+              className={`status-tab ${String(sbuTab) === String(group.index) ? 'active' : ''}`}
+              onClick={() => { setSbuTab(String(group.index)); setPage(1); }}>
+              {group.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="field">

@@ -5,6 +5,7 @@ const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } 
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { getArtistEmployeeScope } = require('../lib/artistVisibility');
 const { notifyDesignSupervisors, notifyAssignedArtist } = require('../lib/designNotifications');
+const { getSbuScope, departmentIdsForTab } = require('../lib/sbuGroups');
 
 const router = express.Router();
 const ROUTE = '/non-standard-job-orders';
@@ -108,10 +109,14 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
       pool.query('SELECT id, code, title FROM units_of_measure WHERE is_active = TRUE ORDER BY code'),
       defaultBranch(req.user.id),
     ]);
+    const sbuScope = await getSbuScope(req.user.id);
     res.json({
       customers: customers[0], employees: employees[0], locations: locations[0], divisions: divisions[0],
       jobTypes: jobTypes[0], pmsJobTypes: pmsJobTypes[0], processes: processes[0], items: items[0], uoms: uoms[0],
       siteInspection: SITE_INSPECTION, defaults,
+      // Present only for an SBU -- the SBU 1 / SBU 2 tabs are theirs alone, since nobody
+      // else's visibility spans both groups.
+      sbuGroups: sbuScope ? sbuScope.groups.map((g) => ({ index: g.index, label: g.label, name: g.displayName })) : [],
     });
   } catch (err) { next(err); }
 });
@@ -188,9 +193,19 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     // every non-standard job order. Same rule Job Orders apply. That queue IS their whole
     // view of this module, so it replaces the sales-rep scope rather than stacking with
     // it; otherwise a supervisor who is also an account officer would see neither set.
+    const sbuScope = await getSbuScope(req.user.id);
     if (await isScopedToDesignQueue(req.user.id)) {
       conditions.push('n.status = ? AND n.sub_status IN (?)');
       params.push(DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES);
+    } else if (sbuScope) {
+      // An SBU sees BOTH SBU groups' orders, not just the divisions they own -- they
+      // approve each other's groups, and an approver who cannot find an order cannot
+      // approve it. The SBU 1 / SBU 2 tabs narrow this to one group; no tab means both.
+      // This replaces the sales-rep scope rather than stacking with it, the same way the
+      // design queue does above -- an SBU is also a supervisor, and intersecting the two
+      // would hand them back only their own reports.
+      conditions.push('n.sales_division_id IN (?)');
+      params.push(departmentIdsForTab(sbuScope, req.query.sbu));
     } else {
       // Otherwise a user sees their own orders; a Supervisor also sees their direct
       // reports'. Shared with Estimates/Sales Orders so "my transactions" means the same

@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { ticketVisibilityClause, canManageTicket, isGeneralManager } = require('../lib/ticketVisibility');
+const { getSbuScope, departmentIdsForTab } = require('../lib/sbuGroups');
 
 const router = express.Router();
 const ROUTE = '/tickets';
@@ -25,6 +26,18 @@ router.get('/meta/departments', requireAuth, async (req, res, next) => {
 // permission that GET /users requires. Minimal, non-sensitive fields only. A supervisor
 // can only assign within their own department, so this is always scoped to one --
 // department_id is required, not an optional filter.
+// Empty for everyone except an SBU, which is what hides the SBU 1 / SBU 2 tabs from
+// everyone else -- their visibility covers one group at most, so a tab strip would just be
+// two labels over the same rows.
+router.get('/meta/sbu-groups', requireAuth, async (req, res, next) => {
+  try {
+    const scope = await getSbuScope(req.user.id);
+    res.json({ groups: scope ? scope.groups.map((g) => ({ index: g.index, label: g.label, name: g.displayName })) : [] });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/meta/assignable-users', requireAuth, async (req, res, next) => {
   try {
     const { department_id: departmentId } = req.query;
@@ -59,12 +72,22 @@ const APPROVAL_SELECT = `
 
 router.get('/', requireAuth, async (req, res, next) => {
   try {
-    const { status, department_id: departmentId } = req.query;
-    const { sql: visSql, params: visParams } = await ticketVisibilityClause(req.user.id);
+    const { status, department_id: departmentId, sbu } = req.query;
+    const { sql: visSql, params: visParams, sbuScope } = await ticketVisibilityClause(req.user.id);
     const where = [visSql];
     const params = [...visParams];
     if (status && STATUSES.includes(status)) { where.push('t.status = ?'); params.push(status); }
     if (departmentId) { where.push('t.department_id = ?'); params.push(departmentId); }
+    // SBU 1 / SBU 2 tab. Narrows within what the clause above already allows, so it can
+    // only ever subtract from this user's visibility, never add to it.
+    if (sbu && sbuScope) {
+      const ids = departmentIdsForTab(sbuScope, sbu);
+      where.push(
+        `EXISTS (SELECT 1 FROM users su JOIN employees se ON se.id = su.employee_id
+                  WHERE su.id = t.created_by_user_id AND se.department_id IN (${ids.map(() => '?').join(', ')}))`
+      );
+      params.push(...ids);
+    }
 
     const [rows] = await pool.query(
       `SELECT t.*, d.name AS department_name, cu.display_name AS created_by_name, au.display_name AS assigned_to_name,

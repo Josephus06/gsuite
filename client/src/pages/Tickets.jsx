@@ -25,6 +25,10 @@ export default function Tickets() {
   const [departments, setDepartments] = useState([]);
   const [usersByDept, setUsersByDept] = useState({});
   const [status, setStatus] = useState('');
+  // SBU 1 / SBU 2 tabs. The endpoint returns an empty list for anyone who is not an SBU,
+  // which is what keeps the strip hidden for them; '' is the "both groups" tab.
+  const [sbuGroups, setSbuGroups] = useState([]);
+  const [sbuTab, setSbuTab] = useState('');
   const [loading, setLoading] = useState(true);
 
   const headDepartmentIds = useMemo(
@@ -40,6 +44,7 @@ export default function Tickets() {
     setLoading(true);
     const params = {};
     if (status) params.status = status;
+    if (sbuTab) params.sbu = sbuTab;
     const [t, d] = await Promise.all([
       api.get('/tickets', { params }),
       api.get('/tickets/meta/departments'),
@@ -49,7 +54,11 @@ export default function Tickets() {
     setLoading(false);
   }
 
-  useEffect(() => { load(); }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [status, sbuTab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    api.get('/tickets/meta/sbu-groups').then(({ data }) => setSbuGroups(data.groups || []));
+  }, []);
 
   function canManage(row) {
     return isSystemAdminHead || headDepartmentIds.has(row.department_id);
@@ -177,6 +186,19 @@ export default function Tickets() {
       <div className="page-header">
         <h1>Tickets</h1>
       </div>
+
+      {/* Both SBUs see both groups' tickets -- these tabs separate whose group raised the
+          ticket, they do not grant or remove access. Hidden for everyone who is not an SBU. */}
+      {sbuGroups.length > 1 && (
+        <div className="status-tabs">
+          <button className={`status-tab ${sbuTab === '' ? 'active' : ''}`} onClick={() => setSbuTab('')}>All SBUs</button>
+          {sbuGroups.map((group) => (
+            <button key={group.index} title={group.name}
+              className={`status-tab ${String(sbuTab) === String(group.index) ? 'active' : ''}`}
+              onClick={() => setSbuTab(String(group.index))}>{group.label}</button>
+          ))}
+        </div>
+      )}
 
       <div className="status-tabs">
         <button className={`status-tab ${status === '' ? 'active' : ''}`} onClick={() => setStatus('')}>All</button>
