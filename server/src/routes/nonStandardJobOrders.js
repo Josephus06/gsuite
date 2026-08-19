@@ -5,7 +5,7 @@ const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } 
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { getArtistEmployeeScope } = require('../lib/artistVisibility');
 const { notifyDesignSupervisors, notifyAssignedArtist } = require('../lib/designNotifications');
-const { getSbuScope, departmentIdsForTab } = require('../lib/sbuGroups');
+const { getSbuScope, departmentIdsForTab, sbuCanApproveDepartment } = require('../lib/sbuGroups');
 
 const router = express.Router();
 const ROUTE = '/non-standard-job-orders';
@@ -261,6 +261,13 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
          ${from} ${where} ORDER BY n.id DESC LIMIT ? OFFSET ?`,
       [req.user.id, ...params, size, (current - 1) * size],
     );
+    // is_my_approval stays literally "am I tagged on this one" -- it is what puts "(yours)"
+    // on the row. can_approve is the question the tick box actually asks, and for an SBU
+    // that includes the other group's orders even though they are tagged on neither.
+    for (const row of rows) {
+      row.can_approve = !!row.is_my_approval
+        || (!!sbuScope && sbuScope.departmentIds.includes(Number(row.sales_division_id)));
+    }
     const [[counts]] = await pool.query(
       `SELECT COUNT(*) AS all_count,
               SUM(n.sub_status = ?) AS for_approval,
@@ -650,7 +657,7 @@ router.put('/:id/approve', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[row]] = await conn.query(
-      'SELECT id, nstdjo_no, status, sub_status, approved_at, description, created_by_user_id FROM non_standard_job_orders WHERE id = ?',
+      'SELECT id, nstdjo_no, status, sub_status, approved_at, description, created_by_user_id, sales_division_id FROM non_standard_job_orders WHERE id = ?',
       [req.params.id],
     );
     if (!row) return res.status(404).json({ error: 'Non-standard job order not found.' });
@@ -661,7 +668,8 @@ router.put('/:id/approve', requireAuth, async (req, res, next) => {
       'SELECT 1 AS x FROM non_standard_job_order_approvers WHERE non_standard_job_order_id = ? AND user_id = ?',
       [req.params.id, req.user.id],
     );
-    if (!isApprover) {
+    // Either SBU can clear this gate for either group -- see sbuCanApproveDepartment.
+    if (!isApprover && !(await sbuCanApproveDepartment(req.user.id, row.sales_division_id))) {
       return res.status(403).json({ error: 'Only this job order\'s designated approver(s) can approve it.' });
     }
 
@@ -1253,7 +1261,7 @@ router.post('/bulk-approve', requireAuth, async (req, res, next) => {
       const conn = await pool.getConnection();
       try {
         const [[row]] = await conn.query(
-          `SELECT id, nstdjo_no, status, sub_status, approved_at, artist_employee_id, created_by_user_id
+          `SELECT id, nstdjo_no, status, sub_status, approved_at, artist_employee_id, created_by_user_id, sales_division_id
              FROM non_standard_job_orders WHERE id = ?`,
           [id],
         );
@@ -1267,7 +1275,9 @@ router.post('/bulk-approve', requireAuth, async (req, res, next) => {
             'SELECT 1 AS x FROM non_standard_job_order_approvers WHERE non_standard_job_order_id = ? AND user_id = ?',
             [id, req.user.id],
           );
-          if (!isApprover) { skipped.push({ ...ref, reason: 'You are not a designated approver for this one.' }); continue; }
+          if (!isApprover && !(await sbuCanApproveDepartment(req.user.id, row.sales_division_id))) {
+            skipped.push({ ...ref, reason: 'You are not a designated approver for this one.' }); continue;
+          }
 
           await conn.beginTransaction();
           await conn.query(

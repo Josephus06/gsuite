@@ -39,7 +39,9 @@ export default function NonStandardJobOrders() {
   // ticking it and once reading why it failed.
   function selectable(row) {
     if (row.status === 'Cancelled') return false;
-    if (row.sub_status === SUB_SBU_APPROVAL) return !!row.is_my_approval;
+    // can_approve, not is_my_approval: an SBU may clear either group's SBU gate, including
+    // orders they are not tagged on. The server decides it -- this only mirrors that.
+    if (row.sub_status === SUB_SBU_APPROVAL) return !!row.can_approve;
     if (row.sub_status === SUB_SALES_APPROVAL) return canApproveSales;
     return false;
   }

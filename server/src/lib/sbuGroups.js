@@ -88,4 +88,19 @@ function departmentIdsForTab(scope, sbuIndex) {
   return group ? group.departmentIds : scope.departmentIds;
 }
 
-module.exports = { getSbuGroups, getSbuScope, departmentIdsForTab };
+// Either SBU may approve either group's documents. The per-document approver snapshot
+// (taken at creation from department_ticket_approvers) still governs everyone else, but an
+// SBU is not limited to the group they happen to be tagged on -- including for documents
+// raised before this rule existed, which is why this is checked at approval time rather
+// than by tagging both SBUs when the document is created.
+//
+// `departmentId` is the document's own group: sales_division_id on a job order, the
+// raiser's department on a ticket.
+async function sbuCanApproveDepartment(userId, departmentId) {
+  if (departmentId == null) return false;
+  const scope = await getSbuScope(userId);
+  if (!scope) return false;
+  return scope.departmentIds.includes(Number(departmentId));
+}
+
+module.exports = { getSbuGroups, getSbuScope, departmentIdsForTab, sbuCanApproveDepartment };
