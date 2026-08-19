@@ -42,6 +42,8 @@ import RfqcJobOrders from './pages/RfqcJobOrders';
 import StockLedgerReport from './pages/StockLedgerReport';
 import BinCardReport from './pages/BinCardReport';
 import InventoryAdjustments from './pages/InventoryAdjustments';
+import Rmis from './pages/Rmis';
+import RmiView from './pages/RmiView';
 import InventoryAdjustmentEdit from './pages/InventoryAdjustmentEdit';
 import InventoryAdjustmentView from './pages/InventoryAdjustmentView';
 import TransferOrders from './pages/TransferOrders';
@@ -234,6 +236,8 @@ function App() {
         <Route path="/stock-ledger-reports" element={<StockLedgerReport />} />
         <Route path="/bin-card-reports" element={<BinCardReport />} />
         <Route path="/inventory-adjustments" element={<InventoryAdjustments />} />
+        <Route path="/rmis" element={<Rmis />} />
+        <Route path="/rmis/:id" element={<RmiView />} />
         <Route path="/inventory-adjustments/new" element={<InventoryAdjustmentEdit />} />
         <Route path="/inventory-adjustments/:id/edit" element={<InventoryAdjustmentEdit />} />
         <Route path="/inventory-adjustments/:id" element={<InventoryAdjustmentView />} />

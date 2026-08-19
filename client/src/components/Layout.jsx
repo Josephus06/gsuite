@@ -63,7 +63,7 @@ const NAV_STRUCTURE = [
     // left, things you read on the right. Inventory Items moved to Master Lists, next to
     // Service Items -- it's a master record, not an inventory transaction or report.
     //
-    // The live menu also lists Reallocate Items, RMI, Office Supply Requisition Fulfillment,
+    // The live menu also lists Reallocate Items, Office Supply Requisition Fulfillment,
     // Inventory Reports, Approved Inventory Adjustments, Fulfilled/Received Transfer Orders,
     // Fulfilled Office Supply Requisitions, Received RMIs and Monthly Output. Those aren't
     // pages in this build (Reallocate and OSR Fulfillment exist only as sub-routes reached
@@ -73,6 +73,7 @@ const NAV_STRUCTURE = [
         title: 'Transactions',
         items: [
           { route: '/inventory-adjustments', label: 'Inventory Adjustments' },
+          { route: '/rmis', label: 'RMI' },
           { route: '/transfer-orders', label: 'Transfer Orders' },
           { route: '/item-fulfillments', permRoute: '/transfer-orders', label: 'Item Fulfillments' },
           { route: '/item-receipts', permRoute: '/transfer-orders', label: 'Item Receipts' },
