@@ -13,6 +13,13 @@ function formatDateTime(v) {
   return v ? new Date(v).toLocaleString() : '—';
 }
 
+// A Non-Standard Job Order with no priced materials lines yet legitimately earns nothing,
+// so 0 is shown as 0.00 rather than a dash -- a dash would read as "not calculated".
+function formatIncentive(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+}
+
 function timerStatus(row) {
   if (row.layout_ended_at) return 'Completed';
   if (row.is_running) return 'Running';
@@ -57,6 +64,7 @@ export default function AssignedJobOrders() {
                   <th>Sub Status</th>
                   <th>Layout - Job Type</th>
                   <th>Minutes Consume</th>
+                  <th>Incentive</th>
                   <th>Planned Start</th>
                   <th>Planned End</th>
                   <th>Timer Status</th>
@@ -65,7 +73,7 @@ export default function AssignedJobOrders() {
               </thead>
               <tbody>
                 {rows.length === 0 && (
-                  <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>No Job Orders assigned to you right now.</td></tr>
+                  <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: 20 }}>No Job Orders assigned to you right now.</td></tr>
                 )}
                 {/* Job Orders and Non-Standard Job Orders have independent id sequences,
                     so the key has to include the kind or the two can collide. */}
@@ -77,6 +85,12 @@ export default function AssignedJobOrders() {
                     <td>{row.sub_status}</td>
                     <td>{row.pms_job_type_name ? `${row.pms_job_type_code} — ${row.pms_job_type_name}` : '—'}</td>
                     <td>{row.minutes_consume ?? 0} mins</td>
+                    {/* Amount first, then what it is made of -- a flat 7.50 per layout on a
+                        Job Order, 5% of each materials line on a Non-Standard one. */}
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {formatIncentive(row.incentive_amount)}
+                      {row.incentive_basis && <div className="muted" style={{ fontSize: '0.85em' }}>{row.incentive_basis}</div>}
+                    </td>
                     <td>{formatDateTime(row.planned_start_at)}</td>
                     <td>{formatDateTime(row.planned_end_at)}</td>
                     <td>{timerStatus(row)}</td>

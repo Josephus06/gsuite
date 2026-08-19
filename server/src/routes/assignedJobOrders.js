@@ -1,6 +1,9 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const {
+  jobOrderIncentiveExpression, nstdjoIncentiveExpression, joIncentiveBasis, NSTDJO_INCENTIVE_BASIS,
+} = require('../lib/artistIncentive');
 
 const router = express.Router();
 const ROUTE = '/assigned-jo';
@@ -39,6 +42,10 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
               c.name AS customer_name,
               pjt.id AS pms_job_type_id, pjt.code AS pms_job_type_code, pjt.display_name AS pms_job_type_name,
               pjt.minutes_consume,
+              -- Same expressions the Artist Incentive report uses, so the artist's worklist
+              -- and their report cannot quote different figures for the same job.
+              ${jobOrderIncentiveExpression('jo')} AS incentive_amount,
+              ${joIncentiveBasis('jo')} AS incentive_basis,
               EXISTS(SELECT 1 FROM job_order_layout_sessions s WHERE s.job_order_id = jo.id AND s.ended_at IS NULL) AS is_running
        FROM job_orders jo
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
@@ -58,6 +65,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
               c.name AS customer_name,
               pjt.id AS pms_job_type_id, pjt.code AS pms_job_type_code, pjt.display_name AS pms_job_type_name,
               pjt.minutes_consume,
+              ${nstdjoIncentiveExpression('n')} AS incentive_amount,
+              '${NSTDJO_INCENTIVE_BASIS}' AS incentive_basis,
               EXISTS(SELECT 1 FROM non_standard_job_order_layout_sessions s
                       WHERE s.non_standard_job_order_id = n.id AND s.ended_at IS NULL) AS is_running
        FROM non_standard_job_orders n

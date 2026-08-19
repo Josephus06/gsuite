@@ -6,28 +6,17 @@ const { getArtistEmployeeScope } = require('../lib/artistVisibility');
 const router = express.Router();
 const ROUTE = '/reports/artist-incentive';
 
-// A Non-Standard Job Order carries its artist incentive per materials line, worked out
-// when the order was saved (5% of that line's Process Price -- see ARTIST_INCENTIVE_RATE
-// in nonStandardJobOrders.js). Reading the stored figure rather than recomputing means a
-// later change to the rate cannot restate what past work already earned.
-//
-// A Job Order earns a flat 7.50 per unit of layout work -- NOT a percentage. It has no
-// per-line price to take a percentage of (its process lines record process_cost only, and
-// its layout is described by a PMS Job Type carrying minutes, not pesos), so the incentive
-// is a fixed amount rather than a rate.
-//
-// Scaled by layout_qty -- the number of files/designs the artist laid out -- because that
-// is how the rest of the system measures the same effort (planned end = the layout job
-// type's minutes_consume x layout_qty). layout_qty defaults to 1, so for the ordinary
-// single-layout job this is simply 7.50 per Job Order.
-const JO_INCENTIVE_AMOUNT = 7.5;
+// How both incentives are calculated now lives in lib/artistIncentive.js, shared with the
+// artist's own Assigned JO worklist -- the two must never quote different figures for the
+// same job, which a second copy of these rules is exactly how you get.
+const {
+  JO_INCENTIVE_AMOUNT, NSTDJO_INCENTIVE_BASIS,
+  jobOrderIncentiveExpression, nstdjoIncentiveExpression, joIncentiveBasis,
+} = require('../lib/artistIncentive');
+
 // Matches COMPLETED_STATUS in nonStandardJobOrders.js -- an NSTDJO only earns once Sales
 // have signed it off.
 const COMPLETED_STATUS = 'COMPLETED';
-
-function jobOrderIncentiveExpression() {
-  return `ROUND(${JO_INCENTIVE_AMOUNT} * COALESCE(NULLIF(jo.layout_qty, 0), 1), 2)`;
-}
 
 // Both sides are filtered on the date the artist actually finished the layout
 // (layout_ended_at), not when the work was planned or the order raised -- an incentive is
@@ -74,8 +63,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
               c.name AS customer_name,
               pjt.display_name AS layout_job_type_name,
               COALESCE(NULLIF(jo.layout_qty, 0), 1) AS layout_qty,
-              CONCAT(${JO_INCENTIVE_AMOUNT}, ' x ', COALESCE(NULLIF(jo.layout_qty, 0), 1)) AS incentive_basis,
-              ${jobOrderIncentiveExpression()} AS incentive_amount
+              ${joIncentiveBasis('jo')} AS incentive_basis,
+              ${jobOrderIncentiveExpression('jo')} AS incentive_amount
          FROM job_orders jo
          LEFT JOIN employees e ON e.id = jo.artist_id
          LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
@@ -94,11 +83,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
               c.name AS customer_name,
               pjt.display_name AS layout_job_type_name,
               COALESCE(NULLIF(n.layout_qty, 0), 1) AS layout_qty,
-              '5% per line' AS incentive_basis,
-              ROUND(COALESCE((
-                SELECT SUM(m.artist_incentive) FROM non_standard_job_order_materials m
-                 WHERE m.non_standard_job_order_id = n.id
-              ), 0), 2) AS incentive_amount
+              '${NSTDJO_INCENTIVE_BASIS}' AS incentive_basis,
+              ${nstdjoIncentiveExpression('n')} AS incentive_amount
          FROM non_standard_job_orders n
          LEFT JOIN employees e ON e.id = n.artist_employee_id
          LEFT JOIN employees sr ON sr.id = n.sales_rep_id
