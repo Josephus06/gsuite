@@ -55,16 +55,25 @@ function lookupCommission(brackets, amount) {
 }
 
 // The rep plus everyone reporting up to them, as a set of employee ids -- what their team
-// weighted-sales rolls up. Walks the users.supervisor_id tree downward from the rep's own
+// weighted-sales rolls up. Walks the user_supervisors graph downward from the rep's own
 // user; a rep with no user account (or no reports) rolls up to just themselves.
 async function getTeamEmployeeIds(employeeId, rootUserId) {
   const team = new Set([Number(employeeId)]);
   if (!rootUserId) return [...team];
 
-  // One pass over the active user tree, then BFS from the root user downward.
-  const [users] = await pool.query('SELECT id, employee_id, supervisor_id FROM users WHERE is_active = TRUE');
+  // One pass over the active reporting graph, then BFS from the root user downward. Read
+  // from user_supervisors rather than users.supervisor_id: a rep may report to several
+  // supervisors, so this is a graph, not a tree, and a rep with two supervisors rolls up
+  // into BOTH of their team totals. `visitedUsers` keeps a rep counted once per team even
+  // when two paths reach them.
+  const [links] = await pool.query(
+    `SELECT u.id, u.employee_id, us.supervisor_id
+       FROM user_supervisors us
+       JOIN users u ON u.id = us.user_id
+      WHERE u.is_active = TRUE`
+  );
   const childrenBySupervisor = new Map();
-  for (const u of users) {
+  for (const u of links) {
     if (u.supervisor_id == null) continue;
     if (!childrenBySupervisor.has(u.supervisor_id)) childrenBySupervisor.set(u.supervisor_id, []);
     childrenBySupervisor.get(u.supervisor_id).push(u);

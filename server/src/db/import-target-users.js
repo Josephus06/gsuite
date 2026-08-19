@@ -176,8 +176,11 @@ async function main() {
     console.log(`  mirrored ${grantedCount} page permission(s)`);
   }
 
-  // Now link supervisor_id along each chain using the local ids just resolved (or
-  // already-existing local accounts) -- one hop per person, matching the real chain.
+  // Now link the reporting relationship along each chain using the local ids just resolved
+  // (or already-existing local accounts) -- one hop per person, matching the real chain.
+  // user_supervisors is the relationship of record (a user may report to several people);
+  // users.supervisor_id is only kept in step as the primary, and only while it is still NULL
+  // so an existing manual assignment is never overwritten.
   let linked = 0;
   for (const repName of TARGET_SALES_REPS) {
     const chain = chainByRep[repName];
@@ -185,11 +188,15 @@ async function main() {
       const selfId = localIdByLiveUsername.get(chain[i]);
       const supervisorId = localIdByLiveUsername.get(chain[i + 1]);
       if (!selfId || !supervisorId || selfId === supervisorId) continue;
+      await pool.query(
+        'INSERT IGNORE INTO user_supervisors (user_id, supervisor_id) VALUES (?, ?)',
+        [selfId, supervisorId]
+      );
       await pool.query('UPDATE users SET supervisor_id = ? WHERE id = ? AND supervisor_id IS NULL', [supervisorId, selfId]);
       linked++;
     }
   }
-  console.log(`\nLinked supervisor_id for up to ${linked} chain relationship(s) (only where previously NULL).`);
+  console.log(`\nLinked up to ${linked} chain relationship(s) in user_supervisors.`);
   console.log(`\nDefault password for all newly-created accounts: ${DEFAULT_PASSWORD}`);
   await pool.end();
 }

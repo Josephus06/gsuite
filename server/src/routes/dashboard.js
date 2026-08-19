@@ -57,10 +57,14 @@ async function resolveScope(userId) {
   }
 
   if (me.is_supervisor) {
-    // Supervisor: themself + every Account Officer whose supervisor_id points at them.
+    // Supervisor: themself + every Account Officer assigned to them in user_supervisors.
+    // A rep with two supervisors counts for both dashboards -- that is what a second
+    // assignment means -- so the same sale appears on each of their totals.
     const [rows] = await pool.query(
-      `SELECT u.id, u.display_name, u.employee_id
-       FROM users u WHERE u.supervisor_id = ? OR u.id = ?`,
+      `SELECT DISTINCT u.id, u.display_name, u.employee_id
+       FROM users u
+       LEFT JOIN user_supervisors us ON us.user_id = u.id
+       WHERE us.supervisor_id = ? OR u.id = ?`,
       [userId, userId]
     );
     return { role: 'supervisor', reps: rows, employeeIds: rows.map((r) => r.employee_id).filter(Boolean) };

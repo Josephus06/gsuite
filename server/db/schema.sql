@@ -236,9 +236,11 @@ CREATE TABLE users (
     is_sales_marketing_director BOOLEAN DEFAULT FALSE,
     is_sales_business_unit BOOLEAN DEFAULT FALSE,
     approval_code VARCHAR(50),
-    -- Reporting relationship for Dashboard scoping: a Supervisor's dashboard shows only
-    -- the account officers with supervisor_id = them; a Sales Manager's dashboard shows
-    -- all sales users regardless of this link (no self-reference needed at that level).
+    -- PRIMARY supervisor only, and derived -- the real reporting relationship is the
+    -- user_supervisors table, because a user may report to several supervisors. This column
+    -- is kept in sync with the first row there so older code paths and any external query
+    -- still resolve to a sensible single answer; never write it directly, and never read it
+    -- to answer "who reports to me" (that under-reports every secondary assignment).
     supervisor_id BIGINT NULL REFERENCES users(id),
     -- Profile picture: a small (client-resized) JPEG stored inline as a data: URL rather
     -- than on disk -- this app has no object storage configured and Railway's filesystem
@@ -701,6 +703,8 @@ CREATE TABLE transaction_settings (
 -- SECTION 8: SALES / ESTIMATES
 -- Sourced from a separate "creating an estimate" schema drop.
 -- Reconciliation notes (per user decision):
+--  * customers, employees, sales_divisions, locations, job_types, processes
+--  * customers, employees, sales_divisions, locations, job_types, processes
 --  * customers, employees, sales_divisions, locations, job_types, processes
 --    are NOT redefined here -- the pasted versions of those tables were
 --    reference/context only. All FKs below point at the real tables from
@@ -2421,6 +2425,25 @@ CREATE TABLE user_sales_divisions (
     sales_division_id BIGINT NOT NULL REFERENCES sales_divisions(id),
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_user_division (user_id, sales_division_id)
+);
+
+-- Who each user reports to. A user may have SEVERAL supervisors (a shared account officer
+-- rolling up to two supervisors is the case this exists for), which is why the relationship
+-- lives here rather than in users.supervisor_id -- that column is now just the primary of
+-- these, kept in sync for older readers. Existing databases get this via
+-- src/db/add-user-supervisors.js, which also backfills it from users.supervisor_id.
+--
+-- Dashboard scope, sales visibility and the commission rollup all read "my people" from
+-- here, so a rep with two supervisors appears under BOTH of them -- including in each one's
+-- commission team total. That is the intended meaning of a second assignment, but it does
+-- mean the same sale counts toward two supervisors' weighted sales.
+CREATE TABLE user_supervisors (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    supervisor_id BIGINT NOT NULL REFERENCES users(id),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_user_supervisor (user_id, supervisor_id),
+    KEY idx_user_supervisors_supervisor (supervisor_id)
 );
 
 -- ---------------------------------------------------------------------------------------

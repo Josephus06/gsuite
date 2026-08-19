@@ -16,12 +16,40 @@ async function saveSalesDivisions(userId, ids) {
   }
 }
 
+// Replace a user's supervisors in full, mirroring saveSalesDivisions above. A user may report
+// to several supervisors, so this is the real relationship; `users.supervisor_id` is kept in
+// sync with the FIRST one purely so older readers of that column still resolve to a sensible
+// primary rather than NULL. Self-assignment is dropped -- it would make the commission rollup
+// treat a user as their own report.
+async function saveSupervisors(userId, ids) {
+  const supervisorIds = [...new Set(
+    (Array.isArray(ids) ? ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0 && n !== Number(userId))
+  )];
+  await pool.query('DELETE FROM user_supervisors WHERE user_id = ?', [userId]);
+  for (const supervisorId of supervisorIds) {
+    await pool.query('INSERT INTO user_supervisors (user_id, supervisor_id) VALUES (?, ?)', [userId, supervisorId]);
+  }
+  await pool.query('UPDATE users SET supervisor_id = ? WHERE id = ?', [supervisorIds[0] ?? null, userId]);
+}
+
 // "Account Type" tab fields (step 4 of the real system's Add/Update User wizard).
 const ACCOUNT_TYPE_FIELDS = [
   'user_group_id', 'account_type', 'can_approve_sales_estimate', 'is_account_officer',
   'is_supervisor', 'is_sales_manager', 'is_sales_marketing_director', 'is_sales_business_unit',
-  'is_design_supervisor', 'is_purchasing_supervisor', 'approval_code', 'supervisor_id',
+  'is_design_supervisor', 'is_purchasing_supervisor', 'approval_code',
 ];
+
+// Supervisors are NOT in the list above on purpose. Every field there is written verbatim on
+// each PUT -- absent means NULL -- so leaving supervisor_id in it would blank the primary
+// supervisor on any update that didn't resend it, and drift from user_supervisors. The column
+// is written only by saveSupervisors(), from the table.
+// `supervisor_ids` is the payload field; a lone legacy `supervisor_id` is still accepted so a
+// client running older code keeps working against a freshly deployed server.
+const supervisorIdsFrom = (body) => {
+  if (Array.isArray(body.supervisor_ids)) return body.supervisor_ids;
+  if (body.supervisor_id !== undefined) return body.supervisor_id ? [body.supervisor_id] : [];
+  return undefined;
+};
 
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
@@ -30,11 +58,14 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
               u.is_active, u.last_login_at, u.created_at, u.account_type, u.supervisor_id,
               CONCAT(e.first_name, ' ', e.last_name) AS employee_name,
               l.location_name AS default_branch_name,
-              su.display_name AS supervisor_name
+              -- Every supervisor, comma-joined: a user may report to several, and showing
+              -- only users.supervisor_id here would hide the secondary ones from the list.
+              (SELECT GROUP_CONCAT(s.display_name ORDER BY s.display_name SEPARATOR ', ')
+                 FROM user_supervisors us JOIN users s ON s.id = us.supervisor_id
+                WHERE us.user_id = u.id) AS supervisor_name
        FROM users u
        LEFT JOIN employees e ON e.id = u.employee_id
        LEFT JOIN locations l ON l.id = u.default_branch_id
-       LEFT JOIN users su ON su.id = u.supervisor_id
        ORDER BY u.id DESC`
     );
     res.json(rows);
@@ -56,7 +87,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
   try {
     const [[user]] = await pool.query(
       `SELECT id, username, email, display_name, employee_id, default_branch_id, is_active, last_login_at, created_at,
-              ${ACCOUNT_TYPE_FIELDS.join(', ')}
+              supervisor_id, ${ACCOUNT_TYPE_FIELDS.join(', ')}
        FROM users WHERE id = ?`,
       [req.params.id]
     );
@@ -76,7 +107,23 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
 
-    res.json({ ...user, branches, permissions, sales_division_ids: divisions.map((d) => d.sales_division_id) });
+    // Everyone this user reports to. supervisor_id (the primary) rides along unchanged for
+    // any caller still reading the single value.
+    const [supervisors] = await pool.query(
+      `SELECT us.supervisor_id, s.display_name
+         FROM user_supervisors us JOIN users s ON s.id = us.supervisor_id
+        WHERE us.user_id = ? ORDER BY s.display_name`,
+      [req.params.id]
+    );
+
+    res.json({
+      ...user,
+      branches,
+      permissions,
+      sales_division_ids: divisions.map((d) => d.sales_division_id),
+      supervisor_ids: supervisors.map((s) => s.supervisor_id),
+      supervisor_names: supervisors.map((s) => s.display_name),
+    });
   } catch (err) {
     next(err);
   }
@@ -96,6 +143,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       [employee_id || null, username, email, passwordHash, display_name, default_branch_id || null, is_active ?? true, ...accountTypeValues]
     );
     await saveSalesDivisions(result.insertId, req.body.sales_division_ids);
+    await saveSupervisors(result.insertId, supervisorIdsFrom(req.body) || []);
     const [[row]] = await pool.query(
       `SELECT id, username, email, display_name, employee_id, default_branch_id, is_active, ${ACCOUNT_TYPE_FIELDS.join(', ')} FROM users WHERE id = ?`,
       [result.insertId]
@@ -124,6 +172,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 
     await pool.query(`UPDATE users SET ${fields.join(', ')}, updated_at = NOW() WHERE id = ?`, [...values, req.params.id]);
     if (req.body.sales_division_ids !== undefined) await saveSalesDivisions(req.params.id, req.body.sales_division_ids);
+    const nextSupervisors = supervisorIdsFrom(req.body);
+    if (nextSupervisors !== undefined) await saveSupervisors(req.params.id, nextSupervisors);
     const [[row]] = await pool.query(
       `SELECT id, username, email, display_name, employee_id, default_branch_id, is_active, ${ACCOUNT_TYPE_FIELDS.join(', ')} FROM users WHERE id = ?`,
       [req.params.id]

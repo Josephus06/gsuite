@@ -67,11 +67,16 @@ async function answerAdminSupervisorLookup(userId, personName) {
   if (!await isSystemAdmin(userId)) return null;
 
   const like = `%${personName}%`;
+  // A user may report to more than one supervisor, so this reads user_supervisors and lists
+  // them all -- users.supervisor_id would answer with only the primary and quietly imply it
+  // is the only one.
   const [people] = await pool.query(
-    `SELECT u.display_name, su.display_name AS supervisor_name
+    `SELECT u.display_name,
+            (SELECT GROUP_CONCAT(s.display_name ORDER BY s.display_name SEPARATOR ', ')
+               FROM user_supervisors us JOIN users s ON s.id = us.supervisor_id
+              WHERE us.user_id = u.id) AS supervisor_names
      FROM users u
      LEFT JOIN employees e ON e.id = u.employee_id
-     LEFT JOIN users su ON su.id = u.supervisor_id
      WHERE CONCAT_WS(' ', e.first_name, e.last_name) LIKE ?
         OR u.display_name LIKE ?
         OR u.username LIKE ?
@@ -81,8 +86,11 @@ async function answerAdminSupervisorLookup(userId, personName) {
 
   if (people.length === 0) return 'No matching records found.';
   if (people.length > 1) return `I found multiple people matching "${personName}". Please use their full name.`;
-  if (!people[0].supervisor_name) return `${people[0].display_name} does not have a supervisor assigned.`;
-  return `${people[0].display_name}'s supervisor is ${people[0].supervisor_name}.`;
+  const { display_name: name, supervisor_names: supervisors } = people[0];
+  if (!supervisors) return `${name} does not have a supervisor assigned.`;
+  const list = supervisors.split(', ');
+  if (list.length === 1) return `${name}'s supervisor is ${list[0]}.`;
+  return `${name} has ${list.length} supervisors: ${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}.`;
 }
 
 // Data-Q&A is entirely delegated to sqlFallback.js now -- no hand-built regex/keyword

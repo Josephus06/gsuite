@@ -32,7 +32,7 @@ const EMPTY_ACCOUNT = {
 const EMPTY_ACCOUNT_TYPE = {
   user_group_id: '', account_type: '', can_approve_sales_estimate: false, is_account_officer: false,
   is_supervisor: false, is_sales_manager: false, is_sales_marketing_director: false, is_sales_business_unit: false,
-  is_design_supervisor: false, is_purchasing_supervisor: false, approval_code: '', supervisor_id: '',
+  is_design_supervisor: false, is_purchasing_supervisor: false, approval_code: '', supervisor_ids: [],
   sales_division_ids: [],
 };
 
@@ -108,7 +108,7 @@ export default function UserWizard() {
         is_supervisor: !!data.is_supervisor, is_sales_manager: !!data.is_sales_manager,
         is_sales_marketing_director: !!data.is_sales_marketing_director, is_sales_business_unit: !!data.is_sales_business_unit,
         is_design_supervisor: !!data.is_design_supervisor, is_purchasing_supervisor: !!data.is_purchasing_supervisor,
-        approval_code: data.approval_code || '', supervisor_id: data.supervisor_id || '',
+        approval_code: data.approval_code || '', supervisor_ids: data.supervisor_ids || [],
         sales_division_ids: data.sales_division_ids || [],
       });
       setBranches((data.branches || []).map((b) => ({
@@ -460,14 +460,35 @@ export default function UserWizard() {
               <label>Approval Code</label>
               <input value={accountType.approval_code} onChange={(e) => setAccountType({ ...accountType, approval_code: e.target.value })} />
             </div>
+            {/* A user can report to several supervisors -- the picker adds one at a time and
+                each stays listed until removed. Their data rolls up to every supervisor here,
+                so all of them see it on their Dashboard and in their commission team total. */}
             <div className="field">
-              <label>Supervisor <span className="muted">(who this Account Officer's Dashboard data rolls up to)</span></label>
+              <label>Supervisors <span className="muted">(who this Account Officer's Dashboard data rolls up to — one or more)</span></label>
               <EntityPicker
-                label="Supervisor" items={allUsers} value={accountType.supervisor_id} getLabel={(u) => u.display_name}
+                label="Add supervisor" items={allUsers.filter((u) => u.id !== Number(id) && !accountType.supervisor_ids.includes(u.id))}
+                value={null} getLabel={(u) => u.display_name}
                 columns={[{ key: 'display_name', label: 'Name' }, { key: 'username', label: 'Username' }]}
                 searchKeys={['display_name', 'username']}
-                onSelect={(u) => setAccountType({ ...accountType, supervisor_id: u.id })}
+                onSelect={(u) => setAccountType((at) => (
+                  at.supervisor_ids.includes(u.id) ? at : { ...at, supervisor_ids: [...at.supervisor_ids, u.id] }
+                ))}
               />
+              {accountType.supervisor_ids.length === 0 && <div className="muted">No supervisor assigned.</div>}
+              {accountType.supervisor_ids.map((sid) => {
+                const su = allUsers.find((u) => u.id === sid);
+                return (
+                  <div className="field-checkbox" key={sid}>
+                    <span>{su ? su.display_name : `User #${sid}`}</span>
+                    <button
+                      type="button" className="btn btn-link" style={{ marginLeft: 8 }}
+                      onClick={() => setAccountType((at) => ({
+                        ...at, supervisor_ids: at.supervisor_ids.filter((x) => x !== sid),
+                      }))}
+                    >Remove</button>
+                  </div>
+                );
+              })}
             </div>
             <div className="wizard-actions">
               <button type="button" className="btn" onClick={() => setStep(3)}>Previous</button>
