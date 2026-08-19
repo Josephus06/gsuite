@@ -5,7 +5,9 @@ import Avatar from '../Avatar';
 import ReactionButton from './ReactionButton';
 import CommentThread from './CommentThread';
 import Linkify from './Linkify';
-import { REACTION_BY_KEY, reactionSummary, topReactionKeys } from './reactions';
+import {
+  REACTION_BY_KEY, reactionSummary, topReactionKeys, reactorTooltip, allReactorNames,
+} from './reactions';
 import { audienceMeta } from './audience';
 import { fbTime, fbTimeFull } from './time';
 
@@ -143,11 +145,24 @@ export default function PostCard({ post, user, viewer, onChanged, onDeleted, onE
           {state.reaction_total > 0 && (
             <>
               <div className="fb-bubbles">
+                {/* Hovering one emoji lists who chose THAT reaction; hovering the names
+                    beside it lists everyone who reacted at all. */}
                 {top.map((k) => (
-                  <span className="fb-bubble" key={k} title={REACTION_BY_KEY[k].label}>{REACTION_BY_KEY[k].emoji}</span>
+                  <span
+                    className="fb-bubble"
+                    key={k}
+                    title={reactorTooltip(state.reactors_by_type?.[k], state.reactions?.[k], REACTION_BY_KEY[k].label)}
+                  >
+                    {REACTION_BY_KEY[k].emoji}
+                  </span>
                 ))}
               </div>
-              <span style={{ marginLeft: 8 }}>{summary}</span>
+              <span
+                style={{ marginLeft: 8, cursor: 'default' }}
+                title={reactorTooltip(allReactorNames(state.reactors_by_type, state.top_reactors), state.reaction_total)}
+              >
+                {summary}
+              </span>
             </>
           )}
           <div className="fb-stat-right">

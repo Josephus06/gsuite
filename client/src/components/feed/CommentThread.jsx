@@ -4,7 +4,7 @@ import api from '../../api/client';
 import Avatar from '../Avatar';
 import ReactionButton from './ReactionButton';
 import Linkify from './Linkify';
-import { REACTION_BY_KEY, topReactionKeys } from './reactions';
+import { REACTION_BY_KEY, topReactionKeys, reactorTooltip, allReactorNames } from './reactions';
 import { fbTime, fbTimeFull } from './time';
 
 // Auto-growing single-line-until-it-isn't comment box. Enter submits, Shift+Enter newlines.
@@ -107,8 +107,21 @@ function CommentItem({ comment, user, depth, onReply, onDelete, onReact }) {
               </div>
               {comment.reaction_total > 0 && (
                 <div className="fb-comment-reacts">
-                  {top.map((k) => <span className="emoji" key={k}>{REACTION_BY_KEY[k].emoji}</span>)}
-                  <span>{comment.reaction_total}</span>
+                  {top.map((k) => (
+                    <span
+                      className="emoji"
+                      key={k}
+                      title={reactorTooltip(comment.reactors_by_type?.[k], comment.reactions?.[k], REACTION_BY_KEY[k].label)}
+                    >
+                      {REACTION_BY_KEY[k].emoji}
+                    </span>
+                  ))}
+                  <span
+                    style={{ cursor: 'default' }}
+                    title={reactorTooltip(allReactorNames(comment.reactors_by_type), comment.reaction_total)}
+                  >
+                    {comment.reaction_total}
+                  </span>
                 </div>
               )}
             </div>

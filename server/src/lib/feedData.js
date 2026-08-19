@@ -22,6 +22,11 @@ const MAX_IMAGES_PER_POST = 10;
 // makes you click for the rest -- the client calls GET /:id/comments for the full thread.
 const PREVIEW_COMMENTS = 2;
 const PREVIEW_REACTORS = 3;
+// Names carried per reaction so hovering an emoji can list who chose it. Higher than
+// PREVIEW_REACTORS (which only feeds the "and 23 others" summary) but still bounded --
+// a hover card is unreadable past a couple of dozen names, and the client can say how
+// many more there are from the tallies it already has.
+const HOVER_REACTORS = 20;
 
 // The JWT carries only id/username/display_name, so department + admin come from a lookup.
 async function viewerContext(userId) {
@@ -90,6 +95,8 @@ function shapePost(row, viewerId) {
     reaction_total: 0,
     my_reaction: null,
     top_reactors: [],
+    // { like: ['Ana Cruz', ...], haha: [...] } -- who chose each emoji, for the hover.
+    reactors_by_type: {},
     comment_count: 0,
     comments: [],
   };
@@ -113,6 +120,7 @@ function shapeComment(row, viewerId, isAdmin) {
     reactions: {},
     reaction_total: 0,
     my_reaction: null,
+    reactors_by_type: {},
     replies: [],
   };
 }
@@ -157,19 +165,30 @@ async function decoratePosts(posts, viewerId, isAdmin) {
     if (p) p.my_reaction = m.type;
   }
 
-  // Names behind "Ana and 23 others" -- newest reactors first, capped per post.
+  // Names behind "Ana and 23 others", and the names behind each individual emoji so both
+  // can be shown on hover. Partitioned per (post, type) rather than per post: taking the
+  // newest N for the post as a whole would leave a rarely-used reaction with no names at
+  // all, which is exactly the one someone hovers to ask "who found this funny?".
+  //
+  // Capped at HOVER_REACTORS per reaction -- a tooltip listing 200 names is not readable,
+  // and the client says "+N more" from the tallies it already has.
   const [reactors] = await pool.query(
-    `SELECT post_id, display_name FROM (
-       SELECT r.post_id, u.display_name,
-              ROW_NUMBER() OVER (PARTITION BY r.post_id ORDER BY r.created_at DESC, r.id DESC) AS rn
+    `SELECT post_id, type, display_name, created_at FROM (
+       SELECT r.post_id, r.type, u.display_name, r.created_at,
+              ROW_NUMBER() OVER (PARTITION BY r.post_id, r.type ORDER BY r.created_at DESC, r.id DESC) AS rn
          FROM feed_post_reactions r JOIN users u ON u.id = r.user_id
         WHERE r.post_id IN (?)
-     ) t WHERE rn <= ?`,
-    [ids, PREVIEW_REACTORS]
+     ) t WHERE rn <= ?
+     ORDER BY created_at DESC`,
+    [ids, HOVER_REACTORS]
   );
   for (const r of reactors) {
     const p = byId.get(Number(r.post_id));
-    if (p) p.top_reactors.push(r.display_name);
+    if (!p) continue;
+    // Newest-first across every type -- what "Ana and 23 others" reads from.
+    p.top_reactors.push(r.display_name);
+    if (!p.reactors_by_type[r.type]) p.reactors_by_type[r.type] = [];
+    p.reactors_by_type[r.type].push(r.display_name);
   }
 
   const [counts] = await pool.query(
@@ -225,6 +244,23 @@ async function decorateComments(comments, viewerId) {
   for (const m of mine) {
     const c = byId.get(Number(m.comment_id));
     if (c) c.my_reaction = m.type;
+  }
+
+  // Who reacted with what, same as posts -- a comment's emoji row is hoverable too.
+  const [reactors] = await pool.query(
+    `SELECT comment_id, type, display_name FROM (
+       SELECT r.comment_id, r.type, u.display_name,
+              ROW_NUMBER() OVER (PARTITION BY r.comment_id, r.type ORDER BY r.created_at DESC, r.id DESC) AS rn
+         FROM feed_comment_reactions r JOIN users u ON u.id = r.user_id
+        WHERE r.comment_id IN (?)
+     ) t WHERE rn <= ?`,
+    [ids, HOVER_REACTORS]
+  );
+  for (const r of reactors) {
+    const c = byId.get(Number(r.comment_id));
+    if (!c) continue;
+    if (!c.reactors_by_type[r.type]) c.reactors_by_type[r.type] = [];
+    c.reactors_by_type[r.type].push(r.display_name);
   }
   return comments;
 }
