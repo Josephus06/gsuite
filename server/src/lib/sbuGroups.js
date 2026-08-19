@@ -13,6 +13,13 @@ const pool = require('../db');
 // the chatbot already treats division names this way for the same reason.
 const norm = (s) => String(s || '').toLowerCase().replace(/[\s_-]+/g, '');
 
+// Only the numbered sales groups form an SBU group: "Sales - 1" through "Sales - 4"
+// normalise to sales1..sales4. Support, Marketing, the branches and the unnumbered "Sales"
+// department are deliberately not groups -- there are exactly two SBUs, covering sales
+// groups 1+3 and 2+4, and a user who owns only a non-sales division (Marketing has the SBU
+// flag set for commission purposes) is not an SBU group owner.
+const isSalesGroup = (departmentName) => /^sales\d+$/.test(norm(departmentName));
+
 // Groups are numbered by the lowest department id they own, which is what makes Michelle's
 // group (Sales - 1, Sales - 3) "SBU 1" and Arlene's (Sales - 2, Sales - 4) "SBU 2" --
 // the numbering users already use for them.
@@ -39,6 +46,7 @@ async function getSbuGroups() {
   for (const row of owners) {
     const department = departmentByKey.get(norm(row.division_name));
     if (!department) continue; // a division with no matching department owns no documents
+    if (!isSalesGroup(department.name)) continue;
     if (!byUser.has(row.user_id)) {
       byUser.set(row.user_id, { userId: row.user_id, displayName: row.display_name, departmentIds: [], departmentNames: [] });
     }
@@ -64,7 +72,11 @@ async function getSbuScope(userId) {
   if (!user?.is_sales_business_unit) return null;
 
   const groups = await getSbuGroups();
-  if (!groups.length) return null;
+  // The flag alone is not enough -- it is also set on accounts that own no sales group at
+  // all (Marketing, and the admin account before it was excluded above). Only an owner of
+  // one of the groups gets the cross-group view and the tabs; for everyone else this
+  // returns null and their page keeps exactly the layout and scope it has today.
+  if (!groups.some((g) => g.userId === userId)) return null;
   return { groups, departmentIds: groups.flatMap((g) => g.departmentIds) };
 }
 
