@@ -166,6 +166,7 @@ export default function AssignedJobOrderRun({ kind = 'JO' }) {
           <div>
             <h4>Job</h4>
             <div>Customer : <span className="hi">{jo.customer_name}</span></div>
+            <div>Sales Rep : <span className="hi">{jo.sales_rep_name || '—'}</span></div>
             <div>Job Desc. : <span className="hi">{jo.description}</span></div>
             <div>Layout - Job Type : <span className="hi">{jo.pms_job_type_name ? `${jo.pms_job_type_code} — ${jo.pms_job_type_name}` : '—'}</span></div>
             <div>Minutes Consume (Allotted) : <span className="hi">{jo.minutes_consume ?? 0} mins × {jo.layout_qty ?? 1} qty = {allottedSeconds / 60} mins</span></div>
