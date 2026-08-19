@@ -168,6 +168,29 @@ router.post('/', requireAuth, async (req, res, next) => {
           [approverUserId, `${ticketNo} needs your approval`, subject, ticketId]
         );
       }
+
+      // No approvers on the raiser's department means there is no gate: the ticket is
+      // actionable the moment it is raised. Tell the destination head now, because the only
+      // other place that tells them is PUT /:id/approve -- and nobody can call that on this
+      // ticket. Approval requires a row in ticket_approvers, which was never written, so
+      // approved_at stays NULL for good and the head would otherwise never hear about a
+      // ticket that is sitting in their queue waiting to be assigned.
+      //
+      // Where the raiser's department DOES have approvers, this stays quiet on purpose: the
+      // head is told once approval clears, which is the point the ticket becomes theirs to
+      // act on.
+      if (!creatorDeptApprovers.length) {
+        const [[destination]] = await conn.query('SELECT head_user_id FROM departments WHERE id = ?', [departmentId]);
+        // Raising a ticket for your own department, as its head, should not notify you about
+        // your own ticket.
+        if (destination?.head_user_id && Number(destination.head_user_id) !== Number(req.user.id)) {
+          await conn.query(
+            `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
+             VALUES (?, 'ticket_ready', ?, ?, 'Ticket', ?)`,
+            [destination.head_user_id, `${ticketNo} was raised for your department`, subject, ticketId],
+          );
+        }
+      }
       await conn.commit();
       const [[row]] = await pool.query('SELECT * FROM tickets WHERE id = ?', [ticketId]);
       res.status(201).json(row);
