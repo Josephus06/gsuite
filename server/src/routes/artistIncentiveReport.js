@@ -41,14 +41,19 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const wantJo = source !== 'NSTDJO';
     const wantNstdjo = source !== 'JO';
 
-    // What makes an incentive earned differs by source:
-    //  - a Job Order counts as soon as the artist stops the timer on their Assigned JO
-    //    (layout_ended_at), which is the end of their involvement in it;
-    //  - a Non-Standard Job Order counts only once Sales have signed it off and the order
-    //    is COMPLETED -- it can still be bounced around before that.
-    // Both are dated by the actual end date, so an order completed later still lands in
-    // the period the work was actually finished.
-    const joWhere = ['jo.artist_id IS NOT NULL', 'jo.layout_ended_at IS NOT NULL'];
+    // An incentive is earned when SALES SIGN THE WORK OFF, not when the artist puts their
+    // pen down. Both sources are held to that:
+    //  - a Job Order once it has cleared Sales Approval, which moves its Sub Status to
+    //    'Approved' (see PUT /job-orders/:id/approve-sales);
+    //  - a Non-Standard Job Order once the order is COMPLETED, which is what Sales signing
+    //    it off does there.
+    // Both still need the artist to have finished (layout_ended_at) and are dated by that
+    // end, so an order approved later still lands in the period the work was done.
+    //
+    // The JO rule used to be layout_ended_at alone, which credited work Sales had not yet
+    // accepted -- and would still have credited it had Sales sent it back. Note the effect:
+    // a finished-but-unapproved JO now drops out of the report until it is approved.
+    const joWhere = ['jo.artist_id IS NOT NULL', 'jo.layout_ended_at IS NOT NULL', "jo.sub_status = 'Approved'"];
     const nWhere = ['n.artist_employee_id IS NOT NULL', 'n.layout_ended_at IS NOT NULL', 'n.status = ?'];
     const joParams = [];
     const nParams = [COMPLETED_STATUS];
