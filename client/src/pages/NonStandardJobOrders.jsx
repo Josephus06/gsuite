@@ -26,6 +26,10 @@ export default function NonStandardJobOrders() {
   // for them; '' is the "both groups" tab an SBU lands on.
   const [sbuGroups, setSbuGroups] = useState([]);
   const [sbuTab, setSbuTab] = useState('');
+  // Approval tabs sit under the SBU tabs and narrow whichever group is selected: '' is
+  // every order in that group, then the two halves an approver actually works from.
+  const [approvalTab, setApprovalTab] = useState('');
+  const [counts, setCounts] = useState({ all: 0, for_approval: 0, approved: 0 });
 
   const canApproveSales = can(ROUTE, 'can_approve');
 
@@ -63,15 +67,18 @@ export default function NonStandardJobOrders() {
   }
 
   async function load() {
-    const { data } = await api.get(ROUTE, { params: { page, limit: 10, search, sbu: sbuTab || undefined } });
+    const { data } = await api.get(ROUTE, {
+      params: { page, limit: 10, search, sbu: sbuTab || undefined, approval: approvalTab || undefined },
+    });
     setRows(data.rows);
     setTotal(data.total);
+    if (data.counts) setCounts(data.counts);
     // Selection is per page of results. Carrying ticks across a page change would let
     // someone approve rows they can no longer see.
     setSelected([]);
   }
 
-  useEffect(() => { load(); }, [page, sbuTab]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [page, sbuTab, approvalTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     api.get(`${ROUTE}/meta`).then(({ data }) => setSbuGroups(data.sbuGroups || []));
@@ -109,6 +116,22 @@ export default function NonStandardJobOrders() {
               {group.label}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Second row: splits whichever SBU group is selected into the approver's two piles.
+          Counts come from the same query as the rows, so they always agree with the list. */}
+      {sbuGroups.length > 1 && (
+        <div className="status-tabs" style={{ marginBottom: 12, flexWrap: 'wrap' }}>
+          {[['', 'All', 'all'], ['for_approval', 'For Approval', 'for_approval'], ['approved', 'Approved', 'approved']].map(
+            ([key, label, countKey]) => (
+              <button key={key || 'all'} type="button"
+                className={`status-tab ${approvalTab === key ? 'active' : ''}`}
+                onClick={() => { setApprovalTab(key); setPage(1); }}>
+                {label} <span className="badge badge-muted">{counts[countKey] ?? 0}</span>
+              </button>
+            ),
+          )}
         </div>
       )}
 

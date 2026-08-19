@@ -222,6 +222,23 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
         params.push(artistEmployeeId);
       }
     }
+    // For Approval / Approved tab. "Approved" is keyed on approved_at rather than the
+    // "SBU Approved" sub-status: an approved order moves on through Design and production,
+    // so a sub-status test would empty the tab as soon as the work actually progressed,
+    // which reads as the approval having been lost.
+    const APPROVAL_FILTERS = {
+      for_approval: { sql: 'n.sub_status = ?', params: [SUB_SBU_APPROVAL] },
+      approved: { sql: 'n.approved_at IS NOT NULL', params: [] },
+    };
+    const approvalFilter = APPROVAL_FILTERS[req.query.approval];
+    // Counts are taken BEFORE this filter is applied, so each tab shows its own total
+    // rather than the count of whichever tab happens to be open.
+    const countWhere = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const countParams = [...params];
+    if (approvalFilter) {
+      conditions.push(approvalFilter.sql);
+      params.push(...approvalFilter.params);
+    }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const from = `FROM non_standard_job_orders n
       JOIN customers c ON c.id = n.customer_id
@@ -244,7 +261,21 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
          ${from} ${where} ORDER BY n.id DESC LIMIT ? OFFSET ?`,
       [req.user.id, ...params, size, (current - 1) * size],
     );
-    res.json({ rows, total, page: current, limit: size });
+    const [[counts]] = await pool.query(
+      `SELECT COUNT(*) AS all_count,
+              SUM(n.sub_status = ?) AS for_approval,
+              SUM(n.approved_at IS NOT NULL) AS approved
+         ${from} ${countWhere}`,
+      [SUB_SBU_APPROVAL, ...countParams],
+    );
+    res.json({
+      rows, total, page: current, limit: size,
+      counts: {
+        all: Number(counts.all_count) || 0,
+        for_approval: Number(counts.for_approval) || 0,
+        approved: Number(counts.approved) || 0,
+      },
+    });
   } catch (err) { next(err); }
 });
 
