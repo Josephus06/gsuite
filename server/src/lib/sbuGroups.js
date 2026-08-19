@@ -17,12 +17,18 @@ const norm = (s) => String(s || '').toLowerCase().replace(/[\s_-]+/g, '');
 // group (Sales - 1, Sales - 3) "SBU 1" and Arlene's (Sales - 2, Sales - 4) "SBU 2" --
 // the numbering users already use for them.
 async function getSbuGroups() {
+  // A System Admin account carrying the SBU flag is not a real SBU group -- on the live
+  // database the admin account has it set and owns EVERY division, which would both take
+  // the "SBU 1" label off the actual first SBU and, because a group's scope is the union of
+  // all groups, silently widen every SBU's view to every division in the company. An admin
+  // already sees everything through their own scope, so excluding them costs nothing.
   const [owners] = await pool.query(
     `SELECT u.id AS user_id, u.display_name, sd.name AS division_name
        FROM users u
        JOIN user_sales_divisions usd ON usd.user_id = u.id
        JOIN sales_divisions sd ON sd.id = usd.sales_division_id
-      WHERE u.is_sales_business_unit = TRUE AND u.is_active = TRUE`
+      WHERE u.is_sales_business_unit = TRUE AND u.is_active = TRUE
+        AND (u.account_type IS NULL OR u.account_type <> 'System Admin')`
   );
   if (!owners.length) return [];
 
