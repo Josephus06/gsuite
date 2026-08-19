@@ -92,6 +92,11 @@ export default function NonStandardJobOrderFormModal({ mode = 'create', order, o
   const [saveError, setSaveError] = useState('');
   const [saving, setSaving] = useState(false);
   const [bracketsByProcess, setBracketsByProcess] = useState({});
+  // Inline "new contact person" panel. Saving it writes to the customer's contacts in the
+  // master list, so the person is available on every later order too, not just this one.
+  const [newContact, setNewContact] = useState(null);
+  const [savingContact, setSavingContact] = useState(false);
+  const [contactError, setContactError] = useState('');
 
   useEffect(() => { api.get(`${ROUTE}/meta`).then(({ data }) => setMeta(data)); }, []);
 
@@ -171,6 +176,24 @@ export default function NonStandardJobOrderFormModal({ mode = 'create', order, o
     setErrors((current) => ({ ...current, contact_person_id: '' }));
   }
 
+  // Saves the new contact against the chosen customer, then selects it -- so the user lands
+  // back where they were, with the person already filled in.
+  async function saveNewContact() {
+    if (!newContact?.contact_name.trim()) { setContactError('Contact name is required.'); return; }
+    setSavingContact(true);
+    setContactError('');
+    try {
+      const { data } = await api.post(`${ROUTE}/contacts`, { ...newContact, customer_id: form.customer_id });
+      setContacts((current) => [...current, data]);
+      selectContact(data);
+      setNewContact(null);
+    } catch (error) {
+      setContactError(error.response?.data?.error || 'Could not save this contact person.');
+    } finally {
+      setSavingContact(false);
+    }
+  }
+
   function selectJobType(jobType) {
     // The PMS Job Type list is filtered by job type, so a previous pick can no longer apply.
     setForm((current) => ({ ...current, job_type_id: jobType.id, pms_job_type_id: '' }));
@@ -247,7 +270,30 @@ export default function NonStandardJobOrderFormModal({ mode = 'create', order, o
         {isEdit && <div className="muted" style={{ marginBottom: 12 }}>Saving these changes sends this job order back to SBU Approval.</div>}
         <div className="filter-grid">
           <div className="field"><label>Customer *</label><EntityPicker label="Select Customer" items={meta?.customers || []} value={form.customer_id} getLabel={(customer) => customer.name} columns={[{ key: 'name', label: 'Customer' }]} searchKeys={['name']} onSelect={selectCustomer} placeholder="Select customer" />{fieldError(errors, 'customer_id')}</div>
-          <div className="field"><label>Contact Person *</label><EntityPicker label="Select Contact Person" items={contacts} value={form.contact_person_id} getLabel={(contact) => contact.contact_name} columns={[{ key: 'contact_name', label: 'Name' }, { key: 'email', label: 'Email' }, { key: 'phone', label: 'Contact Nos' }, { key: 'title', label: 'Title' }]} searchKeys={['contact_name', 'email', 'title']} onSelect={selectContact} disabled={!form.customer_id} placeholder={form.customer_id ? 'Select contact person' : 'Select a customer first'} />{fieldError(errors, 'contact_person_id')}</div>
+          <div className="field"><label>Contact Person *</label><EntityPicker label="Select Contact Person" items={contacts} value={form.contact_person_id} getLabel={(contact) => contact.contact_name} columns={[{ key: 'contact_name', label: 'Name' }, { key: 'email', label: 'Email' }, { key: 'phone', label: 'Contact Nos' }, { key: 'title', label: 'Title' }]} searchKeys={['contact_name', 'email', 'title']} onSelect={selectContact} disabled={!form.customer_id} placeholder={form.customer_id ? 'Select contact person' : 'Select a customer first'} />{fieldError(errors, 'contact_person_id')}
+            {form.customer_id && !newContact && (
+              <button type="button" className="btn btn-link" style={{ padding: '4px 0' }}
+                onClick={() => { setContactError(''); setNewContact({ contact_name: '', title: '', email: '', phone: '' }); }}>
+                + Add new contact person
+              </button>
+            )}
+            {newContact && (
+              <div className="field" style={{ border: '1px solid var(--border, #ddd)', borderRadius: 6, padding: 10, marginTop: 6 }}>
+                <label>New Contact Person <span className="muted">(saved to this customer in Master Lists)</span></label>
+                {contactError && <div className="error-banner">{contactError}</div>}
+                {[['contact_name', 'Name *'], ['title', 'Title'], ['email', 'Email'], ['phone', 'Contact No']].map(([key, label]) => (
+                  <input key={key} placeholder={label} value={newContact[key]} style={{ marginBottom: 6 }}
+                    onChange={(event) => setNewContact((current) => ({ ...current, [key]: event.target.value }))} />
+                ))}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" className="btn btn-primary" disabled={savingContact} onClick={saveNewContact}>
+                    {savingContact ? 'Saving...' : 'Save Contact'}
+                  </button>
+                  <button type="button" className="btn" disabled={savingContact} onClick={() => setNewContact(null)}>Cancel</button>
+                </div>
+              </div>
+            )}
+          </div>
           <div className="field"><label>Contact Email</label><input type="email" value={form.contact_email} onChange={(event) => setField('contact_email', event.target.value)} /></div>
           <div className="field"><label>Contact Title</label><input value={form.contact_title} onChange={(event) => setField('contact_title', event.target.value)} /></div>
           <div className="field"><label>Contact Phone</label><input value={form.contact_phone} onChange={(event) => setField('contact_phone', event.target.value)} /></div>

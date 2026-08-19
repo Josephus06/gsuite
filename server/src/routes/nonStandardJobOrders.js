@@ -130,6 +130,35 @@ router.get('/contacts', requireAuth, requirePermission(ROUTE, 'can_view'), async
   } catch (err) { next(err); }
 });
 
+// Add a contact person without leaving the NSTDJO form. Writes to customer_contacts, the
+// same table Master Lists > Customer reads, so a contact added here is immediately part of
+// that customer's details rather than a copy local to this order.
+//
+// Exposed under this page's own can_add rather than reusing POST /customers/:id/contacts,
+// which requires Customers can_edit -- the same reasoning as the cost-brackets route below:
+// raising a job order should not require rights to edit the customer master.
+router.post('/contacts', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
+  try {
+    const { customer_id: customerId, contact_name: contactName, title, email, phone } = req.body;
+    if (!customerId) return res.status(400).json({ error: 'Select a customer first.' });
+    if (!contactName || !contactName.trim()) return res.status(400).json({ error: 'Contact name is required.' });
+
+    const [[customer]] = await pool.query('SELECT id FROM customers WHERE id = ?', [customerId]);
+    if (!customer) return res.status(400).json({ error: 'Invalid customer.' });
+
+    const [result] = await pool.query(
+      `INSERT INTO customer_contacts (customer_id, contact_name, title, email, phone, is_primary)
+       VALUES (?, ?, ?, ?, ?, FALSE)`,
+      [customerId, contactName.trim(), title?.trim() || null, email?.trim() || null, phone?.trim() || null],
+    );
+    const [[row]] = await pool.query(
+      'SELECT id, contact_name, title, email, phone, description FROM customer_contacts WHERE id = ?',
+      [result.insertId],
+    );
+    res.status(201).json(row);
+  } catch (err) { next(err); }
+});
+
 // Process Price on a materials line is derived from Process Costing, so the grid needs a
 // process's quantity brackets. Exposed here under this page's own permission rather than
 // reusing /process-costing/:id/cost-brackets, which would force everyone raising an

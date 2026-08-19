@@ -12,6 +12,7 @@ function formatTime(v) {
 function notificationTypeLabel(type) {
   switch (type) {
     case 'ticket_pending_approval': return 'Pending Approval';
+    case 'ticket_received': return 'New Ticket';
     case 'ticket_ready': return 'Ticket Ready';
     case 'ticket_assigned': return 'Assigned';
     case 'ticket_approved': return 'Approved';

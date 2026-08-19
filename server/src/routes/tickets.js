@@ -168,6 +168,29 @@ router.post('/', requireAuth, async (req, res, next) => {
           [approverUserId, `${ticketNo} needs your approval`, subject, ticketId]
         );
       }
+
+      // Tell the destination department's head straight away, before any approval. They
+      // could already SEE the ticket at this point but were told nothing until it cleared
+      // approval, so an unapproved ticket could sit unnoticed -- and when the sender's
+      // department has no approvers at all the ticket is immediately assignable, in which
+      // case the old 'ticket_ready' notice on approval never fires and the head heard
+      // nothing whatsoever. The message says which of the two situations this is.
+      const [[destination]] = await conn.query('SELECT head_user_id FROM departments WHERE id = ?', [departmentId]);
+      const awaitingApproval = creatorDeptApprovers.length > 0;
+      if (destination?.head_user_id && destination.head_user_id !== req.user.id) {
+        await conn.query(
+          `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
+           VALUES (?, 'ticket_received', ?, ?, 'Ticket', ?)`,
+          [
+            destination.head_user_id,
+            `${ticketNo} was sent to your department`,
+            awaitingApproval
+              ? `${subject} -- still awaiting approval from the sender's department.`
+              : `${subject} -- ready to assign.`,
+            ticketId,
+          ]
+        );
+      }
       await conn.commit();
       const [[row]] = await pool.query('SELECT * FROM tickets WHERE id = ?', [ticketId]);
       res.status(201).json(row);
