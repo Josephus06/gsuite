@@ -32,6 +32,19 @@ const SUB_SALES_REVISION = 'Sales Revision';
 // should see at a glance that Design sent this one back, not an approver. It behaves
 // identically otherwise -- editable by Sales, and out of every queue until re-approved.
 const SUB_SALES_REVISION_DESIGN = 'Sales Revision (Design)';
+
+// The list's tabs. "For Approval" is everything waiting on somebody to decide, which is
+// both gates this module has: an order queued for its SBU approver, and a finished layout
+// queued for Sales. That is the same pair the page already lets an approver tick and
+// bulk-approve, so the tab and the checkboxes agree about what is outstanding.
+//
+// "Approved" is the other side of both: cleared the SBU gate, or signed off by Sales at
+// the end. Deliberately not the design-stage statuses -- "For Artist" is work in hand,
+// not an approval outcome.
+const LIST_TABS = {
+  for_approval: ['SBU Approval', 'Sales Approval'],
+  approved: ['SBU Approved', 'Approved'],
+};
 // Cleared by an approver but not yet handed over. Approval only unlocks the handoff --
 // Sales still chooses when the order actually goes to Design by pressing Forward, which
 // is what moves it to "For Design Supervisor". Deliberately NOT in
@@ -147,7 +160,7 @@ router.get('/cost-brackets/:processId', requireAuth, requirePermission(ROUTE, 'c
 
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { search = '', page = 1, limit = 10 } = req.query;
+    const { search = '', page = 1, limit = 10, tab = '' } = req.query;
     const params = [];
     const conditions = [];
     if (search) {
@@ -178,6 +191,19 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
         params.push(artistEmployeeId);
       }
     }
+    // Everything above scopes what this user may see at all. The tab filters within that,
+    // and is kept separate so the tab counts can be taken from the same scope without it.
+    const scopedWhere = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const scopedParams = [...params];
+
+    if (LIST_TABS[tab]) {
+      // Cancelled orders keep whatever sub status they were cancelled at, so without this a
+      // cancelled order sits in "For Approval" forever, waiting for a decision nobody can
+      // make -- the page already refuses to let an approver tick one. The All tab still
+      // shows them; these two are about outstanding and settled work.
+      conditions.push('n.sub_status IN (?) AND n.status <> ?');
+      params.push(LIST_TABS[tab], CANCELLED_STATUS);
+    }
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const from = `FROM non_standard_job_orders n
       JOIN customers c ON c.id = n.customer_id
@@ -200,7 +226,22 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
          ${from} ${where} ORDER BY n.id DESC LIMIT ? OFFSET ?`,
       [req.user.id, ...params, size, (current - 1) * size],
     );
-    res.json({ rows, total, page: current, limit: size });
+    // Counted across everything this user can see, not the filtered page, so each tab keeps
+    // showing its own total while another is selected.
+    const [tallies] = await pool.query(
+      `SELECT n.sub_status, n.status, COUNT(*) AS n ${from} ${scopedWhere} GROUP BY n.sub_status, n.status`,
+      scopedParams,
+    );
+    const counts = { all: 0, for_approval: 0, approved: 0 };
+    for (const t of tallies) {
+      counts.all += Number(t.n);
+      if (t.status === CANCELLED_STATUS) continue;
+      for (const [key, statuses] of Object.entries(LIST_TABS)) {
+        if (statuses.includes(t.sub_status)) counts[key] += Number(t.n);
+      }
+    }
+
+    res.json({ rows, total, page: current, limit: size, counts });
   } catch (err) { next(err); }
 });
 

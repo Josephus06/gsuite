@@ -10,6 +10,16 @@ const ROUTE = '/non-standard-job-orders';
 const SUB_SBU_APPROVAL = 'SBU Approval';
 const SUB_SALES_APPROVAL = 'Sales Approval';
 
+// Kept in step with LIST_TABS on the server, which is what actually filters. "For Approval"
+// is both gates this module has -- an order queued for its SBU approver and a finished
+// layout queued for Sales -- which is the same pair this page already lets an approver tick
+// and bulk-approve, so the tab and the checkboxes agree about what is outstanding.
+const LIST_TABS = [
+  { key: 'all', label: 'All' },
+  { key: 'for_approval', label: 'For Approval' },
+  { key: 'approved', label: 'Approved' },
+];
+
 export default function NonStandardJobOrders() {
   const navigate = useNavigate();
   const { can } = useAuth();
@@ -17,11 +27,13 @@ export default function NonStandardJobOrders() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
+  const [tab, setTab] = useState('all');
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
+  const [counts, setCounts] = useState({});
 
   const canApproveSales = can(ROUTE, 'can_approve');
 
@@ -59,15 +71,30 @@ export default function NonStandardJobOrders() {
   }
 
   async function load() {
-    const { data } = await api.get(ROUTE, { params: { page, limit: 10, search } });
+    const params = { page, limit: 10, search };
+    if (tab !== 'all') params.tab = tab;
+    const { data } = await api.get(ROUTE, { params });
     setRows(data.rows);
     setTotal(data.total);
+    setCounts(data.counts || {});
     // Selection is per page of results. Carrying ticks across a page change would let
     // someone approve rows they can no longer see.
     setSelected([]);
   }
 
-  useEffect(() => { load(); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [page, tab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Page 1 whenever the criteria change: staying on page 4 of the previous result set
+  // shows an empty table and looks like the search found nothing.
+  function runSearch() {
+    if (page === 1) load();
+    else setPage(1);
+  }
+
+  function pickTab(key) {
+    setPage(1);
+    setTab(key);
+  }
 
   return (
     <div>
@@ -81,7 +108,7 @@ export default function NonStandardJobOrders() {
               </button>{' '}
             </>
           )}
-          <button className="btn btn-sm" onClick={() => { setPage(1); load(); }}>Search</button>{' '}
+          <button className="btn btn-sm" onClick={runSearch}>Search</button>{' '}
           <button className="btn btn-primary" onClick={() => setOpen(true)}>Add New</button>
         </div>
       </div>
@@ -91,8 +118,25 @@ export default function NonStandardJobOrders() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="field">
           <label>General Searching</label>
-          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="JO #, customer, or job description" />
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); runSearch(); } }}
+            placeholder="JO #, customer, or job description"
+          />
         </div>
+      </div>
+
+      <div className="status-tabs">
+        {LIST_TABS.map((t) => (
+          <button
+            key={t.key}
+            className={`status-tab ${tab === t.key ? 'active' : ''}`}
+            onClick={() => pickTab(t.key)}
+          >
+            {t.label} <span className="badge badge-muted">{counts[t.key] ?? 0}</span>
+          </button>
+        ))}
       </div>
 
       <div className="card">
