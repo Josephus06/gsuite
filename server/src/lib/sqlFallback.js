@@ -26,7 +26,7 @@ const OPENAI_MODEL = 'gpt-4o-mini';
 
 const CATALOG_TABLES = [
   'customers', 'suppliers', 'departments', 'inventories', 'inventory_locations',
-  'chart_of_accounts', 'service_items', 'employees', 'sales_divisions',
+  'chart_of_accounts', 'service_items', 'employees', 'sales_divisions', 'locations',
 ];
 const OWNED_TABLES = [
   'estimates', 'sales_orders', 'job_orders', 'tickets', 'purchase_orders',
@@ -47,7 +47,8 @@ customers(id, customer_code, name, company_name, credit_limit, is_active)
 suppliers(id, supplier_code, name, company_name, is_active)
 departments(id, name, description, head_user_id, is_active)
 inventories(id, item_code, display_name, item_type, selling_price, average_cost, reorder_point, is_active)
-inventory_locations(id, inventory_id -> inventories.id, location_id, qty_on_hand, qty_committed)
+inventory_locations(id, inventory_id -> inventories.id, location_id -> locations.id, qty_on_hand, qty_committed)
+locations(id, location_code, location_name, location_type [one of: Branch, Warehouse, Design, Damaged, Delivery Charge, Technical, Subcon, Other], is_active) -- warehouses and branches. People name these in shorthand ("DPOD", "WH04", "Central"), so match with LIKE against BOTH location_name and location_code; stock questions about a named place JOIN inventory_locations to this table rather than guessing at location_id.
 chart_of_accounts(id, account_code, account_name, account_type, is_active)
 service_items(id, item_code, display_name, unit_price, is_active)
 employees(id, employee_code, first_name, last_name, department_id -> departments.id, position_title, is_active)
@@ -293,6 +294,7 @@ Rules:
 - Always include a LIMIT clause (20 or fewer rows) unless the question asks for a single aggregate.
 - For name/code lookups, use LIKE '%...%' rather than an exact match unless the user gave a full, exact code -- a real item/customer/etc. is often referenced by a partial or approximate name. For status/priority columns, use an EXACT match (=) against one of the listed values -- never LIKE a human phrasing like "pending for customer approval" against the real stored value 'pending_customer_approval', map it to the exact value first.
 - Zero rows back is a perfectly good, honest answer ("no matching record"). Prefer writing a best-effort query over refusing -- only output NO_QUERY if the question is about something genuinely outside this schema entirely (e.g. asks to modify data, or about a topic no table here covers).
+- NEVER drop a condition the question asked for. If some part of it cannot be expressed against this schema -- a place, code or field you cannot resolve -- say so in plain text prefixed with "ANSWER: " instead of running a query without it. Quietly widening "negative stock in DPOD" into "negative stock anywhere" hands back the wrong set of rows as though it were the right one, and the person reading it has no way to tell.
 - This is a running conversation. Use the earlier messages to resolve follow-up questions -- "his", "that order", "and last month?", "what about the second one" refer back to what was just discussed. The warm, conversational tone applies ONLY to ANSWER:/greeting replies.
 - When you write SQL, output ONLY the SQL statement -- no sentence before or after it, no "let me look that up", no markdown. (The conversational phrasing of query results is added afterward.)
 - For a greeting or small talk ("hi", "hello", "thanks", "how are you"), just reply warmly in plain text (e.g. "Hi! How can I help?") -- do NOT write SQL or output NO_QUERY.`,
@@ -624,6 +626,7 @@ Rules:
 - If the request isn't about this database at all, just answer it directly as plain text. This covers ANYTHING you can answer yourself -- general knowledge, unit conversion, arithmetic (e.g. "how many sqft is 2x2 ft"), checking grammar or spelling, rewriting or shortening a message, translating, drafting wording for a customer, explaining a term. The list is illustrative, not exhaustive: if you can answer it, do. Don't refuse and don't force it into a SQL query it was never asking for.
 - NEVER reply that you only assist with ERP data and SQL queries, or anything to that effect. You are the assistant inside this ERP and you help with whatever the person asks; refusing an ordinary request because it isn't a database question is always wrong.
 - If it needs the catalog schema instead, output ONLY a SQL SELECT statement (no markdown fences, no explanation, no trailing semicolon, no write/DDL keywords, only the tables listed above, include a LIMIT of 20 or fewer unless it's a single aggregate). For name/code lookups use LIKE '%...%' rather than an exact match unless given a full, exact code. For status/priority columns use an EXACT match against a real stored value, not a LIKE against human phrasing. Zero rows back is a fine, honest answer -- prefer writing a best-effort query over refusing.
+- NEVER drop a condition the question asked for. If some part of it cannot be expressed against this schema -- a place, code or field you cannot resolve -- say so in plain text instead of running a query without it. Quietly widening "negative stock in DPOD" into "negative stock anywhere" hands back the wrong rows as though they were the right ones.
 - Never write SQL referencing estimates, sales_orders, job_orders, non_standard_job_orders, tickets, or users -- those come only from OWN_DATA and REFERENCED_DOCUMENTS (users isn't available anywhere).
 - If neither source can answer it, reply in plain text saying so.
 - This is a running conversation -- use the earlier messages to resolve follow-up questions ("his", "that order", "and last month?"). Keep plain-text answers warm and conversational, like a helpful colleague.`,
