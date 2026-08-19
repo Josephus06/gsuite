@@ -14,6 +14,10 @@ const MAX_BODY = 20000;
 // A data-URL image lands in a MEDIUMTEXT (16 MB). The client downscales before sending;
 // this is the backstop against a hand-rolled request filling the column.
 const MAX_IMAGE_CHARS = 8 * 1024 * 1024;
+// Photos per post. High enough that nobody bumps into it posting an event or a site visit,
+// low enough that one post cannot make the feed page enormous for everyone who scrolls
+// past it -- every photo is inline base64 in the payload, not a URL the browser can skip.
+const MAX_IMAGES_PER_POST = 10;
 // How many comments ride along with each post in the feed payload. FB shows a couple and
 // makes you click for the rest -- the client calls GET /:id/comments for the full thread.
 const PREVIEW_COMMENTS = 2;
@@ -43,6 +47,11 @@ function visiblePostsWhere(userId, groupId, alias = 'p') {
   return { sql, params: [userId, groupId] };
 }
 
+// Named columns rather than p.*, so the superseded feed_posts.image_data blob is not read
+// on every page. Photos now come from feed_post_images via decoratePosts.
+const POST_COLS = `
+  p.id, p.user_id, p.body, p.audience, p.audience_group_id, p.created_at, p.edited_at`;
+
 const AUTHOR_COLS = `
   u.id            AS author_id,
   u.display_name  AS author_name,
@@ -60,7 +69,12 @@ function shapePost(row, viewerId) {
   return {
     id: row.id,
     body: row.body || '',
-    image_data: row.image_data || null,
+    // Filled by decoratePosts. image_data is kept alongside as the first photo purely so a
+    // browser still running the previous bundle keeps showing something after a deploy; it
+    // is derived from the same list, not read from the old column, so it costs no extra
+    // bytes and cannot disagree with it.
+    images: [],
+    image_data: null,
     audience: row.audience,
     created_at: row.created_at,
     edited_at: row.edited_at,
@@ -110,6 +124,18 @@ async function decoratePosts(posts, viewerId, isAdmin) {
   if (!posts.length) return posts;
   const ids = posts.map((p) => p.id);
   const byId = new Map(posts.map((p) => [Number(p.id), p]));
+
+  const [images] = await pool.query(
+    `SELECT post_id, image_data FROM feed_post_images
+      WHERE post_id IN (?) ORDER BY post_id, position, id`,
+    [ids]
+  );
+  for (const img of images) {
+    const post = byId.get(Number(img.post_id));
+    if (!post) continue;
+    post.images.push(img.image_data);
+  }
+  for (const post of posts) post.image_data = post.images[0] || null;
 
   const [tallies] = await pool.query(
     'SELECT post_id, type, COUNT(*) AS n FROM feed_post_reactions WHERE post_id IN (?) GROUP BY post_id, type',
@@ -208,7 +234,7 @@ async function decorateComments(comments, viewerId) {
 async function loadVisiblePost(postId, viewerId, groupId) {
   const vis = visiblePostsWhere(viewerId, groupId);
   const [[row]] = await pool.query(
-    `SELECT p.* FROM feed_posts p WHERE p.id = ? AND ${vis.sql}`,
+    `SELECT ${POST_COLS} FROM feed_posts p WHERE p.id = ? AND ${vis.sql}`,
     [postId, ...vis.params]
   );
   return row || null;
@@ -226,7 +252,7 @@ async function fetchPostPage({ viewerId, groupId, isAdmin, cursor, limit = PAGE_
   }
 
   const [rows] = await pool.query(
-    `SELECT p.*, ${AUTHOR_COLS} ${POST_FROM}
+    `SELECT ${POST_COLS}, ${AUTHOR_COLS} ${POST_FROM}
       WHERE ${vis.sql}${extraSql}${cursorSql}
       ORDER BY p.id DESC
       LIMIT ?`,
@@ -243,6 +269,8 @@ module.exports = {
   REACTIONS,
   AUDIENCES,
   PAGE_SIZE,
+  MAX_IMAGES_PER_POST,
+  POST_COLS,
   MAX_BODY,
   MAX_IMAGE_CHARS,
   AUTHOR_COLS,

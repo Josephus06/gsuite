@@ -3,11 +3,15 @@ import Avatar from '../Avatar';
 import { fileToScaledDataUrl } from '../../utils/image';
 import { AUDIENCES, audienceMeta } from './audience';
 
+// Kept in step with MAX_IMAGES_PER_POST on the server, which is what actually enforces it.
+// This copy is so the picker can say no before spending time scaling files it will reject.
+const MAX_IMAGES = 10;
+
 // FB's "Create post" dialog. Doubles as the edit dialog when `editing` is a post -- same
 // fields, so keeping one component avoids two copies of the audience/photo logic.
 export default function PostComposer({ open, onClose, onSubmit, user, groupName, editing }) {
   const [body, setBody] = useState('');
-  const [image, setImage] = useState(null);
+  const [images, setImages] = useState([]);
   const [audience, setAudience] = useState('public');
   const [audienceOpen, setAudienceOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -19,7 +23,9 @@ export default function PostComposer({ open, onClose, onSubmit, user, groupName,
   useEffect(() => {
     if (!open) return;
     setBody(editing?.body || '');
-    setImage(editing?.image_data || null);
+    setImages(editing?.images?.length
+      ? editing.images
+      : (editing?.image_data ? [editing.image_data] : []));
     setAudience(editing?.audience || 'public');
     setAudienceOpen(false);
     setError('');
@@ -47,25 +53,46 @@ export default function PostComposer({ open, onClose, onSubmit, user, groupName,
     el.style.height = `${el.scrollHeight}px`;
   }
 
-  async function pickImage(e) {
-    const file = e.target.files?.[0];
+  async function pickImages(e) {
+    const files = Array.from(e.target.files || []);
     e.target.value = '';
-    if (!file) return;
+    if (!files.length) return;
     setError('');
+
+    // Appended rather than replacing: picking photos from two different folders is one post
+    // as far as the author is concerned, and a second trip to the picker should not wipe
+    // the first. Trimmed to what is left rather than refused outright, so choosing twenty
+    // still gives you ten and a message instead of nothing and a message.
+    const room = MAX_IMAGES - images.length;
+    if (room <= 0) {
+      setError(`A post can have at most ${MAX_IMAGES} photos.`);
+      return;
+    }
+    const taking = files.slice(0, room);
     try {
-      setImage(await fileToScaledDataUrl(file));
+      // Scaled in parallel: these are independent canvas draws, and a set of ten run one at
+      // a time is a visible wait on the Add photo button.
+      const scaled = await Promise.all(taking.map((f) => fileToScaledDataUrl(f)));
+      setImages((current) => [...current, ...scaled]);
+      if (files.length > room) {
+        setError(`Only the first ${room} photo${room === 1 ? '' : 's'} were added -- a post can have at most ${MAX_IMAGES}.`);
+      }
     } catch (err) {
       setError(err.message || 'Could not read that image.');
     }
   }
 
+  function removeImage(index) {
+    setImages((current) => current.filter((_, i) => i !== index));
+  }
+
   async function submit() {
     const text = body.trim();
-    if (!text && !image) return;
+    if (!text && !images.length) return;
     setBusy(true);
     setError('');
     try {
-      await onSubmit({ body: text, image_data: image, audience });
+      await onSubmit({ body: text, images, audience });
       onClose();
     } catch (err) {
       setError(err.response?.data?.error || err.message || 'Could not publish your post.');
@@ -76,9 +103,9 @@ export default function PostComposer({ open, onClose, onSubmit, user, groupName,
   if (!open) return null;
 
   const meta = audienceMeta(audience, groupName);
-  const canPost = Boolean(body.trim() || image) && !busy;
+  const canPost = Boolean(body.trim() || images.length) && !busy;
   // FB only uses the oversized text treatment for short, image-less posts.
-  const bigText = !image && body.length <= 130;
+  const bigText = !images.length && body.length <= 130;
 
   return (
     <div className="fb-modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -129,17 +156,33 @@ export default function PostComposer({ open, onClose, onSubmit, user, groupName,
             onChange={(e) => { setBody(e.target.value); autoGrow(e.target); }}
           />
 
-          {image && (
-            <div className="fb-preview-wrap">
-              <img src={image} alt="Attachment preview" />
-              <button type="button" className="fb-preview-remove" onClick={() => setImage(null)} aria-label="Remove photo">✕</button>
+          {images.length > 0 && (
+            <div className={`fb-preview-grid n${Math.min(images.length, 4)}`}>
+              {images.map((img, i) => (
+                /* Index as key: these are data URLs with no id of their own, and the same
+                   photo can legitimately be added twice. */
+                <div className="fb-preview-cell" key={i}>
+                  <img src={img} alt={`Attachment ${i + 1}`} />
+                  <button
+                    type="button"
+                    className="fb-preview-remove"
+                    onClick={() => removeImage(i)}
+                    aria-label={`Remove photo ${i + 1}`}
+                  >✕</button>
+                </div>
+              ))}
             </div>
           )}
 
           <div className="fb-attach-row">
             <span>Add to your post</span>
             <div className="fb-attach-btns">
-              <button type="button" className="fb-attach-btn" title="Photo" onClick={() => fileRef.current?.click()}>🖼️</button>
+              <button
+                type="button"
+                className="fb-attach-btn"
+                title={images.length ? `Add photos (${images.length}/${MAX_IMAGES})` : 'Photo'}
+                onClick={() => fileRef.current?.click()}
+              >🖼️</button>
               <button type="button" className="fb-attach-btn" title="Tag people" onClick={() => setBody((b) => `${b}@`)}>🏷️</button>
               <button type="button" className="fb-attach-btn" title="Feeling" onClick={() => setBody((b) => `${b}😊`)}>😊</button>
             </div>
@@ -147,7 +190,8 @@ export default function PostComposer({ open, onClose, onSubmit, user, groupName,
               ref={fileRef}
               type="file"
               accept="image/png,image/jpeg,image/webp,image/gif"
-              onChange={pickImage}
+              multiple
+              onChange={pickImages}
               style={{ display: 'none' }}
             />
           </div>

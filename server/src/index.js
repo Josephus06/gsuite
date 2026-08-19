@@ -111,15 +111,24 @@ app.use(cors({
   },
   credentials: true,
 }));
-// Artist attachments are PDFs sent as base64, which inflates them by a third -- a 10MB
-// drawing arrives as ~13.4MB of JSON. Scoped to that one endpoint rather than raising the
-// global ceiling, so no other route can be handed a 14MB body. It runs first; the general
-// parser below then sees req._body already set and skips the request.
+// Routes that carry base64 payloads, which inflate by a third: artist attachments (a 10MB
+// drawing arrives as ~13.4MB of JSON) and a newsfeed post, which can hold several photos.
+// Scoped to these endpoints rather than raising the global ceiling, so no other route can be
+// handed a 14MB body. It runs first; the general parser below then sees req._body already
+// set and skips the request.
 const attachmentUploadJson = express.json({ limit: '14mb' });
+// Creating a post is a POST to the collection; editing one is a PUT to a member. Both can
+// carry the full set of photos, so both need the larger parser -- an edit that re-sends the
+// pictures is the same size as the post that created them.
+const isFeedWrite = (req) => (
+  (req.method === 'POST' && /^\/api\/feed\/?$/.test(req.path))
+  || (req.method === 'PUT' && /^\/api\/feed\/\d+\/?$/.test(req.path))
+);
 app.use((req, res, next) => (
-  req.method === 'POST'
+  (req.method === 'POST'
     && (/^\/api\/job-orders\/\d+\/attachments\/?$/.test(req.path)
-      || /^\/api\/tickets\/\d+\/attachments\/?$/.test(req.path))
+      || /^\/api\/tickets\/\d+\/attachments\/?$/.test(req.path)))
+    || isFeedWrite(req)
     ? attachmentUploadJson(req, res, next)
     : next()
 ));

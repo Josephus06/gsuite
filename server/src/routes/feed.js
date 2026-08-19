@@ -12,6 +12,8 @@ const {
   PAGE_SIZE,
   MAX_BODY,
   MAX_IMAGE_CHARS,
+  MAX_IMAGES_PER_POST,
+  POST_COLS,
   AUTHOR_COLS,
   POST_FROM,
   viewerContext,
@@ -201,30 +203,72 @@ router.get('/contacts', requireAuth, async (req, res, next) => {
   }
 });
 
-// POST /api/feed  { body, image_data, audience }
+// Accepts either shape: images[] from the current client, or a lone image_data from one
+// still running the previous bundle. Returns the photos in the order they should display,
+// or throws the message the caller should hand back.
+function readImages(reqBody) {
+  const raw = Array.isArray(reqBody.images)
+    ? reqBody.images
+    : (reqBody.image_data ? [reqBody.image_data] : []);
+  const images = raw.filter((i) => typeof i === 'string' && i.trim());
+  if (images.length > MAX_IMAGES_PER_POST) {
+    throw new Error(`A post can have at most ${MAX_IMAGES_PER_POST} photos.`);
+  }
+  if (images.some((i) => !i.startsWith('data:image/'))) throw new Error('That is not an image.');
+  if (images.some((i) => i.length > MAX_IMAGE_CHARS)) throw new Error('Image is too large.');
+  return images;
+}
+
+// Rewrites a post's photo list wholesale. Editing a post sends the list the author ended
+// up with, so replacing is both simpler and more correct than diffing: a photo removed in
+// the composer has to disappear here, and reordering has to stick.
+async function writeImages(conn, postId, images) {
+  await conn.query('DELETE FROM feed_post_images WHERE post_id = ?', [postId]);
+  for (const [position, image] of images.entries()) {
+    await conn.query(
+      'INSERT INTO feed_post_images (post_id, position, image_data) VALUES (?, ?, ?)',
+      [postId, position, image],
+    );
+  }
+}
+
+// POST /api/feed  { body, images[], audience }
 router.post('/', requireAuth, async (req, res, next) => {
   try {
     const body = (req.body.body || '').trim();
-    const image = req.body.image_data || null;
+    let images;
+    try { images = readImages(req.body); } catch (e) { return res.status(400).json({ error: e.message }); }
     const audience = AUDIENCES.includes(req.body.audience) ? req.body.audience : 'public';
 
-    if (!body && !image) return res.status(400).json({ error: 'Write something or add a photo.' });
+    if (!body && !images.length) return res.status(400).json({ error: 'Write something or add a photo.' });
     if (body.length > MAX_BODY) return res.status(400).json({ error: 'Post is too long.' });
-    if (image && image.length > MAX_IMAGE_CHARS) return res.status(400).json({ error: 'Image is too large.' });
 
     const { groupId, isAdmin } = await viewerContext(req.user.id);
     if (audience === 'department' && !groupId) {
       return res.status(400).json({ error: 'You are not assigned to a department, so you cannot post to one.' });
     }
 
-    const [result] = await pool.query(
-      'INSERT INTO feed_posts (user_id, body, image_data, audience, audience_group_id) VALUES (?, ?, ?, ?, ?)',
-      [req.user.id, body || null, image, audience, audience === 'department' ? groupId : null]
-    );
+    // One transaction: a post whose photos failed to insert would show up in the feed as an
+    // empty card, and the author has no way to tell it happened.
+    const conn = await pool.getConnection();
+    let postId;
+    try {
+      await conn.beginTransaction();
+      const [result] = await conn.query(
+        'INSERT INTO feed_posts (user_id, body, audience, audience_group_id) VALUES (?, ?, ?, ?)',
+        [req.user.id, body || null, audience, audience === 'department' ? groupId : null]
+      );
+      postId = result.insertId;
+      await writeImages(conn, postId, images);
+      await conn.commit();
+    } catch (e) {
+      await conn.rollback();
+      throw e;
+    } finally { conn.release(); }
 
     const [[row]] = await pool.query(
-      `SELECT p.*, ${AUTHOR_COLS} ${POST_FROM} WHERE p.id = ?`,
-      [result.insertId]
+      `SELECT ${POST_COLS}, ${AUTHOR_COLS} ${POST_FROM} WHERE p.id = ?`,
+      [postId]
     );
     const [post] = await decoratePosts([shapePost(row, req.user.id)], req.user.id, isAdmin);
     res.status(201).json({ post });
@@ -240,35 +284,58 @@ router.post('/', requireAuth, async (req, res, next) => {
 // PUT /api/feed/:id  -- author only.
 router.put('/:id', requireAuth, async (req, res, next) => {
   try {
-    const [[existing]] = await pool.query('SELECT * FROM feed_posts WHERE id = ? AND is_deleted = 0', [req.params.id]);
+    const [[existing]] = await pool.query(
+      'SELECT id, user_id, body, audience, audience_group_id FROM feed_posts WHERE id = ? AND is_deleted = 0',
+      [req.params.id],
+    );
     if (!existing) return res.status(404).json({ error: 'Post not found' });
     if (Number(existing.user_id) !== Number(req.user.id)) {
       return res.status(403).json({ error: 'You can only edit your own posts.' });
     }
 
     const body = (req.body.body ?? existing.body ?? '').trim();
-    const hasImage = req.body.image_data !== undefined ? req.body.image_data : existing.image_data;
-    if (!body && !hasImage) return res.status(400).json({ error: 'Write something or add a photo.' });
+    // An edit that mentions neither images nor image_data leaves the photos alone; one that
+    // sends an empty list is the author having removed them all, which must be obeyed.
+    const touchesImages = Array.isArray(req.body.images) || req.body.image_data !== undefined;
+    let images = [];
+    if (touchesImages) {
+      try { images = readImages(req.body); } catch (e) { return res.status(400).json({ error: e.message }); }
+    } else {
+      const [existingImages] = await pool.query(
+        'SELECT image_data FROM feed_post_images WHERE post_id = ? ORDER BY position, id',
+        [req.params.id],
+      );
+      images = existingImages.map((i) => i.image_data);
+    }
+    if (!body && !images.length) return res.status(400).json({ error: 'Write something or add a photo.' });
     if (body.length > MAX_BODY) return res.status(400).json({ error: 'Post is too long.' });
 
     const audience = AUDIENCES.includes(req.body.audience) ? req.body.audience : existing.audience;
     const { groupId, isAdmin } = await viewerContext(req.user.id);
 
-    await pool.query(
-      `UPDATE feed_posts
-          SET body = ?, image_data = ?, audience = ?, audience_group_id = ?, edited_at = NOW()
-        WHERE id = ?`,
-      [
-        body || null,
-        req.body.image_data !== undefined ? req.body.image_data : existing.image_data,
-        audience,
-        audience === 'department' ? (existing.audience_group_id || groupId) : null,
-        req.params.id,
-      ]
-    );
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.query(
+        `UPDATE feed_posts
+            SET body = ?, audience = ?, audience_group_id = ?, edited_at = NOW()
+          WHERE id = ?`,
+        [
+          body || null,
+          audience,
+          audience === 'department' ? (existing.audience_group_id || groupId) : null,
+          req.params.id,
+        ]
+      );
+      if (touchesImages) await writeImages(conn, req.params.id, images);
+      await conn.commit();
+    } catch (e) {
+      await conn.rollback();
+      throw e;
+    } finally { conn.release(); }
 
     const [[row]] = await pool.query(
-      `SELECT p.*, ${AUTHOR_COLS} ${POST_FROM} WHERE p.id = ?`,
+      `SELECT ${POST_COLS}, ${AUTHOR_COLS} ${POST_FROM} WHERE p.id = ?`,
       [req.params.id]
     );
     const [post] = await decoratePosts([shapePost(row, req.user.id)], req.user.id, isAdmin);
@@ -281,7 +348,10 @@ router.put('/:id', requireAuth, async (req, res, next) => {
 // Soft delete so comment threads and reaction history aren't destroyed by a stray click.
 router.delete('/:id', requireAuth, async (req, res, next) => {
   try {
-    const [[existing]] = await pool.query('SELECT * FROM feed_posts WHERE id = ? AND is_deleted = 0', [req.params.id]);
+    const [[existing]] = await pool.query(
+      'SELECT id, user_id FROM feed_posts WHERE id = ? AND is_deleted = 0',
+      [req.params.id],
+    );
     if (!existing) return res.status(404).json({ error: 'Post not found' });
 
     const { isAdmin } = await viewerContext(req.user.id);

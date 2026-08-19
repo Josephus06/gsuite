@@ -889,3 +889,119 @@
   background: #31a24c;
   border: 3px solid var(--fb-card);
 }
+
+/* ---- Several photos on one post ------------------------------------------------------
+   Both grids below follow the same idea as FB: the tiles are a fixed shape and the photos
+   are cropped to fill them (object-fit: cover), because a row of pictures with different
+   aspect ratios left uncropped is a ragged mess. The full picture is one click away in the
+   lightbox, which never crops. */
+
+/* Composer previews. Smaller and denser than the posted gallery -- this is a checklist of
+   what you attached, not the finished post. */
+.fb-preview-grid {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 4px;
+  grid-template-columns: repeat(3, 1fr);
+}
+.fb-preview-grid.n1 { grid-template-columns: 1fr; }
+.fb-preview-grid.n2 { grid-template-columns: repeat(2, 1fr); }
+
+.fb-preview-cell {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--fb-input);
+}
+.fb-preview-cell img {
+  display: block;
+  width: 100%;
+  /* A single preview keeps its proportions; in a grid the tiles are square so the rows line
+     up regardless of what was picked. */
+  aspect-ratio: 1;
+  object-fit: cover;
+}
+.fb-preview-grid.n1 .fb-preview-cell img { aspect-ratio: auto; max-height: 380px; object-fit: contain; }
+
+/* Posted gallery. */
+.fb-post-gallery {
+  display: grid;
+  gap: 2px;
+  background: var(--fb-divider);
+}
+.fb-post-gallery.n2 { grid-template-columns: repeat(2, 1fr); }
+.fb-post-gallery.n3 { grid-template-columns: repeat(2, 1fr); }
+/* Three photos read best as one large and two stacked beside it, rather than an orphan
+   tile on a second row. */
+.fb-post-gallery.n3 .fb-gallery-cell:first-child { grid-row: span 2; }
+.fb-post-gallery.n4 { grid-template-columns: repeat(2, 1fr); }
+
+.fb-gallery-cell {
+  position: relative;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  overflow: hidden;
+  min-height: 0;
+}
+.fb-gallery-cell img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+}
+.fb-post-gallery.n3 .fb-gallery-cell:first-child img { aspect-ratio: 1 / 2.02; }
+
+/* "+3" over the last tile when there are more photos than tiles. */
+.fb-gallery-more {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 28px;
+  font-weight: 700;
+}
+
+/* Lightbox paging. Fixed rather than absolute: the backdrop is the whole viewport, and the
+   arrows belong to it rather than to whatever size the photo happens to be. */
+.fb-lightbox-nav {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  color: #111;
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.fb-lightbox-nav:hover { background: #fff; }
+.fb-lightbox-nav.prev { left: 16px; }
+.fb-lightbox-nav.next { right: 16px; }
+
+.fb-lightbox-count {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  .fb-lightbox-nav { width: 38px; height: 38px; font-size: 24px; }
+  .fb-lightbox-nav.prev { left: 6px; }
+  .fb-lightbox-nav.next { right: 6px; }
+}

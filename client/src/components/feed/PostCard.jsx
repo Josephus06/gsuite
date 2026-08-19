@@ -18,7 +18,9 @@ export default function PostCard({ post, user, viewer, onChanged, onDeleted, onE
   const [focusComment, setFocusComment] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
-  const [lightbox, setLightbox] = useState(false);
+  // Index of the photo being viewed full-screen, or null for none. An index rather than a
+  // boolean because a post can now hold several and the viewer pages between them.
+  const [lightbox, setLightbox] = useState(null);
   const menuRef = useRef(null);
   const navigate = useNavigate();
 
@@ -56,9 +58,15 @@ export default function PostCard({ post, user, viewer, onChanged, onDeleted, onE
   const summary = reactionSummary(state.reaction_total, state.top_reactors, state.my_reaction);
   const canManage = state.can_edit || viewer?.is_admin;
 
+  // images[] is what the server sends now; image_data is the single-photo shape a cached
+  // page may still be holding. Either way this is the list to render.
+  const images = state.images?.length
+    ? state.images
+    : (state.image_data ? [state.image_data] : []);
+
   const long = state.body.length > FOLD_AT;
   const shownBody = long && !expanded ? `${state.body.slice(0, FOLD_AT).trimEnd()}…` : state.body;
-  const bigText = !state.image_data && state.body.length <= 130;
+  const bigText = !images.length && state.body.length <= 130;
 
   return (
     <div className="fb-card" style={{ position: 'relative' }}>
@@ -110,8 +118,24 @@ export default function PostCard({ post, user, viewer, onChanged, onDeleted, onE
         </div>
       )}
 
-      {state.image_data && (
-        <img className="fb-post-image" src={state.image_data} alt="" onClick={() => setLightbox(true)} />
+      {/* One photo keeps its full-width treatment; several tile into a grid whose shape
+          depends on how many there are, and anything past the fourth tile collapses into a
+          "+N" overlay on the last one rather than shrinking every tile to a thumbnail. */}
+      {images.length === 1 && (
+        <img className="fb-post-image" src={images[0]} alt="" onClick={() => setLightbox(0)} />
+      )}
+      {images.length > 1 && (
+        <div className={`fb-post-gallery n${Math.min(images.length, 4)}`}>
+          {images.slice(0, 4).map((img, i) => {
+            const hidden = i === 3 ? images.length - 4 : 0;
+            return (
+              <button type="button" className="fb-gallery-cell" key={i} onClick={() => setLightbox(i)}>
+                <img src={img} alt="" />
+                {hidden > 0 && <span className="fb-gallery-more">+{hidden}</span>}
+              </button>
+            );
+          })}
+        </div>
       )}
 
       {(state.reaction_total > 0 || state.comment_count > 0) && (
@@ -173,13 +197,31 @@ export default function PostCard({ post, user, viewer, onChanged, onDeleted, onE
         />
       )}
 
-      {lightbox && (
-        <div className="fb-modal-backdrop" onClick={() => setLightbox(false)}>
+      {lightbox !== null && images[lightbox] && (
+        <div className="fb-modal-backdrop" onClick={() => setLightbox(null)}>
           <img
-            src={state.image_data}
+            src={images[lightbox]}
             alt=""
             style={{ maxWidth: '95vw', maxHeight: '92vh', objectFit: 'contain', borderRadius: 8 }}
           />
+          {images.length > 1 && (
+            <>
+              {/* stopPropagation, or paging would close the viewer on the backdrop click. */}
+              <button
+                type="button"
+                className="fb-lightbox-nav prev"
+                aria-label="Previous photo"
+                onClick={(e) => { e.stopPropagation(); setLightbox((i) => (i - 1 + images.length) % images.length); }}
+              >‹</button>
+              <button
+                type="button"
+                className="fb-lightbox-nav next"
+                aria-label="Next photo"
+                onClick={(e) => { e.stopPropagation(); setLightbox((i) => (i + 1) % images.length); }}
+              >›</button>
+              <span className="fb-lightbox-count">{lightbox + 1} / {images.length}</span>
+            </>
+          )}
         </div>
       )}
     </div>
