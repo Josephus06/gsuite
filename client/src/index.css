@@ -1832,3 +1832,26 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .att-drop-main em { font-style: normal; color: var(--accent); }
 .att-drop-hint { font-size: 11.5px; color: var(--text); opacity: 0.65; margin-top: 3px; }
 .att-drop.is-busy { opacity: 0.6; pointer-events: none; }
+
+/* HRD room cards. Buttons rather than divs so the whole card is keyboard-reachable and
+   announced as clickable -- the card IS the room, there is nothing else to click. */
+.hrd-room-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+.hrd-room-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+.hrd-room-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12); }
+.hrd-room-card:focus-visible { outline: 2px solid var(--primary, #6b3fa0); outline-offset: 2px; }
+.hrd-room-name { font-weight: 600; font-size: 1.05rem; }
+.hrd-room-desc { font-size: 0.9rem; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.hrd-room-meta { margin-top: auto; font-size: 0.85rem; opacity: 0.75; }

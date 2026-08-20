@@ -20,6 +20,9 @@ const NAV_STRUCTURE = [
   // The clickable order-to-cash chart -- a guide to the other modules rather than a
   // module of its own, so it sits at top level next to Dashboard.
   { route: '/process-flow', label: 'Manual' },
+  // HR document rooms. Top level next to Manual: it is reference material for everyone,
+  // not part of the order-to-cash chain the category dropdowns describe.
+  { route: '/hrd', label: 'HRD' },
   {
     label: 'CRM',
     children: [

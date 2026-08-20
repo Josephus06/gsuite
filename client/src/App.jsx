@@ -141,6 +141,8 @@ import AssemblyBuildView from './pages/AssemblyBuildView';
 import Tickets from './pages/Tickets';
 import TicketView from './pages/TicketView';
 import ProcessFlow from './pages/ProcessFlow';
+import Hrd from './pages/Hrd';
+import HrdRoom from './pages/HrdRoom';
 import NonStandardJobOrders from './pages/NonStandardJobOrders';
 import NonStandardJobOrderView from './pages/NonStandardJobOrderView';
 import NonStandardSalesOrders from './pages/NonStandardSalesOrders';
@@ -201,6 +203,8 @@ function App() {
         <Route path="/estimates/:id/print" element={<EstimatePrint />} />
         <Route path="/sales-orders" element={<SalesOrders />} />
         <Route path="/sales-orders/:id" element={<SalesOrderView />} />
+        <Route path="/hrd" element={<Hrd />} />
+        <Route path="/hrd/:id" element={<HrdRoom />} />
         <Route path="/non-standard-job-orders" element={<NonStandardJobOrders />} />
         <Route path="/non-standard-job-orders/:id" element={<NonStandardJobOrderView />} />
         <Route path="/non-standard-sales-orders" element={<NonStandardSalesOrders />} />
