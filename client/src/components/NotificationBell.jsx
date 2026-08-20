@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { announce, soundEnabled, setSoundEnabled } from '../utils/notificationSound';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 
@@ -40,6 +41,7 @@ export default function NotificationBell() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [open, setOpen] = useState(false);
   const [toasts, setToasts] = useState([]);
+  const [sound, setSound] = useState(soundEnabled);
   const lastSeenMaxId = useRef(null);
   const rootRef = useRef(null);
 
@@ -62,6 +64,10 @@ export default function NotificationBell() {
         fresh.forEach((n) => {
           setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== n.id)), TOAST_MS);
         });
+        // Chime, then read the headline. Raised here rather than in the toast so what is
+        // heard and what is shown can never disagree, and sorted newest-first so the one
+        // read aloud is the one that just landed.
+        announce([...fresh].sort((a, b) => b.id - a.id).map((n) => n.title));
       }
     } catch {
       // Polling hiccup -- just try again next tick, not worth surfacing to the user.
@@ -170,9 +176,22 @@ export default function NotificationBell() {
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid var(--border)' }}>
               <strong style={{ fontSize: 14 }}>Notifications</strong>
-              {unreadCount > 0 && (
-                <button type="button" className="btn btn-sm" onClick={markAllRead}>Mark all read</button>
-              )}
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                {/* Anything that speaks needs an off switch within reach of the thing that
+                    speaks -- burying this in a settings page would be its own annoyance. */}
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  title={sound ? 'Sound and voice on — click to mute' : 'Muted — click to turn sound and voice on'}
+                  aria-label={sound ? 'Mute notification sound' : 'Unmute notification sound'}
+                  onClick={() => { const next = !sound; setSound(next); setSoundEnabled(next); if (next) announce(['Notification sound on']); }}
+                >
+                  {sound ? '🔊' : '🔇'}
+                </button>
+                {unreadCount > 0 && (
+                  <button type="button" className="btn btn-sm" onClick={markAllRead}>Mark all read</button>
+                )}
+              </div>
             </div>
             {notifications.length === 0 && (
               <div className="muted" style={{ padding: 16, textAlign: 'center' }}>No notifications yet.</div>
