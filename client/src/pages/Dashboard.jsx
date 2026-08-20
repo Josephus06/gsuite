@@ -4,10 +4,18 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { Sparkline, DonutChart, GaugeRing, BarList, Holo3DOrb, Holo3DBars, useCountUp } from '../components/charts';
 import Avatar from '../components/Avatar';
+import Modal from '../components/Modal';
 import SyncFromSourceButton from '../components/SyncFromSourceButton';
 import { parseUtc } from '../utils/datetime';
 import Feed from './Feed';
 import '../styles/feed.css';
+
+// "20 August 2026" from a YYYY-MM-DD key. Built from the parts rather than new Date(key):
+// a bare date string is parsed as UTC midnight, which displays as the previous day at UTC+8.
+function formatDayHeading(key) {
+  const [y, m, d] = String(key).split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
 
 const STAT_TONES = ['purple', 'blue', 'green', 'lime'];
 
@@ -561,6 +569,10 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
   const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
   const leading = first.getDay();
 
+  // The day whose jobs are being shown in the popup, or null. Held here rather than in the
+  // parent so paging months closes it -- the day it refers to is no longer on screen.
+  const [openDay, setOpenDay] = useState(null);
+
   const byDay = new Map();
   for (const j of jobs || []) {
     if (!j.day) continue;
@@ -605,7 +617,14 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
           return (
             <div
               key={key}
-              className={`artist-calendar-day${key === todayKey ? ' is-today' : ''}${dayJobs.length ? ' has-jobs' : ''}`}
+              role={dayJobs.length ? 'button' : undefined}
+              tabIndex={dayJobs.length ? 0 : undefined}
+              className={`artist-calendar-day${key === todayKey ? ' is-today' : ''}${dayJobs.length ? ' has-jobs is-clickable' : ''}`}
+              title={dayJobs.length ? `${dayJobs.length} scheduled — click to see them` : undefined}
+              onClick={dayJobs.length ? () => setOpenDay(key) : undefined}
+              onKeyDown={dayJobs.length ? (e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenDay(key); }
+              } : undefined}
             >
               <span className="artist-calendar-daynum">{dayNo}</span>
               {dayJobs.slice(0, 3).map((j) => {
@@ -615,19 +634,21 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
                 const runPath = pathFor
                   ? pathFor(j)
                   : (j.kind === 'NSTDJO' ? `/assigned-jo/nstdjo/${j.id}` : `/assigned-jo/${j.id}`);
+                // A label, not a button: the whole day is the click target now, and a button
+                // inside a clickable cell is both invalid markup and two competing targets in
+                // the same few pixels. Opening a job happens from the day's popup.
                 return (
-                  <button
+                  <span
                     key={`${j.kind || 'JO'}-${j.id}`}
-                    type="button"
                     className="artist-calendar-chip"
                     style={TIMER_STATUS_STYLE[state]}
+                    data-run-path={runPath}
                     title={tooltipFor
                       ? tooltipFor(j)
                       : `${j.jobOrderNo} · ${j.customerName || '—'} · ${state} · Planned ${formatDateTime(j.plannedStartAt)} → ${formatDateTime(j.plannedEndAt)}`}
-                    onClick={() => navigate(runPath)}
                   >
                     {j.jobOrderNo}
-                  </button>
+                  </span>
                 );
               })}
               {dayJobs.length > 3 && (
@@ -637,6 +658,53 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
           );
         })}
       </div>
+
+      {openDay && (
+        <Modal title={`Scheduled on ${formatDayHeading(openDay)}`} onClose={() => setOpenDay(null)}>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>JO / NSTDJO #</th>
+                  <th>Status</th>
+                  <th>Incentive</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {(byDay.get(openDay) || []).map((j) => {
+                  const state = j.done ? 'Completed' : j.running ? 'Running' : 'Not Started';
+                  const runPath = pathFor
+                    ? pathFor(j)
+                    : (j.kind === 'NSTDJO' ? `/assigned-jo/nstdjo/${j.id}` : `/assigned-jo/${j.id}`);
+                  return (
+                    <tr key={`${j.kind || 'JO'}-${j.id}`}>
+                      <td>
+                        <strong>{j.jobOrderNo}</strong>
+                        {j.customerName && <div className="muted" style={{ fontSize: '0.85em' }}>{j.customerName}</div>}
+                      </td>
+                      <td>
+                        {/* Both statuses, because they answer different questions: sub status
+                            is whose hands the job is in, the timer state is how far this
+                            artist got with it. */}
+                        <span className="badge" style={TIMER_STATUS_STYLE[state]}>{state}</span>
+                        {j.subStatus && <div className="muted" style={{ fontSize: '0.85em' }}>{j.subStatus}</div>}
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {Number(j.incentiveAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {j.incentiveBasis && <div className="muted" style={{ fontSize: '0.85em' }}>{j.incentiveBasis}</div>}
+                      </td>
+                      <td>
+                        <button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(runPath)}>Open</button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

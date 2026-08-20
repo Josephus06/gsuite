@@ -1898,3 +1898,10 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .running-timer-error { font-size: 0.72rem; color: #ffb4b4; margin-bottom: 6px; }
 .running-timer-actions { display: flex; gap: 6px; }
 .running-timer-actions .btn { flex: 1; }
+
+/* A calendar day with work on it is a click target for its own popup. */
+.artist-calendar-day.is-clickable { cursor: pointer; }
+.artist-calendar-day.is-clickable:hover { background: rgba(124, 111, 232, 0.12); }
+.artist-calendar-day.is-clickable:focus-visible { outline: 2px solid #7c6fe8; outline-offset: -2px; }
+/* The chips inside are labels now, not buttons -- the day owns the click. */
+.artist-calendar-day.is-clickable .artist-calendar-chip { cursor: pointer; }

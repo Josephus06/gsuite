@@ -2,6 +2,11 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { DESIGN_QUEUE_STATUS } = require('../lib/designSupervisorVisibility');
+// Shared with the Artist Incentive report and the Assigned JO list, so the calendar cannot
+// quote a different figure for the same job than the other two do.
+const {
+  jobOrderIncentiveExpression, nstdjoIncentiveExpression, joIncentiveBasis, NSTDJO_INCENTIVE_BASIS,
+} = require('../lib/artistIncentive');
 
 const router = express.Router();
 
@@ -451,6 +456,10 @@ async function artistCalendar(employeeId, monthStart, monthEnd) {
     `SELECT jo.id, jo.job_order_no, jo.description, jo.sub_status,
             jo.planned_start_at, jo.planned_end_at, jo.layout_ended_at,
             c.name AS customer_name,
+            -- Same expressions the Artist Incentive report and the Assigned JO list use, so a
+            -- day's popup cannot quote a different figure from the other two.
+            ${jobOrderIncentiveExpression('jo')} AS incentive_amount,
+            ${joIncentiveBasis('jo')} AS incentive_basis,
             EXISTS(SELECT 1 FROM job_order_layout_sessions s
                     WHERE s.job_order_id = jo.id AND s.ended_at IS NULL) AS is_running
        FROM job_orders jo
@@ -472,6 +481,8 @@ async function artistCalendar(employeeId, monthStart, monthEnd) {
       `SELECT n.id, n.nstdjo_no AS job_order_no, n.description, n.sub_status,
               n.planned_start_at, n.planned_end_at, n.layout_ended_at,
               c.name AS customer_name,
+              ${nstdjoIncentiveExpression('n')} AS incentive_amount,
+              '${NSTDJO_INCENTIVE_BASIS}' AS incentive_basis,
               EXISTS(SELECT 1 FROM non_standard_job_order_layout_sessions s
                       WHERE s.non_standard_job_order_id = n.id AND s.ended_at IS NULL) AS is_running
          FROM non_standard_job_orders n
@@ -493,6 +504,8 @@ async function artistCalendar(employeeId, monthStart, monthEnd) {
     plannedStartAt: r.planned_start_at,
     plannedEndAt: r.planned_end_at,
     // The calendar colours a day by what is on it, so it needs to know what state each job is in.
+    incentiveAmount: Number(r.incentive_amount || 0),
+    incentiveBasis: r.incentive_basis,
     done: !!r.layout_ended_at,
     running: !!Number(r.is_running),
     day: r.planned_start_at ? String(r.planned_start_at).slice(0, 10) : null,
