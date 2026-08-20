@@ -133,15 +133,6 @@ export default function DashboardCarousel() {
 
   return (
     <div className="fb-card fb-carousel">
-      {/* The anniversary lockup, served from public/ rather than bundled: it is a fixed piece
-          of company branding, not something a component needs to import, and at 40KB it wants
-          its own cacheable URL instead of riding inside the JS. Its white background was
-          knocked out to alpha so it sits on the card in either theme. */}
-      <img
-        className="fb-carousel-brand"
-        src="/anniversary-30.png"
-        alt="GraphicStar — 30 years — creations made easy"
-      />
       <div className="fb-rail-title">Spotlight</div>
 
       {current ? (

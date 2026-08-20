@@ -170,7 +170,16 @@ export default function Feed() {
         {/* ------------------------------------------------------------ left rail */}
         {/* Own column at the far left, outside the shortcuts rail: it is company notice
             material rather than navigation, and the space was empty anyway. */}
-        <aside className="fb-rail fb-rail-far-left">
+        <aside className="fb-rail fb-rail-far-left">
+          {/* The anniversary lockup, above the Spotlight card and not inside it: it is a
+              standing mark for the year rather than one of the things being spotlighted, and
+              the carousel hides itself entirely for anyone with nothing to show. Served from
+              public/ so it keeps its own cacheable URL instead of riding inside the JS. */}
+          <img
+            className="fb-anniversary"
+            src="/anniversary-30.png"
+            alt="GraphicStar — 30 years — creations made easy"
+          />
           <DashboardCarousel />
         </aside>
 
