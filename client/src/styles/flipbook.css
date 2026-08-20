@@ -31,6 +31,9 @@
   width: 100%;
   display: flex;
   justify-content: center;
+  /* At 145% the open spread is wider than the content column on a laptop. Scrolling the
+     stage keeps that inside the book instead of pushing the whole page sideways. */
+  overflow: auto;
 }
 .flipbook-stage:focus-visible { outline: 2px solid var(--fb-orange); outline-offset: 6px; border-radius: 12px; }
 
@@ -266,3 +269,100 @@
   .flipbook-leaf { transition-duration: 180ms; }
   .fb-tile, .fb-client { animation: none; }
 }
+
+/* ------------------------------------------------------- uploaded artwork pages */
+
+/* An uploaded page is the printed page: it fills the sheet edge to edge with no chrome of
+   ours over it, because the artwork already carries its own margins and page numbers. */
+.fb-image-page {
+  padding: 0;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.fb-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  animation: fb-image-in 420ms ease both;
+}
+@keyframes fb-image-in {
+  from { opacity: 0; transform: scale(1.015); }
+  to { opacity: 1; transform: none; }
+}
+.fb-image-page .fb-page-num { opacity: 0.85; }
+.fb-image-caption {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: 10px 14px;
+  font-size: 0.85em;
+  color: #fff;
+  background: linear-gradient(transparent, rgba(8, 22, 46, 0.78));
+}
+
+/* Shown while the bytes are on their way. A sweep rather than a spinner: the sheet is
+   already there, only its picture is missing. */
+.fb-image-loading {
+  width: 100%; height: 100%;
+  background: linear-gradient(160deg, #f6f8fc, #e9edf5);
+  position: relative;
+  overflow: hidden;
+}
+.fb-image-loading span {
+  position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.85) 50%, transparent 80%);
+  transform: translateX(-100%);
+  animation: fb-shimmer 1.25s ease-in-out infinite;
+}
+@keyframes fb-shimmer {
+  to { transform: translateX(100%); }
+}
+
+/* ------------------------------------------------------------ artwork manager */
+
+.fb-manage { margin: 0 0 12px; }
+.fb-manage-body {
+  border: 1px solid var(--border, #dfe3ea);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-top: 8px;
+  background: var(--surface, #fff);
+  animation: fb-manage-in 220ms ease both;
+}
+@keyframes fb-manage-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+.fb-manage-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.fb-manage-busy { margin-top: 10px; font-size: 0.9em; color: var(--fb-navy); }
+.fb-manage-error { margin-top: 10px; font-size: 0.9em; color: #b3261e; }
+.fb-manage-list {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+  /* Twenty-four rows is a lot of page; the list scrolls so the book stays in view. */
+  max-height: 320px;
+  overflow-y: auto;
+}
+.fb-manage-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--border, #eceff4);
+  border-radius: 8px;
+}
+.fb-manage-thumb {
+  width: 44px; height: 62px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: #eef1f6;
+  flex: 0 0 auto;
+}
+.fb-manage-thumb.is-empty { display: inline-block; }
+.fb-manage-meta { flex: 1 1 auto; min-width: 0; }
+.fb-manage-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fb-manage-actions { display: flex; gap: 6px; flex: 0 0 auto; }

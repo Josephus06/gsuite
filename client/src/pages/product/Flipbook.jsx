@@ -20,7 +20,10 @@ export default function Flipbook({ pages, renderPage }) {
 
   // How many leaves have been turned: 0 = closed on the cover, leaves.length = fully read.
   const [turned, setTurned] = useState(0);
-  const [zoom, setZoom] = useState(1);
+  // 145%: the size the book is actually read at. Fitting the whole spread on screen at 100%
+  // leaves body copy too small to read, so it opens where a reader would have put it anyway.
+  const DEFAULT_ZOOM = 1.45;
+  const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const stageRef = useRef(null);
 
   const canBack = turned > 0;
@@ -92,7 +95,7 @@ export default function Flipbook({ pages, renderPage }) {
         <span className="flipbook-zoom">
           <button type="button" className="btn btn-sm" onClick={() => setZoom((z) => Math.max(0.6, +(z - 0.1).toFixed(2)))} aria-label="Zoom out">−</button>
           <span className="flipbook-zoom-value">{Math.round(zoom * 100)}%</span>
-          <button type="button" className="btn btn-sm" onClick={() => setZoom((z) => Math.min(1.6, +(z + 0.1).toFixed(2)))} aria-label="Zoom in">+</button>
+          <button type="button" className="btn btn-sm" onClick={() => setZoom((z) => Math.min(2.2, +(z + 0.1).toFixed(2)))} aria-label="Zoom in">+</button>
         </span>
       </div>
 
