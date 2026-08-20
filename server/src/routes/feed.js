@@ -17,6 +17,7 @@ const {
   AUTHOR_COLS,
   POST_FROM,
   viewerContext,
+  visiblePostsWhere,
   shapePost,
   shapeComment,
   decoratePosts,
@@ -180,6 +181,42 @@ router.get('/', requireAuth, async (req, res, next) => {
 // Deliberately not behind requirePermission: every authenticated user already sees
 // colleagues' names on posts, and gating the rail on an unrelated page permission would
 // blank it for most accounts.
+// One photo, as bytes. The feed used to inline every image as base64, which nothing could
+// cache and everything had to wait for; served from here they arrive in parallel, after the
+// posts are already on screen, and the browser keeps them.
+//
+// Visibility is re-checked through the post's own audience rule rather than trusted from the
+// id -- an image id is a small integer, and a private post's photo must not be readable by
+// anyone who increments one.
+router.get('/images/:imageId', requireAuth, async (req, res, next) => {
+  try {
+    const { groupId } = await viewerContext(req.user.id);
+    const vis = visiblePostsWhere(req.user.id, groupId);
+    const [[row]] = await pool.query(
+      `SELECT i.image_data FROM feed_post_images i
+         JOIN feed_posts p ON p.id = i.post_id
+        WHERE i.id = ? AND ${vis.sql}`,
+      [req.params.imageId, ...vis.params],
+    );
+    if (!row) return res.status(404).json({ error: 'Not found' });
+
+    // Stored as a data: URL ("data:image/jpeg;base64,...."), so the media type travels with
+    // the bytes and does not have to be guessed from the filename -- there isn't one.
+    const match = /^data:([\w.+-]+\/[\w.+-]+);base64,(.*)$/s.exec(row.image_data || '');
+    const mime = match ? match[1] : 'application/octet-stream';
+    const buf = Buffer.from(match ? match[2] : String(row.image_data || ''), 'base64');
+
+    // A photo never changes once posted -- editing a post replaces the rows -- so this is
+    // safe to cache hard. private, because the audience rule above decided who may see it and
+    // a shared cache has no way to apply that.
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'private, max-age=604800, immutable');
+    res.setHeader('ETag', `"feedimg-${req.params.imageId}-${buf.length}"`);
+    if (req.headers['if-none-match'] === res.getHeader('ETag')) return res.status(304).end();
+    res.send(buf);
+  } catch (err) { next(err); }
+});
+
 const ONLINE_MINUTES = 5;
 
 router.get('/contacts', requireAuth, async (req, res, next) => {

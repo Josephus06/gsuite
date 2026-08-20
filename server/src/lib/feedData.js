@@ -74,12 +74,12 @@ function shapePost(row, viewerId) {
   return {
     id: row.id,
     body: row.body || '',
-    // Filled by decoratePosts. image_data is kept alongside as the first photo purely so a
-    // browser still running the previous bundle keeps showing something after a deploy; it
-    // is derived from the same list, not read from the old column, so it costs no extra
-    // bytes and cannot disagree with it.
+    // Filled by decoratePosts with the ids of this post's photos; the client fetches each
+    // from /feed/images/:id. `images` stays in the shape as an empty array so a browser still
+    // running the previous bundle renders a post with no photo rather than crashing on
+    // undefined -- it is not filled, because doing so is what made the feed 2.84 MB.
     images: [],
-    image_data: null,
+    image_ids: [],
     audience: row.audience,
     created_at: row.created_at,
     edited_at: row.edited_at,
@@ -133,17 +133,23 @@ async function decoratePosts(posts, viewerId, isAdmin) {
   const ids = posts.map((p) => p.id);
   const byId = new Map(posts.map((p) => [Number(p.id), p]));
 
+  // IDs only -- the bytes are fetched per image from GET /feed/images/:id.
+  //
+  // These used to be inlined as base64 data URLs, which made one page of feed 2.84 MB: 1.24 MB
+  // of images, plus another 1.24 MB because image_data repeated images[0] in the same
+  // response. Nothing rendered until all of it arrived, and none of it could be cached, so
+  // every visit to the dashboard paid the full cost again. Sent as ids, the page is a few KB
+  // and the photos stream in afterwards, cached by the browser from then on.
   const [images] = await pool.query(
-    `SELECT post_id, image_data FROM feed_post_images
+    `SELECT id, post_id FROM feed_post_images
       WHERE post_id IN (?) ORDER BY post_id, position, id`,
     [ids]
   );
   for (const img of images) {
     const post = byId.get(Number(img.post_id));
     if (!post) continue;
-    post.images.push(img.image_data);
+    post.image_ids.push(img.id);
   }
-  for (const post of posts) post.image_data = post.images[0] || null;
 
   const [tallies] = await pool.query(
     'SELECT post_id, type, COUNT(*) AS n FROM feed_post_reactions WHERE post_id IN (?) GROUP BY post_id, type',

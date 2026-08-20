@@ -8,6 +8,7 @@ import Linkify from './Linkify';
 import {
   REACTION_BY_KEY, reactionSummary, topReactionKeys, reactorTooltip, allReactorNames,
 } from './reactions';
+import useFeedImages from './useFeedImages';
 import { audienceMeta } from './audience';
 import { fbTime, fbTimeFull } from './time';
 
@@ -60,11 +61,15 @@ export default function PostCard({ post, user, viewer, onChanged, onDeleted, onE
   const summary = reactionSummary(state.reaction_total, state.top_reactors, state.my_reaction);
   const canManage = state.can_edit || viewer?.is_admin;
 
-  // images[] is what the server sends now; image_data is the single-photo shape a cached
-  // page may still be holding. Either way this is the list to render.
-  const images = state.images?.length
-    ? state.images
-    : (state.image_data ? [state.image_data] : []);
+  // Photos arrive as ids and are fetched separately -- see useFeedImages. state.images /
+  // state.image_data are the older inline shapes, still honoured so a post already in memory
+  // from a previous bundle keeps rendering.
+  const fetched = useFeedImages(state.image_ids);
+  const inline = state.images?.length ? state.images : (state.image_data ? [state.image_data] : []);
+  // Only drop the nulls once loading has finished, or a post briefly renders as text-only and
+  // then reflows when its photo lands.
+  const images = state.image_ids?.length ? fetched.filter(Boolean) : inline;
+  const imagesPending = Boolean(state.image_ids?.length) && images.length < state.image_ids.length;
 
   const long = state.body.length > FOLD_AT;
   const shownBody = long && !expanded ? `${state.body.slice(0, FOLD_AT).trimEnd()}…` : state.body;
@@ -123,8 +128,11 @@ export default function PostCard({ post, user, viewer, onChanged, onDeleted, onE
       {/* One photo keeps its full-width treatment; several tile into a grid whose shape
           depends on how many there are, and anything past the fourth tile collapses into a
           "+N" overlay on the last one rather than shrinking every tile to a thumbnail. */}
+      {/* Holds the space while the photo is still on its way, so the post does not jump as
+          images land under the reader's cursor. */}
+      {imagesPending && !images.length && <div className="fb-post-image-placeholder" />}
       {images.length === 1 && (
-        <img className="fb-post-image" src={images[0]} alt="" onClick={() => setLightbox(0)} />
+        <img className="fb-post-image" src={images[0]} alt="" loading="lazy" onClick={() => setLightbox(0)} />
       )}
       {images.length > 1 && (
         <div className={`fb-post-gallery n${Math.min(images.length, 4)}`}>

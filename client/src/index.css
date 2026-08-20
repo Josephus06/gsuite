@@ -1855,3 +1855,15 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .hrd-room-name { font-weight: 600; font-size: 1.05rem; }
 .hrd-room-desc { font-size: 0.9rem; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .hrd-room-meta { margin-top: auto; font-size: 0.85rem; opacity: 0.75; }
+
+/* Reserves the space a feed photo will occupy while its bytes are still arriving, so posts
+   do not jump under the reader as images land. */
+.fb-post-image-placeholder {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  max-height: 420px;
+  background: linear-gradient(100deg, rgba(128,128,128,0.10) 30%, rgba(128,128,128,0.18) 50%, rgba(128,128,128,0.10) 70%);
+  background-size: 200% 100%;
+  animation: fb-img-shimmer 1.2s linear infinite;
+}
+@keyframes fb-img-shimmer { to { background-position: -200% 0; } }

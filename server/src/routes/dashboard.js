@@ -151,45 +151,49 @@ async function repMetrics(employeeIds) {
   const placeholders = employeeIds.map(() => '?').join(', ');
   const monthStart = monthRange();
 
-  const [[weighted]] = await pool.query(
-    `SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS amount
-     FROM sales_orders WHERE sales_rep_id IN (${placeholders}) AND date_created >= ?`,
-    [...employeeIds, monthStart]
-  );
-
-  const [[estTotals]] = await pool.query(
-    `SELECT COUNT(*) AS created, SUM(status = 'approved') AS approved
-     FROM estimates WHERE sales_rep_id IN (${placeholders})`,
-    employeeIds
-  );
-
-  const [[paid]] = await pool.query(
-    `SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS amount
-     FROM sales_orders WHERE sales_rep_id IN (${placeholders}) AND status = ?`,
-    [...employeeIds, PAID_STATUS]
-  );
-
   const unpaidPlaceholders = UNPAID_STATUSES.map(() => '?').join(', ');
-  const [[unpaid]] = await pool.query(
-    `SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS amount
-     FROM sales_orders WHERE sales_rep_id IN (${placeholders}) AND status IN (${unpaidPlaceholders})`,
-    [...employeeIds, ...UNPAID_STATUSES]
-  );
 
-  const [[allTime]] = await pool.query(
-    `SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS amount
-     FROM sales_orders WHERE sales_rep_id IN (${placeholders})`,
-    employeeIds
-  );
-
-  const [pipeline] = await pool.query(
-    `SELECT status, COUNT(*) AS count FROM estimates WHERE sales_rep_id IN (${placeholders}) GROUP BY status`,
-    employeeIds
-  );
+  // Every figure below is independent of the others, so they go to the database together
+  // rather than one after another. A supervisor's dashboard calls this once per rep, so the
+  // serial version paid seven round trips per rep and spent over a second doing nothing but
+  // waiting -- the queries themselves are milliseconds.
+  const [
+    [[weighted]], [[estTotals]], [[paid]], [[unpaid]], [[allTime]], [pipeline], trend,
+  ] = await Promise.all([
+    pool.query(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS amount
+       FROM sales_orders WHERE sales_rep_id IN (${placeholders}) AND date_created >= ?`,
+      [...employeeIds, monthStart]
+    ),
+    pool.query(
+      `SELECT COUNT(*) AS created, SUM(status = 'approved') AS approved
+       FROM estimates WHERE sales_rep_id IN (${placeholders})`,
+      employeeIds
+    ),
+    pool.query(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS amount
+       FROM sales_orders WHERE sales_rep_id IN (${placeholders}) AND status = ?`,
+      [...employeeIds, PAID_STATUS]
+    ),
+    pool.query(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS amount
+       FROM sales_orders WHERE sales_rep_id IN (${placeholders}) AND status IN (${unpaidPlaceholders})`,
+      [...employeeIds, ...UNPAID_STATUSES]
+    ),
+    pool.query(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS amount
+       FROM sales_orders WHERE sales_rep_id IN (${placeholders})`,
+      employeeIds
+    ),
+    pool.query(
+      `SELECT status, COUNT(*) AS count FROM estimates WHERE sales_rep_id IN (${placeholders}) GROUP BY status`,
+      employeeIds
+    ),
+    salesTrend(employeeIds),
+  ]);
 
   const created = Number(estTotals?.created || 0);
   const approved = Number(estTotals?.approved || 0);
-  const trend = await salesTrend(employeeIds);
   const winRate = created ? Number(((approved / created) * 100).toFixed(1)) : 0;
   const paidAmt = Number(paid.amount);
   const unpaidAmt = Number(unpaid.amount);
