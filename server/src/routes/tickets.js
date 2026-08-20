@@ -257,7 +257,9 @@ router.put('/:id/assign', requireAuth, async (req, res, next) => {
   try {
     const { assigned_to_user_id: assignedToUserId } = req.body;
     const [[ticket]] = await pool.query(
-      'SELECT department_id, approved_at, forwarded_to_gm_at, gm_approved_at FROM tickets WHERE id = ?',
+      // ticket_no is read below to name the ticket in the assignment notification; without it
+      // the assignee is told "undefined assigned to you".
+      'SELECT ticket_no, department_id, approved_at, forwarded_to_gm_at, gm_approved_at FROM tickets WHERE id = ?',
       [req.params.id]
     );
     if (!ticket) return res.status(404).json({ error: 'Not found' });

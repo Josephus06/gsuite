@@ -13,6 +13,11 @@ import { useAuth } from '../context/useAuth';
 const GREETING = "Hi! Ask me things like \"how many estimates today\" or \"my weighted sales this month\" — or type \"create ticket\" to reach a department.";
 const POLL_MS = 6000;
 
+// Phrases that mean "stop talking to the department, talk to the assistant again". Matched
+// only as a whole message, deliberately: a genuine ticket reply that happens to contain
+// "ask the bot" must still reach the department rather than being swallowed as a command.
+const LEAVE_THREAD = /^\s*(ask (the )?(bot|assistant)|back to (the )?(bot|assistant)|new question|exit ticket|leave ticket)\s*[.!?]?\s*$/i;
+
 function formatTime(v) {
   return v ? new Date(v).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
 }
@@ -163,6 +168,17 @@ export default function ChatWidget() {
     setInput('');
     setSending(true);
     try {
+      // Typed way out of the thread, for anyone who types rather than hunting for the button
+      // in the header. Someone who has just raised a ticket and wants to ask something else
+      // says so in words -- and until this existed, every one of those words was filed as a
+      // reply to the ticket instead.
+      if (mode === 'ticket_thread' && LEAVE_THREAD.test(text)) {
+        pushLocal('user', text);
+        setMode('chat');
+        pushLocal('bot', `You're back with the assistant — messages are no longer going to ${ticket?.ticket_no}. Ask away, or press "Reply to ticket" to go back to it.`);
+        return;
+      }
+
       if (mode === 'ticket_thread' && ticket) {
         await api.post(`/tickets/${ticket.id}/messages`, { message: text });
         const { data } = await api.get(`/tickets/${ticket.id}`);
@@ -227,6 +243,29 @@ export default function ChatWidget() {
           <div style={{ background: 'var(--accent)', color: '#fff', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <strong style={{ fontSize: 14 }}>Jot With Us{ticket ? ` · ${ticket.ticket_no}` : ''}</strong>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {/* Once a ticket exists, everything typed goes into its thread. Without a way
+                  back, raising a ticket permanently ends the ability to ask the assistant
+                  anything -- it looks like the bot has stopped answering. */}
+              {mode === 'ticket_thread' && (
+                <button
+                  type="button"
+                  onClick={() => { setMode('chat'); pushLocal('bot', `You're back with the assistant. Ask me anything — your messages are no longer going to ${ticket?.ticket_no}. Type "open ticket" to return to it.`); }}
+                  title="Stop replying to the ticket and ask the assistant instead"
+                  style={{ background: 'rgba(255,255,255,0.18)', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 11, borderRadius: 10, padding: '2px 8px' }}
+                >
+                  Ask assistant
+                </button>
+              )}
+              {mode === 'chat' && ticket && (
+                <button
+                  type="button"
+                  onClick={() => { setMode('ticket_thread'); pushLocal('bot', `Back on ${ticket.ticket_no}. What you type now goes to that department.`); }}
+                  title="Reply to the ticket again"
+                  style={{ background: 'rgba(255,255,255,0.18)', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 11, borderRadius: 10, padding: '2px 8px' }}
+                >
+                  Reply to ticket
+                </button>
+              )}
               {ticket && (
                 <button type="button" onClick={() => navigate(`/tickets/${ticket.id}`)} title="Open full ticket" style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 13 }}>↗</button>
               )}
