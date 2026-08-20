@@ -353,14 +353,18 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 // estimate (fresh estimate_no, today's date, status reset to the start of the
 // approval flow) -- mirrors the real system's "Replicate" action for reusing a past
 // estimate as the starting point for a new one instead of re-keying everything.
-router.post('/:id/replicate', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
+// Called from the Replicate button and from the chatbot, which is why the work lives in a
+// function rather than only in the route handler: two implementations of this would drift.
+async function replicateEstimate(userId, sourceId) {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [[source]] = await conn.query('SELECT * FROM estimates WHERE id = ?', [req.params.id]);
+    const [[source]] = await conn.query('SELECT * FROM estimates WHERE id = ?', [sourceId]);
     if (!source) {
       await conn.rollback();
-      return res.status(404).json({ error: 'Not found' });
+      const err = new Error('Not found');
+      err.status = 404;
+      throw err;
     }
     const headerValues = HEADER_FIELDS.map((f) => {
       if (f === 'date_created') return new Date().toISOString().slice(0, 10);
@@ -375,7 +379,7 @@ router.post('/:id/replicate', requireAuth, requirePermission(ROUTE, 'can_add'), 
     const newEstimateId = result.insertId;
     await conn.query('UPDATE estimates SET estimate_no = ? WHERE id = ?', [`EST-${100000 + newEstimateId}`, newEstimateId]);
 
-    const [jobOrders] = await conn.query('SELECT * FROM estimate_job_orders WHERE estimate_id = ? ORDER BY line_no', [req.params.id]);
+    const [jobOrders] = await conn.query('SELECT * FROM estimate_job_orders WHERE estimate_id = ? ORDER BY line_no', [sourceId]);
     for (const jo of jobOrders) {
       const joValues = JOB_ORDER_FIELDS.map((f) => jo[f]);
       const [joResult] = await conn.query(
@@ -395,17 +399,28 @@ router.post('/:id/replicate', requireAuth, requirePermission(ROUTE, 'can_add'), 
     }
 
     await logAudit(conn, {
-      estimateId: newEstimateId, userId: req.user.id, eventType: 'Created',
+      estimateId: newEstimateId, userId, eventType: 'Created',
       fieldName: 'replicated_from', newValue: source.estimate_no,
     });
     await conn.commit();
     const [[row]] = await pool.query('SELECT * FROM estimates WHERE id = ?', [newEstimateId]);
-    res.status(201).json(row);
+    // replicated_from and the line count ride along for the chatbot, which has to describe
+    // what it just did in a sentence. The button ignores them.
+    return { ...row, replicated_from: source.estimate_no, job_orders: jobOrders.length };
   } catch (err) {
     await conn.rollback();
-    next(err);
+    throw err;
   } finally {
     conn.release();
+  }
+}
+
+router.post('/:id/replicate', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
+  try {
+    res.status(201).json(await replicateEstimate(req.user.id, req.params.id));
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
   }
 });
 
@@ -875,3 +890,5 @@ router.delete('/:id/attachments/:attachmentId', requireAuth, requirePermission(R
 });
 
 module.exports = router;
+// Exported so the chatbot raises a copy through exactly this code path.
+module.exports.replicateEstimate = replicateEstimate;
