@@ -1867,3 +1867,34 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
   animation: fb-img-shimmer 1.2s linear infinite;
 }
 @keyframes fb-img-shimmer { to { background-position: -200% 0; } }
+
+/* The artist's running layout timer, floating over every page. Deliberately translucent:
+   it sits on top of real content, and an opaque card would hide whatever it covers. */
+.running-timer {
+  position: fixed;
+  z-index: 900;
+  width: 190px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(28, 28, 34, 0.72);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: #fff;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.28);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.running-timer:active { cursor: grabbing; }
+.running-timer.overdue { background: rgba(120, 26, 26, 0.76); }
+.running-timer-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.running-timer-no {
+  background: none; border: none; padding: 0; color: #fff; font: inherit; font-size: 0.82rem;
+  font-weight: 600; opacity: 0.9; cursor: pointer; text-decoration: underline dotted;
+}
+.running-timer-grip { opacity: 0.5; font-size: 0.9rem; }
+.running-timer-clock { font-size: 1.45rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.running-timer-sub { font-size: 0.75rem; opacity: 0.8; margin-bottom: 8px; }
+.running-timer-error { font-size: 0.72rem; color: #ffb4b4; margin-bottom: 6px; }
+.running-timer-actions { display: flex; gap: 6px; }
+.running-timer-actions .btn { flex: 1; }

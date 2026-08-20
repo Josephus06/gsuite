@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import Avatar from './Avatar';
 import ChatWidget from './ChatWidget';
+import RunningJobTimer from './RunningJobTimer';
 import NotificationBell from './NotificationBell';
 import ButtonMenu from './ButtonMenu';
 import api from '../api/client';
@@ -547,6 +548,7 @@ export default function Layout() {
       {bgNote && <div className="app-toast">{bgNote}</div>}
 
       <ChatWidget />
+      <RunningJobTimer />
     </div>
   );
 }

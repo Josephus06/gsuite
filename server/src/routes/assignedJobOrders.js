@@ -126,6 +126,60 @@ async function getOwnedNstdjo(conn, id, userId) {
   return { row };
 }
 
+// Whatever this artist currently has the clock running on, if anything. Drives the floating
+// timer that follows them around the rest of the system, so they can Hold or finish a job
+// without navigating back to Assigned JO.
+//
+// Returns the elapsed time as two numbers rather than a formatted string: consumed_seconds
+// for the spans already closed, and started_at for the one still open. The client ticks the
+// live part locally, so this does not have to be polled every second to look alive.
+//
+// Registered before '/:id' and '/nstdjo/:id' so those parameter routes cannot swallow it.
+router.get('/running', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [[me]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
+    if (!me?.employee_id) return res.json({ running: null });
+
+    const [[jo]] = await pool.query(
+      `SELECT 'JO' AS kind, jo.id, jo.job_order_no, jo.description, jo.layout_qty,
+              pjt.minutes_consume, s.started_at,
+              (SELECT COALESCE(SUM(TIMESTAMPDIFF(SECOND, c.started_at, c.ended_at)), 0)
+                 FROM job_order_layout_sessions c
+                WHERE c.job_order_id = jo.id AND c.ended_at IS NOT NULL) AS consumed_seconds
+         FROM job_order_layout_sessions s
+         JOIN job_orders jo ON jo.id = s.job_order_id
+         LEFT JOIN pms_job_types pjt ON pjt.id = jo.layout_job_type_id
+        WHERE s.ended_at IS NULL AND jo.artist_id = ? AND jo.layout_ended_at IS NULL
+        ORDER BY s.started_at DESC LIMIT 1`,
+      [me.employee_id],
+    );
+
+    const [[nstdjo]] = await pool.query(
+      `SELECT 'NSTDJO' AS kind, n.id, n.nstdjo_no AS job_order_no, n.description, n.layout_qty,
+              pjt.minutes_consume, s.started_at,
+              (SELECT COALESCE(SUM(TIMESTAMPDIFF(SECOND, c.started_at, c.ended_at)), 0)
+                 FROM non_standard_job_order_layout_sessions c
+                WHERE c.non_standard_job_order_id = n.id AND c.ended_at IS NOT NULL) AS consumed_seconds
+         FROM non_standard_job_order_layout_sessions s
+         JOIN non_standard_job_orders n ON n.id = s.non_standard_job_order_id
+         LEFT JOIN pms_job_types pjt ON pjt.id = n.layout_job_type_id
+        WHERE s.ended_at IS NULL AND n.artist_employee_id = ? AND n.layout_ended_at IS NULL
+        ORDER BY s.started_at DESC LIMIT 1`,
+      [me.employee_id],
+    );
+
+    // Nothing stops both tables holding an open session -- the two modules run independent
+    // timers -- so the most recently started one wins rather than an arbitrary preference
+    // for Job Orders.
+    const candidates = [jo, nstdjo].filter(Boolean);
+    if (!candidates.length) return res.json({ running: null });
+    candidates.sort((a, b) => new Date(b.started_at) - new Date(a.started_at));
+    res.json({ running: candidates[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/nstdjo/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[me]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
