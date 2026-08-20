@@ -127,18 +127,24 @@ const isFeedWrite = (req) => (
   (req.method === 'POST' && /^\/api\/feed\/?$/.test(req.path))
   || (req.method === 'PUT' && /^\/api\/feed\/\d+\/?$/.test(req.path))
 );
-app.use((req, res, next) => (
-  (req.method === 'POST'
+// The dashboard carousel takes video, which is an order of magnitude bigger again: 25MB of
+// MP4 arrives as ~34MB of base64. It gets its own parser rather than raising the shared one,
+// so a 36MB body is only ever accepted on the single route that expects it.
+const carouselUploadJson = express.json({ limit: '36mb' });
+app.use((req, res, next) => {
+  if (req.method === 'POST' && /^\/api\/dashboard-carousel\/?$/.test(req.path)) {
+    return carouselUploadJson(req, res, next);
+  }
+  return (req.method === 'POST'
     && (/^\/api\/job-orders\/\d+\/attachments\/?$/.test(req.path)
       || /^\/api\/tickets\/\d+\/attachments\/?$/.test(req.path)
       // HRD room uploads take any file type up to 10MB, which is ~13.4MB of base64.
       || /^\/api\/hrd\/\d+\/files\/?$/.test(req.path)
-      // Same for a dashboard carousel video.
-      || /^\/api\/dashboard-carousel\/?$/.test(req.path)))
+      ))
     || isFeedWrite(req)
     ? attachmentUploadJson(req, res, next)
-    : next()
-));
+    : next();
+});
 app.use(express.json({ limit: '2mb' })); // room for the base64 profile-picture payload
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));

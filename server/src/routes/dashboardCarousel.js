@@ -23,8 +23,11 @@ async function canUpload(userId) {
 // A short video is still tens of times the size of a photo, so the two have different
 // ceilings. Both sit under the 14MB JSON body limit this route is given in index.js, which is
 // what a 10MB file becomes once base64 inflates it by a third.
-const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
-const MAX_VIDEO_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+// 25MB of video is ~34MB once base64 inflates it, which is why this route gets its own
+// oversized body parser in index.js. It is not raised further on purpose: every byte lives
+// in the database, gets replicated to the office server, and rides in the nightly backup.
+const MAX_VIDEO_BYTES = 25 * 1024 * 1024;
 
 // Metadata only -- never the bytes. The rail renders <img>/<video> pointing at /:id/file, so a
 // carousel of ten photos does not become ten megabytes of base64 in the dashboard payload.
@@ -114,17 +117,15 @@ router.post('/', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Soft delete: the row stays so an accidental removal can be undone from the database, and a
-// browser still holding the old list gets a clean 404 rather than someone else's item.
+// A real DELETE, not a flag. Removing a clip is meant to reclaim the space: a hidden 25MB
+// video would otherwise sit in the database forever, replicated to the office server and
+// copied into every nightly backup, while being invisible to everyone.
 router.delete('/:id', requireAuth, async (req, res, next) => {
   try {
     if (!await canUpload(req.user.id)) {
       return res.status(403).json({ error: 'You do not have permission to change the dashboard carousel.' });
     }
-    const [result] = await pool.query(
-      'UPDATE dashboard_carousel_media SET is_active = FALSE WHERE id = ? AND is_active = TRUE',
-      [req.params.id],
-    );
+    const [result] = await pool.query('DELETE FROM dashboard_carousel_media WHERE id = ?', [req.params.id]);
     if (!result.affectedRows) return res.status(404).json({ error: 'Not found' });
     res.json({ removed: true });
   } catch (err) { next(err); }

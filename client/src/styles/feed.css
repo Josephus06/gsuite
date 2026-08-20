@@ -1062,3 +1062,4 @@
 .fb-carousel-dot.active { background: var(--fb-accent, #1877f2); }
 .fb-carousel-actions { display: flex; gap: 6px; margin-top: 10px; }
 .fb-carousel-actions .btn { flex: 1; }
+.fb-carousel-hint { font-size: 0.72rem; margin-top: 6px; text-align: center; opacity: 0.7; }

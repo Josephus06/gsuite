@@ -7,6 +7,9 @@ import api from '../../api/client';
 // inlined, so the dashboard payload stays a few hundred bytes no matter how many photos are
 // in it -- the same mistake the feed used to make with its post images.
 const ROTATE_MS = 6000;
+// Kept in step with MAX_IMAGE_BYTES / MAX_VIDEO_BYTES in routes/dashboardCarousel.js.
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 25 * 1024 * 1024;
 
 export default function DashboardCarousel() {
   const [items, setItems] = useState([]);
@@ -41,6 +44,22 @@ export default function DashboardCarousel() {
 
   async function upload(file) {
     if (!file) return;
+    // Checked here, before reading 16MB into memory and posting it. Too large a body is
+    // rejected by the request parser BEFORE it reaches the route, so the reply carries no
+    // JSON error to report -- the user just sees "could not upload" with no reason. Saying
+    // the actual size against the actual limit is the whole difference.
+    const isVideo = (file.type || '').startsWith('video/');
+    const limit = isVideo ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
+    if (!isVideo && !(file.type || '').startsWith('image/')) {
+      setError('Only an image or a short video can go in the carousel.');
+      if (fileInput.current) fileInput.current.value = '';
+      return;
+    }
+    if (file.size > limit) {
+      setError(`${file.name} is ${(file.size / 1048576).toFixed(1)}MB — ${isVideo ? 'videos' : 'images'} must be ${limit / 1048576}MB or smaller.`);
+      if (fileInput.current) fileInput.current.value = '';
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -55,7 +74,8 @@ export default function DashboardCarousel() {
       });
       await load();
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not upload that file.');
+      setError(err.response?.data?.error
+        || (err.response?.status === 413 ? 'That file is too large to upload.' : `Could not upload ${file.name}.`));
     } finally {
       setBusy(false);
       if (fileInput.current) fileInput.current.value = '';
@@ -63,7 +83,9 @@ export default function DashboardCarousel() {
   }
 
   async function remove() {
-    if (!current || !window.confirm('Remove this from the carousel?')) return;
+    if (!current) return;
+    // Says permanently, because it is: the row and its bytes are deleted, not hidden.
+    if (!window.confirm(`Delete ${current.file_name || 'this item'} from the carousel? It is removed from the database permanently.`)) return;
     try {
       await api.delete(`/dashboard-carousel/${current.id}`);
       await load();
@@ -146,8 +168,11 @@ export default function DashboardCarousel() {
             onClick={() => fileInput.current?.click()}>
             {busy ? 'Uploading…' : 'Upload'}
           </button>
-          {current && <button type="button" className="btn btn-sm" onClick={remove}>Remove</button>}
+          {current && <button type="button" className="btn btn-sm" onClick={remove}>Delete</button>}
         </div>
+      )}
+      {canUpload && (
+        <div className="fb-carousel-hint muted">Images up to 5MB · videos up to 25MB</div>
       )}
     </div>
   );
