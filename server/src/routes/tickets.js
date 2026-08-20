@@ -200,7 +200,7 @@ router.post('/', requireAuth, async (req, res, next) => {
       // nothing whatsoever. The message says which of the two situations this is.
       const [[destination]] = await conn.query('SELECT head_user_id FROM departments WHERE id = ?', [departmentId]);
       const awaitingApproval = creatorDeptApprovers.length > 0;
-      if (destination?.head_user_id && destination.head_user_id !== req.user.id) {
+      if (destination?.head_user_id && Number(destination.head_user_id) !== Number(req.user.id)) {
         await conn.query(
           `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
            VALUES (?, 'ticket_received', ?, ?, 'Ticket', ?)`,

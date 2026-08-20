@@ -10,6 +10,16 @@ const ROUTE = '/non-standard-job-orders';
 const SUB_SBU_APPROVAL = 'SBU Approval';
 const SUB_SALES_APPROVAL = 'Sales Approval';
 
+// Kept in step with LIST_TABS on the server, which is what actually filters. "For Approval"
+// is both gates this module has -- an order queued for its SBU approver and a finished
+// layout queued for Sales -- which is the same pair this page already lets an approver tick
+// and bulk-approve, so the tab and the checkboxes agree about what is outstanding.
+const LIST_TABS = [
+  { key: 'all', label: 'All' },
+  { key: 'for_approval', label: 'For Approval' },
+  { key: 'approved', label: 'Approved' },
+];
+
 export default function NonStandardJobOrders() {
   const navigate = useNavigate();
   const { can } = useAuth();
@@ -17,19 +27,17 @@ export default function NonStandardJobOrders() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
+  const [tab, setTab] = useState('all');
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
-  // SBU 1 / SBU 2 tabs. Empty list for anyone who is not an SBU, so the strip stays hidden
-  // for them; '' is the "both groups" tab an SBU lands on.
+  const [counts, setCounts] = useState({});
+  // SBU 1 / SBU 2 tabs, above the approval tabs. Empty for anyone who is not an SBU, so
+  // the strip stays hidden for them; '' is the "both groups" tab an SBU lands on.
   const [sbuGroups, setSbuGroups] = useState([]);
   const [sbuTab, setSbuTab] = useState('');
-  // Approval tabs sit under the SBU tabs and narrow whichever group is selected: '' is
-  // every order in that group, then the two halves an approver actually works from.
-  const [approvalTab, setApprovalTab] = useState('');
-  const [counts, setCounts] = useState({ all: 0, for_approval: 0, approved: 0 });
 
   const canApproveSales = can(ROUTE, 'can_approve');
 
@@ -41,7 +49,7 @@ export default function NonStandardJobOrders() {
     if (row.status === 'Cancelled') return false;
     // can_approve, not is_my_approval: an SBU may clear either group's SBU gate, including
     // orders they are not tagged on. The server decides it -- this only mirrors that.
-    if (row.sub_status === SUB_SBU_APPROVAL) return !!row.can_approve;
+    if (row.sub_status === SUB_SBU_APPROVAL) return !!(row.can_approve ?? row.is_my_approval);
     if (row.sub_status === SUB_SALES_APPROVAL) return canApproveSales;
     return false;
   }
@@ -69,38 +77,44 @@ export default function NonStandardJobOrders() {
   }
 
   async function load() {
-    const { data } = await api.get(ROUTE, {
-      params: { page, limit: 10, search, sbu: sbuTab || undefined, approval: approvalTab || undefined },
-    });
+    const params = { page, limit: 10, search };
+    if (tab !== 'all') params.tab = tab;
+    if (sbuTab) params.sbu = sbuTab;
+    const { data } = await api.get(ROUTE, { params });
     setRows(data.rows);
     setTotal(data.total);
-    if (data.counts) setCounts(data.counts);
+    setCounts(data.counts || {});
     // Selection is per page of results. Carrying ticks across a page change would let
     // someone approve rows they can no longer see.
     setSelected([]);
   }
 
-  useEffect(() => { load(); }, [page, sbuTab, approvalTab]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [page, tab, sbuTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // A search always starts from page 1. setPage is async, so calling load() straight after it
-  // would fetch with the page we are LEAVING -- searching from page 4 would request page 4 of
-  // the new result set and come back empty. When the page actually changes, the effect above
-  // does the fetch; only when we are already on page 1 does this have to fetch itself.
+  // Its own endpoint rather than /meta: /meta carries the form's entire reference set (21k
+  // customers, 6.5k items), so reading the tabs from it left them unrendered until all of
+  // that had downloaded -- the tabs looked missing on a first visit and appeared on the
+  // second, once the browser had it cached.
+  useEffect(() => {
+    api.get(`${ROUTE}/meta/sbu-groups`).then(({ data }) => setSbuGroups(data.groups || []));
+  }, []);
+
+  // Page 1 whenever the criteria change: staying on page 4 of the previous result set
+  // shows an empty table and looks like the search found nothing.
   function runSearch() {
     if (page === 1) load();
     else setPage(1);
   }
 
-  // Its own endpoint rather than /meta: /meta carries the form's entire reference set (21k
-  // customers, 6.5k items), so reading the tabs from it left them unrendered until all of
-  // that had downloaded -- which looked like the tabs were missing on a first visit and
-  // present on the second, once the browser had it cached.
-  useEffect(() => {
-    api.get(`${ROUTE}/meta/sbu-groups`).then(({ data }) => setSbuGroups(data.groups || []));
-  }, []);
+  function pickTab(key) {
+    setPage(1);
+    setTab(key);
+  }
 
   return (
     <div>
+      {/* Both SBUs see both groups -- these tabs separate whose group an order belongs to,
+          they do not grant or remove access. Hidden for everyone who is not an SBU. */}
       <div className="page-header">
         <h1>Saved Non-Standard Job Orders</h1>
         <div>
@@ -118,10 +132,20 @@ export default function NonStandardJobOrders() {
 
       {error && <div className="error-banner">{error}</div>}
 
-      {/* Both SBUs see both groups -- these tabs separate whose group an order belongs to,
-          they do not grant or remove access. Hidden for everyone who is not an SBU. */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="field">
+          <label>General Searching</label>
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); runSearch(); } }}
+            placeholder="JO #, customer, or job description"
+          />
+        </div>
+      </div>
+
       {sbuGroups.length > 1 && (
-        <div className="status-tabs" style={{ marginBottom: 12, flexWrap: 'wrap' }}>
+        <div className="status-tabs">
           <button type="button" className={`status-tab ${sbuTab === '' ? 'active' : ''}`}
             onClick={() => { setSbuTab(''); setPage(1); }}>All SBUs</button>
           {sbuGroups.map((group) => (
@@ -134,38 +158,16 @@ export default function NonStandardJobOrders() {
         </div>
       )}
 
-      {/* Second row: splits whichever SBU group is selected into the approver's two piles.
-          Counts come from the same query as the rows, so they always agree with the list. */}
-      {sbuGroups.length > 1 && (
-        <div className="status-tabs" style={{ marginBottom: 12, flexWrap: 'wrap' }}>
-          {[['', 'All', 'all'], ['for_approval', 'For Approval', 'for_approval'], ['approved', 'Approved', 'approved']].map(
-            ([key, label, countKey]) => (
-              <button key={key || 'all'} type="button"
-                className={`status-tab ${approvalTab === key ? 'active' : ''}`}
-                onClick={() => { setApprovalTab(key); setPage(1); }}>
-                {label} <span className="badge badge-muted">{counts[countKey] ?? 0}</span>
-              </button>
-            ),
-          )}
-        </div>
-      )}
-
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div className="field">
-          <label>General Searching</label>
-          {/* Enter searches. The field is not inside a <form>, so without this the key does
-              nothing and the only way to search is the button in the header. */}
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter') return;
-              event.preventDefault();
-              runSearch();
-            }}
-            placeholder="JO #, customer, or job description"
-          />
-        </div>
+      <div className="status-tabs">
+        {LIST_TABS.map((t) => (
+          <button
+            key={t.key}
+            className={`status-tab ${tab === t.key ? 'active' : ''}`}
+            onClick={() => pickTab(t.key)}
+          >
+            {t.label} <span className="badge badge-muted">{counts[t.key] ?? 0}</span>
+          </button>
+        ))}
       </div>
 
       <div className="card">

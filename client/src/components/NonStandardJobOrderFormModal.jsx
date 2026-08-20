@@ -225,7 +225,11 @@ export default function NonStandardJobOrderFormModal({ mode = 'create', order, o
     return Object.keys(next).length === 0;
   }
 
-  async function submit(event, forward) {
+  // Saving is all this modal does. Forwarding to the Design Supervisor is offered on the
+  // order itself once the SBU gate is cleared -- which is the only point it can succeed:
+  // the forward endpoint acts on "Pending" or "SBU Approved", so from here it only ever
+  // worked for a raiser whose department has no approvers, and 409'd for everyone else.
+  async function submit(event) {
     event.preventDefault();
     setSaveError('');
     if (!validate()) return;
@@ -236,8 +240,7 @@ export default function NonStandardJobOrderFormModal({ mode = 'create', order, o
         // clears the previous approval so the changes get signed off, not the old version.
         await api.put(`${ROUTE}/${order.id}`, form);
       } else {
-        const { data } = await api.post(ROUTE, form);
-        if (forward) await api.post(`${ROUTE}/${data.id}/forward`);
+        await api.post(ROUTE, form);
       }
       await onSaved?.();
       onClose();
@@ -265,7 +268,7 @@ export default function NonStandardJobOrderFormModal({ mode = 'create', order, o
 
   return (
     <Modal title={isEdit ? `Revise ${order.nstdjo_no}` : 'Non-Standard Job Order'} onClose={() => !saving && onClose()} xl>
-      <form onSubmit={(event) => submit(event, false)}>
+      <form onSubmit={submit}>
         {saveError && <div className="error-banner">{saveError}</div>}
         {isEdit && <div className="muted" style={{ marginBottom: 12 }}>Saving these changes sends this job order back to SBU Approval.</div>}
         <div className="filter-grid">
@@ -342,7 +345,6 @@ export default function NonStandardJobOrderFormModal({ mode = 'create', order, o
 
         <div className="modal-actions">
           <button type="button" className="btn" disabled={saving} onClick={onClose}>Cancel</button>
-          {!isEdit && <button type="button" className="btn" disabled={saving} onClick={(event) => submit(event, true)}>Forward To Design Supervisor</button>}
           <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : isEdit ? 'Save & Resubmit' : 'Save'}</button>
         </div>
       </form>

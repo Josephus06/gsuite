@@ -8,6 +8,16 @@ const {
 const router = express.Router();
 const ROUTE = '/assigned-jo';
 
+// The queue used to stop at the two sub-statuses where the artist still has the work in
+// hand. It now carries the whole tail of their involvement, because the list groups into
+// tabs and an order that vanishes the moment it is sent for approval leaves the artist no
+// way to see what became of it -- or that their incentive has been credited.
+//
+//   'For Artist' / 'For Artist (Revision)'  -> theirs to work on (Not Started, Started/On Hold)
+//   'Sales Approval'                        -> sent, waiting on Sales
+//   'Approved'                              -> signed off; this is what earns the incentive
+const ARTIST_QUEUE_SUB_STATUSES = ['For Artist', 'For Artist (Revision)', 'Sales Approval', 'Approved'];
+
 async function logAudit(conn, { jobOrderId, userId, eventType, fieldName = null, oldValue = null, newValue = null }) {
   await conn.query(
     `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
@@ -51,9 +61,9 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
        LEFT JOIN customers c ON c.id = so.customer_id
        LEFT JOIN pms_job_types pjt ON pjt.id = jo.layout_job_type_id
-       WHERE jo.artist_id = ? AND jo.sub_status IN ('For Artist', 'For Artist (Revision)')
+       WHERE jo.artist_id = ? AND jo.sub_status IN (?)
        ORDER BY jo.id DESC`,
-      [me.employee_id]
+      [me.employee_id, ARTIST_QUEUE_SUB_STATUSES]
     );
 
     // Non-Standard Job Orders assigned to the same artist appear in the same worklist --
@@ -73,10 +83,9 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN customers c ON c.id = n.customer_id
        LEFT JOIN pms_job_types pjt ON pjt.id = n.layout_job_type_id
        WHERE n.artist_employee_id = ?
-         AND n.status = 'Planned - Pending for BOM'
-         AND n.sub_status IN ('For Artist', 'For Artist (Revision)')
+         AND n.sub_status IN (?)
        ORDER BY n.id DESC`,
-      [me.employee_id]
+      [me.employee_id, ARTIST_QUEUE_SUB_STATUSES]
     );
 
     res.json([
@@ -125,10 +134,12 @@ router.get('/nstdjo/:id', requireAuth, requirePermission(ROUTE, 'can_view'), asy
               n.planned_start_at, n.planned_end_at, n.layout_started_at, n.layout_ended_at, n.layout_qty,
               n.artist_employee_id, c.name AS customer_name, n.job_type,
               n.sales_revision_count, n.last_revision_at, n.last_revision_note,
+              CONCAT(nsr.first_name, ' ', nsr.last_name) AS sales_rep_name,
               pjt.id AS pms_job_type_id, pjt.code AS pms_job_type_code, pjt.display_name AS pms_job_type_name,
               pjt.minutes_consume
          FROM non_standard_job_orders n
          LEFT JOIN customers c ON c.id = n.customer_id
+         LEFT JOIN employees nsr ON nsr.id = n.sales_rep_id
          LEFT JOIN pms_job_types pjt ON pjt.id = n.layout_job_type_id
         WHERE n.id = ?`,
       [req.params.id]
@@ -248,11 +259,15 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       `SELECT jo.id, jo.job_order_no, jo.status, jo.sub_status, jo.description, jo.artist_id,
               jo.planned_start_at, jo.planned_end_at, jo.layout_started_at, jo.layout_ended_at, jo.layout_qty,
               c.name AS customer_name,
+              COALESCE(CONCAT(jsr.first_name, ' ', jsr.last_name),
+                       CONCAT(ssr.first_name, ' ', ssr.last_name)) AS sales_rep_name,
               pjt.id AS pms_job_type_id, pjt.code AS pms_job_type_code, pjt.display_name AS pms_job_type_name,
               pjt.minutes_consume
        FROM job_orders jo
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
        LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN employees jsr ON jsr.id = jo.sales_rep_id
+       LEFT JOIN employees ssr ON ssr.id = so.sales_rep_id
        LEFT JOIN pms_job_types pjt ON pjt.id = jo.layout_job_type_id
        WHERE jo.id = ?`,
       [req.params.id]
