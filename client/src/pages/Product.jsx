@@ -29,10 +29,10 @@ function WorkFrame({ slotName, slot, canManage, onUpload, onClear, busy }) {
   const swallow = canManage ? (e) => { e.stopPropagation(); } : undefined;
 
   return (
-    <div className={`fb-work-frame${url ? ' has-photo' : ''}`} onClick={swallow}>
+    <div className={`pf-work-frame${url ? ' has-photo' : ''}`} onClick={swallow}>
       {url
-        ? <img src={url} alt="" className="fb-work-photo" />
-        : <span className="fb-work-mark">GRAPHIC<em>STAR</em></span>}
+        ? <img src={url} alt="" className="pf-work-photo" />
+        : <span className="pf-work-mark">GRAPHIC<em>STAR</em></span>}
 
       {canManage && (
         <>
@@ -40,10 +40,10 @@ function WorkFrame({ slotName, slot, canManage, onUpload, onClear, busy }) {
             ref={input}
             type="file"
             accept="image/png,image/jpeg,image/webp,image/gif"
-            className="fb-slot-input"
+            className="pf-slot-input"
             onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onUpload(slotName, f); }}
           />
-          <div className="fb-slot-tools">
+          <div className="pf-slot-tools">
             <button type="button" className="btn btn-sm" disabled={busy} onClick={() => input.current?.click()}>
               {url ? 'Replace photo' : 'Add photo'}
             </button>
@@ -65,12 +65,12 @@ function WorkFrame({ slotName, slot, canManage, onUpload, onClear, busy }) {
 function ImagePage({ page }) {
   const url = useFlipbookImage(page.id);
   return (
-    <div className="flipbook-page fb-image-page">
+    <div className="flipbook-page pf-image-page">
       {url
-        ? <img src={url} alt={page.caption || `Page ${page.number || 1}`} className="fb-image" draggable="false" />
-        : <div className="fb-image-loading"><span /></div>}
-      {page.caption && <span className="fb-image-caption">{page.caption}</span>}
-      {page.number && <span className="fb-page-num">{page.number}</span>}
+        ? <img src={url} alt={page.caption || `Page ${page.number || 1}`} className="pf-image" draggable="false" />
+        : <div className="pf-image-loading"><span /></div>}
+      {page.caption && <span className="pf-image-caption">{page.caption}</span>}
+      {page.number && <span className="pf-page-num">{page.number}</span>}
     </div>
   );
 }
@@ -84,8 +84,8 @@ function ProfilePage(page, ctx) {
   const accent = page.accent;
   const chrome = (
     <>
-      {page.number && <span className="fb-page-num">{page.number}</span>}
-      {page.section && <span className="fb-page-tab">{page.section}</span>}
+      {page.number && <span className="pf-page-num">{page.number}</span>}
+      {page.section && <span className="pf-page-tab">{page.section}</span>}
     </>
   );
 
@@ -95,56 +95,56 @@ function ProfilePage(page, ctx) {
 
     case 'cover':
       return (
-        <div className="flipbook-page fb-cover">
-          <div className="fb-cover-blob fb-cover-blob-navy" />
-          <div className="fb-cover-blob fb-cover-blob-orange" />
-          <div className="fb-cover-mark">
-            <span className="fb-logo-g">G</span>
-            <span className="fb-logo-word">GRAPHIC<em>STAR</em></span>
-            <span className="fb-logo-tag">{page.tagline}</span>
+        <div className="flipbook-page pf-cover">
+          <div className="pf-cover-blob pf-cover-blob-navy" />
+          <div className="pf-cover-blob pf-cover-blob-orange" />
+          <div className="pf-cover-mark">
+            <span className="pf-logo-g">G</span>
+            <span className="pf-logo-word">GRAPHIC<em>STAR</em></span>
+            <span className="pf-logo-tag">{page.tagline}</span>
           </div>
-          <div className="fb-cover-title">
-            <div className="fb-cover-eyebrow">{page.eyebrow}</div>
-            <div className="fb-cover-main">{page.title}</div>
-            <div className="fb-cover-rule" />
-            <div className="fb-cover-sub">{page.subtitle}</div>
+          <div className="pf-cover-title">
+            <div className="pf-cover-eyebrow">{page.eyebrow}</div>
+            <div className="pf-cover-main">{page.title}</div>
+            <div className="pf-cover-rule" />
+            <div className="pf-cover-sub">{page.subtitle}</div>
           </div>
         </div>
       );
 
     case 'text':
       return (
-        <div className="flipbook-page fb-text">
+        <div className="flipbook-page pf-text">
           {chrome}
-          <h2 className="fb-heading">{page.heading}</h2>
-          <p className="fb-body">{page.body}</p>
-          <div className="fb-text-glow" />
+          <h2 className="pf-heading">{page.heading}</h2>
+          <p className="pf-body">{page.body}</p>
+          <div className="pf-text-glow" />
         </div>
       );
 
     case 'divider':
       return (
-        <div className="flipbook-page fb-divider">
+        <div className="flipbook-page pf-divider">
           {chrome}
-          <div className="fb-divider-inner">
-            <div className="fb-divider-eyebrow">{page.eyebrow}</div>
-            <div className="fb-divider-title">{page.title}</div>
+          <div className="pf-divider-inner">
+            <div className="pf-divider-eyebrow">{page.eyebrow}</div>
+            <div className="pf-divider-title">{page.title}</div>
           </div>
         </div>
       );
 
     case 'grid':
       return (
-        <div className="flipbook-page fb-grid-page" style={accent ? { '--fb-accent': accent } : undefined}>
+        <div className="flipbook-page pf-grid-page" style={accent ? { '--pf-accent': accent } : undefined}>
           {chrome}
-          <h2 className="fb-grid-heading">{page.heading}</h2>
-          <div className="fb-tiles">
+          <h2 className="pf-grid-heading">{page.heading}</h2>
+          <div className="pf-tiles">
             {page.items.map((item, i) => (
               // Staggered so the tiles arrive in sequence as the page lands rather than all
               // snapping in at once.
-              <div className="fb-tile" key={item} style={{ animationDelay: `${i * 45}ms` }}>
-                <span className="fb-tile-mark" aria-hidden="true">◧</span>
-                <span className="fb-tile-label">{item}</span>
+              <div className="pf-tile" key={item} style={{ animationDelay: `${i * 45}ms` }}>
+                <span className="pf-tile-mark" aria-hidden="true">◧</span>
+                <span className="pf-tile-label">{item}</span>
               </div>
             ))}
           </div>
@@ -156,10 +156,10 @@ function ProfilePage(page, ctx) {
       // rewritten around it.
       const slotName = `work-${page.number}`;
       return (
-        <div className="flipbook-page fb-work">
+        <div className="flipbook-page pf-work">
           {chrome}
-          <h2 className="fb-work-heading">{page.heading}</h2>
-          <div className="fb-work-client">{page.client}</div>
+          <h2 className="pf-work-heading">{page.heading}</h2>
+          <div className="pf-work-client">{page.client}</div>
           <WorkFrame
             slotName={slotName}
             slot={ctx?.slots?.[slotName]}
@@ -174,16 +174,16 @@ function ProfilePage(page, ctx) {
 
     case 'clients':
       return (
-        <div className="flipbook-page fb-clients">
+        <div className="flipbook-page pf-clients">
           {chrome}
-          <h2 className="fb-heading fb-center">{page.heading}</h2>
-          <div className="fb-client-grid">
+          <h2 className="pf-heading pf-center">{page.heading}</h2>
+          <div className="pf-client-grid">
             {page.clients.map((c, i) => (
-              <span className="fb-client" key={c} style={{ animationDelay: `${i * 25}ms` }}>{c}</span>
+              <span className="pf-client" key={c} style={{ animationDelay: `${i * 25}ms` }}>{c}</span>
             ))}
           </div>
-          <h3 className="fb-subheading">Licenses / Certifications</h3>
-          <ul className="fb-cert-list">
+          <h3 className="pf-subheading">Licenses / Certifications</h3>
+          <ul className="pf-cert-list">
             {page.certifications.map((c) => <li key={c}>{c}</li>)}
           </ul>
         </div>
@@ -191,16 +191,16 @@ function ProfilePage(page, ctx) {
 
     case 'professionals':
       return (
-        <div className="flipbook-page fb-pros">
+        <div className="flipbook-page pf-pros">
           {chrome}
-          <h2 className="fb-heading fb-center">{page.heading}</h2>
+          <h2 className="pf-heading pf-center">{page.heading}</h2>
           {page.people.map((p) => (
-            <div className="fb-pro" key={p.name}>
-              <div className="fb-pro-head">
-                <div className="fb-pro-name">{p.name}</div>
-                <div className="fb-pro-role">{p.role}</div>
+            <div className="pf-pro" key={p.name}>
+              <div className="pf-pro-head">
+                <div className="pf-pro-name">{p.name}</div>
+                <div className="pf-pro-role">{p.role}</div>
               </div>
-              <ul className="fb-pro-licenses">
+              <ul className="pf-pro-licenses">
                 {p.licenses.map((l) => <li key={l}>{l}</li>)}
               </ul>
             </div>
@@ -210,11 +210,11 @@ function ProfilePage(page, ctx) {
 
     case 'back':
       return (
-        <div className="flipbook-page fb-back">
-          <div className="fb-cover-mark centered">
-            <span className="fb-logo-g">G</span>
-            <span className="fb-logo-word">GRAPHIC<em>STAR</em></span>
-            <span className="fb-logo-tag">{page.tagline}</span>
+        <div className="flipbook-page pf-back">
+          <div className="pf-cover-mark centered">
+            <span className="pf-logo-g">G</span>
+            <span className="pf-logo-word">GRAPHIC<em>STAR</em></span>
+            <span className="pf-logo-tag">{page.tagline}</span>
           </div>
         </div>
       );
@@ -319,7 +319,7 @@ export default function Product() {
         </span>
       </div>
       {loaded && canManage && <FlipbookManager pages={uploaded} onChange={load} />}
-      {slotError && <div className="fb-manage-error">{slotError}</div>}
+      {slotError && <div className="pf-manage-error">{slotError}</div>}
       {/* Remounted when the source changes so the reader is not left on leaf 9 of a book that
           just became four pages long. */}
       <Flipbook

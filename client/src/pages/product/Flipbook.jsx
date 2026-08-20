@@ -56,7 +56,7 @@ export default function Flipbook({ pages, renderPage }) {
         className="flipbook-stage"
         ref={stageRef}
         tabIndex={0}
-        style={{ '--fb-zoom': zoom }}
+        style={{ '--pf-zoom': zoom }}
         aria-label="Company profile flipbook. Use the left and right arrow keys to turn pages."
       >
         <div className={`flipbook-book${turned === 0 ? ' is-closed' : ''}`}>

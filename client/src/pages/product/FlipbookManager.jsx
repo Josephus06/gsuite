@@ -5,8 +5,8 @@ import useFlipbookImage, { MAX_PAGE_BYTES, forgetPageImage } from './flipbookIma
 function Thumb({ page }) {
   const url = useFlipbookImage(page.id);
   return url
-    ? <img src={url} alt="" className="fb-manage-thumb" />
-    : <span className="fb-manage-thumb is-empty" aria-hidden="true" />;
+    ? <img src={url} alt="" className="pf-manage-thumb" />
+    : <span className="pf-manage-thumb is-empty" aria-hidden="true" />;
 }
 
 // Managing the artwork: upload the exported pages, put them in reading order, drop the ones
@@ -86,14 +86,14 @@ export default function FlipbookManager({ pages, onChange }) {
   }
 
   return (
-    <div className={`fb-manage${open ? ' is-open' : ''}`}>
-      <button type="button" className="btn btn-sm fb-manage-toggle" onClick={() => setOpen((o) => !o)}>
+    <div className={`pf-manage${open ? ' is-open' : ''}`}>
+      <button type="button" className="btn btn-sm pf-manage-toggle" onClick={() => setOpen((o) => !o)}>
         {open ? 'Close artwork manager' : `Manage artwork${pages.length ? ` (${pages.length} pages)` : ''}`}
       </button>
 
       {open && (
-        <div className="fb-manage-body">
-          <div className="fb-manage-head">
+        <div className="pf-manage-body">
+          <div className="pf-manage-head">
             <input
               ref={fileInput}
               type="file"
@@ -109,18 +109,18 @@ export default function FlipbookManager({ pages, onChange }) {
             </span>
           </div>
 
-          {busy && <div className="fb-manage-busy">{busy}</div>}
-          {error && <div className="fb-manage-error">{error}</div>}
+          {busy && <div className="pf-manage-busy">{busy}</div>}
+          {error && <div className="pf-manage-error">{error}</div>}
 
-          <div className="fb-manage-list">
+          <div className="pf-manage-list">
             {pages.map((p, i) => (
-              <div className="fb-manage-item" key={p.id}>
+              <div className="pf-manage-item" key={p.id}>
                 <Thumb page={p} />
-                <div className="fb-manage-meta">
-                  <div className="fb-manage-name">{p.position}. {p.file_name || 'page'}</div>
+                <div className="pf-manage-meta">
+                  <div className="pf-manage-name">{p.position}. {p.file_name || 'page'}</div>
                   <div className="muted">{(p.size_bytes / 1024).toFixed(0)} KB{p.uploaded_by_name ? ` · ${p.uploaded_by_name}` : ''}</div>
                 </div>
-                <div className="fb-manage-actions">
+                <div className="pf-manage-actions">
                   <button type="button" className="btn btn-sm" disabled={i === 0 || !!busy} onClick={() => move(i, -1)} aria-label="Move earlier">↑</button>
                   <button type="button" className="btn btn-sm" disabled={i === pages.length - 1 || !!busy} onClick={() => move(i, 1)} aria-label="Move later">↓</button>
                   <button type="button" className="btn btn-sm btn-danger" disabled={!!busy} onClick={() => remove(p)}>Delete</button>
