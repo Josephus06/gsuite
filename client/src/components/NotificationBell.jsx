@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { announce, soundEnabled, setSoundEnabled } from '../utils/notificationSound';
+import {
+  announce, chime, soundEnabled, setSoundEnabled, speak, desktopNotify, requestDesktopPermission,
+} from '../utils/notificationSound';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 
@@ -67,7 +69,13 @@ export default function NotificationBell() {
         // Chime, then read the headline. Raised here rather than in the toast so what is
         // heard and what is shown can never disagree, and sorted newest-first so the one
         // read aloud is the one that just landed.
-        announce([...fresh].sort((a, b) => b.id - a.id).map((n) => n.title));
+        const newest = [...fresh].sort((a, b) => b.id - a.id);
+        announce(newest.map((n) => n.title));
+        desktopNotify({
+          title: newest[0].title,
+          body: newest.length > 1 ? `${newest[0].message || ''} (+${newest.length - 1} more)` : (newest[0].message || ''),
+          onClick: () => openNotification(newest[0]),
+        });
       }
     } catch {
       // Polling hiccup -- just try again next tick, not worth surfacing to the user.
@@ -184,9 +192,19 @@ export default function NotificationBell() {
                   className="btn btn-sm"
                   title={sound ? 'Sound and voice on — click to mute' : 'Muted — click to turn sound and voice on'}
                   aria-label={sound ? 'Mute notification sound' : 'Unmute notification sound'}
-                  onClick={() => { const next = !sound; setSound(next); setSoundEnabled(next); if (next) announce(['Notification sound on']); }}
+                  onClick={async () => {
+                    const next = !sound;
+                    setSound(next); setSoundEnabled(next);
+                    if (next) { await requestDesktopPermission(); announce(['Notification sound on']); }
+                  }}
                 >
                   {sound ? '🔊' : '🔇'}
+                </button>
+                {/* A deterministic way to check the voice works, rather than waiting for
+                    a real notification to find out that it does not. */}
+                <button type="button" className="btn btn-sm" title="Read a sample aloud"
+                  onClick={() => { chime(); setTimeout(() => speak('TICKET-141 is approved and ready to work on'), 450); }}>
+                  Test
                 </button>
                 {unreadCount > 0 && (
                   <button type="button" className="btn btn-sm" onClick={markAllRead}>Mark all read</button>

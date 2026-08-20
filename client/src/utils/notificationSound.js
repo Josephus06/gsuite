@@ -72,20 +72,75 @@ function speakable(text) {
     .trim();
 }
 
-export function speak(text) {
+// Voices load asynchronously. getVoices() returns [] on the first call in Chrome, and
+// speaking before they arrive is the usual reason nothing is heard while the API reports no
+// error at all. Resolves either when the list arrives or after a short wait, since some
+// browsers populate it synchronously and never fire the event.
+function voicesReady() {
+  const synth = window.speechSynthesis;
+  if (synth.getVoices().length) return Promise.resolve();
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    synth.addEventListener('voiceschanged', finish, { once: true });
+    setTimeout(finish, 1000);
+  });
+}
+
+export async function speak(text) {
   if (!('speechSynthesis' in window)) return;
+  const synth = window.speechSynthesis;
   const say = speakable(text);
   if (!say) return;
-  // Cancel anything still being read: three notifications in a row should announce the
-  // newest, not queue a backlog the listener has already seen on screen.
-  window.speechSynthesis.cancel();
+
+  await voicesReady();
+
+  // Only cancel when something is actually queued. Calling cancel() on an idle synthesiser
+  // and then speaking immediately leaves Chrome's queue in a state where the utterance is
+  // accepted and never spoken -- which is exactly a chime with no voice after it.
+  if (synth.speaking || synth.pending) {
+    synth.cancel();
+    await new Promise((r) => { setTimeout(r, 120); });
+  }
+
   const utterance = new SpeechSynthesisUtterance(say);
   utterance.rate = 1;
   utterance.pitch = 1;
   utterance.volume = 1;
-  const voice = window.speechSynthesis.getVoices().find((v) => /^en(-|_|$)/i.test(v.lang));
+  utterance.lang = 'en-US';
+  const voice = synth.getVoices().find((v) => /^en(-|_|$)/i.test(v.lang));
   if (voice) utterance.voice = voice;
-  window.speechSynthesis.speak(utterance);
+  synth.speak(utterance);
+
+  // Chrome can hand back a synthesiser that is paused from an earlier tab switch; resume is
+  // a no-op when it is already running.
+  if (synth.paused) synth.resume();
+}
+
+// A desktop notification -- the OS-level popup that shows even when this tab is in the
+// background or the window is minimised. It cannot fire when the browser itself is closed:
+// that needs a service worker and Web Push, which is a different mechanism (see the note in
+// NotificationBell).
+export function desktopNotify({ title, body, onClick }) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  // Only when the page is not being looked at. Duplicating an on-screen toast into an OS
+  // popup while the user is staring at the page is just noise.
+  if (document.visibilityState === 'visible') return;
+  try {
+    const n = new Notification(title, { body: body || '', tag: `gsuite-${title}`, icon: '/favicon.ico' });
+    n.onclick = () => { window.focus(); n.close(); onClick?.(); };
+  } catch {
+    // Some browsers throw when constructing one outside a service worker; the in-page toast
+    // and the voice have already done the job, so there is nothing to recover from.
+  }
+}
+
+// Asked for once, and only from a real click -- browsers ignore (or permanently block) a
+// permission request that is not tied to a user gesture.
+export function requestDesktopPermission() {
+  if (!('Notification' in window)) return Promise.resolve('unsupported');
+  if (Notification.permission !== 'default') return Promise.resolve(Notification.permission);
+  return Notification.requestPermission();
 }
 
 // The pair, for a batch of new notifications. Only the newest is read: reading five in a row
