@@ -70,6 +70,10 @@ export default function ChatWidget() {
   const [mode, setMode] = useState('chat'); // chat | awaiting_department | awaiting_issue | ticket_thread
   const [departments, setDepartments] = useState([]);
   const [pendingDepartmentId, setPendingDepartmentId] = useState(null);
+  // An action the bot has offered to carry out and is waiting on a yes for. Held here and
+  // handed back with the next message: the server re-checks permission and the order before
+  // doing anything, so this only says WHAT was offered, never that it was allowed.
+  const [pendingAction, setPendingAction] = useState(null);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const bottomRef = useRef(null);
@@ -193,8 +197,11 @@ export default function ChatWidget() {
         // (localMessages here is the pre-message state -- the setState from pushLocal above
         // hasn't applied yet -- so it's exactly the conversation before this message.)
         const history = localMessages.map((m) => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text }));
-        const { data } = await api.post('/chatbot/ask', { message: text, history });
+        const { data } = await api.post('/chatbot/ask', { message: text, history, pendingAction });
         pushLocal('bot', data.reply);
+        // Cleared on every turn and only set again if this reply is itself an offer, so an
+        // offer never survives past the answer to it.
+        setPendingAction(data.pendingAction || null);
         if (data.isTicketTrigger) setMode('awaiting_department');
         return;
       }

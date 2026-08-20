@@ -1141,6 +1141,14 @@ router.put('/:id/sales-request-revision', requireAuth, requirePermission(ROUTE, 
   } finally { conn.release(); }
 });
 
+// A refusal the caller can turn into an HTTP status or a sentence, depending on whether it
+// came in through the button or through the chatbot.
+function badRequest(status, message) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+}
+
 // Copy an order into a new one, whatever state the original is in.
 //
 // Repeat work is ordinary here -- the same job for the same customer next month -- and re-keying
@@ -1148,21 +1156,24 @@ router.put('/:id/sales-request-revision', requireAuth, requirePermission(ROUTE, 
 // including Cancelled and COMPLETED, because those are the two people most often want to copy:
 // a finished job worth repeating, or a cancelled one worth raising again properly.
 //
-// The copy is a NEW order raised by whoever pressed the button, not a clone of the original's
-// progress. It starts at the beginning of the workflow and goes through the presser's own
+// Called from the Replicate button and from the chatbot, which is why it is a function here
+// rather than only a route handler: two implementations of this would drift apart.
+//
+// The copy is a NEW order raised by whoever asked for it, not a clone of the original's
+// progress. It starts at the beginning of the workflow and goes through that person's own
 // department approvers -- copying the original's approvers would send it to the wrong people
 // when the two raisers sit in different departments. Nothing about the artist assignment,
 // timers, approvals or audit history is carried across; only the customer, job details and the
 // material/process lines, which are the reason anyone replicates an order at all.
-router.post('/:id/replicate', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
+async function replicateNonStandardJobOrder(userId, sourceId) {
   const conn = await pool.getConnection();
   try {
-    const [[src]] = await conn.query('SELECT * FROM non_standard_job_orders WHERE id = ?', [req.params.id]);
-    if (!src) return res.status(404).json({ error: 'Non-standard job order not found.' });
+    const [[src]] = await conn.query('SELECT * FROM non_standard_job_orders WHERE id = ?', [sourceId]);
+    if (!src) throw badRequest(404, 'Non-standard job order not found.');
 
-    const branch = await defaultBranch(req.user.id);
-    if (!branch.employee_id) return res.status(400).json({ error: 'Your user account needs an assigned employee before a non-standard job order can be saved.' });
-    if (!branch.sales_division_id) return res.status(400).json({ error: 'Your default User Branch needs a department before a non-standard job order can be saved.' });
+    const branch = await defaultBranch(userId);
+    if (!branch.employee_id) throw badRequest(400, 'Your user account needs an assigned employee before a non-standard job order can be saved.');
+    if (!branch.sales_division_id) throw badRequest(400, 'Your default User Branch needs a department before a non-standard job order can be saved.');
 
     const [approvers] = await conn.query(
       `SELECT dta.user_id FROM users u
@@ -1170,7 +1181,7 @@ router.post('/:id/replicate', requireAuth, requirePermission(ROUTE, 'can_add'), 
          JOIN departments d ON d.id = e.department_id
          JOIN department_ticket_approvers dta ON dta.department_id = d.id
         WHERE u.id = ?`,
-      [req.user.id],
+      [userId],
     );
     const initialSubStatus = approvers.length ? SUB_SBU_APPROVAL : SUB_PENDING;
 
@@ -1186,7 +1197,7 @@ router.post('/:id/replicate', requireAuth, requirePermission(ROUTE, 'can_add'), 
         src.memo, branch.location_id || src.job_location_id, src.job_type_id, src.job_type,
         src.site_inspection_subtype, src.pms_job_type_id, src.description, src.quantity,
         src.shipping_address, src.delivery_date, src.delivery_time, branch.employee_id, branch.sales_division_id,
-        INITIAL_STATUS, initialSubStatus, req.user.id],
+        INITIAL_STATUS, initialSubStatus, userId],
     );
     const newId = result.insertId;
     const nstdjoNo = `NSTDJO-${newId}`;
@@ -1196,7 +1207,7 @@ router.post('/:id/replicate', requireAuth, requirePermission(ROUTE, 'can_add'), 
     // original was saved, and the same lines at the same prices must earn the same figure.
     const [mats] = await conn.query(
       'SELECT * FROM non_standard_job_order_materials WHERE non_standard_job_order_id = ? ORDER BY line_no, id',
-      [req.params.id],
+      [sourceId],
     );
     for (const m of mats) {
       await conn.query(
@@ -1224,18 +1235,27 @@ router.post('/:id/replicate', requireAuth, requirePermission(ROUTE, 'can_add'), 
     // Recorded on the copy so its origin is never a guess -- a replicated order is otherwise
     // indistinguishable from one keyed by hand.
     await logAudit(conn, {
-      id: newId, userId: req.user.id, eventType: 'Created',
+      id: newId, userId: userId, eventType: 'Created',
       fieldName: 'nstdjo_no', newValue: `${nstdjoNo} (replicated from ${src.nstdjo_no})`,
     });
     await conn.commit();
-    res.status(201).json({
+    return {
       id: newId, nstdjo_no: nstdjoNo, replicated_from: src.nstdjo_no,
       status: INITIAL_STATUS, sub_status: initialSubStatus, lines: mats.length,
-    });
+    };
   } catch (err) {
     await conn.rollback();
-    next(err);
+    throw err;
   } finally { conn.release(); }
+}
+
+router.post('/:id/replicate', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
+  try {
+    res.status(201).json(await replicateNonStandardJobOrder(req.user.id, req.params.id));
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
 });
 
 
@@ -1356,3 +1376,6 @@ router.post('/bulk-approve', requireAuth, async (req, res, next) => {
 });
 
 module.exports = router;
+// Exported so the chatbot can raise a copy through exactly this code path rather than a
+// second implementation that would drift away from it.
+module.exports.replicateNonStandardJobOrder = replicateNonStandardJobOrder;
