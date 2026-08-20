@@ -104,6 +104,7 @@ export default function AssignedJobOrders() {
                 <tr>
                   <th>JO #</th>
                   <th>Customer</th>
+                  <th>Sales Rep</th>
                   <th>Job Desc.</th>
                   <th>Sub Status</th>
                   <th>Layout - Job Type</th>
@@ -117,7 +118,7 @@ export default function AssignedJobOrders() {
               </thead>
               <tbody>
                 {rows.length === 0 && (
-                  <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: 20 }}>Nothing in {(STAGES.find((t) => t.key === stage) || {}).label}.</td></tr>
+                  <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: 20 }}>Nothing in {(STAGES.find((t) => t.key === stage) || {}).label}.</td></tr>
                 )}
                 {/* Job Orders and Non-Standard Job Orders have independent id sequences,
                     so the key has to include the kind or the two can collide. */}
@@ -125,6 +126,7 @@ export default function AssignedJobOrders() {
                   <tr key={`${row.kind}-${row.id}`}>
                     <td>{row.job_order_no}</td>
                     <td>{row.customer_name}</td>
+                    <td>{row.sales_rep_name || '—'}</td>
                     <td>{row.description}</td>
                     <td>{row.sub_status}</td>
                     <td>{row.pms_job_type_name ? `${row.pms_job_type_code} — ${row.pms_job_type_name}` : '—'}</td>

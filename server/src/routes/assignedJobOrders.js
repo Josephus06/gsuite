@@ -56,10 +56,17 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
               -- and their report cannot quote different figures for the same job.
               ${jobOrderIncentiveExpression('jo')} AS incentive_amount,
               ${joIncentiveBasis('jo')} AS incentive_basis,
+              -- The job order's own rep if it carries one, otherwise the sales order's --
+              -- same fallback the run screen uses, so the list and the job agree about who
+              -- to go to with a question.
+              COALESCE(CONCAT(jsr.first_name, ' ', jsr.last_name),
+                       CONCAT(ssr.first_name, ' ', ssr.last_name)) AS sales_rep_name,
               EXISTS(SELECT 1 FROM job_order_layout_sessions s WHERE s.job_order_id = jo.id AND s.ended_at IS NULL) AS is_running
        FROM job_orders jo
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
        LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN employees jsr ON jsr.id = jo.sales_rep_id
+       LEFT JOIN employees ssr ON ssr.id = so.sales_rep_id
        LEFT JOIN pms_job_types pjt ON pjt.id = jo.layout_job_type_id
        WHERE jo.artist_id = ? AND jo.sub_status IN (?)
        ORDER BY jo.id DESC`,
@@ -77,10 +84,12 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
               pjt.minutes_consume,
               ${nstdjoIncentiveExpression('n')} AS incentive_amount,
               '${NSTDJO_INCENTIVE_BASIS}' AS incentive_basis,
+              CONCAT(nsr.first_name, ' ', nsr.last_name) AS sales_rep_name,
               EXISTS(SELECT 1 FROM non_standard_job_order_layout_sessions s
                       WHERE s.non_standard_job_order_id = n.id AND s.ended_at IS NULL) AS is_running
        FROM non_standard_job_orders n
        LEFT JOIN customers c ON c.id = n.customer_id
+       LEFT JOIN employees nsr ON nsr.id = n.sales_rep_id
        LEFT JOIN pms_job_types pjt ON pjt.id = n.layout_job_type_id
        WHERE n.artist_employee_id = ?
          AND n.sub_status IN (?)
