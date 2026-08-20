@@ -142,6 +142,7 @@ import Tickets from './pages/Tickets';
 import TicketView from './pages/TicketView';
 import ProcessFlow from './pages/ProcessFlow';
 import Hrd from './pages/Hrd';
+import Product from './pages/Product';
 import HrdRoom from './pages/HrdRoom';
 import NonStandardJobOrders from './pages/NonStandardJobOrders';
 import NonStandardJobOrderView from './pages/NonStandardJobOrderView';
@@ -204,6 +205,7 @@ function App() {
         <Route path="/sales-orders" element={<SalesOrders />} />
         <Route path="/sales-orders/:id" element={<SalesOrderView />} />
         <Route path="/hrd" element={<Hrd />} />
+        <Route path="/product" element={<Product />} />
         <Route path="/hrd/:id" element={<HrdRoom />} />
         <Route path="/non-standard-job-orders" element={<NonStandardJobOrders />} />
         <Route path="/non-standard-job-orders/:id" element={<NonStandardJobOrderView />} />

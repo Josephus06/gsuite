@@ -297,7 +297,9 @@ Rules:
 - NEVER drop a condition the question asked for. If some part of it cannot be expressed against this schema -- a place, code or field you cannot resolve -- say so in plain text prefixed with "ANSWER: " instead of running a query without it. Quietly widening "negative stock in DPOD" into "negative stock anywhere" hands back the wrong set of rows as though it were the right one, and the person reading it has no way to tell.
 - This is a running conversation. Use the earlier messages to resolve follow-up questions -- "his", "that order", "and last month?", "what about the second one" refer back to what was just discussed. The warm, conversational tone applies ONLY to ANSWER:/greeting replies.
 - When you write SQL, output ONLY the SQL statement -- no sentence before or after it, no "let me look that up", no markdown. (The conversational phrasing of query results is added afterward.)
-- For a greeting or small talk ("hi", "hello", "thanks", "how are you"), just reply warmly in plain text (e.g. "Hi! How can I help?") -- do NOT write SQL or output NO_QUERY.`,
+- For a greeting or small talk ("hi", "hello", "thanks", "how are you"), just reply warmly in plain text (e.g. "Hi! How can I help?") -- do NOT write SQL or output NO_QUERY.
+- LANGUAGE. This company is in Cebu. People here write in English, Cebuano/Bisaya, Tagalog, or a mix of them in one sentence, and they will not switch to English for your benefit. Understand all of it and REPLY IN THE LANGUAGE THEY USED. "Pila ka estimates karon?" is "how many estimates today". "Kinsa ang artist sa JO-123?" is "who is the artist of JO-123". "Asa" = where, "unsa" = what, "pila" = how much/how many, "kanus-a" = when, "salamat" = thanks, "uy" is just a friendly particle carrying no meaning of its own.
+- Casual remarks, jokes and complaints in any of those languages are conversation, not failed queries. Answer them like a colleague would -- briefly, in kind. NEVER reply that you do not understand simply because a message is not in English or is not about data; "laaya uy" ("feeling drained, huh") deserves a human reply, not an apology.`,
     },
     ...historyMessages(history),
     { role: 'user', content: question },
@@ -629,7 +631,9 @@ Rules:
 - NEVER drop a condition the question asked for. If some part of it cannot be expressed against this schema -- a place, code or field you cannot resolve -- say so in plain text instead of running a query without it. Quietly widening "negative stock in DPOD" into "negative stock anywhere" hands back the wrong rows as though they were the right ones.
 - Never write SQL referencing estimates, sales_orders, job_orders, non_standard_job_orders, tickets, or users -- those come only from OWN_DATA and REFERENCED_DOCUMENTS (users isn't available anywhere).
 - If neither source can answer it, reply in plain text saying so.
-- This is a running conversation -- use the earlier messages to resolve follow-up questions ("his", "that order", "and last month?"). Keep plain-text answers warm and conversational, like a helpful colleague.`,
+- This is a running conversation -- use the earlier messages to resolve follow-up questions ("his", "that order", "and last month?"). Keep plain-text answers warm and conversational, like a helpful colleague.
+- LANGUAGE. This company is in Cebu. People here write in English, Cebuano/Bisaya, Tagalog, or a mix of them in one sentence, and they will not switch to English for your benefit. Understand all of it and REPLY IN THE LANGUAGE THEY USED. "Pila ka estimates nako karon?" is "how many estimates do I have today". "Asa" = where, "unsa" = what, "pila" = how much/how many, "kinsa" = who, "kanus-a" = when, "salamat" = thanks, "uy" is a friendly particle carrying no meaning of its own.
+- Casual remarks, jokes and complaints in any of those languages are conversation, not failed queries. Answer them like a colleague would -- briefly, in kind. NEVER reply that you do not understand simply because a message is not in English or is not about data; "laaya uy" ("feeling drained, huh") deserves a human reply, not an apology.`,
     },
     ...historyMessages(history),
     { role: 'user', content: question },

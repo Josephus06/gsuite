@@ -24,6 +24,9 @@ const NAV_STRUCTURE = [
   // HR document rooms. Top level next to Manual: it is reference material for everyone,
   // not part of the order-to-cash chain the category dropdowns describe.
   { route: '/hrd', label: 'HRD' },
+  // The company profile flipbook -- reference material anyone may show a customer,
+  // so it sits at top level rather than inside a category dropdown.
+  { route: '/product', label: 'Product' },
   {
     label: 'CRM',
     children: [

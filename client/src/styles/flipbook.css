@@ -1,0 +1,268 @@
+/* Flipbook: a stack of sheets rotating around a spine in real 3D.
+ *
+ * The three things that make it read as paper rather than as a sliding div:
+ *   1. preserve-3d on the leaf, with the two faces back to back and backface-visibility
+ *      hidden -- so the reverse of a sheet is genuinely its own page.
+ *   2. transform-origin on the spine edge, not the centre.
+ *   3. a gloss layer whose gradient sweeps as the leaf turns, standing in for the way light
+ *      moves across a curling page. Without it the turn looks like a flat rectangle rotating.
+ */
+
+.flipbook-wrap {
+  --fb-navy: #0d2a5c;
+  --fb-orange: #f5a623;
+  --fb-accent: var(--fb-orange);
+  --fb-page-w: 420px;
+  --fb-page-h: 594px; /* A-series ratio, same proportion as the printed profile */
+  --fb-zoom: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.flipbook-stage {
+  /* The whole illusion depends on this: without perspective the rotation is an affine
+     squash rather than a page lifting toward the reader. */
+  perspective: 2400px;
+  perspective-origin: 50% 45%;
+  padding: 26px 10px 10px;
+  outline: none;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+.flipbook-stage:focus-visible { outline: 2px solid var(--fb-orange); outline-offset: 6px; border-radius: 12px; }
+
+.flipbook-book {
+  position: relative;
+  width: calc(var(--fb-page-w) * 2 * var(--fb-zoom));
+  height: calc(var(--fb-page-h) * var(--fb-zoom));
+  transform-style: preserve-3d;
+  transition: transform 600ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+/* Closed on the cover, the book sits as a single page rather than an empty left half. */
+.flipbook-book.is-closed { transform: translateX(calc(var(--fb-page-w) * -0.5 * var(--fb-zoom))); }
+
+.flipbook-leaf {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: calc(var(--fb-page-w) * var(--fb-zoom));
+  height: 100%;
+  transform-origin: left center;
+  transform-style: preserve-3d;
+  /* Slightly slower coming back than going out, which is how a real page settles. */
+  transition: transform 780ms cubic-bezier(0.35, 0.02, 0.2, 1);
+  will-change: transform;
+}
+.flipbook-leaf.is-turned { transform: rotateY(-180deg); }
+
+.flipbook-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  overflow: hidden;
+  background: #fff;
+  cursor: pointer;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.22);
+}
+.flipbook-front { border-radius: 2px 10px 10px 2px; }
+.flipbook-back { transform: rotateY(180deg); border-radius: 10px 2px 2px 10px; }
+
+/* The moving highlight. It is on the face rather than the leaf so each side can catch the
+   light differently, the way the two sides of a turning sheet do. */
+.flipbook-gloss {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(100deg, rgba(0, 0, 0, 0.20) 0%, rgba(0, 0, 0, 0) 22%, rgba(255, 255, 255, 0.16) 55%, rgba(0, 0, 0, 0.06) 100%);
+  opacity: 0.55;
+  transition: opacity 780ms ease;
+}
+.flipbook-gloss.back { background: linear-gradient(260deg, rgba(0, 0, 0, 0.22) 0%, rgba(0, 0, 0, 0) 26%, rgba(255, 255, 255, 0.12) 60%, rgba(0, 0, 0, 0.05) 100%); }
+.flipbook-leaf.is-turned .flipbook-gloss { opacity: 0.28; }
+
+/* Shows only through the hairline where the two halves meet. */
+.flipbook-spine {
+  position: absolute;
+  top: 2%;
+  left: 50%;
+  width: 14px;
+  height: 96%;
+  margin-left: -7px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, rgba(0,0,0,0.28), rgba(0,0,0,0.06) 40%, rgba(0,0,0,0.06) 60%, rgba(0,0,0,0.28));
+  z-index: 0;
+}
+
+.flipbook-page {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 34px 30px;
+  display: flex;
+  flex-direction: column;
+  font-size: calc(13px * var(--fb-zoom));
+  color: var(--fb-navy);
+  background: #fff;
+}
+.flipbook-blank { background: linear-gradient(160deg, #fdfdfd, #f1f3f7); }
+
+/* ---------------------------------------------------------------- page furniture */
+
+.fb-page-num {
+  position: absolute; top: 0; left: 0;
+  background: linear-gradient(135deg, var(--fb-orange), #f7c948);
+  color: #fff; font-weight: 800; font-size: 1.25em;
+  padding: 6px 14px; border-radius: 0 0 6px 0;
+}
+.fb-page-tab {
+  position: absolute; top: 0; right: 0;
+  background: var(--fb-navy); color: #fff; font-weight: 700; font-size: 0.85em;
+  padding: 8px 14px; border-radius: 0 0 0 6px;
+}
+
+/* -------------------------------------------------------------------- cover */
+
+.fb-cover { padding: 0; overflow: hidden; background: linear-gradient(160deg, #eaf2ff 0%, #ffffff 55%); }
+.fb-cover-blob { position: absolute; border-radius: 50%; filter: blur(0.5px); }
+.fb-cover-blob-navy {
+  width: 150%; aspect-ratio: 1; left: -70%; top: -18%;
+  background: radial-gradient(circle at 60% 40%, #16357a, #0d2a5c 70%);
+  opacity: 0.96;
+}
+.fb-cover-blob-orange {
+  width: 120%; aspect-ratio: 1; left: -46%; bottom: -46%;
+  background: radial-gradient(circle at 40% 40%, #ffc247, var(--fb-orange) 72%);
+}
+.fb-cover-mark { position: absolute; top: 8%; left: 8%; display: flex; flex-direction: column; gap: 2px; z-index: 2; }
+.fb-cover-mark.centered { position: static; margin: auto; align-items: center; }
+.fb-logo-g {
+  width: 2.6em; height: 2.6em; border-radius: 50%;
+  background: conic-gradient(from 210deg, var(--fb-navy) 0 55%, var(--fb-orange) 55% 100%);
+  color: #fff; font-weight: 900; font-size: 1.5em; display: grid; place-items: center;
+}
+.fb-logo-word { font-weight: 900; font-size: 1.5em; letter-spacing: 0.02em; color: var(--fb-navy); }
+.fb-logo-word em { color: var(--fb-orange); font-style: normal; }
+.fb-logo-tag { font-size: 0.8em; opacity: 0.7; }
+.fb-cover-title { position: absolute; left: 8%; bottom: 9%; z-index: 3; color: #fff; }
+.fb-cover-eyebrow { font-size: 1.5em; font-weight: 800; letter-spacing: 0.04em; }
+.fb-cover-main { font-size: 3em; font-weight: 900; line-height: 1.02; }
+.fb-cover-rule { height: 3px; width: 62%; background: #fff; margin: 10px 0; border-radius: 2px; }
+.fb-cover-sub { font-size: 1.3em; opacity: 0.95; }
+
+.fb-back { background: linear-gradient(200deg, #ffffff, #eef2f9); display: grid; place-items: center; }
+
+/* --------------------------------------------------------------------- text */
+
+.fb-heading { font-size: 2.1em; font-weight: 900; margin: 34px 0 14px; }
+.fb-center { text-align: center; }
+.fb-subheading { font-size: 1.15em; font-weight: 800; margin: 16px 0 6px; text-align: center; }
+.fb-body { font-size: 1.05em; line-height: 1.55; text-align: justify; white-space: pre-line; }
+.fb-text-glow {
+  position: absolute; inset: auto -20% -25% -20%; height: 55%;
+  background: radial-gradient(ellipse at 50% 100%, rgba(34, 211, 238, 0.28), transparent 70%);
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ divider */
+
+.fb-divider { justify-content: center; align-items: center; background: linear-gradient(180deg, #ffffff 0%, #eaf6ff 100%); }
+.fb-divider-inner { text-align: center; }
+.fb-divider-eyebrow { font-size: 2.2em; color: var(--fb-orange); font-weight: 400; }
+.fb-divider-title { font-size: 3.2em; font-weight: 900; letter-spacing: 0.01em; }
+
+/* ------------------------------------------------------------ product tiles */
+
+.fb-grid-heading { font-size: 1.9em; font-weight: 800; text-align: center; margin: 40px 0 18px; }
+.fb-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; overflow: hidden; }
+.fb-tile {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  animation: fb-tile-in 420ms cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+}
+@keyframes fb-tile-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+.fb-tile-mark {
+  width: 100%; aspect-ratio: 4 / 3; display: grid; place-items: center;
+  border-radius: 6px; font-size: 1.6em; color: #b9c4d8;
+  background: linear-gradient(150deg, #f4f7fc, #e7edf7);
+  box-shadow: inset 0 0 0 1px rgba(13, 42, 92, 0.06);
+}
+.fb-tile-img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; }
+.fb-tile-label {
+  background: linear-gradient(135deg, var(--fb-accent), #f7c948);
+  color: #fff; font-weight: 700; font-size: 0.72em; text-align: center;
+  padding: 4px 8px; border-radius: 999px; width: 100%;
+}
+
+/* ------------------------------------------------------------------- works */
+
+.fb-work-heading { font-size: 2em; font-weight: 800; text-align: center; margin: 46px 0 2px; }
+.fb-work-client { text-align: center; font-size: 1.15em; margin-bottom: 16px; }
+.fb-work-frame {
+  flex: 1; border-radius: 10px; display: grid; place-items: center;
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(245, 166, 35, 0.22), transparent 60%),
+    radial-gradient(ellipse at 70% 80%, rgba(34, 211, 238, 0.25), transparent 62%),
+    linear-gradient(160deg, #eef3fb, #dbe6f5);
+}
+.fb-work-mark { font-weight: 900; font-size: 1.4em; color: rgba(13, 42, 92, 0.35); }
+.fb-work-mark em { color: rgba(245, 166, 35, 0.6); font-style: normal; }
+
+/* ----------------------------------------------------------------- clients */
+
+.fb-client-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
+.fb-client {
+  font-size: 0.72em; font-weight: 600; text-align: center; padding: 6px 4px;
+  border-radius: 6px; background: #f4f7fc; box-shadow: inset 0 0 0 1px rgba(13, 42, 92, 0.05);
+  animation: fb-tile-in 380ms ease backwards;
+}
+.fb-cert-list { font-size: 0.8em; line-height: 1.6; padding-left: 18px; }
+
+/* ----------------------------------------------------------- professionals */
+
+.fb-pro { margin-bottom: 12px; }
+.fb-pro-head { border-left: 4px solid var(--fb-orange); padding-left: 8px; margin-bottom: 4px; }
+.fb-pro-name { font-weight: 800; font-size: 0.95em; }
+.fb-pro-role { font-size: 0.78em; opacity: 0.75; }
+.fb-pro-licenses { font-size: 0.74em; line-height: 1.45; padding-left: 20px; margin: 0; }
+
+/* ---------------------------------------------------------------- controls */
+
+.flipbook-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: center; }
+.flipbook-counter { font-size: 0.85rem; min-width: 190px; text-align: center; opacity: 0.8; }
+.flipbook-zoom { display: inline-flex; align-items: center; gap: 6px; }
+.flipbook-zoom-value { font-size: 0.8rem; width: 44px; text-align: center; opacity: 0.75; }
+
+.flipbook-jump { display: flex; gap: 5px; flex-wrap: wrap; justify-content: center; max-width: 520px; }
+.flipbook-dot {
+  width: 9px; height: 9px; border-radius: 50%; border: none; padding: 0; cursor: pointer;
+  background: rgba(128, 128, 128, 0.35); transition: transform 160ms ease, background 160ms ease;
+}
+.flipbook-dot:hover { transform: scale(1.35); }
+.flipbook-dot.done { background: var(--fb-orange); }
+.flipbook-dot.active { background: var(--fb-navy); transform: scale(1.4); }
+
+/* A phone cannot show a spread, so the book narrows to a single page and the turn becomes a
+   half-width sheet rather than a squeezed two-page layout. */
+@media (max-width: 1000px) {
+  .flipbook-wrap { --fb-page-w: 300px; --fb-page-h: 424px; }
+}
+@media (max-width: 700px) {
+  .flipbook-wrap { --fb-page-w: 260px; --fb-page-h: 368px; }
+  .flipbook-book { width: calc(var(--fb-page-w) * var(--fb-zoom)); }
+  .flipbook-book.is-closed { transform: none; }
+  .flipbook-leaf { left: 0; }
+  .fb-tiles { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* The turn is the entire point of this component, so reduced-motion shortens it rather than
+   removing it -- an instant swap would leave the reader with no idea which way they moved. */
+@media (prefers-reduced-motion: reduce) {
+  .flipbook-leaf { transition-duration: 180ms; }
+  .fb-tile, .fb-client { animation: none; }
+}
