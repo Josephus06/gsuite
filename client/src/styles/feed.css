@@ -1021,6 +1021,15 @@
 /* ------------------------------------------------------- spotlight carousel rail */
 /* Sticky like the other rails, so it stays put while the feed scrolls past it. */
 .fb-carousel { padding: 12px; }
+/* The anniversary lockup sits above the Spotlight heading. Capped rather than stretched to
+   the full column: at 320px the gold hairlines in "creations made easy" start to break up. */
+.fb-carousel-brand {
+  display: block;
+  width: 100%;
+  max-width: 260px;
+  height: auto;
+  margin: 2px auto 10px;
+}
 .fb-carousel-stage {
   position: relative;
   border-radius: 8px;
