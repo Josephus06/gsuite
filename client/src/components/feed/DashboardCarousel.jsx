@@ -11,12 +11,35 @@ const ROTATE_MS = 6000;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 25 * 1024 * 1024;
 
+// Media is fetched and handed to the element as an object URL rather than pointed at the API
+// directly. /dashboard-carousel/:id/file requires an Authorization header, and a browser sends
+// none for <img src> or <video src> -- the request 401s and the frame renders as a broken
+// image. Cached by id so paging back and forth does not refetch a 16MB clip each time.
+const blobCache = new Map();
+const inflight = new Map();
+
+function loadMedia(id) {
+  if (blobCache.has(id)) return Promise.resolve(blobCache.get(id));
+  if (inflight.has(id)) return inflight.get(id);
+  const p = api.get(`/dashboard-carousel/${id}/file`, { responseType: 'blob' })
+    .then(({ data }) => {
+      const url = URL.createObjectURL(data);
+      blobCache.set(id, url);
+      inflight.delete(id);
+      return url;
+    })
+    .catch(() => { inflight.delete(id); blobCache.set(id, null); return null; });
+  inflight.set(id, p);
+  return p;
+}
+
 export default function DashboardCarousel() {
   const [items, setItems] = useState([]);
   const [canUpload, setCanUpload] = useState(false);
   const [index, setIndex] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [mediaUrl, setMediaUrl] = useState(null);
   const fileInput = useRef(null);
 
   const load = useCallback(async () => {
@@ -33,6 +56,16 @@ export default function DashboardCarousel() {
   useEffect(() => { load(); }, [load]);
 
   const current = items[index];
+
+  // Resolve the showing item's bytes. Cleared first so the previous slide's picture is not
+  // left on screen under the next one's caption while it loads.
+  useEffect(() => {
+    if (!current) { setMediaUrl(null); return undefined; }
+    let stale = false;
+    setMediaUrl(blobCache.get(current.id) ?? null);
+    loadMedia(current.id).then((url) => { if (!stale) setMediaUrl(url); });
+    return () => { stale = true; };
+  }, [current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-advance, but never while a video is playing -- cutting a clip off mid-sentence to
   // show the next photo is worse than a carousel that waits.
@@ -104,13 +137,14 @@ export default function DashboardCarousel() {
 
       {current ? (
         <div className="fb-carousel-stage">
-          {current.media_type === 'video' ? (
+          {!mediaUrl && <div className="fb-carousel-loading muted">Loading…</div>}
+          {mediaUrl && (current.media_type === 'video' ? (
             // Controls, and no autoplay: an unexpected noise from a dashboard is startling,
             // and muted autoplay everywhere is its own kind of annoying.
             <video
               key={current.id}
               className="fb-carousel-media"
-              src={`/api/dashboard-carousel/${current.id}/file`}
+              src={mediaUrl || undefined}
               controls
               preload="metadata"
             />
@@ -118,11 +152,11 @@ export default function DashboardCarousel() {
             <img
               key={current.id}
               className="fb-carousel-media"
-              src={`/api/dashboard-carousel/${current.id}/file`}
+              src={mediaUrl || undefined}
               alt={current.caption || ''}
               loading="lazy"
             />
-          )}
+          ))}
 
           {items.length > 1 && (
             <>
