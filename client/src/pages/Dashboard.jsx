@@ -617,14 +617,18 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
           return (
             <div
               key={key}
-              role={dayJobs.length ? 'button' : undefined}
-              tabIndex={dayJobs.length ? 0 : undefined}
-              className={`artist-calendar-day${key === todayKey ? ' is-today' : ''}${dayJobs.length ? ' has-jobs is-clickable' : ''}`}
-              title={dayJobs.length ? `${dayJobs.length} scheduled — click to see them` : undefined}
-              onClick={dayJobs.length ? () => setOpenDay(key) : undefined}
-              onKeyDown={dayJobs.length ? (e) => {
+              role="button"
+              tabIndex={0}
+              // EVERY day opens, including empty ones. Making only busy days clickable meant a
+              // click on a quiet day did nothing at all, which is indistinguishable from the
+              // feature being broken -- an empty day answers "nothing scheduled", which is
+              // itself worth knowing.
+              className={`artist-calendar-day is-clickable${key === todayKey ? ' is-today' : ''}${dayJobs.length ? ' has-jobs' : ''}`}
+              title={dayJobs.length ? `${dayJobs.length} scheduled — click to see them` : 'Nothing scheduled — click to confirm'}
+              onClick={() => setOpenDay(key)}
+              onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenDay(key); }
-              } : undefined}
+              }}
             >
               <span className="artist-calendar-daynum">{dayNo}</span>
               {dayJobs.slice(0, 3).map((j) => {
@@ -672,6 +676,11 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
                 </tr>
               </thead>
               <tbody>
+                {!(byDay.get(openDay) || []).length && (
+                  <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                    Nothing scheduled on this day.
+                  </td></tr>
+                )}
                 {(byDay.get(openDay) || []).map((j) => {
                   const state = j.done ? 'Completed' : j.running ? 'Running' : 'Not Started';
                   const runPath = pathFor
