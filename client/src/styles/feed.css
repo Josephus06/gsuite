@@ -63,10 +63,10 @@
   /* Four columns now: spotlight carousel, shortcuts rail, the 590px feed, contacts. The
      shell widens to fit the extra rail rather than squeezing the feed column, which is the
      one fixed width the whole layout is built around. */
-  grid-template-columns: 260px minmax(0, 1fr) 590px minmax(0, 1fr);
+  grid-template-columns: 340px minmax(0, 1fr) 590px minmax(0, 1fr);
   gap: 16px;
   align-items: start;
-  max-width: 1760px;
+  max-width: 1840px;
   margin: 0 auto;
   padding: 0 16px;
 }
@@ -75,7 +75,7 @@
 .fb-rail { position: sticky; top: 72px; min-width: 0; }
 .fb-rail-left { justify-self: end; width: 100%; max-width: 320px; }
 .fb-rail-right { justify-self: end; width: 100%; max-width: 320px; }
-.fb-rail-far-left { justify-self: start; width: 100%; max-width: 260px; }
+.fb-rail-far-left { justify-self: start; width: 100%; max-width: 340px; }
 .fb-center { min-width: 0; }
 
 /* The spotlight goes first as the viewport narrows: the feed and its shortcuts matter more,
@@ -1032,23 +1032,38 @@
   width: 100%;
   /* A tall portrait photo and a 16:9 clip both have to sit in the same frame without
      stretching, so the box is fixed and the media is fitted inside it. */
-  height: 300px;
+  /* Sized against the viewport so it fills the column on a large screen, and stops short on
+     a laptop rather than pushing the Upload button below the fold. */
+  height: min(64vh, 640px);
   object-fit: contain;
   background: #000;
 }
-.fb-carousel-empty { padding: 28px 8px; text-align: center; font-size: 0.85rem; }
+.fb-carousel-empty { padding: 120px 8px; text-align: center; font-size: 0.85rem; }
 .fb-carousel-nav {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
   border: none;
-  width: 26px;
-  height: 40px;
-  font-size: 20px;
+  /* Scaled up with the frame -- a 26px arrow on a 640px stage is a hard target to hit. */
+  width: 32px;
+  height: 56px;
+  font-size: 24px;
   line-height: 1;
   cursor: pointer;
   color: #fff;
   background: rgba(0, 0, 0, 0.38);
+}
+
+/* Each slide fades in as it arrives. React remounts the element on a key change, so the
+   animation replays on every slide without any transition state to track. */
+@keyframes fb-carousel-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.fb-carousel-media { animation: fb-carousel-fade 420ms ease-out; }
+/* Respect a system-level request for less motion: the fade is decoration, not information. */
+@media (prefers-reduced-motion: reduce) {
+  .fb-carousel-media { animation: none; }
 }
 .fb-carousel-nav:hover { background: rgba(0, 0, 0, 0.6); }
 .fb-carousel-nav.prev { left: 0; border-radius: 0 6px 6px 0; }
