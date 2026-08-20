@@ -671,13 +671,15 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
                 <tr>
                   <th>JO / NSTDJO #</th>
                   <th>Status</th>
+                  <th>Planned End</th>
+                  <th>Actual End</th>
                   <th>Incentive</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 {!(byDay.get(openDay) || []).length && (
-                  <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                  <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>
                     Nothing scheduled on this day.
                   </td></tr>
                 )}
@@ -698,6 +700,16 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
                             artist got with it. */}
                         <span className="badge" style={TIMER_STATUS_STYLE[state]}>{state}</span>
                         {j.subStatus && <div className="muted" style={{ fontSize: '0.85em' }}>{j.subStatus}</div>}
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{formatDateTime(j.plannedEndAt)}</td>
+                      {/* Regularly a different day from the plan, and the one that decides
+                          which month the incentive is credited to. Flagged when the two
+                          differ so an artist can see why a job counts where it does. */}
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {j.actualEndAt ? formatDateTime(j.actualEndAt) : <span className="muted">—</span>}
+                        {j.actualEndAt && String(j.actualEndAt).slice(0, 10) !== String(j.plannedEndAt).slice(0, 10) && (
+                          <div className="muted" style={{ fontSize: '0.85em' }}>different day</div>
+                        )}
                       </td>
                       <td style={{ whiteSpace: 'nowrap' }}>
                         {Number(j.incentiveAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}

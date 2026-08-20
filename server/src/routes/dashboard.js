@@ -411,11 +411,22 @@ const NSTDJO_COMPLETED_STATUS = 'COMPLETED';
 const NSTDJO_ACTIVE_STATUS = 'Planned - Pending for BOM';
 
 async function artistIncentiveForMonth(employeeId, monthStart, monthEnd) {
+  // Two rules, both shared with the Artist Incentive report so the dashboard figure and the
+  // report can never disagree about what an artist has earned:
+  //
+  //  - Credited to the month the work actually FINISHED (layout_ended_at), not the month it
+  //    was planned for. A job planned for the 18th and finished on the 19th belongs to the
+  //    19th, and one finished across a month boundary belongs to the later month.
+  //  - Only once Sales have signed it off: sub_status 'Approved' for a Job Order, status
+  //    COMPLETED for a Non-Standard one. Without this the dashboard paid out the moment the
+  //    artist stopped their timer, while the report -- correctly -- did not, so the two
+  //    quoted different totals for the same month.
   const [[jo]] = await pool.query(
-    `SELECT COALESCE(SUM(ROUND(${JO_INCENTIVE_AMOUNT} * COALESCE(NULLIF(jo.layout_qty, 0), 1), 2)), 0) AS amount,
+    `SELECT COALESCE(SUM(${jobOrderIncentiveExpression('jo')}), 0) AS amount,
             COUNT(*) AS jobs
        FROM job_orders jo
-      WHERE jo.artist_id = ? AND jo.layout_ended_at >= ? AND jo.layout_ended_at < ?`,
+      WHERE jo.artist_id = ? AND jo.sub_status = 'Approved'
+        AND jo.layout_ended_at >= ? AND jo.layout_ended_at < ?`,
     [employeeId, monthStart, monthEnd]
   );
 
@@ -425,9 +436,7 @@ async function artistIncentiveForMonth(employeeId, monthStart, monthEnd) {
   const [tbl] = await pool.query("SHOW TABLES LIKE 'non_standard_job_orders'");
   if (tbl.length) {
     const [[row]] = await pool.query(
-      `SELECT COALESCE(SUM(ROUND(COALESCE((
-                SELECT SUM(m.artist_incentive) FROM non_standard_job_order_materials m
-                 WHERE m.non_standard_job_order_id = n.id), 0), 2)), 0) AS amount,
+      `SELECT COALESCE(SUM(${nstdjoIncentiveExpression('n')}), 0) AS amount,
               COUNT(*) AS jobs
          FROM non_standard_job_orders n
         WHERE n.artist_employee_id = ? AND n.status = ?
@@ -506,6 +515,9 @@ async function artistCalendar(employeeId, monthStart, monthEnd) {
     // The calendar colours a day by what is on it, so it needs to know what state each job is in.
     incentiveAmount: Number(r.incentive_amount || 0),
     incentiveBasis: r.incentive_basis,
+    // When the artist actually stopped the clock, which is regularly not the planned day --
+    // and is the date the incentive is credited against.
+    actualEndAt: r.layout_ended_at,
     done: !!r.layout_ended_at,
     running: !!Number(r.is_running),
     day: r.planned_start_at ? String(r.planned_start_at).slice(0, 10) : null,
