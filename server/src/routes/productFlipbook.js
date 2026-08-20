@@ -30,13 +30,22 @@ async function canManage(userId) {
 router.get('/', requireAuth, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT f.id, f.position, f.file_name, f.caption, f.mime_type, f.size_bytes, f.created_at,
+      `SELECT f.id, f.position, f.slot, f.file_name, f.caption, f.mime_type, f.size_bytes, f.created_at,
               u.display_name AS uploaded_by_name
          FROM product_flipbook_pages f
          LEFT JOIN users u ON u.id = f.uploaded_by_user_id
         ORDER BY f.position, f.id`,
     );
-    res.json({ pages: rows, can_manage: await canManage(req.user.id) });
+    // Two different things live in this table. A row with no slot is a page of the book; a
+    // slotted row is a photograph dropped into a frame on one of the built-in pages. They are
+    // handed over separately so neither side has to filter the other out.
+    const slots = {};
+    for (const r of rows) if (r.slot) slots[r.slot] = r;
+    res.json({
+      pages: rows.filter((r) => !r.slot),
+      slots,
+      can_manage: await canManage(req.user.id),
+    });
   } catch (err) { next(err); }
 });
 
@@ -65,6 +74,9 @@ router.post('/', requireAuth, async (req, res, next) => {
       return res.status(403).json({ error: 'You do not have permission to change the product flipbook.' });
     }
     const { data, mime_type: mimeType, file_name: fileName, caption } = req.body || {};
+    // Slot names come from the page definitions, not from the user, so they are a short
+    // known-shape identifier rather than free text.
+    const slot = /^[a-z0-9-]{1,40}$/.test(String(req.body?.slot || '')) ? String(req.body.slot) : null;
     if (!data) return res.status(400).json({ error: 'data is required.' });
     if (!IMAGE_TYPES.test(String(mimeType || ''))) {
       return res.status(400).json({ error: 'Flipbook pages must be images (PNG, JPG, WEBP or GIF).' });
@@ -84,20 +96,32 @@ router.post('/', requireAuth, async (req, res, next) => {
       });
     }
 
-    // Appended to the end. A batch upload sends files in name order, so page-01..page-24
-    // lands in reading order without anyone reordering afterwards.
-    const [[last]] = await pool.query('SELECT COALESCE(MAX(position), 0) AS p FROM product_flipbook_pages');
+    // A slot holds one photo, so uploading to a filled frame replaces what is there --
+    // otherwise the only way to change a picture would be to delete it first, and a
+    // half-finished replacement would leave the frame empty in the meantime.
+    let position = 0;
+    if (!slot) {
+      // Appended to the end. A batch upload sends files in name order, so page-01..page-24
+      // lands in reading order without anyone reordering afterwards.
+      const [[last]] = await pool.query(
+        'SELECT COALESCE(MAX(position), 0) AS p FROM product_flipbook_pages WHERE slot IS NULL',
+      );
+      position = Number(last.p) + 1;
+    } else {
+      await pool.query('DELETE FROM product_flipbook_pages WHERE slot = ?', [slot]);
+    }
+
     const [result] = await pool.query(
-      `INSERT INTO product_flipbook_pages (position, file_name, caption, mime_type, size_bytes, file_data, uploaded_by_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO product_flipbook_pages (position, slot, file_name, caption, mime_type, size_bytes, file_data, uploaded_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        Number(last.p) + 1, String(fileName || '').slice(0, 255) || null,
+        position, slot, String(fileName || '').slice(0, 255) || null,
         String(caption || '').trim().slice(0, 255) || null,
         String(mimeType).slice(0, 100), buf.length, buf, req.user.id,
       ],
     );
     const [[row]] = await pool.query(
-      'SELECT id, position, file_name, caption, mime_type, size_bytes, created_at FROM product_flipbook_pages WHERE id = ?',
+      'SELECT id, position, slot, file_name, caption, mime_type, size_bytes, created_at FROM product_flipbook_pages WHERE id = ?',
       [result.insertId],
     );
     res.status(201).json(row);
@@ -120,7 +144,10 @@ router.put('/order', requireAuth, async (req, res, next) => {
 
     await conn.beginTransaction();
     for (let i = 0; i < ids.length; i += 1) {
-      await conn.query('UPDATE product_flipbook_pages SET position = ? WHERE id = ?', [i + 1, ids[i]]);
+      await conn.query(
+        'UPDATE product_flipbook_pages SET position = ? WHERE id = ? AND slot IS NULL',
+        [i + 1, ids[i]],
+      );
     }
     await conn.commit();
     res.json({ reordered: ids.length });
@@ -132,6 +159,17 @@ router.put('/order', requireAuth, async (req, res, next) => {
 
 // A real delete: the point of removing a page is to reclaim its bytes, which otherwise keep
 // replicating to the office server and riding in every nightly backup.
+router.delete('/slot/:slot', requireAuth, async (req, res, next) => {
+  try {
+    if (!await canManage(req.user.id)) {
+      return res.status(403).json({ error: 'You do not have permission to change the product flipbook.' });
+    }
+    const [result] = await pool.query('DELETE FROM product_flipbook_pages WHERE slot = ?', [req.params.slot]);
+    if (!result.affectedRows) return res.status(404).json({ error: 'That frame is already empty.' });
+    res.json({ deleted: true });
+  } catch (err) { next(err); }
+});
+
 router.delete('/:id', requireAuth, async (req, res, next) => {
   try {
     if (!await canManage(req.user.id)) {

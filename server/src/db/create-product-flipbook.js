@@ -19,6 +19,9 @@ const DDL = `
 CREATE TABLE product_flipbook_pages (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     position INT NOT NULL DEFAULT 0,
+    -- NULL for a page of the book; a slot name (e.g. work-11) for a photo dropped into one
+    -- of the built-in pages. See add-product-flipbook-slots.js.
+    slot VARCHAR(40) NULL,
     file_name VARCHAR(255) NULL,
     caption VARCHAR(255) NULL,
     mime_type VARCHAR(100) NOT NULL,
@@ -26,6 +29,7 @@ CREATE TABLE product_flipbook_pages (
     file_data LONGBLOB NOT NULL,
     uploaded_by_user_id BIGINT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_product_flipbook_slot (slot),
     KEY idx_product_flipbook_order (position, id)
 )`;
 

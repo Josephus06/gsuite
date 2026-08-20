@@ -11,6 +11,11 @@ import api from '../../api/client';
 // Cached at module level and never revoked: turning back and forth through a brochure would
 // otherwise re-download every page, and revoking a URL that a mounted leaf is still showing
 // blanks the page.
+// Kept in step with MAX_PAGE_BYTES in server/src/routes/productFlipbook.js. Checked in the
+// browser as well as there because a body over the request parser ceiling is rejected before
+// the route runs, so the reply carries no JSON message to show.
+export const MAX_PAGE_BYTES = 8 * 1024 * 1024;
+
 const cache = new Map();
 const inflight = new Map();
 

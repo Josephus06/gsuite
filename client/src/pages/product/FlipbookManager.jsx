@@ -1,11 +1,6 @@
 import { useRef, useState } from 'react';
 import api from '../../api/client';
-import useFlipbookImage, { forgetPageImage } from './flipbookImages';
-
-// Kept in step with MAX_PAGE_BYTES in server/src/routes/productFlipbook.js. Checked here as
-// well as there because a body over the parser's ceiling is rejected before the route runs,
-// so the reply carries no JSON message to show -- the upload would just fail silently.
-const MAX_PAGE_BYTES = 8 * 1024 * 1024;
+import useFlipbookImage, { MAX_PAGE_BYTES, forgetPageImage } from './flipbookImages';
 
 function Thumb({ page }) {
   const url = useFlipbookImage(page.id);

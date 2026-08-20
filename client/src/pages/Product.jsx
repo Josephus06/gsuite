@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api/client';
 import Flipbook from './product/Flipbook';
 import FlipbookManager from './product/FlipbookManager';
-import useFlipbookImage from './product/flipbookImages';
+import useFlipbookImage, { MAX_PAGE_BYTES, forgetPageImage } from './product/flipbookImages';
 import PAGES from './product/profilePages';
 import '../styles/flipbook.css';
 
@@ -15,6 +15,49 @@ import '../styles/flipbook.css';
 //
 // Every page kind renders through this one switch, so the book stays visually consistent and
 // a new page type is a case here rather than another bespoke layout.
+
+// The photo frame on an "Our Work" page. Empty it shows the house mark; filled it shows the
+// project photograph. Anyone who can manage the flipbook fills it by clicking it -- the frame
+// is the upload control, so there is nothing to find in a separate screen.
+function WorkFrame({ slotName, slot, canManage, onUpload, onClear, busy }) {
+  const url = useFlipbookImage(slot?.id);
+  const input = useRef(null);
+
+  // Every page face turns the book when clicked. Held back only for someone who can manage the
+  // artwork, since for them the frame is a control -- for everyone else it is still page, and
+  // clicking the middle of a page should turn it.
+  const swallow = canManage ? (e) => { e.stopPropagation(); } : undefined;
+
+  return (
+    <div className={`fb-work-frame${url ? ' has-photo' : ''}`} onClick={swallow}>
+      {url
+        ? <img src={url} alt="" className="fb-work-photo" />
+        : <span className="fb-work-mark">GRAPHIC<em>STAR</em></span>}
+
+      {canManage && (
+        <>
+          <input
+            ref={input}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif"
+            className="fb-slot-input"
+            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) onUpload(slotName, f); }}
+          />
+          <div className="fb-slot-tools">
+            <button type="button" className="btn btn-sm" disabled={busy} onClick={() => input.current?.click()}>
+              {url ? 'Replace photo' : 'Add photo'}
+            </button>
+            {url && (
+              <button type="button" className="btn btn-sm btn-danger" disabled={busy} onClick={() => onClear(slotName)}>
+                Remove
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 // A real component, not a branch of the switch: it needs a hook to resolve the image, and
 // renderPage is called mid-render from Flipbook, where a conditional hook would land in the
@@ -32,7 +75,10 @@ function ImagePage({ page }) {
   );
 }
 
-function ProfilePage(page) {
+// `ctx` carries the uploaded photos and whether this viewer may change them. It is passed as
+// an argument rather than read from a context provider because renderPage is a plain function
+// call from inside Flipbook, not a component boundary.
+function ProfilePage(page, ctx) {
   if (!page) return <div className="flipbook-page flipbook-blank" />;
 
   const accent = page.accent;
@@ -105,17 +151,26 @@ function ProfilePage(page) {
         </div>
       );
 
-    case 'work':
+    case 'work': {
+      // Keyed by page number, so a photo stays with its project even if the pages are
+      // rewritten around it.
+      const slotName = `work-${page.number}`;
       return (
         <div className="flipbook-page fb-work">
           {chrome}
           <h2 className="fb-work-heading">{page.heading}</h2>
           <div className="fb-work-client">{page.client}</div>
-          <div className="fb-work-frame">
-            <span className="fb-work-mark">GRAPHIC<em>STAR</em></span>
-          </div>
+          <WorkFrame
+            slotName={slotName}
+            slot={ctx?.slots?.[slotName]}
+            canManage={!!ctx?.canManage}
+            busy={!!ctx?.busy}
+            onUpload={ctx?.uploadSlot}
+            onClear={ctx?.clearSlot}
+          />
         </div>
       );
+    }
 
     case 'clients':
       return (
@@ -171,21 +226,77 @@ function ProfilePage(page) {
 
 export default function Product() {
   const [uploaded, setUploaded] = useState([]);
+  const [slots, setSlots] = useState({});
   const [canManage, setCanManage] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [slotError, setSlotError] = useState('');
 
   const load = useCallback(async () => {
     try {
       const { data } = await api.get('/product-flipbook');
       setUploaded(data.pages || []);
+      setSlots(data.slots || {});
       setCanManage(!!data.can_manage);
     } catch {
       // The module still has a profile to show without the API, so a failure here is quiet.
       setUploaded([]);
+      setSlots({});
     } finally { setLoaded(true); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const uploadSlot = useCallback(async (slotName, file) => {
+    if (!file) return;
+    setSlotError('');
+    if (!(file.type || '').startsWith('image/')) {
+      setSlotError('A frame takes a picture — PNG, JPG, WEBP or GIF.');
+      return;
+    }
+    if (file.size > MAX_PAGE_BYTES) {
+      setSlotError(`${file.name} is ${(file.size / 1048576).toFixed(1)}MB — photos must be ${MAX_PAGE_BYTES / 1048576}MB or smaller.`);
+      return;
+    }
+    setBusy(true);
+    try {
+      const data = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('Could not read that file.'));
+        reader.readAsDataURL(file);
+      });
+      // The old photo, if any, is discarded server-side. Its object URL goes with it, or the
+      // frame would keep showing the picture that was just replaced.
+      const previous = slots[slotName];
+      await api.post('/product-flipbook', {
+        data, mime_type: file.type, file_name: file.name, slot: slotName,
+      });
+      if (previous) forgetPageImage(previous.id);
+      await load();
+    } catch (err) {
+      setSlotError(err.response?.data?.error || `Could not add ${file.name}.`);
+    } finally { setBusy(false); }
+  }, [load, slots]);
+
+  const clearSlot = useCallback(async (slotName) => {
+    if (!window.confirm('Remove this photo? The frame goes back to being empty.')) return;
+    setBusy(true);
+    setSlotError('');
+    try {
+      const previous = slots[slotName];
+      await api.delete(`/product-flipbook/slot/${slotName}`);
+      if (previous) forgetPageImage(previous.id);
+      await load();
+    } catch (err) {
+      setSlotError(err.response?.data?.error || 'Could not remove that photo.');
+    } finally { setBusy(false); }
+  }, [load, slots]);
+
+  const renderPage = useCallback(
+    (page) => ProfilePage(page, { slots, canManage, busy, uploadSlot, clearSlot }),
+    [slots, canManage, busy, uploadSlot, clearSlot],
+  );
 
   const pages = useMemo(() => {
     if (!uploaded.length) return PAGES;
@@ -208,12 +319,13 @@ export default function Product() {
         </span>
       </div>
       {loaded && canManage && <FlipbookManager pages={uploaded} onChange={load} />}
+      {slotError && <div className="fb-manage-error">{slotError}</div>}
       {/* Remounted when the source changes so the reader is not left on leaf 9 of a book that
           just became four pages long. */}
       <Flipbook
         key={uploaded.length ? `uploaded-${uploaded.length}` : 'built-in'}
         pages={pages}
-        renderPage={ProfilePage}
+        renderPage={renderPage}
       />
     </div>
   );
