@@ -18,6 +18,14 @@ function formatDateTime(v) {
   return v ? new Date(v).toLocaleString() : '—';
 }
 
+// What a browser will render in a tab rather than offering as a download. Deliberately a
+// short allowlist: offering "View" on a .docx or a .zip produces a tab of binary garbage,
+// which reads as the file being corrupted.
+function canPreview(mime) {
+  const m = String(mime || '').toLowerCase();
+  return m === 'application/pdf' || m.startsWith('image/') || m === 'text/plain';
+}
+
 // Inside one room: whatever has been uploaded, and a way to add more. Any file type is
 // accepted, so there is no accept="" filter on the picker.
 export default function HrdRoom() {
@@ -87,22 +95,38 @@ export default function HrdRoom() {
     }
   }
 
-  // The file route streams bytes with its own Content-Disposition, and needs the auth header,
-  // so it is fetched as a blob rather than opened as a bare link.
-  async function openFile(file) {
+  // The file route needs an Authorization header, so a plain <a href> cannot reach it -- the
+  // bytes are fetched and handed to the browser as an object URL. Fetched once per file and
+  // reused, so viewing and then downloading the same document does not pull it twice.
+  const blobUrls = useRef(new Map());
+  async function fileUrl(file) {
+    if (blobUrls.current.has(file.id)) return blobUrls.current.get(file.id);
+    const res = await api.get(`${ROUTE}/${id}/files/${file.id}/file`, { responseType: 'blob' });
+    const url = URL.createObjectURL(new Blob([res.data], { type: file.mime_type || 'application/octet-stream' }));
+    blobUrls.current.set(file.id, url);
+    return url;
+  }
+
+  // Opens in a new tab, for the types a browser can actually render. Anything else would just
+  // show as a wall of binary, which is why View is offered only where it works.
+  async function viewFile(file) {
     try {
-      const res = await api.get(`${ROUTE}/${id}/files/${file.id}/file`, { responseType: 'blob' });
-      const url = URL.createObjectURL(new Blob([res.data], { type: file.mime_type || 'application/octet-stream' }));
+      window.open(await fileUrl(file), '_blank', 'noopener');
+    } catch {
+      setError(`Could not open ${file.file_name}.`);
+    }
+  }
+
+  async function downloadFile(file) {
+    try {
       const a = document.createElement('a');
-      a.href = url;
+      a.href = await fileUrl(file);
       a.download = file.file_name;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      // Revoked on the next tick: revoking immediately can cancel the download in some browsers.
-      setTimeout(() => URL.revokeObjectURL(url), 10000);
     } catch {
-      setError(`Could not open ${file.file_name}.`);
+      setError(`Could not download ${file.file_name}.`);
     }
   }
 
@@ -161,7 +185,12 @@ export default function HrdRoom() {
                   <td>{file.uploaded_by_name || '—'}</td>
                   <td>{formatDateTime(file.created_at)}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    <button type="button" className="btn btn-sm btn-primary" onClick={() => openFile(file)}>Download</button>{' '}
+                    {canPreview(file.mime_type) && (
+                      <>
+                        <button type="button" className="btn btn-sm btn-primary" onClick={() => viewFile(file)}>View</button>{' '}
+                      </>
+                    )}
+                    <button type="button" className="btn btn-sm" onClick={() => downloadFile(file)}>Download</button>{' '}
                     {can(ROUTE, 'can_delete') && (
                       <button type="button" className="btn btn-sm" onClick={() => removeFile(file)}>Delete</button>
                     )}
