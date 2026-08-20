@@ -13,7 +13,7 @@ const HEADER_FIELDS = [
   'date_created', 'customer_id', 'contact_person_id', 'contact_email', 'contact_title', 'contact_phone',
   'blanket_po_id', 'blanket_po_memo', 'sales_rep_id', 'sales_division_id', 'office_location_id',
   'contract_description', 'memo', 'shipping_address', 'has_multiple_shipping', 'production_lead_time',
-  'price_validity', 'order_confirmation_type', 'print_warranty', 'print_warranty_term', 'structure_warranty',
+  'price_validity', 'order_confirmation_type', 'order_confirmation_ref', 'print_warranty', 'print_warranty_term', 'structure_warranty',
   'structure_warranty_term', 'electrical_warranty', 'electrical_warranty_term', 'prepared_by_id', 'approved_by_id',
   'credit_term', 'credit_limit', 'credit_balance', 'bill_to_contact_number', 'status',
   'subtotal', 'discount_total', 'net_of_tax', 'tax_total', 'total_amount', 'est_gp_rate', 'est_gp_amount',
@@ -41,7 +41,7 @@ const SALES_ORDER_HEADER_FIELDS = [
   'estimate_id', 'date_created', 'customer_id', 'contact_person_id', 'contact_email', 'contact_title', 'contact_phone',
   'blanket_po_id', 'blanket_po_memo', 'sales_rep_id', 'sales_division_id', 'office_location_id',
   'contract_description', 'memo', 'shipping_address', 'production_lead_time', 'price_validity',
-  'order_confirmation_type', 'prepared_by_id', 'approved_by_id', 'credit_term', 'credit_limit', 'credit_balance',
+  'order_confirmation_type', 'order_confirmation_ref', 'prepared_by_id', 'approved_by_id', 'credit_term', 'credit_limit', 'credit_balance',
   'bill_to_contact_number', 'subtotal', 'discount_total', 'net_of_tax', 'tax_total', 'total_amount',
   'est_gp_rate', 'est_gp_amount',
 ];
@@ -785,6 +785,93 @@ router.put('/:id/assign-csa', requireAuth, requirePermission(CSA_ROUTE, 'can_app
   } finally {
     conn.release();
   }
+});
+
+// ---------------------------------------------------------------------------------
+// Order-confirmation documents: the PO, conforme or proof of payment behind the
+// confirmation type on the header. Optional -- an estimate is perfectly valid with none.
+//
+// PDFs and images only, unlike the job-order attachments this mirrors: this is a scan of a
+// commercial document, and accepting spreadsheets or archives here invites the estimate to
+// become a general file dump.
+// ---------------------------------------------------------------------------------
+const ESTIMATE_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+const ESTIMATE_ATTACHMENT_TYPES = /^(application\/pdf|image\/(png|jpe?g|gif|webp|bmp|tiff))$/i;
+
+router.get('/:id/attachments', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, u.display_name AS uploaded_by_name
+         FROM estimate_attachments a
+         LEFT JOIN users u ON u.id = a.uploaded_by_user_id
+        WHERE a.estimate_id = ? ORDER BY a.id`,
+      [req.params.id],
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+router.post('/:id/attachments', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const [[est]] = await pool.query('SELECT id FROM estimates WHERE id = ?', [req.params.id]);
+    if (!est) return res.status(404).json({ error: 'Estimate not found.' });
+
+    const { file_name: fileName, data, mime_type: mimeType } = req.body || {};
+    if (!fileName || !data) return res.status(400).json({ error: 'file_name and data are required.' });
+    if (!ESTIMATE_ATTACHMENT_TYPES.test(String(mimeType || ''))) {
+      return res.status(400).json({ error: 'Only a PDF or an image can be attached.' });
+    }
+
+    // Accepts a bare base64 string or a full data: URL, since the browser's FileReader hands
+    // back the latter.
+    const base64 = String(data).includes(',') ? String(data).split(',').pop() : String(data);
+    let buf;
+    try {
+      buf = Buffer.from(base64, 'base64');
+    } catch {
+      return res.status(400).json({ error: 'data is not valid base64.' });
+    }
+    if (!buf.length) return res.status(400).json({ error: 'That file is empty.' });
+    if (buf.length > ESTIMATE_ATTACHMENT_MAX_BYTES) {
+      return res.status(413).json({ error: `Attachments must be ${ESTIMATE_ATTACHMENT_MAX_BYTES / 1024 / 1024}MB or smaller.` });
+    }
+
+    const [result] = await pool.query(
+      `INSERT INTO estimate_attachments (estimate_id, file_name, mime_type, size_bytes, file_data, uploaded_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [req.params.id, String(fileName).slice(0, 255), String(mimeType).slice(0, 100), buf.length, buf, req.user.id],
+    );
+    const [[row]] = await pool.query(
+      'SELECT id, file_name, mime_type, size_bytes, created_at FROM estimate_attachments WHERE id = ?',
+      [result.insertId],
+    );
+    res.status(201).json(row);
+  } catch (err) { next(err); }
+});
+
+router.get('/:id/attachments/:attachmentId/file', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [[row]] = await pool.query(
+      'SELECT file_name, mime_type, file_data FROM estimate_attachments WHERE id = ? AND estimate_id = ?',
+      [req.params.attachmentId, req.params.id],
+    );
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
+    // Both types here render in a browser tab, which is what someone checking a PO wants.
+    res.setHeader('Content-Disposition', `inline; filename="${row.file_name.replace(/"/g, '')}"`);
+    res.send(row.file_data);
+  } catch (err) { next(err); }
+});
+
+router.delete('/:id/attachments/:attachmentId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const [result] = await pool.query(
+      'DELETE FROM estimate_attachments WHERE id = ? AND estimate_id = ?',
+      [req.params.attachmentId, req.params.id],
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: 'Not found' });
+    res.json({ deleted: true });
+  } catch (err) { next(err); }
 });
 
 module.exports = router;

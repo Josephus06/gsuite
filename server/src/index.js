@@ -140,6 +140,8 @@ app.use((req, res, next) => {
       || /^\/api\/tickets\/\d+\/attachments\/?$/.test(req.path)
       // HRD room uploads take any file type up to 10MB, which is ~13.4MB of base64.
       || /^\/api\/hrd\/\d+\/files\/?$/.test(req.path)
+      // Order-confirmation scans on an estimate: same 10MB ceiling.
+      || /^\/api\/estimates\/\d+\/attachments\/?$/.test(req.path)
       ))
     || isFeedWrite(req)
     ? attachmentUploadJson(req, res, next)

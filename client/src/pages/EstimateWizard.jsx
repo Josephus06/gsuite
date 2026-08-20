@@ -18,7 +18,7 @@ const EMPTY_HEADER = {
   customer_id: '', contact_person_id: '', contact_email: '', contact_title: '', contact_phone: '',
   blanket_po_id: '', blanket_po_memo: '', sales_rep_id: '', sales_division_id: '', office_location_id: '',
   contract_description: '', memo: '', shipping_address: '', has_multiple_shipping: false,
-  production_lead_time: '', price_validity: '', order_confirmation_type: '',
+  production_lead_time: '', price_validity: '', order_confirmation_type: '', order_confirmation_ref: '',
   print_warranty: false, print_warranty_term: '', structure_warranty: false, structure_warranty_term: '',
   electrical_warranty: false, electrical_warranty_term: '',
   prepared_by_id: '', approved_by_id: '', credit_term: '', credit_limit: '', credit_balance: '',
@@ -27,6 +27,27 @@ const EMPTY_HEADER = {
 };
 
 const ORDER_CONFIRMATION_OPTIONS = ['PO#', 'PO# with Payment', 'Conforme', 'Payment'];
+
+// What the reference number is actually called, per confirmation type. "Reference No." for
+// all four would make the field say less than the dropdown above it already does.
+const ORDER_CONFIRMATION_REF_LABEL = {
+  'PO#': 'PO Number',
+  'PO# with Payment': 'PO Number',
+  Conforme: 'Conforme No.',
+  Payment: 'Payment Reference',
+};
+const ORDER_CONFIRMATION_REF_PLACEHOLDER = {
+  'PO#': 'e.g. PO-2026-0042',
+  'PO# with Payment': 'e.g. PO-2026-0042',
+  Conforme: 'e.g. CONF-118',
+  Payment: 'e.g. OR-9931 / bank ref',
+};
+
+// PDF and images only: an attachment here is a scan of a commercial document, and letting
+// spreadsheets or archives in turns the estimate into a general file dump. Kept in step with
+// ESTIMATE_ATTACHMENT_TYPES in server/src/routes/estimates.js.
+const ATTACHMENT_TYPES = /^(application\/pdf|image\/(png|jpe?g|gif|webp|bmp|tiff))$/i;
+const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 
 const EMPTY_JO = {
   nstdjo_no: '', job_type_id: '', job_location_id: '', description: '', quantity: '', units: '',
@@ -128,6 +149,9 @@ export default function EstimateWizard() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Files chosen before the estimate exists, plus anything a failed upload left behind.
+  const [pendingAttachments, setPendingAttachments] = useState([]);
+  const [attachmentError, setAttachmentError] = useState('');
 
   const [estimateId, setEstimateId] = useState(id ? Number(id) : null);
   const [estimateNo, setEstimateNo] = useState('');
@@ -278,6 +302,50 @@ export default function EstimateWizard() {
     await api.put(`/estimates/${estimateId}`, buildHeaderPayload());
   }
 
+  // Files chosen on step 1 are held until the estimate exists -- attachments hang off an
+  // estimate id, and on a new estimate there is not one yet. Uploaded on the way to step 2,
+  // once the POST above has created it.
+  function addPendingAttachments(fileList) {
+    const files = [...(fileList || [])];
+    if (!files.length) return;
+    setAttachmentError('');
+    const accepted = [];
+    for (const f of files) {
+      if (!ATTACHMENT_TYPES.test(f.type || '')) {
+        setAttachmentError(`${f.name} is not a PDF or an image.`);
+        continue;
+      }
+      if (f.size > ATTACHMENT_MAX_BYTES) {
+        setAttachmentError(`${f.name} is ${(f.size / 1048576).toFixed(1)}MB — the limit is 10MB.`);
+        continue;
+      }
+      accepted.push(f);
+    }
+    if (accepted.length) setPendingAttachments((prev) => [...prev, ...accepted]);
+  }
+
+  async function uploadPendingAttachments(id) {
+    if (!id || !pendingAttachments.length) return;
+    const remaining = [];
+    for (const file of pendingAttachments) {
+      try {
+        const data = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(new Error('unreadable'));
+          reader.readAsDataURL(file);
+        });
+        await api.post(`/estimates/${id}/attachments`, { file_name: file.name, mime_type: file.type, data });
+      } catch (err) {
+        // Kept in the pending list so a failed upload can be retried, rather than vanishing
+        // and leaving the estimate quietly short of the document someone attached.
+        remaining.push(file);
+        setAttachmentError(err.response?.data?.error || `Could not upload ${file.name}.`);
+      }
+    }
+    setPendingAttachments(remaining);
+  }
+
   async function goNextFromStep1(e) {
     e.preventDefault();
     setError('');
@@ -286,9 +354,11 @@ export default function EstimateWizard() {
         const { data } = await api.post('/estimates', buildHeaderPayload());
         setEstimateId(data.id);
         setEstimateNo(data.estimate_no);
+        await uploadPendingAttachments(data.id);
         navigate(`/estimates/${data.id}/edit`, { replace: true });
       } else {
         await api.put(`/estimates/${estimateId}`, buildHeaderPayload());
+        await uploadPendingAttachments(estimateId);
       }
       setStep(2);
     } catch (err) {
@@ -852,10 +922,54 @@ export default function EstimateWizard() {
                 <div className="field"><label>Price Validity</label><input value={header.price_validity} onChange={(e) => setHeaderField('price_validity', e.target.value)} placeholder="e.g. 30 days" /></div>
                 <div className="field">
                   <label>Order Confirmation</label>
-                  <select value={header.order_confirmation_type} onChange={(e) => setHeaderField('order_confirmation_type', e.target.value)}>
+                  <select
+                    value={header.order_confirmation_type}
+                    onChange={(e) => {
+                      setHeaderField('order_confirmation_type', e.target.value);
+                      // Clearing the type clears the reference with it -- a PO number left
+                      // behind under "Conforme" is worse than an empty field.
+                      if (!e.target.value) setHeaderField('order_confirmation_ref', '');
+                    }}
+                  >
                     <option value="">—</option>
                     {ORDER_CONFIRMATION_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
                   </select>
+                </div>
+
+                {/* The number behind the confirmation, revealed only once a type is chosen.
+                    Recording that a PO exists without recording which one is what this
+                    replaces. Optional: the type is often known before the paperwork lands. */}
+                {header.order_confirmation_type && (
+                  <div className="field">
+                    <label>{ORDER_CONFIRMATION_REF_LABEL[header.order_confirmation_type] || 'Reference No.'}</label>
+                    <input
+                      value={header.order_confirmation_ref}
+                      onChange={(e) => setHeaderField('order_confirmation_ref', e.target.value)}
+                      placeholder={ORDER_CONFIRMATION_REF_PLACEHOLDER[header.order_confirmation_type] || ''}
+                    />
+                  </div>
+                )}
+
+                {/* Supporting documents. Deliberately not gated on a confirmation type being
+                    chosen -- a scan can arrive before anyone records what kind it is. */}
+                <div className="field">
+                  <label>Attachments <span className="muted">(optional — PDF or image, up to 10MB each)</span></label>
+                  <input
+                    type="file"
+                    accept="application/pdf,image/*"
+                    multiple
+                    onChange={(e) => addPendingAttachments(e.target.files)}
+                  />
+                  {attachmentError && <div className="error" style={{ marginTop: 4 }}>{attachmentError}</div>}
+                  {pendingAttachments.map((f, i) => (
+                    <div key={`${f.name}-${i}`} className="field-checkbox" style={{ justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: '0.85em' }}>
+                        {f.name} <span className="muted">({(f.size / 1024).toFixed(0)} KB)</span>
+                      </span>
+                      <button type="button" className="btn btn-sm"
+                        onClick={() => setPendingAttachments((prev) => prev.filter((_, x) => x !== i))}>Remove</button>
+                    </div>
+                  ))}
                 </div>
                 <div className="field">
                   <div className="field-checkbox">
