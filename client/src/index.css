@@ -194,8 +194,13 @@ label {
   align-items: stretch;
   padding: 0 16px;
   gap: 8px;
-  position: relative;
-  z-index: 20;
+  /* Frozen to the top of the viewport. The module menus, the notification bell and the
+     account menu all live up here, and scrolling a long feed used to carry every one of
+     them off the screen. z-index sits above the feed's sticky rails so the dropdowns are
+     not clipped by a rail that scrolled under them. */
+  position: sticky;
+  top: 0;
+  z-index: 30;
 }
 .topnav-hamburger {
   display: none;

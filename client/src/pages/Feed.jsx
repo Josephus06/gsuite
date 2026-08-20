@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Avatar from '../components/Avatar';
 import PostCard from '../components/feed/PostCard';
+import DashboardCarousel from '../components/feed/DashboardCarousel';
 import PostComposer from '../components/feed/PostComposer';
 import '../styles/feed.css';
 
@@ -167,6 +168,12 @@ export default function Feed() {
     <div className="fbfeed">
       <div className="fb-shell">
         {/* ------------------------------------------------------------ left rail */}
+        {/* Own column at the far left, outside the shortcuts rail: it is company notice
+            material rather than navigation, and the space was empty anyway. */}
+        <aside className="fb-rail fb-rail-far-left">
+          <DashboardCarousel />
+        </aside>
+
         <aside className="fb-rail fb-rail-left">
           <button type="button" className="fb-rail-item" onClick={() => navigate(`/profile/${user?.id}`)}>
             <Avatar user={user} size={36} />

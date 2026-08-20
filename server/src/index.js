@@ -65,6 +65,7 @@ const crmActivityRoutes = require('./routes/crmActivities');
 const chatbotRoutes = require('./routes/chatbot');
 const ticketRoutes = require('./routes/tickets');
 const hrdRoutes = require('./routes/hrd');
+const dashboardCarouselRoutes = require('./routes/dashboardCarousel');
 const ticketReportRoutes = require('./routes/ticketReport');
 const artistIncentiveReportRoutes = require('./routes/artistIncentiveReport');
 const notificationRoutes = require('./routes/notifications');
@@ -131,7 +132,9 @@ app.use((req, res, next) => (
     && (/^\/api\/job-orders\/\d+\/attachments\/?$/.test(req.path)
       || /^\/api\/tickets\/\d+\/attachments\/?$/.test(req.path)
       // HRD room uploads take any file type up to 10MB, which is ~13.4MB of base64.
-      || /^\/api\/hrd\/\d+\/files\/?$/.test(req.path)))
+      || /^\/api\/hrd\/\d+\/files\/?$/.test(req.path)
+      // Same for a dashboard carousel video.
+      || /^\/api\/dashboard-carousel\/?$/.test(req.path)))
     || isFeedWrite(req)
     ? attachmentUploadJson(req, res, next)
     : next()
@@ -205,6 +208,7 @@ app.use('/api/reports/tickets', ticketReportRoutes);
 app.use('/api/tickets/report', ticketReportRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/hrd', hrdRoutes);
+app.use('/api/dashboard-carousel', dashboardCarouselRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/feed', feedRoutes);
 app.use('/api/profiles', profileRoutes);

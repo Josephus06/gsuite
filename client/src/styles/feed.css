@@ -60,18 +60,30 @@
    content area rather than the full viewport. */
 .fb-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 590px minmax(0, 1fr);
+  /* Four columns now: spotlight carousel, shortcuts rail, the 590px feed, contacts. The
+     shell widens to fit the extra rail rather than squeezing the feed column, which is the
+     one fixed width the whole layout is built around. */
+  grid-template-columns: 260px minmax(0, 1fr) 590px minmax(0, 1fr);
   gap: 16px;
   align-items: start;
-  max-width: 1500px;
+  max-width: 1760px;
   margin: 0 auto;
   padding: 0 16px;
 }
-.fb-rail { position: sticky; top: 16px; min-width: 0; }
+/* 56px of frozen topbar plus the usual 16px of breathing room -- at top: 16px the rails
+   stuck underneath the navbar and their first item was permanently hidden behind it. */
+.fb-rail { position: sticky; top: 72px; min-width: 0; }
 .fb-rail-left { justify-self: end; width: 100%; max-width: 320px; }
-.fb-rail-right { justify-self: start; width: 100%; max-width: 320px; }
+.fb-rail-right { justify-self: end; width: 100%; max-width: 320px; }
+.fb-rail-far-left { justify-self: start; width: 100%; max-width: 260px; }
 .fb-center { min-width: 0; }
 
+/* The spotlight goes first as the viewport narrows: the feed and its shortcuts matter more,
+   and three rails plus a 590px column do not fit before the feed itself starts to suffer. */
+@media (max-width: 1660px) {
+  .fb-shell { grid-template-columns: minmax(0, 1fr) 590px minmax(0, 1fr); }
+  .fb-rail-far-left { display: none; }
+}
 @media (max-width: 1400px) {
   .fb-shell { grid-template-columns: minmax(0, 1fr) 590px; }
   .fb-rail-right { display: none; }
@@ -1005,3 +1017,48 @@
   .fb-lightbox-nav.prev { left: 6px; }
   .fb-lightbox-nav.next { right: 6px; }
 }
+
+/* ------------------------------------------------------- spotlight carousel rail */
+/* Sticky like the other rails, so it stays put while the feed scrolls past it. */
+.fb-carousel { padding: 12px; }
+.fb-carousel-stage {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(128, 128, 128, 0.10);
+}
+.fb-carousel-media {
+  display: block;
+  width: 100%;
+  /* A tall portrait photo and a 16:9 clip both have to sit in the same frame without
+     stretching, so the box is fixed and the media is fitted inside it. */
+  height: 300px;
+  object-fit: contain;
+  background: #000;
+}
+.fb-carousel-empty { padding: 28px 8px; text-align: center; font-size: 0.85rem; }
+.fb-carousel-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  width: 26px;
+  height: 40px;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.38);
+}
+.fb-carousel-nav:hover { background: rgba(0, 0, 0, 0.6); }
+.fb-carousel-nav.prev { left: 0; border-radius: 0 6px 6px 0; }
+.fb-carousel-nav.next { right: 0; border-radius: 6px 0 0 6px; }
+.fb-carousel-caption { font-size: 0.82rem; margin-top: 8px; opacity: 0.85; }
+.fb-carousel-dots { display: flex; gap: 5px; justify-content: center; margin-top: 8px; flex-wrap: wrap; }
+.fb-carousel-dot {
+  width: 7px; height: 7px; padding: 0; border: none; border-radius: 50%;
+  background: rgba(128, 128, 128, 0.45); cursor: pointer;
+}
+.fb-carousel-dot.active { background: var(--fb-accent, #1877f2); }
+.fb-carousel-actions { display: flex; gap: 6px; margin-top: 10px; }
+.fb-carousel-actions .btn { flex: 1; }
