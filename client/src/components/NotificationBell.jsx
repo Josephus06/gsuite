@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
 import {
-  announce, chime, soundEnabled, setSoundEnabled, speak, desktopNotify, requestDesktopPermission,
+  announce, chime, speak, soundEnabled, setSoundEnabled, primeSpeech,
+  desktopNotify, requestDesktopPermission, availableVoice,
 } from '../utils/notificationSound';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
@@ -44,6 +44,9 @@ export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [sound, setSound] = useState(soundEnabled);
+  // Shown in the bell menu when the voice does not start, instead of leaving someone to
+  // guess whether the feature is broken or their speakers are.
+  const [voiceNote, setVoiceNote] = useState('');
   const lastSeenMaxId = useRef(null);
   const rootRef = useRef(null);
 
@@ -70,7 +73,7 @@ export default function NotificationBell() {
         // heard and what is shown can never disagree, and sorted newest-first so the one
         // read aloud is the one that just landed.
         const newest = [...fresh].sort((a, b) => b.id - a.id);
-        announce(newest.map((n) => n.title));
+        announce(newest.map((n) => n.title), setVoiceNote);
         desktopNotify({
           title: newest[0].title,
           body: newest.length > 1 ? `${newest[0].message || ''} (+${newest.length - 1} more)` : (newest[0].message || ''),
@@ -203,7 +206,12 @@ export default function NotificationBell() {
                 {/* A deterministic way to check the voice works, rather than waiting for
                     a real notification to find out that it does not. */}
                 <button type="button" className="btn btn-sm" title="Read a sample aloud"
-                  onClick={() => { chime(); setTimeout(() => speak('TICKET-141 is approved and ready to work on'), 450); }}>
+                  onClick={() => {
+                    setVoiceNote('');
+                    primeSpeech();
+                    chime();
+                    setTimeout(() => speak('TICKET-211 was sent to your department', setVoiceNote), 450);
+                  }}>
                   Test
                 </button>
                 {unreadCount > 0 && (
@@ -211,6 +219,16 @@ export default function NotificationBell() {
                 )}
               </div>
             </div>
+            {voiceNote && (
+              <div className="muted" style={{ fontSize: 11, padding: '6px 14px', borderBottom: '1px solid var(--border)' }}>
+                {voiceNote}
+              </div>
+            )}
+            {sound && availableVoice() && (
+              <div className="muted" style={{ fontSize: 11, padding: '6px 14px', borderBottom: '1px solid var(--border)' }}>
+                Voice: {availableVoice()}
+              </div>
+            )}
             {notifications.length === 0 && (
               <div className="muted" style={{ padding: 16, textAlign: 'center' }}>No notifications yet.</div>
             )}

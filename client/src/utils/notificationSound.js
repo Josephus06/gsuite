@@ -1,4 +1,4 @@
-// Audible notifications: a short chime, then the headline read aloud.
+// Audible notifications: a short chime, then the headline read aloud in a female voice.
 //
 // Both are generated in the browser -- a WebAudio tone rather than a bundled mp3, and the
 // platform's own speech synthesiser rather than a TTS service. Nothing to ship, nothing to
@@ -16,24 +16,16 @@ export function setSoundEnabled(on) {
   localStorage.setItem(PREF_KEY, on ? 'on' : 'off');
 }
 
+// ---------------------------------------------------------------------------- chime
+
 // Browsers refuse to start audio until the user has interacted with the page, so the context
-// is created lazily and resumed on the first interaction. Without this the very first
-// notification of a session is silently swallowed on a freshly-loaded tab.
+// is created lazily and resumed on the first interaction.
 let ctx = null;
 function audioContext() {
   if (ctx) return ctx;
   const Ctor = window.AudioContext || window.webkitAudioContext;
   if (!Ctor) return null;
   ctx = new Ctor();
-  if (ctx.state === 'suspended') {
-    const resume = () => {
-      ctx.resume();
-      window.removeEventListener('pointerdown', resume);
-      window.removeEventListener('keydown', resume);
-    };
-    window.addEventListener('pointerdown', resume);
-    window.addEventListener('keydown', resume);
-  }
   return ctx;
 }
 
@@ -41,7 +33,8 @@ function audioContext() {
 // kind of alarm that makes an office look up.
 export function chime() {
   const audio = audioContext();
-  if (!audio || audio.state === 'suspended') return;
+  if (!audio) return;
+  if (audio.state === 'suspended') audio.resume();
   const now = audio.currentTime;
   [880, 1320].forEach((freq, i) => {
     const osc = audio.createOscillator();
@@ -58,6 +51,59 @@ export function chime() {
   });
 }
 
+// ---------------------------------------------------------------------------- voice
+
+// Known female voices across Windows, macOS, Android and Chrome's own set. Matched by name
+// because the API exposes no gender field at all -- there is nothing else to go on.
+const FEMALE_HINTS = /(female|zira|hazel|susan|linda|heera|catherine|samantha|victoria|karen|moira|tessa|fiona|serena|allison|ava|nicky|joanna|salli|kimberly|amy|emma|aria|jenny|michelle|natasha|clara|libby|sonia)/i;
+
+let voices = [];
+function refreshVoices() {
+  if (!('speechSynthesis' in window)) return;
+  voices = window.speechSynthesis.getVoices() || [];
+}
+if ('speechSynthesis' in window) {
+  refreshVoices();
+  // Chrome returns an empty list on the first call and fills it asynchronously.
+  window.speechSynthesis.addEventListener('voiceschanged', refreshVoices);
+}
+
+// Preference order: a female English voice, then any English voice, then whatever exists.
+// Never awaited -- see speak() for why picking a voice must not be asynchronous.
+function pickVoice() {
+  const english = voices.filter((v) => /^en(-|_|$)/i.test(v.lang));
+  return english.find((v) => FEMALE_HINTS.test(v.name))
+    || voices.find((v) => FEMALE_HINTS.test(v.name))
+    || english[0]
+    || voices[0]
+    || null;
+}
+
+export function availableVoice() {
+  const v = pickVoice();
+  return v ? `${v.name} (${v.lang})` : null;
+}
+
+// Chrome will not speak unless the page has been interacted with, and -- the part that is
+// easy to miss -- an `await` before speak() breaks the chain from that interaction, so the
+// utterance is accepted and silently dropped. Speaking a silent utterance during the first
+// real click unlocks the synthesiser for everything afterwards, including speech triggered
+// later by a background poll.
+let primed = false;
+export function primeSpeech() {
+  if (primed || !('speechSynthesis' in window)) return;
+  primed = true;
+  refreshVoices();
+  const u = new SpeechSynthesisUtterance(' ');
+  u.volume = 0;
+  try { window.speechSynthesis.speak(u); } catch { /* nothing to recover from */ }
+  if (ctx?.state === 'suspended') ctx.resume();
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('pointerdown', primeSpeech, { once: true });
+  window.addEventListener('keydown', primeSpeech, { once: true });
+}
+
 // "TICKET-141" is read as "ticket dash one four one" or worse; splitting the hyphen and
 // spacing the digits gets "ticket one forty one", which is how someone would say it.
 function speakable(text) {
@@ -72,55 +118,46 @@ function speakable(text) {
     .trim();
 }
 
-// Voices load asynchronously. getVoices() returns [] on the first call in Chrome, and
-// speaking before they arrive is the usual reason nothing is heard while the API reports no
-// error at all. Resolves either when the list arrives or after a short wait, since some
-// browsers populate it synchronously and never fire the event.
-function voicesReady() {
-  const synth = window.speechSynthesis;
-  if (synth.getVoices().length) return Promise.resolve();
-  return new Promise((resolve) => {
-    let done = false;
-    const finish = () => { if (!done) { done = true; resolve(); } };
-    synth.addEventListener('voiceschanged', finish, { once: true });
-    setTimeout(finish, 1000);
-  });
-}
-
-export async function speak(text) {
-  if (!('speechSynthesis' in window)) return;
+// Deliberately synchronous. Every await between a user gesture and speak() is a chance for
+// the browser to decide this is not user-initiated, which is exactly how the first version
+// ended up chiming and then saying nothing.
+export function speak(text, onFailure) {
+  if (!('speechSynthesis' in window)) { onFailure?.('This browser has no speech synthesiser.'); return; }
   const synth = window.speechSynthesis;
   const say = speakable(text);
   if (!say) return;
 
-  await voicesReady();
-
-  // Only cancel when something is actually queued. Calling cancel() on an idle synthesiser
-  // and then speaking immediately leaves Chrome's queue in a state where the utterance is
-  // accepted and never spoken -- which is exactly a chime with no voice after it.
-  if (synth.speaking || synth.pending) {
-    synth.cancel();
-    await new Promise((r) => { setTimeout(r, 120); });
-  }
+  // Only cancel when something is actually queued: cancelling an idle synthesiser leaves
+  // Chrome accepting the next utterance and never speaking it.
+  if (synth.speaking || synth.pending) synth.cancel();
 
   const utterance = new SpeechSynthesisUtterance(say);
   utterance.rate = 1;
-  utterance.pitch = 1;
+  utterance.pitch = 1.05; // a touch brighter, which reads as a lighter voice on flatter engines
   utterance.volume = 1;
   utterance.lang = 'en-US';
-  const voice = synth.getVoices().find((v) => /^en(-|_|$)/i.test(v.lang));
+  const voice = pickVoice();
   if (voice) utterance.voice = voice;
+  utterance.onerror = (e) => onFailure?.(`The voice failed to start (${e.error || 'unknown'}).`);
   synth.speak(utterance);
-
-  // Chrome can hand back a synthesiser that is paused from an earlier tab switch; resume is
-  // a no-op when it is already running.
   if (synth.paused) synth.resume();
+
+  // Nothing started and nothing errored is the silent failure this whole file exists to
+  // avoid -- say so rather than leaving someone wondering.
+  if (onFailure) {
+    setTimeout(() => {
+      if (!synth.speaking && !synth.pending) {
+        onFailure('The browser accepted the voice but did not speak. Click anywhere on the page once, then press Test again.');
+      }
+    }, 700);
+  }
 }
 
-// A desktop notification -- the OS-level popup that shows even when this tab is in the
-// background or the window is minimised. It cannot fire when the browser itself is closed:
-// that needs a service worker and Web Push, which is a different mechanism (see the note in
-// NotificationBell).
+// ------------------------------------------------------------------- desktop popup
+
+// The OS-level popup that shows even when this tab is in the background or the window is
+// minimised. It cannot fire when the browser itself is closed: that needs a service worker
+// and Web Push, which is a different mechanism.
 export function desktopNotify({ title, body, onClick }) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   // Only when the page is not being looked at. Duplicating an on-screen toast into an OS
@@ -131,7 +168,7 @@ export function desktopNotify({ title, body, onClick }) {
     n.onclick = () => { window.focus(); n.close(); onClick?.(); };
   } catch {
     // Some browsers throw when constructing one outside a service worker; the in-page toast
-    // and the voice have already done the job, so there is nothing to recover from.
+    // and the voice have already done the job.
   }
 }
 
@@ -145,10 +182,13 @@ export function requestDesktopPermission() {
 
 // The pair, for a batch of new notifications. Only the newest is read: reading five in a row
 // takes half a minute, during which nobody can hear the next one.
-export function announce(titles) {
+export function announce(titles, onFailure) {
   if (!soundEnabled() || !titles.length) return;
   chime();
   const [first] = titles;
   const rest = titles.length - 1;
-  setTimeout(() => speak(rest > 0 ? `${first}. And ${rest} more notification${rest === 1 ? '' : 's'}.` : first), 450);
+  setTimeout(
+    () => speak(rest > 0 ? `${first}. And ${rest} more notification${rest === 1 ? '' : 's'}.` : first, onFailure),
+    450,
+  );
 }
