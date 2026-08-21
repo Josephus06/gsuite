@@ -4,30 +4,45 @@ const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Reading a notification deletes it.
+// The bell holds the five most recent notifications, read or unread.
 //
-// The bell is a list of things still waiting on you, not a log. Kept as a log it only ever
-// grew -- on the live database most of what it held was already-read rows nobody would look
-// at again, and the one unread item that mattered sat somewhere below them. So a notification
-// exists exactly as long as it is outstanding, and the list is empty when there is nothing
-// left to act on.
+// Read ones stay, so a notification can be looked at again after it has been opened -- but
+// only the newest five are kept, and it is the read ones that make way. A sixth arriving
+// pushes out the oldest one already dealt with.
 //
-// What that costs, deliberately: there is no going back to a notification once it has been
-// opened. The thing it points at -- the ticket, the job order, the post -- is still there and
-// is where the actual history lives; the notification was only ever the tap on the shoulder.
+// Nothing unread is ever deleted to make room. If the five newest are all unread, an older
+// read one is still cleared, and beyond that the list is allowed to run past five rather than
+// silently destroying something the user has never seen -- an unread ticket assignment
+// disappearing before anyone laid eyes on it is a far worse outcome than a list of six.
+const KEEP = 5;
+
+// Applied when the list is read rather than at each of the twenty places that create a
+// notification: every user polls this endpoint every five seconds, so the trim lands within a
+// tick of the new arrival, and there is one rule in one place instead of twenty call sites
+// that would each have to remember.
+async function trim(userId) {
+  await pool.query(
+    `DELETE FROM notifications
+      WHERE user_id = ? AND is_read = TRUE
+        AND id NOT IN (
+          SELECT id FROM (
+            SELECT id FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT ?
+          ) newest
+        )`,
+    [userId, userId, KEEP],
+  );
+}
 
 // Own notifications only, most recent first.
 router.get('/', requireAuth, async (req, res, next) => {
   try {
+    await trim(req.user.id);
     const [rows] = await pool.query(
       'SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC LIMIT 50',
       [req.user.id]
     );
-    // Every row that still exists is unread, so this is a plain count. It is still a separate
-    // query rather than rows.length because the list above is capped at 50 and the badge has
-    // to be able to say 60.
     const [[{ count }]] = await pool.query(
-      'SELECT COUNT(*) AS count FROM notifications WHERE user_id = ?',
+      'SELECT COUNT(*) AS count FROM notifications WHERE user_id = ? AND is_read = FALSE',
       [req.user.id]
     );
     res.json({ notifications: rows, unread_count: count });
@@ -36,13 +51,11 @@ router.get('/', requireAuth, async (req, res, next) => {
   }
 });
 
-// Kept at PUT /:id/read rather than becoming DELETE /:id: a browser still running the previous
-// bundle calls this path, and having that quietly do the right thing is worth more than the
-// verb being tidy.
+// Marks it read; it stays in the list until a newer notification pushes it out.
 router.put('/:id/read', requireAuth, async (req, res, next) => {
   try {
     await pool.query(
-      'DELETE FROM notifications WHERE id = ? AND user_id = ?',
+      'UPDATE notifications SET is_read = TRUE WHERE id = ? AND user_id = ?',
       [req.params.id, req.user.id]
     );
     res.json({ ok: true });
@@ -51,12 +64,13 @@ router.put('/:id/read', requireAuth, async (req, res, next) => {
   }
 });
 
-// Clears the lot. Reading everything and deleting everything are now the same act, so this is
-// the button that empties the bell.
 router.put('/read-all', requireAuth, async (req, res, next) => {
   try {
-    const [result] = await pool.query('DELETE FROM notifications WHERE user_id = ?', [req.user.id]);
-    res.json({ ok: true, cleared: result.affectedRows });
+    await pool.query('UPDATE notifications SET is_read = TRUE WHERE user_id = ? AND is_read = FALSE', [req.user.id]);
+    // Clearing the badge is usually what pushes the list past five, so the trim runs here too
+    // instead of leaving a long list on screen until the next poll.
+    await trim(req.user.id);
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
