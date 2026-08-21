@@ -31,7 +31,7 @@ router.get('/meta/departments', requireAuth, async (req, res, next) => {
 // two labels over the same rows.
 router.get('/meta/sbu-groups', requireAuth, async (req, res, next) => {
   try {
-    const scope = await getSbuScope(req.user.id);
+    const scope = await getSbuScope(req.user.id, { withMarketing: true });
     res.json({ groups: scope ? scope.groups.map((g) => ({ index: g.index, label: g.label, name: g.displayName })) : [] });
   } catch (err) {
     next(err);

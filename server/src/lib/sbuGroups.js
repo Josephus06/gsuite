@@ -80,10 +80,11 @@ async function getMarketingDepartmentIds() {
 // of the cross-approval arrangement, and an approver who cannot find a document cannot
 // approve it. Returns null for everyone else, leaving their existing scope untouched.
 //
-// `withMarketing` is off by default and set only by non-standard job orders. Tickets share
-// this scope, and widening what an SBU can read there is a different decision from letting
-// them approve Marketing's job orders -- so it is asked for explicitly rather than arriving
-// as a side effect.
+// `withMarketing` is off by default and asked for explicitly by each caller, because
+// widening what an SBU can read is a separate decision per module rather than something
+// that should arrive as a side effect. Non-standard job orders set it so both SBUs can
+// approve Marketing's orders; tickets set it so Marketing's tickets are visible to, and
+// actionable by, either SBU rather than sitting in a queue with nobody able to see them.
 async function getSbuScope(userId, { withMarketing = false } = {}) {
   const [[user]] = await pool.query(
     'SELECT is_sales_business_unit FROM users WHERE id = ? AND is_active = TRUE',

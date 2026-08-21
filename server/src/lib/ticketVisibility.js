@@ -49,12 +49,18 @@ async function ticketVisibilityClause(userId) {
     params.push(...role.headOfDepartmentIds);
   }
 
-  // An SBU sees tickets raised from BOTH SBU groups, matched on the raiser's department.
-  // Being tagged as approver already covers the group they approve, but after the
-  // cross-approval swap that is the OTHER group -- without this an SBU would lose sight of
-  // their own people's tickets entirely. Grouped by who raised it, not which department it
-  // was sent to: a Sales - 1 ticket is SBU 1's whether it goes to Accounting or Design.
-  const sbuScope = await getSbuScope(userId);
+  // An SBU sees tickets raised from BOTH SBU groups, plus Marketing, matched on the
+  // raiser's department. Being tagged as approver already covers the group they approve,
+  // but after the cross-approval swap that is the OTHER group -- without this an SBU would
+  // lose sight of their own people's tickets entirely. Grouped by who raised it, not which
+  // department it was sent to: a Sales - 1 ticket is SBU 1's whether it goes to Accounting
+  // or Design.
+  //
+  // Marketing owns no SBU -- nobody holds it as a sales group -- so its tickets would
+  // otherwise be visible to no SBU at all. Both cover it jointly, the same arrangement
+  // non-standard job orders already use, which is why it is a third tab rather than being
+  // folded into one of theirs: either can act on it, and neither is made to own it.
+  const sbuScope = await getSbuScope(userId, { withMarketing: true });
   if (sbuScope) {
     clauses.push(
       `EXISTS (SELECT 1 FROM users su JOIN employees se ON se.id = su.employee_id

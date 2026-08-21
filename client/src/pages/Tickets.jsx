@@ -187,8 +187,10 @@ export default function Tickets() {
         <h1>Tickets</h1>
       </div>
 
-      {/* Both SBUs see both groups' tickets -- these tabs separate whose group raised the
-          ticket, they do not grant or remove access. Hidden for everyone who is not an SBU. */}
+      {/* Both SBUs see both groups' tickets, and Marketing's -- these tabs separate whose
+          group raised the ticket, they do not grant or remove access. Labels come from the
+          server so a third group appears here without a change on this side. Hidden for
+          everyone who is not an SBU. */}
       {sbuGroups.length > 1 && (
         <div className="status-tabs">
           <button className={`status-tab ${sbuTab === '' ? 'active' : ''}`} onClick={() => setSbuTab('')}>All SBUs</button>
