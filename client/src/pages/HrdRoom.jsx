@@ -97,7 +97,7 @@ export default function HrdRoom() {
 
   // The file route needs an Authorization header, so a plain <a href> cannot reach it -- the
   // bytes are fetched and handed to the browser as an object URL. Fetched once per file and
-  // reused, so viewing and then downloading the same document does not pull it twice.
+  // reused, so opening the same document twice does not pull it twice.
   const blobUrls = useRef(new Map());
   async function fileUrl(file) {
     if (blobUrls.current.has(file.id)) return blobUrls.current.get(file.id);
@@ -117,18 +117,6 @@ export default function HrdRoom() {
     }
   }
 
-  async function downloadFile(file) {
-    try {
-      const a = document.createElement('a');
-      a.href = await fileUrl(file);
-      a.download = file.file_name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    } catch {
-      setError(`Could not download ${file.file_name}.`);
-    }
-  }
 
   if (loading) return <LoadingSpinner />;
   if (!room) return <div className="error-banner">{error || 'Room not found.'}</div>;
@@ -148,6 +136,11 @@ export default function HrdRoom() {
       </div>
 
       {room.description && <div className="card muted" style={{ marginBottom: 16 }}>{room.description}</div>}
+      {/* Stated on the page so a missing Download button reads as the rule it is, rather
+          than as something broken. */}
+      <div className="muted" style={{ marginBottom: 12, fontSize: '0.9em' }}>
+        🔒 Documents in HRD are view-only — they open in a tab and cannot be downloaded from here.
+      </div>
       {error && <div className="error-banner">{error}</div>}
 
       <input
@@ -185,12 +178,17 @@ export default function HrdRoom() {
                   <td>{file.uploaded_by_name || '—'}</td>
                   <td>{formatDateTime(file.created_at)}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    {canPreview(file.mime_type) && (
+                    {canPreview(file.mime_type) ? (
                       <>
                         <button type="button" className="btn btn-sm btn-primary" onClick={() => viewFile(file)}>View</button>{' '}
                       </>
+                    ) : (
+                      // Said plainly rather than left as an empty cell. There is no download
+                      // to fall back on any more, so a Word or Excel file uploaded here can
+                      // only be read by re-uploading it as a PDF -- and someone looking at a
+                      // row with no buttons would otherwise assume the page was broken.
+                      <span className="muted" style={{ marginRight: 8 }}>Not viewable in browser</span>
                     )}
-                    <button type="button" className="btn btn-sm" onClick={() => downloadFile(file)}>Download</button>{' '}
                     {can(ROUTE, 'can_delete') && (
                       <button type="button" className="btn btn-sm" onClick={() => removeFile(file)}>Delete</button>
                     )}

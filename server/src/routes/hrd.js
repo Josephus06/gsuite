@@ -162,10 +162,14 @@ router.get('/:id/files/:fileId/file', requireAuth, requirePermission(ROUTE, 'can
     );
     if (!row) return res.status(404).json({ error: 'File not found.' });
     res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
-    // PDFs and images open in a tab; anything the browser cannot render is offered as a
-    // download rather than dumped into the page as text.
-    const inline = /^(application\/pdf|image\/)/.test(row.mime_type || '');
-    res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${row.file_name.replace(/"/g, '')}"`);
+    // HRD documents are read here, not taken away: always inline, never attachment, so a
+    // request for one opens it rather than saving it. This is the honest limit of what a
+    // web page can enforce -- a browser showing a PDF still has its own save button, and
+    // anything on screen can be photographed. It stops the casual copy, not a determined one.
+    res.setHeader('Content-Disposition', `inline; filename="${row.file_name.replace(/"/g, '')}"`);
+    // The type is the uploader's word for it; without this a file claiming to be text could
+    // be sniffed into something the browser executes in our own origin.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.send(row.file_data);
   } catch (err) { next(err); }
 });
