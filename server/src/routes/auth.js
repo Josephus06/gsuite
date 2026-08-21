@@ -111,9 +111,13 @@ router.post('/impersonate/:userId', requireAuth, async (req, res, next) => {
       'SELECT id, username, display_name FROM users WHERE id = ?', [req.user.id]
     );
 
+    // event_type is a fixed ENUM (Created/Updated/Approved/Disapproved/Cancelled/Deleted/
+    // Status Change) -- 'Impersonation' is not one of its values, so writing it truncated to
+    // empty and, under strict mode, failed the insert and the whole sign-in with it. 'Updated'
+    // is an allowed value; the field_name and message carry what actually happened.
     await pool.query(
       `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, new_value, set_by_user_id)
-       VALUES ('User', ?, 'Impersonation', 'started', ?, ?)`,
+       VALUES ('User', ?, 'Updated', 'impersonation_started', ?, ?)`,
       [target.id, `${label(admin)} signed in as ${label(target)}`, admin.id]
     );
 
@@ -140,7 +144,7 @@ router.post('/stop-impersonating', requireAuth, async (req, res, next) => {
 
     await pool.query(
       `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, new_value, set_by_user_id)
-       VALUES ('User', ?, 'Impersonation', 'ended', ?, ?)`,
+       VALUES ('User', ?, 'Updated', 'impersonation_ended', ?, ?)`,
       [req.user.id, `${label(admin)} returned to their own account`, admin.id]
     );
     // The impersonated user drops off the Contacts rail -- the admin was never really them.
