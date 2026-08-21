@@ -34,7 +34,15 @@ async function validateExpenseTargets(preparedExpenses, employeeId) {
     return `Only an expense on ${COMMISSION_PAYABLE_CODE} Commission Payable can be applied to a month.`;
   }
 
+  // Rejected before the query, not after: mysql2 renders a NaN parameter as the bare token
+  // NaN, so a non-numeric value arrives at the database as an identifier and comes back as
+  // "Unknown column 'NaN' in 'where clause'" -- an error that says nothing about the month
+  // that was actually selected.
   const payableIds = [...new Set(targeted.map((e) => Number(e.applies_to_payable_id)))];
+  if (payableIds.some((id) => !Number.isFinite(id) || id <= 0)) {
+    return 'A selected month is not valid. Re-pick it and save again.';
+  }
+
   const [payables] = await pool.query(
     'SELECT id FROM commission_payables WHERE id IN (?) AND employee_id = ?', [payableIds, employeeId],
   );

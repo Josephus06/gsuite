@@ -302,8 +302,13 @@ export default function CommissionVoucherEdit() {
                           style={{ width: '100%' }}
                         >
                           <option value="">Not applied to a month</option>
+                          {/* commission_payable_id, not id -- /for-employee returns the payable
+                              as `SELECT id AS commission_payable_id`, and an undefined value
+                              here makes the browser submit the option's TEXT instead. */}
                           {payables.map((p) => (
-                            <option key={p.id} value={p.id}>{formatMonth(p.period_from)}</option>
+                            <option key={p.commission_payable_id} value={p.commission_payable_id}>
+                              {formatMonth(p.period_from)}
+                            </option>
                           ))}
                         </select>
                       ) : <span className="muted">—</span>}
