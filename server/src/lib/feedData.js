@@ -81,6 +81,10 @@ function shapePost(row, viewerId) {
     images: [],
     image_ids: [],
     audience: row.audience,
+    // Which department a 'department' post was addressed to. Needed so the edit dialog can
+    // reopen on the right one -- an admin can address any department, so it cannot be assumed
+    // to be the author's own.
+    audience_group_id: row.audience_group_id,
     created_at: row.created_at,
     edited_at: row.edited_at,
     author: {

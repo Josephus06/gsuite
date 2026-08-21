@@ -9,10 +9,16 @@ const MAX_IMAGES = 10;
 
 // FB's "Create post" dialog. Doubles as the edit dialog when `editing` is a post -- same
 // fields, so keeping one component avoids two copies of the audience/photo logic.
-export default function PostComposer({ open, onClose, onSubmit, user, groupName, editing }) {
+// `groups` arrives only for a System Admin -- the server sends the department list to nobody
+// else, and its absence is what keeps the plain "My department" option for everyone else.
+// One list, one source: the picker cannot offer a department the server would refuse.
+export default function PostComposer({
+  open, onClose, onSubmit, user, groupName, groupId, groups, editing,
+}) {
   const [body, setBody] = useState('');
   const [images, setImages] = useState([]);
   const [audience, setAudience] = useState('public');
+  const [targetGroupId, setTargetGroupId] = useState(null);
   const [audienceOpen, setAudienceOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -27,6 +33,9 @@ export default function PostComposer({ open, onClose, onSubmit, user, groupName,
       ? editing.images
       : (editing?.image_data ? [editing.image_data] : []));
     setAudience(editing?.audience || 'public');
+    // Editing reopens on the department the post actually went to, which for an admin is not
+    // necessarily their own.
+    setTargetGroupId(editing?.audience_group_id ?? groupId ?? null);
     setAudienceOpen(false);
     setError('');
     setBusy(false);
@@ -39,7 +48,7 @@ export default function PostComposer({ open, onClose, onSubmit, user, groupName,
       autoGrow(el);
     }, 30);
     return () => clearTimeout(id);
-  }, [open, editing]);
+  }, [open, editing, groupId]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -92,7 +101,12 @@ export default function PostComposer({ open, onClose, onSubmit, user, groupName,
     setBusy(true);
     setError('');
     try {
-      await onSubmit({ body: text, images, audience });
+      await onSubmit({
+        body: text,
+        images,
+        audience,
+        audience_group_id: audience === 'department' ? targetGroupId : null,
+      });
       onClose();
     } catch (err) {
       setError(err.response?.data?.error || err.message || 'Could not publish your post.');
@@ -102,7 +116,10 @@ export default function PostComposer({ open, onClose, onSubmit, user, groupName,
 
   if (!open) return null;
 
-  const meta = audienceMeta(audience, groupName);
+  // An admin choosing another department must see that department on the button, not their
+  // own -- the label is the only thing telling them where the post is about to go.
+  const chosenGroupName = groups?.find((g) => g.id === targetGroupId)?.name || groupName;
+  const meta = audienceMeta(audience, chosenGroupName);
   const canPost = Boolean(body.trim() || images.length) && !busy;
   // FB only uses the oversized text treatment for short, image-less posts.
   const bigText = !images.length && body.length <= 130;
@@ -125,9 +142,37 @@ export default function PostComposer({ open, onClose, onSubmit, user, groupName,
               </button>
               {audienceOpen && (
                 <div className="fb-audience-menu" style={{ top: '100%', left: 0, marginTop: 4 }}>
-                  {AUDIENCES.map((a) => {
+                  {AUDIENCES.flatMap((a) => {
+                    // For an admin the single "My department" row becomes one row per
+                    // department, in place. Expanded here rather than nested behind a submenu
+                    // so choosing a department is the same one click it is for everyone else.
+                    if (a.key === 'department' && groups?.length) {
+                      return groups.map((g) => (
+                        <button
+                          key={`department-${g.id}`}
+                          type="button"
+                          className="fb-audience-option"
+                          onClick={() => {
+                            setAudience('department');
+                            setTargetGroupId(g.id);
+                            setAudienceOpen(false);
+                          }}
+                        >
+                          <span style={{ fontSize: 20 }}>{a.icon}</span>
+                          <span>
+                            {g.name}
+                            <span className="sub">
+                              {g.id === groupId ? 'Only my department' : 'Only that department'}
+                            </span>
+                          </span>
+                          {audience === 'department' && targetGroupId === g.id
+                            && <span style={{ marginLeft: 'auto', color: 'var(--fb-blue)' }}>✓</span>}
+                        </button>
+                      ));
+                    }
+
                     const m = audienceMeta(a.key, groupName);
-                    return (
+                    return [(
                       <button
                         key={a.key}
                         type="button"
@@ -141,7 +186,7 @@ export default function PostComposer({ open, onClose, onSubmit, user, groupName,
                         </span>
                         {audience === a.key && <span style={{ marginLeft: 'auto', color: 'var(--fb-blue)' }}>✓</span>}
                       </button>
-                    );
+                    )];
                   })}
                 </div>
               )}

@@ -53,6 +53,33 @@ async function insertNotifications(rows) {
   );
 }
 
+// Which department a 'department' post is addressed to.
+//
+// Everyone else can only address their own, and the server does not take the client's word
+// for which that is -- it reads it back off the user. A System Admin can address any
+// department, which is the point: a notice meant for Production only should not have to go
+// to the whole company or be re-posted by someone in Production.
+//
+// Returns { id } or { error, status } rather than throwing, because both callers have to turn
+// a refusal into a reply the composer can show.
+async function resolveAudienceGroup({ audience, requested, groupId, isAdmin }) {
+  if (audience !== 'department') return { id: null };
+
+  const wanted = Number(requested) || null;
+  if (isAdmin && wanted) {
+    const [[group]] = await pool.query('SELECT id FROM user_groups WHERE id = ?', [wanted]);
+    if (!group) return { error: 'That department no longer exists.', status: 400 };
+    return { id: group.id };
+  }
+  if (!groupId) {
+    return { error: 'You are not assigned to a department, so you cannot post to one.', status: 400 };
+  }
+  if (wanted && wanted !== groupId) {
+    return { error: 'You can only post to your own department.', status: 403 };
+  }
+  return { id: groupId };
+}
+
 // Everyone who should hear about a brand-new post: the same audience rule the feed query
 // uses, minus the author. A 'private' post notifies nobody, which is the whole point of it.
 async function recipientsForPost({ audience, groupId, authorId }) {
@@ -151,6 +178,12 @@ router.get('/', requireAuth, async (req, res, next) => {
     const [[group]] = groupId
       ? await pool.query('SELECT name FROM user_groups WHERE id = ?', [groupId])
       : [[null]];
+    // Admins pick which department a post is for, so they get the list. Nobody else does --
+    // an empty list is what makes the composer show the plain "My department" option, and
+    // sending it to everyone would only advertise a choice the server would refuse.
+    const [groups] = isAdmin
+      ? await pool.query('SELECT id, name FROM user_groups ORDER BY name')
+      : [[]];
 
     const { posts, nextCursor } = await fetchPostPage({
       viewerId: req.user.id,
@@ -163,7 +196,9 @@ router.get('/', requireAuth, async (req, res, next) => {
     res.json({
       posts,
       next_cursor: nextCursor,
-      viewer: { group_id: groupId, group_name: group?.name || null, is_admin: isAdmin },
+      viewer: {
+        group_id: groupId, group_name: group?.name || null, is_admin: isAdmin, groups,
+      },
     });
   } catch (err) {
     next(err);
@@ -281,9 +316,10 @@ router.post('/', requireAuth, async (req, res, next) => {
     if (body.length > MAX_BODY) return res.status(400).json({ error: 'Post is too long.' });
 
     const { groupId, isAdmin } = await viewerContext(req.user.id);
-    if (audience === 'department' && !groupId) {
-      return res.status(400).json({ error: 'You are not assigned to a department, so you cannot post to one.' });
-    }
+    const target = await resolveAudienceGroup({
+      audience, requested: req.body.audience_group_id, groupId, isAdmin,
+    });
+    if (target.error) return res.status(target.status).json({ error: target.error });
 
     // One transaction: a post whose photos failed to insert would show up in the feed as an
     // empty card, and the author has no way to tell it happened.
@@ -293,7 +329,7 @@ router.post('/', requireAuth, async (req, res, next) => {
       await conn.beginTransaction();
       const [result] = await conn.query(
         'INSERT INTO feed_posts (user_id, body, audience, audience_group_id) VALUES (?, ?, ?, ?)',
-        [req.user.id, body || null, audience, audience === 'department' ? groupId : null]
+        [req.user.id, body || null, audience, target.id]
       );
       postId = result.insertId;
       await writeImages(conn, postId, images);
@@ -349,6 +385,16 @@ router.put('/:id', requireAuth, async (req, res, next) => {
 
     const audience = AUDIENCES.includes(req.body.audience) ? req.body.audience : existing.audience;
     const { groupId, isAdmin } = await viewerContext(req.user.id);
+    // An edit that says nothing about the department keeps the one the post already had, so
+    // fixing a typo on a post addressed to Production cannot quietly redirect it at the
+    // author's own department.
+    const target = await resolveAudienceGroup({
+      audience,
+      requested: req.body.audience_group_id ?? existing.audience_group_id,
+      groupId,
+      isAdmin,
+    });
+    if (target.error) return res.status(target.status).json({ error: target.error });
 
     const conn = await pool.getConnection();
     try {
@@ -357,12 +403,7 @@ router.put('/:id', requireAuth, async (req, res, next) => {
         `UPDATE feed_posts
             SET body = ?, audience = ?, audience_group_id = ?, edited_at = NOW()
           WHERE id = ?`,
-        [
-          body || null,
-          audience,
-          audience === 'department' ? (existing.audience_group_id || groupId) : null,
-          req.params.id,
-        ]
+        [body || null, audience, target.id, req.params.id]
       );
       if (touchesImages) await writeImages(conn, req.params.id, images);
       await conn.commit();

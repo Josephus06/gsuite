@@ -297,6 +297,8 @@ export default function Feed() {
         editing={editing}
         user={user}
         groupName={viewer?.group_name}
+        groupId={viewer?.group_id}
+        groups={viewer?.groups}
         onClose={() => { setComposerOpen(false); setEditing(null); }}
         onSubmit={submitPost}
       />
