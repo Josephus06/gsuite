@@ -14,6 +14,8 @@
   --warning-bg: rgba(245, 159, 0, 0.1);
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --shadow: rgba(0, 0, 0, 0.08) 0 4px 14px -2px;
+  /* Translucent card fill, used only over the wallpaper -- see the data-bg card rule. */
+  --card-glass: rgba(255, 255, 255, 0.55);
   /* color-scheme is set per-theme on <html> by src/utils/theme.js. */
 }
 
@@ -36,6 +38,7 @@
   --warning: #fbbf24;
   --warning-bg: rgba(251, 191, 36, 0.14);
   --shadow: rgba(0, 0, 0, 0.4) 0 4px 14px -2px;
+  --card-glass: rgba(26, 26, 34, 0.5);
 }
 
 * {
@@ -111,6 +114,20 @@ body {
    the cover image, the avatar, the About and Posts cards below -- keeps its own surface. */
 :root[data-bg='on'] .fbfeed,
 :root[data-bg='on'] .fb-profile-head { background: transparent; }
+
+/* Cards let the wallpaper through too. They were kept opaque on purpose -- that fill is what
+   makes text readable over the photo -- so this is a deliberate override for anyone who would
+   rather see the picture: a translucent tint plus a blur, not clear glass. The blur frosts
+   whatever is behind the card so text keeps its contrast even over a busy photo, and the tint
+   is heavy enough (roughly half) that the wallpaper reads as texture rather than competing
+   with the content. Only when a wallpaper is on -- with none, a see-through card would just
+   expose the flat base colour and lose its edges. */
+:root[data-bg='on'] .card,
+:root[data-bg='on'] .fb-card {
+  background: var(--card-glass);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
 
 h1, h2, h3 {
   color: var(--text-h);
