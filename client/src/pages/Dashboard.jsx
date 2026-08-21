@@ -64,6 +64,13 @@ function money(v) {
   const n = Number(v) || 0;
   return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
+// Incentive is earned in fractions of a peso -- 7.50 a layout, 5% of an NSTDJO line -- so it
+// keeps two decimals where the whole-peso money() above would round 1,207.50 up to 1,208 and
+// disagree with Reports > Artist Incentive, which shows the exact figure.
+function money2(v) {
+  const n = Number(v) || 0;
+  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 function timeAgo(iso) {
   if (!iso) return '';
   const diffMs = Date.now() - parseUtc(iso).getTime();
@@ -776,7 +783,7 @@ function ArtistDashboard({ data, user, navigate }) {
           // Incentive earned from the job orders actually finished in the month being viewed --
           // the same 7.50-per-layout / NSTDJO-per-line rules as Reports > Artist Incentive.
           label: isCurrentMonth ? 'Incentive This Month' : `Incentive · ${month}`,
-          value: `₱${money(incentive.amount ?? 0)}`,
+          value: `₱${money2(incentive.amount ?? 0)}`,
           icon: '💰',
         },
         { label: 'Completed This Month', value: data.completedThisMonth, icon: '✅' },

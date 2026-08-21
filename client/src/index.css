@@ -103,10 +103,9 @@ body {
    keeps content readable over the image -- but the feed wash steps aside so the picture
    shows through the wide margins either side of the column.
 
-   .holo-dashboard is the one page-wide wash left alone on purpose. It is fixed-light by
-   design (see the Dashboard section below): its text stays dark whatever the theme is, so
-   dropping its background would leave dark text over the dark base colour in night mode.
-   It keeps its wash and behaves like one big card.
+   .holo-dashboard follows night mode now and lets the wallpaper through -- its transparency
+   and dark palette live together in the Dashboard section below, since dropping the wash is
+   only safe once the text under it turns light in dark mode.
 
    .fb-profile-head is the same case as the feed wash: a full-bleed band behind the cover
    photo and name, not a card anyone reads text off. Its own --fb-card fill would otherwise
@@ -1244,6 +1243,9 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
   --dash-text-dim: #8a8da8;
   --dash-border: rgba(43, 45, 66, 0.08);
   --dash-card-shadow: 0 8px 28px rgba(43, 45, 66, 0.08);
+  /* The card fill was hardcoded #fff, which is why the dashboard could not follow the theme.
+     Routed through a variable so dark mode can swap it below. */
+  --dash-card-bg: #ffffff;
 
   --holo-bg-1: #0b0d21;
   --holo-bg-2: #131a3a;
@@ -1261,6 +1263,39 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
   background: var(--dash-bg);
   color: var(--dash-text);
 }
+
+/* Dark mode. The dashboard used to force its light palette whatever the theme was; these swap
+   the --dash-* tokens the whole page reads from, so the same markup now follows night mode.
+   The neon --holo-* widget colours are left as they are -- they are already built for dark. */
+:root[data-theme='dark'] .holo-dashboard {
+  --dash-bg: #121218;
+  --dash-text: #f3f4f6;
+  --dash-text-dim: #9a9db8;
+  --dash-border: rgba(255, 255, 255, 0.1);
+  --dash-card-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  --dash-card-bg: #1c1c26;
+  --holo-text: #f3f4f6;
+  --holo-text-dim: #9a9db8;
+}
+
+/* Over a wallpaper the dashboard steps aside like the rest of the app: its page-wide wash
+   goes transparent so the picture shows through the gaps, and the cards become the same
+   frosted glass as .card / .fb-card. The coloured stat cards keep their colour but at reduced
+   opacity, so the wallpaper reads through the tint while the white figures stay legible. */
+:root[data-bg='on'] .holo-dashboard { background: transparent; }
+:root[data-bg='on'] .holo-card {
+  background: var(--card-glass);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+:root[data-bg='on'] .holo-stat-card {
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+:root[data-bg='on'] .holo-stat-card.tone-purple { background: linear-gradient(135deg, rgba(143, 131, 243, 0.6), rgba(106, 92, 224, 0.6)); }
+:root[data-bg='on'] .holo-stat-card.tone-blue { background: linear-gradient(135deg, rgba(91, 157, 249, 0.6), rgba(63, 116, 230, 0.6)); }
+:root[data-bg='on'] .holo-stat-card.tone-green { background: linear-gradient(135deg, rgba(43, 209, 171, 0.6), rgba(22, 168, 137, 0.6)); }
+:root[data-bg='on'] .holo-stat-card.tone-lime { background: linear-gradient(135deg, rgba(195, 224, 90, 0.6), rgba(150, 194, 46, 0.6)); }
 
 .holo-header {
   display: flex;
@@ -1301,7 +1336,7 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 
 .holo-card {
   position: relative;
-  background: #fff;
+  background: var(--dash-card-bg);
   border: 1px solid var(--dash-border);
   border-radius: 18px;
   padding: 18px 20px;
