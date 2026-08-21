@@ -15,7 +15,7 @@
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
   --shadow: rgba(0, 0, 0, 0.08) 0 4px 14px -2px;
   /* Translucent card fill, used only over the wallpaper -- see the data-bg card rule. */
-  --card-glass: rgba(255, 255, 255, 0.55);
+  --card-glass: rgba(255, 255, 255, 0.4);
   /* color-scheme is set per-theme on <html> by src/utils/theme.js. */
 }
 
@@ -38,7 +38,7 @@
   --warning: #fbbf24;
   --warning-bg: rgba(251, 191, 36, 0.14);
   --shadow: rgba(0, 0, 0, 0.4) 0 4px 14px -2px;
-  --card-glass: rgba(26, 26, 34, 0.5);
+  --card-glass: rgba(26, 26, 34, 0.4);
 }
 
 * {
