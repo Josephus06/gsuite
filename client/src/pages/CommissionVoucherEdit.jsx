@@ -10,6 +10,11 @@ function money(v) {
 function formatMonth(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : ''; }
 function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
 
+// Only an expense on Commission Payable may be pointed at a month. Matched on the account code
+// rather than an id, the same way the server resolves it -- the id differs between databases.
+const COMMISSION_PAYABLE_CODE = '24200';
+const isCommissionPayable = (account) => account?.account_code === COMMISSION_PAYABLE_CODE;
+
 // Create form for a Commission Voucher (the live #/commission_voucher_crud screen): pick an
 // employee, choose which of their unpaid/partial Commission Payables to release and how much, add
 // optional expense adjustments, pick the cash/bank account, and Save. Settles the payables and
@@ -72,6 +77,7 @@ export default function CommissionVoucherEdit() {
         setExpenses((cv.expenses || []).map((e) => ({
           account: { id: e.account_id, account_code: e.account_code, account_name: e.account_name },
           description: e.description || '', amount: String(e.amount),
+          applies_to_payable_id: e.applies_to_payable_id || null,
         })));
       } catch (err) {
         setError(err.response?.data?.error || 'Could not load this voucher.');
@@ -99,8 +105,18 @@ export default function CommissionVoucherEdit() {
     }
   }
 
-  function addExpense() { setExpenses((x) => [...x, { account: null, description: '', amount: '' }]); }
-  function setExpense(i, patch) { setExpenses((x) => x.map((e, idx) => (idx === i ? { ...e, ...patch } : e))); }
+  function addExpense() { setExpenses((x) => [...x, { account: null, description: '', amount: '', applies_to_payable_id: null }]); }
+  // Switching the account away from Commission Payable drops any month it was pointed at: the
+  // field disappears from the row, and a target stranded on another account is exactly what
+  // the server rejects on save.
+  function setExpense(i, patch) {
+    setExpenses((x) => x.map((e, idx) => {
+      if (idx !== i) return e;
+      const next = { ...e, ...patch };
+      if ('account' in patch && !isCommissionPayable(next.account)) next.applies_to_payable_id = null;
+      return next;
+    }));
+  }
   function removeExpense(i) { setExpenses((x) => x.filter((_, idx) => idx !== i)); }
 
   const totalReleased = useMemo(
@@ -117,7 +133,10 @@ export default function CommissionVoucherEdit() {
       .filter((p) => checked[p.commission_payable_id])
       .map((p) => ({ commission_payable_id: p.commission_payable_id, released_amount: Number(released[p.commission_payable_id]) || 0 }));
     const exp = expenses.filter((e) => e.account && Number(e.amount) !== 0)
-      .map((e) => ({ account_id: e.account.id, description: e.description || null, amount: Number(e.amount) }));
+      .map((e) => ({
+        account_id: e.account.id, description: e.description || null, amount: Number(e.amount),
+        applies_to_payable_id: isCommissionPayable(e.account) ? (e.applies_to_payable_id || null) : null,
+      }));
     // A voucher needs at least a commission line OR an expense -- an expense-only voucher is a
     // pure refund (no commission released).
     if (!lines.length && !exp.length) { setError('Select a commission or add an expense.'); return; }
@@ -259,9 +278,9 @@ export default function CommissionVoucherEdit() {
         <div className="card">
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Account</th><th>Description</th><th style={{ textAlign: 'right' }}>Amount</th><th></th></tr></thead>
+              <thead><tr><th>Account</th><th>Applies To</th><th>Description</th><th style={{ textAlign: 'right' }}>Amount</th><th></th></tr></thead>
               <tbody>
-                {expenses.length === 0 && <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 12 }}>No expenses. A negative amount credits the account; a positive amount debits it.</td></tr>}
+                {expenses.length === 0 && <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 12 }}>No expenses. A negative amount credits the account; a positive amount debits it.</td></tr>}
                 {expenses.map((e, i) => (
                   <tr key={i}>
                     <td style={{ minWidth: 260 }}>
@@ -270,6 +289,24 @@ export default function CommissionVoucherEdit() {
                         columns={[{ key: 'account_code', label: 'Code' }, { key: 'account_name', label: 'Name' }]}
                         searchKeys={['account_code', 'account_name']} placeholder="--Select--" onSelect={(a) => setExpense(i, { account: a })}
                       />
+                    </td>
+                    {/* Only Commission Payable can be pointed at a month -- doing so makes the
+                        expense a payback that reduces that month's Released Commission and
+                        settles an overpayment, instead of joining the refund pool. The server
+                        rejects a target on any other account, so this stays in step with it. */}
+                    <td style={{ minWidth: 170 }}>
+                      {isCommissionPayable(e.account) ? (
+                        <select
+                          value={e.applies_to_payable_id || ''}
+                          onChange={(ev) => setExpense(i, { applies_to_payable_id: ev.target.value || null })}
+                          style={{ width: '100%' }}
+                        >
+                          <option value="">Not applied to a month</option>
+                          {payables.map((p) => (
+                            <option key={p.id} value={p.id}>{formatMonth(p.period_from)}</option>
+                          ))}
+                        </select>
+                      ) : <span className="muted">—</span>}
                     </td>
                     <td><input value={e.description} onChange={(ev) => setExpense(i, { description: ev.target.value })} style={{ width: '100%' }} /></td>
                     <td><input type="number" step="0.01" value={e.amount} onChange={(ev) => setExpense(i, { amount: ev.target.value })} style={{ width: 140, textAlign: 'right' }} /></td>

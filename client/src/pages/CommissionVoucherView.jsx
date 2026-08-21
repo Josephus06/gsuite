@@ -126,12 +126,18 @@ export default function CommissionVoucherView() {
         <div className="card">
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Account Code</th><th>Account Title</th><th>Description</th><th style={{ textAlign: 'right' }}>Amount</th></tr></thead>
+              <thead><tr><th>Account Code</th><th>Account Title</th><th>Applies To</th><th>Description</th><th style={{ textAlign: 'right' }}>Amount</th></tr></thead>
               <tbody>
-                {cv.expenses.length === 0 && <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>No expenses.</td></tr>}
+                {cv.expenses.length === 0 && <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>No expenses.</td></tr>}
                 {cv.expenses.map((e) => (
                   <tr key={e.id}>
-                    <td>{e.account_code}</td><td>{e.account_name}</td><td>{e.description || ''}</td>
+                    <td>{e.account_code}</td><td>{e.account_name}</td>
+                    {/* Set only on a payback -- an expense pointed at a month reduces that
+                        month's Released Commission instead of joining the refund pool. */}
+                    <td>{e.applies_to_period_from
+                      ? new Date(e.applies_to_period_from).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+                      : <span className="muted">—</span>}</td>
+                    <td>{e.description || ''}</td>
                     <td style={{ textAlign: 'right' }}>{money(e.amount)}</td>
                   </tr>
                 ))}
