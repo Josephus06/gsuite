@@ -107,16 +107,18 @@ export default function NotificationBell() {
     return () => document.removeEventListener('mousedown', onClickOutside);
   }, [open]);
 
+  // Opening a notification consumes it: the server deletes the row, so the bell only ever
+  // holds what is still outstanding. Removed from the list here as well as on the server so
+  // it disappears on the click rather than at the next five-second poll.
   async function openNotification(n) {
     setOpen(false);
-    if (!n.is_read) {
-      try {
-        await api.put(`/notifications/${n.id}/read`);
-        setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)));
-        setUnreadCount((c) => Math.max(0, c - 1));
-      } catch {
-        // Non-critical -- worst case it just stays "unread" until the next poll settles it.
-      }
+    try {
+      await api.put(`/notifications/${n.id}/read`);
+      setNotifications((prev) => prev.filter((x) => x.id !== n.id));
+      setUnreadCount((c) => Math.max(0, c - 1));
+    } catch {
+      // Non-critical -- the next poll settles the list either way, and the navigation below
+      // is the part the user actually asked for.
     }
     if (n.related_type === 'Ticket' && n.related_id) navigate(`/tickets/${n.related_id}`);
     // Design hand-off notifications. An artist told the work is theirs goes straight to the
@@ -138,10 +140,14 @@ export default function NotificationBell() {
     }
   }
 
-  async function markAllRead() {
+  // Empties the bell. Confirmed first, because reading everything and deleting everything are
+  // now the same act -- one stray click would otherwise take the whole list with it.
+  async function clearAll() {
+    if (!notifications.length) return;
+    if (!window.confirm(`Clear all ${unreadCount} notification${unreadCount === 1 ? '' : 's'}? They are removed, not just marked read.`)) return;
     try {
       await api.put('/notifications/read-all');
-      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+      setNotifications([]);
       setUnreadCount(0);
     } catch {
       // Non-critical.
@@ -216,7 +222,7 @@ export default function NotificationBell() {
                   Test
                 </button>
                 {unreadCount > 0 && (
-                  <button type="button" className="btn btn-sm" onClick={markAllRead}>Mark all read</button>
+                  <button type="button" className="btn btn-sm" onClick={clearAll}>Clear all</button>
                 )}
               </div>
             </div>
@@ -231,7 +237,7 @@ export default function NotificationBell() {
               </div>
             )}
             {notifications.length === 0 && (
-              <div className="muted" style={{ padding: 16, textAlign: 'center' }}>No notifications yet.</div>
+              <div className="muted" style={{ padding: 16, textAlign: 'center' }}>Nothing waiting on you.</div>
             )}
             {notifications.map((n) => (
               <div
@@ -239,11 +245,13 @@ export default function NotificationBell() {
                 onClick={() => openNotification(n)}
                 style={{
                   padding: '10px 14px', borderBottom: '1px solid var(--border)', cursor: 'pointer',
-                  background: n.is_read ? 'transparent' : 'var(--panel-2, #f3f4f6)',
+                  // Every row here is outstanding -- an opened one is gone -- so they all
+                  // carry the unread treatment.
+                  background: 'var(--panel-2, #f3f4f6)',
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                  <div style={{ fontSize: 13, fontWeight: n.is_read ? 400 : 600 }}>{n.title}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{n.title}</div>
                   <div className="muted" style={{ fontSize: 11 }}>{notificationTypeLabel(n.type)}</div>
                 </div>
                 {n.message && <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{n.message}</div>}
