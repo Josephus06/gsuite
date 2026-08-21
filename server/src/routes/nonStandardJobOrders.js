@@ -122,7 +122,7 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
       pool.query('SELECT id, code, title FROM units_of_measure WHERE is_active = TRUE ORDER BY code'),
       defaultBranch(req.user.id),
     ]);
-    const sbuScope = await getSbuScope(req.user.id);
+    const sbuScope = await getSbuScope(req.user.id, { withMarketing: true });
     res.json({
       customers: customers[0], employees: employees[0], locations: locations[0], divisions: divisions[0],
       jobTypes: jobTypes[0], pmsJobTypes: pmsJobTypes[0], processes: processes[0], items: items[0], uoms: uoms[0],
@@ -154,7 +154,7 @@ router.get('/contacts', requireAuth, requirePermission(ROUTE, 'can_view'), async
 // first visit and appear on the second, once the browser had the payload cached.
 router.get('/meta/sbu-groups', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const scope = await getSbuScope(req.user.id);
+    const scope = await getSbuScope(req.user.id, { withMarketing: true });
     res.json({ groups: scope ? scope.groups.map((g) => ({ index: g.index, label: g.label, name: g.displayName })) : [] });
   } catch (err) { next(err); }
 });
@@ -217,7 +217,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     // every non-standard job order. Same rule Job Orders apply. That queue IS their whole
     // view of this module, so it replaces the sales-rep scope rather than stacking with
     // it; otherwise a supervisor who is also an account officer would see neither set.
-    const sbuScope = await getSbuScope(req.user.id);
+    const sbuScope = await getSbuScope(req.user.id, { withMarketing: true });
     if (await isScopedToDesignQueue(req.user.id)) {
       conditions.push('n.status = ? AND n.sub_status IN (?)');
       params.push(DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES);

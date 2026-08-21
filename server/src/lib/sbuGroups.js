@@ -61,10 +61,30 @@ async function getSbuGroups() {
     .map((g, i) => ({ ...g, index: i + 1, label: `SBU ${i + 1}` }));
 }
 
+// Marketing raises job orders too, and owns no SBU: nobody holds it as a sales group, so
+// under the rule above its orders would sit in a queue with no approver who can see them.
+// Both SBUs cover it jointly, which is why it is a third tab rather than being folded into
+// one of theirs -- either can clear it, and neither is made to own it.
+//
+// Resolved by name for the same reason everything else here is: the department id differs
+// between the office and cloud databases, so an id in code would point at the wrong team on
+// one of them.
+const isMarketing = (departmentName) => norm(departmentName) === 'marketing';
+
+async function getMarketingDepartmentIds() {
+  const [rows] = await pool.query('SELECT id, name FROM departments WHERE is_active = TRUE');
+  return rows.filter((d) => isMarketing(d.name)).map((d) => d.id);
+}
+
 // An SBU sees BOTH groups' non-standard job orders and tickets -- that is the whole point
 // of the cross-approval arrangement, and an approver who cannot find a document cannot
 // approve it. Returns null for everyone else, leaving their existing scope untouched.
-async function getSbuScope(userId) {
+//
+// `withMarketing` is off by default and set only by non-standard job orders. Tickets share
+// this scope, and widening what an SBU can read there is a different decision from letting
+// them approve Marketing's job orders -- so it is asked for explicitly rather than arriving
+// as a side effect.
+async function getSbuScope(userId, { withMarketing = false } = {}) {
   const [[user]] = await pool.query(
     'SELECT is_sales_business_unit FROM users WHERE id = ? AND is_active = TRUE',
     [userId]
@@ -77,7 +97,26 @@ async function getSbuScope(userId) {
   // one of the groups gets the cross-group view and the tabs; for everyone else this
   // returns null and their page keeps exactly the layout and scope it has today.
   if (!groups.some((g) => g.userId === userId)) return null;
-  return { groups, departmentIds: groups.flatMap((g) => g.departmentIds) };
+
+  const tabs = [...groups];
+  if (withMarketing) {
+    const marketingIds = await getMarketingDepartmentIds();
+    // Numbered after the real SBUs so the existing tabs keep the indexes users have
+    // bookmarked, and skipped entirely where no Marketing department exists rather than
+    // showing a tab that could only ever be empty.
+    if (marketingIds.length) {
+      tabs.push({
+        userId: null,
+        displayName: 'Marketing department',
+        departmentIds: marketingIds,
+        departmentNames: ['Marketing'],
+        index: groups.length + 1,
+        label: 'Marketing',
+      });
+    }
+  }
+
+  return { groups: tabs, departmentIds: tabs.flatMap((g) => g.departmentIds) };
 }
 
 // Narrows a scope to one tab. An unknown/absent index means "both", so a stale bookmark
@@ -96,9 +135,12 @@ function departmentIdsForTab(scope, sbuIndex) {
 //
 // `departmentId` is the document's own group: sales_division_id on a job order, the
 // raiser's department on a ticket.
+//
+// Marketing is included because this is only called from non-standard job orders, where both
+// SBUs cover it -- see the Marketing tab above.
 async function sbuCanApproveDepartment(userId, departmentId) {
   if (departmentId == null) return false;
-  const scope = await getSbuScope(userId);
+  const scope = await getSbuScope(userId, { withMarketing: true });
   if (!scope) return false;
   return scope.departmentIds.includes(Number(departmentId));
 }
