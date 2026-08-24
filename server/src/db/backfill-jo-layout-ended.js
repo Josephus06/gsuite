@@ -18,15 +18,24 @@
 // THIS CHANGES WHAT PEOPLE ARE PAID. It is a dry run unless you pass --apply, and it prints every
 // row it would touch so the dates can be checked against what those artists actually did.
 //
-//   node src/db/backfill-jo-layout-ended.js            show what would change
-//   node src/db/backfill-jo-layout-ended.js --apply    make the change
+//   node src/db/backfill-jo-layout-ended.js               show what would change
+//   node src/db/backfill-jo-layout-ended.js --apply       make the change
+//   node src/db/backfill-jo-layout-ended.js --as-user=7   attribute the audit entries to user 7
 const pool = require('../db');
 require('dotenv').config();
 
 const APPLY = process.argv.includes('--apply');
 
+// audit_logs.set_by_user_id is NOT NULL and carries a foreign key to users(id) (fk_audit_user), so
+// every entry has to name a real user. The first version of this script wrote NULL there, which
+// made --apply die on the very first insert -- inside a transaction on Railway, so the run rolled
+// back and wrote nothing rather than half-finishing. Defaults to the lowest-numbered active user,
+// the admin account on every install so far; --as-user=<id> names someone else. Resolved against
+// the database, not hardcoded, because the ids differ between installs.
+const AS_USER = (process.argv.find((arg) => arg.startsWith('--as-user=')) || '').split('=')[1];
+
 async function main() {
-  console.log(`Local DB: ${process.env.DB_NAME} on ${process.env.DB_HOST}`);
+  console.log(`DB: ${process.env.DB_NAME} on ${process.env.DB_HOST}`);
   console.log(APPLY ? 'MODE: applying changes\n' : 'MODE: dry run -- nothing will be written (pass --apply)\n');
 
   const [rows] = await pool.query(
@@ -67,8 +76,24 @@ async function main() {
     console.log('    These need a date chosen by hand, by someone who knows when the work was done.');
   }
 
+  // Resolved before the dry run returns, not after, so a bad --as-user or a user table with nobody
+  // active is reported by the safe pass instead of only surfacing once --apply is writing.
+  const [[actor]] = await pool.query(
+    AS_USER ? 'SELECT id, username FROM users WHERE id = ?'
+      : 'SELECT id, username FROM users WHERE is_active = 1 ORDER BY id LIMIT 1',
+    AS_USER ? [AS_USER] : [],
+  );
+  if (!actor) {
+    console.error(AS_USER
+      ? `\nNo user with id ${AS_USER}. The audit entries need a real user -- pick an existing id.`
+      : '\nNo active user to attribute the audit entries to. Pass --as-user=<id>.');
+    await pool.end();
+    process.exit(1);
+  }
+  console.log(`\nAudit entries will be attributed to user ${actor.id} (${actor.username}).`);
+
   if (!APPLY) {
-    console.log(`\nDry run. Re-run with --apply to set ${usable.length} layout end date(s).`);
+    console.log(`Dry run. Re-run with --apply to set ${usable.length} layout end date(s).`);
     await pool.end();
     return;
   }
@@ -79,8 +104,8 @@ async function main() {
     await pool.query('UPDATE job_orders SET layout_ended_at = ? WHERE id = ? AND layout_ended_at IS NULL', [r.approved_at, r.id]);
     await pool.query(
       `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
-       VALUES ('JobOrder', ?, 'Updated', 'layout_ended_at', NULL, ?, NULL)`,
-      [r.id, `backfilled from the audited approval time (${String(r.approved_at).slice(0, 19)})`],
+       VALUES ('JobOrder', ?, 'Updated', 'layout_ended_at', NULL, ?, ?)`,
+      [r.id, `backfilled from the audited approval time (${String(r.approved_at).slice(0, 19)})`, actor.id],
     );
     done += 1;
   }

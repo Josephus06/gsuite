@@ -137,16 +137,33 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   } catch (err) { next(err); }
 });
 
-// Artists to populate the filter -- only those who actually have finished layout work,
-// so the dropdown isn't the whole employee list.
+// Artists to populate the filter -- only those who actually have incentives to show, so the
+// dropdown isn't the whole employee list.
+//
+// These conditions MUST match the report body above, sign-off included. They did not: the
+// dropdown asked only for an artist and a layout end, while the body also requires Sales to
+// have accepted the work. That let the filter offer an artist whose only finished layout was
+// still sitting at 'For Artist' -- picking them returned "No incentives in this period", which
+// reads as a broken report rather than as work not yet signed off. An artist who earns nothing
+// yet does not belong in a filter over earnings.
 router.get('/artists', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
+    // Scoped the same way the body is, too: an Artist may only see their own incentives, so
+    // listing everyone else in their filter was both a dead end and other people's names.
+    const artistEmployeeId = await getArtistEmployeeScope(req.user.id);
+    const scope = artistEmployeeId ? 'AND e.id = ?' : '';
     const [rows] = await pool.query(
       `SELECT e.id, CONCAT(e.first_name, ' ', e.last_name) AS name
          FROM employees e
-        WHERE e.id IN (SELECT artist_id FROM job_orders WHERE artist_id IS NOT NULL AND layout_ended_at IS NOT NULL)
-           OR e.id IN (SELECT artist_employee_id FROM non_standard_job_orders WHERE artist_employee_id IS NOT NULL AND layout_ended_at IS NOT NULL)
+        WHERE (e.id IN (SELECT artist_id FROM job_orders
+                         WHERE artist_id IS NOT NULL AND layout_ended_at IS NOT NULL
+                           AND sub_status = 'Approved')
+            OR e.id IN (SELECT artist_employee_id FROM non_standard_job_orders
+                         WHERE artist_employee_id IS NOT NULL AND layout_ended_at IS NOT NULL
+                           AND status = ?))
+          ${scope}
         ORDER BY e.first_name, e.last_name`,
+      artistEmployeeId ? [COMPLETED_STATUS, artistEmployeeId] : [COMPLETED_STATUS],
     );
     res.json(rows);
   } catch (err) { next(err); }
