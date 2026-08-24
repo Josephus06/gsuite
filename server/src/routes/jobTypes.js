@@ -197,6 +197,24 @@ router.patch('/:id/processes/:processLinkId', requireAuth, requirePermission(ROU
   } catch (err) { next(err); }
 });
 
+// The processes defined for one job type. The estimate asks for this when a Job Type is
+// chosen on a job order line, so the operator picks from that job's own processes instead of
+// searching the whole process master for the handful that apply.
+router.get('/:id/processes', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT jtp.id, jtp.process_id, jtp.sort_order, jtp.minutes_per_unit,
+              p.process_code, p.process_name, p.base_unit_id, p.is_active,
+              COALESCE(jtp.minutes_per_unit, p.minutes_per_unit) AS effective_minutes_per_unit
+         FROM job_type_processes jtp
+         JOIN processes p ON p.id = jtp.process_id
+        WHERE jtp.job_type_id = ? ORDER BY jtp.sort_order, p.process_name`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
 // ---------------------------------------------------------------------------------------
 // Materials a process may use, per job type
 // ---------------------------------------------------------------------------------------

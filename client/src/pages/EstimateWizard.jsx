@@ -6,6 +6,7 @@ import DataTable from '../components/DataTable';
 import EntityPicker from '../components/EntityPicker';
 import { computeAutoPricing } from '../utils/costing';
 import LoadingSpinner from '../components/LoadingSpinner';
+import Modal from '../components/Modal';
 
 const STEPS = ['Customer and Estimate', 'Job Orders', 'Billing', 'Completed'];
 
@@ -175,6 +176,12 @@ export default function EstimateWizard() {
   // Allowed-material lists, cached per `${job_type_id}:${process_id}` pair. A pair with no
   // row defined is unrestricted, and is cached as null so it is not re-fetched on every render.
   const [allowedMaterials, setAllowedMaterials] = useState({});
+  // Process chooser opened when a Job Type is picked on a job order line.
+  const [processPicker, setProcessPicker] = useState(null); // { joIdx, jobTypeId, rows, selected:Set, loading }
+  // A job order line only accepts processes once it has been saved, which needs Quantity and
+  // Units too. Choices made before that are held here and applied the moment the line saves,
+  // so picking the Job Type first -- the natural order -- does not lose the selection.
+  const pendingProcesses = useRef({});
   const [units, setUnits] = useState([]);
   const [paymentTerms, setPaymentTerms] = useState([]);
   const [bracketsByProcess, setBracketsByProcess] = useState({});
@@ -425,6 +432,11 @@ export default function EstimateWizard() {
       // Merge in only the server-assigned identifiers — keep whatever the user has typed into
       // this row since the request was fired, rather than overwriting it with the stale payload.
       setJobOrders((prev) => prev.map((r, i) => (i === idx ? { ...r, id: data.id, line_no: data.line_no, processes: [] } : r)));
+      const pending = pendingProcesses.current[idx];
+      if (pending?.length) {
+        delete pendingProcesses.current[idx];
+        await applyProcessSelection(idx, pending);
+      }
     } finally {
       postingJobOrders.current.delete(idx);
     }
@@ -686,7 +698,10 @@ export default function EstimateWizard() {
           label="Job Type" items={jobTypes} value={val} getLabel={(j) => j.display_name}
           columns={[{ key: 'display_name', label: 'Display Name' }, { key: 'base_unit', label: 'Base Unit' }]}
           searchKeys={['display_name']}
-          onSelect={(j) => commitJobOrderRow(idx, { job_type_id: j.id })}
+          onSelect={async (j) => {
+            await commitJobOrderRow(idx, { job_type_id: j.id });
+            openProcessPicker(idx, j.id);
+          }}
         />
       );
     }
@@ -737,6 +752,53 @@ export default function EstimateWizard() {
         onBlur={() => (isPricingInput ? recalcAndCommitJobOrder(idx, {}, col.key) : commitJobOrderRow(idx))}
       />
     );
+  }
+
+  async function openProcessPicker(joIdx, jobTypeId) {
+    if (!jobTypeId) return;
+    setProcessPicker({ joIdx, jobTypeId, rows: [], selected: new Set(), loading: true, search: '' });
+    try {
+      const { data } = await api.get(`/job-types/${jobTypeId}/processes`);
+      setProcessPicker((prev) => (prev && prev.joIdx === joIdx ? { ...prev, rows: data, loading: false } : prev));
+    } catch {
+      setProcessPicker((prev) => (prev && prev.joIdx === joIdx ? { ...prev, rows: [], loading: false } : prev));
+    }
+  }
+
+  // Appends one process row per chosen process and saves each. The whole row is passed as the
+  // override rather than relying on jobOrdersRef, which only catches up after the next render.
+  async function applyProcessSelection(joIdx, processIds) {
+    if (!processIds.length) return;
+    const jo = jobOrdersRef.current[joIdx];
+    const startIdx = (jo?.processes || []).length;
+    const newRows = processIds.map((pid, n) => {
+      const proc = processesList.find((x) => x.id === pid);
+      return {
+        _tempId: `pick-${pid}-${startIdx + n}`, id: null, ...EMPTY_PROC,
+        process_id: pid, process_uom: proc ? unitLabel(proc.base_unit_id) : '',
+      };
+    });
+    setJobOrders((prev) => prev.map((r, i) => (i === joIdx
+      ? { ...r, processes: [...(r.processes || []), ...newRows] }
+      : r)));
+    for (let n = 0; n < newRows.length; n++) {
+      ensureAllowedMaterials(jo?.job_type_id, newRows[n].process_id);
+      await recalcAndCommitProcess(joIdx, startIdx + n, newRows[n]);
+    }
+  }
+
+  async function confirmProcessPicker() {
+    if (!processPicker) return;
+    const { joIdx, selected } = processPicker;
+    const ids = [...selected];
+    setProcessPicker(null);
+    if (!ids.length) return;
+    if (jobOrdersRef.current[joIdx]?.id) {
+      await applyProcessSelection(joIdx, ids);
+    } else {
+      // Line not saved yet -- held until commitJobOrderRow creates it.
+      pendingProcesses.current[joIdx] = [...(pendingProcesses.current[joIdx] || []), ...ids];
+    }
   }
 
   function materialKey(jobTypeId, processId) { return `${jobTypeId}:${processId}`; }
@@ -1113,7 +1175,12 @@ export default function EstimateWizard() {
                                   </tbody>
                                 </table>
                               </div>
-                              <button type="button" className="btn btn-sm" style={{ marginTop: 8 }} onClick={() => addProcessRow(idx)}>Add Process</button>
+                              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                                <button type="button" className="btn btn-sm btn-primary" disabled={!jo.job_type_id} onClick={() => openProcessPicker(idx, jo.job_type_id)}>
+                                  Choose Processes
+                                </button>
+                                <button type="button" className="btn btn-sm" onClick={() => addProcessRow(idx)}>Add Process</button>
+                              </div>
                             </div>
                           )}
                         </td>
@@ -1208,6 +1275,75 @@ export default function EstimateWizard() {
           </div>
         )}
       </div>
+
+      {processPicker && (
+        <Modal title="Processes for this Job Type" onClose={() => setProcessPicker(null)} large>
+          {processPicker.loading ? <LoadingSpinner /> : (
+            <>
+              {processPicker.rows.length === 0 ? (
+                <div className="empty-state">
+                  This job type has no processes defined. Add them on the Job Type screen, or use
+                  Add Process to enter one by hand.
+                </div>
+              ) : (
+                <>
+                  <p className="muted" style={{ marginTop: 0 }}>
+                    Tick the processes this job actually needs. Only this job type's {processPicker.rows.length} processes are listed.
+                  </p>
+                  <input
+                    autoFocus
+                    style={{ width: '100%', marginBottom: 10 }}
+                    placeholder="Search by code or name..."
+                    value={processPicker.search}
+                    onChange={(e) => setProcessPicker((prev) => (prev ? { ...prev, search: e.target.value } : prev))}
+                  />
+                  <div className="table-wrap" style={{ maxHeight: '55vh', overflowY: 'auto' }}>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th style={{ width: 36 }}></th>
+                          <th>Process Code</th>
+                          <th>Process Name</th>
+                          <th>Time Study (min)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {processPicker.rows.filter((r) => {
+                          const q = processPicker.search.trim().toLowerCase();
+                          if (!q) return true;
+                          return `${r.process_code} ${r.process_name}`.toLowerCase().includes(q);
+                        }).map((r) => {
+                          const checked = processPicker.selected.has(r.process_id);
+                          const toggle = () => setProcessPicker((prev) => {
+                            if (!prev) return prev;
+                            const selected = new Set(prev.selected);
+                            if (selected.has(r.process_id)) selected.delete(r.process_id); else selected.add(r.process_id);
+                            return { ...prev, selected };
+                          });
+                          return (
+                            <tr key={r.id} onClick={toggle} style={{ cursor: 'pointer' }}>
+                              <td><input type="checkbox" checked={checked} onChange={toggle} onClick={(e) => e.stopPropagation()} /></td>
+                              <td>{r.process_code}</td>
+                              <td>{r.process_name}</td>
+                              <td>{r.effective_minutes_per_unit ?? ''}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+              <div className="wizard-actions" style={{ marginTop: 12 }}>
+                <button type="button" className="btn" onClick={() => setProcessPicker(null)}>Cancel</button>
+                <button type="button" className="btn btn-primary" disabled={processPicker.selected.size === 0} onClick={confirmProcessPicker}>
+                  Add Selected ({processPicker.selected.size})
+                </button>
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
     </div>
   );
 }
