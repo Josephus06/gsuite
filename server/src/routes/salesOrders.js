@@ -150,13 +150,19 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
     const [[lineCount]] = await conn.query('SELECT COUNT(*) AS n FROM sales_order_lines WHERE sales_order_id = ?', [so.id]);
     const jobOrderNo = `JO-${soNumericPart}-${line.line_no}-${lineCount.n}`;
     const [result] = await conn.query(
+      // delivery_date/delivery_time come across with the rest of the line: production schedules
+      // against them (scheduledJobOrders, and the dashboard's COALESCE(delivery_date,
+      // planned_start_at) window), so a JO created without them loses the date Sales committed
+      // to and silently falls back to planned dates.
       `INSERT INTO job_orders
          (job_order_no, sales_order_line_id, sales_order_id, job_type_id, job_location_id, description, quantity, units,
-          length, width, height, memo, contact_email, contact_title, contact_phone, shipping_address, sales_rep_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          length, width, height, memo, contact_email, contact_title, contact_phone, shipping_address, sales_rep_id,
+          delivery_date, delivery_time)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [jobOrderNo, line.id, req.params.id, line.job_type_id, line.job_location_id, line.description, line.quantity, line.units,
         line.length, line.width, line.height, line.memo,
-        so.contact_email, so.contact_title, so.contact_phone, so.shipping_address, so.sales_rep_id]
+        so.contact_email, so.contact_title, so.contact_phone, so.shipping_address, so.sales_rep_id,
+        line.delivery_date, line.delivery_time]
     );
     const jobOrderId = result.insertId;
     await conn.query('UPDATE sales_order_lines SET job_order_id = ? WHERE id = ?', [jobOrderId, line.id]);
