@@ -585,7 +585,7 @@ router.put('/:id/sales-approval', requireAuth, async (req, res, next) => {
   try {
     await conn.beginTransaction();
     const [[jo]] = await conn.query(
-      'SELECT sub_status, artist_id, sales_rep_id, job_order_no FROM job_orders WHERE id = ?',
+      'SELECT sub_status, artist_id, sales_rep_id, job_order_no, layout_ended_at FROM job_orders WHERE id = ?',
       [req.params.id]
     );
     if (!jo) { await conn.rollback(); return res.status(404).json({ error: 'Not found' }); }
@@ -618,6 +618,30 @@ router.put('/:id/sales-approval', requireAuth, async (req, res, next) => {
       return res.status(409).json({
         error: 'Attach the perspective and Bill of Materials before requesting Sales Approval.',
         reason: 'no_attachment',
+      });
+    }
+    // CLOSE THE LAYOUT TIMER IF IT IS STILL OPEN, because handing work to Sales is finishing it.
+    //
+    // layout_ended_at is what the Artist Incentive report requires and dates by, and nothing was
+    // setting it on this path. Only the "Done" button closed the timer, and that button needs the
+    // artist to have pressed Play first -- so an artist who submitted without running the timer
+    // reached "Approved" with layout_ended_at still NULL and earned nothing. All three approved
+    // Job Orders in this database are in exactly that state, which is why the report showed zero.
+    //
+    // The end is stamped HERE rather than at approval, because the report dates the incentive to
+    // when the work was done, not when Sales got round to accepting it -- so an order approved in
+    // the following month still lands in the period the artist worked.
+    //
+    // layout_started_at is deliberately NOT invented. If the artist never started the timer we do
+    // not know when they began, and writing started = ended would claim the layout took no time
+    // and quietly distort their performance figures. A missing duration is honest; a fabricated
+    // one is not.
+    if (!jo.layout_ended_at) {
+      await conn.query('UPDATE job_order_layout_sessions SET ended_at = NOW() WHERE job_order_id = ? AND ended_at IS NULL', [req.params.id]);
+      await conn.query('UPDATE job_orders SET layout_ended_at = NOW() WHERE id = ?', [req.params.id]);
+      await logAudit(conn, {
+        jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated',
+        fieldName: 'layout_ended_at', newValue: 'closed on submission for Sales Approval',
       });
     }
     await conn.query("UPDATE job_orders SET sub_status = 'Sales Approval', updated_at = NOW() WHERE id = ?", [req.params.id]);
