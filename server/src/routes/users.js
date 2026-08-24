@@ -36,7 +36,7 @@ async function saveSupervisors(userId, ids) {
 const ACCOUNT_TYPE_FIELDS = [
   'user_group_id', 'account_type', 'can_approve_sales_estimate', 'is_account_officer',
   'is_supervisor', 'is_sales_manager', 'is_sales_marketing_director', 'is_sales_business_unit',
-  'is_design_supervisor', 'is_purchasing_supervisor', 'approval_code',
+  'is_design_supervisor', 'is_purchasing_supervisor', 'is_signage_planner', 'approval_code',
 ];
 
 // Supervisors are NOT in the list above on purpose. Every field there is written verbatim on

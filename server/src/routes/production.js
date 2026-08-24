@@ -180,6 +180,117 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
 // clamped) if it would push the running total past the line's total material
 // requirement (`total`) or past what's actually on hand -- you can never mark more
 // completed than what the job actually needs or than what's physically in stock.
+// ---------------------------------------------------------------------------------------
+// Scheduling: planned dates, then Acknowledge
+// ---------------------------------------------------------------------------------------
+//
+// Both live on the production screen rather than the Job Order edit form, because the person
+// who schedules a job is looking at the shop floor view, not the sales-side record. Forecast
+// is not stored -- it is the span between these two dates, so setting them is what "defines
+// the forecast".
+
+// A Signage Planner may schedule without holding can_edit on /production -- that permission
+// also carries process completion, assembly builds and RWIP, which a planner has no business
+// doing. Anyone who genuinely has production edit rights keeps the capability too.
+async function requireScheduler(req, res, next) {
+  try {
+    const [[u]] = await pool.query('SELECT is_signage_planner FROM users WHERE id = ?', [req.user.id]);
+    if (u?.is_signage_planner) return next();
+    return requirePermission(ROUTE, 'can_edit')(req, res, next);
+  } catch (err) { return next(err); }
+}
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+function parseDate(v) {
+  if (v === undefined || v === null || v === '') return null;
+  const d = String(v).slice(0, 10);
+  return DATE_RE.test(d) ? d : undefined; // undefined = malformed, distinct from a cleared date
+}
+
+router.put('/:id/planned-dates', requireAuth, requireScheduler, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const start = parseDate(req.body?.planned_start_date);
+    const end = parseDate(req.body?.planned_end_date);
+    if (start === undefined || end === undefined) {
+      return res.status(400).json({ error: 'Dates must be in YYYY-MM-DD format.' });
+    }
+    if (start && end && end < start) {
+      return res.status(400).json({ error: 'Planned End cannot be before Planned Start.' });
+    }
+
+    const [[jo]] = await conn.query(
+      'SELECT planned_start_date, planned_end_date, status FROM job_orders WHERE id = ?', [req.params.id]
+    );
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (jo.status === 'Cancelled') return res.status(409).json({ error: 'This job order is cancelled.' });
+
+    await conn.beginTransaction();
+    await conn.query(
+      'UPDATE job_orders SET planned_start_date = ?, planned_end_date = ?, updated_at = NOW() WHERE id = ?',
+      [start, end, req.params.id]
+    );
+    const asDay = (v) => (v ? String(v).slice(0, 10) : '');
+    for (const [field, before, after] of [
+      ['planned_start_date', asDay(jo.planned_start_date), start || ''],
+      ['planned_end_date', asDay(jo.planned_end_date), end || ''],
+    ]) {
+      if (before === after) continue;
+      await conn.query(
+        `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+         VALUES ('JobOrder', ?, 'Updated', ?, ?, ?, ?)`,
+        [req.params.id, field, before, after, req.user.id]
+      );
+    }
+    await conn.commit();
+    res.json({ planned_start_date: start, planned_end_date: end });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// Acknowledge: the scheduler accepts the forecast and the job moves onto the floor.
+router.put('/:id/acknowledge', requireAuth, requireScheduler, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[jo]] = await conn.query(
+      'SELECT planned_start_date, planned_end_date, production_stage, is_on_hold, status FROM job_orders WHERE id = ?',
+      [req.params.id]
+    );
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!jo.planned_start_date || !jo.planned_end_date) {
+      return res.status(400).json({ error: 'Set Planned Start and Planned End before acknowledging.' });
+    }
+    if (jo.is_on_hold) return res.status(409).json({ error: 'This job order is on hold. Resume it before acknowledging.' });
+    // Only from scheduling. Acknowledging a job already building, inspected or invoiced would
+    // walk its stage backwards and lose the progress those stages represent.
+    if (jo.production_stage !== 'pending_for_scheduling') {
+      return res.status(409).json({ error: 'Only a job order pending scheduling can be acknowledged.' });
+    }
+
+    await conn.beginTransaction();
+    await conn.query(
+      "UPDATE job_orders SET production_stage = 'in_process', updated_at = NOW() WHERE id = ?",
+      [req.params.id]
+    );
+    await conn.query(
+      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+       VALUES ('JobOrder', ?, 'Updated', 'production_stage', ?, 'in_process', ?)`,
+      [req.params.id, jo.production_stage, req.user.id]
+    );
+    await conn.commit();
+    res.json({ production_stage: 'in_process' });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
 router.put('/:id/processes/:processId/complete', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
     const [[proc]] = await pool.query(

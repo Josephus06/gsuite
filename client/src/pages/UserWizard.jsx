@@ -32,7 +32,7 @@ const EMPTY_ACCOUNT = {
 const EMPTY_ACCOUNT_TYPE = {
   user_group_id: '', account_type: '', can_approve_sales_estimate: false, is_account_officer: false,
   is_supervisor: false, is_sales_manager: false, is_sales_marketing_director: false, is_sales_business_unit: false,
-  is_design_supervisor: false, is_purchasing_supervisor: false, approval_code: '', supervisor_ids: [],
+  is_design_supervisor: false, is_purchasing_supervisor: false, is_signage_planner: false, approval_code: '', supervisor_ids: [],
   sales_division_ids: [],
 };
 
@@ -108,6 +108,7 @@ export default function UserWizard() {
         is_supervisor: !!data.is_supervisor, is_sales_manager: !!data.is_sales_manager,
         is_sales_marketing_director: !!data.is_sales_marketing_director, is_sales_business_unit: !!data.is_sales_business_unit,
         is_design_supervisor: !!data.is_design_supervisor, is_purchasing_supervisor: !!data.is_purchasing_supervisor,
+        is_signage_planner: !!data.is_signage_planner,
         approval_code: data.approval_code || '', supervisor_ids: data.supervisor_ids || [],
         sales_division_ids: data.sales_division_ids || [],
       });
@@ -422,6 +423,7 @@ export default function UserWizard() {
               ['is_sales_business_unit', 'Sales Business Unit'],
               ['is_design_supervisor', 'Design Supervisor'],
               ['is_purchasing_supervisor', 'Purchasing Supervisor'],
+              ['is_signage_planner', 'Signage Planner'],
             ].map(([key, label]) => (
               <div className="field-checkbox" key={key}>
                 <input type="checkbox" id={key} checked={accountType[key]} onChange={(e) => setAccountType({ ...accountType, [key]: e.target.checked })} />

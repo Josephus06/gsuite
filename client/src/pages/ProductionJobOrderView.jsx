@@ -47,6 +47,17 @@ const STAGE_LABELS = {
   invoiced: 'Invoiced',
 };
 
+// The banner is dark, so a default date input renders as a white slab in the middle of it.
+const SCHEDULE_INPUT = {
+  background: 'rgba(255,255,255,0.14)',
+  border: '1px solid rgba(255,255,255,0.35)',
+  color: '#fff',
+  borderRadius: 4,
+  padding: '2px 6px',
+  fontSize: 13,
+  colorScheme: 'dark',
+};
+
 const PROCESS_COLUMNS = [
   { key: 'process_name', label: 'Process' },
   { key: 'process_qty', label: 'Process Qty' },
@@ -319,6 +330,13 @@ export default function ProductionJobOrderView() {
   const navigate = useNavigate();
   const { can, user } = useAuth();
   const [jo, setJo] = useState(null);
+  // Planned dates are edited in place on this screen rather than on the Job Order form -- the
+  // person scheduling a job is looking at the floor view. Held as drafts so a half-typed date
+  // does not fire a save on every keystroke.
+  const [plannedStart, setPlannedStart] = useState('');
+  const [plannedEnd, setPlannedEnd] = useState('');
+  const [scheduleError, setScheduleError] = useState('');
+  const [savingSchedule, setSavingSchedule] = useState(false);
   const [tab, setTab] = useState('processes');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -329,7 +347,45 @@ export default function ProductionJobOrderView() {
   const [showRwip, setShowRwip] = useState(false);
 
   function load() {
-    return api.get(`/production/${id}`).then(({ data }) => { setJo(data); setLoading(false); });
+    return api.get(`/production/${id}`).then(({ data }) => {
+      setJo(data);
+      setPlannedStart(data.planned_start_date ? String(data.planned_start_date).slice(0, 10) : '');
+      setPlannedEnd(data.planned_end_date ? String(data.planned_end_date).slice(0, 10) : '');
+      setLoading(false);
+    });
+  }
+
+  async function handleSavePlanned() {
+    setScheduleError('');
+    if (plannedStart && plannedEnd && plannedEnd < plannedStart) {
+      setScheduleError('Planned End cannot be before Planned Start.');
+      return;
+    }
+    setSavingSchedule(true);
+    try {
+      await api.put(`/production/${id}/planned-dates`, {
+        planned_start_date: plannedStart || null,
+        planned_end_date: plannedEnd || null,
+      });
+      await load();
+    } catch (err) {
+      setScheduleError(err.response?.data?.error || 'Could not save the planned dates.');
+    } finally {
+      setSavingSchedule(false);
+    }
+  }
+
+  async function handleAcknowledge() {
+    setScheduleError('');
+    setSavingSchedule(true);
+    try {
+      await api.put(`/production/${id}/acknowledge`);
+      await load();
+    } catch (err) {
+      setScheduleError(err.response?.data?.error || 'Could not acknowledge this job order.');
+    } finally {
+      setSavingSchedule(false);
+    }
   }
 
   useEffect(() => { load(); }, [id]);
@@ -405,6 +461,17 @@ export default function ProductionJobOrderView() {
   const canCreateRwip = can('/production', 'can_edit');
   const isTerminal = jo.status === 'Completed' || jo.status === 'Cancelled';
   const isOnHold = !!jo.is_on_hold;
+  // Editable in place while the job is still live; Acknowledge is offered only out of
+  // scheduling, since moving a building or invoiced job back to In-Process would lose the
+  // progress its stage represents.
+  // A Signage Planner schedules without holding production edit rights, so the fields open
+  // for them too -- matching what the server accepts.
+  const canSchedule = (canEdit || !!user?.is_signage_planner) && !isTerminal;
+  const savedStart = jo.planned_start_date ? String(jo.planned_start_date).slice(0, 10) : '';
+  const savedEnd = jo.planned_end_date ? String(jo.planned_end_date).slice(0, 10) : '';
+  const plannedDirty = plannedStart !== savedStart || plannedEnd !== savedEnd;
+  const forecastDefined = !!savedStart && !!savedEnd;
+  const awaitingSchedule = jo.production_stage === 'pending_for_scheduling' && !isOnHold;
   // RWIP can only be raised while the JO is in process; open RWIPs block building the mother JO.
   const isInProcess = jo.production_stage === 'in_process';
   const openRwipCount = jo.open_rwip_count || 0;
@@ -474,9 +541,56 @@ export default function ProductionJobOrderView() {
             <div>Office Location : <span className="hi">{jo.office_location_name}</span></div>
             <div>Sales Division : <span className="hi">{jo.sales_division_name}</span></div>
             <div>Shipping Address : <span className="hi">{jo.shipping_address}</span></div>
-            <div>Planned Start : <span className="hi">{jo.planned_start_date ? String(jo.planned_start_date).slice(0, 10) : ''}</span></div>
-            <div>Planned End : <span className="hi">{jo.planned_end_date ? String(jo.planned_end_date).slice(0, 10) : ''}</span></div>
-            <div>Forecast : <span className="hi">{forecastLabel(jo.planned_start_date, jo.planned_end_date)}</span></div>
+            {canSchedule ? (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  Planned Start :
+                  <input
+                    type="date" value={plannedStart} disabled={savingSchedule}
+                    onChange={(e) => setPlannedStart(e.target.value)}
+                    style={SCHEDULE_INPUT}
+                  />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                  Planned End :
+                  <input
+                    type="date" value={plannedEnd} disabled={savingSchedule}
+                    onChange={(e) => setPlannedEnd(e.target.value)}
+                    style={SCHEDULE_INPUT}
+                  />
+                </div>
+                <div style={{ marginTop: 4 }}>
+                  {/* Reads off the drafts, so the span updates as the dates are typed rather
+                      than only after a save. */}
+                  Forecast : <span className="hi">{forecastLabel(plannedStart, plannedEnd) || '—'}</span>
+                  {plannedDirty && (
+                    <button
+                      type="button" className="btn btn-sm btn-primary" style={{ marginLeft: 10 }}
+                      disabled={savingSchedule} onClick={handleSavePlanned}
+                    >
+                      {savingSchedule ? 'Saving...' : 'Save Dates'}
+                    </button>
+                  )}
+                  {!plannedDirty && forecastDefined && awaitingSchedule && (
+                    <button
+                      type="button" className="btn btn-sm btn-primary" style={{ marginLeft: 10 }}
+                      disabled={savingSchedule} onClick={handleAcknowledge}
+                    >
+                      {savingSchedule ? 'Working...' : 'Acknowledge'}
+                    </button>
+                  )}
+                </div>
+                {scheduleError && (
+                  <div style={{ marginTop: 6, color: '#ffd4d4', fontWeight: 600 }}>{scheduleError}</div>
+                )}
+              </>
+            ) : (
+              <>
+                <div>Planned Start : <span className="hi">{jo.planned_start_date ? String(jo.planned_start_date).slice(0, 10) : ''}</span></div>
+                <div>Planned End : <span className="hi">{jo.planned_end_date ? String(jo.planned_end_date).slice(0, 10) : ''}</span></div>
+                <div>Forecast : <span className="hi">{forecastLabel(jo.planned_start_date, jo.planned_end_date)}</span></div>
+              </>
+            )}
             <div>Delivery Date : <span className="hi">{jo.delivery_date ? String(jo.delivery_date).slice(0, 10) : ''}</span></div>
             <div>Delivery Time : <span className="hi">{jo.delivery_time}</span></div>
             <div>Sales Rep. : <span className="hi">{jo.sales_rep_name}</span></div>
