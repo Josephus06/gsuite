@@ -57,8 +57,12 @@ echo "== 1/8  what this needs"
 # The Railway URL is the PUBLIC one (MYSQL_PUBLIC_URL in the service's Variables tab). The
 # internal *.railway.internal address only resolves inside Railway's own network.
 read -rp "   Railway MYSQL_PUBLIC_URL (mysql://user:pass@host:port/railway): " RAILWAY_URL
-read -rsp "   MySQL root password on THIS cloud server: " CLOUD_PW; echo
-read -rsp "   MySQL root password on the OFFICE server: " OFFICE_PW; echo
+# Not necessarily root. Any account with global privileges will do, and a dedicated maintenance
+# account is the better arrangement -- it leaves root socket-only, which is how Ubuntu ships it.
+read -rp  "   MySQL admin USER on the cloud server [root]: " CLOUD_USER; CLOUD_USER="${CLOUD_USER:-root}"
+read -rsp "   password for ${CLOUD_USER} on THIS cloud server: " CLOUD_PW; echo
+read -rp  "   MySQL admin USER on the office server [root]: " OFFICE_USER; OFFICE_USER="${OFFICE_USER:-root}"
+read -rsp "   password for ${OFFICE_USER} on the OFFICE server: " OFFICE_PW; echo
 
 # Pulled apart with a regex rather than by splitting on punctuation: Railway passwords are
 # generated and routinely contain :, / and @, which is exactly what naive splitting breaks on.
@@ -79,15 +83,49 @@ echo -n "   reaching Railway...  "
 mysql --host="$R_HOST" --port="$R_PORT" --user="$R_USER" --password="$R_PASS" \
       --connect-timeout=20 -e "SELECT 1" "$R_DB" > /dev/null && echo "ok"
 echo -n "   reaching the cloud database...  "
-mysql -uroot --password="$CLOUD_PW" --connect-timeout=10 -e "SELECT 1" > /dev/null && echo "ok"
+mysql -u"$CLOUD_USER" --password="$CLOUD_PW" --connect-timeout=10 -e "SELECT 1" > /dev/null && echo "ok"
 echo -n "   reaching the office database over the tailnet...  "
-mysql --host="$OFFICE_IP" -uroot --password="$OFFICE_PW" --connect-timeout=25 -e "SELECT 1" > /dev/null && echo "ok"
+mysql --host="$OFFICE_IP" -u"$OFFICE_USER" --password="$OFFICE_PW" --connect-timeout=25 -e "SELECT 1" > /dev/null && echo "ok"
+
+# PRIVILEGES, CHECKED NOW RATHER THAN DISCOVERED LATER.
+#
+# The data copy alone would run under the application's own account. The rest of this will not:
+# stopping replication, suppressing the binary log during the load, and clearing GTID history
+# are all global privileges. An account that can load the data but cannot do those three things
+# is the worst case of the three available -- it would replace both databases and then leave the
+# pair replicating each other's loads, which is a considerably bigger mess than not starting.
+#
+# So this is checked against both servers before anything is touched, and it stops here if
+# either falls short.
+has_global_privs() {
+  # USAGE ON *.* is what every account has and means "no privileges"; anything else at *.* means
+  # real global rights. Checked by asking the server what this account can do rather than by
+  # assuming the username called "root" is privileged -- it is routinely not.
+  mysql "$@" -N -B -e "SHOW GRANTS FOR CURRENT_USER()" 2>/dev/null \
+    | grep -E "ON \*\.\*" | grep -qvE "^GRANT USAGE ON \*\.\*"
+}
+PRIV_FAIL=0
+has_global_privs -u"$CLOUD_USER" --password="$CLOUD_PW" \
+  || { echo "   !! ${CLOUD_USER} on the cloud has no global privileges."; PRIV_FAIL=1; }
+has_global_privs --host="$OFFICE_IP" -u"$OFFICE_USER" --password="$OFFICE_PW" \
+  || { echo "   !! ${OFFICE_USER} on the office has no global privileges."; PRIV_FAIL=1; }
+if [ "$PRIV_FAIL" = "1" ]; then
+  echo
+  echo "   This needs an administrative account on BOTH servers -- not the application's"
+  echo "   gsuite account. It has to stop replication, keep the load out of the binary log,"
+  echo "   and reset GTID history, and none of those are database-level privileges."
+  echo
+  echo "   Loading the data without them would replace both databases and leave the two"
+  echo "   servers replicating each other's loads. Stopping here instead."
+  exit 1
+fi
+echo "   both accounts have the privileges this needs."
 
 # What is about to be destroyed, stated in rows rather than in the abstract, because "this will
 # replace your database" does not land the way "this will replace 124,109 job orders" does.
-CLOUD_JOS=$(mysql -uroot --password="$CLOUD_PW" -N -B -e \
+CLOUD_JOS=$(mysql -u"$CLOUD_USER" --password="$CLOUD_PW" -N -B -e \
   "SELECT COUNT(*) FROM ${DB_NAME}.job_orders" 2>/dev/null || echo "?")
-OFFICE_JOS=$(mysql --host="$OFFICE_IP" -uroot --password="$OFFICE_PW" -N -B -e \
+OFFICE_JOS=$(mysql --host="$OFFICE_IP" -u"$OFFICE_USER" --password="$OFFICE_PW" -N -B -e \
   "SELECT COUNT(*) FROM ${DB_NAME}.job_orders" 2>/dev/null || echo "?")
 RAILWAY_JOS=$(mysql --host="$R_HOST" --port="$R_PORT" --user="$R_USER" --password="$R_PASS" -N -B -e \
   "SELECT COUNT(*) FROM job_orders" "$R_DB" 2>/dev/null || echo "?")
@@ -109,11 +147,11 @@ echo "== 2/8  backing up what is about to be replaced"
 CLOUD_BAK="${WORK_DIR}/cloud-before-${STAMP}.sql.gz"
 OFFICE_BAK="${WORK_DIR}/office-before-${STAMP}.sql.gz"
 
-MYSQL_PWD="$CLOUD_PW" mysqldump -uroot --single-transaction --routines --events --triggers \
+MYSQL_PWD="$CLOUD_PW" mysqldump -u"$CLOUD_USER" --single-transaction --routines --events --triggers \
   --set-gtid-purged=OFF --default-character-set=utf8mb4 "$DB_NAME" | gzip > "$CLOUD_BAK"
 echo "   cloud  -> $(du -h "$CLOUD_BAK" | cut -f1)  $CLOUD_BAK"
 
-MYSQL_PWD="$OFFICE_PW" mysqldump --host="$OFFICE_IP" -uroot --single-transaction --routines --events --triggers \
+MYSQL_PWD="$OFFICE_PW" mysqldump --host="$OFFICE_IP" -u"$OFFICE_USER" --single-transaction --routines --events --triggers \
   --set-gtid-purged=OFF --default-character-set=utf8mb4 "$DB_NAME" | gzip > "$OFFICE_BAK"
 echo "   office -> $(du -h "$OFFICE_BAK" | cut -f1)  $OFFICE_BAK"
 
@@ -159,11 +197,11 @@ echo "== 4/8  stopping replication between cloud and office"
 # arriving from the other side. Both sides are loaded independently instead, and the link is
 # rebuilt afterwards from a clean, identical starting point.
 for TARGET in cloud office; do
-  if [ "$TARGET" = "cloud" ]; then H=""; P="$CLOUD_PW"; else H="--host=$OFFICE_IP"; P="$OFFICE_PW"; fi
+  if [ "$TARGET" = "cloud" ]; then H=""; U="$CLOUD_USER"; P="$CLOUD_PW"; else H="--host=$OFFICE_IP"; U="$OFFICE_USER"; P="$OFFICE_PW"; fi
   # STOP REPLICA on a server with no channel is an error, not a no-op -- tolerated here because
   # "there was nothing to stop" is a perfectly good outcome.
-  mysql $H -uroot --password="$P" -e "STOP REPLICA;" 2>/dev/null || true
-  mysql $H -uroot --password="$P" -e "RESET REPLICA ALL;" 2>/dev/null || true
+  mysql $H -u"$U" --password="$P" -e "STOP REPLICA;" 2>/dev/null || true
+  mysql $H -u"$U" --password="$P" -e "RESET REPLICA ALL;" 2>/dev/null || true
   echo "   ${TARGET}: replication stopped and cleared"
 done
 
@@ -178,19 +216,19 @@ echo "== 5/8  loading the cloud"
 # FOREIGN_KEY_CHECKS=0 because mysqldump writes tables in alphabetical order, not dependency
 # order, so a child table is routinely restored before its parent.
 load() {
-  local H="$1" LABEL="$3"
+  local H="$1" U="$3" LABEL="$4"
   # Through the environment, not argv: the load is the longest-running command here, and an
   # argument would sit in the process list for the whole of it.
   export MYSQL_PWD="$2"
-  mysql $H -uroot -e "DROP DATABASE IF EXISTS ${DB_NAME}; CREATE DATABASE ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+  mysql $H -u"$U" -e "DROP DATABASE IF EXISTS ${DB_NAME}; CREATE DATABASE ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
   { echo "SET sql_log_bin=0; SET FOREIGN_KEY_CHECKS=0; SET UNIQUE_CHECKS=0;";
     zcat "$DUMP";
     echo "SET FOREIGN_KEY_CHECKS=1; SET UNIQUE_CHECKS=1;"; } \
-  | mysql $H -uroot "$DB_NAME"
+  | mysql $H -u"$U" "$DB_NAME"
   unset MYSQL_PWD
   echo "   ${LABEL}: loaded"
 }
-load "" "$CLOUD_PW" "cloud"
+load "" "$CLOUD_PW" "$CLOUD_USER" "cloud"
 
 # ---------------------------------------------------------------------------------------
 echo
@@ -209,10 +247,10 @@ if ssh -o BatchMode=yes -o ConnectTimeout=10 "root@${OFFICE_IP}" true 2>/dev/nul
     set -e
     read -r OPW
     export MYSQL_PWD=\"\$OPW\"
-    mysql -uroot -e \"DROP DATABASE IF EXISTS ${DB_NAME}; CREATE DATABASE ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\"
+    mysql -u -e \"DROP DATABASE IF EXISTS ${DB_NAME}; CREATE DATABASE ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\"
     { echo 'SET sql_log_bin=0; SET FOREIGN_KEY_CHECKS=0; SET UNIQUE_CHECKS=0;';
       zcat /root/$(basename "$DUMP");
-      echo 'SET FOREIGN_KEY_CHECKS=1; SET UNIQUE_CHECKS=1;'; } | mysql -uroot ${DB_NAME}
+      echo 'SET FOREIGN_KEY_CHECKS=1; SET UNIQUE_CHECKS=1;'; } | mysql -u ${DB_NAME}
     rm -f /root/$(basename "$DUMP")
   "
   echo "   office: loaded (copied over, expanded there)"
@@ -220,7 +258,7 @@ else
   # No SSH key between the machines. Slower, but it does not require one, and it is better than
   # stopping here with the cloud already replaced and the office not.
   echo "   no SSH key to the office -- streaming over the tailnet instead, this is slower."
-  load "--host=$OFFICE_IP" "$OFFICE_PW" "office"
+  load "--host=$OFFICE_IP" "$OFFICE_PW" "$OFFICE_USER" "office"
 fi
 
 # ---------------------------------------------------------------------------------------
@@ -235,21 +273,21 @@ echo "== 7/8  rebuilding replication"
 # This is also why the load ran with sql_log_bin=0 -- there is nothing in either binary log that
 # the other side needs to be told about.
 for TARGET in cloud office; do
-  if [ "$TARGET" = "cloud" ]; then H=""; P="$CLOUD_PW"; else H="--host=$OFFICE_IP"; P="$OFFICE_PW"; fi
-  mysql $H -uroot --password="$P" -e "RESET BINARY LOGS AND GTIDS;" 2>/dev/null \
-    || mysql $H -uroot --password="$P" -e "RESET MASTER;"   # pre-8.4 spelling
+  if [ "$TARGET" = "cloud" ]; then H=""; U="$CLOUD_USER"; P="$CLOUD_PW"; else H="--host=$OFFICE_IP"; U="$OFFICE_USER"; P="$OFFICE_PW"; fi
+  mysql $H -u"$U" --password="$P" -e "RESET BINARY LOGS AND GTIDS;" 2>/dev/null \
+    || mysql $H -u"$U" --password="$P" -e "RESET MASTER;"   # pre-8.4 spelling
   echo "   ${TARGET}: transaction history cleared"
 done
 
 read -rsp "   replication password for the 'repl' account: " REPL_PW; echo
 CLOUD_IP_SELF="${CLOUD_TAILNET_IP:-100.111.65.92}"
 
-mysql -uroot --password="$CLOUD_PW" -e "
+mysql -u"$CLOUD_USER" --password="$CLOUD_PW" -e "
   CHANGE REPLICATION SOURCE TO SOURCE_HOST='${OFFICE_IP}', SOURCE_USER='repl',
     SOURCE_PASSWORD='${REPL_PW}', SOURCE_AUTO_POSITION=1, GET_SOURCE_PUBLIC_KEY=1
     FOR CHANNEL 'from_office';
   START REPLICA FOR CHANNEL 'from_office';"
-mysql --host="$OFFICE_IP" -uroot --password="$OFFICE_PW" -e "
+mysql --host="$OFFICE_IP" -u"$OFFICE_USER" --password="$OFFICE_PW" -e "
   CHANGE REPLICATION SOURCE TO SOURCE_HOST='${CLOUD_IP_SELF}', SOURCE_USER='repl',
     SOURCE_PASSWORD='${REPL_PW}', SOURCE_AUTO_POSITION=1, GET_SOURCE_PUBLIC_KEY=1
     FOR CHANNEL 'from_cloud';
@@ -264,7 +302,7 @@ echo "== 8/8  checking all three agree"
 # Counted from the servers themselves rather than trusted from the loader's exit code. A load
 # that reports success and leaves a table empty is the failure worth catching here.
 count_on() {
-  mysql $1 -uroot --password="$2" -N -B -e "
+  mysql $1 -u"$3" --password="$2" -N -B -e "
     SELECT CONCAT(
       (SELECT COUNT(*) FROM ${DB_NAME}.job_orders), ' / ',
       (SELECT COUNT(*) FROM ${DB_NAME}.sales_orders), ' / ',
@@ -277,8 +315,8 @@ R_COUNTS=$(mysql --host="$R_HOST" --port="$R_PORT" --user="$R_USER" --password="
     (SELECT COUNT(*) FROM sales_orders), ' / ',
     (SELECT COUNT(*) FROM estimates), ' / ',
     (SELECT COUNT(*) FROM customer_payments))" "$R_DB")
-C_COUNTS=$(count_on "" "$CLOUD_PW")
-O_COUNTS=$(count_on "--host=$OFFICE_IP" "$OFFICE_PW")
+C_COUNTS=$(count_on "" "$CLOUD_PW" "$CLOUD_USER")
+O_COUNTS=$(count_on "--host=$OFFICE_IP" "$OFFICE_PW" "$OFFICE_USER")
 
 echo "   job orders / sales orders / estimates / payments"
 echo "   Railway : ${R_COUNTS}"
@@ -299,10 +337,10 @@ fi
 
 echo
 echo "replication:"
-mysql -uroot --password="$CLOUD_PW" -e "SHOW REPLICA STATUS\G" \
+mysql -u"$CLOUD_USER" --password="$CLOUD_PW" -e "SHOW REPLICA STATUS\G" \
   | grep -E "Channel_Name|Replica_IO_Running|Replica_SQL_Running|Seconds_Behind_Source|Last_Error" \
   | sed 's/^/   cloud  /'
-mysql --host="$OFFICE_IP" -uroot --password="$OFFICE_PW" -e "SHOW REPLICA STATUS\G" \
+mysql --host="$OFFICE_IP" -u"$OFFICE_USER" --password="$OFFICE_PW" -e "SHOW REPLICA STATUS\G" \
   | grep -E "Channel_Name|Replica_IO_Running|Replica_SQL_Running|Seconds_Behind_Source|Last_Error" \
   | sed 's/^/   office /'
 
@@ -310,7 +348,7 @@ echo
 echo "Backups of what was replaced, kept on this machine:"
 echo "   ${CLOUD_BAK}"
 echo "   ${OFFICE_BAK}"
-echo "Restore one with:  zcat <file> | mysql -uroot -p ${DB_NAME}"
+echo "Restore one with:  zcat <file> | mysql -u<admin> -p ${DB_NAME}"
 echo
 echo "The two migrations from the latest release still need running against whichever"
 echo "database the application actually uses:"
