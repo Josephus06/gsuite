@@ -25,6 +25,13 @@ function accountLabel(a) { return a ? `${a.account_code} — ${a.account_name}` 
 function jobTypeLabel(j) { return j ? j.display_name : ''; }
 function departmentLabel(d) { return d ? d.name : ''; }
 function processLabel(p) { return p ? `${p.process_code} — ${p.process_name}` : ''; }
+// Trailing zeros off a DECIMAL(10,4) read as false precision on a screen where 0.12 and 1.63
+// are typical -- "1.6300 minutes" invites someone to think four places were measured.
+function minutes(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? String(Number(n.toFixed(4))) : null;
+}
 function customerLabel(c) { return c ? `${c.customer_code} — ${c.name}` : ''; }
 
 export default function JobTypeEdit() {
@@ -46,6 +53,9 @@ export default function JobTypeEdit() {
   const [processes, setProcesses] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [newCustomerGpRate, setNewCustomerGpRate] = useState(0);
+  const [editingTimeId, setEditingTimeId] = useState(null);
+  const [timeDraft, setTimeDraft] = useState('');
+  const [timeError, setTimeError] = useState('');
 
   function load() {
     return Promise.all([
@@ -124,6 +134,30 @@ export default function JobTypeEdit() {
   async function removeProcess(linkId) {
     await api.delete(`/job-types/${id}/processes/${linkId}`);
     setProcesses((prev) => prev.filter((p) => p.id !== linkId));
+  }
+
+  function startEditTime(row) {
+    setTimeError('');
+    setEditingTimeId(row.id);
+    // Seeded with the override only. Showing the inherited value here would silently turn
+    // an inherited row into an overridden one the moment someone opened and saved it.
+    setTimeDraft(row.minutes_per_unit === null || row.minutes_per_unit === undefined ? '' : String(row.minutes_per_unit));
+  }
+
+  async function saveTime(linkId) {
+    setTimeError('');
+    const raw = timeDraft.trim();
+    if (raw !== '' && (!Number.isFinite(Number(raw)) || Number(raw) < 0)) {
+      setTimeError('Time study must be a number of minutes, 0 or greater.');
+      return;
+    }
+    try {
+      const { data } = await api.patch(`/job-types/${id}/processes/${linkId}`, { minutes_per_unit: raw === '' ? null : Number(raw) });
+      setProcesses((prev) => prev.map((p) => (p.id === linkId ? data : p)));
+      setEditingTimeId(null);
+    } catch (err) {
+      setTimeError(err.response?.data?.error || 'Could not save that time study.');
+    }
   }
 
   async function addCustomer(c) {
@@ -228,15 +262,54 @@ export default function JobTypeEdit() {
         <div className="card">
           {isNew ? <p className="muted" style={{ marginTop: 0 }}>Save this job first to manage its processes.</p> : (
             <>
+              {timeError && <div className="error-banner" style={{ marginBottom: 10 }}>{timeError}</div>}
               <DataTable
                 columns={[
                   { key: 'process_code', label: 'Process Code' },
                   { key: 'process_name', label: 'Process Name' },
+                  {
+                    key: 'effective_minutes_per_unit',
+                    label: 'Time Study (min)',
+                    render: (r) => (editingTimeId === r.id ? (
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <input
+                          type="number" min="0" step="0.0001" autoFocus
+                          style={{ width: 110 }}
+                          value={timeDraft}
+                          placeholder={minutes(r.process_minutes_per_unit) ?? 'not set'}
+                          onChange={(e) => setTimeDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') saveTime(r.id);
+                            if (e.key === 'Escape') setEditingTimeId(null);
+                          }}
+                        />
+                        <button type="button" className="btn btn-sm btn-primary" onClick={() => saveTime(r.id)}>Save</button>
+                        <button type="button" className="btn btn-sm" onClick={() => setEditingTimeId(null)}>Cancel</button>
+                      </div>
+                    ) : (
+                      <button type="button" className="link-btn" onClick={() => startEditTime(r)}>
+                        {minutes(r.effective_minutes_per_unit) ?? <span className="muted">Set time</span>}
+                      </button>
+                    )),
+                  },
+                  {
+                    key: 'source',
+                    label: 'Source',
+                    // Which number is in play matters: an inherited row moves when the process's
+                    // own study is re-measured, an overridden one does not.
+                    render: (r) => (r.minutes_per_unit === null || r.minutes_per_unit === undefined
+                      ? <span className="muted">Process default{minutes(r.process_minutes_per_unit) === null ? ' (none set)' : ''}</span>
+                      : 'This job type'),
+                  },
                 ]}
                 rows={processes}
                 actions={(r) => <button className="btn btn-sm btn-danger" onClick={() => removeProcess(r.id)}>Remove</button>}
                 emptyLabel="No processes assigned yet."
               />
+              <p className="muted" style={{ marginTop: 8, marginBottom: 0 }}>
+                Total time study: <strong>{minutes(processes.reduce((sum, r) => sum + Number(r.effective_minutes_per_unit || 0), 0)) ?? '0'}</strong> minutes per unit.
+                Clear a value to fall back to the process's own study.
+              </p>
               <div className="inline-form" style={{ marginTop: 10 }}>
                 <div className="field">
                   <label>Process</label>

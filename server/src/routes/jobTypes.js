@@ -61,8 +61,12 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     );
     if (!row) return res.status(404).json({ error: 'Not found' });
 
+    // Both numbers go down: jtp.minutes_per_unit is this job type's own time study for the
+    // process, p.minutes_per_unit is the process's general one. The screen shows the effective
+    // value and needs the fallback to say where it came from.
     const [processes] = await pool.query(
-      `SELECT jtp.*, p.process_code, p.process_name
+      `SELECT jtp.*, p.process_code, p.process_name, p.minutes_per_unit AS process_minutes_per_unit,
+              COALESCE(jtp.minutes_per_unit, p.minutes_per_unit) AS effective_minutes_per_unit
        FROM job_type_processes jtp
        JOIN processes p ON p.id = jtp.process_id
        WHERE jtp.job_type_id = ? ORDER BY jtp.sort_order, jtp.id`,
@@ -137,27 +141,60 @@ router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async
   }
 });
 
+// Blank clears the override so the link inherits the process's own study again -- distinct
+// from 0, which is a deliberate "this costs no time on this job".
+const INVALID = Symbol('invalid');
+function parseMinutes(raw) {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return INVALID;
+  return n;
+}
+
+const PROCESS_LINK_SELECT = `SELECT jtp.*, p.process_code, p.process_name,
+         p.minutes_per_unit AS process_minutes_per_unit,
+         COALESCE(jtp.minutes_per_unit, p.minutes_per_unit) AS effective_minutes_per_unit
+    FROM job_type_processes jtp
+    JOIN processes p ON p.id = jtp.process_id WHERE jtp.id = ?`;
+
 router.post('/:id/processes', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
-    const { process_id } = req.body;
+    const { process_id, minutes_per_unit } = req.body;
+    const minutes = parseMinutes(minutes_per_unit);
+    if (minutes === INVALID) return res.status(400).json({ error: 'Time study must be a number of minutes, 0 or greater.' });
+
     const [[{ maxSort }]] = await pool.query(
       'SELECT COALESCE(MAX(sort_order), 0) AS maxSort FROM job_type_processes WHERE job_type_id = ?',
       [req.params.id]
     );
     const [result] = await pool.query(
-      'INSERT INTO job_type_processes (job_type_id, process_id, sort_order) VALUES (?, ?, ?)',
-      [req.params.id, process_id, maxSort + 1]
+      'INSERT INTO job_type_processes (job_type_id, process_id, sort_order, minutes_per_unit) VALUES (?, ?, ?, ?)',
+      [req.params.id, process_id, maxSort + 1, minutes]
     );
-    const [[row]] = await pool.query(
-      `SELECT jtp.*, p.process_code, p.process_name FROM job_type_processes jtp
-       JOIN processes p ON p.id = jtp.process_id WHERE jtp.id = ?`,
-      [result.insertId]
-    );
+    const [[row]] = await pool.query(PROCESS_LINK_SELECT, [result.insertId]);
     res.status(201).json(row);
   } catch (err) {
     if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'This process is already assigned to this job type.' });
     next(err);
   }
+});
+
+// Set (or clear) this job type's time study for one of its processes. Scoped by job_type_id
+// as well as link id so a link on another job type cannot be retimed through this URL.
+router.patch('/:id/processes/:processLinkId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const minutes = parseMinutes(req.body?.minutes_per_unit);
+    if (minutes === INVALID) return res.status(400).json({ error: 'Time study must be a number of minutes, 0 or greater.' });
+
+    const [result] = await pool.query(
+      'UPDATE job_type_processes SET minutes_per_unit = ? WHERE id = ? AND job_type_id = ?',
+      [minutes, req.params.processLinkId, req.params.id]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: 'Not found' });
+
+    const [[row]] = await pool.query(PROCESS_LINK_SELECT, [req.params.processLinkId]);
+    res.json(row);
+  } catch (err) { next(err); }
 });
 
 router.delete('/:id/processes/:processLinkId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
