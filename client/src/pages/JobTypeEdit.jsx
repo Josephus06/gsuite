@@ -242,6 +242,7 @@ export default function JobTypeEdit() {
                   <label>Process</label>
                   <EntityPicker
                     label="Process" items={processesList} value="" getLabel={processLabel}
+                    isSelectable={(p) => !!p.is_active}
                     columns={[{ key: 'process_code', label: 'Code' }, { key: 'process_name', label: 'Name' }]}
                     searchKeys={['process_code', 'process_name']}
                     onSelect={addProcess}

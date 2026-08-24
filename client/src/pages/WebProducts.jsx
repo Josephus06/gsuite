@@ -281,7 +281,9 @@ function LineEditor({ line, processes, items, busy, onSave, onRemove }) {
           <label>Process</label>
           <select value={draft.process_id || ''} onChange={(e) => set('process_id', e.target.value)}>
             <option value="">— none —</option>
-            {processes.map((p) => <option key={p.id} value={p.id}>{p.process_name}</option>)}
+            {processes
+              .filter((p) => p.is_active || String(p.id) === String(draft.process_id))
+              .map((p) => <option key={p.id} value={p.id}>{p.process_name}</option>)}
           </select>
         </div>
         <div className="field">

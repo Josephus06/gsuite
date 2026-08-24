@@ -6,19 +6,30 @@ const PAGE_SIZE = 10;
 
 export default function EntityPicker({
   label, items, value, getLabel, columns, searchKeys, onSelect, placeholder, required, disabled,
-  triggerLabel, triggerClassName,
+  triggerLabel, triggerClassName, isSelectable,
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
 
+  // Deliberately searches the FULL list, not the selectable one. A record that points at
+  // something since retired must still show what it points at.
   const selected = items.find((i) => String(i.id) === String(value));
 
+  // What may be chosen from here on. Callers pass isSelectable to keep retired master data --
+  // an inactive process, a disabled location -- out of new work without hiding it on the
+  // documents that already reference it. The currently-selected row is kept regardless, so
+  // reopening the picker on an existing line does not silently drop what it is set to.
+  const selectableItems = useMemo(() => {
+    if (!isSelectable) return items;
+    return items.filter((item) => isSelectable(item) || String(item.id) === String(value));
+  }, [items, isSelectable, value]);
+
   const filtered = useMemo(() => {
-    if (!search) return items;
+    if (!search) return selectableItems;
     const q = search.toLowerCase();
-    return items.filter((item) => searchKeys.some((k) => String(item[k] ?? '').toLowerCase().includes(q)));
-  }, [items, search, searchKeys]);
+    return selectableItems.filter((item) => searchKeys.some((k) => String(item[k] ?? '').toLowerCase().includes(q)));
+  }, [selectableItems, search, searchKeys]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);

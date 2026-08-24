@@ -739,6 +739,7 @@ export default function EstimateWizard() {
       return (
         <EntityPicker
           label="Process" items={processesList} value={val} getLabel={(p) => p.process_name}
+          isSelectable={(p) => !!p.is_active}
           columns={[{ key: 'process_name', label: 'Process Name' }, { key: 'process_code', label: 'Code' }, { key: 'base_unit', label: 'Base Unit', render: (p) => unitLabel(p.base_unit_id) }]}
           searchKeys={['process_name', 'process_code']}
           onSelect={(p) => recalcAndCommitProcess(joIdx, procIdx, { process_id: p.id, process_uom: unitLabel(p.base_unit_id) })}

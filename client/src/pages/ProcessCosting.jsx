@@ -99,7 +99,7 @@ export default function ProcessCosting() {
     setBrackets((prev) => prev.filter((_, i) => i !== idx));
   }
 
-  const filteredProcesses = processes.filter((p) =>
+  const filteredProcesses = processes.filter((p) => p.is_active).filter((p) =>
     !search || p.process_name.toLowerCase().includes(search.toLowerCase()) || p.process_code.toLowerCase().includes(search.toLowerCase())
   );
   const totalPages = Math.max(1, Math.ceil(filteredProcesses.length / PAGE_SIZE));
