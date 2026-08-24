@@ -176,6 +176,9 @@ export default function EstimateWizard() {
   // Allowed-material lists, cached per `${job_type_id}:${process_id}` pair. A pair with no
   // row defined is unrestricted, and is cached as null so it is not re-fetched on every render.
   const [allowedMaterials, setAllowedMaterials] = useState({});
+  // Escape hatch on the Material picker: tick it to see the whole inventory even where the
+  // pair is restricted. Anything chosen while it is on gets learned onto the pair.
+  const [showAllMaterials, setShowAllMaterials] = useState(false);
   // Process chooser opened when a Job Type is picked on a job order line.
   const [processPicker, setProcessPicker] = useState(null); // { joIdx, jobTypeId, rows, selected:Set, loading }
   // A job order line only accepts processes once it has been saved, which needs Quantity and
@@ -803,6 +806,27 @@ export default function EstimateWizard() {
 
   function materialKey(jobTypeId, processId) { return `${jobTypeId}:${processId}`; }
 
+  // Remember a material the pair had never been given, so it is offered as a defined material
+  // next time this job type runs this process. Failure is deliberately quiet: the estimate
+  // keeps the material either way, and a permission or network problem here must not block
+  // the line being costed.
+  async function learnMaterial(jobTypeId, processId, item) {
+    if (!jobTypeId || !processId) return;
+    const key = materialKey(jobTypeId, processId);
+    const current = allowedMaterials[key];
+    if (Array.isArray(current) && current.some((m) => m.inventory_id === item.id)) return;
+    try {
+      const { data } = await api.post(`/job-types/${jobTypeId}/process-materials/${processId}`, { inventory_id: item.id });
+      if (!data) return;
+      setAllowedMaterials((prev) => {
+        const list = Array.isArray(prev[key]) ? prev[key] : [];
+        return { ...prev, [key]: [...list, data] };
+      });
+    } catch {
+      // ignored on purpose -- see above
+    }
+  }
+
   // Fetched lazily: the pair is only known once both the Job Type and the Process are set,
   // and pre-loading every pair on an estimate with many job orders would be a lot of requests
   // for lists most of them never open.
@@ -842,10 +866,21 @@ export default function EstimateWizard() {
       // rather than silently becoming unusable.
       const allowed = allowedMaterials[materialKey(jobTypeId, row.process_id)];
       const allowedIds = Array.isArray(allowed) ? new Set(allowed.map((m) => m.inventory_id)) : null;
-      const items = allowedIds ? inventoryItems.filter((i) => allowedIds.has(i.id)) : inventoryItems;
+      const restricted = !!allowedIds && !showAllMaterials;
+      const items = restricted ? inventoryItems.filter((i) => allowedIds.has(i.id)) : inventoryItems;
       return (
         <EntityPicker
-          label={allowedIds ? 'Material (restricted to this job type)' : 'Material'}
+          label={restricted ? 'Material (restricted to this job type)' : 'Material'}
+          headerExtra={(
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 400 }}>
+              <input
+                type="checkbox"
+                checked={showAllMaterials}
+                onChange={(e) => setShowAllMaterials(e.target.checked)}
+              />
+              Show all materials
+            </label>
+          )}
           items={items} value={val} getLabel={(i) => i.display_name}
           columns={[{ key: 'item_code', label: 'Code' }, { key: 'display_name', label: 'Name' }, { key: 'category_name', label: 'Category' }]}
           searchKeys={['item_code', 'display_name']}
@@ -854,6 +889,8 @@ export default function EstimateWizard() {
             recalcAndCommitProcess(joIdx, procIdx, {
               item_id: i.id, unit: unitLabel(i.base_unit_id), uom: i.base_unit_code || '',
             });
+            // Chosen from outside the defined list -- remember it for next time.
+            if (!allowedIds || !allowedIds.has(i.id)) learnMaterial(jobTypeId, row.process_id, i);
           }}
         />
       );

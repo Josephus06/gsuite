@@ -281,6 +281,48 @@ router.post('/:id/processes/:processLinkId/materials', requireAuth, requirePermi
   }
 });
 
+// Learn a material from the estimate floor.
+//
+// When an estimator picks a material this pair has never been given, that choice is what the
+// process actually uses -- so it is remembered here and offered as a defined material next
+// time. Addressed by process_id rather than link id because the estimate knows the process it
+// put on the line, not which job_type_processes row represents it.
+//
+// Gated on the ESTIMATE's can_edit, not the job type's: Sales can view job types but not edit
+// them, so gating this the obvious way would 403 for exactly the people doing the estimating.
+// The write it allows is deliberately narrow -- one row on one (job type, process) pair.
+router.post('/:id/process-materials/:processId', requireAuth, requirePermission('/estimates', 'can_edit'), async (req, res, next) => {
+  try {
+    const { inventory_id: inventoryId } = req.body || {};
+    if (!inventoryId) return res.status(400).json({ error: 'inventory_id is required.' });
+
+    const [[link]] = await pool.query(
+      'SELECT id FROM job_type_processes WHERE job_type_id = ? AND process_id = ? ORDER BY id LIMIT 1',
+      [req.params.id, req.params.processId]
+    );
+    // The process is not on this job type at all -- nothing to hang the material off. Not an
+    // error for the caller: the estimate keeps the material it chose, it just is not learned.
+    if (!link) return res.status(204).send();
+
+    // Idempotent: two estimators picking the same material must not race into a 409.
+    await pool.query(
+      'INSERT IGNORE INTO job_type_process_materials (job_type_process_id, inventory_id) VALUES (?, ?)',
+      [link.id, inventoryId]
+    );
+    const [[row]] = await pool.query(
+      `${MATERIAL_SELECT} WHERE m.job_type_process_id = ? AND m.inventory_id = ?`,
+      [link.id, inventoryId]
+    );
+    // IGNORE downgrades the foreign-key violation to a warning, so a bad inventory_id inserts
+    // nothing and reaches here looking like success. No row back means it was never valid.
+    if (!row) return res.status(400).json({ error: 'That material does not exist.' });
+    res.status(201).json(row);
+  } catch (err) {
+    if (err.code === 'ER_NO_REFERENCED_ROW_2') return res.status(400).json({ error: 'That material does not exist.' });
+    next(err);
+  }
+});
+
 router.delete('/:id/processes/:processLinkId/materials/:materialId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
     const [result] = await pool.query(

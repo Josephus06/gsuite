@@ -6,7 +6,7 @@ const PAGE_SIZE = 10;
 
 export default function EntityPicker({
   label, items, value, getLabel, columns, searchKeys, onSelect, placeholder, required, disabled,
-  triggerLabel, triggerClassName, isSelectable,
+  triggerLabel, triggerClassName, isSelectable, headerExtra,
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -69,7 +69,11 @@ export default function EntityPicker({
       )}
 
       {open && (
-        <Modal title={label} onClose={() => setOpen(false)} large>
+        <Modal
+          title={headerExtra ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>{label}{headerExtra}</span> : label}
+          onClose={() => setOpen(false)}
+          large
+        >
           <div className="picker-search" style={{ margin: '0 -24px 16px' }}>
             <input
               autoFocus
