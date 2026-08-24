@@ -145,9 +145,13 @@ export default function EstimateView() {
       const { data } = await api.get(`/estimates/${id}/email-recipient`);
       setEmailInfo(data);
       setEmailTo(data.suggested || '');
-    } catch {
+    } catch (err) {
       setEmailInfo(null);
-      setEmailError('Could not work out where to send this.');
+      // The server's own words, not a generic stand-in. Swallowing them meant a missing database
+      // column surfaced as "could not work out where to send this", which points at the address
+      // rather than at the schema and sends whoever reads it looking in the wrong place.
+      setEmailError(err.response?.data?.error
+        || `Could not work out where to send this (server returned ${err.response?.status || 'no response'}).`);
     }
   }
 
