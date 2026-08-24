@@ -3,7 +3,9 @@ const pool = require('../db');
 const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } = require('../lib/designSupervisorVisibility');
 const { getArtistEmployeeScope } = require('../lib/artistVisibility');
-const { notifyDesignSupervisors, notifyAssignedArtist, notifySalesRep } = require('../lib/designNotifications');
+const {
+  notifyDesignSupervisors, notifyAssignedArtist, notifySalesRep, NOTIFY_TYPE_JO_REVISION,
+} = require('../lib/designNotifications');
 
 const router = express.Router();
 const ROUTE = '/job-orders';
@@ -678,7 +680,10 @@ router.put('/:id/request-revision', requireAuth, requirePermission(ROUTE, 'can_a
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [[jo]] = await conn.query('SELECT sub_status FROM job_orders WHERE id = ?', [req.params.id]);
+    const [[jo]] = await conn.query(
+      'SELECT sub_status, artist_id, job_order_no FROM job_orders WHERE id = ?',
+      [req.params.id]
+    );
     if (!jo) { await conn.rollback(); return res.status(404).json({ error: 'Not found' }); }
     if (jo.sub_status !== 'Sales Approval') {
       await conn.rollback();
@@ -689,6 +694,24 @@ router.put('/:id/request-revision', requireAuth, requirePermission(ROUTE, 'can_a
     // revision round instead of continuing to count from the first pass.
     await conn.query("UPDATE job_orders SET sub_status = 'For Artist (Revision)', layout_started_at = NULL, layout_ended_at = NULL, updated_at = NOW() WHERE id = ?", [req.params.id]);
     await conn.query('DELETE FROM job_order_layout_sessions WHERE job_order_id = ?', [req.params.id]);
+    // Tell the artist their work has come back. Without this the sub-status changed and nothing
+    // said so -- the artist would find out by noticing the order had reappeared in their queue,
+    // which is exactly as reliable as it sounds.
+    //
+    // Remarks are accepted if sent but not required: the Job Order view has no reason box today,
+    // unlike the Non-Standard equivalent. Worth adding, and this will carry it the moment it
+    // exists rather than needing a second change here.
+    const remarks = String(req.body?.remarks || '').trim();
+    await notifyAssignedArtist(conn, {
+      artistEmployeeId: jo.artist_id,
+      type: NOTIFY_TYPE_JO_REVISION,
+      title: `${jo.job_order_no} has been sent back for revision`,
+      message: remarks
+        ? `Sales asked for changes: ${remarks.slice(0, 300)}`
+        : 'Sales returned this layout for revision. Check with them for what needs changing.',
+      relatedType: 'JobOrder',
+      relatedId: Number(req.params.id),
+    });
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'sub_status', oldValue: 'Sales Approval', newValue: 'For Artist (Revision)' });
     await conn.commit();
     const [[row]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);

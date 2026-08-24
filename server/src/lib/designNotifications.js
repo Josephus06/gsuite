@@ -39,7 +39,13 @@ async function notifyDesignSupervisors(conn, { title, message, relatedType, rela
 // The artist is an employee record; the notification has to go to the *user* account linked
 // to it. An artist with no user account (or a deactivated one) simply gets no notification
 // rather than failing the assignment -- the supervisor's action must still succeed.
-async function notifyAssignedArtist(conn, { artistEmployeeId, title, message, relatedType, relatedId }) {
+// `type` defaults to the assignment type but can be overridden, because the artist hears from
+// this function at two different moments -- being given new work, and being sent work back. They
+// are not the same event, and labelling a revision as an assignment would make the two
+// indistinguishable to anything that later groups or filters the feed.
+async function notifyAssignedArtist(conn, {
+  artistEmployeeId, title, message, relatedType, relatedId, type = NOTIFY_TYPE_ARTIST_ASSIGNED,
+}) {
   if (!artistEmployeeId) return false;
   const [[artistUser]] = await conn.query(
     'SELECT id FROM users WHERE employee_id = ? AND is_active = TRUE LIMIT 1',
@@ -49,7 +55,7 @@ async function notifyAssignedArtist(conn, { artistEmployeeId, title, message, re
   await conn.query(
     `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [artistUser.id, NOTIFY_TYPE_ARTIST_ASSIGNED, title, message, relatedType, relatedId],
+    [artistUser.id, type, title, message, relatedType, relatedId],
   );
   return true;
 }
@@ -64,6 +70,8 @@ async function notifyAssignedArtist(conn, { artistEmployeeId, title, message, re
 // sales_rep_id. That is an employee record; the notification has to reach the *user* account
 // linked to it, the same indirection notifyAssignedArtist deals with.
 const NOTIFY_TYPE_SALES_APPROVAL = 'jo_sales_approval';
+// Work coming back, as distinct from work arriving.
+const NOTIFY_TYPE_JO_REVISION = 'jo_revision';
 
 async function notifySalesRep(conn, { salesRepEmployeeId, title, message, relatedType, relatedId }) {
   if (!salesRepEmployeeId) return false;
@@ -89,4 +97,5 @@ module.exports = {
   NOTIFY_TYPE_PENDING_ASSIGNMENT,
   NOTIFY_TYPE_ARTIST_ASSIGNED,
   NOTIFY_TYPE_SALES_APPROVAL,
+  NOTIFY_TYPE_JO_REVISION,
 };
