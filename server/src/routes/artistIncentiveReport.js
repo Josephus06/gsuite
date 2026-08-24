@@ -18,6 +18,10 @@ const {
 // have signed it off.
 const COMPLETED_STATUS = 'COMPLETED';
 
+// account_type on the USER account, not a field on the employee record -- the same value the
+// Job Order assignment picker filters by (routes/employees.js, ?account_type=Artist).
+const ARTIST_ACCOUNT_TYPE = 'Artist';
+
 // Both sides are filtered on the date the artist actually finished the layout
 // (layout_ended_at), not when the work was planned or the order raised -- an incentive is
 // earned when the work is done.
@@ -137,25 +141,39 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   } catch (err) { next(err); }
 });
 
-// Artists to populate the filter -- only those who actually have incentives to show, so the
-// dropdown isn't the whole employee list.
+// Artists to populate the filter: EVERY artist, not only the ones who have earned something.
 //
-// These conditions MUST match the report body above, sign-off included. They did not: the
-// dropdown asked only for an artist and a layout end, while the body also requires Sales to
-// have accepted the work. That let the filter offer an artist whose only finished layout was
-// still sitting at 'For Artist' -- picking them returned "No incentives in this period", which
-// reads as a broken report rather than as work not yet signed off. An artist who earns nothing
-// yet does not belong in a filter over earnings.
+// Deriving this list from earnings was wrong twice over. It made the filter useless as a
+// payout tool -- "did this artist earn anything this period?" is a question you ask *about*
+// an artist, and an empty answer for a real artist is information, not an error -- and it
+// made the dropdown a running commentary on the data instead of a stable list, so an office
+// with many artists saw three names and reasonably concluded the report was broken.
+//
+// An artist is someone whose linked user account is of type 'Artist', the same definition
+// the Job Order assignment picker uses (GET /employees?account_type=Artist). Sharing that
+// definition is the point: the people you can assign layout work to are exactly the people
+// you can then filter the incentives by. It also drops anyone who merely *holds* a job order
+// without being an artist -- a System Admin who was assigned one, say.
+//
+// The second arm keeps anyone who actually has incentive rows, whatever their account type
+// is now. Without it a filter can miss someone the report body still shows: account types
+// change, and an artist who has since moved on or been made a supervisor keeps the work they
+// did. A name in the body that cannot be selected in the filter is the mismatch this whole
+// endpoint has already been fixed for once.
 router.get('/artists', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    // Scoped the same way the body is, too: an Artist may only see their own incentives, so
-    // listing everyone else in their filter was both a dead end and other people's names.
+    // Scoped the same way the body is: an Artist may only see their own incentives, so
+    // listing everyone else in their filter is both a dead end and other people's names.
     const artistEmployeeId = await getArtistEmployeeScope(req.user.id);
     const scope = artistEmployeeId ? 'AND e.id = ?' : '';
+    const params = [ARTIST_ACCOUNT_TYPE, COMPLETED_STATUS];
+    if (artistEmployeeId) params.push(artistEmployeeId);
     const [rows] = await pool.query(
       `SELECT e.id, CONCAT(e.first_name, ' ', e.last_name) AS name
          FROM employees e
-        WHERE (e.id IN (SELECT artist_id FROM job_orders
+        WHERE (e.id IN (SELECT u.employee_id FROM users u
+                         WHERE u.account_type = ? AND u.employee_id IS NOT NULL)
+            OR e.id IN (SELECT artist_id FROM job_orders
                          WHERE artist_id IS NOT NULL AND layout_ended_at IS NOT NULL
                            AND sub_status = 'Approved')
             OR e.id IN (SELECT artist_employee_id FROM non_standard_job_orders
@@ -163,7 +181,7 @@ router.get('/artists', requireAuth, requirePermission(ROUTE, 'can_view'), async 
                            AND status = ?))
           ${scope}
         ORDER BY e.first_name, e.last_name`,
-      artistEmployeeId ? [COMPLETED_STATUS, artistEmployeeId] : [COMPLETED_STATUS],
+      params,
     );
     res.json(rows);
   } catch (err) { next(err); }
