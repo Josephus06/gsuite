@@ -109,16 +109,18 @@ async function notifyNewPost(post, author) {
 }
 
 // Reactions coalesce: repeated reacting (or a popular post) would otherwise bury the bell in
-// one row per reactor. Any UNREAD reaction notification for this post is replaced by a single
-// refreshed one, so the author sees "Ana and 4 others reacted to your post". Already-read
-// notifications are left alone -- those are history.
+// one row per reactor. The author's UNREAD reaction notification for this post is REWRITTEN in
+// place, so they see "Ana and 4 others reacted to your post". Already-read notifications are
+// left alone -- those are history.
+//
+// Rewritten rather than deleted-and-reinserted, which is what it used to do. A DELETE issued
+// from either half of the office/cloud pair can arrive at the other after that row has already
+// gone, which stops replication with error 1032 and takes every other table down with it (see
+// src/db/REPLICATION-RECOVERY.md). An UPDATE of a row both sides hold replicates cleanly, and
+// an INSERT of a new row never conflicts because the two servers allocate ids from separate
+// ranges.
 async function notifyReaction(post, actor) {
   if (Number(post.user_id) === Number(actor.id)) return;
-
-  await pool.query(
-    'DELETE FROM notifications WHERE user_id = ? AND type = ? AND related_type = ? AND related_id = ? AND is_read = 0',
-    [post.user_id, NOTIFY.reaction, 'FeedPost', post.id]
-  );
 
   const [[{ n }]] = await pool.query(
     'SELECT COUNT(*) AS n FROM feed_post_reactions WHERE post_id = ? AND user_id <> ?',
@@ -128,13 +130,22 @@ async function notifyReaction(post, actor) {
   const who = others === 0
     ? actor.display_name
     : `${actor.display_name} and ${others} other${others === 1 ? '' : 's'}`;
+  const title = `${who} reacted to your post`;
+  const message = post.body ? clip(post.body, 200) : 'Your photo';
+
+  // Newest first, one row: this coalesces onto a single notification going forward. Any extra
+  // unread rows left over from the old delete-and-reinsert behaviour are simply outlived --
+  // the bell's five-row cap clears them once read.
+  const [updated] = await pool.query(
+    `UPDATE notifications SET title = ?, message = ?, created_at = NOW()
+      WHERE user_id = ? AND type = ? AND related_type = ? AND related_id = ? AND is_read = 0
+      ORDER BY id DESC LIMIT 1`,
+    [title, message, post.user_id, NOTIFY.reaction, 'FeedPost', post.id]
+  );
+  if (updated.affectedRows) return;
 
   await insertNotifications([{
-    userId: post.user_id,
-    type: NOTIFY.reaction,
-    title: `${who} reacted to your post`,
-    message: post.body ? clip(post.body, 200) : 'Your photo',
-    postId: post.id,
+    userId: post.user_id, type: NOTIFY.reaction, title, message, postId: post.id,
   }]);
 }
 

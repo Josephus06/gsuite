@@ -16,11 +16,28 @@ const router = express.Router();
 // disappearing before anyone laid eyes on it is a far worse outcome than a list of six.
 const KEEP = 5;
 
+// Which server in a replication pair performs destructive notification maintenance.
+//
+// The trim below DELETEs rows. In the office/cloud pair BOTH servers accept writes, so both
+// would run it for the same user seconds apart -- and whichever delete replicates second finds
+// the row already gone, which stops the applier with error 1032 and silently freezes every
+// other table's replication with it. That is what took replication down repeatedly on
+// 2026-08-24; see src/db/REPLICATION-RECOVERY.md.
+//
+// So only one server trims, and its deletes replicate cleanly to the other. Set
+// REPLICATION_ROLE=replica in the .env of the follower (the office). Unset means primary, so a
+// standalone install -- local, Railway -- keeps trimming exactly as before.
+const IS_REPLICA = String(process.env.REPLICATION_ROLE || '').toLowerCase() === 'replica';
+
 // Applied when the list is read rather than at each of the twenty places that create a
 // notification: every user polls this endpoint every five seconds, so the trim lands within a
 // tick of the new arrival, and there is one rule in one place instead of twenty call sites
 // that would each have to remember.
+//
+// On a replica this is a no-op: the primary's trim arrives by replication, so the cap is still
+// enforced -- just once, from one place, instead of both servers racing to apply it.
 async function trim(userId) {
+  if (IS_REPLICA) return;
   await pool.query(
     `DELETE FROM notifications
       WHERE user_id = ? AND is_read = TRUE
