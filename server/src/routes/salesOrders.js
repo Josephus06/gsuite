@@ -231,21 +231,146 @@ async function estimateIdForSalesOrder(req) {
   return so.estimate_id;
 }
 
+// Both the estimate's files and the order's own, each tagged with where it came from -- the
+// screen shows them in one list, and `source` is what tells it which file route to open and
+// whether the row may be removed.
 router.get('/:id/attachments', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const estimateId = await estimateIdForSalesOrder(req);
-    if (estimateId === null) return res.status(404).json({ error: 'Not found' });
-    // A sales order with no estimate behind it (imported or non-standard) simply has none.
-    if (!estimateId) return res.json([]);
+    const so = await salesOrderForAttachment(req);
+    if (!so) return res.status(404).json({ error: 'Not found' });
 
-    const [rows] = await pool.query(
+    // A sales order with no estimate behind it (imported or non-standard) simply has none.
+    const [inherited] = so.estimate_id ? await pool.query(
       `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, u.display_name AS uploaded_by_name
          FROM estimate_attachments a
          LEFT JOIN users u ON u.id = a.uploaded_by_user_id
         WHERE a.estimate_id = ? ORDER BY a.id`,
-      [estimateId],
+      [so.estimate_id],
+    ) : [[]];
+
+    const [own] = await pool.query(
+      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, u.display_name AS uploaded_by_name
+         FROM sales_order_attachments a
+         LEFT JOIN users u ON u.id = a.uploaded_by_user_id
+        WHERE a.sales_order_id = ? ORDER BY a.id`,
+      [req.params.id],
     );
-    res.json(rows);
+
+    res.json({
+      canManage: so.canManage,
+      attachments: [
+        ...inherited.map((r) => ({ ...r, source: 'estimate' })),
+        ...own.map((r) => ({ ...r, source: 'order' })),
+      ],
+    });
+  } catch (err) { next(err); }
+});
+
+// ---------------------------------------------------------------------------------------
+// The order's own attachments
+// ---------------------------------------------------------------------------------------
+//
+// An order picks up documents after it is raised -- a revised PO, a signed conforme, a
+// delivery instruction. Those belong to the order, not to the estimate behind it, so they
+// live in their own table and are listed alongside the inherited ones with a source marker.
+//
+// Gated on can_add rather than can_edit: Sales holds can_add on /sales-orders but not
+// can_edit, and the reps who own these orders are exactly who needs to attach to them.
+// Adding paperwork is also genuinely an add, not an edit of the order.
+const SO_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+const SO_ATTACHMENT_TYPES = /^(application\/pdf|image\/(png|jpe?g|gif|webp|bmp|tiff))$/i;
+
+// The order, plus whether this user owns it. Ownership is the rep the order is booked
+// under -- "the owner of the sales order" -- resolved through the acting user's employee_id.
+async function salesOrderForAttachment(req) {
+  const [[so]] = await pool.query(
+    'SELECT id, estimate_id, sales_rep_id FROM sales_orders WHERE id = ?', [req.params.id]
+  );
+  if (!so) return null;
+  const scope = await getSalesRepEmployeeScope(req.user.id);
+  if (scope && !scope.includes(so.sales_rep_id)) return null;
+
+  const [[me]] = await pool.query('SELECT employee_id, account_type FROM users WHERE id = ?', [req.user.id]);
+  // scope === null means no visibility rule applies to this account (System Admin and the
+  // non-sales roles) -- those can manage the order's files the same as its owner can.
+  const isOwner = !!me?.employee_id && Number(me.employee_id) === Number(so.sales_rep_id);
+  return { ...so, isOwner, canManage: isOwner || scope === null };
+}
+
+router.post('/:id/order-attachments', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
+  try {
+    const so = await salesOrderForAttachment(req);
+    if (!so) return res.status(404).json({ error: 'Not found' });
+    if (!so.canManage) {
+      return res.status(403).json({ error: 'Only the sales order\'s own rep can attach files to it.' });
+    }
+
+    const { file_name: fileName, data, mime_type: mimeType } = req.body || {};
+    if (!fileName || !data) return res.status(400).json({ error: 'file_name and data are required.' });
+    if (!SO_ATTACHMENT_TYPES.test(String(mimeType || ''))) {
+      return res.status(400).json({ error: 'Only a PDF or an image can be attached.' });
+    }
+
+    // Accepts a bare base64 string or a full data: URL, since the browser's FileReader hands
+    // back the latter.
+    const base64 = String(data).includes(',') ? String(data).split(',').pop() : String(data);
+    let buf;
+    try {
+      buf = Buffer.from(base64, 'base64');
+    } catch {
+      return res.status(400).json({ error: 'data is not valid base64.' });
+    }
+    if (!buf.length) return res.status(400).json({ error: 'That file is empty.' });
+    if (buf.length > SO_ATTACHMENT_MAX_BYTES) {
+      return res.status(413).json({ error: `Attachments must be ${SO_ATTACHMENT_MAX_BYTES / 1024 / 1024}MB or smaller.` });
+    }
+
+    const [result] = await pool.query(
+      `INSERT INTO sales_order_attachments (sales_order_id, file_name, mime_type, size_bytes, file_data, uploaded_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [req.params.id, String(fileName).slice(0, 255), String(mimeType).slice(0, 100), buf.length, buf, req.user.id]
+    );
+    const [[row]] = await pool.query(
+      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.uploaded_by_user_id,
+              u.display_name AS uploaded_by_name
+         FROM sales_order_attachments a
+         LEFT JOIN users u ON u.id = a.uploaded_by_user_id
+        WHERE a.id = ?`,
+      [result.insertId]
+    );
+    res.status(201).json({ ...row, source: 'order' });
+  } catch (err) { next(err); }
+});
+
+router.get('/:id/order-attachments/:attachmentId/file', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const so = await salesOrderForAttachment(req);
+    if (!so) return res.status(404).json({ error: 'Not found' });
+
+    const [[row]] = await pool.query(
+      'SELECT file_name, mime_type, file_data FROM sales_order_attachments WHERE id = ? AND sales_order_id = ?',
+      [req.params.attachmentId, req.params.id]
+    );
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${row.file_name.replace(/"/g, '')}"`);
+    res.send(row.file_data);
+  } catch (err) { next(err); }
+});
+
+router.delete('/:id/order-attachments/:attachmentId', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
+  try {
+    const so = await salesOrderForAttachment(req);
+    if (!so) return res.status(404).json({ error: 'Not found' });
+    if (!so.canManage) {
+      return res.status(403).json({ error: 'Only the sales order\'s own rep can remove its files.' });
+    }
+    const [result] = await pool.query(
+      'DELETE FROM sales_order_attachments WHERE id = ? AND sales_order_id = ?',
+      [req.params.attachmentId, req.params.id]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: 'Not found' });
+    res.status(204).send();
   } catch (err) { next(err); }
 });
 

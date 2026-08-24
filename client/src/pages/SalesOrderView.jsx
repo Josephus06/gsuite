@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
@@ -77,6 +77,9 @@ export default function SalesOrderView() {
   const [deliveries, setDeliveries] = useState([]);
   const [attachments, setAttachments] = useState([]);
   const [attachmentError, setAttachmentError] = useState('');
+  const [canManageAttachments, setCanManageAttachments] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const attachmentInputRef = useRef(null);
 
   function load() {
     return api.get(`/sales-orders/${id}`).then(({ data }) => { setSo(data); setLoading(false); });
@@ -91,17 +94,24 @@ export default function SalesOrderView() {
     }
     if (tab === 'attachments') {
       api.get(`/sales-orders/${id}/attachments`)
-        .then(({ data }) => setAttachments(data))
-        .catch(() => setAttachments([]));
+        .then(({ data }) => {
+          setAttachments(data.attachments || []);
+          setCanManageAttachments(!!data.canManage);
+        })
+        .catch(() => { setAttachments([]); setCanManageAttachments(false); });
     }
   }, [tab, id]);
 
   // Fetched through the API rather than linked with a bare href so the request carries the
-  // auth header -- the file endpoint is behind requireAuth like everything else.
-  async function openAttachment(attachmentId) {
+  // auth header -- the file endpoints are behind requireAuth like everything else. The two
+  // sources live in different tables, so `source` decides which route to ask.
+  async function openAttachment(row) {
     setAttachmentError('');
+    const path = row.source === 'order'
+      ? `/sales-orders/${id}/order-attachments/${row.id}/file`
+      : `/sales-orders/${id}/attachments/${row.id}/file`;
     try {
-      const { data } = await api.get(`/sales-orders/${id}/attachments/${attachmentId}/file`, { responseType: 'blob' });
+      const { data } = await api.get(path, { responseType: 'blob' });
       const url = URL.createObjectURL(data);
       window.open(url, '_blank');
       // Revoked on a delay: revoking immediately can beat the new tab to the object.
@@ -110,6 +120,51 @@ export default function SalesOrderView() {
       setAttachmentError('Could not open that file.');
     }
   }
+
+  async function uploadAttachment(file) {
+    if (!file) return;
+    setAttachmentError('');
+    // Checked here as well as on the server so the user finds out before spending a minute
+    // uploading something that will be refused.
+    if (file.size > 10 * 1024 * 1024) {
+      setAttachmentError(`"${file.name}" is ${fileSize(file.size)}. Files must be 10MB or smaller.`);
+      if (attachmentInputRef.current) attachmentInputRef.current.value = '';
+      return;
+    }
+    setUploading(true);
+    try {
+      const data = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('Could not read that file'));
+        reader.readAsDataURL(file);
+      });
+      const { data: row } = await api.post(`/sales-orders/${id}/order-attachments`, {
+        file_name: file.name, mime_type: file.type, data,
+      });
+      setAttachments((prev) => [...prev, row]);
+    } catch (err) {
+      setAttachmentError(err.response?.data?.error || err.message || 'Upload failed.');
+    } finally {
+      setUploading(false);
+      if (attachmentInputRef.current) attachmentInputRef.current.value = '';
+    }
+  }
+
+  async function removeAttachment(attachmentId, name) {
+    if (!confirm(`Remove "${name}"?`)) return;
+    setAttachmentError('');
+    setUploading(true);
+    try {
+      await api.delete(`/sales-orders/${id}/order-attachments/${attachmentId}`);
+      setAttachments((prev) => prev.filter((a) => !(a.source === 'order' && a.id === attachmentId)));
+    } catch (err) {
+      setAttachmentError(err.response?.data?.error || 'Could not remove that file.');
+    } finally {
+      setUploading(false);
+    }
+  }
+
 
   async function handleCreateJo(lineId) {
     setCreatingLineId(lineId);
@@ -301,31 +356,58 @@ export default function SalesOrderView() {
       {tab === 'attachments' && (
         <div className="card">
           <p className="muted" style={{ marginTop: 0 }}>
-            Files attached to the originating estimate
-            {so.estimate_no ? <> <button type="button" className="link-btn" onClick={() => navigate(`/estimates/${so.estimate_id}`)}>{so.estimate_no}</button></> : null}
-            . Attached when the estimate was raised; read-only here.
+            Files on this order. Those marked Estimate came across from
+            {so.estimate_no ? <> <button type="button" className="link-btn" onClick={() => navigate(`/estimates/${so.estimate_id}`)}>{so.estimate_no}</button></> : ' the estimate'}
+            {' '}and are read-only here; anything added below belongs to the order itself.
           </p>
           {attachmentError && <div className="error-banner" style={{ marginBottom: 12 }}>{attachmentError}</div>}
           <div className="table-wrap">
             <table>
-              <thead><tr><th>#</th><th>File</th><th>Type</th><th>Size</th><th>Uploaded By</th><th>Uploaded</th></tr></thead>
+              <thead><tr><th>#</th><th>File</th><th>Source</th><th>Type</th><th>Size</th><th>Uploaded By</th><th>Uploaded</th><th></th></tr></thead>
               <tbody>
                 {attachments.length === 0 && (
-                  <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>No files attached to the estimate.</td></tr>
+                  <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>No files on this order yet.</td></tr>
                 )}
                 {attachments.map((a, idx) => (
-                  <tr key={a.id}>
+                  <tr key={`${a.source}-${a.id}`}>
                     <td>{idx + 1}</td>
-                    <td><button type="button" className="link-btn" onClick={() => openAttachment(a.id)}>{a.file_name}</button></td>
+                    <td><button type="button" className="link-btn" onClick={() => openAttachment(a)}>{a.file_name}</button></td>
+                    <td>{a.source === 'order' ? 'This order' : 'Estimate'}</td>
                     <td>{a.mime_type === 'application/pdf' ? 'PDF' : (String(a.mime_type || '').startsWith('image/') ? 'Image' : a.mime_type)}</td>
                     <td>{fileSize(a.size_bytes)}</td>
                     <td>{a.uploaded_by_name || ''}</td>
                     <td>{a.created_at ? new Date(a.created_at).toLocaleString() : ''}</td>
+                    <td>
+                      {/* Only the order's own files can be removed here -- an estimate's
+                          paperwork is managed on the estimate. */}
+                      {canManageAttachments && a.source === 'order' && (
+                        <button type="button" className="btn btn-sm btn-danger" disabled={uploading} onClick={() => removeAttachment(a.id, a.file_name)}>Remove</button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+
+          {canManageAttachments ? (
+            <div style={{ marginTop: 12 }}>
+              <input
+                ref={attachmentInputRef}
+                type="file"
+                accept="application/pdf,image/png,image/jpeg,image/gif,image/webp,image/bmp,image/tiff"
+                disabled={uploading}
+                onChange={(e) => uploadAttachment(e.target.files?.[0])}
+              />
+              <div className="muted" style={{ fontSize: '0.85em', marginTop: 4 }}>
+                PDF or image, up to 10MB. {uploading && 'Uploading...'}
+              </div>
+            </div>
+          ) : (
+            <p className="muted" style={{ marginTop: 12, marginBottom: 0 }}>
+              Only the rep this order is booked under can attach files to it.
+            </p>
+          )}
         </div>
       )}
 

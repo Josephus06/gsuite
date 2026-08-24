@@ -143,6 +143,8 @@ app.use((req, res, next) => {
       || /^\/api\/hrd\/\d+\/files\/?$/.test(req.path)
       // Order-confirmation scans on an estimate: same 10MB ceiling.
       || /^\/api\/estimates\/\d+\/attachments\/?$/.test(req.path)
+      // Documents the order picked up after it was raised -- same 10MB ceiling again.
+      || /^\/api\/sales-orders\/\d+\/order-attachments\/?$/.test(req.path)
       // A flipbook page is one exported brochure page at print resolution: 8MB of image
       // is ~10.7MB of base64, so it needs the raised parser too.
       || /^\/api\/product-flipbook\/?$/.test(req.path)
