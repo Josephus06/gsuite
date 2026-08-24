@@ -120,6 +120,51 @@ different datasets is worse than a stopped replica, because nothing will ever fl
 
 ---
 
+## 4b. If the SAME table keeps breaking it — repair that table
+
+Skipping clears the queue but does not fix anything. If the same table appears in the error
+again and again, that table's contents genuinely differ between the two servers and every
+future delete on it will stop replication again.
+
+This happened on 2026-08-24: `notifications` had disagreed since the Railway cutover, and
+replication was skipped past it five times in one day before the table itself was repaired.
+
+**Confirm the tables differ** — run on BOTH servers and compare:
+
+    mysql -uroot gsuite_erp -e "CHECKSUM TABLE notifications, tickets, users"
+
+Note: `users` and `notifications` change constantly (`users.last_seen_at` is the presence
+heartbeat, written on nearly every request), so their checksums are moving targets and will
+rarely match to the second. Read them on both sides close together, and treat a *large*
+difference as real. `tickets` and similar are stable enough to compare directly.
+
+**Then copy the cloud's copy over the office's.** On the office:
+
+    sudo MYSQL_PWD='<cloud DB_PASSWORD>' mysqldump --host=100.111.65.92 --user=gsuite \
+      --skip-lock-tables --no-tablespaces --set-gtid-purged=OFF --hex-blob \
+      gsuite_erp <table> --result-file=/tmp/fix.sql
+    tail -3 /tmp/fix.sql            # MUST end "-- Dump completed on"
+    grep -c GTID_PURGED /tmp/fix.sql  # MUST print 0
+
+    mysql -uroot -e "STOP REPLICA"
+    ( echo "SET sql_log_bin=0;"; cat /tmp/fix.sql ) | mysql -uroot gsuite_erp
+    mysql -uroot -e "START REPLICA"
+    mysql -uroot gsuite_erp -e "CHECKSUM TABLE <table>"
+
+Three flags matter here, all learned the hard way:
+
+- **`--set-gtid-purged=OFF`** — without it a partial dump carries `SET @@GLOBAL.GTID_PURGED`,
+  which on load tries to rewrite the office's GTID state and breaks replication outright.
+  Always verify with the `grep -c` above.
+- **`--skip-lock-tables`** — `--single-transaction` makes mysqldump issue `FLUSH TABLES`,
+  which `gsuite` lacks the privilege for. For a single table being repaired with the replica
+  stopped, a consistent snapshot is not needed.
+- **`SET sql_log_bin=0`** — keeps the repair out of the office's binlog so it does not
+  replicate back to the cloud and start the same fight from the other direction. It must be
+  in the SAME session as the load, which is why it is piped in rather than run separately.
+
+---
+
 ## 5. When skipping is not the answer: re-seed the office
 
 Use this when the error is not 1032/1060, when the counts still disagree after catching up,
@@ -153,12 +198,18 @@ that throws away everything that had not arrived yet.
     tail -3 /root/office-before-reseed.sql        # MUST end "-- Dump completed on"
 
     # seed from the cloud, over Tailscale
-    mysqldump --host=100.111.65.92 --user=repl -p --single-transaction \
-      --set-gtid-purged=ON --routines --events --triggers --hex-blob --quick \
+    sudo mysqldump --host=100.111.65.92 --user=gsuite -p --single-transaction \
+      --set-gtid-purged=ON --no-tablespaces --routines --events --triggers --hex-blob --quick \
       gsuite_erp --result-file=/root/seed.sql
     tail -3 /root/seed.sql                        # MUST end "-- Dump completed on"
 
-The `repl` password is in `/root/.mysql_repl_pw` on the cloud.
+Use **`gsuite`**, not `repl`. `repl` holds only `REPLICATION SLAVE, REPLICATION CLIENT` — it
+cannot read tables and cannot take a dump. `gsuite@%` has `ALL PRIVILEGES ON gsuite_erp` and
+can connect from the office. Its password is the cloud's `DB_PASSWORD`:
+
+    ssh root@146.190.103.165 "grep '^DB_PASSWORD=' /opt/gsuite/server/.env"
+
+`--no-tablespaces` avoids a `PROCESS` privilege error that `gsuite` would otherwise hit.
 
     mysql -uroot -e "DROP DATABASE gsuite_erp; CREATE DATABASE gsuite_erp CHARACTER SET utf8mb4; RESET BINARY LOGS AND GTIDS;"
     mysql -uroot gsuite_erp < /root/seed.sql
@@ -197,13 +248,34 @@ replication is healthy, run the migration on the cloud and let it flow to the of
 If replication is already broken and you must run it on both, that is fine — just expect 1060
 when the channels come back, and skip it (step 4).
 
-**Schedule the health check.** It exists, it reports only when something is wrong, and it has
-never been scheduled:
+**Keep the health check scheduled.** It reports only when something is wrong. It needs
+credentials for BOTH servers in its environment, which cron does not have — so they live in a
+root-only file rather than in the crontab. Installed on the office 2026-08-24:
 
-    */10 * * * * /usr/bin/node /opt/gsuite/server/src/db/replication-health.js --quiet
+    sudo tee /root/.replhealth.env >/dev/null <<'ENVEOF'
+    CLOUD_HOST=100.111.65.92
+    CLOUD_USER=gsuite
+    CLOUD_PW=<cloud DB_PASSWORD>
+    OFFICE_HOST=127.0.0.1
+    OFFICE_USER=root
+    OFFICE_PW=<office mysql root password>
+    ENVEOF
+    sudo chmod 600 /root/.replhealth.env
 
-Without it a stopped channel is invisible. The `from_office` channel was down from 2026-08-21
-to 2026-08-24 and was noticed only because someone spotted stale data on screen.
+Test it before trusting it — a check that cannot authenticate reports nothing wrong precisely
+because it never ran:
+
+    sudo bash -c 'set -a; . /root/.replhealth.env; set +a; node /opt/gsuite/server/src/db/replication-health.js'
+
+Then schedule it:
+
+    ( sudo crontab -l 2>/dev/null; echo '*/10 * * * * set -a; . /root/.replhealth.env; set +a; /usr/bin/node /opt/gsuite/server/src/db/replication-health.js --quiet' ) | sudo crontab -
+
+`gsuite` is the right user for the cloud side — it holds `REPLICATION CLIENT`. `setup`, the
+script's default for OFFICE_USER, does not exist; use `root`.
+
+Without this a stopped channel is invisible. The `from_office` channel was down from
+2026-08-21 to 2026-08-24 and was noticed only because someone spotted stale data on screen.
 
 **Expect 1032 as normal wear.** Both servers accept writes (`auto_increment_increment=10`,
 offsets 1 and 2, one hostname resolving to both), so the same row can be deleted on each side
