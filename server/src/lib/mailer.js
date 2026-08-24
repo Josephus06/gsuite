@@ -45,6 +45,14 @@ function getTransport() {
       port: Number(SMTP_PORT),
       secure: Number(SMTP_PORT) === 465,
       auth: { user: SMTP_USER, pass: SMTP_PASS },
+      // WITHOUT THESE, A BLOCKED PORT LOOKS LIKE A SLOW ONE. Nodemailer waits two minutes to
+      // connect by default, so a host that silently drops outbound SMTP -- which many platforms
+      // do, to stop their address ranges being used for spam -- leaves the user watching a
+      // "Sending..." button for two minutes before anything is reported. Ten seconds is far more
+      // than a reachable mail server needs, and failing fast lets us say what is actually wrong.
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 20000,
     });
   }
   return transport;
@@ -90,6 +98,21 @@ async function send({ to, subject, html, text, replyTo, attachments, fromName })
     });
     return { ok: true, messageId: info.messageId };
   } catch (err) {
+    // A timeout or a refused connection almost never means the settings are wrong -- it means
+    // nothing could get out of this machine to the mail server. Saying so points at the hosting
+    // platform rather than sending someone to re-check a password that was correct all along.
+    const blocked = /ETIMEDOUT|ECONNREFUSED|ESOCKET|Greeting never received|timeout/i.test(
+      `${err.code || ''} ${err.message || ''}`,
+    );
+    if (blocked) {
+      return {
+        ok: false,
+        blocked: true,
+        error: `Could not reach ${SMTP_HOST}:${SMTP_PORT} from this server (${err.code || 'timed out'}). `
+          + 'The settings look right -- this is the host blocking outbound mail. '
+          + 'Try port 587 instead of 465, or send through a provider that works over HTTPS.',
+      };
+    }
     return { ok: false, error: err.message || 'The mail server refused the message.' };
   }
 }
