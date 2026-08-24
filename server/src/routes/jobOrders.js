@@ -3,7 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } = require('../lib/designSupervisorVisibility');
 const { getArtistEmployeeScope } = require('../lib/artistVisibility');
-const { notifyDesignSupervisors, notifyAssignedArtist } = require('../lib/designNotifications');
+const { notifyDesignSupervisors, notifyAssignedArtist, notifySalesRep } = require('../lib/designNotifications');
 
 const router = express.Router();
 const ROUTE = '/job-orders';
@@ -582,7 +582,10 @@ router.put('/:id/sales-approval', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [[jo]] = await conn.query('SELECT sub_status, artist_id FROM job_orders WHERE id = ?', [req.params.id]);
+    const [[jo]] = await conn.query(
+      'SELECT sub_status, artist_id, sales_rep_id, job_order_no FROM job_orders WHERE id = ?',
+      [req.params.id]
+    );
     if (!jo) { await conn.rollback(); return res.status(404).json({ error: 'Not found' }); }
 
     const [[me]] = await conn.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
@@ -616,6 +619,16 @@ router.put('/:id/sales-approval', requireAuth, async (req, res, next) => {
       });
     }
     await conn.query("UPDATE job_orders SET sub_status = 'Sales Approval', updated_at = NOW() WHERE id = ?", [req.params.id]);
+    // Tell the sales rep who owns this Job Order. Without it the hand-off was silent: the layout
+    // was finished and waiting on them, and the only way to find out was to go looking.
+    // Non-Standard Job Orders have notified on this transition all along -- Job Orders did not.
+    await notifySalesRep(conn, {
+      salesRepEmployeeId: jo.sales_rep_id,
+      title: `${jo.job_order_no} is ready for your sign-off`,
+      message: 'The artist has finished the layout and sent it for Sales Approval.',
+      relatedType: 'JobOrder',
+      relatedId: Number(req.params.id),
+    });
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'sub_status', oldValue: jo.sub_status, newValue: 'Sales Approval' });
     await conn.commit();
     const [[row]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);

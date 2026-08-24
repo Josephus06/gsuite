@@ -54,9 +54,39 @@ async function notifyAssignedArtist(conn, { artistEmployeeId, title, message, re
   return true;
 }
 
+// The third hand-off, and the one that was still silent: the artist finishes the layout and
+// sends it to Sales for sign-off. Nothing told Sales, so a finished Job Order sat at "Sales
+// Approval" until somebody happened to scan the list -- the same failure the two above were
+// written to fix, in the one place it had been missed.
+//
+// A Job Order has no raiser to notify. Unlike a Non-Standard Job Order, which somebody creates
+// by hand, a JO descends from a Sales Order and an Estimate, so the person who owns it is its
+// sales_rep_id. That is an employee record; the notification has to reach the *user* account
+// linked to it, the same indirection notifyAssignedArtist deals with.
+const NOTIFY_TYPE_SALES_APPROVAL = 'jo_sales_approval';
+
+async function notifySalesRep(conn, { salesRepEmployeeId, title, message, relatedType, relatedId }) {
+  if (!salesRepEmployeeId) return false;
+  const [[repUser]] = await conn.query(
+    'SELECT id FROM users WHERE employee_id = ? AND is_active = TRUE ORDER BY id LIMIT 1',
+    [salesRepEmployeeId],
+  );
+  // A rep with no user account, or a deactivated one, simply gets no notification rather than
+  // failing the hand-off. The artist's work must still be submitted.
+  if (!repUser) return false;
+  await conn.query(
+    `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [repUser.id, NOTIFY_TYPE_SALES_APPROVAL, title, message, relatedType, relatedId],
+  );
+  return true;
+}
+
 module.exports = {
   notifyDesignSupervisors,
   notifyAssignedArtist,
+  notifySalesRep,
   NOTIFY_TYPE_PENDING_ASSIGNMENT,
   NOTIFY_TYPE_ARTIST_ASSIGNED,
+  NOTIFY_TYPE_SALES_APPROVAL,
 };
