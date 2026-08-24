@@ -1047,10 +1047,23 @@ router.post('/:id/email', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
               sent_to_customer_by_user_id = ?, updated_at = NOW() WHERE id = ?`,
       [to.slice(0, 255), req.user.id, req.params.id],
     );
-    await logAudit(conn, {
-      estimateId: req.params.id, userId: req.user.id, eventType: 'Emailed',
-      fieldName: 'sent_to_customer_email', oldValue: est.sent_to_customer_email, newValue: to,
-    });
+    // ONCE THE MESSAGE HAS GONE, THE RECORD OF IT MUST SURVIVE. Sending is not undoable. If
+    // anything after this point fails and takes the record down with it, the system forgets the
+    // customer was contacted and the next person sends a second copy -- the same failure as
+    // recording an unsent message, but in the direction that actually reaches the customer.
+    try {
+      // 'Updated', not 'Emailed': audit_logs.event_type is an ENUM of seven values and does not
+      // include the latter, so MySQL rejected the row and rolled back an email that had already
+      // left. field_name and the values carry what actually happened.
+      await logAudit(conn, {
+        estimateId: req.params.id, userId: req.user.id, eventType: 'Updated',
+        fieldName: 'sent_to_customer_email', oldValue: est.sent_to_customer_email, newValue: to,
+      });
+    } catch (auditErr) {
+      // A missing audit line is a small loss. Throwing away the fact that a customer was emailed,
+      // because the note about it would not save, is a much bigger one.
+      console.error(`estimate ${req.params.id}: emailed to ${to}, audit entry failed --`, auditErr.message);
+    }
     await conn.commit();
 
     res.json({
