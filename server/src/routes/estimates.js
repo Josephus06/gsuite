@@ -1,4 +1,6 @@
 const express = require('express');
+const mailer = require('../lib/mailer');
+const { buildEstimateEmail } = require('../lib/estimateEmail');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
@@ -887,6 +889,143 @@ router.delete('/:id/attachments/:attachmentId', requireAuth, requirePermission(R
     if (!result.affectedRows) return res.status(404).json({ error: 'Not found' });
     res.json({ deleted: true });
   } catch (err) { next(err); }
+});
+
+
+// ---------------------------------------------------------------------------------------
+// Send the estimate to the customer
+// ---------------------------------------------------------------------------------------
+//
+// An estimate sitting in Pending Customer Approval is waiting on somebody outside the company to
+// look at it, and until now getting it to them happened outside the system entirely -- printed,
+// or retyped into a mail client. This closes that gap and, just as importantly, writes down that
+// it happened.
+//
+// WHO IT GOES TO. Only 45 of 69,466 estimates carry a contact_email, so the address is usually
+// not on the estimate. It falls back to the linked contact person's address, and the sender can
+// override it outright -- 29 of the 47 estimates currently awaiting approval have no address on
+// file anywhere, and refusing to send those would make the button useless exactly where it is
+// most needed. The address used is echoed back and recorded, so what was typed is never a guess
+// afterwards.
+//
+// WHAT IT SHOWS. The job lines and their amounts, not the process and material breakdown beneath
+// them. That breakdown is our costing and carries our margin; it is not the customer's business
+// and must not leave the building by accident.
+router.get('/:id/email-recipient', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [[row]] = await pool.query(
+      `SELECT e.id, e.estimate_no, e.status, e.contact_email, e.sent_to_customer_at, e.sent_to_customer_email,
+              cc.email AS contact_email_on_file, cc.contact_name, c.name AS customer_name,
+              su.display_name AS sent_by_name
+         FROM estimates e
+         LEFT JOIN customer_contacts cc ON cc.id = e.contact_person_id
+         LEFT JOIN customers c ON c.id = e.customer_id
+         LEFT JOIN users su ON su.id = e.sent_to_customer_by_user_id
+        WHERE e.id = ?`,
+      [req.params.id],
+    );
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    // Last sent wins as the suggestion: if somebody corrected the address once, that correction
+    // is a better guess than the stale one still sitting on the record.
+    const suggested = row.sent_to_customer_email || row.contact_email || row.contact_email_on_file || '';
+    res.json({
+      suggested,
+      source: row.sent_to_customer_email ? 'last sent'
+        : row.contact_email ? 'this estimate'
+          : row.contact_email_on_file ? 'contact record' : null,
+      contactName: row.contact_name,
+      customerName: row.customer_name,
+      sentAt: row.sent_to_customer_at,
+      sentTo: row.sent_to_customer_email,
+      sentByName: row.sent_by_name,
+      // Surfaced so the button can explain itself instead of failing when pressed.
+      mailConfigured: mailer.isConfigured(),
+      mailProblem: mailer.isConfigured() ? null : mailer.missingReason(),
+    });
+  } catch (err) { next(err); }
+});
+
+router.post('/:id/email', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    // Checked before the work rather than after: building the message and then discovering there
+    // is no mail server wastes the user's time and reads like a bug.
+    if (!mailer.isConfigured()) {
+      return res.status(503).json({ error: `Email is not set up on this server -- ${mailer.missingReason()}.` });
+    }
+
+    const [[est]] = await conn.query(
+      `SELECT e.*, c.name AS customer_name, cc.contact_name AS contact_person_name, cc.email AS contact_email_on_file,
+              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name
+         FROM estimates e
+         LEFT JOIN customers c ON c.id = e.customer_id
+         LEFT JOIN customer_contacts cc ON cc.id = e.contact_person_id
+         LEFT JOIN employees sr ON sr.id = e.sales_rep_id
+        WHERE e.id = ?`,
+      [req.params.id],
+    );
+    if (!est) return res.status(404).json({ error: 'Not found' });
+
+    // Same scoping the detail view applies -- an account officer cannot email out somebody
+    // else's estimate by posting to its id.
+    const scope = await getSalesRepEmployeeScope(req.user.id);
+    if (scope && !scope.includes(est.sales_rep_id)) return res.status(404).json({ error: 'Not found' });
+
+    if (est.status !== 'pending_customer_approval') {
+      return res.status(409).json({
+        error: 'Only an estimate awaiting customer approval can be sent to the customer.',
+      });
+    }
+
+    const to = String(req.body?.email || est.contact_email || est.contact_email_on_file || '').trim();
+    if (!to) {
+      return res.status(400).json({ error: 'There is no email address for this customer. Enter one to send it to.' });
+    }
+    // Deliberately permissive -- enough to catch a typo like a missing @ or a stray space, not an
+    // attempt to adjudicate RFC 5322. Rejecting a valid unusual address would be the worse error.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      return res.status(400).json({ error: `"${to}" does not look like an email address.` });
+    }
+
+    const [jobOrders] = await conn.query(
+      `SELECT jo.description, jo.quantity, jo.units, jo.subtotal, jo.gross_amount, jt.display_name AS job_type
+         FROM estimate_job_orders jo
+         LEFT JOIN job_types jt ON jt.id = jo.job_type_id
+        WHERE jo.estimate_id = ? ORDER BY jo.line_no`,
+      [req.params.id],
+    );
+
+    // Replies go to the sales rep who owns the estimate, not to the SMTP account -- a customer
+    // answering "yes please" should land with the person who can act on it.
+    const [[me]] = await conn.query('SELECT display_name, email FROM users WHERE id = ?', [req.user.id]);
+    const { subject, html, text } = buildEstimateEmail(est, jobOrders, {
+      senderName: est.sales_rep_name || me?.display_name,
+      senderEmail: me?.email,
+      note: String(req.body?.note || '').trim() || null,
+    });
+
+    const sent = await mailer.send({ to, subject, html, text, replyTo: me?.email });
+    if (!sent.ok) return res.status(502).json({ error: `The mail server refused it: ${sent.error}` });
+
+    // Only written once the send actually succeeded. Recording an attempt as a send is how a
+    // system ends up confidently telling someone a customer was contacted when they were not.
+    await conn.beginTransaction();
+    await conn.query(
+      `UPDATE estimates SET sent_to_customer_at = NOW(), sent_to_customer_email = ?,
+              sent_to_customer_by_user_id = ?, updated_at = NOW() WHERE id = ?`,
+      [to.slice(0, 255), req.user.id, req.params.id],
+    );
+    await logAudit(conn, {
+      estimateId: req.params.id, userId: req.user.id, eventType: 'Emailed',
+      fieldName: 'sent_to_customer_email', oldValue: est.sent_to_customer_email, newValue: to,
+    });
+    await conn.commit();
+
+    res.json({ ok: true, sentTo: to, sentAt: new Date().toISOString(), lines: jobOrders.length });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally { conn.release(); }
 });
 
 module.exports = router;

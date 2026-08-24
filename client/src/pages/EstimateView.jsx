@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import EstimateApprovalModal from '../components/EstimateApprovalModal';
+import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 // Read-only counterpart to EstimateWizard (which stays the create/edit form): mirrors
@@ -94,6 +95,13 @@ export default function EstimateView() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [showApproval, setShowApproval] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailInfo, setEmailInfo] = useState(null);
+  const [emailTo, setEmailTo] = useState('');
+  const [emailNote, setEmailNote] = useState('');
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailError, setEmailError] = useState('');
+  const [emailResult, setEmailResult] = useState(null);
 
   async function load() {
     setLoading(true);
@@ -125,6 +133,37 @@ export default function EstimateView() {
   const nextStatus = estimate?.status === 'pending_supervisor_approval' ? 'pending_customer_approval'
     : (estimate?.status === 'pending_customer_approval' ? 'approved' : null);
   function handleApprove() { if (nextStatus) setShowApproval(true); }
+
+  // Opened rather than sent outright. The address is usually not on the estimate, and even
+  // when it is, letting somebody see where a message to a customer is about to go before it
+  // goes is worth one extra click.
+  async function openEmail() {
+    setEmailError('');
+    setEmailResult(null);
+    setEmailOpen(true);
+    try {
+      const { data } = await api.get(`/estimates/${id}/email-recipient`);
+      setEmailInfo(data);
+      setEmailTo(data.suggested || '');
+    } catch {
+      setEmailInfo(null);
+      setEmailError('Could not work out where to send this.');
+    }
+  }
+
+  async function sendEmail() {
+    setEmailBusy(true);
+    setEmailError('');
+    try {
+      const { data } = await api.post(`/estimates/${id}/email`, { email: emailTo.trim(), note: emailNote.trim() });
+      setEmailResult(data);
+      await load();
+    } catch (err) {
+      setEmailError(err.response?.data?.error || 'Could not send it.');
+    } finally {
+      setEmailBusy(false);
+    }
+  }
 
   async function handleReplicate() {
     if (!confirm('Replicate this estimate into a new draft?')) return;
@@ -173,6 +212,13 @@ export default function EstimateView() {
           {canShowPrint && <button className="btn btn-sm btn-primary" onClick={() => window.open(`/estimates/${id}/print`, '_blank')}>Print</button>}
           {canEdit && isPending && canShowApprove && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>Approve</button>}
           {canEdit && isPending && <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setStatus('disapproved')}>Disapprove</button>}
+          {/* Only while the estimate is actually waiting on the customer -- sending one that is
+              already approved or cancelled would confuse the person receiving it. */}
+          {canEdit && estimate.status === 'pending_customer_approval' && (
+            <button className="btn btn-sm btn-primary" disabled={busy} onClick={openEmail}>
+              {estimate.sent_to_customer_at ? 'Send Again' : 'Send to Email'}
+            </button>
+          )}
           {canAdd && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleReplicate}>Replicate</button>}
         </div>
       </div>
@@ -337,6 +383,90 @@ export default function EstimateView() {
         <div><span className="muted">Tax</span><div className="hi-lg">{money(taxTotal)}</div></div>
         <div><span className="muted">Total Amount</span><div className="hi-lg">{money(totalAmount)}</div></div>
       </div>
+
+      {emailOpen && (
+        <Modal title="Send Estimate to Customer" onClose={() => !emailBusy && setEmailOpen(false)}>
+          {emailResult ? (
+            // Says where it went, not just that it went. "Sent" on its own invites the follow-up
+            // question this whole feature exists to answer.
+            <>
+              <p>Sent to <strong>{emailResult.sentTo}</strong>.</p>
+              <p className="muted">
+                {emailResult.lines} job line{emailResult.lines === 1 ? '' : 's'} were included, with the
+                estimate total. Replies come back to you, not to the system mailbox.
+              </p>
+              <div className="modal-actions">
+                <button type="button" className="btn btn-primary" onClick={() => setEmailOpen(false)}>Close</button>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Said before they fill anything in, rather than after they press Send. */}
+              {emailInfo && !emailInfo.mailConfigured && (
+                <div className="error-banner">
+                  This server cannot send email — {emailInfo.mailProblem}. Ask whoever administers it
+                  to set that up; nothing here will work until they do.
+                </div>
+              )}
+
+              {emailInfo?.sentAt && (
+                <div className="muted" style={{ marginBottom: 12 }}>
+                  Already sent to <strong>{emailInfo.sentTo}</strong> on{' '}
+                  {new Date(emailInfo.sentAt).toLocaleString()}
+                  {emailInfo.sentByName ? ` by ${emailInfo.sentByName}` : ''}. Sending again will
+                  deliver another copy.
+                </div>
+              )}
+
+              <div className="field">
+                <label>
+                  Send to{' '}
+                  {emailInfo?.source && <span className="muted">(from the {emailInfo.source})</span>}
+                </label>
+                <input
+                  autoFocus type="email" value={emailTo} placeholder="customer@example.com"
+                  onChange={(event) => setEmailTo(event.target.value)}
+                />
+                {/* Most estimates carry no address, so this is the normal case rather than an
+                    error state -- worded so it does not read as something having gone wrong. */}
+                {emailInfo && !emailInfo.suggested && (
+                  <div className="muted" style={{ marginTop: 4 }}>
+                    No address on file for {emailInfo.contactName || emailInfo.customerName || 'this customer'} —
+                    type one to send it.
+                  </div>
+                )}
+              </div>
+
+              <div className="field">
+                <label>Message <span className="muted">(optional — appears above the figures)</span></label>
+                <textarea
+                  rows={3} value={emailNote}
+                  placeholder="Anything you want to say alongside the estimate."
+                  onChange={(event) => setEmailNote(event.target.value)}
+                />
+              </div>
+
+              <p className="muted">
+                The customer sees the job lines and the total. The process and material costing
+                underneath is not included.
+              </p>
+
+              {emailError && <div className="error-banner">{emailError}</div>}
+
+              <div className="modal-actions">
+                <button type="button" className="btn" disabled={emailBusy} onClick={() => setEmailOpen(false)}>Cancel</button>
+                <button
+                  type="button" className="btn btn-primary"
+                  disabled={emailBusy || !emailTo.trim() || (emailInfo && !emailInfo.mailConfigured)}
+                  onClick={sendEmail}
+                >
+                  {emailBusy ? 'Sending…' : 'Send'}
+                </button>
+              </div>
+            </>
+          )}
+        </Modal>
+      )}
 
       {showApproval && nextStatus && (
         <EstimateApprovalModal
