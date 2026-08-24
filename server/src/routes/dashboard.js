@@ -793,6 +793,57 @@ router.get('/sales-calendar', requireAuth, async (req, res, next) => {
   }
 });
 
+// The production planner's calendar: every job order whose forecast window (Planned Start ->
+// Planned End) touches the month being viewed. Spans are returned as-is rather than expanded
+// into one row per day -- a job planned across three weeks would otherwise be sent twenty
+// times over; the calendar walks the span itself.
+//
+// Open to anyone who can see production, plus the Signage Planners who schedule it but hold
+// no production permission of their own.
+router.get('/production-calendar', requireAuth, async (req, res, next) => {
+  try {
+    const [[me]] = await pool.query('SELECT is_signage_planner FROM users WHERE id = ?', [req.user.id]);
+    if (!me?.is_signage_planner) {
+      const [[perm]] = await pool.query(
+        `SELECT atp.can_view FROM users u
+           JOIN account_type_permissions atp ON atp.account_type = u.account_type
+           JOIN pages p ON p.id = atp.page_id
+          WHERE u.id = ? AND p.route = '/production'`,
+        [req.user.id]
+      );
+      const [[u]] = await pool.query('SELECT account_type FROM users WHERE id = ?', [req.user.id]);
+      if (u?.account_type !== 'System Admin' && !perm?.can_view) {
+        return res.status(403).json({ error: 'Not permitted' });
+      }
+    }
+
+    const bounds = monthBounds(req.query.month);
+    const [rows] = await pool.query(
+      `SELECT jo.id, jo.job_order_no AS jobOrderNo, jo.description, jo.quantity, jo.units,
+              jo.planned_start_date AS plannedStart, jo.planned_end_date AS plannedEnd,
+              jo.delivery_date AS deliveryDate, jo.production_stage AS stage, jo.is_on_hold AS onHold,
+              c.name AS customerName, jt.display_name AS jobTypeName, loc.location_name AS jobLocationName
+         FROM job_orders jo
+         LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
+         LEFT JOIN customers c ON c.id = so.customer_id
+         LEFT JOIN job_types jt ON jt.id = jo.job_type_id
+         LEFT JOIN locations loc ON loc.id = jo.job_location_id
+        WHERE jo.planned_start_date IS NOT NULL
+          AND jo.planned_end_date IS NOT NULL
+          AND jo.status <> 'Cancelled'
+          -- Overlap, not containment: a job running across the month boundary belongs on this
+          -- month's calendar for the days it actually occupies.
+          AND jo.planned_start_date < ?
+          AND jo.planned_end_date >= ?
+        ORDER BY jo.planned_start_date, jo.job_order_no`,
+      [bounds.end, bounds.start]
+    );
+    return res.json({ month: bounds.month, jobs: rows });
+  } catch (err) {
+    return next(err);
+  }
+});
+
 module.exports = router;
 // Reused by the chatbot's data-Q&A intents (server/src/lib/chatbotIntents.js) so "what's
 // my weighted sales this month" answers with the exact same number this Dashboard

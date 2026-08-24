@@ -263,15 +263,21 @@ function AdminDashboard({ data, user, navigate }) {
 
       <div className="dash-main-grid">
         <ProfileCard user={user} roleLabel={ROLE_LABELS.admin} rings={data.rings} activity={activity} />
-        <div className="holo-card dash-chart-card">
-          <h3>Org-Wide Sales Trend</h3>
-          <div className="holo-tile-dark">
-            <Holo3DOrb value={approvalRingValue} max={100} color="var(--holo-cyan)" sub="estimates approved" />
-            <div style={{ padding: '10px 0', display: 'flex', justifyContent: 'center' }}>
-              <Holo3DBars data={data.trend} color="#a78bfa" width={260} height={90} labels={last6MonthLabels()} />
+        {user?.is_signage_planner ? (
+          // A planner opens this screen to answer "what is on the floor this month", not to
+          // read a sales trend -- so the forecast calendar takes that panel for them.
+          <ForecastCalendarCard navigate={navigate} />
+        ) : (
+          <div className="holo-card dash-chart-card">
+            <h3>Org-Wide Sales Trend</h3>
+            <div className="holo-tile-dark">
+              <Holo3DOrb value={approvalRingValue} max={100} color="var(--holo-cyan)" sub="estimates approved" />
+              <div style={{ padding: '10px 0', display: 'flex', justifyContent: 'center' }}>
+                <Holo3DBars data={data.trend} color="#a78bfa" width={260} height={90} labels={last6MonthLabels()} />
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
 
       <div className="holo-grid holo-grid-wide">
@@ -557,6 +563,19 @@ function DesignSupervisorDashboard({ data, user, navigate }) {
   );
 }
 
+// Mirrors ProductionJobOrderView's STAGE_LABELS -- the planner's calendar has to name a
+// stage the same way the production screen it links to does.
+const PROD_STAGE_LABELS = {
+  pending_for_scheduling: 'Pending for Sched.',
+  for_revision: 'For Revision',
+  in_process_with_revision: 'In-Process w/ Rev.',
+  in_process: 'In-Process',
+  for_qi: 'For QI',
+  partially_completed: 'Part. Completed',
+  completed: 'Completed',
+  invoiced: 'Invoiced',
+};
+
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
@@ -569,6 +588,155 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
 // Days are keyed by the plain YYYY-MM-DD the server sends, never by parsing it into a Date and
 // reading it back: at UTC+8 `new Date('2026-08-01')` is 8am local, and formatting it in another
 // timezone slides the job onto the previous day.
+// Every job order whose forecast window covers a day, laid out as a month. Kept separate from
+// ScheduleCalendar rather than bent to fit: that one's day popup is built around an artist's
+// incentive and actual-end times, which say nothing to someone scheduling the floor. The grid
+// classes are shared so the two read as the same calendar.
+function ForecastCalendarCard({ navigate }) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const now = new Date();
+  const [month, setMonth] = useState(`${now.getFullYear()}-${pad(now.getMonth() + 1)}`);
+  const [jobs, setJobs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [openDay, setOpenDay] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api.get('/dashboard/production-calendar', { params: { month } })
+      .then(({ data: d }) => { if (!cancelled) setJobs(d.jobs || []); })
+      .catch(() => { if (!cancelled) setJobs([]); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [month]);
+
+  const [year, monthNo] = month.split('-').map(Number);
+  const first = new Date(year, monthNo - 1, 1);
+  const daysInMonth = new Date(year, monthNo, 0).getDate();
+  const leading = first.getDay();
+
+  // A job occupies every day of its forecast window, not just the start -- that span is the
+  // whole point of the calendar, so the walk happens here rather than the server sending the
+  // same job once per day it covers.
+  const byDay = new Map();
+  for (const j of jobs) {
+    const start = String(j.plannedStart || '').slice(0, 10);
+    const end = String(j.plannedEnd || '').slice(0, 10);
+    if (!start || !end) continue;
+    for (let d = 1; d <= daysInMonth; d += 1) {
+      const key = `${year}-${pad(monthNo)}-${pad(d)}`;
+      if (key < start || key > end) continue;
+      if (!byDay.has(key)) byDay.set(key, []);
+      byDay.get(key).push(j);
+    }
+  }
+
+  const todayKey = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const cells = [];
+  for (let i = 0; i < leading; i += 1) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d += 1) cells.push(`${year}-${pad(monthNo)}-${pad(d)}`);
+
+  const shift = (delta) => {
+    const base = new Date(year, monthNo - 1 + delta, 1);
+    setMonth(`${base.getFullYear()}-${pad(base.getMonth() + 1)}`);
+  };
+
+  const spanLabel = (j) => `${String(j.plannedStart).slice(0, 10)} to ${String(j.plannedEnd).slice(0, 10)}`;
+
+  return (
+    <div className="holo-card dash-chart-card">
+      <h3>Production Schedule</h3>
+      <div className="artist-calendar">
+        <div className="artist-calendar-head">
+          <button type="button" className="btn btn-sm" onClick={() => shift(-1)} disabled={loading}>&lsaquo;</button>
+          <strong>{MONTH_NAMES[monthNo - 1]} {year}</strong>
+          <button type="button" className="btn btn-sm" onClick={() => shift(1)} disabled={loading}>&rsaquo;</button>
+          <span className="muted artist-calendar-count">
+            {loading ? 'Loading...' : `${jobs.length} scheduled`}
+          </span>
+        </div>
+
+        <div className="artist-calendar-grid">
+          {WEEKDAYS.map((w) => <div key={w} className="artist-calendar-weekday">{w}</div>)}
+          {cells.map((key, i) => {
+            if (!key) return <div key={`pad-${i}`} className="artist-calendar-day is-empty" />;
+            const dayJobs = byDay.get(key) || [];
+            return (
+              <div
+                key={key}
+                role="button"
+                tabIndex={0}
+                className={`artist-calendar-day is-clickable${key === todayKey ? ' is-today' : ''}${dayJobs.length ? ' has-jobs' : ''}`}
+                title={dayJobs.length ? `${dayJobs.length} in the window -- click to see them` : 'Nothing scheduled -- click to confirm'}
+                onClick={() => setOpenDay(key)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenDay(key); } }}
+              >
+                <span className="artist-calendar-daynum">{Number(key.slice(8, 10))}</span>
+                {dayJobs.slice(0, 3).map((j) => (
+                  <span
+                    key={j.id}
+                    className="artist-calendar-chip"
+                    title={`${j.jobOrderNo} - ${j.customerName || ''} - ${spanLabel(j)}`}
+                  >
+                    {j.jobOrderNo}
+                  </span>
+                ))}
+                {dayJobs.length > 3 && <span className="artist-calendar-more">+{dayJobs.length - 3} more</span>}
+              </div>
+            );
+          })}
+        </div>
+
+        {openDay && (
+          <Modal title={`Scheduled on ${formatDayHeading(openDay)}`} onClose={() => setOpenDay(null)} large>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>JO #</th><th>Job Type</th><th>Qty</th><th>Forecast</th>
+                    <th>Delivery</th><th>Stage</th><th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {!(byDay.get(openDay) || []).length && (
+                    <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                      Nothing scheduled on this day.
+                    </td></tr>
+                  )}
+                  {(byDay.get(openDay) || []).map((j) => (
+                    <tr key={j.id}>
+                      <td>
+                        <strong>{j.jobOrderNo}</strong>
+                        {j.customerName && <div className="muted" style={{ fontSize: '0.85em' }}>{j.customerName}</div>}
+                      </td>
+                      <td>
+                        {j.jobTypeName}
+                        {j.jobLocationName && <div className="muted" style={{ fontSize: '0.85em' }}>{j.jobLocationName}</div>}
+                      </td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{Number(j.quantity || 0)} {j.units || ''}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{spanLabel(j)}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {j.deliveryDate ? String(j.deliveryDate).slice(0, 10) : <span className="muted">-</span>}
+                      </td>
+                      <td>
+                        {PROD_STAGE_LABELS[j.stage] || j.stage || '-'}
+                        {!!j.onHold && <div className="muted" style={{ fontSize: '0.85em' }}>On Hold</div>}
+                      </td>
+                      <td>
+                        <button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(`/production/${j.id}`)}>Open</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Modal>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, tooltipFor }) {
   const [year, monthNo] = String(month || '').split('-').map(Number);
   const valid = Number.isFinite(year) && Number.isFinite(monthNo);
