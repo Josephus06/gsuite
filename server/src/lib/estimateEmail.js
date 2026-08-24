@@ -48,12 +48,46 @@ function row(label, value) {
     <td style="padding:2px 0 2px 14px;font-size:13px;"><strong>${esc(value)}</strong></td></tr>`;
 }
 
+// THE FIGURES COME FROM THE LINES, NOT FROM THE ESTIMATE HEADER.
+//
+// estimates.subtotal / total_amount are only populated when somebody opens the Billing step and
+// presses "Recalculate from Job Orders". Plenty of estimates never have that done, so the header
+// sits at zero while the job lines carry real money -- and reading the header sent a customer a
+// quotation totalling 0.00 while the screen the sender was looking at showed 162.58.
+//
+// So this totals the lines, exactly as EstimateView's own footer does, and the email therefore
+// always agrees with what the person pressing Send can see.
+//
+// The header is kept as a fallback for the opposite case: older migrated estimates whose header
+// totals were imported but whose line detail was not. Used only when the lines come to nothing,
+// so it can never contradict a real line total.
+function computeTotals(est, jobOrders) {
+  const num = (v) => (v === null || v === undefined || v === '' ? 0 : Number(v) || 0);
+  const subtotal = (jobOrders || []).reduce((s, jo) => s + num(jo.subtotal), 0);
+  const discount = (jobOrders || []).reduce((s, jo) => s + num(jo.disc_amount), 0);
+  const tax = (jobOrders || []).reduce((s, jo) => s + num(jo.tax_amount), 0);
+  const netOfTax = subtotal - discount;
+  const total = netOfTax + tax;
+
+  if (total === 0 && num(est.total_amount) !== 0) {
+    return {
+      subtotal: num(est.subtotal),
+      discount: num(est.discount_total),
+      netOfTax: num(est.net_of_tax),
+      tax: num(est.tax_total),
+      total: num(est.total_amount),
+    };
+  }
+  return { subtotal, discount, netOfTax, tax, total };
+}
+
 function buildHtml(est, jobOrders, { companyName, senderName, senderEmail, note }) {
+  const t = computeTotals(est, jobOrders);
   const totals = [
-    ['Subtotal', est.subtotal],
-    ['Discount', est.discount_total],
-    ['Net of Tax', est.net_of_tax],
-    ['Tax', est.tax_total],
+    ['Subtotal', t.subtotal],
+    ['Discount', t.discount],
+    ['Net of Tax', t.netOfTax],
+    ['Tax', t.tax],
   ].filter(([, v]) => v !== null && v !== undefined && Number(v) !== 0);
 
   return `<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#111827;max-width:720px;margin:0 auto;padding:8px;">
@@ -101,7 +135,7 @@ function buildHtml(est, jobOrders, { companyName, senderName, senderEmail, note 
           <td style="padding:3px 10px;text-align:right;font-size:13px;width:150px;">${peso(v)}</td></tr>`).join('')}
         <tr>
           <td style="padding:9px 10px;text-align:right;font-weight:700;font-size:15px;border-top:2px solid #d1d5db;">Total</td>
-          <td style="padding:9px 10px;text-align:right;font-weight:700;font-size:15px;border-top:2px solid #d1d5db;">${peso(est.total_amount)}</td>
+          <td style="padding:9px 10px;text-align:right;font-weight:700;font-size:15px;border-top:2px solid #d1d5db;">${peso(t.total)}</td>
         </tr>
       </tbody>
     </table>
@@ -121,6 +155,7 @@ function buildHtml(est, jobOrders, { companyName, senderName, senderEmail, note 
 // The plain-text alternative. Not decoration: a message sent as HTML alone is markedly more
 // likely to be filed as junk, and some clients still show this instead.
 function buildText(est, jobOrders, { companyName, senderName, note }) {
+  const t = computeTotals(est, jobOrders);
   const lines = [
     `${companyName}`,
     `Estimate ${est.estimate_no || ''} -- ${day(est.date_created)}`,
@@ -134,7 +169,7 @@ function buildText(est, jobOrders, { companyName, senderName, note }) {
   for (const [i, jo] of (jobOrders || []).entries()) {
     lines.push(`${i + 1}. ${jo.description || jo.job_type || ''} -- ${jo.quantity ?? ''} ${jo.units || ''} -- ${peso(jo.gross_amount ?? jo.subtotal)}`);
   }
-  lines.push('', `TOTAL: ${peso(est.total_amount)}`, '');
+  lines.push('', `TOTAL: ${peso(t.total)}`, '');
   lines.push('To accept this estimate, simply reply to this email.');
   if (senderName) lines.push('', senderName);
   lines.push(companyName);

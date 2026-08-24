@@ -1003,7 +1003,10 @@ router.post('/:id/email', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
     }
 
     const [jobOrders] = await conn.query(
-      `SELECT jo.description, jo.quantity, jo.units, jo.subtotal, jo.gross_amount, jt.display_name AS job_type
+      // disc_amount and tax_amount come along because the email totals its own figures from the
+      // lines rather than reading the estimate header -- see buildEstimateEmail for why.
+      `SELECT jo.description, jo.quantity, jo.units, jo.subtotal, jo.disc_amount, jo.tax_amount,
+              jo.gross_amount, jt.display_name AS job_type
          FROM estimate_job_orders jo
          LEFT JOIN job_types jt ON jt.id = jo.job_type_id
         WHERE jo.estimate_id = ? ORDER BY jo.line_no`,
