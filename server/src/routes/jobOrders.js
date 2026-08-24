@@ -10,6 +10,12 @@ const {
 const router = express.Router();
 const ROUTE = '/job-orders';
 
+// Who may be assigned layout work. account_type lives on the USER account, not the employee
+// record, so this is checked by joining through users.employee_id -- the same definition the
+// assignment picker filters by (GET /employees?account_type=Artist) and the Artist Incentive
+// report's filter uses.
+const ARTIST_ACCOUNT_TYPE = 'Artist';
+
 // The "Saved Job Orders" status tabs, mirroring the live list. A JO lands in exactly one: Hold wins
 // over everything; otherwise released JOs go by production_stage and pre-release JOs by sub_status
 // (the Design/Layout/Sales-approval workflow), with "Update JO" the catch-all for a freshly created
@@ -526,6 +532,22 @@ router.put('/:id/assign-design', requireAuth, async (req, res, next) => {
 
     const [[pmsJobType]] = await conn.query('SELECT minutes_consume FROM pms_job_types WHERE id = ?', [layout_job_type_id]);
     if (!pmsJobType) { await conn.rollback(); return res.status(400).json({ error: 'Invalid Layout - Job Type.' }); }
+
+    // The artist is checked the same way the job type just was. The picker in the UI already
+    // lists Artists only, but nothing here enforced it, so any employee id that reached this
+    // endpoint was written through -- which is how a System Admin came to hold a Job Order and
+    // then to earn a layout incentive on the Artist Incentive report. Client-side filtering is
+    // a convenience; this is the rule.
+    const [[artist]] = await conn.query(
+      `SELECT e.id FROM employees e
+         JOIN users u ON u.employee_id = e.id
+        WHERE e.id = ? AND u.account_type = ?`,
+      [artist_id, ARTIST_ACCOUNT_TYPE],
+    );
+    if (!artist) {
+      await conn.rollback();
+      return res.status(400).json({ error: 'That employee is not an Artist -- layout work can only be assigned to an Artist account.' });
+    }
 
     // Planned End = Planned Start + (the PMS Job Type's allotted minutes_consume x Qty)
     // -- minutes_consume is the allotment for one unit of this layout task, so a Qty of
