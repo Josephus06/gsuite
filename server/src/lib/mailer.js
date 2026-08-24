@@ -56,14 +56,29 @@ function fromAddress() {
   return FROM_EMAIL || SMTP_USER || '';
 }
 
-// Resolves to { ok: true, messageId } or { ok: false, error }. It does not throw: every caller
-// so far wants to report the failure to a person rather than turn it into a 500, and a send that
+// A display name for the From header. The ADDRESS cannot be the sales rep's own: SPF and DMARC
+// exist to stop a server sending as a domain it is not authorised for, and providers drop or
+// spam-folder mail that tries. What we can honestly do is put the rep's NAME on an address we are
+// allowed to send from, so the customer sees who it is from in their inbox, and point Reply-To at
+// the rep so an answer reaches a person rather than a shared mailbox.
+//
+// Quotes and line breaks are stripped before the name goes into the header. A newline in a header
+// value ends that header and begins another -- that is how extra recipients get injected into a
+// message -- and a display name is user-supplied data like any other.
+function fromHeader(name) {
+  const addr = fromAddress();
+  const clean = String(name || '').replace(/[\r\n"<>]/g, '').trim().slice(0, 78);
+  return clean ? `"${clean}" <${addr}>` : addr;
+}
+
+// Resolves to { ok: true, messageId } or { ok: false, error }. It does not throw: every caller so
+// far wants to report the failure to a person rather than turn it into a 500, and a send that
 // fails is a normal outcome (a wrong address, a provider refusing) rather than a bug.
-async function send({ to, subject, html, text, replyTo, attachments }) {
+async function send({ to, subject, html, text, replyTo, attachments, fromName }) {
   if (!isConfigured()) return { ok: false, error: `Email is not set up on this server -- ${missingReason()}.` };
   try {
     const info = await getTransport().sendMail({
-      from: fromAddress(),
+      from: fromHeader(fromName),
       to,
       subject,
       html,
@@ -79,4 +94,4 @@ async function send({ to, subject, html, text, replyTo, attachments }) {
   }
 }
 
-module.exports = { send, isConfigured, missingReason, fromAddress };
+module.exports = { send, isConfigured, missingReason, fromAddress, fromHeader };

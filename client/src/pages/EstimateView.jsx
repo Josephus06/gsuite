@@ -450,6 +450,13 @@ export default function EstimateView() {
                 />
               </div>
 
+              {emailInfo?.replyTo && (
+                <p className="muted">
+                  Goes out as <strong>{emailInfo.sendAsName}</strong>, and replies come back to{' '}
+                  <strong>{emailInfo.replyTo}</strong> — the estimate&rsquo;s sales rep, not you,
+                  unless they have no address on file.
+                </p>
+              )}
               <p className="muted">
                 The customer sees the job lines and the total. The process and material costing
                 underneath is not included.

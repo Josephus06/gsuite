@@ -916,11 +916,15 @@ router.get('/:id/email-recipient', requireAuth, requirePermission(ROUTE, 'can_vi
     const [[row]] = await pool.query(
       `SELECT e.id, e.estimate_no, e.status, e.contact_email, e.sent_to_customer_at, e.sent_to_customer_email,
               cc.email AS contact_email_on_file, cc.contact_name, c.name AS customer_name,
-              su.display_name AS sent_by_name
+              su.display_name AS sent_by_name,
+              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
+              COALESCE(NULLIF(ru.email, ''), NULLIF(sr.email, '')) AS sales_rep_email
          FROM estimates e
          LEFT JOIN customer_contacts cc ON cc.id = e.contact_person_id
          LEFT JOIN customers c ON c.id = e.customer_id
          LEFT JOIN users su ON su.id = e.sent_to_customer_by_user_id
+         LEFT JOIN employees sr ON sr.id = e.sales_rep_id
+         LEFT JOIN users ru ON ru.employee_id = e.sales_rep_id AND ru.is_active = TRUE
         WHERE e.id = ?`,
       [req.params.id],
     );
@@ -940,6 +944,10 @@ router.get('/:id/email-recipient', requireAuth, requirePermission(ROUTE, 'can_vi
       sentAt: row.sent_to_customer_at,
       sentTo: row.sent_to_customer_email,
       sentByName: row.sent_by_name,
+      // Shown before sending, because "who will the customer think sent this, and where does
+      // their reply land" is the thing people most want to check and cannot otherwise see.
+      sendAsName: row.sales_rep_email ? row.sales_rep_name : null,
+      replyTo: row.sales_rep_email || null,
       // Surfaced so the button can explain itself instead of failing when pressed.
       mailConfigured: mailer.isConfigured(),
       mailProblem: mailer.isConfigured() ? null : mailer.missingReason(),
@@ -958,11 +966,16 @@ router.post('/:id/email', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
 
     const [[est]] = await conn.query(
       `SELECT e.*, c.name AS customer_name, cc.contact_name AS contact_person_name, cc.email AS contact_email_on_file,
-              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name
+              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
+              -- The rep is an employee; their address lives on the user account linked to that
+              -- employee, with the employee record itself as a fallback for reps who have an
+              -- address on file but no login.
+              COALESCE(NULLIF(ru.email, ''), NULLIF(sr.email, '')) AS sales_rep_email
          FROM estimates e
          LEFT JOIN customers c ON c.id = e.customer_id
          LEFT JOIN customer_contacts cc ON cc.id = e.contact_person_id
          LEFT JOIN employees sr ON sr.id = e.sales_rep_id
+         LEFT JOIN users ru ON ru.employee_id = e.sales_rep_id AND ru.is_active = TRUE
         WHERE e.id = ?`,
       [req.params.id],
     );
@@ -1000,13 +1013,30 @@ router.post('/:id/email', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
     // Replies go to the sales rep who owns the estimate, not to the SMTP account -- a customer
     // answering "yes please" should land with the person who can act on it.
     const [[me]] = await conn.query('SELECT display_name, email FROM users WHERE id = ?', [req.user.id]);
+
+    // WHO THE CUSTOMER HEARS FROM. The estimate's sales rep owns the relationship, and they are
+    // frequently not the person pressing the button -- a CSA or a manager may send on their
+    // behalf. So the rep is preferred, and only if they have no address on file does it fall
+    // back to whoever is sending.
+    //
+    // The name and the address are resolved TOGETHER and never mixed. Taking the name from the
+    // rep and the address from the sender produced a signature reading one person's name over
+    // another person's email, and replies going to someone the customer was never introduced to.
+    const rep = est.sales_rep_email
+      ? { name: est.sales_rep_name, email: est.sales_rep_email }
+      : { name: me?.display_name, email: me?.email };
+
     const { subject, html, text } = buildEstimateEmail(est, jobOrders, {
-      senderName: est.sales_rep_name || me?.display_name,
-      senderEmail: me?.email,
+      senderName: rep.name,
+      senderEmail: rep.email,
       note: String(req.body?.note || '').trim() || null,
     });
 
-    const sent = await mailer.send({ to, subject, html, text, replyTo: me?.email });
+    // The From address stays the company mailbox -- see mailer.fromHeader for why it cannot be
+    // the rep's own -- but carries the rep's name, and replies are routed to the rep.
+    const sent = await mailer.send({
+      to, subject, html, text, replyTo: rep.email || undefined, fromName: rep.name,
+    });
     if (!sent.ok) return res.status(502).json({ error: `The mail server refused it: ${sent.error}` });
 
     // Only written once the send actually succeeded. Recording an attempt as a send is how a
@@ -1023,7 +1053,10 @@ router.post('/:id/email', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
     });
     await conn.commit();
 
-    res.json({ ok: true, sentTo: to, sentAt: new Date().toISOString(), lines: jobOrders.length });
+    res.json({
+      ok: true, sentTo: to, sentAt: new Date().toISOString(), lines: jobOrders.length,
+      sentAs: rep.name, replyTo: rep.email,
+    });
   } catch (err) {
     await conn.rollback();
     next(err);
