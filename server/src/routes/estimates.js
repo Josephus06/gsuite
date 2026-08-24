@@ -1,6 +1,7 @@
 const express = require('express');
 const mailer = require('../lib/mailer');
 const { buildEstimateEmail } = require('../lib/estimateEmail');
+const { buildEstimatePdf, estimatePdfFilename } = require('../lib/estimatePdf');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
@@ -965,8 +966,12 @@ router.post('/:id/email', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
     }
 
     const [[est]] = await conn.query(
+      // prepared_by / approved_by are here for the attached PDF's signature blocks -- the print
+      // report shows them, so the attachment has to as well or it is a different document.
       `SELECT e.*, c.name AS customer_name, cc.contact_name AS contact_person_name, cc.email AS contact_email_on_file,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
+              CONCAT(pb.first_name, ' ', pb.last_name) AS prepared_by_name,
+              CONCAT(ap.first_name, ' ', ap.last_name) AS approved_by_name,
               -- The rep is an employee; their address lives on the user account linked to that
               -- employee, with the employee record itself as a fallback for reps who have an
               -- address on file but no login.
@@ -975,6 +980,8 @@ router.post('/:id/email', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
          LEFT JOIN customers c ON c.id = e.customer_id
          LEFT JOIN customer_contacts cc ON cc.id = e.contact_person_id
          LEFT JOIN employees sr ON sr.id = e.sales_rep_id
+         LEFT JOIN employees pb ON pb.id = e.prepared_by_id
+         LEFT JOIN employees ap ON ap.id = e.approved_by_id
          LEFT JOIN users ru ON ru.employee_id = e.sales_rep_id AND ru.is_active = TRUE
         WHERE e.id = ?`,
       [req.params.id],
@@ -1005,10 +1012,17 @@ router.post('/:id/email', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
     const [jobOrders] = await conn.query(
       // disc_amount and tax_amount come along because the email totals its own figures from the
       // lines rather than reading the estimate header -- see buildEstimateEmail for why.
+      //
+      // The size, unit price and tax rate are for the attached PDF, which reproduces the full
+      // Price Quotation and needs every column the printed one carries. The processes under each
+      // line are still not read: that is our costing, and it does not leave the building.
       `SELECT jo.description, jo.quantity, jo.units, jo.subtotal, jo.disc_amount, jo.tax_amount,
-              jo.gross_amount, jt.display_name AS job_type
+              jo.gross_amount, jo.length, jo.width, jo.height, jo.uom, jo.price_per_unit,
+              jo.disc_percent, jo.disc_price_per_unit, t.rate AS tax_rate,
+              jt.display_name AS job_type
          FROM estimate_job_orders jo
          LEFT JOIN job_types jt ON jt.id = jo.job_type_id
+         LEFT JOIN taxes t ON t.id = jo.tax_code_id
         WHERE jo.estimate_id = ? ORDER BY jo.line_no`,
       [req.params.id],
     );
@@ -1035,10 +1049,31 @@ router.post('/:id/email', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
       note: String(req.body?.note || '').trim() || null,
     });
 
+    // THE QUOTATION ITSELF, ATTACHED. The body is a readable summary; the PDF is the document --
+    // the same Price Quotation the Print button produces, which is what a customer forwards to
+    // their own approver, prints, signs and sends back. A body-only email left them retyping it.
+    //
+    // A PDF THAT WILL NOT BUILD DOES NOT STOP THE SEND. The lines and totals are in the body
+    // regardless, so the customer still gets a usable quotation, and holding the whole email
+    // hostage to a layout bug helps nobody. What must not happen is the sender being told it went
+    // with an attachment when it did not -- so the failure is reported back and shown to them.
+    let attachments;
+    let pdfProblem = null;
+    try {
+      attachments = [{
+        filename: estimatePdfFilename(est),
+        content: await buildEstimatePdf(est, jobOrders),
+        contentType: 'application/pdf',
+      }];
+    } catch (pdfErr) {
+      pdfProblem = pdfErr.message || 'The quotation PDF could not be generated.';
+      console.error(`estimate ${req.params.id}: quotation PDF failed --`, pdfErr);
+    }
+
     // The From address stays the company mailbox -- see mailer.fromHeader for why it cannot be
     // the rep's own -- but carries the rep's name, and replies are routed to the rep.
     const sent = await mailer.send({
-      to, subject, html, text, replyTo: rep.email || undefined, fromName: rep.name,
+      to, subject, html, text, attachments, replyTo: rep.email || undefined, fromName: rep.name,
     });
     if (!sent.ok) return res.status(502).json({ error: `The mail server refused it: ${sent.error}` });
 
@@ -1072,6 +1107,8 @@ router.post('/:id/email', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
     res.json({
       ok: true, sentTo: to, sentAt: new Date().toISOString(), lines: jobOrders.length,
       sentAs: rep.name, replyTo: rep.email,
+      attachedPdf: attachments ? attachments[0].filename : null,
+      pdfProblem,
     });
   } catch (err) {
     await conn.rollback();

@@ -397,8 +397,20 @@ export default function EstimateView() {
               <p>Sent to <strong>{emailResult.sentTo}</strong>.</p>
               <p className="muted">
                 {emailResult.lines} job line{emailResult.lines === 1 ? '' : 's'} were included, with the
-                estimate total. Replies come back to you, not to the system mailbox.
+                estimate total{emailResult.attachedPdf ? ', and the price quotation went with it as ' : '. '}
+                {emailResult.attachedPdf && <strong>{emailResult.attachedPdf}</strong>}
+                {emailResult.attachedPdf ? '. ' : ''}
+                Replies come back to you, not to the system mailbox.
               </p>
+              {/* The message has gone either way -- this says what the customer did NOT get, so
+                  nobody assumes they are holding a quotation they can sign. */}
+              {emailResult.pdfProblem && (
+                <div className="error-banner">
+                  The email went out, but the quotation PDF could not be attached —
+                  {' '}{emailResult.pdfProblem}. The job lines and total are in the message itself;
+                  send the printed quotation separately if the customer needs it.
+                </div>
+              )}
               <div className="modal-actions">
                 <button type="button" className="btn btn-primary" onClick={() => setEmailOpen(false)}>Close</button>
               </div>
@@ -458,8 +470,9 @@ export default function EstimateView() {
                 </p>
               )}
               <p className="muted">
-                The customer sees the job lines and the total. The process and material costing
-                underneath is not included.
+                The customer gets the job lines and the total in the message, and the full price
+                quotation — the same document the Print button produces — attached as a PDF. The
+                process and material costing underneath is not included in either.
               </p>
 
               {emailError && <div className="error-banner">{emailError}</div>}

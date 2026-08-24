@@ -1,15 +1,19 @@
 // Renders an estimate as an email a customer can actually read.
 //
-// SENT AS HTML IN THE BODY, NOT AS A PDF ATTACHMENT. The obvious idea is to attach the same
-// document the Print button produces, but that print view is rendered by the browser from the
-// React app -- reproducing it server-side would mean running a headless browser on the API host,
-// and the cloud container has no browser binaries installed. An HTML body needs nothing beyond
-// what already exists, renders on a phone, and does not sit unopened as an attachment. If a PDF
-// is wanted later, this is the function that would gain one.
+// THE BODY IS THE SUMMARY; THE ATTACHMENT IS THE DOCUMENT. The full Price Quotation goes out as a
+// PDF alongside this (see estimatePdf.js) -- that is the thing a customer prints, signs and sends
+// back. This body still carries the lines and the total in HTML because an attachment is a click
+// away and often unopened on a phone, and because a message that is nothing but "see attached"
+// reads as spam to both the recipient and the filters.
 //
 // STYLES ARE INLINE ON PURPOSE. Gmail and Outlook strip <style> blocks; a stylesheet would render
 // as an unstyled wall of text for most recipients. The same goes for the table layout, which is
 // the only thing that lays out reliably across mail clients.
+
+// The company's colours, off the logo, so the email and the PDF it carries look like one piece of
+// paper from one company. Same two values as estimatePdf.js and the brand mark itself.
+const BRAND_BLUE = '#1a2a78';
+const BRAND_ORANGE = '#f28c00';
 
 const peso = (n) => `PHP ${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const day = (d) => (d ? String(d).slice(0, 10) : '');
@@ -91,9 +95,12 @@ function buildHtml(est, jobOrders, { companyName, senderName, senderEmail, note 
   ].filter(([, v]) => v !== null && v !== undefined && Number(v) !== 0);
 
   return `<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#111827;max-width:720px;margin:0 auto;padding:8px;">
-  <div style="background:#1e3a8a;color:#fff;padding:18px 20px;border-radius:8px 8px 0 0;">
-    <div style="font-size:18px;font-weight:700;">${esc(companyName)}</div>
-    <div style="font-size:22px;font-weight:700;margin-top:6px;">Estimate ${esc(est.estimate_no || '')}</div>
+  <div style="background:${BRAND_BLUE};color:#fff;padding:18px 20px;border-radius:8px 8px 0 0;border-bottom:3px solid ${BRAND_ORANGE};">
+    <div style="font-size:19px;font-weight:700;letter-spacing:0.02em;">
+      GRAPHIC<span style="color:${BRAND_ORANGE};">STAR</span>
+    </div>
+    <div style="font-size:11px;opacity:0.75;margin-top:1px;">Creations Made Easy</div>
+    <div style="font-size:22px;font-weight:700;margin-top:12px;">Estimate ${esc(est.estimate_no || '')}</div>
     <div style="opacity:0.85;font-size:13px;margin-top:2px;">Dated ${esc(day(est.date_created))}</div>
   </div>
 
@@ -102,11 +109,12 @@ function buildHtml(est, jobOrders, { companyName, senderName, senderEmail, note 
       Good day${est.contact_person_name ? ` ${esc(est.contact_person_name)}` : ''},
     </p>
     <p style="font-size:14px;margin:0 0 16px;">
-      Please find below our estimate for your requirement. Kindly review it and let us know if you
-      would like to proceed, or if anything needs adjusting.
+      Please find below our estimate for your requirement, with the full price quotation attached
+      as a PDF. Kindly review it and let us know if you would like to proceed, or if anything needs
+      adjusting.
     </p>
 
-    ${note ? `<div style="background:#f3f4f6;border-left:3px solid #1e3a8a;padding:10px 14px;margin:0 0 18px;font-size:13px;white-space:pre-wrap;">${esc(note)}</div>` : ''}
+    ${note ? `<div style="background:#f3f4f6;border-left:3px solid ${BRAND_BLUE};padding:10px 14px;margin:0 0 18px;font-size:13px;white-space:pre-wrap;">${esc(note)}</div>` : ''}
 
     <table style="width:100%;border-collapse:collapse;margin:0 0 18px;">
       <tbody>
@@ -134,8 +142,8 @@ function buildHtml(est, jobOrders, { companyName, senderName, senderEmail, note 
           <td style="padding:3px 10px;text-align:right;font-size:13px;color:#6b7280;">${esc(l)}</td>
           <td style="padding:3px 10px;text-align:right;font-size:13px;width:150px;">${peso(v)}</td></tr>`).join('')}
         <tr>
-          <td style="padding:9px 10px;text-align:right;font-weight:700;font-size:15px;border-top:2px solid #d1d5db;">Total</td>
-          <td style="padding:9px 10px;text-align:right;font-weight:700;font-size:15px;border-top:2px solid #d1d5db;">${peso(t.total)}</td>
+          <td style="padding:9px 10px;text-align:right;font-weight:700;font-size:15px;border-top:2px solid ${BRAND_BLUE};color:${BRAND_BLUE};">Total</td>
+          <td style="padding:9px 10px;text-align:right;font-weight:700;font-size:15px;border-top:2px solid ${BRAND_BLUE};color:${BRAND_BLUE};">${peso(t.total)}</td>
         </tr>
       </tbody>
     </table>
@@ -145,7 +153,7 @@ function buildHtml(est, jobOrders, { companyName, senderName, senderEmail, note 
     </p>
     <p style="font-size:13px;margin:14px 0 0;">
       ${senderName ? `<strong>${esc(senderName)}</strong><br>` : ''}
-      ${senderEmail ? `<a href="mailto:${esc(senderEmail)}" style="color:#1e3a8a;">${esc(senderEmail)}</a><br>` : ''}
+      ${senderEmail ? `<a href="mailto:${esc(senderEmail)}" style="color:${BRAND_BLUE};">${esc(senderEmail)}</a><br>` : ''}
       ${esc(companyName)}
     </p>
   </div>
@@ -162,7 +170,8 @@ function buildText(est, jobOrders, { companyName, senderName, note }) {
     '',
     `Good day${est.contact_person_name ? ` ${est.contact_person_name}` : ''},`,
     '',
-    'Please find our estimate below. Kindly review it and let us know if you would like to proceed.',
+    'Please find our estimate below, with the full price quotation attached as a PDF.',
+    'Kindly review it and let us know if you would like to proceed.',
     '',
   ];
   if (note) lines.push(note, '');

@@ -106,12 +106,31 @@ function fromHeader(name) {
   return clean ? `"${clean}" <${addr}>` : addr;
 }
 
+// Attachments reach the two APIs base64-encoded in the JSON body rather than as a MIME part.
+// Both take the same two things under different names, so the caller keeps writing nodemailer's
+// shape ({ filename, content }) and the difference is absorbed here.
+//
+// Base64 costs a third in size on the wire. Brevo caps a message at 10MB and Resend at 40MB, and
+// what we send today is a quotation PDF measured in tens of kilobytes -- nowhere near either, but
+// worth knowing before something larger is ever attached.
+function encodeAttachments(provider, attachments) {
+  if (!attachments?.length) return undefined;
+  return attachments.map((a) => {
+    const content = Buffer.isBuffer(a.content) ? a.content.toString('base64')
+      : Buffer.from(String(a.content || ''), a.encoding || 'utf8').toString('base64');
+    return provider === 'brevo'
+      ? { content, name: a.filename }
+      : { content, filename: a.filename, content_type: a.contentType || undefined };
+  });
+}
+
 // The same message, over HTTPS. Both providers take one POST and answer immediately, so there is
 // no transport to pool and nothing to keep open between sends.
 //
 // A ten-second budget, matching the SMTP path. An email API that has not answered in ten seconds
 // is not going to, and the person is watching a button.
-async function sendOverHttp(provider, { to, subject, html, text, replyTo, fromName }) {
+async function sendOverHttp(provider, { to, subject, html, text, replyTo, attachments, fromName }) {
+  const files = encodeAttachments(provider, attachments);
   const from = fromAddress();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 10000);
@@ -127,6 +146,7 @@ async function sendOverHttp(provider, { to, subject, html, text, replyTo, fromNa
         htmlContent: html,
         textContent: text,
         replyTo: replyTo ? { email: replyTo } : undefined,
+        attachment: files,
       },
     }
     : {
@@ -134,7 +154,15 @@ async function sendOverHttp(provider, { to, subject, html, text, replyTo, fromNa
       headers: { authorization: `Bearer ${RESEND_API_KEY}`, 'content-type': 'application/json' },
       // Resend takes the whole From as one string, so the display name is quoted here the same
       // way the SMTP path does it -- and sanitised by the same function, for the same reason.
-      body: { from: fromHeader(fromName), to: [to], subject, html, text, reply_to: replyTo || undefined },
+      body: {
+        from: fromHeader(fromName),
+        to: [to],
+        subject,
+        html,
+        text,
+        reply_to: replyTo || undefined,
+        attachments: files,
+      },
     };
 
   try {
@@ -168,13 +196,12 @@ async function sendOverHttp(provider, { to, subject, html, text, replyTo, fromNa
 async function send({ to, subject, html, text, replyTo, attachments, fromName }) {
   if (!isConfigured()) return { ok: false, error: `Email is not set up on this server -- ${missingReason()}.` };
 
-  // Attachments are an SMTP-path feature only. Nothing sends them today; routing them silently
-  // into a provider that would drop them is worse than saying so.
+  // Attachments travel by either route. They used to be refused here on the API path, back when
+  // nothing attached anything and dropping a file silently would have been worse than saying so.
+  // Estimates now go out with the quotation PDF on them, and Railway -- the one install that
+  // cannot use SMTP at all -- is exactly where that has to keep working.
   const provider = httpProvider();
-  if (provider) {
-    if (attachments?.length) return { ok: false, error: 'Attachments are not supported when sending through an email API.' };
-    return sendOverHttp(provider, { to, subject, html, text, replyTo, fromName });
-  }
+  if (provider) return sendOverHttp(provider, { to, subject, html, text, replyTo, attachments, fromName });
 
   try {
     const info = await getTransport().sendMail({
