@@ -50,6 +50,12 @@ const LINE_COLUMNS = [
   { key: 'gp_rate', label: 'GP Rate', render: (r) => (r.gp_rate != null ? `${r.gp_rate}%` : '') },
 ];
 
+function fileSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
 function num(v) { return v === null || v === undefined || v === '' ? 0 : Number(v); }
 function money(v) {
   const n = Number(v);
@@ -69,6 +75,8 @@ export default function SalesOrderView() {
   const [showDTModal, setShowDTModal] = useState(false);
   const [invoices, setInvoices] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
+  const [attachments, setAttachments] = useState([]);
+  const [attachmentError, setAttachmentError] = useState('');
 
   function load() {
     return api.get(`/sales-orders/${id}`).then(({ data }) => { setSo(data); setLoading(false); });
@@ -81,7 +89,27 @@ export default function SalesOrderView() {
       api.get(`/sales-invoices/by-sales-order/${id}`).then(({ data }) => setInvoices(data));
       api.get(`/item-deliveries/by-sales-order/${id}`).then(({ data }) => setDeliveries(data));
     }
+    if (tab === 'attachments') {
+      api.get(`/sales-orders/${id}/attachments`)
+        .then(({ data }) => setAttachments(data))
+        .catch(() => setAttachments([]));
+    }
   }, [tab, id]);
+
+  // Fetched through the API rather than linked with a bare href so the request carries the
+  // auth header -- the file endpoint is behind requireAuth like everything else.
+  async function openAttachment(attachmentId) {
+    setAttachmentError('');
+    try {
+      const { data } = await api.get(`/sales-orders/${id}/attachments/${attachmentId}/file`, { responseType: 'blob' });
+      const url = URL.createObjectURL(data);
+      window.open(url, '_blank');
+      // Revoked on a delay: revoking immediately can beat the new tab to the object.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      setAttachmentError('Could not open that file.');
+    }
+  }
 
   async function handleCreateJo(lineId) {
     setCreatingLineId(lineId);
@@ -200,6 +228,7 @@ export default function SalesOrderView() {
       <div className="status-tabs" style={{ marginTop: 20 }}>
         <button className={`status-tab ${tab === 'items' ? 'active' : ''}`} onClick={() => setTab('items')}>Items</button>
         <button className={`status-tab ${tab === 'related' ? 'active' : ''}`} onClick={() => setTab('related')}>Related Records</button>
+        <button className={`status-tab ${tab === 'attachments' ? 'active' : ''}`} onClick={() => setTab('attachments')}>Attachment</button>
         <button className={`status-tab ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}>System Info</button>
       </div>
 
@@ -261,6 +290,37 @@ export default function SalesOrderView() {
                     <td>{inv.date_created ? String(inv.date_created).slice(0, 10) : ''}</td>
                     <td>{money(inv.gross_amount)}</td>
                     <td>{inv.status === 'cancelled' ? 'Cancelled' : 'Saved'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === 'attachments' && (
+        <div className="card">
+          <p className="muted" style={{ marginTop: 0 }}>
+            Files attached to the originating estimate
+            {so.estimate_no ? <> <button type="button" className="link-btn" onClick={() => navigate(`/estimates/${so.estimate_id}`)}>{so.estimate_no}</button></> : null}
+            . Attached when the estimate was raised; read-only here.
+          </p>
+          {attachmentError && <div className="error-banner" style={{ marginBottom: 12 }}>{attachmentError}</div>}
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>#</th><th>File</th><th>Type</th><th>Size</th><th>Uploaded By</th><th>Uploaded</th></tr></thead>
+              <tbody>
+                {attachments.length === 0 && (
+                  <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>No files attached to the estimate.</td></tr>
+                )}
+                {attachments.map((a, idx) => (
+                  <tr key={a.id}>
+                    <td>{idx + 1}</td>
+                    <td><button type="button" className="link-btn" onClick={() => openAttachment(a.id)}>{a.file_name}</button></td>
+                    <td>{a.mime_type === 'application/pdf' ? 'PDF' : (String(a.mime_type || '').startsWith('image/') ? 'Image' : a.mime_type)}</td>
+                    <td>{fileSize(a.size_bytes)}</td>
+                    <td>{a.uploaded_by_name || ''}</td>
+                    <td>{a.created_at ? new Date(a.created_at).toLocaleString() : ''}</td>
                   </tr>
                 ))}
               </tbody>

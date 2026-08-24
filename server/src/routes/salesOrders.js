@@ -202,4 +202,63 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
   }
 });
 
+// ---------------------------------------------------------------------------------------
+// Attachments carried over from the originating estimate
+// ---------------------------------------------------------------------------------------
+//
+// The PO, conforme or proof of payment someone scanned onto the estimate is the same
+// document the order is worked against, so it is exposed here rather than making whoever
+// opens the Sales Order navigate back to the estimate to find it. The rows are read-only
+// on this side: the files belong to the estimate, and letting an order add or delete them
+// would leave the two screens disagreeing about what was actually submitted.
+//
+// Gated on the Sales Order's own can_view (not the estimate's) -- someone who can see the
+// order is entitled to the paperwork behind it, and plenty of order-side accounts have no
+// estimate permission at all.
+async function estimateIdForSalesOrder(req) {
+  const [[so]] = await pool.query('SELECT id, estimate_id, sales_rep_id FROM sales_orders WHERE id = ?', [req.params.id]);
+  if (!so) return null;
+  // Same defense in depth as the detail route -- a scoped user must not reach another rep's
+  // paperwork by pasting an id.
+  const scope = await getSalesRepEmployeeScope(req.user.id);
+  if (scope && !scope.includes(so.sales_rep_id)) return null;
+  return so.estimate_id;
+}
+
+router.get('/:id/attachments', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const estimateId = await estimateIdForSalesOrder(req);
+    if (estimateId === null) return res.status(404).json({ error: 'Not found' });
+    // A sales order with no estimate behind it (imported or non-standard) simply has none.
+    if (!estimateId) return res.json([]);
+
+    const [rows] = await pool.query(
+      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, u.display_name AS uploaded_by_name
+         FROM estimate_attachments a
+         LEFT JOIN users u ON u.id = a.uploaded_by_user_id
+        WHERE a.estimate_id = ? ORDER BY a.id`,
+      [estimateId],
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+router.get('/:id/attachments/:attachmentId/file', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const estimateId = await estimateIdForSalesOrder(req);
+    if (!estimateId) return res.status(404).json({ error: 'Not found' });
+
+    // Matched against the estimate id as well as the attachment id, so an attachment on
+    // someone else's estimate cannot be pulled through this order's URL.
+    const [[row]] = await pool.query(
+      'SELECT file_name, mime_type, file_data FROM estimate_attachments WHERE id = ? AND estimate_id = ?',
+      [req.params.attachmentId, estimateId],
+    );
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${row.file_name.replace(/"/g, '')}"`);
+    res.send(row.file_data);
+  } catch (err) { next(err); }
+});
+
 module.exports = router;
