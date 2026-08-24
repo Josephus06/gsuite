@@ -1,4 +1,4 @@
-// The one place this system builds an SMTP connection.
+// The one place this system sends mail, by whichever route the install actually has.
 //
 // Until now the only thing that sent mail was the nightly ticket reminder, which built its own
 // transport inline. A second sender (estimates going to customers) made that a fork in the road:
@@ -11,22 +11,49 @@
 // installation does not send mail at all", because only one of those is worth telling a user to
 // go and fix. So `isConfigured()` is separate from `send()` rather than being discovered by
 // catching an exception.
+//
+// TWO TRANSPORTS, BECAUSE ONE OF THEM DOES NOT WORK EVERYWHERE. The office and cloud installs
+// reach an SMTP server perfectly well. Railway does not: outbound SMTP is blocked there on every
+// port and to every provider -- smtp.gmail.com:587 and secure262.inmotionhosting.com:465 both
+// time out -- which is a deliberate anti-spam measure on the platform, not a misconfiguration.
+// Nothing you can put in SMTP_HOST fixes it.
+//
+// So when an email API key is present, mail goes out over HTTPS on port 443 instead, which is
+// never blocked. The choice is made by which variables exist rather than by a mode switch: an
+// install with an API key uses it, an install with SMTP settings uses those, and the caller
+// cannot tell the difference.
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
-const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, FROM_EMAIL } = process.env;
+const {
+  SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, FROM_EMAIL,
+  BREVO_API_KEY, RESEND_API_KEY,
+} = process.env;
+
+// HTTPS is preferred when available: it works on every host, SMTP does not.
+function httpProvider() {
+  if (BREVO_API_KEY) return 'brevo';
+  if (RESEND_API_KEY) return 'resend';
+  return null;
+}
 
 // Built once and reused. Nodemailer pools connections behind this, so creating a transport per
 // message would open a new TLS session for every send.
 let transport = null;
 
 function isConfigured() {
+  if (httpProvider()) return !!FROM_EMAIL;
   return !!(SMTP_HOST && SMTP_PORT && SMTP_USER && SMTP_PASS);
 }
 
 // What to tell a user when it is not set up, naming the specific thing that is missing rather
 // than "email is not configured" -- which sends them looking through everything.
 function missingReason() {
+  // An install part-way through moving to an API key gets told about the API key, not sent back
+  // to fill in SMTP settings it no longer needs.
+  if (httpProvider()) {
+    return FROM_EMAIL ? '' : 'FROM_EMAIL is not set, and the email API needs a verified sender address';
+  }
   const gaps = [];
   if (!SMTP_HOST) gaps.push('SMTP_HOST');
   if (!SMTP_PORT) gaps.push('SMTP_PORT');
@@ -79,11 +106,76 @@ function fromHeader(name) {
   return clean ? `"${clean}" <${addr}>` : addr;
 }
 
+// The same message, over HTTPS. Both providers take one POST and answer immediately, so there is
+// no transport to pool and nothing to keep open between sends.
+//
+// A ten-second budget, matching the SMTP path. An email API that has not answered in ten seconds
+// is not going to, and the person is watching a button.
+async function sendOverHttp(provider, { to, subject, html, text, replyTo, fromName }) {
+  const from = fromAddress();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+
+  const req = provider === 'brevo'
+    ? {
+      url: 'https://api.brevo.com/v3/smtp/email',
+      headers: { 'api-key': BREVO_API_KEY, 'content-type': 'application/json', accept: 'application/json' },
+      body: {
+        sender: { email: from, name: fromName || undefined },
+        to: [{ email: to }],
+        subject,
+        htmlContent: html,
+        textContent: text,
+        replyTo: replyTo ? { email: replyTo } : undefined,
+      },
+    }
+    : {
+      url: 'https://api.resend.com/emails',
+      headers: { authorization: `Bearer ${RESEND_API_KEY}`, 'content-type': 'application/json' },
+      // Resend takes the whole From as one string, so the display name is quoted here the same
+      // way the SMTP path does it -- and sanitised by the same function, for the same reason.
+      body: { from: fromHeader(fromName), to: [to], subject, html, text, reply_to: replyTo || undefined },
+    };
+
+  try {
+    const res = await fetch(req.url, {
+      method: 'POST',
+      headers: req.headers,
+      body: JSON.stringify(req.body),
+      signal: controller.signal,
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // The provider's own words. "400 Bad Request" tells nobody that the sender address has not
+      // been verified yet, which is the commonest first-run failure with both of these.
+      const detail = payload?.message || payload?.error?.message || payload?.error || JSON.stringify(payload).slice(0, 200);
+      return { ok: false, error: `${provider} refused it (${res.status}): ${detail}` };
+    }
+    return { ok: true, messageId: payload?.messageId || payload?.id || null };
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      return { ok: false, blocked: true, error: `${provider} did not respond within 10 seconds.` };
+    }
+    return { ok: false, error: err.message || `Could not reach ${provider}.` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // Resolves to { ok: true, messageId } or { ok: false, error }. It does not throw: every caller so
 // far wants to report the failure to a person rather than turn it into a 500, and a send that
 // fails is a normal outcome (a wrong address, a provider refusing) rather than a bug.
 async function send({ to, subject, html, text, replyTo, attachments, fromName }) {
   if (!isConfigured()) return { ok: false, error: `Email is not set up on this server -- ${missingReason()}.` };
+
+  // Attachments are an SMTP-path feature only. Nothing sends them today; routing them silently
+  // into a provider that would drop them is worse than saying so.
+  const provider = httpProvider();
+  if (provider) {
+    if (attachments?.length) return { ok: false, error: 'Attachments are not supported when sending through an email API.' };
+    return sendOverHttp(provider, { to, subject, html, text, replyTo, fromName });
+  }
+
   try {
     const info = await getTransport().sendMail({
       from: fromHeader(fromName),
@@ -110,7 +202,9 @@ async function send({ to, subject, html, text, replyTo, attachments, fromName })
         blocked: true,
         error: `Could not reach ${SMTP_HOST}:${SMTP_PORT} from this server (${err.code || 'timed out'}). `
           + 'The settings look right -- this is the host blocking outbound mail. '
-          + 'Try port 587 instead of 465, or send through a provider that works over HTTPS.',
+          + (String(SMTP_PORT) === '465'
+            ? 'Try port 587, or set BREVO_API_KEY to send over HTTPS instead.'
+            : 'This host blocks SMTP on every port -- set BREVO_API_KEY to send over HTTPS instead.'),
       };
     }
     return { ok: false, error: err.message || 'The mail server refused the message.' };
