@@ -930,9 +930,11 @@ router.get('/:id/email-recipient', requireAuth, requirePermission(ROUTE, 'can_vi
     const suggested = row.sent_to_customer_email || row.contact_email || row.contact_email_on_file || '';
     res.json({
       suggested,
-      source: row.sent_to_customer_email ? 'last sent'
+      // Phrased to read after the word 'from' in the label, rather than as bare nouns that
+      // need an article bolted on -- which is how 'from the this estimate' happened.
+      source: row.sent_to_customer_email ? 'the address last used'
         : row.contact_email ? 'this estimate'
-          : row.contact_email_on_file ? 'contact record' : null,
+          : row.contact_email_on_file ? 'the contact record' : null,
       contactName: row.contact_name,
       customerName: row.customer_name,
       sentAt: row.sent_to_customer_at,

@@ -425,7 +425,7 @@ export default function EstimateView() {
               <div className="field">
                 <label>
                   Send to{' '}
-                  {emailInfo?.source && <span className="muted">(from the {emailInfo.source})</span>}
+                  {emailInfo?.source && <span className="muted">(from {emailInfo.source})</span>}
                 </label>
                 <input
                   autoFocus type="email" value={emailTo} placeholder="customer@example.com"
