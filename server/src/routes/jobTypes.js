@@ -197,6 +197,85 @@ router.patch('/:id/processes/:processLinkId', requireAuth, requirePermission(ROU
   } catch (err) { next(err); }
 });
 
+// ---------------------------------------------------------------------------------------
+// Materials a process may use, per job type
+// ---------------------------------------------------------------------------------------
+//
+// Hung off the job_type_processes link row, because the restriction belongs to the (job
+// type, process) pair: the same cutting process draws on different stock depending on what
+// is being made. The estimate reads this to narrow its Material picker.
+
+const MATERIAL_SELECT = `SELECT m.id, m.job_type_process_id, m.inventory_id, m.is_default,
+         jtp.process_id, p.process_code, p.process_name,
+         i.item_code, i.display_name, i.base_unit_id
+    FROM job_type_process_materials m
+    JOIN job_type_processes jtp ON jtp.id = m.job_type_process_id
+    JOIN processes p ON p.id = jtp.process_id
+    JOIN inventories i ON i.id = m.inventory_id`;
+
+// Every material defined across this job type's processes -- what the Materials tab lists.
+router.get('/:id/materials', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `${MATERIAL_SELECT} WHERE jtp.job_type_id = ? ORDER BY jtp.sort_order, jtp.id, i.display_name`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+// What the estimate asks: given the job type on the line and the process on the row, which
+// materials may be chosen? An empty array means nobody has restricted this pair -- the
+// caller decides what to do about that, and the estimate treats it as "no restriction"
+// rather than locking the picker down to nothing.
+router.get('/:id/process-materials/:processId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `${MATERIAL_SELECT} WHERE jtp.job_type_id = ? AND jtp.process_id = ? ORDER BY m.is_default DESC, i.display_name`,
+      [req.params.id, req.params.processId]
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+router.post('/:id/processes/:processLinkId/materials', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const { inventory_id: inventoryId, is_default: isDefault } = req.body || {};
+    if (!inventoryId) return res.status(400).json({ error: 'inventory_id is required.' });
+
+    // Scoped by job_type_id so a link on another job type cannot be given materials here.
+    const [[link]] = await pool.query(
+      'SELECT id FROM job_type_processes WHERE id = ? AND job_type_id = ?',
+      [req.params.processLinkId, req.params.id]
+    );
+    if (!link) return res.status(404).json({ error: 'Not found' });
+
+    const [result] = await pool.query(
+      'INSERT INTO job_type_process_materials (job_type_process_id, inventory_id, is_default) VALUES (?, ?, ?)',
+      [link.id, inventoryId, isDefault ? 1 : 0]
+    );
+    const [[row]] = await pool.query(`${MATERIAL_SELECT} WHERE m.id = ?`, [result.insertId]);
+    res.status(201).json(row);
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'That material is already allowed for this process.' });
+    if (err.code === 'ER_NO_REFERENCED_ROW_2') return res.status(400).json({ error: 'That material does not exist.' });
+    next(err);
+  }
+});
+
+router.delete('/:id/processes/:processLinkId/materials/:materialId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const [result] = await pool.query(
+      `DELETE m FROM job_type_process_materials m
+         JOIN job_type_processes jtp ON jtp.id = m.job_type_process_id
+        WHERE m.id = ? AND m.job_type_process_id = ? AND jtp.job_type_id = ?`,
+      [req.params.materialId, req.params.processLinkId, req.params.id]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: 'Not found' });
+    res.status(204).send();
+  } catch (err) { next(err); }
+});
+
 router.delete('/:id/processes/:processLinkId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
     await pool.query('DELETE FROM job_type_processes WHERE id = ? AND job_type_id = ?', [req.params.processLinkId, req.params.id]);

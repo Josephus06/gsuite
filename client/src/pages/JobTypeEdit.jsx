@@ -56,6 +56,9 @@ export default function JobTypeEdit() {
   const [editingTimeId, setEditingTimeId] = useState(null);
   const [timeDraft, setTimeDraft] = useState('');
   const [timeError, setTimeError] = useState('');
+  const [materials, setMaterials] = useState([]);
+  const [inventoryItems, setInventoryItems] = useState([]);
+  const [materialError, setMaterialError] = useState('');
 
   function load() {
     return Promise.all([
@@ -65,7 +68,11 @@ export default function JobTypeEdit() {
       api.get('/lookups/processes'),
       api.get('/customers'),
       isNew ? Promise.resolve(null) : api.get(`/job-types/${id}`),
-    ]).then(([deptRes, acctRes, jtRes, procRes, custRes, detailRes]) => {
+      api.get('/inventory'),
+      isNew ? Promise.resolve({ data: [] }) : api.get(`/job-types/${id}/materials`),
+    ]).then(([deptRes, acctRes, jtRes, procRes, custRes, detailRes, invRes, matRes]) => {
+      setInventoryItems(invRes.data);
+      setMaterials(matRes.data);
       setDepartments(deptRes.data);
       setAccounts(acctRes.data);
       setJobTypes(jtRes.data.filter((j) => !id || j.id !== Number(id)));
@@ -134,6 +141,26 @@ export default function JobTypeEdit() {
   async function removeProcess(linkId) {
     await api.delete(`/job-types/${id}/processes/${linkId}`);
     setProcesses((prev) => prev.filter((p) => p.id !== linkId));
+  }
+
+  async function addMaterial(processLinkId, item) {
+    setMaterialError('');
+    try {
+      const { data } = await api.post(`/job-types/${id}/processes/${processLinkId}/materials`, { inventory_id: item.id });
+      setMaterials((prev) => [...prev, data]);
+    } catch (err) {
+      setMaterialError(err.response?.data?.error || 'Could not add that material.');
+    }
+  }
+
+  async function removeMaterial(processLinkId, materialId) {
+    setMaterialError('');
+    try {
+      await api.delete(`/job-types/${id}/processes/${processLinkId}/materials/${materialId}`);
+      setMaterials((prev) => prev.filter((m) => m.id !== materialId));
+    } catch (err) {
+      setMaterialError(err.response?.data?.error || 'Could not remove that material.');
+    }
   }
 
   function startEditTime(row) {
@@ -254,6 +281,7 @@ export default function JobTypeEdit() {
 
       <div className="status-tabs" style={{ marginTop: 20 }}>
         <button className={`status-tab ${tab === 'processes' ? 'active' : ''}`} onClick={() => setTab('processes')}>Processes {processes.length}</button>
+        <button className={`status-tab ${tab === 'materials' ? 'active' : ''}`} onClick={() => setTab('materials')}>Materials {materials.length}</button>
         <button className={`status-tab ${tab === 'accounting' ? 'active' : ''}`} onClick={() => setTab('accounting')}>Accounting</button>
         <button className={`status-tab ${tab === 'customers' ? 'active' : ''}`} onClick={() => setTab('customers')}>Customers</button>
       </div>
@@ -323,6 +351,57 @@ export default function JobTypeEdit() {
                   />
                 </div>
               </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {tab === 'materials' && (
+        <div className="card">
+          {isNew ? <p className="muted" style={{ marginTop: 0 }}>Save this job first to define its materials.</p> : (
+            <>
+              <p className="muted" style={{ marginTop: 0 }}>
+                The stock each process may draw on when this job type is estimated. A process with
+                nothing listed is unrestricted -- the estimate offers the full inventory for it.
+              </p>
+              {materialError && <div className="error-banner" style={{ marginBottom: 10 }}>{materialError}</div>}
+              {processes.length === 0 && <div className="empty-state">Assign a process first, on the Processes tab.</div>}
+              {processes.map((proc) => {
+                const rows = materials.filter((m) => m.job_type_process_id === proc.id);
+                return (
+                  <div key={proc.id} className="card" style={{ marginBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+                      <strong>{proc.process_name}</strong>
+                      <span className="muted">{proc.process_code} &middot; {rows.length ? `${rows.length} material${rows.length === 1 ? '' : 's'}` : 'unrestricted'}</span>
+                    </div>
+                    <DataTable
+                      columns={[
+                        { key: 'item_code', label: 'Code' },
+                        { key: 'display_name', label: 'Material' },
+                      ]}
+                      rows={rows}
+                      actions={(m) => <button className="btn btn-sm btn-danger" onClick={() => removeMaterial(proc.id, m.id)}>Remove</button>}
+                      emptyLabel="No materials defined -- any item may be chosen."
+                    />
+                    <div className="inline-form" style={{ marginTop: 10 }}>
+                      <div className="field">
+                        <label>Material</label>
+                        <EntityPicker
+                          label="Material" items={inventoryItems} value="" getLabel={(i) => i.display_name}
+                          columns={[
+                            { key: 'item_code', label: 'Code' },
+                            { key: 'display_name', label: 'Name' },
+                            { key: 'category_name', label: 'Category' },
+                          ]}
+                          searchKeys={['item_code', 'display_name']}
+                          onSelect={(i) => addMaterial(proc.id, i)}
+                          placeholder="Add Material..."
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </>
           )}
         </div>

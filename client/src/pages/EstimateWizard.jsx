@@ -172,6 +172,9 @@ export default function EstimateWizard() {
   const [processesList, setProcessesList] = useState([]);
   const [taxes, setTaxes] = useState([]);
   const [inventoryItems, setInventoryItems] = useState([]);
+  // Allowed-material lists, cached per `${job_type_id}:${process_id}` pair. A pair with no
+  // row defined is unrestricted, and is cached as null so it is not re-fetched on every render.
+  const [allowedMaterials, setAllowedMaterials] = useState({});
   const [units, setUnits] = useState([]);
   const [paymentTerms, setPaymentTerms] = useState([]);
   const [bracketsByProcess, setBracketsByProcess] = useState({});
@@ -252,6 +255,9 @@ export default function EstimateWizard() {
     setJobOrders(jobOrdersData);
     const usedItemIds = [...new Set(jobOrdersData.flatMap((jo) => jo.processes.map((p) => p.item_id).filter(Boolean)))];
     usedItemIds.forEach((itemId) => ensureUomsLoaded(itemId));
+    // Warm the allowed-material lists for rows that already exist, so reopening an estimate
+    // restricts the picker straight away instead of only after the process is re-picked.
+    jobOrdersData.forEach((jo) => jo.processes.forEach((pr) => ensureAllowedMaterials(jo.job_type_id, pr.process_id)));
     setShippingAddresses(data.shippingAddresses || []);
     await loadCustomerExtras(data.customer_id);
     const logs = await api.get(`/estimates/${estId}/audit-logs`);
@@ -733,6 +739,24 @@ export default function EstimateWizard() {
     );
   }
 
+  function materialKey(jobTypeId, processId) { return `${jobTypeId}:${processId}`; }
+
+  // Fetched lazily: the pair is only known once both the Job Type and the Process are set,
+  // and pre-loading every pair on an estimate with many job orders would be a lot of requests
+  // for lists most of them never open.
+  async function ensureAllowedMaterials(jobTypeId, processId) {
+    if (!jobTypeId || !processId) return;
+    const key = materialKey(jobTypeId, processId);
+    if (key in allowedMaterials) return;
+    try {
+      const { data } = await api.get(`/job-types/${jobTypeId}/process-materials/${processId}`);
+      // null = nobody restricted this pair, so the full inventory stays available.
+      setAllowedMaterials((prev) => ({ ...prev, [key]: data.length ? data : null }));
+    } catch {
+      setAllowedMaterials((prev) => ({ ...prev, [key]: null }));
+    }
+  }
+
   function processCell(col, row, joIdx, procIdx) {
     const val = row[col.key] ?? '';
     if (col.type === 'picker-process') {
@@ -742,14 +766,25 @@ export default function EstimateWizard() {
           isSelectable={(p) => !!p.is_active}
           columns={[{ key: 'process_name', label: 'Process Name' }, { key: 'process_code', label: 'Code' }, { key: 'base_unit', label: 'Base Unit', render: (p) => unitLabel(p.base_unit_id) }]}
           searchKeys={['process_name', 'process_code']}
-          onSelect={(p) => recalcAndCommitProcess(joIdx, procIdx, { process_id: p.id, process_uom: unitLabel(p.base_unit_id) })}
+          onSelect={(p) => {
+            ensureAllowedMaterials(jobOrders[joIdx]?.job_type_id, p.id);
+            recalcAndCommitProcess(joIdx, procIdx, { process_id: p.id, process_uom: unitLabel(p.base_unit_id) });
+          }}
         />
       );
     }
     if (col.type === 'picker-item') {
+      const jobTypeId = jobOrders[joIdx]?.job_type_id;
+      // Undefined = not fetched yet, null = unrestricted, array = the allowed list. Only the
+      // array narrows the picker, so a pair nobody has configured still offers everything
+      // rather than silently becoming unusable.
+      const allowed = allowedMaterials[materialKey(jobTypeId, row.process_id)];
+      const allowedIds = Array.isArray(allowed) ? new Set(allowed.map((m) => m.inventory_id)) : null;
+      const items = allowedIds ? inventoryItems.filter((i) => allowedIds.has(i.id)) : inventoryItems;
       return (
         <EntityPicker
-          label="Material" items={inventoryItems} value={val} getLabel={(i) => i.display_name}
+          label={allowedIds ? 'Material (restricted to this job type)' : 'Material'}
+          items={items} value={val} getLabel={(i) => i.display_name}
           columns={[{ key: 'item_code', label: 'Code' }, { key: 'display_name', label: 'Name' }, { key: 'category_name', label: 'Category' }]}
           searchKeys={['item_code', 'display_name']}
           onSelect={async (i) => {
