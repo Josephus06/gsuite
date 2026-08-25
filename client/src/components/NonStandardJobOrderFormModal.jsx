@@ -83,7 +83,10 @@ function processPriceFor(brackets, material) {
   return costing ? Number((costing.pricePerUnit * quantity).toFixed(2)) : '';
 }
 
-export default function NonStandardJobOrderFormModal({ mode = 'create', order, onClose, onSaved }) {
+// resubmits: whether saving will park the order back on SBU Approval. True for the ordinary
+// Sales revision; false for a System Admin's edit of an order that is past that window, where
+// the save corrects the order in place and leaves its status alone.
+export default function NonStandardJobOrderFormModal({ mode = 'create', order, resubmits = true, onClose, onSaved }) {
   const isEdit = mode === 'edit';
   const [meta, setMeta] = useState(null);
   const [contacts, setContacts] = useState([]);
@@ -270,7 +273,9 @@ export default function NonStandardJobOrderFormModal({ mode = 'create', order, o
     <Modal title={isEdit ? `Revise ${order.nstdjo_no}` : 'Non-Standard Job Order'} onClose={() => !saving && onClose()} xl>
       <form onSubmit={submit}>
         {saveError && <div className="error-banner">{saveError}</div>}
-        {isEdit && <div className="muted" style={{ marginBottom: 12 }}>Saving these changes sends this job order back to SBU Approval.</div>}
+        {isEdit && <div className="muted" style={{ marginBottom: 12 }}>{resubmits
+          ? 'Saving these changes sends this job order back to SBU Approval.'
+          : `Saving these changes edits this job order in place — it stays ${order?.sub_status || 'where it is'} and no re-approval is requested.`}</div>}
         <div className="filter-grid">
           <div className="field"><label>Customer *</label><EntityPicker label="Select Customer" items={meta?.customers || []} value={form.customer_id} getLabel={(customer) => customer.name} columns={[{ key: 'name', label: 'Customer' }]} searchKeys={['name']} onSelect={selectCustomer} placeholder="Select customer" />{fieldError(errors, 'customer_id')}</div>
           <div className="field"><label>Contact Person *</label><EntityPicker label="Select Contact Person" items={contacts} value={form.contact_person_id} getLabel={(contact) => contact.contact_name} columns={[{ key: 'contact_name', label: 'Name' }, { key: 'email', label: 'Email' }, { key: 'phone', label: 'Contact Nos' }, { key: 'title', label: 'Title' }]} searchKeys={['contact_name', 'email', 'title']} onSelect={selectContact} disabled={!form.customer_id} placeholder={form.customer_id ? 'Select contact person' : 'Select a customer first'} />{fieldError(errors, 'contact_person_id')}
@@ -345,7 +350,7 @@ export default function NonStandardJobOrderFormModal({ mode = 'create', order, o
 
         <div className="modal-actions">
           <button type="button" className="btn" disabled={saving} onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : isEdit ? 'Save & Resubmit' : 'Save'}</button>
+          <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : isEdit ? (resubmits ? 'Save & Resubmit' : 'Save Changes') : 'Save'}</button>
         </div>
       </form>
     </Modal>

@@ -264,7 +264,16 @@ export default function NonStandardJobOrderView() {
   // approver(s), and while an approver has parked it back in Sales Revision. Once approved
   // the details it was signed off against must not shift. Only the person who raised it
   // may edit: a supervisor can see a subordinate's order but not change it.
-  const canRevise = (awaitingApproval || inRevision) && !isCancelled && canEdit && !!order.is_mine;
+  //
+  // A System Admin sits outside all of that, matching the server: any status, cancelled and
+  // completed included, and whoever raised it. Their save leaves the order's status where it
+  // is rather than sending it back round for approval -- correcting an order is not revising
+  // it. can_edit still applies, but the admin account type holds it everywhere.
+  const isAdmin = user?.account_type === 'System Admin';
+  const canRevise = canEdit && (isAdmin || ((awaitingApproval || inRevision) && !isCancelled && !!order.is_mine));
+  // Whether this particular save will bounce the order back to SBU Approval, which is what
+  // the edit modal tells the user it is about to do.
+  const reviseResubmits = (awaitingApproval || inRevision) && !isCancelled;
   // Picking the artist belongs to the Design Supervisor alone -- edit rights on this page
   // (which Sales has) deliberately do not offer it. The server keeps a can_edit fallback
   // so an admin who isn't personally flagged can still unstick an order, but nobody else
@@ -537,6 +546,7 @@ export default function NonStandardJobOrderView() {
         <NonStandardJobOrderFormModal
           mode="edit"
           order={order}
+          resubmits={reviseResubmits}
           onClose={() => setEditOpen(false)}
           onSaved={load}
         />

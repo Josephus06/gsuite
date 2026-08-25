@@ -572,15 +572,22 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       [req.params.id],
     );
     if (!row) return res.status(404).json({ error: 'Non-standard job order not found.' });
-    if (row.status === CANCELLED_STATUS) return res.status(409).json({ error: 'This job order has been cancelled.' });
-    if (!EDITABLE_SUB_STATUSES.includes(row.sub_status)) {
-      return res.status(409).json({ error: `This job order is ${row.sub_status} and can no longer be edited.` });
-    }
-    // Only the person who raised it may change it. A supervisor can see a subordinate's
-    // order but not edit it; System Admin keeps its usual override.
+    // System Admin edits any order at any status -- cancelled and completed included, and
+    // whoever raised it. Every rule below is about keeping a live workflow from shifting
+    // underneath the people working it; an admin correcting bad data is the case those
+    // rules are not for, and there was otherwise no way to do it at all.
     const [[me]] = await conn.query('SELECT account_type FROM users WHERE id = ?', [req.user.id]);
-    if (String(row.created_by_user_id) !== String(req.user.id) && me?.account_type !== 'System Admin') {
-      return res.status(403).json({ error: 'Only the user who raised this job order can edit it.' });
+    const isAdmin = me?.account_type === 'System Admin';
+    if (!isAdmin) {
+      if (row.status === CANCELLED_STATUS) return res.status(409).json({ error: 'This job order has been cancelled.' });
+      if (!EDITABLE_SUB_STATUSES.includes(row.sub_status)) {
+        return res.status(409).json({ error: `This job order is ${row.sub_status} and can no longer be edited.` });
+      }
+      // Only the person who raised it may change it. A supervisor can see a subordinate's
+      // order but not edit it.
+      if (String(row.created_by_user_id) !== String(req.user.id)) {
+        return res.status(403).json({ error: 'Only the user who raised this job order can edit it.' });
+      }
     }
     if (!h.customer_id || !h.description?.trim() || !h.quantity || Number(h.quantity) <= 0 || !h.delivery_date) {
       return res.status(400).json({ error: 'Customer, description, positive quantity, and delivery date are required.' });
@@ -609,19 +616,28 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 
     const materials = Array.isArray(h.materials) ? h.materials.filter((m) => m && (m.process_id || m.item_id || m.qty || m.process_qty)) : [];
 
+    // A save inside the normal window (re)parks the order on SBU Approval and clears any
+    // recorded approval, so an approver signs off on what actually changed rather than on a
+    // version edited out from under them. An admin reaching PAST that window is correcting
+    // an order that is already cancelled, in Design's hands, or completed -- rewinding it to
+    // SBU Approval would rewrite its history and drag a finished order back into a queue, so
+    // the override leaves status and approval exactly where it found them.
+    const reparks = row.status !== CANCELLED_STATUS && EDITABLE_SUB_STATUSES.includes(row.sub_status);
+    const nextSubStatus = reparks ? SUB_SBU_APPROVAL : row.sub_status;
+
     await conn.beginTransaction();
     await conn.query(
       `UPDATE non_standard_job_orders SET
          customer_id = ?, contact_person_id = ?, contact_email = ?, contact_title = ?, contact_phone = ?,
          memo = ?, date_created = ?, job_type_id = ?, job_type = ?, pms_job_type_id = ?,
          description = ?, quantity = ?, shipping_address = ?, delivery_date = ?, delivery_time = ?,
-         sub_status = ?, approved_at = NULL, approved_by_user_id = NULL, updated_at = NOW()
+         sub_status = ?, ${reparks ? 'approved_at = NULL, approved_by_user_id = NULL,' : ''} updated_at = NOW()
        WHERE id = ?`,
       [h.customer_id, contact.id, h.contact_email ?? contact.email, h.contact_title ?? contact.title,
         h.contact_phone ?? contact.phone, h.memo || null, h.date_created || new Date().toISOString().slice(0, 10),
         jobType.id, jobType.display_name, h.pms_job_type_id || null, h.description.trim(), h.quantity,
         h.shipping_address || null, h.delivery_date, h.delivery_time || null,
-        SUB_SBU_APPROVAL, req.params.id],
+        nextSubStatus, req.params.id],
     );
 
     // Materials are replaced wholesale rather than diffed -- the grid posts the full set.
@@ -640,22 +656,35 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     }
 
     await logAudit(conn, { id: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'revised' });
+    // An edit only an admin could have made is worth saying so in the System Info tab --
+    // otherwise a changed completed order looks like it changed by itself. Logged as
+    // 'Updated' because audit_logs.event_type is an ENUM and this is not worth widening it;
+    // the field name is what marks it out.
+    if (!reparks) {
+      await logAudit(conn, {
+        id: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'admin_override',
+        oldValue: `${row.status} / ${row.sub_status}`,
+        newValue: 'Edited in place by System Admin -- status unchanged',
+      });
+    }
     // Only a real move gets a Status Change entry -- editing an order that is already
     // sitting on SBU Approval leaves it there, and logging "SBU Approval -> SBU Approval"
     // would just be noise in the System Info tab.
-    if (row.sub_status !== SUB_SBU_APPROVAL) {
+    if (reparks && row.sub_status !== SUB_SBU_APPROVAL) {
       await logAudit(conn, {
         id: req.params.id, userId: req.user.id, eventType: 'Status Change',
         fieldName: 'sub_status', oldValue: row.sub_status, newValue: SUB_SBU_APPROVAL,
       });
     }
 
-    // Re-notify the approvers on every save, including one that leaves the order sitting
-    // where it already was. An approver who has read the order but not yet acted on it
-    // would otherwise approve a version that has changed since they looked at it.
-    const [approvers] = await conn.query(
+    // Re-notify the approvers on every save that parks the order back with them, including
+    // one that leaves it sitting where it already was. An approver who has read the order but
+    // not yet acted on it would otherwise approve a version that has changed since they
+    // looked at it. An admin's out-of-window edit sends nothing: the order is not waiting on
+    // an approver, and asking them to re-approve a completed order is noise, not a gate.
+    const [approvers] = reparks ? await conn.query(
       'SELECT user_id FROM non_standard_job_order_approvers WHERE non_standard_job_order_id = ?', [req.params.id],
-    );
+    ) : [[]];
     for (const { user_id: approverUserId } of approvers) {
       await conn.query(
         `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
@@ -665,7 +694,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     }
 
     await conn.commit();
-    res.json({ id: Number(req.params.id), status: row.status, sub_status: SUB_SBU_APPROVAL });
+    res.json({ id: Number(req.params.id), status: row.status, sub_status: nextSubStatus });
   } catch (err) {
     await conn.rollback();
     next(err);
