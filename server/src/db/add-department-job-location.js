@@ -10,11 +10,14 @@
 // -- not a deploy. A department with this left empty is unrestricted, which is what every
 // non-production department (Sales, Accounting, Design, Support ...) wants.
 //
-// Seeded with the four production departments' current warehouses. Names are matched loosely
-// because the live data punctuates them inconsistently -- "Production -  CNC" carries a double
-// space, "Warehouse - Sign" is title-cased while its department is "Production-SIGNAGE" -- and
-// the ids differ between local and Railway. Note "Production - SIGN" (a separate, older
-// department from "Production-SIGNAGE") is deliberately NOT mapped; nobody is filed under it.
+// Seeded with the production departments' current warehouses. Names are matched loosely because
+// the live data punctuates them inconsistently -- "Production -  CNC" carries a double space,
+// "Warehouse - Sign" is title-cased while its department is "Production-SIGNAGE" -- and the ids
+// differ between environments, so nothing here may be keyed on one.
+//
+// Signage is filed under TWO departments and both are mapped to the same warehouse. Production
+// keeps 11 people on "Production - SIGN" and 2 on "Production-SIGNAGE"; sandbox has it the other
+// way round. Mapping only one left the larger group seeing every warehouse's job orders.
 //
 // Only fills where the column is still empty, so a mapping an admin has since changed is kept.
 //
@@ -32,6 +35,7 @@ const SEED = [
   { department: 'Production - DPOD', location: 'Warehouse - DPOD' },
   { department: 'Production - CNC', location: 'Warehouse - CNC' },
   { department: 'Production-SIGNAGE', location: 'Warehouse - Sign' },
+  { department: 'Production - SIGN', location: 'Warehouse - Sign' },
 ];
 
 async function main() {
