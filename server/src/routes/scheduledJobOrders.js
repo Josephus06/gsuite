@@ -92,12 +92,21 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     // department -- see isScheduler above.
     const mine = !(await isScheduler(req.user.id)) && await isProductionEmployee(me?.employee_id);
 
-    // A production department only sees its own warehouse's work -- both the supervisor's job list
-    // and a production employee's own task list. Built as a fragment because these two queries
-    // assemble their WHERE inline rather than from a conditions array.
+    // A production department only sees its own warehouse's work. Two different tests, because a
+    // job order and its process lines can sit in different warehouses -- tens of thousands do, a
+    // SIGN job order routinely carrying an LFP or a Design line:
+    //   - a worker's own task list goes by the LINE's location, which is where that task is
+    //     actually worked. Filtering it by the job order's would hide an LFP worker's LFP line on
+    //     a SIGN job order -- their own assigned work, invisible to them.
+    //   - the scheduler's job list takes a job order whose own location matches OR which carries
+    //     any line at this warehouse, so no work here is unreachable from the list.
     const scopeLocationId = await getJobLocationScope(req.user.id);
-    const locationClause = scopeLocationId ? ' AND jo.job_location_id = ?' : '';
-    const locationParams = scopeLocationId ? [scopeLocationId] : [];
+    const taskLocationClause = scopeLocationId ? ' AND jop.location_id = ?' : '';
+    const taskLocationParams = scopeLocationId ? [scopeLocationId] : [];
+    const jobLocationClause = scopeLocationId
+      ? ' AND (jo.job_location_id = ? OR EXISTS (SELECT 1 FROM job_order_processes pl WHERE pl.job_order_id = jo.id AND pl.location_id = ?))'
+      : '';
+    const jobLocationParams = scopeLocationId ? [scopeLocationId, scopeLocationId] : [];
 
     if (mine) {
       const [rows] = await pool.query(
@@ -112,9 +121,9 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
          LEFT JOIN processes pr ON pr.id = jop.process_id
          LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
          LEFT JOIN customers c ON c.id = so.customer_id
-         WHERE jop.assigned_employee_id = ?${locationClause}
+         WHERE jop.assigned_employee_id = ?${taskLocationClause}
          ORDER BY jop.id DESC`,
-        [me.employee_id, ...locationParams]
+        [me.employee_id, ...taskLocationParams]
       );
       return res.json({ mode: 'tasks', rows: rows.map((r) => ({ ...r, is_running: !!r.is_running })) });
     }
@@ -128,9 +137,9 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN locations loc ON loc.id = jo.job_location_id
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
        LEFT JOIN customers c ON c.id = so.customer_id
-       WHERE jo.production_stage = 'in_process'${locationClause}
+       WHERE jo.production_stage = 'in_process'${jobLocationClause}
        ORDER BY jo.id DESC`,
-      locationParams
+      jobLocationParams
     );
     res.json({ mode: 'jobs', rows });
   } catch (err) {
@@ -153,15 +162,22 @@ router.get('/:jobOrderId', requireAuth, requirePermission(ROUTE, 'can_view'), as
       [req.params.jobOrderId]
     );
     if (!jo) return res.status(404).json({ error: 'Not found' });
-    // Out of this user's department -- 404 rather than 403, matching the JO detail views.
-    if (!isJobLocationVisible(jo, await getJobLocationScope(req.user.id))) {
-      return res.status(404).json({ error: 'Not found' });
+    // Openable if the job order is this user's warehouse, or if it merely carries a line worked
+    // there -- a SIGN line on an LFP job order is still SIGNAGE's to staff, and refusing the page
+    // would leave it unreachable. 404 otherwise, matching the other JO detail views.
+    const scopeLocationId = await getJobLocationScope(req.user.id);
+    if (scopeLocationId && !isJobLocationVisible(jo, scopeLocationId)) {
+      const [[lineHere]] = await pool.query(
+        'SELECT 1 AS ok FROM job_order_processes WHERE job_order_id = ? AND location_id = ? LIMIT 1',
+        [req.params.jobOrderId, scopeLocationId]
+      );
+      if (!lineHere) return res.status(404).json({ error: 'Not found' });
     }
 
     const [tasks] = await pool.query(
       `SELECT jop.id, jop.qty, jop.unit, jop.total, jop.process_cost, jop.material_cost,
               jop.assigned_employee_id, jop.assignment_started_at, jop.assignment_ended_at,
-              pr.process_name, pr.minutes_per_unit, loc.location_name, i.display_name AS item_name,
+              pr.process_name, pr.minutes_per_unit, loc.location_name, jop.location_id, i.display_name AS item_name,
               COALESCE(jop.total, 0) * COALESCE(pr.minutes_per_unit, 0) AS allotted_minutes,
               CONCAT(ae.first_name, ' ', ae.last_name) AS assigned_employee_name,
               EXISTS(SELECT 1 FROM job_order_process_sessions s WHERE s.job_order_process_id = jop.id AND s.ended_at IS NULL) AS is_running
@@ -174,7 +190,17 @@ router.get('/:jobOrderId', requireAuth, requirePermission(ROUTE, 'can_view'), as
       [req.params.jobOrderId]
     );
 
-    res.json({ ...jo, tasks: tasks.map((t) => ({ ...t, is_running: !!t.is_running })) });
+    // can_assign says whether THIS user may staff THIS line. A line worked at another warehouse
+    // belongs to that department's scheduler, so it stays visible -- the planner still needs to
+    // read the whole job -- but its Assigned To picker is locked.
+    res.json({
+      ...jo,
+      tasks: tasks.map((t) => ({
+        ...t,
+        is_running: !!t.is_running,
+        can_assign: !scopeLocationId || Number(t.location_id) === Number(scopeLocationId),
+      })),
+    });
   } catch (err) {
     next(err);
   }
@@ -183,12 +209,20 @@ router.get('/:jobOrderId', requireAuth, requirePermission(ROUTE, 'can_view'), as
 // Assigning (or clearing, when employee_id is falsy) who will run a task/process line.
 router.put('/:jobOrderId/tasks/:processId/assign', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
-    // The picker already narrows the choices, but the restriction has to hold against a raw
-    // request too -- and the job order itself has to be one this user may see, or a hidden job
-    // order would still be writable by id. 404 for the job order, matching its detail view.
+    // Assignment is per process line, and a line can sit in a different warehouse from its job
+    // order, so it is the LINE's location that decides -- by the job order's, a SIGNAGE planner
+    // could staff the LFP or Design line of a SIGN job order. The picker already narrows the
+    // choices; this is the same rule held against a raw request. 403 rather than 404 because the
+    // line is visible to them on the task table, just not theirs to assign.
     const scopeLocationId = await getJobLocationScope(req.user.id);
-    const [[jo]] = await pool.query('SELECT job_location_id FROM job_orders WHERE id = ?', [req.params.jobOrderId]);
-    if (!jo || !isJobLocationVisible(jo, scopeLocationId)) return res.status(404).json({ error: 'Not found' });
+    const [[line]] = await pool.query(
+      'SELECT location_id FROM job_order_processes WHERE id = ? AND job_order_id = ?',
+      [req.params.processId, req.params.jobOrderId]
+    );
+    if (!line) return res.status(404).json({ error: 'Not found' });
+    if (scopeLocationId && Number(line.location_id) !== Number(scopeLocationId)) {
+      return res.status(403).json({ error: 'That process line is worked at another location.' });
+    }
 
     const employeeId = req.body.employee_id || null;
     if (employeeId) {

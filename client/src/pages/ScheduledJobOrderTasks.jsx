@@ -7,7 +7,10 @@ import LoadingSpinner from '../components/LoadingSpinner';
 // A department supervisor's scheduling screen for one in-process Job Order: assign a
 // production employee to each task (process line), matching the real system's Scheduled
 // JO detail layout. Read-only info about cost/qty/material is shown for context; the
-// only thing editable here is Assigned To. Running the actual clock happens on the
+// only thing editable here is Assigned To -- and only on the lines worked at this user's own
+// warehouse. A line belonging to another warehouse (a Design or LFP line on a SIGN job) is shown
+// with whoever holds it but no picker: that department's scheduler staffs it, and the server
+// refuses the assignment anyway. can_assign comes from the API, which knows the user's scope.
 // assignee's own run screen (ScheduledJobOrderRun.jsx), reachable per row via Open.
 function money(v) {
   const n = Number(v);
@@ -106,14 +109,20 @@ export default function ScheduledJobOrderTasks() {
                     <td>{money(t.process_cost)}</td>
                     <td>{money(t.material_cost)}</td>
                     <td style={{ minWidth: 160 }}>
-                      <EntityPicker
-                        label="Assigned To" items={employees} value={t.assigned_employee_id}
-                        getLabel={(e) => `${e.first_name} ${e.last_name}`}
-                        columns={[{ key: 'name', label: 'Name', render: (e) => `${e.first_name} ${e.last_name}` }, { key: 'department_name', label: 'Department' }]}
-                        searchKeys={['first_name', 'last_name']}
-                        placeholder="Unassigned"
-                        onSelect={(e) => assignEmployee(t.id, e.id)}
-                      />
+                      {t.can_assign ? (
+                        <EntityPicker
+                          label="Assigned To" items={employees} value={t.assigned_employee_id}
+                          getLabel={(e) => `${e.first_name} ${e.last_name}`}
+                          columns={[{ key: 'name', label: 'Name', render: (e) => `${e.first_name} ${e.last_name}` }, { key: 'department_name', label: 'Department' }]}
+                          searchKeys={['first_name', 'last_name']}
+                          placeholder="Unassigned"
+                          onSelect={(e) => assignEmployee(t.id, e.id)}
+                        />
+                      ) : (
+                        <span className="muted" title={`Staffed by ${t.location_name}`}>
+                          {t.assigned_employee_name || 'Unassigned'}
+                        </span>
+                      )}
                     </td>
                     <td>{Number(t.allotted_minutes || 0).toFixed(0)} mins</td>
                     <td><span className={`badge ${STATUS_CLASS[status]}`}>{status}</span></td>
