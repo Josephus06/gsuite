@@ -10,7 +10,9 @@ const TABLES = {
   'chart-of-accounts': { table: 'chart_of_accounts', columns: ['account_code', 'account_name', 'account_type', 'parent_account_id', 'is_active'] },
   locations: { table: 'locations', columns: ['location_code', 'location_name', 'location_type', 'address', 'telephone', 'contact_person', 'is_active'] },
   'business-styles': { table: 'business_styles', columns: ['name', 'description', 'is_active'] },
-  departments: { table: 'departments', columns: ['name', 'description', 'head_user_id', 'is_active'] },
+  // job_location_id is the warehouse a department's people are restricted to on every job order
+  // list -- empty means unrestricted. See lib/jobLocationVisibility.js.
+  departments: { table: 'departments', columns: ['name', 'description', 'head_user_id', 'job_location_id', 'is_active'] },
   'units-of-measure': { table: 'units_of_measure', columns: ['code', 'title', 'is_active'] },
   'unit-conversions': { table: 'unit_conversions', columns: ['from_unit_id', 'to_unit_id', 'multiplier'] },
   'inventory-categories': { table: 'inventory_categories', columns: ['parent_category_id', 'name', 'description', 'is_active'] },

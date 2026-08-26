@@ -4,6 +4,7 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const {
   jobOrderIncentiveExpression, nstdjoIncentiveExpression, joIncentiveBasis, NSTDJO_INCENTIVE_BASIS,
 } = require('../lib/artistIncentive');
+const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 
 const router = express.Router();
 const ROUTE = '/assigned-jo';
@@ -46,6 +47,14 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const [[me]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
     if (!me?.employee_id) return res.json([]);
 
+    // An artist filed under a production department only sees that warehouse's layout work. Two
+    // fragments because the worklist unions job_orders (jo) with non_standard_job_orders (n), and
+    // each carries its own job_location_id.
+    const scopeLocationId = await getJobLocationScope(req.user.id);
+    const joLocationClause = scopeLocationId ? ' AND jo.job_location_id = ?' : '';
+    const nstdjoLocationClause = scopeLocationId ? ' AND n.job_location_id = ?' : '';
+    const locationParams = scopeLocationId ? [scopeLocationId] : [];
+
     const [rows] = await pool.query(
       `SELECT jo.id, jo.job_order_no, jo.status, jo.sub_status, jo.description,
               jo.planned_start_at, jo.planned_end_at, jo.layout_started_at, jo.layout_ended_at, jo.layout_qty,
@@ -68,9 +77,9 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN employees jsr ON jsr.id = jo.sales_rep_id
        LEFT JOIN employees ssr ON ssr.id = so.sales_rep_id
        LEFT JOIN pms_job_types pjt ON pjt.id = jo.layout_job_type_id
-       WHERE jo.artist_id = ? AND jo.sub_status IN (?)
+       WHERE jo.artist_id = ? AND jo.sub_status IN (?)${joLocationClause}
        ORDER BY jo.id DESC`,
-      [me.employee_id, ARTIST_QUEUE_SUB_STATUSES]
+      [me.employee_id, ARTIST_QUEUE_SUB_STATUSES, ...locationParams]
     );
 
     // Non-Standard Job Orders assigned to the same artist appear in the same worklist --
@@ -92,9 +101,9 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN employees nsr ON nsr.id = n.sales_rep_id
        LEFT JOIN pms_job_types pjt ON pjt.id = n.layout_job_type_id
        WHERE n.artist_employee_id = ?
-         AND n.sub_status IN (?)
+         AND n.sub_status IN (?)${nstdjoLocationClause}
        ORDER BY n.id DESC`,
-      [me.employee_id, ARTIST_QUEUE_SUB_STATUSES]
+      [me.employee_id, ARTIST_QUEUE_SUB_STATUSES, ...locationParams]
     );
 
     res.json([
@@ -320,6 +329,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     const [[me]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
     const [[row]] = await pool.query(
       `SELECT jo.id, jo.job_order_no, jo.status, jo.sub_status, jo.description, jo.artist_id,
+              jo.job_location_id,
               jo.planned_start_at, jo.planned_end_at, jo.layout_started_at, jo.layout_ended_at, jo.layout_qty,
               c.name AS customer_name,
               COALESCE(CONCAT(jsr.first_name, ' ', jsr.last_name),
@@ -338,6 +348,11 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     if (!row) return res.status(404).json({ error: 'Not found' });
     if (!me?.employee_id || row.artist_id !== me.employee_id) {
       return res.status(403).json({ error: 'This Job Order is not assigned to you.' });
+    }
+    // Out of this user's department -- 404 rather than 403, matching the JO detail views: an
+    // out-of-department job order should read as one that isn't there.
+    if (!isJobLocationVisible(row, await getJobLocationScope(req.user.id))) {
+      return res.status(404).json({ error: 'Not found' });
     }
 
     const [sessions] = await pool.query(

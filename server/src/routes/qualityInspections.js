@@ -4,6 +4,7 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
 const { createReworkJobOrder, countOpenRework } = require('../lib/reworkJobOrder');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
+const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 
 const router = express.Router();
 // Reached from a Job Order's Production view, not its own page in the nav -- reuses
@@ -30,6 +31,10 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     const where = [];
     const params = [];
+    // An inspection is scoped by the warehouse of the job order it inspects, so a production
+    // department sees only its own -- same rule as the Job Orders and Production lists.
+    const scopeLocationId = await getJobLocationScope(req.user.id);
+    if (scopeLocationId) { where.push('jo.job_location_id = ?'); params.push(scopeLocationId); }
     if (jobLocationId) { where.push('jo.job_location_id = ?'); params.push(jobLocationId); }
     if (customerId) { where.push('so.customer_id = ?'); params.push(customerId); }
     if (asOf) { where.push('qi.date_created <= ?'); params.push(asOf); }
@@ -75,6 +80,7 @@ router.get('/for-job-order/:jobOrderId', requireAuth, requirePermission(ROUTE, '
     const [[jo]] = await pool.query(
       `SELECT jo.id, jo.job_order_no, jo.description, jo.quantity, jo.quantity_built, jo.quantity_inspected, jo.units,
               jt.display_name AS job_type_name, loc.location_name AS job_location_name,
+              jo.job_location_id,
               c.name AS customer_name
        FROM job_orders jo
        LEFT JOIN job_types jt ON jt.id = jo.job_type_id
@@ -85,6 +91,10 @@ router.get('/for-job-order/:jobOrderId', requireAuth, requirePermission(ROUTE, '
       [req.params.jobOrderId]
     );
     if (!jo) return res.status(404).json({ error: 'Not found' });
+    // Out of this user's department -- 404 rather than 403, matching the JO detail views.
+    if (!isJobLocationVisible(jo, await getJobLocationScope(req.user.id))) {
+      return res.status(404).json({ error: 'Not found' });
+    }
 
     const [builds] = await pool.query(
       `SELECT id, ab_no, date_created, quantity_built, passed_qty, rma_qty
@@ -104,6 +114,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
   try {
     const [[qi]] = await pool.query(
       `SELECT qi.*, jo.job_order_no, jo.quantity AS jo_quantity, jo.quantity_built, jo.quantity_inspected,
+              jo.job_location_id,
               c.name AS customer_name, cc.contact_name,
               so.contact_email, so.contact_title, so.contact_phone,
               u.display_name AS created_by_name
@@ -117,6 +128,10 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
     if (!qi) return res.status(404).json({ error: 'Not found' });
+    // Out of this user's department -- 404 rather than 403, matching the JO detail views.
+    if (!isJobLocationVisible(qi, await getJobLocationScope(req.user.id))) {
+      return res.status(404).json({ error: 'Not found' });
+    }
 
     const [lines] = await pool.query(
       `SELECT qil.*, ab.ab_no FROM quality_inspection_lines qil

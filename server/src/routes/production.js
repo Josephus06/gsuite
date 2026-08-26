@@ -3,6 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { isNonStockItem } = require('../lib/itemTypes');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
+const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 
 // Completing a process and building both move stock dated today (the Assembly Build row
 // is inserted with CURDATE()), so today's period is what has to be open for them.
@@ -28,6 +29,12 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     const commonWhere = ['jo.production_stage IS NOT NULL'];
     const commonParams = [];
+
+    // A production department only sees its own warehouse's work. Applied to commonWhere rather
+    // than to `where`, so the stage tab counts are taken over the same rows the listing shows -- a
+    // signage user must not read "For QI 14" and then open the tab to three job orders.
+    const scopeLocationId = await getJobLocationScope(req.user.id);
+    if (scopeLocationId) { commonWhere.push('jo.job_location_id = ?'); commonParams.push(scopeLocationId); }
     if (salesRepId) { commonWhere.push('so.sales_rep_id = ?'); commonParams.push(salesRepId); }
     if (jobLocationId) { commonWhere.push('jo.job_location_id = ?'); commonParams.push(jobLocationId); }
     if (customerId) { commonWhere.push('so.customer_id = ?'); commonParams.push(customerId); }
@@ -118,6 +125,11 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
     if (!jo) return res.status(404).json({ error: 'Not found' });
+    // Out of this user's department: 404 rather than 403, so a job order they may not see reads as
+    // one that isn't there rather than one worth going looking for.
+    if (!isJobLocationVisible(jo, await getJobLocationScope(req.user.id))) {
+      return res.status(404).json({ error: 'Not found' });
+    }
 
     // Back Order is a materials-shortage figure, not a production-progress one: it's how
     // much of this line's total material requirement (qty x area, already summed into

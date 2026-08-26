@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 
 const router = express.Router();
 const ROUTE = '/scheduled-jo';
@@ -69,6 +70,13 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const [[me]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
     const mine = await isProductionEmployee(me?.employee_id);
 
+    // A production department only sees its own warehouse's work -- both the supervisor's job list
+    // and a production employee's own task list. Built as a fragment because these two queries
+    // assemble their WHERE inline rather than from a conditions array.
+    const scopeLocationId = await getJobLocationScope(req.user.id);
+    const locationClause = scopeLocationId ? ' AND jo.job_location_id = ?' : '';
+    const locationParams = scopeLocationId ? [scopeLocationId] : [];
+
     if (mine) {
       const [rows] = await pool.query(
         `SELECT jop.id, jop.total, jop.assignment_started_at, jop.assignment_ended_at,
@@ -82,9 +90,9 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
          LEFT JOIN processes pr ON pr.id = jop.process_id
          LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
          LEFT JOIN customers c ON c.id = so.customer_id
-         WHERE jop.assigned_employee_id = ?
+         WHERE jop.assigned_employee_id = ?${locationClause}
          ORDER BY jop.id DESC`,
-        [me.employee_id]
+        [me.employee_id, ...locationParams]
       );
       return res.json({ mode: 'tasks', rows: rows.map((r) => ({ ...r, is_running: !!r.is_running })) });
     }
@@ -98,8 +106,9 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN locations loc ON loc.id = jo.job_location_id
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
        LEFT JOIN customers c ON c.id = so.customer_id
-       WHERE jo.production_stage = 'in_process'
-       ORDER BY jo.id DESC`
+       WHERE jo.production_stage = 'in_process'${locationClause}
+       ORDER BY jo.id DESC`,
+      locationParams
     );
     res.json({ mode: 'jobs', rows });
   } catch (err) {
@@ -113,7 +122,7 @@ router.get('/:jobOrderId', requireAuth, requirePermission(ROUTE, 'can_view'), as
   try {
     const [[jo]] = await pool.query(
       `SELECT jo.id, jo.job_order_no, jo.description, jo.quantity, jo.units, jo.delivery_date, jo.production_stage,
-              loc.location_name AS job_location_name, c.name AS customer_name
+              loc.location_name AS job_location_name, c.name AS customer_name, jo.job_location_id
        FROM job_orders jo
        LEFT JOIN locations loc ON loc.id = jo.job_location_id
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
@@ -122,6 +131,10 @@ router.get('/:jobOrderId', requireAuth, requirePermission(ROUTE, 'can_view'), as
       [req.params.jobOrderId]
     );
     if (!jo) return res.status(404).json({ error: 'Not found' });
+    // Out of this user's department -- 404 rather than 403, matching the JO detail views.
+    if (!isJobLocationVisible(jo, await getJobLocationScope(req.user.id))) {
+      return res.status(404).json({ error: 'Not found' });
+    }
 
     const [tasks] = await pool.query(
       `SELECT jop.id, jop.qty, jop.unit, jop.total, jop.process_cost, jop.material_cost,

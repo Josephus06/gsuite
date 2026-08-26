@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeAssemblyBuildGl } = require('../lib/glImpact');
+const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 
 const router = express.Router();
@@ -31,6 +32,10 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     const where = [];
     const params = [];
+    // An assembly build belongs to its job order's warehouse, so a production department sees
+    // only its own builds -- same rule as the Job Orders and Production lists.
+    const scopeLocationId = await getJobLocationScope(req.user.id);
+    if (scopeLocationId) { where.push('jo.job_location_id = ?'); params.push(scopeLocationId); }
     if (salesRepId) { where.push('so.sales_rep_id = ?'); params.push(salesRepId); }
     if (jobLocationId) { where.push('jo.job_location_id = ?'); params.push(jobLocationId); }
     if (customerId) { where.push('so.customer_id = ?'); params.push(customerId); }
@@ -77,6 +82,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     const [[ab]] = await pool.query(
       `SELECT ab.*, jo.job_order_no, jo.description AS job_desc, jo.quantity, jo.units, jo.quantity_inspected,
               jo.length, jo.width, jo.height, jo.memo AS jo_memo,
+              jo.job_location_id,
               loc.location_name AS job_location_name, jt.display_name AS job_type_name, jt.asset_account_id AS fg_account_id,
               c.name AS customer_name, cc.contact_name,
               so.contact_email, so.contact_title, so.contact_phone,
@@ -96,6 +102,10 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
     if (!ab) return res.status(404).json({ error: 'Not found' });
+    // Out of this user's department -- 404 rather than 403, matching the JO detail views.
+    if (!isJobLocationVisible(ab, await getJobLocationScope(req.user.id))) {
+      return res.status(404).json({ error: 'Not found' });
+    }
 
     const [processes] = await pool.query(
       `SELECT abl.*, pr.process_name, i.display_name AS item_name, i.asset_account_id AS item_asset_account_id, loc.location_name

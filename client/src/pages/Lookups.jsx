@@ -32,6 +32,9 @@ const CONFIG = [
     { name: 'name', label: 'Name', type: 'text', required: true },
     { name: 'description', label: 'Description', type: 'textarea' },
     { name: 'head_user_id', label: 'Department Head', type: 'user-ref' },
+    // Empty means the department sees every warehouse's job orders; set it and its people see
+    // only that warehouse's (server/src/lib/jobLocationVisibility.js).
+    { name: 'job_location_id', label: 'Job Location Restriction', type: 'ref', ref: 'locations', refLabel: 'location_name' },
     { name: 'is_active', label: 'Active', type: 'checkbox' },
   ] },
   { key: 'units-of-measure', label: 'Units of Measure', fields: [

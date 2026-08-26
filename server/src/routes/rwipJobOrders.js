@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { getJobLocationScope } = require('../lib/jobLocationVisibility');
 
 const router = express.Router();
 const ROUTE = '/rwip-job-orders';
@@ -12,6 +13,10 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const { search, stage } = req.query;
     const where = ['jo.parent_job_order_id IS NOT NULL', "jo.job_order_no LIKE 'RWIP-%'"];
     const params = [];
+    // A rework job order sits in the same warehouse as the job it came from, so the department
+    // restriction applies here exactly as it does on the Production list.
+    const scopeLocationId = await getJobLocationScope(req.user.id);
+    if (scopeLocationId) { where.push('jo.job_location_id = ?'); params.push(scopeLocationId); }
     if (search) {
       where.push('(jo.job_order_no LIKE ? OR pjo.job_order_no LIKE ? OR c.name LIKE ? OR so.sales_order_no LIKE ?)');
       params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);

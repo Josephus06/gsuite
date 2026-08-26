@@ -6,6 +6,7 @@ const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { getArtistEmployeeScope } = require('../lib/artistVisibility');
 const { notifyDesignSupervisors, notifyAssignedArtist } = require('../lib/designNotifications');
 const { getSbuScope, departmentIdsForTab, sbuCanApproveDepartment } = require('../lib/sbuGroups');
+const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 
 const router = express.Router();
 const ROUTE = '/non-standard-job-orders';
@@ -208,6 +209,12 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const { search = '', page = 1, limit = 10, tab = '' } = req.query;
     const params = [];
     const conditions = [];
+    // A production department only sees its own warehouse's orders. Unlike the design-queue and
+    // SBU rules below, this one does not replace the others -- it is a ceiling that stacks on top
+    // of whichever scope applies, and it sits in `conditions` so the tab counts inherit it too.
+    // non_standard_job_orders carries job_location_id itself, so no join is needed for it.
+    const scopeLocationId = await getJobLocationScope(req.user.id);
+    if (scopeLocationId) { conditions.push('n.job_location_id = ?'); params.push(scopeLocationId); }
     if (search) {
       conditions.push('(n.nstdjo_no LIKE ? OR n.description LIKE ? OR c.name LIKE ?)');
       params.push(`%${search}%`, `%${search}%`, `%${search}%`);
@@ -340,6 +347,10 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.user.id, req.user.id, req.user.id, req.params.id],
     );
     if (!row) return res.status(404).json({ error: 'Non-standard job order not found.' });
+    // Same defense in depth as the design-queue/sales checks below, for the department's warehouse.
+    if (!isJobLocationVisible(row, await getJobLocationScope(req.user.id))) {
+      return res.status(404).json({ error: 'Non-standard job order not found.' });
+    }
     // Defense in depth -- neither a Design Supervisor nor a sales user can open an order
     // outside their scope by pasting its URL, even though the list already filters it out.
     if (await isScopedToDesignQueue(req.user.id)) {

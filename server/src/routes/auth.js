@@ -196,9 +196,14 @@ router.get('/me', requireAuth, async (req, res, next) => {
     // Account step). This is what auto-fills Office Location/Sales Division when a user
     // starts a new Estimate: their own branch's location + department.
     const [[defaultBranch]] = await pool.query(
-      `SELECT ub.location_id, ub.department_id, d.name AS department_name
+      `SELECT ub.location_id, ub.department_id, d.name AS department_name,
+              -- The warehouse this department is restricted to on every job order list, if any.
+              -- Carried here so the UI can say why a list is short rather than leaving it looking
+              -- broken; the restriction itself is enforced server-side (lib/jobLocationVisibility.js).
+              d.job_location_id, jl.location_name AS job_location_name
        FROM user_branches ub
        LEFT JOIN departments d ON d.id = ub.department_id
+       LEFT JOIN locations jl ON jl.id = d.job_location_id
        WHERE ub.user_id = ? AND ub.is_default = TRUE LIMIT 1`,
       [user.id]
     );

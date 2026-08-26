@@ -3,6 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } = require('../lib/designSupervisorVisibility');
 const { getArtistEmployeeScope } = require('../lib/artistVisibility');
+const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 const {
   notifyDesignSupervisors, notifyAssignedArtist, notifySalesRep, NOTIFY_TYPE_JO_REVISION,
 } = require('../lib/designNotifications');
@@ -76,6 +77,11 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     const where = [];
     const params = [];
+    // A production department only sees its own warehouse's job orders. This is a ceiling, not
+    // one more scope to choose between: it stacks with the design-queue/artist rules below rather
+    // than replacing them, and it goes into `where` so the status tab counts inherit it too.
+    const scopeLocationId = await getJobLocationScope(req.user.id);
+    if (scopeLocationId) { where.push('jo.job_location_id = ?'); params.push(scopeLocationId); }
     if (salesRepId) { where.push('so.sales_rep_id = ?'); params.push(salesRepId); }
     if (jobLocationId) { where.push('jo.job_location_id = ?'); params.push(jobLocationId); }
     if (officeLocationId) { where.push('so.office_location_id = ?'); params.push(officeLocationId); }
@@ -193,6 +199,11 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
     if (!jo) return res.status(404).json({ error: 'Not found' });
+    // Same defense in depth as the design-queue check below, for the department's warehouse:
+    // 404, so an out-of-department JO reads as one that isn't there.
+    if (!isJobLocationVisible(jo, await getJobLocationScope(req.user.id))) {
+      return res.status(404).json({ error: 'Not found' });
+    }
     // Defense in depth -- a Design Supervisor can't view a JO outside their design
     // queue just by guessing/pasting its URL, even though the list already filters it.
     if (await isScopedToDesignQueue(req.user.id)) {
