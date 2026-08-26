@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 
 const router = express.Router();
@@ -30,10 +30,11 @@ async function getOwnedProcess(conn, processId, userId) {
   return { proc };
 }
 
-// A production-department employee gets the personal-worklist view (their own
-// assignments only). Anyone else with access to this page -- a department supervisor,
-// admin -- isn't themselves a valid assignee, so they instead get the scheduling
-// overview: every currently in-process Job Order, opened to assign staff per task.
+// A production-department employee gets the personal-worklist view (their own assignments
+// only), unless isScheduler below says they are there to hand work out rather than take it.
+// Anyone else with access to this page -- a department supervisor, admin -- isn't themselves a
+// valid assignee, so they get the scheduling overview: every currently in-process Job Order,
+// opened to assign staff per task.
 async function isProductionEmployee(employeeId) {
   if (!employeeId) return false;
   const [[row]] = await pool.query(
@@ -44,16 +45,34 @@ async function isProductionEmployee(employeeId) {
   return !!row;
 }
 
-// Feeds the "Assigned To" picker -- scoped to Production-department employees, same
-// list as Production module's own picker. Registered ahead of the /:jobOrderId param
-// route so "production-employees" isn't swallowed as a jobOrderId value.
+// Who schedules the work rather than doing it. A Signage Planner is filed under a production
+// department but assigns jobs instead of running them, so without this they would land on a
+// personal worklist that is always empty -- nobody assigns tasks to the person doing the
+// assigning. The flag has to carry this on its own because a planner deliberately holds no
+// production edit rights (see db/add-signage-planner-role.js); this is the same test
+// requireScheduler applies on the Production screen. can_edit here covers the GM/System Admin
+// path, who were already getting the scheduling view by not being production employees.
+async function isScheduler(userId) {
+  const [[u]] = await pool.query('SELECT is_signage_planner FROM users WHERE id = ?', [userId]);
+  if (u?.is_signage_planner) return true;
+  return userCan(userId, ROUTE, 'can_edit');
+}
+
+// Feeds the "Assigned To" picker -- Production-department employees, narrowed to the ones who
+// work the scheduler's own warehouse. A SIGNAGE planner staffs SIGNAGE jobs; offering them CNC
+// and DPOD staff invites an assignment nobody in that warehouse can act on. Departments are
+// matched through the same departments.job_location_id map the job order lists use, so a
+// department only contributes staff once it is mapped to a warehouse. Registered ahead of the
+// /:jobOrderId param route so "production-employees" isn't swallowed as a jobOrderId value.
 router.get('/production-employees', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
+    const scopeLocationId = await getJobLocationScope(req.user.id);
     const [rows] = await pool.query(
       `SELECT e.id, e.first_name, e.last_name, e.position_title, d.name AS department_name
        FROM employees e JOIN departments d ON d.id = e.department_id
-       WHERE d.name LIKE 'Production%' AND e.is_active = TRUE
-       ORDER BY e.first_name, e.last_name`
+       WHERE d.name LIKE 'Production%' AND e.is_active = TRUE${scopeLocationId ? ' AND d.job_location_id = ?' : ''}
+       ORDER BY e.first_name, e.last_name`,
+      scopeLocationId ? [scopeLocationId] : []
     );
     res.json(rows);
   } catch (err) {
@@ -61,14 +80,17 @@ router.get('/production-employees', requireAuth, requirePermission(ROUTE, 'can_v
   }
 });
 
-// Landing list: a production employee sees their own personal task worklist (mode:
-// 'tasks'); anyone else (a department supervisor, admin) sees every in-process Job
-// Order instead (mode: 'jobs') -- opening one takes them to the Task table to assign
-// staff per process line, matching the real system's Scheduled JO screen.
+// Landing list: a production employee sees their own personal task worklist (mode: 'tasks');
+// a scheduler -- a Signage Planner, or anyone with can_edit here -- and everyone else (a
+// department supervisor, admin) sees every in-process Job Order instead (mode: 'jobs'),
+// opening one to the Task table to assign staff per process line, matching the real system's
+// Scheduled JO screen.
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[me]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
-    const mine = await isProductionEmployee(me?.employee_id);
+    // A scheduler gets the job list even when their employee record sits in a production
+    // department -- see isScheduler above.
+    const mine = !(await isScheduler(req.user.id)) && await isProductionEmployee(me?.employee_id);
 
     // A production department only sees its own warehouse's work -- both the supervisor's job list
     // and a production employee's own task list. Built as a fragment because these two queries
@@ -161,14 +183,27 @@ router.get('/:jobOrderId', requireAuth, requirePermission(ROUTE, 'can_view'), as
 // Assigning (or clearing, when employee_id is falsy) who will run a task/process line.
 router.put('/:jobOrderId/tasks/:processId/assign', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
+    // The picker already narrows the choices, but the restriction has to hold against a raw
+    // request too -- and the job order itself has to be one this user may see, or a hidden job
+    // order would still be writable by id. 404 for the job order, matching its detail view.
+    const scopeLocationId = await getJobLocationScope(req.user.id);
+    const [[jo]] = await pool.query('SELECT job_location_id FROM job_orders WHERE id = ?', [req.params.jobOrderId]);
+    if (!jo || !isJobLocationVisible(jo, scopeLocationId)) return res.status(404).json({ error: 'Not found' });
+
     const employeeId = req.body.employee_id || null;
     if (employeeId) {
       const [[emp]] = await pool.query(
         `SELECT e.id FROM employees e JOIN departments d ON d.id = e.department_id
-         WHERE e.id = ? AND d.name LIKE 'Production%'`,
-        [employeeId]
+         WHERE e.id = ? AND d.name LIKE 'Production%'${scopeLocationId ? ' AND d.job_location_id = ?' : ''}`,
+        scopeLocationId ? [employeeId, scopeLocationId] : [employeeId]
       );
-      if (!emp) return res.status(400).json({ error: 'That employee is not in a Production department.' });
+      if (!emp) {
+        return res.status(400).json({
+          error: scopeLocationId
+            ? 'That employee is not in a Production department for this job location.'
+            : 'That employee is not in a Production department.',
+        });
+      }
     }
     const [result] = await pool.query(
       'UPDATE job_order_processes SET assigned_employee_id = ? WHERE id = ? AND job_order_id = ?',
