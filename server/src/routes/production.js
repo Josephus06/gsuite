@@ -21,6 +21,20 @@ const STAGE_VALUES = [
   'for_qi', 'partially_completed', 'completed', 'invoiced',
 ];
 
+// Every write in this module is reachable by id whether or not the job order shows on this
+// user's list, so each one re-asks the question the list already asked -- otherwise hiding a
+// job order is decoration and an out-of-department user can still schedule, build or rework it
+// by pasting an id. Answers 404 and returns false when it refuses, matching the detail view;
+// callers do `if (!(await assertJobOrderInScope(req, res))) return;`.
+async function assertJobOrderInScope(req, res) {
+  const scopeLocationId = await getJobLocationScope(req.user.id);
+  if (!scopeLocationId) return true;
+  const [[row]] = await pool.query('SELECT job_location_id FROM job_orders WHERE id = ?', [req.params.id]);
+  if (row && isJobLocationVisible(row, scopeLocationId)) return true;
+  res.status(404).json({ error: 'Not found' });
+  return false;
+}
+
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const {
@@ -127,7 +141,8 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     if (!jo) return res.status(404).json({ error: 'Not found' });
     // Out of this user's department: 404 rather than 403, so a job order they may not see reads as
     // one that isn't there rather than one worth going looking for.
-    if (!isJobLocationVisible(jo, await getJobLocationScope(req.user.id))) {
+    const scopeLocationId = await getJobLocationScope(req.user.id);
+    if (!isJobLocationVisible(jo, scopeLocationId)) {
       return res.status(404).json({ error: 'Not found' });
     }
 
@@ -143,7 +158,11 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       `SELECT jop.*, pr.process_name, pr.minutes_per_unit, i.display_name AS item_name, i.item_type, loc.location_name,
               il.qty_on_hand AS on_hand, il.qty_committed AS committed,
               GREATEST(COALESCE(jop.total, 0) - COALESCE(il.qty_on_hand, 0), 0) AS back_order,
-              COALESCE(jop.total, 0) * COALESCE(pr.minutes_per_unit, 0) AS allotted_minutes
+              COALESCE(jop.total, 0) * COALESCE(pr.minutes_per_unit, 0) AS allotted_minutes,
+              -- Where this line is actually worked. Same COALESCE the location_name and on-hand
+              -- joins below use, so a line carrying no location of its own is treated as sitting
+              -- in its job order's warehouse rather than nowhere.
+              COALESCE(jop.location_id, parent_jo.job_location_id) AS effective_location_id
        FROM job_order_processes jop
        LEFT JOIN job_orders parent_jo ON parent_jo.id = jop.job_order_id
        LEFT JOIN processes pr ON pr.id = jop.process_id
@@ -161,6 +180,13 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // counts as non-stock.
     for (const p of processes) {
       if (isNonStockItem(p.item_type)) p.back_order = 0;
+    }
+
+    // can_complete says whether THIS user may record output on THIS line. A line worked at
+    // another warehouse is that department's to complete -- it stays visible with its figures,
+    // because the whole job has to be readable, but its Completed control is locked.
+    for (const p of processes) {
+      p.can_complete = !scopeLocationId || Number(p.effective_location_id) === Number(scopeLocationId);
     }
 
     // Every Assembly Build transaction saved against this JO -- surfaced on the Related
@@ -235,6 +261,7 @@ router.put('/:id/planned-dates', requireAuth, requireScheduler, async (req, res,
       'SELECT planned_start_date, planned_end_date, status FROM job_orders WHERE id = ?', [req.params.id]
     );
     if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!(await assertJobOrderInScope(req, res))) return;
     if (jo.status === 'Cancelled') return res.status(409).json({ error: 'This job order is cancelled.' });
 
     await conn.beginTransaction();
@@ -273,6 +300,7 @@ router.put('/:id/acknowledge', requireAuth, requireScheduler, async (req, res, n
       [req.params.id]
     );
     if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!(await assertJobOrderInScope(req, res))) return;
     if (!jo.planned_start_date || !jo.planned_end_date) {
       return res.status(400).json({ error: 'Set Planned Start and Planned End before acknowledging.' });
     }
@@ -306,7 +334,8 @@ router.put('/:id/acknowledge', requireAuth, requireScheduler, async (req, res, n
 router.put('/:id/processes/:processId/complete', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
     const [[proc]] = await pool.query(
-      `SELECT jop.total, jop.total_completed, jop.item_id, jop.location_id, il.qty_on_hand AS on_hand, i.item_type
+      `SELECT jop.total, jop.total_completed, jop.item_id, jop.location_id, il.qty_on_hand AS on_hand, i.item_type,
+              COALESCE(jop.location_id, parent_jo.job_location_id) AS effective_location_id
        FROM job_order_processes jop
        LEFT JOIN job_orders parent_jo ON parent_jo.id = jop.job_order_id
        LEFT JOIN inventories i ON i.id = jop.item_id
@@ -315,6 +344,14 @@ router.put('/:id/processes/:processId/complete', requireAuth, requirePermission(
       [req.params.processId, req.params.id]
     );
     if (!proc) return res.status(404).json({ error: 'Not found' });
+    // Completing is per process line, and a line can be worked in a different warehouse from its
+    // job order -- a SIGN job routinely carries a Design or an LFP line. So it is the LINE's
+    // location that decides, not the job order's. 403 rather than 404 because the line is visible
+    // on the Processes table, just not this user's to record output on.
+    const scopeLocationId = await getJobLocationScope(req.user.id);
+    if (scopeLocationId && Number(proc.effective_location_id) !== Number(scopeLocationId)) {
+      return res.status(403).json({ error: 'That process line is worked at another location.' });
+    }
     await assertPeriodOpen(today(), 'non_gl');
 
     const amount = Number(req.body.amount || 0);
@@ -364,6 +401,7 @@ router.put('/:id/assembly-build', requireAuth, requirePermission(ROUTE, 'can_edi
   try {
     const [[jo]] = await conn.query('SELECT quantity, quantity_built, production_stage, job_location_id FROM job_orders WHERE id = ?', [req.params.id]);
     if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!(await assertJobOrderInScope(req, res))) return;
     await assertPeriodOpen(today(), 'non_gl', conn);
 
     const jobQty = Number(jo.quantity || 0);
@@ -518,6 +556,7 @@ router.get('/:id/rwip-draft', requireAuth, requirePermission(ROUTE, 'can_view'),
       [req.params.id]
     );
     if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!(await assertJobOrderInScope(req, res))) return;
     const [processes] = await pool.query(
       `SELECT jop.line_no, jop.process_id, p.process_name, jop.process_qty, jop.process_uom, jop.category, jop.parts,
               jop.item_id, i.display_name AS item_name, jop.length, jop.width, jop.uom, jop.qty, jop.unit, jop.remarks
@@ -539,6 +578,7 @@ router.post('/:id/rwip', requireAuth, requirePermission(ROUTE, 'can_edit'), asyn
   try {
     const [[jo]] = await conn.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
     if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!(await assertJobOrderInScope(req, res))) return;
     if (jo.production_stage !== 'in_process') {
       return res.status(409).json({ error: 'RWIP can only be raised while the Job Order is In-Process.' });
     }

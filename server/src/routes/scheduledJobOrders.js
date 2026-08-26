@@ -101,7 +101,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     //   - the scheduler's job list takes a job order whose own location matches OR which carries
     //     any line at this warehouse, so no work here is unreachable from the list.
     const scopeLocationId = await getJobLocationScope(req.user.id);
-    const taskLocationClause = scopeLocationId ? ' AND jop.location_id = ?' : '';
+    const taskLocationClause = scopeLocationId ? ' AND COALESCE(jop.location_id, jo.job_location_id) = ?' : '';
     const taskLocationParams = scopeLocationId ? [scopeLocationId] : [];
     const jobLocationClause = scopeLocationId
       ? ' AND (jo.job_location_id = ? OR EXISTS (SELECT 1 FROM job_order_processes pl WHERE pl.job_order_id = jo.id AND pl.location_id = ?))'
@@ -177,7 +177,10 @@ router.get('/:jobOrderId', requireAuth, requirePermission(ROUTE, 'can_view'), as
     const [tasks] = await pool.query(
       `SELECT jop.id, jop.qty, jop.unit, jop.total, jop.process_cost, jop.material_cost,
               jop.assigned_employee_id, jop.assignment_started_at, jop.assignment_ended_at,
-              pr.process_name, pr.minutes_per_unit, loc.location_name, jop.location_id, i.display_name AS item_name,
+              pr.process_name, pr.minutes_per_unit, loc.location_name, i.display_name AS item_name,
+              -- A line carrying no location of its own is worked in its job order's warehouse,
+              -- not nowhere -- the same fallback the Production view's figures use.
+              COALESCE(jop.location_id, ?) AS effective_location_id,
               COALESCE(jop.total, 0) * COALESCE(pr.minutes_per_unit, 0) AS allotted_minutes,
               CONCAT(ae.first_name, ' ', ae.last_name) AS assigned_employee_name,
               EXISTS(SELECT 1 FROM job_order_process_sessions s WHERE s.job_order_process_id = jop.id AND s.ended_at IS NULL) AS is_running
@@ -187,7 +190,7 @@ router.get('/:jobOrderId', requireAuth, requirePermission(ROUTE, 'can_view'), as
        LEFT JOIN inventories i ON i.id = jop.item_id
        LEFT JOIN employees ae ON ae.id = jop.assigned_employee_id
        WHERE jop.job_order_id = ? ORDER BY jop.line_no`,
-      [req.params.jobOrderId]
+      [jo.job_location_id, req.params.jobOrderId]
     );
 
     // can_assign says whether THIS user may staff THIS line. A line worked at another warehouse
@@ -198,7 +201,7 @@ router.get('/:jobOrderId', requireAuth, requirePermission(ROUTE, 'can_view'), as
       tasks: tasks.map((t) => ({
         ...t,
         is_running: !!t.is_running,
-        can_assign: !scopeLocationId || Number(t.location_id) === Number(scopeLocationId),
+        can_assign: !scopeLocationId || Number(t.effective_location_id) === Number(scopeLocationId),
       })),
     });
   } catch (err) {
@@ -216,11 +219,14 @@ router.put('/:jobOrderId/tasks/:processId/assign', requireAuth, requirePermissio
     // line is visible to them on the task table, just not theirs to assign.
     const scopeLocationId = await getJobLocationScope(req.user.id);
     const [[line]] = await pool.query(
-      'SELECT location_id FROM job_order_processes WHERE id = ? AND job_order_id = ?',
+      `SELECT COALESCE(jop.location_id, jo.job_location_id) AS effective_location_id
+         FROM job_order_processes jop
+         JOIN job_orders jo ON jo.id = jop.job_order_id
+        WHERE jop.id = ? AND jop.job_order_id = ?`,
       [req.params.processId, req.params.jobOrderId]
     );
     if (!line) return res.status(404).json({ error: 'Not found' });
-    if (scopeLocationId && Number(line.location_id) !== Number(scopeLocationId)) {
+    if (scopeLocationId && Number(line.effective_location_id) !== Number(scopeLocationId)) {
       return res.status(403).json({ error: 'That process line is worked at another location.' });
     }
 

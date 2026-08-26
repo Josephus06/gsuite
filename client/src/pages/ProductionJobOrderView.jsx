@@ -643,9 +643,18 @@ export default function ProductionJobOrderView() {
                       if (c.key === 'completed_input') {
                         if (!p.item_id) return <td key={c.key} />;
                         const pct = num(p.total) > 0 ? Math.min((num(p.total_completed) / num(p.total)) * 100, 100) : 0;
+                        // A line worked at another warehouse is that department's to complete, so
+                        // its progress still reads but the control is inert. can_complete comes from
+                        // the API, which knows this user's scope; the server refuses either way.
                         return (
                           <td key={c.key} style={{ width: 90 }}>
-                            <button type="button" className="progress-bar" onClick={() => setCompletingProcess(p)} title="Update Completed">
+                            <button
+                              type="button"
+                              className="progress-bar"
+                              disabled={!p.can_complete}
+                              onClick={() => setCompletingProcess(p)}
+                              title={p.can_complete ? 'Update Completed' : `Completed by ${p.location_name}`}
+                            >
                               <div className="progress-bar-fill" style={{ width: `${pct}%` }} />
                               <div className="progress-bar-label">{pct.toFixed(0)}%</div>
                             </button>
