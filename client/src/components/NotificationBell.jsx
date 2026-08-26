@@ -5,12 +5,14 @@ import {
 } from '../utils/notificationSound';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import { parseUtc } from '../utils/datetime';
 
 const POLL_MS = 5000;
 const TOAST_MS = 6000;
 
 function formatTime(v) {
-  return v ? new Date(v).toLocaleString('en-US', { month: 'short', day: '2-digit', hour: 'numeric', minute: '2-digit' }) : '';
+  // UTC in the database, no marker on the wire -- see utils/datetime.js.
+  return v ? parseUtc(v).toLocaleString('en-US', { month: 'short', day: '2-digit', hour: 'numeric', minute: '2-digit' }) : '';
 }
 
 function notificationTypeLabel(type) {

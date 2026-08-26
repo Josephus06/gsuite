@@ -5,12 +5,14 @@ import { useAuth } from '../context/useAuth';
 import EntityPicker from '../components/EntityPicker';
 import TicketAttachments from '../components/TicketAttachments';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { parseUtc } from '../utils/datetime';
 
 const STATUS_LABELS = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Closed' };
 const STATUS_BADGE = { open: 'badge-info', in_progress: 'badge-muted', resolved: 'badge-success', closed: 'badge-success' };
 
 function formatDateTime(v) {
-  return v ? new Date(v).toLocaleString('en-US', { month: 'short', day: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
+  // UTC in the database, no marker on the wire -- see utils/datetime.js.
+  return v ? parseUtc(v).toLocaleString('en-US', { month: 'short', day: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
 }
 
 // Full-page equivalent of the chat widget's ticket thread (ChatWidget.jsx) -- reached
