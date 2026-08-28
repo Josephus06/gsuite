@@ -42,7 +42,10 @@ const STATUS_FILTERS = {
 // get `{ rows, counts }` instead, used by the Inventory list page's status tabs.
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { status, search, with_counts: withCounts, item_type: itemType } = req.query;
+    const {
+      status, search, with_counts: withCounts, item_type: itemType,
+      include_jo_services: includeJoServices,
+    } = req.query;
 
     const commonWhere = [];
     const commonParams = [];
@@ -61,11 +64,22 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     // exclusion too narrow and they started appearing in both places.
     //
     // Pass ?item_type=Service (or Non-Inventory / Landed Cost / Discount) to fetch one kind.
+    //
+    // ?include_jo_services=1 keeps that exclusion but lets back through the Service items that
+    // are flagged JO on the Service Items master (is_jo -- 35 of the 100 Service items). Those
+    // are the charges a job actually carries: SERVICE LABOR, Layout Fee, DESIGN-Build Up
+    // Complicated, Clickbook Layout 20 Pages. They are picked on an Estimate or Job Order
+    // process line exactly like a material is, even though they hold no stock -- so the forms
+    // that build those lines ask for them, while the Inventory Items list, Bin Card and Stock
+    // Ledger pickers do not, because a labour charge has no quantity to report on.
+    const NON_STOCK_TYPES = "(i.item_type IS NULL OR i.item_type NOT IN ('Service', 'Non-Inventory', 'Landed Cost', 'Discount'))";
     if (itemType) {
       commonWhere.push('i.item_type = ?');
       commonParams.push(itemType);
+    } else if (includeJoServices === '1') {
+      commonWhere.push(`(${NON_STOCK_TYPES} OR (i.item_type = 'Service' AND i.is_jo = 1))`);
     } else {
-      commonWhere.push("(i.item_type IS NULL OR i.item_type NOT IN ('Service', 'Non-Inventory', 'Landed Cost', 'Discount'))");
+      commonWhere.push(NON_STOCK_TYPES);
     }
     const where = [...commonWhere];
     if (status && STATUS_FILTERS[status]) { where.push(STATUS_FILTERS[status]); }

@@ -211,7 +211,10 @@ export default function EstimateWizard() {
       api.get('/job-types'),
       api.get('/lookups/processes'),
       api.get('/lookups/taxes'),
-      api.get('/inventory'),
+      // Service items flagged JO on the Service Items master belong on a process line here --
+      // SERVICE LABOR, Layout Fee, the DESIGN build-up charges -- so they are asked for
+      // alongside the materials. See the item_type note in routes/inventories.js.
+      api.get('/inventory', { params: { include_jo_services: 1 } }),
       api.get('/lookups/units-of-measure'),
       api.get('/lookups/payment-terms'),
     ]);

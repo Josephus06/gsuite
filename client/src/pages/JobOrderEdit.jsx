@@ -84,7 +84,9 @@ export default function JobOrderEdit() {
       api.get('/employees'),
       api.get('/employees', { params: { account_type: 'Artist' } }),
       api.get('/lookups/processes'),
-      api.get('/inventory'),
+      // Same as the Estimate wizard: a process line here can carry a JO-flagged Service item
+      // (SERVICE LABOR, Layout Fee) as well as a material.
+      api.get('/inventory', { params: { include_jo_services: 1 } }),
       api.get('/lookups/units-of-measure'),
     ]).then(([joRes, locRes, empRes, artistRes, procRes, invRes, unitRes]) => {
       setJo(joRes.data);
