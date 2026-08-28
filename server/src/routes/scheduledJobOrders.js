@@ -58,6 +58,36 @@ async function isScheduler(userId) {
   return userCan(userId, ROUTE, 'can_edit');
 }
 
+// Gate for setting planned dates. Mirrors production.js's requireScheduler: a Signage Planner
+// schedules without holding can_edit here, since that permission also carries staffing.
+async function requireScheduler(req, res, next) {
+  try {
+    if (await isScheduler(req.user.id)) return next();
+    return res.status(403).json({ error: 'You do not have scheduling access.' });
+  } catch (err) { return next(err); }
+}
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+// undefined = malformed, which is deliberately distinct from null = the planner cleared it.
+function parseDate(v) {
+  if (v === undefined || v === null || v === '') return null;
+  const d = String(v).slice(0, 10);
+  return DATE_RE.test(d) ? d : undefined;
+}
+
+// Whether this user may open this job order's task table at all: their own warehouse's job,
+// or one merely carrying a line worked there. Shared by the task table and the planned-date
+// write so the two cannot disagree about what is reachable.
+async function canOpenJobOrder(userId, jobOrder) {
+  const scopeLocationId = await getJobLocationScope(userId);
+  if (!scopeLocationId || isJobLocationVisible(jobOrder, scopeLocationId)) return true;
+  const [[lineHere]] = await pool.query(
+    'SELECT 1 AS ok FROM job_order_processes WHERE job_order_id = ? AND location_id = ? LIMIT 1',
+    [jobOrder.id, scopeLocationId]
+  );
+  return !!lineHere;
+}
+
 // Feeds the "Assigned To" picker -- Production-department employees, narrowed to the ones who
 // work the scheduler's own warehouse. A SIGNAGE planner staffs SIGNAGE jobs; offering them CNC
 // and DPOD staff invites an assignment nobody in that warehouse can act on. Departments are
@@ -166,17 +196,12 @@ router.get('/:jobOrderId', requireAuth, requirePermission(ROUTE, 'can_view'), as
     // there -- a SIGN line on an LFP job order is still SIGNAGE's to staff, and refusing the page
     // would leave it unreachable. 404 otherwise, matching the other JO detail views.
     const scopeLocationId = await getJobLocationScope(req.user.id);
-    if (scopeLocationId && !isJobLocationVisible(jo, scopeLocationId)) {
-      const [[lineHere]] = await pool.query(
-        'SELECT 1 AS ok FROM job_order_processes WHERE job_order_id = ? AND location_id = ? LIMIT 1',
-        [req.params.jobOrderId, scopeLocationId]
-      );
-      if (!lineHere) return res.status(404).json({ error: 'Not found' });
-    }
+    if (!(await canOpenJobOrder(req.user.id, jo))) return res.status(404).json({ error: 'Not found' });
 
     const [tasks] = await pool.query(
       `SELECT jop.id, jop.qty, jop.unit, jop.total, jop.process_cost, jop.material_cost,
               jop.assigned_employee_id, jop.assignment_started_at, jop.assignment_ended_at,
+              jop.planned_start_date, jop.planned_end_date,
               pr.process_name, pr.minutes_per_unit, loc.location_name, i.display_name AS item_name,
               -- A line carrying no location of its own is worked in its job order's warehouse,
               -- not nowhere -- the same fallback the Production view's figures use.
@@ -196,8 +221,17 @@ router.get('/:jobOrderId', requireAuth, requirePermission(ROUTE, 'can_view'), as
     // can_assign says whether THIS user may staff THIS line. A line worked at another warehouse
     // belongs to that department's scheduler, so it stays visible -- the planner still needs to
     // read the whole job -- but its Assigned To picker is locked.
+    //
+    // Planned dates are deliberately NOT narrowed the same way. Scheduling is the planner's job
+    // for the WHOLE order: a SIGN line that can only start once Design has finished its layout
+    // is exactly the dependency they are sequencing, and they cannot plan around a line whose
+    // dates they may not set. Staffing stays local because only that warehouse knows who is
+    // free; dates are the plan, and the plan spans warehouses. So can_schedule is a property of
+    // the user (are they a scheduler at all), not of the line's location.
+    const canSchedule = await isScheduler(req.user.id);
     res.json({
       ...jo,
+      can_schedule: canSchedule,
       tasks: tasks.map((t) => ({
         ...t,
         is_running: !!t.is_running,
@@ -253,6 +287,62 @@ router.put('/:jobOrderId/tasks/:processId/assign', requireAuth, requirePermissio
     res.json({ assigned_employee_id: employeeId });
   } catch (err) {
     next(err);
+  }
+});
+
+// Planned Start/End for one task (process line). Unlike /assign directly above, this is NOT
+// narrowed to the caller's own warehouse -- see the note on can_schedule in the task table
+// above. What still applies is that they must be a scheduler, and the job order must be one
+// they can open at all; a planner cannot reach into a job with no line of theirs on it.
+//
+// Either date may be sent on its own; the one not mentioned keeps its stored value, so
+// setting Start does not silently clear End. Sending an explicit empty string clears it.
+router.put('/:jobOrderId/tasks/:processId/planned-dates', requireAuth, requirePermission(ROUTE, 'can_view'), requireScheduler, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[jo]] = await conn.query('SELECT id, job_location_id, status FROM job_orders WHERE id = ?', [req.params.jobOrderId]);
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!(await canOpenJobOrder(req.user.id, jo))) return res.status(404).json({ error: 'Not found' });
+    if (jo.status === 'Cancelled') return res.status(409).json({ error: 'This job order is cancelled.' });
+
+    const [[line]] = await conn.query(
+      'SELECT id, planned_start_date, planned_end_date FROM job_order_processes WHERE id = ? AND job_order_id = ?',
+      [req.params.processId, req.params.jobOrderId]
+    );
+    if (!line) return res.status(404).json({ error: 'Not found' });
+
+    const asDay = (v) => (v ? String(v).slice(0, 10) : '');
+    const start = 'planned_start_date' in req.body ? parseDate(req.body.planned_start_date) : asDay(line.planned_start_date) || null;
+    const end = 'planned_end_date' in req.body ? parseDate(req.body.planned_end_date) : asDay(line.planned_end_date) || null;
+    if (start === undefined || end === undefined) {
+      return res.status(400).json({ error: 'Dates must be in YYYY-MM-DD format.' });
+    }
+    if (start && end && end < start) {
+      return res.status(400).json({ error: 'Planned End cannot be before Planned Start.' });
+    }
+
+    await conn.beginTransaction();
+    await conn.query(
+      'UPDATE job_order_processes SET planned_start_date = ?, planned_end_date = ? WHERE id = ? AND job_order_id = ?',
+      [start, end, req.params.processId, req.params.jobOrderId]
+    );
+    for (const [field, before, after] of [
+      ['planned_start_date', asDay(line.planned_start_date), start || ''],
+      ['planned_end_date', asDay(line.planned_end_date), end || ''],
+    ]) {
+      if (before === after) continue;
+      await logAudit(conn, {
+        processId: req.params.processId, userId: req.user.id, eventType: 'Updated',
+        fieldName: field, oldValue: before, newValue: after,
+      });
+    }
+    await conn.commit();
+    res.json({ planned_start_date: start, planned_end_date: end });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
   }
 });
 
