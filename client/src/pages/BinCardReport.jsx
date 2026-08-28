@@ -37,6 +37,11 @@ export default function BinCardReport() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [page, setPage] = useState(1);
+  // Off by default: the anchored view is the one that answers "what is on the shelf". Full
+  // history replays every movement this database holds from zero, which is what the migration
+  // actually brought over and disagrees with the source system on 55% of item+location pairs.
+  const [fullHistory, setFullHistory] = useState(false);
+  const [meta, setMeta] = useState(null);
 
   useEffect(() => {
     api.get('/inventory').then(({ data }) => setInventoryItems(data));
@@ -50,10 +55,17 @@ export default function BinCardReport() {
     const params = { item_id: item.id };
     if (location) params.location_id = location.id;
     if (period === 'as_of') params.as_of = date;
+    if (fullHistory) params.full = 1;
     try {
       const { data } = await api.get('/bin-card-reports', { params });
       setRows(data.rows);
       setUnitLabels({ stock_unit_label: data.stock_unit_label, base_unit_label: data.base_unit_label });
+      setMeta({
+        reconciled: data.reconciled,
+        window_from: data.window_from,
+        opening_balance_base: data.opening_balance_base,
+        opening_balance_stock: data.opening_balance_stock,
+      });
       setPage(1);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to generate report');
@@ -112,13 +124,29 @@ export default function BinCardReport() {
               </div>
             )}
           </div>
-          <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={generate} disabled={loading}>
-            Generate
-          </button>
+          <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 16 }}>
+            <button className="btn btn-primary" onClick={generate} disabled={loading}>
+              Generate
+            </button>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, margin: 0, fontWeight: 400 }}>
+              <input type="checkbox" checked={fullHistory} onChange={(e) => setFullHistory(e.target.checked)} />
+              Full history (every movement from zero, does not reconcile with stock on hand)
+            </label>
+          </div>
         </div>
       )}
 
       {error && <div className="error-banner">{error}</div>}
+
+      {/* Which of the two ledgers this is. Without saying so, the anchored view looks like
+          history has gone missing, and the full view looks like the stock figure is wrong. */}
+      {meta && (
+        <div className="muted" style={{ marginBottom: 8, fontSize: 13 }}>
+          {meta.reconciled
+            ? `Opened from the source system's Beginning Balance as at ${meta.window_from}; movements before that date are not replayed.`
+            : 'Full history — every movement this database holds, run from zero. This does not reconcile with stock on hand.'}
+        </div>
+      )}
 
       <div className="card">
         {loading ? <LoadingSpinner /> : (
@@ -146,9 +174,9 @@ export default function BinCardReport() {
                   <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>No transactions found.</td></tr>
                 )}
                 {pageRows.map((r, idx) => (
-                  <tr key={idx}>
+                  <tr key={idx} style={r.is_opening ? { fontWeight: 600 } : undefined}>
                     <td>{formatDate(r.trans_date)}</td>
-                    <td>{r.trans_no}</td>
+                    <td>{r.is_opening ? <span className="muted">Beginning Balance</span> : r.trans_no}</td>
                     <td>{r.ref_no || '—'}</td>
                     <td>{r.from_location_name || ''}</td>
                     <td>{r.to_location_name || ''}</td>

@@ -4,6 +4,7 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const { isNonStockItem } = require('../lib/itemTypes');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
+const { deriveOnHand } = require('../lib/stockLedger');
 
 // Completing a process and building both move stock dated today (the Assembly Build row
 // is inserted with CURDATE()), so today's period is what has to be open for them.
@@ -198,8 +199,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // doesn't read as a false "0 on hand everywhere" shortage.
     const [processes] = await pool.query(
       `SELECT jop.*, pr.process_name, pr.minutes_per_unit, i.display_name AS item_name, i.item_type, loc.location_name,
-              il.qty_on_hand AS on_hand, il.qty_committed AS committed,
-              GREATEST(COALESCE(jop.total, 0) - COALESCE(il.qty_on_hand, 0), 0) AS back_order,
+              il.qty_committed AS committed,
               COALESCE(jop.total, 0) * COALESCE(pr.minutes_per_unit, 0) AS allotted_minutes,
               -- Where this line is actually worked. Same COALESCE the location_name and on-hand
               -- joins below use, so a line carrying no location of its own is treated as sitting
@@ -215,13 +215,42 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
 
-    // A Service line (SERVICE LABOR and the like) consumes no material, so the shortage
-    // arithmetic above is meaningless for it: with no stock row anywhere it always reads
-    // as short by its full requirement, which then offers a Create TO for labor. Zeroed
-    // here rather than in the SQL so lib/itemTypes.js stays the single definition of what
-    // counts as non-stock.
+    // On Hand is the running total of the item's movements at this line's warehouse -- the same
+    // rows, summed, that the Bin Card lists one by one, so the two screens cannot quote different
+    // stock for the same item. It used to read inventory_locations, a snapshot the year
+    // migrations never populated, which left almost every line reading 0.0000 and therefore
+    // short by its full requirement while the Bin Card plainly showed stock.
+    //
+    // Service items are left out of the aggregate entirely, not just blanked afterwards. They
+    // have no shelf, so their total is meaningless -- and SERVICE LABOR is a single shared item
+    // sitting on a large share of all 433,850 assembly build lines, so including it makes the
+    // item_id index useless and MySQL scans that whole table: measured 2.5s a job order against
+    // ~200ms without it. Nothing is lost, since the loop below blanks them regardless.
+    const onHandByPair = await deriveOnHand(pool, processes.filter((p) => !isNonStockItem(p.item_type)).map((p) => p.item_id));
     for (const p of processes) {
-      if (isNonStockItem(p.item_type)) p.back_order = 0;
+      p.on_hand = p.item_id && p.effective_location_id
+        ? (onHandByPair.get(`${p.item_id}|${p.effective_location_id}`) ?? 0)
+        : null;
+      // Back Order is the part of this line's requirement the on-hand does not cover. Floored at
+      // 0 so having enough (or excess) never reads as a negative shortage -- though the on-hand
+      // it is measured against can itself be negative where the movement history is incomplete,
+      // in which case the shortage is the whole requirement and then some.
+      p.back_order = Math.max(Number(p.total || 0) - Number(p.on_hand || 0), 0);
+    }
+
+    // A Service line (SERVICE LABOR and the like) consumes no material, so the shortage
+    // arithmetic above is meaningless for it: it moves no stock, so it has no movements to sum
+    // and always reads as short by its full requirement, which then offers a Create TO for
+    // labor. Zeroed here rather than in the SQL so lib/itemTypes.js stays the single definition
+    // of what counts as non-stock.
+    for (const p of processes) {
+      if (!isNonStockItem(p.item_type)) continue;
+      p.back_order = 0;
+      // And no on-hand either. SERVICE LABOR is one shared item that appears on assembly build
+      // lines across the whole catalogue, so summing its movements produces a large negative
+      // number that means nothing -- a service has no shelf. Null, the same as before this
+      // column was derived, so the screen keeps printing an em dash for it.
+      p.on_hand = null;
     }
 
     // can_complete says whether THIS user may record output on THIS line. A line worked at
@@ -476,12 +505,11 @@ router.put('/:id/approve-revision', requireAuth, requirePermission('/job-orders'
 router.put('/:id/processes/:processId/complete', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
     const [[proc]] = await pool.query(
-      `SELECT jop.total, jop.total_completed, jop.item_id, jop.location_id, il.qty_on_hand AS on_hand, i.item_type,
+      `SELECT jop.total, jop.total_completed, jop.item_id, jop.location_id, i.item_type,
               COALESCE(jop.location_id, parent_jo.job_location_id) AS effective_location_id
        FROM job_order_processes jop
        LEFT JOIN job_orders parent_jo ON parent_jo.id = jop.job_order_id
        LEFT JOIN inventories i ON i.id = jop.item_id
-       LEFT JOIN inventory_locations il ON il.inventory_id = jop.item_id AND il.location_id = COALESCE(jop.location_id, parent_jo.job_location_id)
        WHERE jop.id = ? AND jop.job_order_id = ?`,
       [req.params.processId, req.params.id]
     );
@@ -500,7 +528,13 @@ router.put('/:id/processes/:processId/complete', requireAuth, requirePermission(
     if (amount <= 0) return res.status(400).json({ error: 'Enter an amount greater than 0.' });
 
     const total = Number(proc.total || 0);
-    const onHand = Number(proc.on_hand || 0);
+    // The same figure the Processes tab shows for this line -- a ceiling the user cannot see is
+    // one they cannot act on, and the two used to come from different places. Not computed at all
+    // for a Service line: the ceiling does not apply to it (see below) and pricing SERVICE LABOR's
+    // movements is both meaningless and slow.
+    const onHand = isNonStockItem(proc.item_type)
+      ? 0
+      : Number((await deriveOnHand(pool, [proc.item_id])).get(`${proc.item_id}|${proc.effective_location_id}`) || 0);
     const current = Number(proc.total_completed || 0);
     const remaining = total - current;
 
@@ -565,12 +599,11 @@ router.put('/:id/assembly-build', requireAuth, requirePermission(ROUTE, 'can_edi
               COALESCE(jop.location_id, ?) AS location_id,
               jop.process_qty, jop.qty, jop.total, jop.total_completed, jop.total_built, jop.unit,
               jop.process_cost, jop.material_cost, jop.total_cost,
-              il.qty_on_hand, i.display_name AS item_name, i.item_type
+              i.display_name AS item_name, i.item_type
        FROM job_order_processes jop
-       LEFT JOIN inventory_locations il ON il.inventory_id = jop.item_id AND il.location_id = COALESCE(jop.location_id, ?)
        LEFT JOIN inventories i ON i.id = jop.item_id
        WHERE jop.job_order_id = ?`,
-      [jo.job_location_id, jo.job_location_id, req.params.id]
+      [jo.job_location_id, req.params.id]
     );
 
     const fractions = processes.map((p) => (Number(p.total) > 0 ? Number(p.total_completed) / Number(p.total) : 1));
@@ -592,9 +625,12 @@ router.put('/:id/assembly-build', requireAuth, requirePermission(ROUTE, 'can_edi
       const required = p.item_id && p.location_id ? totalQtyToBuild : 0;
       return { ...p, totalQtyToBuild, required, nonStock: isNonStockItem(p.item_type) };
     });
+    // Checked against the same derived figure the Processes tab shows, so a build is refused for
+    // a shortage the user can actually see on screen.
+    const buildOnHand = await deriveOnHand(conn, lines.filter((l) => !l.nonStock && l.required).map((l) => l.item_id));
     for (const l of lines) {
       if (!l.required || l.nonStock) continue;
-      const onHand = Number(l.qty_on_hand || 0);
+      const onHand = Number(buildOnHand.get(`${l.item_id}|${l.location_id}`) || 0);
       if (l.required > onHand) {
         return res.status(409).json({ error: `Not enough on hand for ${l.item_name}: need ${l.required.toFixed(4)}, only ${onHand.toFixed(4)} on hand.` });
       }
