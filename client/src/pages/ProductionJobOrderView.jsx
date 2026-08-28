@@ -62,8 +62,13 @@ const PROCESS_COLUMNS = [
   { key: 'process_name', label: 'Process' },
   { key: 'process_qty', label: 'Process Qty' },
   { key: 'process_uom', label: 'Process UOM' },
-  { key: 'category', label: 'Category' },
-  { key: 'parts', label: 'Parts' },
+  // Replacing Category and Parts, which live data never fills in -- 9 and 7 of 413,376
+  // process lines respectively. The planned dates the Scheduled JO planner sets per task are
+  // worth far more space on the floor's own view of the same lines: this is where production
+  // reads what it is meant to be working on and when, without leaving the Job Order.
+  // Read-only here; Scheduled JO is where they are set (client/src/pages/ScheduledJobOrderTasks.jsx).
+  { key: 'planned_start_date', label: 'Planned Start' },
+  { key: 'planned_end_date', label: 'Planned End' },
   { key: 'item_name', label: 'Item' },
   { key: 'location_name', label: 'Location' },
   { key: 'length', label: 'Length' },
@@ -91,6 +96,10 @@ const PROCESS_COLUMNS = [
 ];
 
 function num(v) { return v === null || v === undefined || v === '' ? 0 : Number(v); }
+// DATE columns arrive as plain 'YYYY-MM-DD' strings (the pool sets dateStrings), which is
+// already how this page prints Date Created and Delivery Date -- no Date object in between,
+// so nothing can shift a day across a timezone on the way to the cell.
+const day = (v) => (v ? String(v).slice(0, 10) : '');
 function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
@@ -152,8 +161,8 @@ function CompleteProcessModal({ process: p, onClose, onSaved }) {
   return (
     <Modal title={p.process_name} onClose={onClose} large>
       <div className="review-grid">
-        <div className="item"><div className="label">Category</div><div className="value">{p.category}</div></div>
-        <div className="item"><div className="label">Parts</div><div className="value">{p.parts}</div></div>
+        <div className="item"><div className="label">Planned Start</div><div className="value">{day(p.planned_start_date) || <span className="muted">—</span>}</div></div>
+        <div className="item"><div className="label">Planned End</div><div className="value">{day(p.planned_end_date) || <span className="muted">—</span>}</div></div>
         <div className="item"><div className="label">Items</div><div className="value">{p.item_name}</div></div>
         <div className="item"><div className="label">Location</div><div className="value">{p.location_name}</div></div>
         <div className="item"><div className="label">Length</div><div className="value">{p.length ?? ''}</div></div>
@@ -672,6 +681,13 @@ export default function ProductionJobOrderView() {
                           return <td key={c.key}><span className="muted">—</span></td>;
                         }
                         return <td key={c.key}>{qty(p[c.key])}</td>;
+                      }
+                      if (c.key === 'planned_start_date' || c.key === 'planned_end_date') {
+                        // Set on Scheduled JO, and not every line has been planned yet -- an
+                        // em dash says "nobody has scheduled this" where an empty cell would
+                        // just look like a rendering gap.
+                        const d = day(p[c.key]);
+                        return <td key={c.key}>{d || <span className="muted">—</span>}</td>;
                       }
                       if (c.key.endsWith('cost') || c.key === 'total' || c.key === 'grand_total') {
                         return <td key={c.key}>{money(p[c.key])}</td>;
