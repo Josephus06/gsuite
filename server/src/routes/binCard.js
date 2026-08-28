@@ -69,12 +69,26 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     // live's own Beginning Qty for this item (and location, when one is chosen), quoted in the
     // item's Stock Unit like every other figure in that table, so it comes up to Base Unit the
     // same way the movements do.
-    const [[opening]] = await pool.query(
-      `SELECT SUM(beg_qty) AS beg_stock, MIN(window_from) AS window_from, MAX(window_to) AS window_to
-         FROM live_stock_ledger
-        WHERE inventory_id = ?${locationId ? ' AND location_id = ?' : ''}`,
-      locationId ? [itemId, locationId] : [itemId]
-    );
+    //
+    // Asked for only when it can be used, and never allowed to take the report down with it.
+    // window_from is a column import-stock-ledger.js adds on its next run, so between deploying
+    // this and re-importing, an install's ledger does not have it yet -- selecting it there threw
+    // "Unknown column 'window_from'" and the whole Bin Card 500'd. A report that cannot anchor
+    // should fall back to the view it already had, not stop working, so any failure to read the
+    // anchor means there is no anchor.
+    let opening = null;
+    if (full !== '1') {
+      try {
+        [[opening]] = await pool.query(
+          `SELECT SUM(beg_qty) AS beg_stock, MIN(window_from) AS window_from, MAX(window_to) AS window_to
+             FROM live_stock_ledger
+            WHERE inventory_id = ?${locationId ? ' AND location_id = ?' : ''}`,
+          locationId ? [itemId, locationId] : [itemId]
+        );
+      } catch (err) {
+        opening = null;
+      }
+    }
     const windowFrom = opening?.window_from ? String(opening.window_from).slice(0, 10) : null;
     // Asked "as of" a date before the opening balance was struck, the anchor is no help -- it
     // describes a later moment than the question. Answer from full history instead, and say so,
