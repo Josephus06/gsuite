@@ -373,6 +373,106 @@ router.put('/:id/acknowledge', requireAuth, requireScheduler, async (req, res, n
   }
 });
 
+// ---------------------------------------------------------------------------------------
+// The Sales revision loop
+// ---------------------------------------------------------------------------------------
+//
+// 'for_revision' has been one of this module's eight stages from the start -- it has a tab on
+// the Production list, a label on every JO view, a filter on the Job Orders list -- and nothing
+// in the build ever set it. Production could see a job order was wrong (wrong quantity, wrong
+// spec, a material that will not do what the customer asked) and had no way to say so: the job
+// either went ahead wrong or was stopped by walking over to Sales, with nothing recorded.
+//
+// Sales Revision hands it back. Sales edits the job order -- the generic edit endpoint's
+// auto-advance only fires from 'pending_for_scheduling', so a job sitting in revision does not
+// jump stage under them -- and Approve to Production returns it to 'pending_for_scheduling',
+// where Production acknowledges it as usual. The loop is:
+//
+//   Released / pending_for_scheduling --Sales Revision--> for_revision
+//   --Approve to Production--> pending_for_scheduling --Acknowledge--> in_process
+//
+// Each direction is gated on the right that names it: sending back needs Production edit
+// rights, returning it needs Job Order edit rights (Sales's own).
+
+// Released / Pending for Sched. only -- the window between Sales handing the job over and
+// Production accepting it. That is exactly when sending it back costs nothing: no plan has been
+// acknowledged, no line has been staffed, no stock has moved. Once it is In-Process the job is
+// on the floor, and pulling it back to Sales would walk its stage backwards past work already
+// under way; 'in_process_with_revision' is the stage that exists for changing a job at that
+// point, and it is a different flow from this one.
+router.put('/:id/sales-revision', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[jo]] = await conn.query(
+      'SELECT production_stage, is_on_hold, status, quantity_built FROM job_orders WHERE id = ?',
+      [req.params.id]
+    );
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!(await assertJobOrderInScope(req, res))) return;
+    if (jo.status === 'Cancelled') return res.status(409).json({ error: 'This job order is cancelled.' });
+    if (jo.is_on_hold) return res.status(409).json({ error: 'This job order is on hold. Resume it before sending it for revision.' });
+    if (jo.production_stage === 'for_revision') {
+      return res.status(409).json({ error: 'This job order is already with Sales for revision.' });
+    }
+    if (jo.status !== 'Released' || jo.production_stage !== 'pending_for_scheduling') {
+      return res.status(409).json({ error: 'Only a Released job order pending scheduling can be sent for revision.' });
+    }
+    // Belt and braces: a job still pending scheduling should have built nothing, and if one
+    // somehow has, it is not a job to hand back for re-specification.
+    if (Number(jo.quantity_built || 0) > 0) {
+      return res.status(409).json({ error: 'This job order has already built quantity and cannot be sent back for revision.' });
+    }
+
+    await conn.beginTransaction();
+    await conn.query("UPDATE job_orders SET production_stage = 'for_revision', updated_at = NOW() WHERE id = ?", [req.params.id]);
+    await conn.query(
+      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+       VALUES ('JobOrder', ?, 'Updated', 'production_stage', ?, 'for_revision', ?)`,
+      [req.params.id, jo.production_stage, req.user.id]
+    );
+    await conn.commit();
+    res.json({ production_stage: 'for_revision' });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// Sales returns it. Back to pending_for_scheduling rather than straight to in_process, because
+// the point of the round trip is that Production gets to look at the changed job and acknowledge
+// it -- dropping it back on the floor unseen would skip the very step that caught the problem.
+// Planned dates are left as they were: they may still be right, and silently clearing a
+// scheduler's plan because Sales fixed a typo would be its own surprise.
+router.put('/:id/approve-revision', requireAuth, requirePermission('/job-orders', 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[jo]] = await conn.query('SELECT production_stage, status FROM job_orders WHERE id = ?', [req.params.id]);
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!(await assertJobOrderInScope(req, res))) return;
+    if (jo.status === 'Cancelled') return res.status(409).json({ error: 'This job order is cancelled.' });
+    if (jo.production_stage !== 'for_revision') {
+      return res.status(409).json({ error: 'Only a job order for revision can be approved back to production.' });
+    }
+
+    await conn.beginTransaction();
+    await conn.query("UPDATE job_orders SET production_stage = 'pending_for_scheduling', updated_at = NOW() WHERE id = ?", [req.params.id]);
+    await conn.query(
+      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+       VALUES ('JobOrder', ?, 'Updated', 'production_stage', 'for_revision', 'pending_for_scheduling', ?)`,
+      [req.params.id, req.user.id]
+    );
+    await conn.commit();
+    res.json({ production_stage: 'pending_for_scheduling' });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
 router.put('/:id/processes/:processId/complete', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
     const [[proc]] = await pool.query(

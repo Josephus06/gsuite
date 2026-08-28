@@ -345,6 +345,7 @@ export default function ProductionJobOrderView() {
   const [plannedStart, setPlannedStart] = useState('');
   const [plannedEnd, setPlannedEnd] = useState('');
   const [scheduleError, setScheduleError] = useState('');
+  const [actionError, setActionError] = useState('');
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [tab, setTab] = useState('processes');
   const [loading, setLoading] = useState(true);
@@ -454,6 +455,22 @@ export default function ProductionJobOrderView() {
     try { await api.put(`/job-orders/${id}/resume`); await load(); } finally { setBusy(false); }
   }
 
+  // Both directions of the Sales revision loop. The refusals the server can return are real
+  // states a user can be in (already built quantity, on hold), not just guard rails, so they are
+  // surfaced rather than swallowed.
+  async function handleStageAction(path) {
+    setBusy(true);
+    setActionError('');
+    try {
+      await api.put(`/production/${id}/${path}`);
+      await load();
+    } catch (err) {
+      setActionError(err.response?.data?.error || 'Could not update this job order.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleSaveCompletion(processId, amount) {
     await api.put(`/production/${id}/processes/${processId}/complete`, { amount });
     await load();
@@ -481,6 +498,16 @@ export default function ProductionJobOrderView() {
   const plannedDirty = plannedStart !== savedStart || plannedEnd !== savedEnd;
   const forecastDefined = !!savedStart && !!savedEnd;
   const awaitingSchedule = jo.production_stage === 'pending_for_scheduling' && !isOnHold;
+  // The Sales revision loop. Sending back is Production's call and needs Production edit rights;
+  // returning it is Sales's and needs Job Order edit rights -- each button asks for the same
+  // right its endpoint does, so neither can be offered to someone the server will refuse.
+  // Offered only on a Released job order still Pending for Sched. -- the window between Sales
+  // handing it over and Production accepting it, when sending it back costs nothing. Once it is
+  // In-Process there is work under way to walk backwards over.
+  const forRevision = jo.production_stage === 'for_revision';
+  const canSendForRevision = can('/production', 'can_edit') && !isOnHold
+    && jo.status === 'Released' && jo.production_stage === 'pending_for_scheduling'
+    && num(jo.quantity_built) === 0;
   // RWIP can only be raised while the JO is in process; open RWIPs block building the mother JO.
   const isInProcess = jo.production_stage === 'in_process';
   const openRwipCount = jo.open_rwip_count || 0;
@@ -507,6 +534,16 @@ export default function ProductionJobOrderView() {
           <button className="btn btn-sm" onClick={() => navigate('/production')}>Back to Lists</button>
           {canEdit && jo.status !== 'Cancelled' && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/job-orders/${id}/edit`, { state: { from: 'production' } })}>Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
+          {canSendForRevision && (
+            <button className="btn btn-sm btn-warning" disabled={busy}
+              title="Send this Job Order back to Sales to be corrected. It returns here for acknowledgement."
+              onClick={() => handleStageAction('sales-revision')}>Sales Revision</button>
+          )}
+          {forRevision && canEdit && jo.status !== 'Cancelled' && (
+            <button className="btn btn-sm btn-primary" disabled={busy}
+              title="Send the corrected Job Order back to Production for acknowledgement."
+              onClick={() => handleStageAction('approve-revision')}>Approve to Production</button>
+          )}
           {canEdit && !isTerminal && (
             <button className="btn btn-sm btn-primary" disabled={openRwipCount > 0}
               title={openRwipCount > 0 ? 'Complete the RWIP job order(s) before building this Job Order.' : 'Assembly Build'}
@@ -517,6 +554,8 @@ export default function ProductionJobOrderView() {
           {canEdit && isOnHold && !isTerminal && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleResume}>Resume</button>}
         </div>
       </div>
+
+      {actionError && <div className="error-banner" style={{ marginTop: 12 }}>{actionError}</div>}
 
       <div className="page-header" style={{ marginTop: -12 }}>
         <h2 style={{ margin: 0 }}>Production</h2>
