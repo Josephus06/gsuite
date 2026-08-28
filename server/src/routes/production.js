@@ -47,8 +47,33 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     // A production department only sees its own warehouse's work. Applied to commonWhere rather
     // than to `where`, so the stage tab counts are taken over the same rows the listing shows -- a
     // signage user must not read "For QI 14" and then open the tab to three job orders.
+    // "Its own warehouse's work" is not the same as "the job orders FILED there". A job order
+    // routinely carries lines worked somewhere else -- 27,333 carry a Design line filed under a
+    // different warehouse, 5,055 an LFP one, 940 a SIGN one -- and matching on the filing alone
+    // hid every one of those from the department actually doing that part of the job. An LFP user
+    // could staff and schedule their LFP line on a SIGN job order from Scheduled JO, which has
+    // always read it this way, yet could not find that job on the floor view it belongs to: not in
+    // any stage tab, not by search, not by pasting the URL.
+    //
+    // So a job order is visible here if it is filed at this warehouse OR carries a line worked at
+    // it. READ only -- nothing about what they may do changes. can_complete below stays per line,
+    // and assertJobOrderInScope still holds the job-level writes (planned dates, acknowledge,
+    // build, hold, rework) to the warehouse the job order is filed under.
+    // Written as a join against a UNION of the two visible id sets rather than the
+    // `job_location_id = ? OR EXISTS (...)` it reads as, purely for speed: the OR defeats every
+    // index on job_orders and forces a full scan (123,571 rows), which measured 3.4x slower than
+    // this and ~12x slower than the old department-only filter. Each branch of the UNION uses its
+    // own index instead, and UNION (not UNION ALL) dedupes, so a job order both filed here AND
+    // carrying a line here still joins to exactly one row.
     const scopeLocationId = await getJobLocationScope(req.user.id);
-    if (scopeLocationId) { commonWhere.push('jo.job_location_id = ?'); commonParams.push(scopeLocationId); }
+    const visibleJoin = scopeLocationId
+      ? `JOIN (SELECT id FROM job_orders WHERE job_location_id = ?
+               UNION
+               SELECT job_order_id FROM job_order_processes WHERE location_id = ?) vis ON vis.id = jo.id`
+      : '';
+    // The join sits in the FROM clause, ahead of every WHERE placeholder, so its parameters have
+    // to lead both queries below.
+    const visibleParams = scopeLocationId ? [scopeLocationId, scopeLocationId] : [];
     if (salesRepId) { commonWhere.push('so.sales_rep_id = ?'); commonParams.push(salesRepId); }
     if (jobLocationId) { commonWhere.push('jo.job_location_id = ?'); commonParams.push(jobLocationId); }
     if (customerId) { commonWhere.push('so.customer_id = ?'); commonParams.push(customerId); }
@@ -69,6 +94,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const whereSql = `WHERE ${where.join(' AND ')}`;
 
     const baseFrom = `FROM job_orders jo
+       ${visibleJoin}
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
        LEFT JOIN customers c ON c.id = so.customer_id
        LEFT JOIN job_types jt ON jt.id = jo.job_type_id
@@ -86,13 +112,23 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
               CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name
        ${baseFrom} ${whereSql}
        ORDER BY jo.date_forwarded DESC`,
-      params
+      [...visibleParams, ...params]
     );
 
+    // The tab counts select nothing but two job_orders columns, so they carry only the joins their
+    // own filters actually reference -- sales_orders for the sales-rep/customer filters and the
+    // search, customers for the search, and nothing else. Dragging job_types, locations and two
+    // copies of employees through a GROUP BY that never reads them measured 770ms against 137ms.
+    const needsSo = !!(salesRepId || customerId || search);
+    const countFrom = `FROM job_orders jo
+       ${visibleJoin}
+       ${needsSo ? 'LEFT JOIN sales_orders so ON so.id = jo.sales_order_id' : ''}
+       ${search ? 'LEFT JOIN customers c ON c.id = so.customer_id' : ''}`;
+
     const [countRows] = await pool.query(
-      `SELECT jo.production_stage, jo.is_on_hold, COUNT(*) AS count ${baseFrom} WHERE ${commonWhere.join(' AND ')}
+      `SELECT jo.production_stage, jo.is_on_hold, COUNT(*) AS count ${countFrom} WHERE ${commonWhere.join(' AND ')}
        GROUP BY jo.production_stage, jo.is_on_hold`,
-      commonParams
+      [...visibleParams, ...commonParams]
     );
     const counts = Object.fromEntries(STAGE_VALUES.map((s) => [s, 0]));
     counts.hold = 0;
@@ -140,10 +176,16 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     );
     if (!jo) return res.status(404).json({ error: 'Not found' });
     // Out of this user's department: 404 rather than 403, so a job order they may not see reads as
-    // one that isn't there rather than one worth going looking for.
+    // one that isn't there rather than one worth going looking for. Same widened test the list
+    // above applies -- a job carrying a line worked here is reachable, or the row the list now
+    // shows would 404 on being opened.
     const scopeLocationId = await getJobLocationScope(req.user.id);
-    if (!isJobLocationVisible(jo, scopeLocationId)) {
-      return res.status(404).json({ error: 'Not found' });
+    if (scopeLocationId && !isJobLocationVisible(jo, scopeLocationId)) {
+      const [[lineHere]] = await pool.query(
+        'SELECT 1 AS ok FROM job_order_processes WHERE job_order_id = ? AND location_id = ? LIMIT 1',
+        [req.params.id, scopeLocationId]
+      );
+      if (!lineHere) return res.status(404).json({ error: 'Not found' });
     }
 
     // Back Order is a materials-shortage figure, not a production-progress one: it's how
