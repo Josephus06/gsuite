@@ -3,6 +3,7 @@
 // every existing `import ... from '../utils/costing'` working unchanged.
 export {
   convertAreaToBaseUnit,
+  convertLengthToBaseUnit,
   selectBracket,
   computeProcessCosting,
   computeMaterialCosting,

@@ -39,6 +39,19 @@ export function convertAreaToBaseUnit(length, width, uom, baseUnitCode) {
   return areaSqft / areaFactor;
 }
 
+// The linear counterpart, for the 496 items priced by length alone (base unit LMTR, LINCH,
+// LFT): converts a Length entered in `uom` into the item's own base LINEAR unit, so 19 IN of
+// a LINCH-based laminating film comes out as 19, and 3 MTR of an LMTR-based roll as 3.
+// Both sides go through feet, the same pivot convertAreaToBaseUnit uses, so any pair of
+// recognized linear codes converts correctly. Unrecognized/blank units pass through
+// unconverted (factor 1) on either side, matching convertAreaToBaseUnit's behavior for
+// lengths already entered in the item's native unit.
+export function convertLengthToBaseUnit(length, uom, baseUnitCode) {
+  const lengthFeet = num(length) * (LENGTH_UNIT_TO_FEET[uom] ?? 1);
+  const baseFactor = LENGTH_UNIT_TO_FEET[baseUnitCode] ?? 1;
+  return lengthFeet / baseFactor;
+}
+
 // A process's cost is banded by quantity -- find the bracket whose range contains qty.
 export function selectBracket(brackets, qty) {
   if (!brackets?.length) return null;
@@ -97,12 +110,14 @@ export function computeMaterialCosting(inventory) {
 // - Process cost/price is driven by `processQty` (falls back to `qty` if that's the
 //   only one filled in, since a line with a single quantity most likely means the same
 //   count for both): bracket matched by `processQty`, per-unit rate x processQty.
-// - Material cost/price is driven by the material's own `qty`, further scaled by area
-//   (length x width, converted into the item's own base unit via `uom` -- see
-//   convertAreaToBaseUnit) when the selected inventory item is flagged
-//   is_length_based && is_width_based -- material usage scales with area even though
-//   process labor is priced per piece. `total` = qty x area, matching the real site's
-//   "Total" column.
+// - Material cost/price is driven by the material's own `qty`, further scaled by how much
+//   of the item a single piece consumes (`sizeFactor`) -- material usage scales with size
+//   even though process labor is priced per piece. What "size" means depends on how the
+//   item is flagged: is_length_based && is_width_based consumes an AREA (length x width
+//   converted into its base area unit -- see convertAreaToBaseUnit), while is_length_based
+//   alone consumes a LENGTH (converted into its base linear unit -- see
+//   convertLengthToBaseUnit). Anything else consumes 1. `total` = qty x sizeFactor,
+//   matching the real site's "Total" column.
 //
 // process_cost/process_price and material_cost/material_price are each the EXTENDED
 // (already qty-multiplied) amount for this line -- not per-unit rates -- so that
@@ -115,7 +130,7 @@ export function computeMaterialCosting(inventory) {
 // - process_cost = (SubTotal MOH + Sub Con) x procQuantity -- the Process Costing tab's
 //   own bracket fields, with no COGS markup or OPEX layered in (unlike process_price,
 //   which is the full COGS+OPEX selling rate).
-// - material_cost = Average Cost (Base Cost) x area x matQuantity -- the inventory's
+// - material_cost = Average Cost (Base Cost) x sizeFactor x matQuantity -- the inventory's
 //   real weighted-average purchase cost normalized to its base unit via
 //   conversion_factor. This is intentionally NOT the same field material_price is
 //   derived from (Material Cost (Base Cost), the separate sales-pricing basis) -- Average
@@ -133,9 +148,21 @@ export function computeMaterialCosting(inventory) {
 export function computeAutoPricing({ brackets, inventory, processQty, qty, length, width, uom, discAmount, materialDiscAmount }) {
   const procQuantity = num(processQty) || num(qty) || 0;
   const matQuantity = num(qty) || 0;
-  const area = (inventory?.is_length_based && inventory?.is_width_based && num(length) > 0 && num(width) > 0)
-    ? convertAreaToBaseUnit(length, width, uom, inventory.base_unit_code)
-    : 1;
+  // A length-only item used to fall straight through to 1 here, because the only branch
+  // that existed demanded is_width_based as well -- so its Length was read, displayed, and
+  // then silently ignored: 19 IN of a LINCH-based laminating film priced as a single LINCH,
+  // undercharging the material ~19x (sizeFactor multiplies material_cost and material_price,
+  // not just the Total column). Width stays absent for those items by design; it is the
+  // length that has to carry the usage.
+  const sizeFactor = (() => {
+    if (inventory?.is_length_based && inventory?.is_width_based && num(length) > 0 && num(width) > 0) {
+      return convertAreaToBaseUnit(length, width, uom, inventory.base_unit_code);
+    }
+    if (inventory?.is_length_based && !inventory?.is_width_based && num(length) > 0) {
+      return convertLengthToBaseUnit(length, uom, inventory.base_unit_code);
+    }
+    return 1;
+  })();
 
   const bracket = selectBracket(brackets, procQuantity);
   const proc = computeProcessCosting(bracket);
@@ -144,8 +171,8 @@ export function computeAutoPricing({ brackets, inventory, processQty, qty, lengt
 
   const process_cost = proc ? Number((proc.costBasis * procQuantity).toFixed(2)) : null;
   const process_price = proc ? Number((proc.pricePerUnit * procQuantity).toFixed(2)) : null;
-  const material_cost = inventory ? Number((avgCostBase * area * matQuantity).toFixed(2)) : null;
-  const material_price = mat ? Number((mat.pricePerUnit * area * matQuantity).toFixed(2)) : null;
+  const material_cost = inventory ? Number((avgCostBase * sizeFactor * matQuantity).toFixed(2)) : null;
+  const material_price = mat ? Number((mat.pricePerUnit * sizeFactor * matQuantity).toFixed(2)) : null;
 
   const disc_process_price = process_price != null ? Number((process_price - num(discAmount)).toFixed(2)) : null;
   const disc_material_price = material_price != null ? Number((material_price - num(materialDiscAmount)).toFixed(2)) : null;
@@ -167,6 +194,6 @@ export function computeAutoPricing({ brackets, inventory, processQty, qty, lengt
     process_cost, process_price, material_cost, material_price,
     disc_process_price, disc_material_price, net_of_tax, tax_amount,
     total_cost, total_price, gp_rate, gross_amount,
-    total: area !== 1 ? Number((area * matQuantity).toFixed(4)) : matQuantity,
+    total: sizeFactor !== 1 ? Number((sizeFactor * matQuantity).toFixed(4)) : matQuantity,
   };
 }
