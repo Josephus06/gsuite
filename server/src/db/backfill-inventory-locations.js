@@ -46,14 +46,13 @@ function argVal(name, def) {
 }
 
 // The base .env carries the live-site credentials --refresh needs; --env overlays a different
-// database on top of them. Loaded before ../db is required, since the pool reads process.env
-// at require time and dotenv never overrides a value that is already set.
-require('dotenv').config();
-const ENV_NAME = argVal('env', null);
-if (ENV_NAME) {
-  const envPath = path.join(__dirname, '..', '..', `.env.${ENV_NAME}`);
-  const loaded = require('dotenv').config({ path: envPath, override: true });
-  if (loaded.error) { console.error(`Cannot read ${envPath}: ${loaded.error.message}`); process.exit(1); }
+// database on top of them. Must run before ../db is required -- see lib/env.js.
+let ENV_NAME = null;
+try {
+  ENV_NAME = require('./lib/env')();
+} catch (err) {
+  console.error(err.message);
+  process.exit(1);
 }
 
 const { spawnSync } = require('child_process');

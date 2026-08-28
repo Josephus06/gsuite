@@ -11,10 +11,11 @@
 // deliberately -- they are the same concept one level down, and a DATETIME variant here
 // would leave the two reading differently for no gain.
 //
-// Idempotent -- safe to re-run:
+// Idempotent -- safe to re-run, and --env picks the install:
 //   node src/db/add-process-planned-dates.js
+//   node src/db/add-process-planned-dates.js --env=railway
+const envName = require('./lib/env')();
 const pool = require('../db');
-require('dotenv').config();
 
 const TABLE = 'job_order_processes';
 const COLUMNS = [
@@ -23,7 +24,7 @@ const COLUMNS = [
 ];
 
 async function main() {
-  console.log(`Target DB: ${process.env.DB_NAME} on ${process.env.DB_HOST}`);
+  console.log(`Target DB: ${process.env.DB_NAME} on ${process.env.DB_HOST}${envName ? ` (--env=${envName})` : ''}`);
   const [existing] = await pool.query('SHOW COLUMNS FROM ??', [TABLE]);
   const have = new Set(existing.map((c) => c.Field));
 
