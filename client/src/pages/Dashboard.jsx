@@ -592,6 +592,40 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
 // ScheduleCalendar rather than bent to fit: that one's day popup is built around an artist's
 // incentive and actual-end times, which say nothing to someone scheduling the floor. The grid
 // classes are shared so the two read as the same calendar.
+const JO_COLOURS = 8;
+
+// Which of the eight .jo-c* colours each job order wears, for one month's worth of jobs.
+//
+// The starting point is a hash of the job order number, not the job's position in the list, so a
+// job keeps the same colour on every day of its window and from one load to the next -- a band
+// whose colour changed partway across would read as two different jobs.
+//
+// Eight colours and a hash will sometimes hand two jobs the same one. That does not matter for
+// jobs at opposite ends of the month, but two OVERLAPPING jobs in one colour merge into what
+// looks like a single longer band, which is exactly the misreading this feature exists to
+// prevent. So a job whose hashed colour is already taken by a job it overlaps moves to the next
+// free one. Deterministic for a given set of jobs, and only jobs that actually clash are moved.
+function assignJoColours(jobs) {
+  const day = (v) => String(v || '').slice(0, 10);
+  const ordered = [...jobs].sort((a, b) => day(a.plannedStart).localeCompare(day(b.plannedStart))
+    || String(a.jobOrderNo).localeCompare(String(b.jobOrderNo)));
+  const byId = new Map();
+  const placed = [];
+  for (const j of ordered) {
+    const s = String(j.jobOrderNo || '');
+    let h = 0;
+    for (let i = 0; i < s.length; i += 1) h = (h * 31 + s.charCodeAt(i)) % 100003;
+    const start = day(j.plannedStart);
+    const end = day(j.plannedEnd);
+    const clashes = (idx) => placed.some((p) => p.idx === idx && p.start <= end && p.end >= start);
+    let idx = h % JO_COLOURS;
+    for (let n = 0; n < JO_COLOURS && clashes(idx); n += 1) idx = (idx + 1) % JO_COLOURS;
+    placed.push({ idx, start, end });
+    byId.set(j.id, `jo-c${idx}`);
+  }
+  return byId;
+}
+
 function ForecastCalendarCard({ navigate }) {
   const pad = (n) => String(n).padStart(2, '0');
   const now = new Date();
@@ -630,6 +664,13 @@ function ForecastCalendarCard({ navigate }) {
       byDay.get(key).push(j);
     }
   }
+  // Ordered the same way in every cell, so a job holds its row as its band crosses the week
+  // instead of hopping up and down as other jobs start and finish around it.
+  for (const list of byDay.values()) {
+    list.sort((a, b) => String(a.plannedStart).localeCompare(String(b.plannedStart))
+      || String(a.jobOrderNo).localeCompare(String(b.jobOrderNo)));
+  }
+  const colourById = assignJoColours(jobs);
 
   const todayKey = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
   const cells = [];
@@ -641,7 +682,14 @@ function ForecastCalendarCard({ navigate }) {
     setMonth(`${base.getFullYear()}-${pad(base.getMonth() + 1)}`);
   };
 
-  const spanLabel = (j) => `${String(j.plannedStart).slice(0, 10)} to ${String(j.plannedEnd).slice(0, 10)}`;
+  // The span in words as well as in colour: the band shows how long a job runs, this says it
+  // exactly, including the part that falls outside the month on screen.
+  const spanLabel = (j) => {
+    const start = String(j.plannedStart).slice(0, 10);
+    const end = String(j.plannedEnd).slice(0, 10);
+    const days = Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000) + 1;
+    return `${start} to ${end} (${days} day${days === 1 ? '' : 's'})`;
+  };
 
   return (
     <div className="holo-card dash-chart-card">
@@ -672,15 +720,22 @@ function ForecastCalendarCard({ navigate }) {
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenDay(key); } }}
               >
                 <span className="artist-calendar-daynum">{Number(key.slice(8, 10))}</span>
-                {dayJobs.slice(0, 3).map((j) => (
-                  <span
-                    key={j.id}
-                    className="artist-calendar-chip"
-                    title={`${j.jobOrderNo} - ${j.customerName || ''} - ${spanLabel(j)}`}
-                  >
-                    {j.jobOrderNo}
-                  </span>
-                ))}
+                {dayJobs.slice(0, 3).map((j) => {
+                  // Square the edge the window carries on through, so consecutive days join into
+                  // one band. Compared as plain YYYY-MM-DD strings, which sort correctly and keep
+                  // this free of the timezone slide the day keys are built to avoid.
+                  const start = String(j.plannedStart || '').slice(0, 10);
+                  const end = String(j.plannedEnd || '').slice(0, 10);
+                  return (
+                    <span
+                      key={j.id}
+                      className={`artist-calendar-chip jo-span ${colourById.get(j.id) || 'jo-c0'}${key > start ? ' is-cont-left' : ''}${key < end ? ' is-cont-right' : ''}`}
+                      title={`${j.jobOrderNo} - ${j.customerName || ''} - ${spanLabel(j)}`}
+                    >
+                      {j.jobOrderNo}
+                    </span>
+                  );
+                })}
                 {dayJobs.length > 3 && <span className="artist-calendar-more">+{dayJobs.length - 3} more</span>}
               </div>
             );

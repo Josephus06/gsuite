@@ -1477,6 +1477,38 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 }
 .artist-calendar-more { font-size: 10px; opacity: 0.7; padding-left: 4px; }
 
+/* A colour per job order on the Production Schedule. The same job appears once on every day of
+   its forecast window, and as plain text those repeats read as separate jobs -- how many days a
+   job actually occupies is the question the calendar exists to answer. Given a colour and square
+   inner edges, a window becomes one continuous band the eye can measure at a glance.
+   The class is chosen by hashing the job order number (see joColorClass), so a job keeps its
+   colour on every day it covers and across month changes; a colour that shifted between days
+   would defeat the point of the band. Eight hues -- enough to tell neighbouring jobs apart,
+   few enough that each stays legible in both themes. */
+.jo-span { background: var(--jo-fill); color: var(--jo-text); box-shadow: inset 3px 0 0 var(--jo-border); }
+/* Square off whichever edge the band continues through, and drop the left marker on any day
+   that is not the window's first -- one bar with one start, not a row of pills. */
+.jo-span.is-cont-left { border-top-left-radius: 0; border-bottom-left-radius: 0; box-shadow: none; }
+.jo-span.is-cont-right { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+
+.jo-c0 { --jo-fill: #fdf0d5; --jo-border: #d9a441; --jo-text: #6b4a10; }
+.jo-c1 { --jo-fill: #fbe0e6; --jo-border: #d9748f; --jo-text: #7a2740; }
+.jo-c2 { --jo-fill: #e2f0e6; --jo-border: #66a67e; --jo-text: #1f5133; }
+.jo-c3 { --jo-fill: #e4ecfa; --jo-border: #6d8fd0; --jo-text: #22406f; }
+.jo-c4 { --jo-fill: #f0e9fa; --jo-border: #9d7cc9; --jo-text: #4a2f70; }
+.jo-c5 { --jo-fill: #ddf0f2; --jo-border: #5aa5ad; --jo-text: #16484e; }
+.jo-c6 { --jo-fill: #fde8dc; --jo-border: #d68a5c; --jo-text: #7a3d18; }
+.jo-c7 { --jo-fill: #e8ecf1; --jo-border: #8697aa; --jo-text: #2f3f4f; }
+
+:root[data-theme="dark"] .jo-c0 { --jo-fill: #3a2f18; --jo-border: #a8802f; --jo-text: #f0dcae; }
+:root[data-theme="dark"] .jo-c1 { --jo-fill: #3c2029; --jo-border: #b06178; --jo-text: #f4cdd8; }
+:root[data-theme="dark"] .jo-c2 { --jo-fill: #1d3327; --jo-border: #4f8767; --jo-text: #c3e6d1; }
+:root[data-theme="dark"] .jo-c3 { --jo-fill: #1e2b42; --jo-border: #5878b3; --jo-text: #cbdcf7; }
+:root[data-theme="dark"] .jo-c4 { --jo-fill: #2c2438; --jo-border: #8c6cb8; --jo-text: #ddcef2; }
+:root[data-theme="dark"] .jo-c5 { --jo-fill: #16302f; --jo-border: #468a90; --jo-text: #bfe4e6; }
+:root[data-theme="dark"] .jo-c6 { --jo-fill: #3a2519; --jo-border: #a9683f; --jo-text: #f2d6c2; }
+:root[data-theme="dark"] .jo-c7 { --jo-fill: #26303a; --jo-border: #64798c; --jo-text: #d3dce5; }
+
 @media (max-width: 720px) {
   .artist-calendar-day { min-height: 56px; }
   .artist-calendar-chip { font-size: 9px; }
