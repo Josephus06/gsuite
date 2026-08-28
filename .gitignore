@@ -13,3 +13,9 @@ gsuite_erp*.sql
 
 # Database dumps -- hundreds of MB of live financial data. Never in git.
 backups/
+
+# Temporary 2026-sync artifacts (hold Railway creds / are throwaway) -- see server/RESUME-2026-SYNC.md
+server/.env.railway
+server/sync-2026.log
+server/migrate-2026.log
+server/run-2026-sync.sh
