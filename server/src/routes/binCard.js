@@ -149,6 +149,12 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       return { ...r, balance_base: balanceBase, balance_stock: balanceBase / conversionFactor };
     });
 
+    // A running balance can only be accumulated oldest-first, but nobody opens a bin card to read
+    // 2021: the question is almost always "what is this item doing now", and with 149 pages of
+    // history that answer sat on the last page. Reversed after the balances are computed, so page
+    // one is the most recent movement and each row still carries the balance as at its own date.
+    withBalance.reverse();
+
     res.json({
       stock_unit_label: unitInfo.stock_unit_title ? `${unitInfo.stock_unit_title} (${unitInfo.stock_unit_code})` : (unitInfo.stock_unit_code || 'Stock Unit'),
       base_unit_label: unitInfo.base_unit_title ? `${unitInfo.base_unit_title} (${unitInfo.base_unit_code})` : (unitInfo.base_unit_code || 'Base Unit'),
