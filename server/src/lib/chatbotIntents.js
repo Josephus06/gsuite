@@ -1,4 +1,5 @@
 const { runSqlFallback } = require('./sqlFallback');
+const { answerUnitConversion } = require('./unitConversion');
 const pool = require('../db');
 
 // Job-order artist lookups are a common, exact question with a stable relationship
@@ -105,6 +106,11 @@ async function answerQuestion(user, message, history = []) {
   try {
     const relationshipAnswer = answerJosephusRelationship(message);
     if (relationshipAnswer) return relationshipAnswer;
+
+    // Ahead of the model on purpose -- see lib/unitConversion.js. It answers only what it
+    // can parse with certainty and returns null otherwise, so nothing else changes.
+    const conversion = await answerUnitConversion(message);
+    if (conversion) return conversion;
 
     const jobOrderNo = extractJobOrderForArtistLookup(message);
     if (jobOrderNo) {

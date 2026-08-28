@@ -22,7 +22,18 @@ const { ticketVisibilityClause } = require('./ticketVisibility');
 //   use it.
 // System Admin additionally gets the owned tables via validated SQL too, since an admin
 // has no personal-scope boundary to begin with.
-const OPENAI_MODEL = 'gpt-4o-mini';
+// gpt-4o-mini was too weak for what this prompt asks of it. The prompt below is a large
+// one -- full schema, the employee directory, pre-fetched orders -- and on top of reading
+// all that it has to translate a question into correct SQL, or answer in the user's own
+// mix of English/Cebuano/Tagalog. Mini's failures were quiet rather than loud: plausible
+// SQL against the wrong column, and confidently wrong arithmetic (see
+// lib/unitConversion.js for the conversion case, which is now answered in code before it
+// ever reaches the model).
+//
+// Env-overridable because the token cost here is dominated by the prompt, not the reply,
+// so the model is the one lever that moves the bill -- it can be tuned per install
+// without a redeploy.
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 
 const CATALOG_TABLES = [
   'customers', 'suppliers', 'departments', 'inventories', 'inventory_locations',

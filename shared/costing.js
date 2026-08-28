@@ -24,8 +24,13 @@ function num(v) {
 // entered in whatever unit the selected UOM represents (e.g. meters) even though the
 // item itself is priced by a different area unit (almost always Square Foot in the real
 // catalog -- SQFT/SQTF cover 496 of 496 length+width-based items).
-const LENGTH_UNIT_TO_FEET = { FT: 1, LFT: 1, IN: 1 / 12, LINCH: 1 / 12, MM: 0.00328084, CM: 0.0328084, MTR: 3.28084, M: 3.28084, LMTR: 3.28084, YD: 3 };
-const AREA_UNIT_TO_SQFT = { SQFT: 1, SQTF: 1, SQM: 10.7639 };
+//
+// Exported because the chatbot answers unit-conversion questions from these same tables
+// (server/src/lib/unitConversion.js). A second copy over there would be free to drift, and
+// an assistant quoting a different number than the estimate form is worse than one that
+// declines to answer.
+export const LENGTH_UNIT_TO_FEET = { FT: 1, LFT: 1, IN: 1 / 12, LINCH: 1 / 12, MM: 0.00328084, CM: 0.0328084, MTR: 3.28084, M: 3.28084, LMTR: 3.28084, YD: 3 };
+export const AREA_UNIT_TO_SQFT = { SQFT: 1, SQTF: 1, SQM: 10.7639 };
 
 // Converts a Length x Width entered in `uom` into the item's own base-unit area (e.g.
 // Square Foot), so a 5x6 line entered in meters against a Square-Foot-priced tarpaulin
