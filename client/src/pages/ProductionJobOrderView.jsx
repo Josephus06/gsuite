@@ -346,6 +346,12 @@ export default function ProductionJobOrderView() {
   const [plannedStart, setPlannedStart] = useState('');
   const [plannedEnd, setPlannedEnd] = useState('');
   const [scheduleError, setScheduleError] = useState('');
+  // The delivery date, edited in place while the job order is For Revision -- the same control
+  // the Job Order view carries, because Sales reaches a returned job order from either screen.
+  const [deliveryDraft, setDeliveryDraft] = useState('');
+  const [deliveryTimeDraft, setDeliveryTimeDraft] = useState('');
+  const [deliveryError, setDeliveryError] = useState('');
+  const [savingDelivery, setSavingDelivery] = useState(false);
   const [actionError, setActionError] = useState('');
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [tab, setTab] = useState('processes');
@@ -362,6 +368,8 @@ export default function ProductionJobOrderView() {
       setJo(data);
       setPlannedStart(data.planned_start_date ? String(data.planned_start_date).slice(0, 10) : '');
       setPlannedEnd(data.planned_end_date ? String(data.planned_end_date).slice(0, 10) : '');
+      setDeliveryDraft(data.delivery_date ? String(data.delivery_date).slice(0, 10) : '');
+      setDeliveryTimeDraft(data.delivery_time || '');
       setLoading(false);
     });
   }
@@ -395,6 +403,23 @@ export default function ProductionJobOrderView() {
       setScheduleError(err.response?.data?.error || 'Could not save the planned dates.');
     } finally {
       setSavingSchedule(false);
+    }
+  }
+
+  async function handleSaveDelivery() {
+    setDeliveryError('');
+    if (!deliveryDraft) { setDeliveryError('Enter a delivery date.'); return; }
+    setSavingDelivery(true);
+    try {
+      await api.put(`/job-orders/${id}/delivery-date`, {
+        delivery_date: deliveryDraft,
+        delivery_time: deliveryTimeDraft || null,
+      });
+      await load();
+    } catch (err) {
+      setDeliveryError(err.response?.data?.error || 'Could not save the delivery date.');
+    } finally {
+      setSavingDelivery(false);
     }
   }
 
@@ -514,6 +539,7 @@ export default function ProductionJobOrderView() {
   // for them too -- matching what the server accepts.
   const canSchedule = (canEdit || isPlanner(user)) && !isTerminal;
   const deliveryDay = jo.delivery_date ? String(jo.delivery_date).slice(0, 10) : '';
+  const deliveryDirty = deliveryDraft !== deliveryDay || (deliveryTimeDraft || '') !== (jo.delivery_time || '');
   const savedStart = jo.planned_start_date ? String(jo.planned_start_date).slice(0, 10) : '';
   const savedEnd = jo.planned_end_date ? String(jo.planned_end_date).slice(0, 10) : '';
   const plannedDirty = plannedStart !== savedStart || plannedEnd !== savedEnd;
@@ -532,6 +558,7 @@ export default function ProductionJobOrderView() {
   // what PUT /production/:id/approve-revision now accepts.
   const isOwningSalesRep = !!user?.employee_id && jo.sales_rep_id === user.employee_id;
   const canReturnRevision = canEdit || isOwningSalesRep;
+  const canReviseDelivery = forRevision && canReturnRevision && jo.status !== 'Cancelled';
   const canSendForRevision = can('/production', 'can_edit') && !isOnHold
     && jo.status === 'Released' && jo.production_stage === 'pending_for_scheduling'
     && num(jo.quantity_built) === 0;
@@ -668,8 +695,42 @@ export default function ProductionJobOrderView() {
                 <div>Forecast : <span className="hi">{forecastLabel(jo.planned_start_date, jo.planned_end_date)}</span></div>
               </>
             )}
-            <div>Delivery Date : <span className="hi">{jo.delivery_date ? String(jo.delivery_date).slice(0, 10) : ''}</span></div>
-            <div>Delivery Time : <span className="hi">{jo.delivery_time}</span></div>
+            {canReviseDelivery ? (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  Delivery Date :
+                  <input
+                    type="date" value={deliveryDraft} disabled={savingDelivery}
+                    onChange={(e) => setDeliveryDraft(e.target.value)}
+                    style={SCHEDULE_INPUT}
+                  />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                  Delivery Time :
+                  <input
+                    type="time" value={deliveryTimeDraft} disabled={savingDelivery}
+                    onChange={(e) => setDeliveryTimeDraft(e.target.value)}
+                    style={SCHEDULE_INPUT}
+                  />
+                  {deliveryDirty && (
+                    <button
+                      type="button" className="btn btn-sm btn-primary"
+                      disabled={savingDelivery} onClick={handleSaveDelivery}
+                    >
+                      {savingDelivery ? 'Saving...' : 'Save Date'}
+                    </button>
+                  )}
+                </div>
+                {deliveryError && (
+                  <div style={{ marginTop: 6, color: '#ffd4d4', fontWeight: 600 }}>{deliveryError}</div>
+                )}
+              </>
+            ) : (
+              <>
+                <div>Delivery Date : <span className="hi">{jo.delivery_date ? String(jo.delivery_date).slice(0, 10) : ''}</span></div>
+                <div>Delivery Time : <span className="hi">{jo.delivery_time}</span></div>
+              </>
+            )}
             <div>Sales Rep. : <span className="hi">{jo.sales_rep_name}</span></div>
           </div>
           <div>
