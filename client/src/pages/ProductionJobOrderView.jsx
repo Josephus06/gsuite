@@ -9,6 +9,7 @@ import RwipCreateModal from '../components/RwipCreateModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { isNonStockItem } from '../utils/itemTypes';
 import { isPlanner } from '../utils/plannerRoles';
+import { maySalesRevise } from '../utils/salesRevision';
 
 // Mirrors the real system's "Production > Production" detail screen -- same underlying
 // Job Order as JobOrderView.jsx, but reached once the JO is Released and viewed for
@@ -552,12 +553,11 @@ export default function ProductionJobOrderView() {
   // handing it over and Production accepting it, when sending it back costs nothing. Once it is
   // In-Process there is work under way to walk backwards over.
   const forRevision = jo.production_stage === 'for_revision';
-  // Returning a revised job order is the owning sales rep's to do as well as a generic editor's
-  // -- almost no Sales account holds can_edit on /job-orders, so gating on that alone left the
-  // rep looking at a revision they could not send back and an admin as the only way out. Matches
-  // what PUT /production/:id/approve-revision now accepts.
-  const isOwningSalesRep = !!user?.employee_id && jo.sales_rep_id === user.employee_id;
-  const canReturnRevision = canEdit || isOwningSalesRep;
+  // Both halves of the Sales revision loop belong to Sales -- returning the job order and
+  // moving the delivery date. Production raised the revision; offering them the button that ends
+  // it (three Production accounts hold can_edit on /job-orders, which is what this used to ask
+  // for) put the wrong department in charge of clearing it. Same rule the server applies.
+  const canReturnRevision = maySalesRevise(user, jo, canEdit);
   const canReviseDelivery = forRevision && canReturnRevision && jo.status !== 'Cancelled';
   const canSendForRevision = can('/production', 'can_edit') && !isOnHold
     && jo.status === 'Released' && jo.production_stage === 'pending_for_scheduling'

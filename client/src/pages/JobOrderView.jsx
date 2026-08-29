@@ -7,6 +7,7 @@ import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ArtistAttachments from '../components/ArtistAttachments';
+import { maySalesRevise } from '../utils/salesRevision';
 
 // Deliberately minimal Job Order detail -- mirrors the real system's layout (banner +
 // grouped info fields + Processes/RWIP JO/Sub Con/Related Records/System Info tabs +
@@ -294,11 +295,11 @@ export default function JobOrderView() {
   const isSpecialJo = isNsjo || isRwip;
   // Production handed this job order back for Sales to correct (see the Sales revision loop in
   // server/src/routes/production.js). Both actions the stage exists for -- moving the delivery
-  // date and returning the job -- are the owning rep's as well as a generic editor's, matching
-  // what the server now accepts; gating them on can_edit alone is what made the return button
-  // visible to admins only.
+  // date and returning the job -- belong to Sales, and to the rep who owns this job order above
+  // all; can_edit on /job-orders is not that test, which is how the button came to be visible to
+  // admins only and to Production. Same rule the server applies.
   const forRevision = jo.production_stage === 'for_revision' && jo.status !== 'Cancelled';
-  const canReviseAsSales = forRevision && (isOwningSalesRep || canEdit);
+  const canReviseAsSales = forRevision && maySalesRevise(user, jo, canEdit);
   const deliveryDirty = deliveryDraft !== (jo.delivery_date ? String(jo.delivery_date).slice(0, 10) : '')
     || (deliveryTimeDraft || '') !== (jo.delivery_time || '');
   const inDesignPhase = !isSpecialJo && !jo.production_stage && jo.status !== 'Cancelled';
