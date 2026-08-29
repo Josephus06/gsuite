@@ -7,6 +7,7 @@ import Avatar from '../components/Avatar';
 import Modal from '../components/Modal';
 import SyncFromSourceButton from '../components/SyncFromSourceButton';
 import { parseUtc } from '../utils/datetime';
+import { isPlanner } from '../utils/plannerRoles';
 import Feed from './Feed';
 import '../styles/feed.css';
 
@@ -263,7 +264,7 @@ function AdminDashboard({ data, user, navigate }) {
 
       <div className="dash-main-grid">
         <ProfileCard user={user} roleLabel={ROLE_LABELS.admin} rings={data.rings} activity={activity} />
-        {user?.is_signage_planner ? (
+        {isPlanner(user) ? (
           // A planner opens this screen to answer "what is on the floor this month", not to
           // read a sales trend -- so the forecast calendar takes that panel for them.
           <ForecastCalendarCard navigate={navigate} />

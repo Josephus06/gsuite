@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
+const { isPlannerUser } = require('../lib/plannerRoles');
 
 const router = express.Router();
 const ROUTE = '/scheduled-jo';
@@ -45,16 +46,15 @@ async function isProductionEmployee(employeeId) {
   return !!row;
 }
 
-// Who schedules the work rather than doing it. A Signage Planner is filed under a production
+// Who schedules the work rather than doing it. A department planner is filed under a production
 // department but assigns jobs instead of running them, so without this they would land on a
 // personal worklist that is always empty -- nobody assigns tasks to the person doing the
 // assigning. The flag has to carry this on its own because a planner deliberately holds no
-// production edit rights (see db/add-signage-planner-role.js); this is the same test
+// production edit rights (see db/add-department-planner-roles.js); this is the same test
 // requireScheduler applies on the Production screen. can_edit here covers the GM/System Admin
 // path, who were already getting the scheduling view by not being production employees.
 async function isScheduler(userId) {
-  const [[u]] = await pool.query('SELECT is_signage_planner FROM users WHERE id = ?', [userId]);
-  if (u?.is_signage_planner) return true;
+  if (await isPlannerUser(userId)) return true;
   return userCan(userId, ROUTE, 'can_edit');
 }
 

@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { DESIGN_QUEUE_STATUS } = require('../lib/designSupervisorVisibility');
+const { isPlannerUser } = require('../lib/plannerRoles');
 // Shared with the Artist Incentive report and the Assigned JO list, so the calendar cannot
 // quote a different figure for the same job than the other two do.
 const {
@@ -798,12 +799,11 @@ router.get('/sales-calendar', requireAuth, async (req, res, next) => {
 // into one row per day -- a job planned across three weeks would otherwise be sent twenty
 // times over; the calendar walks the span itself.
 //
-// Open to anyone who can see production, plus the Signage Planners who schedule it but hold
+// Open to anyone who can see production, plus the department planners who schedule it but hold
 // no production permission of their own.
 router.get('/production-calendar', requireAuth, async (req, res, next) => {
   try {
-    const [[me]] = await pool.query('SELECT is_signage_planner FROM users WHERE id = ?', [req.user.id]);
-    if (!me?.is_signage_planner) {
+    if (!(await isPlannerUser(req.user.id))) {
       const [[perm]] = await pool.query(
         `SELECT atp.can_view FROM users u
            JOIN account_type_permissions atp ON atp.account_type = u.account_type

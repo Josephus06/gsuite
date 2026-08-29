@@ -5,6 +5,8 @@ const { isNonStockItem } = require('../lib/itemTypes');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 const { deriveOnHand } = require('../lib/stockLedger');
+const { maySalesReviseJobOrder } = require('../lib/jobOrderRevision');
+const { PLANNER_COLUMNS, isPlanner } = require('../lib/plannerRoles');
 
 // Completing a process and building both move stock dated today (the Assembly Build row
 // is inserted with CURDATE()), so today's period is what has to be open for them.
@@ -12,6 +14,22 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 const router = express.Router();
 const ROUTE = '/production';
+
+// The floor roles below (the department planners, Production Supervisor) carry their capability
+// as a per-user tag rather than as a /production permission row, and a capability on a screen the
+// holder cannot open is no capability at all -- a planner has no /production row whatsoever.
+// So reading this module follows the same rule its writes do. It widens nothing else: the
+// department warehouse filter on the list, and assertJobOrderInScope on the detail, both still
+// apply, so a Signage planner reads Signage's work and a DPOD planner DPOD's.
+async function requireProductionView(req, res, next) {
+  try {
+    const [[u]] = await pool.query(
+      `SELECT ${PLANNER_COLUMNS}, is_production_supervisor FROM users WHERE id = ?`, [req.user.id]
+    );
+    if (isPlanner(u) || u?.is_production_supervisor) return next();
+    return requirePermission(ROUTE, 'can_view')(req, res, next);
+  } catch (err) { return next(err); }
+}
 
 // Mirrors the real system's "Production > Production" ("Saved Job Order Stages")
 // screen's 8 tab stages -- "Hold" is a 9th tab there but is handled as a cross-cutting
@@ -36,7 +54,7 @@ async function assertJobOrderInScope(req, res) {
   return false;
 }
 
-router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/', requireAuth, requireProductionView, async (req, res, next) => {
   try {
     const {
       stage, hold, search, sales_rep_id: salesRepId, job_location_id: jobLocationId, customer_id: customerId,
@@ -149,7 +167,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 // production-floor Processes column set (On Hand/Committed read live from
 // inventory_locations, Total Built/Total Completed/Back Order, Sales vs Production
 // Remarks) and no Design/Sales-approval action buttons (those only apply pre-Release).
-router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/:id', requireAuth, requireProductionView, async (req, res, next) => {
   try {
     const [[jo]] = await pool.query(
       `SELECT jo.*, so.sales_order_no, so.status AS sales_order_status, so.office_location_id, so.sales_division_id,
@@ -298,13 +316,35 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
 // is not stored -- it is the span between these two dates, so setting them is what "defines
 // the forecast".
 
-// A Signage Planner may schedule without holding can_edit on /production -- that permission
-// also carries process completion, assembly builds and RWIP, which a planner has no business
-// doing. Anyone who genuinely has production edit rights keeps the capability too.
+// A department planner may schedule without holding can_edit on /production -- that permission
+// also carries RWIP and the rest of production's edits, which planning does not need. Anyone who
+// genuinely has production edit rights keeps the capability too. Which job orders a planner may
+// schedule is bounded by assertJobOrderInScope, i.e. by their department's warehouse.
 async function requireScheduler(req, res, next) {
   try {
-    const [[u]] = await pool.query('SELECT is_signage_planner FROM users WHERE id = ?', [req.user.id]);
-    if (u?.is_signage_planner) return next();
+    const [[u]] = await pool.query(`SELECT ${PLANNER_COLUMNS} FROM users WHERE id = ?`, [req.user.id]);
+    if (isPlanner(u)) return next();
+    return requirePermission(ROUTE, 'can_edit')(req, res, next);
+  } catch (err) { return next(err); }
+}
+
+// Who may work the floor: record output on a process line and turn it into an Assembly Build.
+// can_edit on /production carries that today, but no production account holds it -- Anne and
+// Velbeth are can_view only, and the planner has no /production row at all -- so the two people
+// actually doing the work could not do it, while the Assembly Build button was still drawn for
+// them off the wrong permission (/job-orders can_edit) and then refused here.
+//
+// Granting them /production can_edit would also grant RWIP and every other production edit, so
+// the floor roles carry their own tags instead, same shape as requireScheduler above. No tag
+// widens WHICH job orders they may touch: assembly builds still go through assertJobOrderInScope
+// and completion through the per-line location check, so a Signage production supervisor works
+// Signage's warehouse and nothing else.
+async function requireProductionFloor(req, res, next) {
+  try {
+    const [[u]] = await pool.query(
+      `SELECT ${PLANNER_COLUMNS}, is_production_supervisor FROM users WHERE id = ?`, [req.user.id]
+    );
+    if (isPlanner(u) || u?.is_production_supervisor) return next();
     return requirePermission(ROUTE, 'can_edit')(req, res, next);
   } catch (err) { return next(err); }
 }
@@ -329,11 +369,22 @@ router.put('/:id/planned-dates', requireAuth, requireScheduler, async (req, res,
     }
 
     const [[jo]] = await conn.query(
-      'SELECT planned_start_date, planned_end_date, status FROM job_orders WHERE id = ?', [req.params.id]
+      'SELECT planned_start_date, planned_end_date, delivery_date, status FROM job_orders WHERE id = ?', [req.params.id]
     );
     if (!jo) return res.status(404).json({ error: 'Not found' });
     if (!(await assertJobOrderInScope(req, res))) return;
     if (jo.status === 'Cancelled') return res.status(409).json({ error: 'This job order is cancelled.' });
+    // The delivery date is the promise Sales made to the customer. A plan that starts or ends
+    // after it is a plan to deliver late, agreed with nobody -- so it is refused here rather
+    // than discovered on the delivery date. A job order with no delivery date on it constrains
+    // nothing (plenty of migrated ones have none), and clearing a planned date is always fine.
+    const deliveryDay = jo.delivery_date ? String(jo.delivery_date).slice(0, 10) : null;
+    if (deliveryDay) {
+      const late = [['Planned Start', start], ['Planned End', end]].find(([, d]) => d && d > deliveryDay);
+      if (late) {
+        return res.status(400).json({ error: `${late[0]} cannot be later than the Delivery Date (${deliveryDay}).` });
+      }
+    }
 
     await conn.beginTransaction();
     await conn.query(
@@ -474,12 +525,15 @@ router.put('/:id/sales-revision', requireAuth, requirePermission(ROUTE, 'can_edi
 // it -- dropping it back on the floor unseen would skip the very step that caught the problem.
 // Planned dates are left as they were: they may still be right, and silently clearing a
 // scheduler's plan because Sales fixed a typo would be its own surprise.
-router.put('/:id/approve-revision', requireAuth, requirePermission('/job-orders', 'can_edit'), async (req, res, next) => {
+router.put('/:id/approve-revision', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[jo]] = await conn.query('SELECT production_stage, status FROM job_orders WHERE id = ?', [req.params.id]);
+    const [[jo]] = await conn.query('SELECT production_stage, status, sales_rep_id FROM job_orders WHERE id = ?', [req.params.id]);
     if (!jo) return res.status(404).json({ error: 'Not found' });
     if (!(await assertJobOrderInScope(req, res))) return;
+    if (!(await maySalesReviseJobOrder(req.user.id, jo))) {
+      return res.status(403).json({ error: 'You do not have permission to perform this action' });
+    }
     if (jo.status === 'Cancelled') return res.status(409).json({ error: 'This job order is cancelled.' });
     if (jo.production_stage !== 'for_revision') {
       return res.status(409).json({ error: 'Only a job order for revision can be approved back to production.' });
@@ -502,7 +556,7 @@ router.put('/:id/approve-revision', requireAuth, requirePermission('/job-orders'
   }
 });
 
-router.put('/:id/processes/:processId/complete', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/processes/:processId/complete', requireAuth, requireProductionFloor, async (req, res, next) => {
   try {
     const [[proc]] = await pool.query(
       `SELECT jop.total, jop.total_completed, jop.item_id, jop.location_id, i.item_type,
@@ -572,7 +626,7 @@ router.put('/:id/processes/:processId/complete', requireAuth, requirePermission(
 // in the JO's Related Records tab. Every process line is snapshotted into the
 // transaction (not just material lines), matching the real screenshot showing a
 // labor-only "Layout Fee" line alongside material lines.
-router.put('/:id/assembly-build', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/assembly-build', requireAuth, requireProductionFloor, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[jo]] = await conn.query('SELECT quantity, quantity_built, production_stage, job_location_id FROM job_orders WHERE id = ?', [req.params.id]);

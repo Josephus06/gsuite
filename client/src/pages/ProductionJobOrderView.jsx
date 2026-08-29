@@ -8,6 +8,7 @@ import QualityInspectionModal from '../components/QualityInspectionModal';
 import RwipCreateModal from '../components/RwipCreateModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { isNonStockItem } from '../utils/itemTypes';
+import { isPlanner } from '../utils/plannerRoles';
 
 // Mirrors the real system's "Production > Production" detail screen -- same underlying
 // Job Order as JobOrderView.jsx, but reached once the JO is Released and viewed for
@@ -371,6 +372,18 @@ export default function ProductionJobOrderView() {
       setScheduleError('Planned End cannot be before Planned Start.');
       return;
     }
+    // The delivery date is the promise Sales made to the customer, so the plan has to fit inside
+    // it. Checked here as well as on the server so the scheduler is told while the date is still
+    // in front of them, rather than after a round trip. Both inputs also carry max={deliveryDay},
+    // which stops most of these before they are typed.
+    const deliveryDay = jo?.delivery_date ? String(jo.delivery_date).slice(0, 10) : '';
+    if (deliveryDay) {
+      const late = [['Planned Start', plannedStart], ['Planned End', plannedEnd]].find(([, d]) => d && d > deliveryDay);
+      if (late) {
+        setScheduleError(`${late[0]} cannot be later than the Delivery Date (${deliveryDay}).`);
+        return;
+      }
+    }
     setSavingSchedule(true);
     try {
       await api.put(`/production/${id}/planned-dates`, {
@@ -485,14 +498,22 @@ export default function ProductionJobOrderView() {
 
   const canEdit = can('/job-orders', 'can_edit');
   const canCreateRwip = can('/production', 'can_edit');
+  // Working the floor -- Assembly Build and recording completion -- is production's job, and it
+  // was gated here on can_edit for /job-orders: a Sales permission, which the production accounts
+  // hold and the server does not accept, so the button was drawn for the very people it then
+  // refused. It asks for what the server asks for instead (see requireProductionFloor in
+  // routes/production.js): production edit rights, or one of the two floor role tags. What they
+  // may build is still bounded by their department's warehouse, on the server.
+  const canWorkFloor = canCreateRwip || isPlanner(user) || !!user?.is_production_supervisor;
   const isTerminal = jo.status === 'Completed' || jo.status === 'Cancelled';
   const isOnHold = !!jo.is_on_hold;
   // Editable in place while the job is still live; Acknowledge is offered only out of
   // scheduling, since moving a building or invoiced job back to In-Process would lose the
   // progress its stage represents.
-  // A Signage Planner schedules without holding production edit rights, so the fields open
+  // A department planner schedules without holding production edit rights, so the fields open
   // for them too -- matching what the server accepts.
-  const canSchedule = (canEdit || !!user?.is_signage_planner) && !isTerminal;
+  const canSchedule = (canEdit || isPlanner(user)) && !isTerminal;
+  const deliveryDay = jo.delivery_date ? String(jo.delivery_date).slice(0, 10) : '';
   const savedStart = jo.planned_start_date ? String(jo.planned_start_date).slice(0, 10) : '';
   const savedEnd = jo.planned_end_date ? String(jo.planned_end_date).slice(0, 10) : '';
   const plannedDirty = plannedStart !== savedStart || plannedEnd !== savedEnd;
@@ -505,6 +526,12 @@ export default function ProductionJobOrderView() {
   // handing it over and Production accepting it, when sending it back costs nothing. Once it is
   // In-Process there is work under way to walk backwards over.
   const forRevision = jo.production_stage === 'for_revision';
+  // Returning a revised job order is the owning sales rep's to do as well as a generic editor's
+  // -- almost no Sales account holds can_edit on /job-orders, so gating on that alone left the
+  // rep looking at a revision they could not send back and an admin as the only way out. Matches
+  // what PUT /production/:id/approve-revision now accepts.
+  const isOwningSalesRep = !!user?.employee_id && jo.sales_rep_id === user.employee_id;
+  const canReturnRevision = canEdit || isOwningSalesRep;
   const canSendForRevision = can('/production', 'can_edit') && !isOnHold
     && jo.status === 'Released' && jo.production_stage === 'pending_for_scheduling'
     && num(jo.quantity_built) === 0;
@@ -539,17 +566,17 @@ export default function ProductionJobOrderView() {
               title="Send this Job Order back to Sales to be corrected. It returns here for acknowledgement."
               onClick={() => handleStageAction('sales-revision')}>Sales Revision</button>
           )}
-          {forRevision && canEdit && jo.status !== 'Cancelled' && (
+          {forRevision && canReturnRevision && jo.status !== 'Cancelled' && (
             <button className="btn btn-sm btn-primary" disabled={busy}
               title="Send the corrected Job Order back to Production for acknowledgement."
               onClick={() => handleStageAction('approve-revision')}>Approve to Production</button>
           )}
-          {canEdit && !isTerminal && (
+          {canWorkFloor && !isTerminal && (
             <button className="btn btn-sm btn-primary" disabled={openRwipCount > 0}
               title={openRwipCount > 0 ? 'Complete the RWIP job order(s) before building this Job Order.' : 'Assembly Build'}
               onClick={() => setShowAssemblyBuild(true)}>Assembly Build</button>
           )}
-          {canEdit && hasUninspectedBuilds && <button className="btn btn-sm btn-primary" onClick={() => setShowQualityInspection(true)}>Quality Inspection</button>}
+          {canWorkFloor && hasUninspectedBuilds && <button className="btn btn-sm btn-primary" onClick={() => setShowQualityInspection(true)}>Quality Inspection</button>}
           {canEdit && !isOnHold && !isTerminal && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleHold}>Hold</button>}
           {canEdit && isOnHold && !isTerminal && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleResume}>Resume</button>}
         </div>
@@ -595,6 +622,7 @@ export default function ProductionJobOrderView() {
                   Planned Start :
                   <input
                     type="date" value={plannedStart} disabled={savingSchedule}
+                    max={deliveryDay || undefined}
                     onChange={(e) => setPlannedStart(e.target.value)}
                     style={SCHEDULE_INPUT}
                   />
@@ -603,6 +631,7 @@ export default function ProductionJobOrderView() {
                   Planned End :
                   <input
                     type="date" value={plannedEnd} disabled={savingSchedule}
+                    max={deliveryDay || undefined}
                     onChange={(e) => setPlannedEnd(e.target.value)}
                     style={SCHEDULE_INPUT}
                   />
@@ -699,9 +728,11 @@ export default function ProductionJobOrderView() {
                             <button
                               type="button"
                               className="progress-bar"
-                              disabled={!p.can_complete}
+                              disabled={!p.can_complete || !canWorkFloor}
                               onClick={() => setCompletingProcess(p)}
-                              title={p.can_complete ? 'Update Completed' : `Completed by ${p.location_name}`}
+                              title={!canWorkFloor
+                                ? 'Recording output on this Job Order is production\u2019s to do'
+                                : (p.can_complete ? 'Update Completed' : `Completed by ${p.location_name}`)}
                             >
                               <div className="progress-bar-fill" style={{ width: `${pct}%` }} />
                               <div className="progress-bar-label">{pct.toFixed(0)}%</div>

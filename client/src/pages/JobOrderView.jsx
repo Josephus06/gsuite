@@ -44,6 +44,18 @@ const STAGE_LABELS = {
   invoiced: 'Invoiced',
 };
 
+// The banner is dark, so a default date input renders as a white slab in the middle of it.
+// Same treatment as the planned-date fields on ProductionJobOrderView.
+const BANNER_INPUT = {
+  background: 'rgba(255,255,255,0.14)',
+  border: '1px solid rgba(255,255,255,0.35)',
+  color: '#fff',
+  borderRadius: 4,
+  padding: '2px 6px',
+  fontSize: 13,
+  colorScheme: 'dark',
+};
+
 const PROCESS_COLUMNS = [
   { key: 'process_name', label: 'Process' },
   { key: 'process_qty', label: 'Process Qty' },
@@ -83,6 +95,14 @@ export default function JobOrderView() {
   const [attachmentCount, setAttachmentCount] = useState(0);
   const [actionError, setActionError] = useState('');
 
+  // The delivery date, edited in place on this page while the job order is For Revision.
+  // Held as a draft so a half-typed date does not fire a save on every keystroke -- same
+  // shape as the planned dates on the Production view.
+  const [deliveryDraft, setDeliveryDraft] = useState('');
+  const [deliveryTimeDraft, setDeliveryTimeDraft] = useState('');
+  const [deliveryError, setDeliveryError] = useState('');
+  const [savingDelivery, setSavingDelivery] = useState(false);
+
   const [showAssign, setShowAssign] = useState(false);
   const [pmsJobTypes, setPmsJobTypes] = useState([]);
   const [artists, setArtists] = useState([]);
@@ -90,7 +110,12 @@ export default function JobOrderView() {
   const [assignError, setAssignError] = useState('');
 
   function load() {
-    return api.get(`/job-orders/${id}`).then(({ data }) => { setJo(data); setLoading(false); });
+    return api.get(`/job-orders/${id}`).then(({ data }) => {
+      setJo(data);
+      setDeliveryDraft(data.delivery_date ? String(data.delivery_date).slice(0, 10) : '');
+      setDeliveryTimeDraft(data.delivery_time || '');
+      setLoading(false);
+    });
   }
 
   function loadAttachmentCount() {
@@ -186,6 +211,43 @@ export default function JobOrderView() {
     try { await api.put(`/job-orders/${id}/forward-to-production`); await load(); } finally { setBusy(false); }
   }
 
+  // Production sent this job order back because it could not be made by the date Sales promised.
+  // Changing that date is the whole point of the revision, so it is done here rather than on the
+  // Edit form -- which needs can_edit on Job Orders, a right almost no sales account holds, and
+  // which reopens every other field on an already-released job order.
+  async function handleSaveDelivery() {
+    setDeliveryError('');
+    if (!deliveryDraft) { setDeliveryError('Enter a delivery date.'); return; }
+    setSavingDelivery(true);
+    try {
+      await api.put(`/job-orders/${id}/delivery-date`, {
+        delivery_date: deliveryDraft,
+        delivery_time: deliveryTimeDraft || null,
+      });
+      await load();
+    } catch (err) {
+      setDeliveryError(err.response?.data?.error || 'Could not save the delivery date.');
+    } finally {
+      setSavingDelivery(false);
+    }
+  }
+
+  // Hands the corrected job order back to Production, which acknowledges it as usual. The same
+  // button exists on the Production view, but Sales reaches a job order through Sales > Job
+  // Orders, which opens this page -- so without it here the rep had nowhere to click.
+  async function handleApproveRevision() {
+    setBusy(true);
+    setActionError('');
+    try {
+      await api.put(`/production/${id}/approve-revision`);
+      await load();
+    } catch (err) {
+      setActionError(err.response?.data?.error || 'Could not send this Job Order back to Production.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleApproveRwip() {
     setBusy(true);
     try { await api.put(`/job-orders/${id}/approve-rwip`); await load(); } finally { setBusy(false); }
@@ -230,6 +292,15 @@ export default function JobOrderView() {
   // entirely. Gating on production_stage is also case-safe, unlike a `status !== 'Released'` check
   // (migrated JOs store status lowercase 'released'), which was leaking these buttons through.
   const isSpecialJo = isNsjo || isRwip;
+  // Production handed this job order back for Sales to correct (see the Sales revision loop in
+  // server/src/routes/production.js). Both actions the stage exists for -- moving the delivery
+  // date and returning the job -- are the owning rep's as well as a generic editor's, matching
+  // what the server now accepts; gating them on can_edit alone is what made the return button
+  // visible to admins only.
+  const forRevision = jo.production_stage === 'for_revision' && jo.status !== 'Cancelled';
+  const canReviseAsSales = forRevision && (isOwningSalesRep || canEdit);
+  const deliveryDirty = deliveryDraft !== (jo.delivery_date ? String(jo.delivery_date).slice(0, 10) : '')
+    || (deliveryTimeDraft || '') !== (jo.delivery_time || '');
   const inDesignPhase = !isSpecialJo && !jo.production_stage && jo.status !== 'Cancelled';
 
   const processes = jo.processes || [];
@@ -283,6 +354,11 @@ export default function JobOrderView() {
               <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleRequestRevision}>For Revision</button>
             </>
           )}
+          {canReviseAsSales && (
+            <button className="btn btn-sm btn-primary" disabled={busy}
+              title="Send the corrected Job Order back to Production for acknowledgement."
+              onClick={handleApproveRevision}>Approve to Production</button>
+          )}
           {canEdit && !isOnHold && !isTerminal && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleHold}>Hold</button>}
           {canEdit && isOnHold && !isTerminal && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleResume}>Resume</button>}
         </div>
@@ -328,6 +404,42 @@ export default function JobOrderView() {
             <div>Office Location : <span className="hi">{jo.office_location_name}</span></div>
             <div>Sales Division : <span className="hi">{jo.sales_division_name}</span></div>
             <div>Shipping Address : <span className="hi">{jo.shipping_address}</span></div>
+            {canReviseAsSales ? (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  Delivery Date :
+                  <input
+                    type="date" value={deliveryDraft} disabled={savingDelivery}
+                    onChange={(e) => setDeliveryDraft(e.target.value)}
+                    style={BANNER_INPUT}
+                  />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                  Delivery Time :
+                  <input
+                    type="time" value={deliveryTimeDraft} disabled={savingDelivery}
+                    onChange={(e) => setDeliveryTimeDraft(e.target.value)}
+                    style={BANNER_INPUT}
+                  />
+                  {deliveryDirty && (
+                    <button
+                      type="button" className="btn btn-sm btn-primary"
+                      disabled={savingDelivery} onClick={handleSaveDelivery}
+                    >
+                      {savingDelivery ? 'Saving...' : 'Save Date'}
+                    </button>
+                  )}
+                </div>
+                {deliveryError && (
+                  <div style={{ marginTop: 6, color: '#ffd4d4', fontWeight: 600 }}>{deliveryError}</div>
+                )}
+              </>
+            ) : (
+              <>
+                <div>Delivery Date : <span className="hi">{jo.delivery_date ? String(jo.delivery_date).slice(0, 10) : ''}</span></div>
+                <div>Delivery Time : <span className="hi">{jo.delivery_time}</span></div>
+              </>
+            )}
             <div>Sales Rep. : <span className="hi">{jo.sales_rep_name}</span></div>
           </div>
           <div>

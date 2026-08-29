@@ -2,6 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../db');
+const { PLANNER_COLUMNS, PLANNER_FLAGS, isPlanner } = require('../lib/plannerRoles');
 const { requireAuth, clearPresence, isSystemAdmin } = require('../middleware/auth');
 
 const router = express.Router();
@@ -37,7 +38,8 @@ router.post('/login', async (req, res, next) => {
     const [[user]] = await pool.query(
       `SELECT id, username, email, display_name, password_hash, default_branch_id,
               account_type, can_approve_sales_estimate, is_design_supervisor,
-              is_supervisor, is_purchasing_supervisor, is_signage_planner
+              is_supervisor, is_purchasing_supervisor, ${PLANNER_COLUMNS},
+              is_production_supervisor
          FROM users WHERE (username = ? OR email = ?) AND is_active = TRUE`,
       [username, username]
     );
@@ -62,7 +64,8 @@ router.post('/login', async (req, res, next) => {
         is_design_supervisor: !!user.is_design_supervisor,
         is_supervisor: !!user.is_supervisor,
         is_purchasing_supervisor: !!user.is_purchasing_supervisor,
-        is_signage_planner: !!user.is_signage_planner,
+        ...Object.fromEntries(PLANNER_FLAGS.map((flag) => [flag, !!user[flag]])),
+        is_production_supervisor: !!user.is_production_supervisor,
         account_type: user.account_type,
       },
     });
@@ -175,7 +178,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
               account_type, can_approve_sales_estimate, is_design_supervisor,
               is_account_officer, is_supervisor, is_sales_manager,
               is_sales_marketing_director, is_sales_business_unit, is_purchasing_supervisor,
-              is_signage_planner, supervisor_id,
+              ${PLANNER_COLUMNS}, is_production_supervisor, supervisor_id,
               avatar_data
        FROM users WHERE id = ?`,
       [req.user.id]
@@ -189,7 +192,8 @@ router.get('/me', requireAuth, async (req, res, next) => {
     user.is_sales_marketing_director = !!user.is_sales_marketing_director;
     user.is_sales_business_unit = !!user.is_sales_business_unit;
     user.is_purchasing_supervisor = !!user.is_purchasing_supervisor;
-    user.is_signage_planner = !!user.is_signage_planner;
+    for (const flag of PLANNER_FLAGS) user[flag] = !!user[flag];
+    user.is_production_supervisor = !!user.is_production_supervisor;
 
     // The "Default Login Location" branch (User Branches tab, is_default = TRUE) --
     // distinct from users.default_branch_id (a separate, legacy field set on the User
@@ -216,6 +220,22 @@ router.get('/me', requireAuth, async (req, res, next) => {
        WHERE upp.user_id = ?`,
       [user.id]
     );
+
+    // The production floor roles (the department planners, Production Supervisor) carry their
+    // access as a tag on the account rather than as a permission row -- see requireProductionView
+    // in routes/production.js, which lets them read the module on the strength of the tag alone.
+    // The client only knows about permission rows: it builds the sidebar and every button gate
+    // from this list, so without the row a planner is refused a screen the server would serve.
+    // Adding the row the tag implies keeps the two answers the same rather than making every
+    // caller of can() learn about role flags. can_view only -- what they may WRITE is decided
+    // per action by the server, not by this list.
+    if ((isPlanner(user) || user.is_production_supervisor)
+        && !permissions.some((perm) => perm.route === '/production')) {
+      permissions.push({
+        route: '/production',
+        can_view: 1, can_add: 0, can_edit: 0, can_delete: 0, can_approve: 0, can_print: 0,
+      });
+    }
 
     // Read off the token, not the database -- being impersonated is a property of this
     // session, not of the account. Two admins can be acting as the same user at once, and

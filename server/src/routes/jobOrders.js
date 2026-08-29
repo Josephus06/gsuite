@@ -7,6 +7,7 @@ const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocatio
 const {
   notifyDesignSupervisors, notifyAssignedArtist, notifySalesRep, NOTIFY_TYPE_JO_REVISION,
 } = require('../lib/designNotifications');
+const { maySalesReviseJobOrder } = require('../lib/jobOrderRevision');
 
 const router = express.Router();
 const ROUTE = '/job-orders';
@@ -16,6 +17,9 @@ const ROUTE = '/job-orders';
 // assignment picker filters by (GET /employees?account_type=Artist) and the Artist Incentive
 // report's filter uses.
 const ARTIST_ACCOUNT_TYPE = 'Artist';
+
+// The only delivery date shape PUT /:id/delivery-date accepts -- what <input type="date"> sends.
+const DELIVERY_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // The "Saved Job Orders" status tabs, mirroring the live list. A JO lands in exactly one: Hold wins
 // over everything; otherwise released JOs go by production_stage and pre-release JOs by sub_status
@@ -770,6 +774,83 @@ router.put('/:id/request-revision', requireAuth, requirePermission(ROUTE, 'can_a
       relatedId: Number(req.params.id),
     });
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'sub_status', oldValue: 'Sales Approval', newValue: 'For Artist (Revision)' });
+    await conn.commit();
+    const [[row]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
+    res.json(row);
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// --- Sales revision: the delivery date -------------------------------------------------
+
+// Production hands a job order back with "Sales Revision" (see routes/production.js) and the one
+// thing Sales most often has to change is the date they promised the customer -- Production could
+// not fit the job by then. The full Edit form is the wrong place for it: it is gated on can_edit
+// for /job-orders, which the rep who owns the job order almost never has (24 of 27 sales accounts
+// sit on can_view), and it reopens every other field on a job order that has already been
+// released. So the date is editable in place on the view, on its own, and only while the job
+// order is actually For Revision.
+router.put('/:id/delivery-date', requireAuth, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[jo]] = await conn.query(
+      'SELECT delivery_date, delivery_time, production_stage, status, sales_rep_id, job_location_id FROM job_orders WHERE id = ?',
+      [req.params.id]
+    );
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!isJobLocationVisible(jo, await getJobLocationScope(req.user.id))) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    if (!(await maySalesReviseJobOrder(req.user.id, jo))) {
+      return res.status(403).json({ error: 'You do not have permission to perform this action' });
+    }
+    if (jo.status === 'Cancelled') return res.status(409).json({ error: 'This job order is cancelled.' });
+    if (jo.production_stage !== 'for_revision') {
+      return res.status(409).json({ error: 'The delivery date can only be changed while this Job Order is For Revision.' });
+    }
+
+    const raw = req.body?.delivery_date;
+    if (raw === undefined || raw === null || raw === '') {
+      return res.status(400).json({ error: 'Enter a delivery date.' });
+    }
+    const deliveryDate = String(raw).slice(0, 10);
+    if (!DELIVERY_DATE_RE.test(deliveryDate)) {
+      return res.status(400).json({ error: 'Delivery Date must be in YYYY-MM-DD format.' });
+    }
+    // delivery_time rides along because the view shows the two together, and moving the date a
+    // week without being able to move the time with it is half an edit. Optional: left as it was
+    // when the client does not send it.
+    const timeSent = req.body?.delivery_time !== undefined;
+    const deliveryTime = timeSent ? (String(req.body.delivery_time || '').trim() || null) : jo.delivery_time;
+
+    const before = jo.delivery_date ? String(jo.delivery_date).slice(0, 10) : '';
+    const timeBefore = String(jo.delivery_time || '');
+    if (before === deliveryDate && timeBefore === String(deliveryTime || '')) {
+      const [[unchanged]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
+      return res.json(unchanged);
+    }
+
+    await conn.beginTransaction();
+    await conn.query(
+      'UPDATE job_orders SET delivery_date = ?, delivery_time = ?, updated_at = NOW() WHERE id = ?',
+      [deliveryDate, deliveryTime, req.params.id]
+    );
+    if (before !== deliveryDate) {
+      await logAudit(conn, {
+        jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated',
+        fieldName: 'delivery_date', oldValue: before, newValue: deliveryDate,
+      });
+    }
+    if (timeBefore !== String(deliveryTime || '')) {
+      await logAudit(conn, {
+        jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated',
+        fieldName: 'delivery_time', oldValue: timeBefore, newValue: deliveryTime || '',
+      });
+    }
     await conn.commit();
     const [[row]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
     res.json(row);
