@@ -16,6 +16,14 @@ function formatDate(d) {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
 }
 
+// Branch payment QR codes, served from client/public/qr. Kept in step with PAYMENT_QR in
+// server/src/lib/estimatePdf.js, which embeds the same three files in the emailed PDF.
+const PAYMENT_QR = [
+  { label: 'GRAPHICSTAR MAIN', src: '/qr/qr-graphicstar-main.png' },
+  { label: 'GRAPHICSTAR AYALA CENTER CEBU', src: '/qr/qr-graphicstar-ayala.png' },
+  { label: 'GRAPHICSTAR SM CEBU CITY', src: '/qr/qr-graphicstar-sm.png' },
+];
+
 export default function EstimatePrint() {
   const { id } = useParams();
   const [estimate, setEstimate] = useState(null);
@@ -140,7 +148,17 @@ export default function EstimatePrint() {
             <div>4. Metrobank Checking Account # 236-7-23600587-5</div>
             <div>5. BDO Savings Account # 006360238062</div>
           </div>
-          <p>C. For GCASH and PAYMAYA payments, please contact your sales representative for QR codes.</p>
+          <p>C. For GCASH and PAYMAYA payments, scan the QR code of the branch you are dealing with:</p>
+          {/* The same three files the emailed PDF embeds (server/src/assets/qr) -- see
+              estimatePdf.js for why they are shipped as images rather than generated. */}
+          <div className="print-qr-row">
+            {PAYMENT_QR.map(({ label, src }) => (
+              <div key={label} className="print-qr">
+                <img src={src} alt={`${label} GCash and Maya payment QR code`} />
+                <div className="print-qr-label">{label}</div>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="print-signatures">

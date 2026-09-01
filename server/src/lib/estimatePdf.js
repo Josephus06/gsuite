@@ -17,6 +17,7 @@
 //
 // WHAT IS DELIBERATELY ABSENT: the process and material breakdown under each job line. That is
 // our costing and carries our margin. The print report omits it and so does this.
+const path = require('path');
 const PDFDocument = require('pdfkit');
 
 // Everything in points, the unit PDF itself uses. A4 is 595.28 x 841.89.
@@ -39,6 +40,23 @@ const MARK_VIEWBOX = 200;
 const MARK_PATHS = [
   ['M 16.62,138.88 A 92,92 0 0 1 175.36,47.23 L 142.6,70.17 A 52,52 0 0 0 52.87,121.98 Z', BRAND_BLUE],
   ['M 186.45,68.53 A 92,92 0 0 1 29.52,159.14 L 60.17,133.42 A 52,52 0 0 0 148.86,82.21 L 128,110 Z', BRAND_ORANGE],
+];
+
+// The branch payment QR codes printed at the foot of the quotation. Real GCash/Maya merchant
+// codes, so they are shipped as files and drawn as-is -- nothing here re-encodes or redraws them,
+// because a QR that renders "nearly right" still scans, straight into the wrong account.
+//
+// Cropped from the branch screenshots to the code alone, squared up with a 16px quiet zone (the
+// 4-module white border a scanner needs) so all three print at exactly the same size. The branch
+// name is drawn as text below rather than baked into the image, so the three read identically.
+//
+// The same three files are duplicated under client/public/qr/ for the browser Print view, which
+// cannot read out of the server tree. Update both together.
+const QR_DIR = path.join(__dirname, '..', 'assets', 'qr');
+const PAYMENT_QR = [
+  { label: 'GRAPHICSTAR MAIN', file: path.join(QR_DIR, 'qr-graphicstar-main.png') },
+  { label: 'GRAPHICSTAR AYALA CENTER CEBU', file: path.join(QR_DIR, 'qr-graphicstar-ayala.png') },
+  { label: 'GRAPHICSTAR SM CEBU CITY', file: path.join(QR_DIR, 'qr-graphicstar-sm.png') },
 ];
 
 const num = (v) => (v === null || v === undefined || v === '' ? 0 : Number(v) || 0);
@@ -343,7 +361,39 @@ function termsBlock(doc, company) {
   }
   doc.moveDown(0.4);
   ensure(doc, 16);
-  doc.text('C. For GCASH and PAYMAYA payments, please contact your sales representative for QR codes.', left, doc.y, { width });
+  doc.text('C. For GCASH and PAYMAYA payments, scan the QR code of the branch you are dealing with:', left, doc.y, { width });
+  paymentQrCodes(doc);
+}
+
+// The three branch QR codes, side by side under the payment terms.
+//
+// Kept together with ensure(): a code stranded on its own page, or a label separated from the
+// code beneath it, is worse than a page break before the whole block -- someone scanning a
+// payment code needs to be certain which branch they are paying.
+function paymentQrCodes(doc) {
+  const left = doc.page.margins.left;
+  const width = doc.page.width - doc.page.margins.right - left;
+  const colW = width / PAYMENT_QR.length;
+  const QR = 92;        // points; ~32mm printed, comfortably scannable from a phone
+  const LABEL_H = 11;   // room for one line of 6.5pt label under the code
+
+  doc.moveDown(0.5);
+  ensure(doc, QR + LABEL_H + 6);
+  const top = doc.y;
+
+  PAYMENT_QR.forEach(({ label, file }, i) => {
+    const x = left + colW * i;
+    // Drawn at a fixed width AND height: the source files are square, and letting pdfkit scale
+    // one axis only would stretch a code that has to stay square to scan.
+    doc.image(file, x + (colW - QR) / 2, top, { width: QR, height: QR });
+    doc.font('Helvetica-Bold').fontSize(6.5).fillColor(INK)
+      .text(label, x + 4, top + QR + 3, { width: colW - 8, align: 'center' });
+  });
+
+  // pdfkit does not advance doc.y for an image, and the labels were written per column, so the
+  // cursor is put below the tallest of them by hand -- otherwise the signature block lands on top.
+  doc.y = top + QR + LABEL_H + 4;
+  doc.font('Helvetica').fontSize(8).fillColor('#444444');
 }
 
 function signatureBlock(doc, est) {
