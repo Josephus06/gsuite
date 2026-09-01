@@ -830,6 +830,27 @@ export default function EstimateWizard() {
     }
   }
 
+  // The counterpart to learnMaterial: take a material back off the pair's defined list. Unlike
+  // learning, this one reports failure -- learning silently is fine because the estimate keeps
+  // the material either way, but a remove that quietly did nothing would have the user clicking
+  // it again and again at a row that never goes.
+  async function unlearnMaterial(jobTypeId, processId, item) {
+    if (!jobTypeId || !processId) return;
+    const key = materialKey(jobTypeId, processId);
+    try {
+      await api.delete(`/job-types/${jobTypeId}/process-materials/${processId}/${item.id}`);
+      setAllowedMaterials((prev) => {
+        const list = Array.isArray(prev[key]) ? prev[key] : [];
+        const next = list.filter((m) => m.inventory_id !== item.id);
+        // Emptying the list means nobody restricts this pair any more, which is what null means
+        // here -- otherwise the picker would offer an empty list and no way to pick anything.
+        return { ...prev, [key]: next.length ? next : null };
+      });
+    } catch (err) {
+      alert(err.response?.data?.error || 'Could not remove that material from this job type.');
+    }
+  }
+
   // Fetched lazily: the pair is only known once both the Job Type and the Process are set,
   // and pre-loading every pair on an estimate with many job orders would be a lot of requests
   // for lists most of them never open.
@@ -885,7 +906,29 @@ export default function EstimateWizard() {
             </label>
           )}
           items={items} value={val} getLabel={(i) => i.display_name}
-          columns={[{ key: 'item_code', label: 'Code' }, { key: 'display_name', label: 'Name' }, { key: 'category_name', label: 'Category' }]}
+          columns={[
+            { key: 'item_code', label: 'Code' },
+            { key: 'display_name', label: 'Name' },
+            { key: 'category_name', label: 'Category' },
+            // Only on the restricted list: with "Show all materials" ticked the rows are the
+            // whole catalogue, and most of them were never on this pair to remove.
+            ...(restricted ? [{
+              key: '_unlearn',
+              label: '',
+              render: (i) => (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-danger"
+                  title={`Remove ${i.display_name} from this job type's process`}
+                  // The row itself selects the material; without this, removing one would also
+                  // pick it on the way out.
+                  onClick={(e) => { e.stopPropagation(); unlearnMaterial(jobTypeId, row.process_id, i); }}
+                >
+                  ✕
+                </button>
+              ),
+            }] : []),
+          ]}
           searchKeys={['item_code', 'display_name']}
           onSelect={async (i) => {
             await ensureUomsLoaded(i.id);

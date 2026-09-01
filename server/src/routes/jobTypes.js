@@ -323,6 +323,35 @@ router.post('/:id/process-materials/:processId', requireAuth, requirePermission(
   }
 });
 
+// Unlearn a material from the estimate floor -- the counterpart to the learn POST above.
+//
+// Learning happens as a SIDE EFFECT of picking: choose a material this pair has never had and it
+// is silently added to the pair's defined list for everyone, for good. Without a way back, one
+// misclick permanently widened what the next estimator is offered, and the list could only ever
+// grow. The delete that already existed is addressed by link id and gated on the job type's own
+// can_edit, which Sales does not have -- so it was unreachable from the screen where the mistake
+// is made and noticed.
+//
+// Gated exactly like the learn endpoint, and for the same reason: /estimates can_edit, so the
+// people doing the estimating can undo their own mistake. Addressed by process_id and
+// inventory_id, because that is what the estimate line knows.
+//
+// Removes the pair's material from EVERY job_type_processes row that matches, not just the first
+// one the learn endpoint would have written to: the GET above lists across all of them, so
+// deleting from one link could leave the material still showing.
+router.delete('/:id/process-materials/:processId/:inventoryId', requireAuth, requirePermission('/estimates', 'can_edit'), async (req, res, next) => {
+  try {
+    const [result] = await pool.query(
+      `DELETE m FROM job_type_process_materials m
+         JOIN job_type_processes jtp ON jtp.id = m.job_type_process_id
+        WHERE jtp.job_type_id = ? AND jtp.process_id = ? AND m.inventory_id = ?`,
+      [req.params.id, req.params.processId, req.params.inventoryId]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: 'Not found' });
+    res.status(204).send();
+  } catch (err) { next(err); }
+});
+
 router.delete('/:id/processes/:processLinkId/materials/:materialId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
     const [result] = await pool.query(
