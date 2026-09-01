@@ -366,13 +366,16 @@ router.post('/item-fulfillments/:fulfillmentId/item-receipts', requireAuth, requ
     }
 
     await conn.beginTransaction();
-    const [result] = await conn.query(
-      `INSERT INTO item_receipts (receipt_no, transfer_order_id, item_fulfillment_id, date_created, memo, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?, ?)`,
-      [f.transfer_order_id, req.params.fulfillmentId, dateCreated || new Date().toISOString().slice(0, 10), memo || null, req.user.id]
-    );
-    const receiptId = result.insertId;
-    await conn.query('UPDATE item_receipts SET receipt_no = ? WHERE id = ?', [`IR-${receiptId}`, receiptId]);
+    const { id: receiptId } = await insertNumbered(conn, {
+      table: 'item_receipts',
+      column: 'receipt_no',
+      prefix: 'IR-',
+      run: (no) => conn.query(
+        `INSERT INTO item_receipts (receipt_no, transfer_order_id, item_fulfillment_id, date_created, memo, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [no, f.transfer_order_id, req.params.fulfillmentId, dateCreated || new Date().toISOString().slice(0, 10), memo || null, req.user.id]
+      ),
+    });
 
     for (const s of submitted) {
       const line = byId.get(Number(s.item_fulfillment_line_id));
@@ -599,6 +602,53 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
   }
 });
 
+// The next document number, taken from the numbers actually in use -- same shape as nextReworkNo
+// in lib/reworkJobOrder.js.
+//
+// All three documents in this file used to be numbered <PREFIX>-<insertId>, which quietly assumes
+// a row's number equals its row id. That is true of a database this app filled itself, and of no
+// other. On production, 38,185 of 38,190 transfer orders, 40,994 of 41,001 fulfilments and 40,578
+// of 40,584 receipts were imported carrying their original numbers while their ids were
+// reassigned -- so TO-38206 belongs to row 23463. Once AUTO_INCREMENT climbed into the range those
+// imported numbers occupy, every create became a coin toss, and "Duplicate entry 'TO-38206' for
+// key 'transfer_orders.to_no'" is that coin landing badly. Fulfilments and receipts were the same
+// bug a few hundred rows behind: their next ids were already inside their used ranges.
+// Read on the POOL, not on the caller's connection, and deliberately so.
+//
+// The caller is inside a transaction, and InnoDB's default REPEATABLE READ pins that transaction
+// to the snapshot of its first read. So when two creates race, the loser's retry re-reads its own
+// stale snapshot, cannot see the row the winner just committed, computes the same number again,
+// and fails on every attempt. A separate autocommit connection sees the current committed state,
+// which is what "the next free number" has to mean.
+async function nextDocNo(pool_, table, column, prefix) {
+  const [[mx]] = await pool_.query(
+    'SELECT COALESCE(MAX(CAST(SUBSTRING(??, ?) AS UNSIGNED)), 0) AS n FROM ?? WHERE ?? REGEXP ?',
+    [column, prefix.length + 1, table, column, `^${prefix}[0-9]+$`]
+  );
+  return `${prefix}${mx.n + 1}`;
+}
+
+// Insert a row whose document number has to be unique, and write that number in the INSERT
+// itself.
+//
+// The old two-step inserted '' and then UPDATEd the number in. These columns are UNIQUE, so two
+// people creating at the same moment collided on the empty string before either had a number at
+// all. Reading the maximum and inserting still is not atomic, so a clash is retried rather than
+// prevented: the loser simply takes the next number. A duplicate-key error does not abort a MySQL
+// transaction, so the retry is safe inside the caller's.
+async function insertNumbered(conn, { table, column, prefix, run }) {
+  for (let attempt = 0; ; attempt += 1) {
+    const no = await nextDocNo(pool, table, column, prefix);
+    try {
+      const [result] = await run(no);
+      return { id: result.insertId, no };
+    } catch (err) {
+      // Anything but a number clash is a real failure, and so is losing the race five times.
+      if (err.code !== 'ER_DUP_ENTRY' || attempt >= 4) throw err;
+    }
+  }
+}
+
 // Creates the TO header plus one line per material passed in `lines` -- this is how the
 // Production module's "Create TO" button (only shown when a Job Order has short
 // materials) pre-fills the form with exactly the items that are actually short, in one
@@ -617,15 +667,19 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     await assertPeriodOpen(dateCreated, 'non_gl', conn);
 
     await conn.beginTransaction();
-    const [result] = await conn.query(
-      `INSERT INTO transfer_orders
-         (to_no, date_created, date_needed, withdraw_from_location_id, transfer_to_location_id, requestor_id, job_order_id, memo, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [dateCreated || new Date().toISOString().slice(0, 10), dateNeeded || null, withdrawFromId, transferToId, requestorId || null, jobOrderId || null, memo || null, req.user.id]
-    );
-    const toId = result.insertId;
-    await conn.query('UPDATE transfer_orders SET to_no = ? WHERE id = ?', [`TO-${toId}`, toId]);
-    await logAudit(conn, { toId, userId: req.user.id, eventType: 'Created', fieldName: 'to_no', newValue: `TO-${toId}` });
+
+    const { id: toId, no: toNo } = await insertNumbered(conn, {
+      table: 'transfer_orders',
+      column: 'to_no',
+      prefix: 'TO-',
+      run: (no) => conn.query(
+        `INSERT INTO transfer_orders
+           (to_no, date_created, date_needed, withdraw_from_location_id, transfer_to_location_id, requestor_id, job_order_id, memo, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [no, dateCreated || new Date().toISOString().slice(0, 10), dateNeeded || null, withdrawFromId, transferToId, requestorId || null, jobOrderId || null, memo || null, req.user.id]
+      ),
+    });
+    await logAudit(conn, { toId, userId: req.user.id, eventType: 'Created', fieldName: 'to_no', newValue: toNo });
 
     let lineNo = 1;
     for (const line of (Array.isArray(lines) ? lines : [])) {
@@ -824,13 +878,16 @@ router.post('/:id/item-fulfillments', requireAuth, requirePermission(ROUTE, 'can
     }
 
     await conn.beginTransaction();
-    const [result] = await conn.query(
-      `INSERT INTO item_fulfillments (fulfillment_no, transfer_order_id, date_created, memo, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?)`,
-      [req.params.id, dateCreated || new Date().toISOString().slice(0, 10), memo || null, req.user.id]
-    );
-    const fulfillmentId = result.insertId;
-    await conn.query('UPDATE item_fulfillments SET fulfillment_no = ? WHERE id = ?', [`IF-${fulfillmentId}`, fulfillmentId]);
+    const { id: fulfillmentId, no: fulfillmentNo } = await insertNumbered(conn, {
+      table: 'item_fulfillments',
+      column: 'fulfillment_no',
+      prefix: 'IF-',
+      run: (no) => conn.query(
+        `INSERT INTO item_fulfillments (fulfillment_no, transfer_order_id, date_created, memo, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?)`,
+        [no, req.params.id, dateCreated || new Date().toISOString().slice(0, 10), memo || null, req.user.id]
+      ),
+    });
 
     for (const s of submitted) {
       const line = byId.get(Number(s.transfer_order_line_id));
@@ -863,7 +920,7 @@ router.post('/:id/item-fulfillments', requireAuth, requirePermission(ROUTE, 'can
       [newStatus, req.user.id, req.params.id]
     );
     await logAudit(conn, { toId: req.params.id, userId: req.user.id, eventType: 'Status Change', fieldName: 'status', newValue: newStatus });
-    await logAudit(conn, { toId: req.params.id, userId: req.user.id, eventType: 'Created', fieldName: 'fulfillment_no', newValue: `IF-${fulfillmentId}` });
+    await logAudit(conn, { toId: req.params.id, userId: req.user.id, eventType: 'Created', fieldName: 'fulfillment_no', newValue: fulfillmentNo });
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM item_fulfillments WHERE id = ?', [fulfillmentId]);
