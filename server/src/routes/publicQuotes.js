@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { upperCustomerName } = require('../lib/customerName');
 const { costing } = require('../lib/costing');
 
 const router = express.Router();
@@ -233,7 +234,8 @@ router.post('/quotes', async (req, res, next) => {
       const [ins] = await conn.query(
         `INSERT INTO customers (name, company_name, sales_division_id, is_active, source)
          VALUES (?, ?, ?, TRUE, 'website')`,
-        [(company || name).slice(0, 255), company.slice(0, 255) || null, product.sales_division_id || null]
+        [upperCustomerName((company || name).slice(0, 255)), upperCustomerName(company.slice(0, 255)) || null,
+          product.sales_division_id || null]
       );
       customerId = ins.insertId;
       await conn.query('UPDATE customers SET customer_code = ? WHERE id = ?', [`WEB-${customerId}`, customerId]);

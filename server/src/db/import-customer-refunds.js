@@ -8,6 +8,7 @@
 //   node src/db/import-customer-refunds.js --from=2026-01-01 --to=2026-12-31 --dry-run
 //   node src/db/import-customer-refunds.js --from=2026-01-01 --to=2026-12-31
 const pool = require('../db');
+const { upperCustomerName } = require('../lib/customerName');
 require('dotenv').config();
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
@@ -75,7 +76,7 @@ async function main() {
     if (DRY_RUN) { custCreated += 1; return null; }
     const [[mx]] = await pool.query("SELECT COALESCE(MAX(CAST(SUBSTRING(customer_code,6) AS UNSIGNED)),0)+1 AS n FROM customers WHERE customer_code REGEXP '^CUST-[0-9]{1,6}$'");
     const code = `CUST-${String(mx.n).padStart(4, '0')}`;
-    const [r] = await pool.query('INSERT INTO customers (customer_code, name, tin) VALUES (?,?,?)', [code, trunc(clean(name), 255), trunc(tin, 60)]);
+    const [r] = await pool.query('INSERT INTO customers (customer_code, name, tin) VALUES (?,?,?)', [code, upperCustomerName(trunc(clean(name), 255)), trunc(tin, 60)]);
     custByName.set(key, r.insertId); custCreated += 1; return r.insertId;
   }
 

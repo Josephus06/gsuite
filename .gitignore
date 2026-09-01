@@ -11,6 +11,10 @@ dist/
 *.dump.sql
 gsuite_erp*.sql
 
+# Rollback dumps written by src/db/uppercase-customer-names.js before it rewrites customer
+# names. Real customer names, one UPDATE per row -- keep them on the box, never in git.
+server/src/db/rollback-customer-names-*.sql
+
 # Database dumps -- hundreds of MB of live financial data. Never in git.
 backups/
 

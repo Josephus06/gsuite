@@ -26,6 +26,7 @@
 //   node src/db/import-credit-memos.js --dry-run
 //   node src/db/import-credit-memos.js
 const pool = require('../db');
+const { upperCustomerName } = require('../lib/customerName');
 require('dotenv').config();
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
@@ -171,7 +172,7 @@ async function main() {
       const custName = h.transaction_customer?.Name_Cust || h.Name_Cust || meta.Name_Cust;
       let customerId = custByName.get(norm(custName)) || null;
       if (!customerId && custName && !DRY_RUN) {
-        const [ins] = await pool.query('INSERT INTO customers (name, is_active) VALUES (?, 1)', [String(custName).slice(0, 255)]);
+        const [ins] = await pool.query('INSERT INTO customers (name, is_active) VALUES (?, 1)', [upperCustomerName(String(custName).slice(0, 255))]);
         customerId = ins.insertId;
         custByName.set(norm(custName), customerId);
         custCreated += 1;

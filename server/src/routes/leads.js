@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { upperCustomerName } = require('../lib/customerName');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 
 const router = express.Router();
@@ -113,7 +114,7 @@ router.post('/:id/convert', requireAuth, requirePermission(ROUTE, 'can_edit'), a
     const [result] = await conn.query(
       `INSERT INTO customers (customer_code, name, company_name, default_sales_rep_id, is_active)
        VALUES (?, ?, ?, ?, TRUE)`,
-      [null, lead.contact_name || lead.company_name, lead.company_name, null]
+      [null, upperCustomerName(lead.contact_name || lead.company_name), upperCustomerName(lead.company_name), null]
     );
     const customerId = result.insertId;
     await conn.query('UPDATE customers SET customer_code = ? WHERE id = ?', [`CUST-${customerId}`, customerId]);

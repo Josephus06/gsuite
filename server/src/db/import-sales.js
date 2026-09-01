@@ -20,6 +20,7 @@
 // VOID / CANCELLED sales orders and invoices are never migrated -- they are skipped outright
 // rather than imported with a 'cancelled' status.
 const pool = require('../db');
+const { upperCustomerName } = require('../lib/customerName');
 require('dotenv').config();
 const { fetchWindow, isVoidOrCancelled } = require('./lib/liveWindow');
 
@@ -169,7 +170,7 @@ async function resolveCustomer(name) {
   const [[row]] = await pool.query('SELECT id FROM customers WHERE LOWER(name) = ? LIMIT 1', [key]);
   let id = row ? row.id : null;
   if (!id && !DRY_RUN) {
-    const [r] = await pool.query('INSERT INTO customers (name, is_active) VALUES (?, 1)', [clean(name)]);
+    const [r] = await pool.query('INSERT INTO customers (name, is_active) VALUES (?, 1)', [upperCustomerName(clean(name))]);
     id = r.insertId;
   }
   if (!row) stats.customersCreated += 1;

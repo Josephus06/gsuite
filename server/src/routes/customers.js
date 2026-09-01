@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { upperCustomerName, CUSTOMER_NAME_FIELDS } = require('../lib/customerName');
 
 const router = express.Router();
 const ROUTE = '/customers';
@@ -9,6 +10,14 @@ const FIELDS = [
   'customer_code', 'name', 'company_name', 'business_style_id', 'tin',
   'payment_term_id', 'credit_limit', 'sales_division_id', 'default_sales_rep_id', 'is_active',
 ];
+
+// Names are stored upper-cased whatever was typed -- see lib/customerName.js. Applied to the
+// values on their way into the statement rather than to req.body, so there is one place per
+// route where it happens and no chance of writing the raw value by a path that skipped it.
+const withUpperNames = (body) => FIELDS.map((f) => {
+  const raw = body[f] === undefined ? null : body[f];
+  return CUSTOMER_NAME_FIELDS.includes(f) ? upperCustomerName(raw) : raw;
+});
 
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
@@ -42,7 +51,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const values = FIELDS.map((f) => (req.body[f] === undefined ? null : req.body[f]));
+    const values = withUpperNames(req.body);
     const [result] = await conn.query(
       `INSERT INTO customers (${FIELDS.join(', ')}) VALUES (${FIELDS.map(() => '?').join(', ')})`,
       values
@@ -77,7 +86,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
-    const values = FIELDS.map((f) => (req.body[f] === undefined ? null : req.body[f]));
+    const values = withUpperNames(req.body);
     await pool.query(
       `UPDATE customers SET ${FIELDS.map((f) => `${f} = ?`).join(', ')}, updated_at = NOW() WHERE id = ?`,
       [...values, req.params.id]

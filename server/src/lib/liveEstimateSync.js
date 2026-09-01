@@ -11,6 +11,7 @@
 // import-target-estimates.js onto Node's built-in fetch, so it can run inside a normal
 // Express request handler with no browser/Chromium install needed on the host.
 const pool = require('../db');
+const { upperCustomerName } = require('./customerName');
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
 const TARGET_SALES_REPS = ['Arjie Bayagna', 'Catherine Jane  Langajed', 'Jocel Ann Berina'];
@@ -116,8 +117,11 @@ async function ensureCustomer(cache, liveCust) {
   const code = `LIVE-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
   const [result] = await pool.query(
     'INSERT INTO customers (customer_code, name, company_name, tin, credit_limit, is_active) VALUES (?, ?, ?, ?, ?, TRUE)',
-    [code, name, liveCust.Company_Cust || null, liveCust.TIN_Cust || null, nullableNum(liveCust.CreditLimit_Cust)]
+    [code, upperCustomerName(name), upperCustomerName(liveCust.Company_Cust || null),
+      liveCust.TIN_Cust || null, nullableNum(liveCust.CreditLimit_Cust)]
   );
+  // Cached under the name as the source spells it, which is what the next row will look up --
+  // the upper-casing is how it is STORED, not how the live system refers to it.
   cache.customer.set(name, result.insertId);
   return result.insertId;
 }

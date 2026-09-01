@@ -19,6 +19,7 @@
 //   node src/db/import-target-estimates.js
 const { chromium } = require('playwright');
 const pool = require('../db');
+const { upperCustomerName } = require('../lib/customerName');
 require('dotenv').config();
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
@@ -121,7 +122,8 @@ async function ensureCustomer(liveCust) {
   const code = `LIVE-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
   const [result] = await pool.query(
     'INSERT INTO customers (customer_code, name, company_name, tin, credit_limit, is_active) VALUES (?, ?, ?, ?, ?, TRUE)',
-    [code, name, liveCust.Company_Cust || null, liveCust.TIN_Cust || null, nullableNum(liveCust.CreditLimit_Cust)]
+    [code, upperCustomerName(name), upperCustomerName(liveCust.Company_Cust || null),
+      liveCust.TIN_Cust || null, nullableNum(liveCust.CreditLimit_Cust)]
   );
   console.log(`  + created customer "${name}"`);
   cache.customer.set(name, result.insertId);
