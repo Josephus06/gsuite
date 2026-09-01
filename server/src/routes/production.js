@@ -10,6 +10,7 @@ const {
   REVISION_APPROVED, REVISION_DECLINED,
 } = require('../lib/jobOrderRevision');
 const { PLANNER_COLUMNS, isPlanner } = require('../lib/plannerRoles');
+const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 
 // Completing a process and building both move stock dated today (the Assembly Build row
 // is inserted with CURDATE()), so today's period is what has to be open for them.
@@ -96,6 +97,20 @@ router.get('/', requireAuth, requireProductionView, async (req, res, next) => {
     // The join sits in the FROM clause, ahead of every WHERE placeholder, so its parameters have
     // to lead both queries below.
     const visibleParams = scopeLocationId ? [scopeLocationId, scopeLocationId] : [];
+
+    // A sales account sees its own job orders here too, and a supervisor its team's -- the same
+    // rule the Job Orders list applies, because this is the same job order seen from the floor.
+    // It goes into commonWhere with the department filter above, not into `where`, so the stage
+    // tab counts are taken over the rows the listing will actually show: a rep must not read
+    // "In-Process 3102" and then open the tab to eleven of their own.
+    //
+    // Returns null for everyone who is neither an Account Officer nor a Supervisor, so this
+    // changes nothing for production, planners, accounting or admins -- the people this module
+    // is for. Scoped on the job order's own rep for the same reason the Job Orders list is:
+    // an NSJO or RWIP has no sales order to reach through.
+    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    if (salesScope) { commonWhere.push('jo.sales_rep_id IN (?)'); commonParams.push(salesScope); }
+
     if (salesRepId) { commonWhere.push('so.sales_rep_id = ?'); commonParams.push(salesRepId); }
     if (jobLocationId) { commonWhere.push('jo.job_location_id = ?'); commonParams.push(jobLocationId); }
     if (customerId) { commonWhere.push('so.customer_id = ?'); commonParams.push(customerId); }
@@ -203,6 +218,13 @@ router.get('/:id', requireAuth, requireProductionView, async (req, res, next) =>
     // one that isn't there rather than one worth going looking for. Same widened test the list
     // above applies -- a job carrying a line worked here is reachable, or the row the list now
     // shows would 404 on being opened.
+    // Same 404 the list's filter implies: hiding a job order from the list while still serving
+    // it to anyone who types its id is decoration, not a restriction.
+    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    if (salesScope && !salesScope.map(String).includes(String(jo.sales_rep_id))) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+
     const scopeLocationId = await getJobLocationScope(req.user.id);
     if (scopeLocationId && !isJobLocationVisible(jo, scopeLocationId)) {
       const [[lineHere]] = await pool.query(
