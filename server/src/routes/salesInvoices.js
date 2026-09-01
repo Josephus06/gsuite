@@ -5,6 +5,8 @@ const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
 const { computeSalesInvoiceGl } = require('../lib/glImpact');
 
+const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
+
 const router = express.Router();
 // Unlike Item Fulfillment/Receipt/Quality Inspection/Item Delivery (all reached only by
 // drilling into a parent record and reusing its permission scope), Sales Invoices also
@@ -34,6 +36,11 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     if (status) { where.push('si.status = ?'); params.push(status); }
     if (customerId) { where.push('so.customer_id = ?'); params.push(customerId); }
     if (salesRepId) { where.push('si.sales_rep_id = ?'); params.push(salesRepId); }
+    // An Account Officer sees only their own invoices; a Supervisor sees theirs plus their
+    // reports'. Same rule Estimates and Sales Orders already apply -- see lib/salesVisibility.js,
+    // which returns null (and so changes nothing) for every account that is neither.
+    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    if (salesScope) { where.push('si.sales_rep_id IN (?)'); params.push(salesScope); }
     if (search) {
       where.push('(si.invoice_no LIKE ? OR so.sales_order_no LIKE ? OR c.name LIKE ?)');
       params.push(`%${search}%`, `%${search}%`, `%${search}%`);
@@ -227,6 +234,12 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
     if (!si) return res.status(404).json({ error: 'Not found' });
+    // Defence in depth for the list filter above: hiding a document from the list while still
+    // serving it to anyone who types its id is not a restriction. See lib/salesVisibility.js.
+    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    if (salesScope && !salesScope.includes(si.sales_rep_id)) {
+      return res.status(404).json({ error: 'Not found' });
+    }
 
     // item_code comes from the line's job type -- this ERP's product code, which the Type 2
     // invoice print has an Item Code column for. It is resolved through the job order first

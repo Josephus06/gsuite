@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 
 const router = express.Router();
 // Non-Standard Sales Order (NSSO-<TYPE>-####): a sales-order-like document raised outside the
@@ -216,6 +217,11 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const where = []; const params = [];
     if (status) { where.push('n.status = ?'); params.push(status); }
     if (type) { where.push('n.type = ?'); params.push(type); }
+    // An Account Officer sees only their own non-standard sales orders; a Supervisor sees theirs plus their
+    // reports'. Same rule Estimates and Sales Orders already apply -- see lib/salesVisibility.js,
+    // which returns null (and so changes nothing) for every account that is neither.
+    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    if (salesScope) { where.push('n.sales_rep_id IN (?)'); params.push(salesScope); }
     if (search) { where.push('(n.nsso_no LIKE ? OR c.name LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(
@@ -258,6 +264,12 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
     if (!n) return res.status(404).json({ error: 'Not found' });
+    // Defence in depth for the list filter above: hiding a document from the list while still
+    // serving it to anyone who types its id is not a restriction. See lib/salesVisibility.js.
+    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    if (salesScope && !salesScope.includes(n.sales_rep_id)) {
+      return res.status(404).json({ error: 'Not found' });
+    }
     const [lines] = await pool.query(
       `SELECT l.*, jt.display_name AS job_type_name, jl.location_name AS job_location_name,
               sjo.job_order_no AS source_job_order_no, cjo.job_order_no AS created_job_order_no

@@ -4,6 +4,8 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeCreditMemoGl } = require('../lib/glImpact');
 
+const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
+
 const router = express.Router();
 // Reached from an Open Invoice's "Credit Memo" button -- the AR mirror of Bill Credit,
 // but with sales-shaped lines rather than GL-account expense rows, because crediting a
@@ -126,6 +128,11 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const where = [];
     const params = [];
     if (status) { where.push('cm.status = ?'); params.push(status); }
+    // An Account Officer sees only their own credit memos; a Supervisor sees theirs plus their
+    // reports'. Same rule Estimates and Sales Orders already apply -- see lib/salesVisibility.js,
+    // which returns null (and so changes nothing) for every account that is neither.
+    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    if (salesScope) { where.push('cm.sales_rep_id IN (?)'); params.push(salesScope); }
     if (search) {
       where.push('(cm.credit_memo_no LIKE ? OR c.name LIKE ? OR si.invoice_no LIKE ?)');
       params.push(`%${search}%`, `%${search}%`, `%${search}%`);
@@ -165,6 +172,12 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
     if (!cm) return res.status(404).json({ error: 'Not found' });
+    // Defence in depth for the list filter above: hiding a document from the list while still
+    // serving it to anyone who types its id is not a restriction. See lib/salesVisibility.js.
+    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    if (salesScope && !salesScope.includes(cm.sales_rep_id)) {
+      return res.status(404).json({ error: 'Not found' });
+    }
 
     const [lines] = await pool.query(
       `SELECT cml.*, jo.job_order_no, d.name AS department_name

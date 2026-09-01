@@ -3,6 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } = require('../lib/designSupervisorVisibility');
 const { getArtistEmployeeScope } = require('../lib/artistVisibility');
+const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 const {
   notifyDesignSupervisors, notifyAssignedArtist, notifySalesRep, NOTIFY_TYPE_JO_REVISION,
@@ -124,6 +125,11 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const scopeLocationId = await getJobLocationScope(req.user.id);
     if (scopeLocationId) { where.push('jo.job_location_id = ?'); params.push(scopeLocationId); }
     if (salesRepId) { where.push('so.sales_rep_id = ?'); params.push(salesRepId); }
+    // Scoped on the job order's OWN rep, not the sales order's. The two agree on every one of
+    // the 124,300 rows, but a job order can exist without a sales order at all (NSJO, RWIP), and
+    // scoping through the join would make those invisible to everyone rather than to nobody.
+    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    if (salesScope) { where.push('jo.sales_rep_id IN (?)'); params.push(salesScope); }
     if (jobLocationId) { where.push('jo.job_location_id = ?'); params.push(jobLocationId); }
     if (officeLocationId) { where.push('so.office_location_id = ?'); params.push(officeLocationId); }
     if (departmentId) { where.push('so.sales_division_id = ?'); params.push(departmentId); }
@@ -242,6 +248,12 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
     if (!jo) return res.status(404).json({ error: 'Not found' });
+    // Defence in depth for the list filter above: hiding a document from the list while still
+    // serving it to anyone who types its id is not a restriction. See lib/salesVisibility.js.
+    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    if (salesScope && !salesScope.includes(jo.sales_rep_id)) {
+      return res.status(404).json({ error: 'Not found' });
+    }
     // Same defense in depth as the design-queue check below, for the department's warehouse:
     // 404, so an out-of-department JO reads as one that isn't there.
     if (!isJobLocationVisible(jo, await getJobLocationScope(req.user.id))) {

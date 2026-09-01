@@ -4,6 +4,8 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeDeliveryTicketGl } = require('../lib/glImpact');
 
+const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
+
 const router = express.Router();
 // Like Sales Invoices (and unlike Item Fulfillment/Receipt, which borrow their parent's
 // scope), a Delivery Ticket has its own detail screen reached by its own URL, so it gets
@@ -105,6 +107,11 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const where = [];
     const params = [];
     if (status) { where.push('dt.status = ?'); params.push(status); }
+    // An Account Officer sees only their own delivery tickets; a Supervisor sees theirs plus their
+    // reports'. Same rule Estimates and Sales Orders already apply -- see lib/salesVisibility.js,
+    // which returns null (and so changes nothing) for every account that is neither.
+    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    if (salesScope) { where.push('dt.sales_rep_id IN (?)'); params.push(salesScope); }
     if (search) {
       where.push('(dt.dt_no LIKE ? OR so.sales_order_no LIKE ? OR c.name LIKE ? OR dt.po_no LIKE ?)');
       params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
@@ -167,6 +174,12 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
     if (!dt) return res.status(404).json({ error: 'Not found' });
+    // Defence in depth for the list filter above: hiding a document from the list while still
+    // serving it to anyone who types its id is not a restriction. See lib/salesVisibility.js.
+    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    if (salesScope && !salesScope.includes(dt.sales_rep_id)) {
+      return res.status(404).json({ error: 'Not found' });
+    }
 
     const [lines] = await pool.query(
       `SELECT dtl.*, jo.job_order_no, loc.location_name
