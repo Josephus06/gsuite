@@ -9,7 +9,9 @@ import RwipCreateModal from '../components/RwipCreateModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { isNonStockItem } from '../utils/itemTypes';
 import { isPlanner } from '../utils/plannerRoles';
-import { maySalesRevise } from '../utils/salesRevision';
+import SalesRevisionModal from '../components/SalesRevisionModal';
+import RevisionNotice from '../components/RevisionNotice';
+import { maySalesRevise, awaitingDateDecision } from '../utils/salesRevision';
 
 // Mirrors the real system's "Production > Production" detail screen -- same underlying
 // Job Order as JobOrderView.jsx, but reached once the JO is Released and viewed for
@@ -347,12 +349,7 @@ export default function ProductionJobOrderView() {
   const [plannedStart, setPlannedStart] = useState('');
   const [plannedEnd, setPlannedEnd] = useState('');
   const [scheduleError, setScheduleError] = useState('');
-  // The delivery date, edited in place while the job order is For Revision -- the same control
-  // the Job Order view carries, because Sales reaches a returned job order from either screen.
-  const [deliveryDraft, setDeliveryDraft] = useState('');
-  const [deliveryTimeDraft, setDeliveryTimeDraft] = useState('');
-  const [deliveryError, setDeliveryError] = useState('');
-  const [savingDelivery, setSavingDelivery] = useState(false);
+  const [showRevision, setShowRevision] = useState(false);
   const [actionError, setActionError] = useState('');
   const [savingSchedule, setSavingSchedule] = useState(false);
   const [tab, setTab] = useState('processes');
@@ -369,8 +366,6 @@ export default function ProductionJobOrderView() {
       setJo(data);
       setPlannedStart(data.planned_start_date ? String(data.planned_start_date).slice(0, 10) : '');
       setPlannedEnd(data.planned_end_date ? String(data.planned_end_date).slice(0, 10) : '');
-      setDeliveryDraft(data.delivery_date ? String(data.delivery_date).slice(0, 10) : '');
-      setDeliveryTimeDraft(data.delivery_time || '');
       setLoading(false);
     });
   }
@@ -407,20 +402,26 @@ export default function ProductionJobOrderView() {
     }
   }
 
-  async function handleSaveDelivery() {
-    setDeliveryError('');
-    if (!deliveryDraft) { setDeliveryError('Enter a delivery date.'); return; }
-    setSavingDelivery(true);
+  // Production's own request. The modal collects the reason (and a suggested date when that is
+  // the reason); the error is thrown on so the modal can show it beside its own fields rather
+  // than in the page banner the user is no longer looking at.
+  async function handleSendForRevision(payload) {
+    await api.put(`/production/${id}/sales-revision`, payload);
+    await load();
+  }
+
+  // Sales answers a suggested date. Either answer returns the job order to Production, so this
+  // reloads into the ordinary Pending for Sched. view rather than staying on a revision screen.
+  async function handleDateDecision(decision) {
+    setBusy(true);
+    setActionError('');
     try {
-      await api.put(`/job-orders/${id}/delivery-date`, {
-        delivery_date: deliveryDraft,
-        delivery_time: deliveryTimeDraft || null,
-      });
+      await api.put(`/production/${id}/revision-decision`, { decision });
       await load();
     } catch (err) {
-      setDeliveryError(err.response?.data?.error || 'Could not save the delivery date.');
+      setActionError(err.response?.data?.error || 'Could not answer the suggested delivery date.');
     } finally {
-      setSavingDelivery(false);
+      setBusy(false);
     }
   }
 
@@ -540,7 +541,6 @@ export default function ProductionJobOrderView() {
   // for them too -- matching what the server accepts.
   const canSchedule = (canEdit || isPlanner(user)) && !isTerminal;
   const deliveryDay = jo.delivery_date ? String(jo.delivery_date).slice(0, 10) : '';
-  const deliveryDirty = deliveryDraft !== deliveryDay || (deliveryTimeDraft || '') !== (jo.delivery_time || '');
   const savedStart = jo.planned_start_date ? String(jo.planned_start_date).slice(0, 10) : '';
   const savedEnd = jo.planned_end_date ? String(jo.planned_end_date).slice(0, 10) : '';
   const plannedDirty = plannedStart !== savedStart || plannedEnd !== savedEnd;
@@ -558,7 +558,9 @@ export default function ProductionJobOrderView() {
   // it (three Production accounts hold can_edit on /job-orders, which is what this used to ask
   // for) put the wrong department in charge of clearing it. Same rule the server applies.
   const canReturnRevision = maySalesRevise(user, jo, canEdit);
-  const canReviseDelivery = forRevision && canReturnRevision && jo.status !== 'Cancelled';
+  // A date revision ends by answering it (below), not by the generic return button -- which the
+  // server also refuses while the suggestion is unanswered, so the two agree.
+  const decidingDate = canReturnRevision && awaitingDateDecision(jo);
   const canSendForRevision = can('/production', 'can_edit') && !isOnHold
     && jo.status === 'Released' && jo.production_stage === 'pending_for_scheduling'
     && num(jo.quantity_built) === 0;
@@ -591,9 +593,19 @@ export default function ProductionJobOrderView() {
           {canSendForRevision && (
             <button className="btn btn-sm btn-warning" disabled={busy}
               title="Send this Job Order back to Sales to be corrected. It returns here for acknowledgement."
-              onClick={() => handleStageAction('sales-revision')}>Sales Revision</button>
+              onClick={() => setShowRevision(true)}>Sales Revision</button>
           )}
-          {forRevision && canReturnRevision && jo.status !== 'Cancelled' && (
+          {decidingDate && (
+            <>
+              <button className="btn btn-sm btn-primary" disabled={busy}
+                title="Accept the suggested delivery date and send this Job Order back to Production."
+                onClick={() => handleDateDecision('approved')}>Approve Date</button>
+              <button className="btn btn-sm btn-warning" disabled={busy}
+                title="Keep the current delivery date and send this Job Order back to Production."
+                onClick={() => handleDateDecision('declined')}>Decline Date</button>
+            </>
+          )}
+          {forRevision && canReturnRevision && !decidingDate && jo.status !== 'Cancelled' && (
             <button className="btn btn-sm btn-primary" disabled={busy}
               title="Send the corrected Job Order back to Production for acknowledgement."
               onClick={() => handleStageAction('approve-revision')}>Approve to Production</button>
@@ -695,42 +707,8 @@ export default function ProductionJobOrderView() {
                 <div>Forecast : <span className="hi">{forecastLabel(jo.planned_start_date, jo.planned_end_date)}</span></div>
               </>
             )}
-            {canReviseDelivery ? (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  Delivery Date :
-                  <input
-                    type="date" value={deliveryDraft} disabled={savingDelivery}
-                    onChange={(e) => setDeliveryDraft(e.target.value)}
-                    style={SCHEDULE_INPUT}
-                  />
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                  Delivery Time :
-                  <input
-                    type="time" value={deliveryTimeDraft} disabled={savingDelivery}
-                    onChange={(e) => setDeliveryTimeDraft(e.target.value)}
-                    style={SCHEDULE_INPUT}
-                  />
-                  {deliveryDirty && (
-                    <button
-                      type="button" className="btn btn-sm btn-primary"
-                      disabled={savingDelivery} onClick={handleSaveDelivery}
-                    >
-                      {savingDelivery ? 'Saving...' : 'Save Date'}
-                    </button>
-                  )}
-                </div>
-                {deliveryError && (
-                  <div style={{ marginTop: 6, color: '#ffd4d4', fontWeight: 600 }}>{deliveryError}</div>
-                )}
-              </>
-            ) : (
-              <>
-                <div>Delivery Date : <span className="hi">{jo.delivery_date ? String(jo.delivery_date).slice(0, 10) : ''}</span></div>
-                <div>Delivery Time : <span className="hi">{jo.delivery_time}</span></div>
-              </>
-            )}
+            <div>Delivery Date : <span className="hi">{jo.delivery_date ? String(jo.delivery_date).slice(0, 10) : ''}</span></div>
+            <div>Delivery Time : <span className="hi">{jo.delivery_time}</span></div>
             <div>Sales Rep. : <span className="hi">{jo.sales_rep_name}</span></div>
           </div>
           <div>
@@ -745,6 +723,8 @@ export default function ProductionJobOrderView() {
           </div>
         </div>
       </div>
+
+      <RevisionNotice jo={jo} />
 
       <div className="status-tabs" style={{ marginTop: 20 }}>
         <button className={`status-tab ${tab === 'processes' ? 'active' : ''}`} onClick={() => setTab('processes')}>Processes</button>
@@ -963,6 +943,14 @@ export default function ProductionJobOrderView() {
           jobOrderId={id}
           onClose={() => setShowQualityInspection(false)}
           onSaved={async (qi) => { setShowQualityInspection(false); await load(); navigate(`/quality-inspections/${qi.id}`); }}
+        />
+      )}
+
+      {showRevision && (
+        <SalesRevisionModal
+          jo={jo}
+          onClose={() => setShowRevision(false)}
+          onSubmit={handleSendForRevision}
         />
       )}
 

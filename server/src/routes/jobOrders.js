@@ -7,7 +7,9 @@ const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocatio
 const {
   notifyDesignSupervisors, notifyAssignedArtist, notifySalesRep, NOTIFY_TYPE_JO_REVISION,
 } = require('../lib/designNotifications');
-const { maySalesReviseJobOrder } = require('../lib/jobOrderRevision');
+const {
+  maySalesReviseJobOrder, isOpenForSalesRework, REWORK_PROTECTED_FIELDS,
+} = require('../lib/jobOrderRevision');
 
 const router = express.Router();
 const ROUTE = '/job-orders';
@@ -17,9 +19,6 @@ const ROUTE = '/job-orders';
 // assignment picker filters by (GET /employees?account_type=Artist) and the Artist Incentive
 // report's filter uses.
 const ARTIST_ACCOUNT_TYPE = 'Artist';
-
-// The only delivery date shape PUT /:id/delivery-date accepts -- what <input type="date"> sends.
-const DELIVERY_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // The "Saved Job Orders" status tabs, mirroring the live list. A JO lands in exactly one: Hold wins
 // over everything; otherwise released JOs go by production_stage and pre-release JOs by sub_status
@@ -60,6 +59,44 @@ const PROCESS_FIELDS = [
   'process_id', 'process_qty', 'process_uom', 'category', 'parts', 'item_id', 'location_id',
   'artist_remarks', 'length', 'width', 'uom', 'qty', 'total', 'unit', 'remarks', 'memo',
 ];
+
+// can_edit on /job-orders, OR the narrow grant a "change material/process" revision carries:
+// the job order's own sales rep may rework THAT job order for as long as it sits in revision for
+// THAT reason. Production asking Sales to re-specify a job is only a request if Sales can act on
+// it, and 24 of 27 sales accounts hold can_view alone -- so before this, the standard answer to
+// "change the material" was to find someone else to do it.
+//
+// Returns 'permission' | 'rework' | null, because the two are not equivalent downstream: a rework
+// grant is scoped to the spec (see REWORK_PROTECTED_FIELDS) where can_edit is not.
+async function jobOrderEditGrant(userId, jobOrderId) {
+  const [[page]] = await pool.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
+  const [[perm]] = await pool.query(
+    'SELECT can_edit AS allowed FROM user_page_permissions WHERE user_id = ? AND page_id = ?',
+    [userId, page?.id]
+  );
+  if (perm?.allowed) return 'permission';
+  if (await isSystemAdmin(userId)) return 'permission';
+
+  const [[jo]] = await pool.query(
+    'SELECT sales_rep_id, status, production_stage, revision_reason FROM job_orders WHERE id = ?',
+    [jobOrderId]
+  );
+  if (!jo || !isOpenForSalesRework(jo)) return null;
+  const [[me]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [userId]);
+  if (me?.employee_id && String(jo.sales_rep_id) === String(me.employee_id)) return 'rework';
+  return null;
+}
+
+// Middleware form, for the routes that only need "may they touch this at all" -- the process
+// rows, which ARE the material and the process, so a rework grant opens them completely.
+async function requireJobOrderEdit(req, res, next) {
+  try {
+    const grant = await jobOrderEditGrant(req.user.id, req.params.id);
+    if (!grant) return res.status(403).json({ error: 'You do not have permission to perform this action' });
+    req.joEditGrant = grant;
+    return next();
+  } catch (err) { return next(err); }
+}
 
 async function logAudit(conn, { jobOrderId, userId, eventType, fieldName = null, oldValue = null, newValue = null }) {
   await conn.query(
@@ -182,7 +219,8 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
               ljt.display_name AS layout_job_type_name,
               nsso.nsso_no, rc.name AS reason_code_name,
               CONCAT(rap.first_name, ' ', rap.last_name) AS rma_approved_by_name,
-              pjo.job_order_no AS parent_job_order_no
+              pjo.job_order_no AS parent_job_order_no,
+              rqu.display_name AS revision_requested_by_name
        FROM job_orders jo
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
        LEFT JOIN sales_order_lines sol ON sol.id = jo.sales_order_line_id
@@ -199,6 +237,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
        LEFT JOIN reasons rc ON rc.id = jo.reason_code_id
        LEFT JOIN employees rap ON rap.id = jo.rma_approved_by_id
        LEFT JOIN job_orders pjo ON pjo.id = jo.parent_job_order_id
+       LEFT JOIN users rqu ON rqu.id = jo.revision_requested_by_id
        WHERE jo.id = ?`,
       [req.params.id]
     );
@@ -338,7 +377,7 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
 // Real system's "Edit" button -- shown there whenever the JO isn't Cancelled and the
 // user can edit; only the production-side fields captured on the JO itself are
 // editable (customer/sales details stay derived from the Sales Order).
-router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id', requireAuth, requireJobOrderEdit, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -375,6 +414,26 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         return res.status(409).json({ error: 'This Job Order is Released -- the artist can no longer be reassigned.' });
       }
     }
+    // A rework grant re-specifies the job; it does not re-plan or reassign it. The form posts
+    // every field it holds, so this checks for an actual CHANGE rather than for presence --
+    // the same way the artist_id rule just above works. Refused loudly instead of quietly
+    // dropped: a save that silently keeps the old date would read as the app losing the edit.
+    if (req.joEditGrant === 'rework') {
+      const changed = REWORK_PROTECTED_FIELDS.filter((f) => {
+        if (req.body[f] === undefined) return false;
+        const before = oldRow[f] === null || oldRow[f] === undefined ? '' : String(oldRow[f]);
+        const after = req.body[f] === null || req.body[f] === '' ? '' : String(req.body[f]);
+        // Dates arrive as 'YYYY-MM-DD' from the form but may be stored with a time component.
+        return before.slice(0, after.length || before.length) !== after && before !== after;
+      });
+      if (changed.length) {
+        await conn.rollback();
+        return res.status(403).json({
+          error: `While this Job Order is for revision you can change its materials and processes, not ${changed.join(', ')}.`,
+        });
+      }
+    }
+
     const values = EDIT_FIELDS.map((f) => (req.body[f] === undefined || req.body[f] === '' ? null : req.body[f]));
 
     // Setting both Planned dates is what "scheduling" this JO means on the production
@@ -785,86 +844,10 @@ router.put('/:id/request-revision', requireAuth, requirePermission(ROUTE, 'can_a
   }
 });
 
-// --- Sales revision: the delivery date -------------------------------------------------
-
-// Production hands a job order back with "Sales Revision" (see routes/production.js) and the one
-// thing Sales most often has to change is the date they promised the customer -- Production could
-// not fit the job by then. The full Edit form is the wrong place for it: it is gated on can_edit
-// for /job-orders, which the rep who owns the job order almost never has (24 of 27 sales accounts
-// sit on can_view), and it reopens every other field on a job order that has already been
-// released. So the date is editable in place on the view, on its own, and only while the job
-// order is actually For Revision.
-router.put('/:id/delivery-date', requireAuth, async (req, res, next) => {
-  const conn = await pool.getConnection();
-  try {
-    const [[jo]] = await conn.query(
-      'SELECT delivery_date, delivery_time, production_stage, status, sales_rep_id, job_location_id FROM job_orders WHERE id = ?',
-      [req.params.id]
-    );
-    if (!jo) return res.status(404).json({ error: 'Not found' });
-    if (!isJobLocationVisible(jo, await getJobLocationScope(req.user.id))) {
-      return res.status(404).json({ error: 'Not found' });
-    }
-    if (!(await maySalesReviseJobOrder(req.user.id, jo))) {
-      return res.status(403).json({ error: 'You do not have permission to perform this action' });
-    }
-    if (jo.status === 'Cancelled') return res.status(409).json({ error: 'This job order is cancelled.' });
-    if (jo.production_stage !== 'for_revision') {
-      return res.status(409).json({ error: 'The delivery date can only be changed while this Job Order is For Revision.' });
-    }
-
-    const raw = req.body?.delivery_date;
-    if (raw === undefined || raw === null || raw === '') {
-      return res.status(400).json({ error: 'Enter a delivery date.' });
-    }
-    const deliveryDate = String(raw).slice(0, 10);
-    if (!DELIVERY_DATE_RE.test(deliveryDate)) {
-      return res.status(400).json({ error: 'Delivery Date must be in YYYY-MM-DD format.' });
-    }
-    // delivery_time rides along because the view shows the two together, and moving the date a
-    // week without being able to move the time with it is half an edit. Optional: left as it was
-    // when the client does not send it.
-    const timeSent = req.body?.delivery_time !== undefined;
-    const deliveryTime = timeSent ? (String(req.body.delivery_time || '').trim() || null) : jo.delivery_time;
-
-    const before = jo.delivery_date ? String(jo.delivery_date).slice(0, 10) : '';
-    const timeBefore = String(jo.delivery_time || '');
-    if (before === deliveryDate && timeBefore === String(deliveryTime || '')) {
-      const [[unchanged]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
-      return res.json(unchanged);
-    }
-
-    await conn.beginTransaction();
-    await conn.query(
-      'UPDATE job_orders SET delivery_date = ?, delivery_time = ?, updated_at = NOW() WHERE id = ?',
-      [deliveryDate, deliveryTime, req.params.id]
-    );
-    if (before !== deliveryDate) {
-      await logAudit(conn, {
-        jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated',
-        fieldName: 'delivery_date', oldValue: before, newValue: deliveryDate,
-      });
-    }
-    if (timeBefore !== String(deliveryTime || '')) {
-      await logAudit(conn, {
-        jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated',
-        fieldName: 'delivery_time', oldValue: timeBefore, newValue: deliveryTime || '',
-      });
-    }
-    await conn.commit();
-    const [[row]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
-    res.json(row);
-  } catch (err) {
-    await conn.rollback();
-    next(err);
-  } finally {
-    conn.release();
-  }
-});
 
 // --- Materials tab (job_order_processes rows) --------------------------------
 
-router.post('/:id/processes', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.post('/:id/processes', requireAuth, requireJobOrderEdit, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -892,7 +875,7 @@ router.post('/:id/processes', requireAuth, requirePermission(ROUTE, 'can_edit'),
   }
 });
 
-router.put('/:id/processes/:procId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/processes/:procId', requireAuth, requireJobOrderEdit, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -917,7 +900,7 @@ router.put('/:id/processes/:procId', requireAuth, requirePermission(ROUTE, 'can_
   }
 });
 
-router.delete('/:id/processes/:procId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.delete('/:id/processes/:procId', requireAuth, requireJobOrderEdit, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();

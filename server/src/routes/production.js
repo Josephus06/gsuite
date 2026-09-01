@@ -5,7 +5,10 @@ const { isNonStockItem } = require('../lib/itemTypes');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 const { deriveOnHand } = require('../lib/stockLedger');
-const { maySalesReviseJobOrder } = require('../lib/jobOrderRevision');
+const {
+  maySalesReviseJobOrder, REVISION_REASONS, REVISION_DELIVERY_DATE, REVISION_MATERIAL_PROCESS,
+  REVISION_APPROVED, REVISION_DECLINED,
+} = require('../lib/jobOrderRevision');
 const { PLANNER_COLUMNS, isPlanner } = require('../lib/plannerRoles');
 
 // Completing a process and building both move stock dated today (the Assembly Build row
@@ -177,7 +180,8 @@ router.get('/:id', requireAuth, requireProductionView, async (req, res, next) =>
               oloc.location_name AS office_location_name, sd.name AS sales_division_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name,
-              ljt.display_name AS layout_job_type_name
+              ljt.display_name AS layout_job_type_name,
+              rqu.display_name AS revision_requested_by_name
        FROM job_orders jo
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
        LEFT JOIN sales_order_lines sol ON sol.id = jo.sales_order_line_id
@@ -190,6 +194,7 @@ router.get('/:id', requireAuth, requireProductionView, async (req, res, next) =>
        LEFT JOIN employees sr ON sr.id = jo.sales_rep_id
        LEFT JOIN employees ar ON ar.id = jo.artist_id
        LEFT JOIN pms_job_types ljt ON ljt.id = jo.layout_job_type_id
+       LEFT JOIN users rqu ON rqu.id = jo.revision_requested_by_id
        WHERE jo.id = ?`,
       [req.params.id]
     );
@@ -484,7 +489,7 @@ router.put('/:id/sales-revision', requireAuth, requirePermission(ROUTE, 'can_edi
   const conn = await pool.getConnection();
   try {
     const [[jo]] = await conn.query(
-      'SELECT production_stage, is_on_hold, status, quantity_built FROM job_orders WHERE id = ?',
+      'SELECT production_stage, is_on_hold, status, quantity_built, delivery_date, revision_reason FROM job_orders WHERE id = ?',
       [req.params.id]
     );
     if (!jo) return res.status(404).json({ error: 'Not found' });
@@ -503,15 +508,50 @@ router.put('/:id/sales-revision', requireAuth, requirePermission(ROUTE, 'can_edi
       return res.status(409).json({ error: 'This job order has already built quantity and cannot be sent back for revision.' });
     }
 
+    // The reason is required, because it is not a label -- it decides what Sales may then do
+    // (re-specify the job, or answer a proposed date). A revision with no reason would leave
+    // them the same guessing game the stage used to be.
+    const reason = String(req.body?.reason || '');
+    if (!REVISION_REASONS.includes(reason)) {
+      return res.status(400).json({ error: 'Choose a reason for the revision.' });
+    }
+    const note = String(req.body?.note || '').trim().slice(0, 500) || null;
+
+    let suggested = null;
+    if (reason === REVISION_DELIVERY_DATE) {
+      suggested = parseDate(req.body?.suggested_delivery_date);
+      if (!suggested) {
+        return res.status(400).json({ error: 'Suggest a delivery date in YYYY-MM-DD format.' });
+      }
+      // Proposing the date already on the job order asks Sales to decide nothing.
+      if (jo.delivery_date && String(jo.delivery_date).slice(0, 10) === suggested) {
+        return res.status(400).json({ error: 'That is already this job order\u2019s delivery date -- suggest a different one.' });
+      }
+    }
+
     await conn.beginTransaction();
-    await conn.query("UPDATE job_orders SET production_stage = 'for_revision', updated_at = NOW() WHERE id = ?", [req.params.id]);
+    await conn.query(
+      `UPDATE job_orders
+          SET production_stage = 'for_revision', revision_reason = ?, revision_note = ?,
+              revision_suggested_delivery_date = ?, revision_requested_by_id = ?,
+              revision_requested_at = NOW(), revision_date_decision = NULL, updated_at = NOW()
+        WHERE id = ?`,
+      [reason, note, suggested, req.user.id, req.params.id]
+    );
     await conn.query(
       `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
        VALUES ('JobOrder', ?, 'Updated', 'production_stage', ?, 'for_revision', ?)`,
       [req.params.id, jo.production_stage, req.user.id]
     );
+    // Recorded as its own audit row so the reason shows on the job order's System Info tab
+    // beside the stage change, rather than only inside this module's own state.
+    await conn.query(
+      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+       VALUES ('JobOrder', ?, 'Updated', 'revision_reason', ?, ?, ?)`,
+      [req.params.id, jo.revision_reason || '', suggested ? `${reason} (${suggested})` : reason, req.user.id]
+    );
     await conn.commit();
-    res.json({ production_stage: 'for_revision' });
+    res.json({ production_stage: 'for_revision', revision_reason: reason, revision_suggested_delivery_date: suggested });
   } catch (err) {
     await conn.rollback();
     next(err);
@@ -528,7 +568,10 @@ router.put('/:id/sales-revision', requireAuth, requirePermission(ROUTE, 'can_edi
 router.put('/:id/approve-revision', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[jo]] = await conn.query('SELECT production_stage, status, sales_rep_id FROM job_orders WHERE id = ?', [req.params.id]);
+    const [[jo]] = await conn.query(
+      'SELECT production_stage, status, sales_rep_id, revision_reason, revision_date_decision FROM job_orders WHERE id = ?',
+      [req.params.id]
+    );
     if (!jo) return res.status(404).json({ error: 'Not found' });
     if (!(await assertJobOrderInScope(req, res))) return;
     if (!(await maySalesReviseJobOrder(req.user.id, jo))) {
@@ -537,6 +580,12 @@ router.put('/:id/approve-revision', requireAuth, async (req, res, next) => {
     if (jo.status === 'Cancelled') return res.status(409).json({ error: 'This job order is cancelled.' });
     if (jo.production_stage !== 'for_revision') {
       return res.status(409).json({ error: 'Only a job order for revision can be approved back to production.' });
+    }
+    // A date revision ends by answering the suggestion, not by returning the job order with the
+    // question still open -- otherwise Production's proposal could be ignored without a record
+    // of anyone having considered it. That path is /revision-decision below.
+    if (jo.revision_reason === REVISION_DELIVERY_DATE && !jo.revision_date_decision) {
+      return res.status(409).json({ error: 'Approve or decline the suggested delivery date first.' });
     }
 
     await conn.beginTransaction();
@@ -548,6 +597,90 @@ router.put('/:id/approve-revision', requireAuth, async (req, res, next) => {
     );
     await conn.commit();
     res.json({ production_stage: 'pending_for_scheduling' });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// Sales answers a suggested delivery date. Approving writes it; declining leaves the date exactly
+// as it was -- the point of declining is that the promise to the customer stands and Production
+// has to find another way to meet it. Either answer returns the job order to Production in the
+// same step: on a date revision there is nothing else for Sales to do, and leaving it parked in
+// revision behind a second button would just be ceremony.
+//
+// Planned dates are deliberately left alone, as on approve-revision. Approving a LATER date
+// cannot invalidate them, and Production re-acknowledges the job either way, which is when a plan
+// that no longer fits gets redrawn by the people who own it.
+router.put('/:id/revision-decision', requireAuth, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[jo]] = await conn.query(
+      `SELECT production_stage, status, sales_rep_id, delivery_date, revision_reason,
+              revision_suggested_delivery_date, revision_date_decision
+         FROM job_orders WHERE id = ?`,
+      [req.params.id]
+    );
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!(await assertJobOrderInScope(req, res))) return;
+    if (!(await maySalesReviseJobOrder(req.user.id, jo))) {
+      return res.status(403).json({ error: 'You do not have permission to perform this action' });
+    }
+    if (jo.status === 'Cancelled') return res.status(409).json({ error: 'This job order is cancelled.' });
+    if (jo.production_stage !== 'for_revision' || jo.revision_reason !== REVISION_DELIVERY_DATE) {
+      return res.status(409).json({ error: 'This job order has no suggested delivery date to decide on.' });
+    }
+    if (jo.revision_date_decision) {
+      return res.status(409).json({ error: 'That suggested delivery date has already been answered.' });
+    }
+
+    const decision = String(req.body?.decision || '');
+    if (decision !== REVISION_APPROVED && decision !== REVISION_DECLINED) {
+      return res.status(400).json({ error: 'Approve or decline the suggested delivery date.' });
+    }
+    const suggested = jo.revision_suggested_delivery_date
+      ? String(jo.revision_suggested_delivery_date).slice(0, 10) : null;
+    if (decision === REVISION_APPROVED && !suggested) {
+      return res.status(409).json({ error: 'This job order has no suggested delivery date to approve.' });
+    }
+    const before = jo.delivery_date ? String(jo.delivery_date).slice(0, 10) : '';
+
+    await conn.beginTransaction();
+    if (decision === REVISION_APPROVED) {
+      await conn.query(
+        'UPDATE job_orders SET delivery_date = ?, updated_at = NOW() WHERE id = ?',
+        [suggested, req.params.id]
+      );
+      await conn.query(
+        `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+         VALUES ('JobOrder', ?, 'Updated', 'delivery_date', ?, ?, ?)`,
+        [req.params.id, before, suggested, req.user.id]
+      );
+    }
+    await conn.query(
+      `UPDATE job_orders
+          SET revision_date_decision = ?, production_stage = 'pending_for_scheduling', updated_at = NOW()
+        WHERE id = ?`,
+      [decision, req.params.id]
+    );
+    await conn.query(
+      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+       VALUES ('JobOrder', ?, 'Updated', 'revision_date_decision', ?, ?, ?)`,
+      [req.params.id, '', `${decision} (${suggested || 'no date'})`, req.user.id]
+    );
+    await conn.query(
+      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+       VALUES ('JobOrder', ?, 'Updated', 'production_stage', 'for_revision', 'pending_for_scheduling', ?)`,
+      [req.params.id, req.user.id]
+    );
+    await conn.commit();
+    res.json({
+      production_stage: 'pending_for_scheduling',
+      revision_date_decision: decision,
+      delivery_date: decision === REVISION_APPROVED ? suggested : before || null,
+    });
   } catch (err) {
     await conn.rollback();
     next(err);
