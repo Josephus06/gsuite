@@ -1172,8 +1172,41 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .print-info-grid { display: flex; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
 .print-info-grid > div:first-child { flex: 1; }
 .print-info-right { white-space: nowrap; text-align: right; }
-.print-items-table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
-.print-items-table th, .print-items-table td { border-bottom: 1px solid #ddd; padding: 8px 6px; text-align: left; font-size: 12px; }
+/* TWO THINGS ARE NEEDED HERE, and the first one is the one that actually bit.
+
+   white-space: normal undoes the global `th, td { white-space: nowrap }` further up this file.
+   List pages escape that through `.table-wrap th, .table-wrap td`; this table is not inside a
+   .table-wrap, so it never did -- and these descriptions run to 200 characters, so one line item
+   was laid out as a single unbroken line straight across the figures beside it.
+
+   table-layout: fixed is what then makes the column widths bind. Under the default `auto` the
+   browser sizes each column to its content, so even once the text can wrap, the description
+   column takes whatever it wants and squeezes the numbers into a sliver. A CSS width alone does
+   not fix that; auto layout treats it as a suggestion and the content still wins.
+
+   The widths are the PDF's own: COLS in server/src/lib/estimatePdf.js is
+   18/107/62/50/40/55/50/55/78 of 515pt, so a quotation breaks its lines in the same places
+   whichever way the customer receives it. */
+.print-items-table { width: 100%; table-layout: fixed; border-collapse: collapse; margin-bottom: 16px; }
+.print-items-table th:nth-child(1), .print-items-table td:nth-child(1) { width: 3.5%; }
+.print-items-table th:nth-child(2), .print-items-table td:nth-child(2) { width: 20.8%; }
+.print-items-table th:nth-child(3), .print-items-table td:nth-child(3) { width: 12%; }
+.print-items-table th:nth-child(4), .print-items-table td:nth-child(4) { width: 9.7%; }
+.print-items-table th:nth-child(5), .print-items-table td:nth-child(5) { width: 7.8%; }
+.print-items-table th:nth-child(6), .print-items-table td:nth-child(6) { width: 10.7%; }
+.print-items-table th:nth-child(7), .print-items-table td:nth-child(7) { width: 9.7%; }
+.print-items-table th:nth-child(8), .print-items-table td:nth-child(8) { width: 10.7%; }
+.print-items-table th:nth-child(9), .print-items-table td:nth-child(9) { width: 15.1%; }
+.print-items-table th, .print-items-table td {
+  border-bottom: 1px solid #ddd; padding: 8px 6px; text-align: left; font-size: 12px;
+  white-space: normal;
+}
+/* Top, not middle: against a description wrapped over ten lines the figures belong beside its
+   first line, the way the PDF sets them, not floating halfway down the row. */
+.print-items-table td { vertical-align: top; }
+/* A description with no spaces in it -- a part code, a pasted URL -- has no break opportunity,
+   and in a fixed column it would spill over its neighbour instead of wrapping. */
+.print-items-table td:nth-child(2) { overflow-wrap: anywhere; }
 .print-items-table th { color: #555; font-weight: 600; }
 .print-items-table td:nth-child(n+4), .print-items-table th:nth-child(n+4) { text-align: right; }
 .print-totals-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 28px; }
