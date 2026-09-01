@@ -895,6 +895,14 @@ export default function EstimateWizard() {
             // Chosen from outside the defined list -- remember it for next time.
             if (!allowedIds || !allowedIds.has(i.id)) learnMaterial(jobTypeId, row.process_id, i);
           }}
+          // The material is the one picker on this row that may legitimately be empty -- a
+          // labour-only process line carries none -- so a wrong choice has to be undoable
+          // without deleting and re-adding the whole process row.
+          //
+          // Undoes exactly what onSelect above sets. The unit and UOM came from the material, so
+          // leaving them behind would describe a material that is no longer there; the pricing
+          // recalc already treats a line with no item_id as carrying no material cost.
+          onClear={() => recalcAndCommitProcess(joIdx, procIdx, { item_id: null, unit: '', uom: '' })}
         />
       );
     }

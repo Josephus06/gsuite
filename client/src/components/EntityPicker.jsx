@@ -4,9 +4,12 @@ import Pagination from './Pagination';
 
 const PAGE_SIZE = 10;
 
+// onClear is optional and opt-in per caller: a picker offers "Clear selection" only where the
+// field is genuinely allowed to be empty. Wiring it into every picker would invite someone to
+// blank a required reference and only find out at save time.
 export default function EntityPicker({
   label, items, value, getLabel, columns, searchKeys, onSelect, placeholder, required, disabled,
-  triggerLabel, triggerClassName, isSelectable, headerExtra,
+  triggerLabel, triggerClassName, isSelectable, headerExtra, onClear,
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -46,6 +49,13 @@ export default function EntityPicker({
     setOpen(false);
   }
 
+  // Clears the FIELD, not the record behind it -- hence "Clear selection" rather than "Delete",
+  // which in a picker listing master data reads like it removes the material itself.
+  function clearSelection() {
+    onClear();
+    setOpen(false);
+  }
+
   return (
     <>
       {triggerLabel ? (
@@ -74,13 +84,21 @@ export default function EntityPicker({
           onClose={() => setOpen(false)}
           large
         >
-          <div className="picker-search" style={{ margin: '0 -24px 16px' }}>
+          <div className="picker-search" style={{ margin: '0 -24px 16px', display: 'flex', gap: 12, alignItems: 'center' }}>
             <input
               autoFocus
               placeholder="Search..."
               value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+              style={{ flex: 1, minWidth: 0 }}
             />
+            {/* Only with something to clear: on an empty field the button would do nothing and
+                just raise the question of what it does. */}
+            {onClear && selected && (
+              <button type="button" className="btn" style={{ whiteSpace: 'nowrap' }} onClick={clearSelection}>
+                Clear selection
+              </button>
+            )}
           </div>
           <div className="table-wrap">
             <table>
