@@ -12,8 +12,8 @@
 
 // The company's colours, off the logo, so the email and the PDF it carries look like one piece of
 // paper from one company. Same two values as estimatePdf.js and the brand mark itself.
-const BRAND_BLUE = '#1a2a78';
-const BRAND_ORANGE = '#f28c00';
+const BRAND_BLUE = '#0b109f';
+const BRAND_ORANGE = '#ec7601';
 
 const peso = (n) => `PHP ${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const day = (d) => (d ? String(d).slice(0, 10) : '');

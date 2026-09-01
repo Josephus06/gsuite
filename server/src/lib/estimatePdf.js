@@ -27,20 +27,27 @@ const MUTED = '#666666';
 const RULE = '#dddddd';
 
 // THE COMPANY'S OWN COLOURS, not the app's. This document goes to a customer under the
-// GraphicStar name, so it is themed off the logo -- the same two values the brand mark itself is
-// drawn in (client/src/assets/brand-mark.svg), not the purple the ERP's own chrome uses. If the
-// mark is ever restyled, these move with it.
-const BRAND_BLUE = '#1a2a78';
-const BRAND_ORANGE = '#f28c00';
+// GraphicStar name, so it is themed off the logo, not the purple the ERP's own chrome uses.
+//
+// Sampled straight out of the mark below rather than eyeballed: these are the two colours that
+// actually cover it (20.6% and 18.7% of its pixels). They replace an approximation carried over
+// from the older hand-drawn mark, which ran a darker navy than the real logo -- with the true mark
+// now printed beside the wordmark, the two had to agree or the letterhead would read as two
+// different blues side by side.
+const BRAND_BLUE = '#0b109f';
+const BRAND_ORANGE = '#ec7601';
 
-// The mark, straight from brand-mark.svg: two arcs on a 200x200 canvas, the blue upper sweep and
-// the orange lower one with the wedge cut out of it. Kept as path data rather than a bitmap so it
-// stays sharp at any size and the PDF carries no embedded image.
-const MARK_VIEWBOX = 200;
-const MARK_PATHS = [
-  ['M 16.62,138.88 A 92,92 0 0 1 175.36,47.23 L 142.6,70.17 A 52,52 0 0 0 52.87,121.98 Z', BRAND_BLUE],
-  ['M 186.45,68.53 A 92,92 0 0 1 29.52,159.14 L 60.17,133.42 A 52,52 0 0 0 148.86,82.21 L 128,110 Z', BRAND_ORANGE],
-];
+// The company's actual mark, as it appears on graphicstar.ph: a 256px square PNG on a
+// transparent ground, the blue upper sweep over the orange lower one with the wedge through the
+// middle. It replaces a hand-drawn approximation in path data, which had a thinner band and a
+// much smaller wedge than the real thing.
+//
+// A bitmap is fine HERE where it would not be for the full logo: this artwork is two flat colours
+// with no bevel and no drop shadow, so it scales down cleanly, and 256px into a 38pt slot is
+// around 480 DPI -- far past what any printer resolves. The wordmark beside it is still set in
+// type for exactly the reason the full logo file is not used: that one carries a bevel and a
+// shadow, and shrunk to letterhead size it prints muddy.
+const MARK_FILE = path.join(__dirname, '..', 'assets', 'brand', 'graphicstar-mark.png');
 
 // The branch payment QR codes printed at the foot of the quotation. Real GCash/Maya merchant
 // codes, so they are shipped as files and drawn as-is -- nothing here re-encodes or redraws them,
@@ -165,12 +172,11 @@ function drawRow(doc, values, {
   doc.y += 1;
 }
 
-// The brand mark, drawn at `size` points square with its top-left at (x, y).
+// The brand mark, drawn at `size` points square with its top-left at (x, y). Width AND height
+// are given because the artwork is square and must stay square -- letting pdfkit fit one axis
+// would distort it.
 function drawMark(doc, x, y, size) {
-  const scale = size / MARK_VIEWBOX;
-  doc.save().translate(x, y).scale(scale);
-  for (const [d, color] of MARK_PATHS) doc.path(d).fill(color);
-  doc.restore();
+  doc.image(MARK_FILE, x, y, { width: size, height: size });
 }
 
 // The logo, as the customer knows it: the mark, then GRAPHIC in blue and STAR in orange, with the

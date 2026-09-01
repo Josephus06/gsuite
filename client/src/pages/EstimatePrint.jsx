@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import brandMark from '../assets/brand-mark.svg';
+// The real mark, not the app's hand-drawn one (which still drives the loading spinner).
+import brandMark from '../assets/graphicstar-mark.png';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
