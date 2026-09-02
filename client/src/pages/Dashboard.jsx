@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
@@ -793,7 +793,81 @@ function ForecastCalendarCard({ navigate }) {
   );
 }
 
+// Where a process has actually got to. The badge classes carry the colour; nothing here sets
+// one, so these follow the design tokens like every other badge.
+const PROCESS_STATUS = {
+  done: { label: 'Done', className: 'badge badge-success' },
+  in_progress: { label: 'In progress', className: 'badge badge-info' },
+  on_hold: { label: 'On hold', className: 'badge badge-warning' },
+  not_started: { label: 'Not started', className: 'badge badge-muted' },
+};
+
+// The processes under one scheduled job order, fetched only when a row is actually opened.
+// A month of job orders is a lot of process lines to load for the two or three anyone expands.
+function ProcessBreakdown({ kind, id }) {
+  const [state, setState] = useState({ loading: true, error: '', data: null });
+
+  useEffect(() => {
+    let live = true;
+    setState({ loading: true, error: '', data: null });
+    api.get(`/dashboard/scheduled-processes/${kind || 'JO'}/${id}`)
+      .then(({ data }) => { if (live) setState({ loading: false, error: '', data }); })
+      .catch((err) => {
+        if (live) setState({ loading: false, error: err.response?.data?.error || 'Could not load the processes for this job order.', data: null });
+      });
+    return () => { live = false; };
+  }, [kind, id]);
+
+  if (state.loading) return <div className="muted" style={{ padding: 'var(--space-3)' }}>Loading processes…</div>;
+  if (state.error) return <div className="muted" style={{ padding: 'var(--space-3)' }}>{state.error}</div>;
+
+  const { processes = [], hasProcesses, note } = state.data || {};
+  if (!processes.length) {
+    return <div className="muted" style={{ padding: 'var(--space-3)' }}>This job order has no processes on it.</div>;
+  }
+
+  return (
+    <div style={{ padding: 'var(--space-3)' }}>
+      {/* Said plainly rather than shown as a one-row table that looks like a bug. */}
+      {hasProcesses === false && note && (
+        <div className="muted" style={{ marginBottom: 'var(--space-2)' }}>{note}</div>
+      )}
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Process</th><th>Material</th><th>Assigned To</th><th>Status</th><th>Completed</th></tr>
+          </thead>
+          <tbody>
+            {processes.map((p, i) => {
+              const st = PROCESS_STATUS[p.status] || PROCESS_STATUS.not_started;
+              return (
+                <tr key={p.id}>
+                  <td>{p.lineNo || i + 1}</td>
+                  <td>{p.processName || <span className="muted">—</span>}</td>
+                  <td>{p.itemName || <span className="muted">—</span>}</td>
+                  <td>{p.assignedTo || <span className="muted">Unassigned</span>}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    <span className={st.className}>{st.label}</span>
+                  </td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    {Number(p.total || 0) > 0
+                      ? `${Number(p.totalCompleted || 0)} / ${Number(p.total)} ${p.unit || ''}`
+                      : <span className="muted">—</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, tooltipFor }) {
+  // Which row's processes are open. One at a time: the popup is not tall enough for two
+  // breakdowns, and the question is always about one job order.
+  const [openRow, setOpenRow] = useState(null);
   const [year, monthNo] = String(month || '').split('-').map(Number);
   const valid = Number.isFinite(year) && Number.isFinite(monthNo);
   const first = valid ? new Date(year, monthNo - 1, 1) : new Date();
@@ -894,8 +968,10 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
         })}
       </div>
 
+      {/* Wide: a row now opens a nested process table, and at the default width every column
+          of it wraps onto three lines. */}
       {openDay && (
-        <Modal title={`Scheduled on ${formatDayHeading(openDay)}`} onClose={() => setOpenDay(null)}>
+        <Modal title={`Scheduled on ${formatDayHeading(openDay)}`} onClose={() => setOpenDay(null)} large>
           <div className="table-wrap">
             <table>
               <thead>
@@ -919,9 +995,25 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
                   const runPath = pathFor
                     ? pathFor(j)
                     : (j.kind === 'NSTDJO' ? `/assigned-jo/nstdjo/${j.id}` : `/assigned-jo/${j.id}`);
+                  const rowKey = `${j.kind || 'JO'}-${j.id}`;
+                  const isOpen = openRow === rowKey;
                   return (
-                    <tr key={`${j.kind || 'JO'}-${j.id}`}>
+                    <Fragment key={rowKey}>
+                    <tr>
                       <td>
+                        {/* The whole-job status above answers "has anyone touched it". This
+                            opens the only answer a rep chasing a customer can use: which
+                            process is done and which has not started. */}
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-ghost"
+                          aria-expanded={isOpen}
+                          title={isOpen ? 'Hide processes' : 'Show processes'}
+                          onClick={() => setOpenRow(isOpen ? null : rowKey)}
+                          style={{ marginRight: 'var(--space-2)' }}
+                        >
+                          {isOpen ? '▾' : '▸'}
+                        </button>
                         <strong>{j.jobOrderNo}</strong>
                         {j.customerName && <div className="muted" style={{ fontSize: '0.85em' }}>{j.customerName}</div>}
                       </td>
@@ -950,6 +1042,14 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
                         <button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(runPath)}>Open</button>
                       </td>
                     </tr>
+                    {isOpen && (
+                      <tr>
+                        <td colSpan={6} style={{ background: 'var(--color-neutral-bg)' }}>
+                          <ProcessBreakdown kind={j.kind} id={j.id} />
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   );
                 })}
               </tbody>

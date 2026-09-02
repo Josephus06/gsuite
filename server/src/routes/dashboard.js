@@ -794,6 +794,116 @@ router.get('/sales-calendar', requireAuth, async (req, res, next) => {
   }
 });
 
+// The processes under one scheduled job order, with where each one has actually got to.
+//
+// The calendar could already say a job order was "Not Started" or "Running" as a whole, which is
+// the sum of its parts and answers nothing useful: a rep chasing a customer wants to know that
+// printing is done and cutting has not started, not that the job is "in progress". These are the
+// same rows the production floor works from, read rather than written.
+//
+// STATUS IS DERIVED, not stored. A process line carries assignment_started_at and
+// assignment_ended_at, and every Play/Hold pair opens and closes a row in
+// job_order_process_sessions. So:
+//   done        -- assignment_ended_at is set
+//   in progress -- a session is open right now (started, never held or finished)
+//   on hold     -- it has been started, but no session is open and it is not finished
+//   not started -- never started
+// There is no status column to disagree with, which is why Hold is visible at all: nothing
+// writes the word "held" anywhere.
+//
+// NSTDJO is answered honestly rather than emptily. Non-standard job orders have no process
+// table in this build -- they carry materials and a single layout stage
+// (layout_started_at / layout_ended_at) -- so the route says so and returns that one stage,
+// instead of an empty list that reads as "nothing scheduled".
+router.get('/scheduled-processes/:kind/:id', requireAuth, async (req, res, next) => {
+  try {
+    const kind = String(req.params.kind).toUpperCase();
+    if (kind !== 'JO' && kind !== 'NSTDJO') return res.status(400).json({ error: 'Unknown document type.' });
+
+    // Scoped exactly as the calendar that links here: an admin sees any job order, a rep only
+    // their own, a supervisor their team's. Anything else is a 404, matching the lists.
+    const scope = await resolveScope(req.user.id);
+    const unrestricted = scope.role === 'admin';
+    const allowed = scope.employeeIds || [];
+    if (!unrestricted && !allowed.length) return res.status(404).json({ error: 'Not found' });
+
+    if (kind === 'NSTDJO') {
+      const [tbl] = await pool.query("SHOW TABLES LIKE 'non_standard_job_orders'");
+      if (!tbl.length) return res.status(404).json({ error: 'Not found' });
+      const [[n]] = await pool.query(
+        `SELECT id, nstdjo_no, sales_rep_id, sub_status, layout_started_at, layout_ended_at
+           FROM non_standard_job_orders WHERE id = ?`, [req.params.id]);
+      if (!n) return res.status(404).json({ error: 'Not found' });
+      if (!unrestricted && !allowed.map(String).includes(String(n.sales_rep_id))) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+      const status = n.layout_ended_at ? 'done' : n.layout_started_at ? 'in_progress' : 'not_started';
+      return res.json({
+        kind,
+        // Said out loud so the screen can explain the single row rather than look broken.
+        hasProcesses: false,
+        note: 'A non-standard job order is not broken into processes in this build -- it carries one layout stage.',
+        processes: [{
+          id: n.id,
+          lineNo: 1,
+          processName: 'Layout',
+          itemName: null,
+          assignedTo: null,
+          status,
+          startedAt: n.layout_started_at,
+          endedAt: n.layout_ended_at,
+        }],
+      });
+    }
+
+    const [[jo]] = await pool.query('SELECT id, sales_rep_id FROM job_orders WHERE id = ?', [req.params.id]);
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!unrestricted && !allowed.map(String).includes(String(jo.sales_rep_id))) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+
+    const [rows] = await pool.query(
+      `SELECT jop.id, jop.line_no, jop.assignment_started_at, jop.assignment_ended_at,
+              jop.total, jop.total_completed, jop.unit,
+              pr.process_name, i.display_name AS item_name,
+              CONCAT(e.first_name, ' ', e.last_name) AS assigned_to,
+              (SELECT COUNT(*) FROM job_order_process_sessions ss
+                WHERE ss.job_order_process_id = jop.id AND ss.ended_at IS NULL) AS open_sessions
+         FROM job_order_processes jop
+         LEFT JOIN processes pr ON pr.id = jop.process_id
+         LEFT JOIN inventories i ON i.id = jop.item_id
+         LEFT JOIN employees e ON e.id = jop.assigned_employee_id
+        WHERE jop.job_order_id = ?
+        ORDER BY jop.line_no, jop.id`,
+      [req.params.id],
+    );
+
+    return res.json({
+      kind,
+      hasProcesses: true,
+      processes: rows.map((r) => ({
+        id: r.id,
+        lineNo: r.line_no,
+        processName: r.process_name,
+        itemName: r.item_name,
+        assignedTo: r.assigned_to && r.assigned_to.trim() ? r.assigned_to : null,
+        status: r.assignment_ended_at ? 'done'
+          : Number(r.open_sessions) > 0 ? 'in_progress'
+            : r.assignment_started_at ? 'on_hold' : 'not_started',
+        startedAt: r.assignment_started_at,
+        endedAt: r.assignment_ended_at,
+        // How much of the line has been recorded as completed, which is a different question
+        // from whether the assignment has been stopped.
+        total: r.total,
+        totalCompleted: r.total_completed,
+        unit: r.unit,
+      })),
+    });
+  } catch (err) {
+    return next(err);
+  }
+});
+
 // The production planner's calendar: every job order whose forecast window (Planned Start ->
 // Planned End) touches the month being viewed. Spans are returned as-is rather than expanded
 // into one row per day -- a job planned across three weeks would otherwise be sent twenty
