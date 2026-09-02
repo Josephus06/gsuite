@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 
 const router = express.Router();
 const ROUTE = '/hrd';
@@ -15,7 +15,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   try {
     const [rows] = await pool.query(
       `SELECT r.id, r.name, r.description, r.created_at, r.updated_at,
-              u.display_name AS created_by_name,
+              r.created_by_user_id, u.display_name AS created_by_name,
               (SELECT COUNT(*) FROM hrd_room_files f WHERE f.room_id = r.id) AS file_count,
               (SELECT COALESCE(SUM(f.size_bytes), 0) FROM hrd_room_files f WHERE f.room_id = r.id) AS total_bytes
          FROM hrd_rooms r
@@ -52,7 +52,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[room]] = await pool.query(
-      `SELECT r.id, r.name, r.description, r.created_at, u.display_name AS created_by_name
+      `SELECT r.id, r.name, r.description, r.created_at,
+              r.created_by_user_id, u.display_name AS created_by_name
          FROM hrd_rooms r LEFT JOIN users u ON u.id = r.created_by_user_id WHERE r.id = ?`,
       [req.params.id],
     );
@@ -69,10 +70,27 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
   } catch (err) { next(err); }
 });
 
-router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+// Renaming a room is open to whoever made it, as well as to anyone with can_edit on HRD.
+//
+// can_edit here is held by the two System Admin accounts and nobody else, so before this the
+// person who created a room -- and who is the one to notice they had typed the name wrong --
+// could not correct it. Same dual-check shape as forward-to-design on Job Orders: the specific
+// right first, the generic permission as the fallback that keeps admins working.
+//
+// Deliberately NOT extended to delete. Renaming a room you named is tidying up; deleting one
+// takes every file in it with it, which is why that route asks for confirmation even from an
+// admin.
+router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const name = String(req.body?.name || '').trim();
     if (!name) return res.status(400).json({ error: 'Room name is required.' });
+
+    const [[room]] = await pool.query('SELECT created_by_user_id FROM hrd_rooms WHERE id = ?', [req.params.id]);
+    if (!room) return res.status(404).json({ error: 'Room not found.' });
+    if (String(room.created_by_user_id) !== String(req.user.id) && !(await userCan(req.user.id, ROUTE, 'can_edit'))) {
+      return res.status(403).json({ error: 'Only the person who created this room, or an HRD editor, can rename it.' });
+    }
+
     const [result] = await pool.query(
       'UPDATE hrd_rooms SET name = ?, description = ? WHERE id = ?',
       [name.slice(0, 150), String(req.body?.description || '').trim().slice(0, 5000) || null, req.params.id],

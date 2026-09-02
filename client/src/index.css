@@ -2014,6 +2014,21 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
   transition: transform 0.08s ease, box-shadow 0.08s ease;
 }
 .hrd-room-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12); }
+/* The rename control sits over the card rather than inside it -- the card is a button, and a
+   button within a button is invalid HTML. The slot is the positioning context; the card keeps
+   the whole slot, so nothing about clicking through to the room changes. */
+.hrd-room-slot { position: relative; display: flex; }
+.hrd-room-slot > .hrd-room-card { flex: 1; }
+.hrd-room-rename {
+  position: absolute; top: 8px; right: 8px;
+  opacity: 0; transition: opacity 0.12s ease;
+  padding: 2px 8px; line-height: 1.4;
+}
+/* Shown on hover, but never hidden from the keyboard: focus-visible brings it back, and it
+   stays visible on touch, where there is no hover to reveal it. */
+.hrd-room-slot:hover .hrd-room-rename,
+.hrd-room-rename:focus-visible { opacity: 1; }
+@media (hover: none) { .hrd-room-rename { opacity: 1; } }
 .hrd-room-card:focus-visible { outline: 2px solid var(--primary, #6b3fa0); outline-offset: 2px; }
 .hrd-room-name { font-weight: 600; font-size: 1.05rem; }
 .hrd-room-desc { font-size: 0.9rem; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }

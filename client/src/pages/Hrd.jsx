@@ -19,10 +19,13 @@ function formatBytes(n) {
 // fills in.
 export default function Hrd() {
   const navigate = useNavigate();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
+  // The room being renamed, or null. Holds its own copy of the fields so a half-typed name is
+  // not written onto the card behind the dialog.
+  const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ name: '', description: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -44,8 +47,10 @@ export default function Hrd() {
     setSaving(true);
     setError('');
     try {
-      await api.post(ROUTE, form);
+      if (editing) await api.put(`${ROUTE}/${editing.id}`, form);
+      else await api.post(ROUTE, form);
       setAdding(false);
+      setEditing(null);
       setForm({ name: '', description: '' });
       await load();
     } catch (err) {
@@ -53,6 +58,17 @@ export default function Hrd() {
     } finally {
       setSaving(false);
     }
+  }
+
+  // Whoever made the room may rename it, and so may anyone with edit rights on HRD -- the same
+  // pair the server accepts, so the pencil is never shown on a room the save would refuse.
+  const mayRename = (room) => can(ROUTE, 'can_edit')
+    || (!!user?.id && String(room.created_by_user_id) === String(user.id));
+
+  function openRename(room) {
+    setError('');
+    setEditing(room);
+    setForm({ name: room.name || '', description: room.description || '' });
   }
 
   return (
@@ -72,26 +88,43 @@ export default function Hrd() {
             </div>
           )}
           {rooms.map((room) => (
-            // The whole card is the target, not a link buried in it -- the card IS the room.
-            <button
-              type="button"
-              key={room.id}
-              className="card hrd-room-card"
-              onClick={() => navigate(`${ROUTE}/${room.id}`)}
-            >
-              <div className="hrd-room-name">{room.name}</div>
-              {room.description && <div className="muted hrd-room-desc">{room.description}</div>}
-              <div className="hrd-room-meta">
-                {room.file_count} file{Number(room.file_count) === 1 ? '' : 's'}
-                {Number(room.total_bytes) > 0 && ` · ${formatBytes(room.total_bytes)}`}
-              </div>
-            </button>
+            // The card and its rename control are siblings, not nested. The card used to be one
+            // big <button>, and a second button inside it would be invalid HTML -- the click
+            // target of the inner one is not reliably its own.
+            <div key={room.id} className="hrd-room-slot">
+              <button
+                type="button"
+                className="card hrd-room-card"
+                onClick={() => navigate(`${ROUTE}/${room.id}`)}
+              >
+                <div className="hrd-room-name">{room.name}</div>
+                {room.description && <div className="muted hrd-room-desc">{room.description}</div>}
+                <div className="hrd-room-meta">
+                  {room.file_count} file{Number(room.file_count) === 1 ? '' : 's'}
+                  {Number(room.total_bytes) > 0 && ` · ${formatBytes(room.total_bytes)}`}
+                </div>
+              </button>
+              {mayRename(room) && (
+                <button
+                  type="button"
+                  className="btn btn-sm hrd-room-rename"
+                  title={`Rename ${room.name}`}
+                  aria-label={`Rename ${room.name}`}
+                  onClick={() => openRename(room)}
+                >
+                  ✎
+                </button>
+              )}
+            </div>
           ))}
         </div>
       )}
 
-      {adding && (
-        <Modal title="Add Room" onClose={() => !saving && setAdding(false)}>
+      {(adding || editing) && (
+        <Modal
+          title={editing ? `Rename ${editing.name}` : 'Add Room'}
+          onClose={() => { if (!saving) { setAdding(false); setEditing(null); } }}
+        >
           {error && <div className="error-banner">{error}</div>}
           <div className="field">
             <label>Room Name *</label>
@@ -112,7 +145,7 @@ export default function Hrd() {
             />
           </div>
           <div className="wizard-actions">
-            <button type="button" className="btn" disabled={saving} onClick={() => setAdding(false)}>Cancel</button>
+            <button type="button" className="btn" disabled={saving} onClick={() => { setAdding(false); setEditing(null); }}>Cancel</button>
             <button type="button" className="btn btn-primary" disabled={saving} onClick={save}>
               {saving ? 'Saving…' : 'Save'}
             </button>
