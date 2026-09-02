@@ -43,6 +43,30 @@ const TIMER_STATUS_STYLE = {
   Running: { background: 'rgba(34,211,238,0.15)', color: '#22d3ee' },
   Completed: { background: 'rgba(52,211,153,0.15)', color: '#34d399' },
 };
+// WHOSE STATUS IS THIS. The timer states above describe the artist's layout stage: it is
+// finished the moment the artist stops the clock, which on a job order is long before the job
+// itself is done. An artist asking "have I finished my layout" is answered by it; a sales rep
+// asking "where is my customer's job" is not -- and was being told "Completed" about a job
+// order still sitting at Released with production not yet scheduled. So the sales calendar
+// reports the document's own status instead, and only the artist calendar keeps the timer.
+const DOC_STATUS_STYLE = {
+  completed: { background: 'var(--color-success-bg)', color: 'var(--color-success-text)' },
+  released: { background: 'var(--color-primary-bg)', color: 'var(--color-primary-text)' },
+  cancelled: { background: 'var(--color-danger-bg)', color: 'var(--color-danger-text)' },
+  pending: { background: 'var(--color-warning-bg)', color: 'var(--color-warning-text)' },
+  neutral: { background: 'var(--color-neutral-bg)', color: 'var(--color-neutral-text)' },
+};
+// Matched on keywords, not on an exact list: the status vocabulary differs between job orders
+// and non-standard ones and has grown over time, and an unrecognised status must still render
+// as itself in neutral rather than disappear into an unstyled badge.
+function docStatusStyle(status) {
+  const v = String(status || '').toLowerCase();
+  if (v.includes('complet')) return DOC_STATUS_STYLE.completed;
+  if (v.includes('cancel') || v.includes('disapprov')) return DOC_STATUS_STYLE.cancelled;
+  if (v.includes('pending') || v.includes('planned') || v.includes('for ')) return DOC_STATUS_STYLE.pending;
+  if (v.includes('released')) return DOC_STATUS_STYLE.released;
+  return DOC_STATUS_STYLE.neutral;
+}
 function formatDateTime(v) { return v ? new Date(v).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'; }
 
 const JOB_TYPE_COLORS = ['#22d3ee', '#f472b6', '#a78bfa', '#fbbf24', '#34d399'];
@@ -395,6 +419,8 @@ function SalesDashboard({ data, user, navigate }) {
             // The incentive on these rows is the artist's layout incentive, not the rep's
             // commission, and this endpoint does not send it -- it read 0.00 on every row.
             showIncentive={false}
+            // Sales asks where the job is, not whether the artist has stopped the clock.
+            statusMode="document"
             pathFor={(j) => (j.kind === 'NSTDJO' ? `/non-standard-job-orders/${j.id}` : `/job-orders/${j.id}`)}
             tooltipFor={(j) => [
               j.jobOrderNo,
@@ -867,7 +893,7 @@ function ProcessBreakdown({ kind, id }) {
   );
 }
 
-function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, tooltipFor, showIncentive = true }) {
+function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, tooltipFor, showIncentive = true, statusMode = 'timer' }) {
   // Which row's processes are open. One at a time: the popup is not tall enough for two
   // breakdowns, and the question is always about one job order.
   const [openRow, setOpenRow] = useState(null);
@@ -941,6 +967,7 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
               <span className="artist-calendar-daynum">{dayNo}</span>
               {dayJobs.slice(0, 3).map((j) => {
                 const state = j.done ? 'Completed' : j.running ? 'Running' : 'Not Started';
+                const docStatus = statusMode === 'document' && j.status ? j.status : null;
                 // A Job Order and a Non-Standard Job Order can share an id, so the key has to
                 // carry the kind -- and each has its own run screen to open.
                 const runPath = pathFor
@@ -953,11 +980,11 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
                   <span
                     key={`${j.kind || 'JO'}-${j.id}`}
                     className="artist-calendar-chip"
-                    style={TIMER_STATUS_STYLE[state]}
+                    style={docStatus ? docStatusStyle(docStatus) : TIMER_STATUS_STYLE[state]}
                     data-run-path={runPath}
                     title={tooltipFor
                       ? tooltipFor(j)
-                      : `${j.jobOrderNo} · ${j.customerName || '—'} · ${state} · Planned ${formatDateTime(j.plannedStartAt)} → ${formatDateTime(j.plannedEndAt)}`}
+                      : `${j.jobOrderNo} · ${j.customerName || '—'} · ${docStatus || state} · Planned ${formatDateTime(j.plannedStartAt)} → ${formatDateTime(j.plannedEndAt)}`}
                   >
                     {j.jobOrderNo}
                   </span>
@@ -982,7 +1009,7 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
                   <th>JO / NSTDJO #</th>
                   <th>Status</th>
                   <th>Planned End</th>
-                  <th>Actual End</th>
+                  <th>{statusMode === 'document' ? 'Layout end' : 'Actual End'}</th>
                   {showIncentive && <th>Incentive</th>}
                   <th></th>
                 </tr>
@@ -997,6 +1024,7 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
                   const state = j.done ? 'Completed'
                     : j.running ? 'Running'
                     : j.startedAt ? 'Held' : 'Not Started';
+                  const docStatus = statusMode === 'document' && j.status ? j.status : null;
                   const runPath = pathFor
                     ? pathFor(j)
                     : (j.kind === 'NSTDJO' ? `/assigned-jo/nstdjo/${j.id}` : `/assigned-jo/${j.id}`);
@@ -1026,7 +1054,9 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
                         {/* Both statuses, because they answer different questions: sub status
                             is whose hands the job is in, the timer state is how far this
                             artist got with it. */}
-                        <span className="badge" style={TIMER_STATUS_STYLE[state]}>{state}</span>
+                        <span className="badge" style={docStatus ? docStatusStyle(docStatus) : TIMER_STATUS_STYLE[state]}>
+                          {docStatus || state}
+                        </span>
                         {j.subStatus && <div className="muted" style={{ fontSize: '0.85em' }}>{j.subStatus}</div>}
                       </td>
                       <td style={{ whiteSpace: 'nowrap' }}>{formatDateTime(j.plannedEndAt)}</td>
