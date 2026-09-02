@@ -392,6 +392,9 @@ function SalesDashboard({ data, user, navigate }) {
             loading={calLoading}
             onMonth={loadMonth}
             navigate={navigate}
+            // The incentive on these rows is the artist's layout incentive, not the rep's
+            // commission, and this endpoint does not send it -- it read 0.00 on every row.
+            showIncentive={false}
             pathFor={(j) => (j.kind === 'NSTDJO' ? `/non-standard-job-orders/${j.id}` : `/job-orders/${j.id}`)}
             tooltipFor={(j) => [
               j.jobOrderNo,
@@ -864,7 +867,7 @@ function ProcessBreakdown({ kind, id }) {
   );
 }
 
-function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, tooltipFor }) {
+function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, tooltipFor, showIncentive = true }) {
   // Which row's processes are open. One at a time: the popup is not tall enough for two
   // breakdowns, and the question is always about one job order.
   const [openRow, setOpenRow] = useState(null);
@@ -980,18 +983,20 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
                   <th>Status</th>
                   <th>Planned End</th>
                   <th>Actual End</th>
-                  <th>Incentive</th>
+                  {showIncentive && <th>Incentive</th>}
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 {!(byDay.get(openDay) || []).length && (
-                  <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                  <tr><td colSpan={showIncentive ? 6 : 5} className="muted" style={{ textAlign: 'center', padding: 20 }}>
                     Nothing scheduled on this day.
                   </td></tr>
                 )}
                 {(byDay.get(openDay) || []).map((j) => {
-                  const state = j.done ? 'Completed' : j.running ? 'Running' : 'Not Started';
+                  const state = j.done ? 'Completed'
+                    : j.running ? 'Running'
+                    : j.startedAt ? 'Held' : 'Not Started';
                   const runPath = pathFor
                     ? pathFor(j)
                     : (j.kind === 'NSTDJO' ? `/assigned-jo/nstdjo/${j.id}` : `/assigned-jo/${j.id}`);
@@ -1034,17 +1039,19 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
                           <div className="muted" style={{ fontSize: '0.85em' }}>different day</div>
                         )}
                       </td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        {Number(j.incentiveAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        {j.incentiveBasis && <div className="muted" style={{ fontSize: '0.85em' }}>{j.incentiveBasis}</div>}
-                      </td>
+                      {showIncentive && (
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          {Number(j.incentiveAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {j.incentiveBasis && <div className="muted" style={{ fontSize: '0.85em' }}>{j.incentiveBasis}</div>}
+                        </td>
+                      )}
                       <td>
                         <button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(runPath)}>Open</button>
                       </td>
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan={6} style={{ background: 'var(--color-neutral-bg)' }}>
+                        <td colSpan={showIncentive ? 6 : 5} style={{ background: 'var(--color-neutral-bg)' }}>
                           <ProcessBreakdown kind={j.kind} id={j.id} />
                         </td>
                       </tr>

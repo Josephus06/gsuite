@@ -464,7 +464,8 @@ async function artistIncentiveForMonth(employeeId, monthStart, monthEnd) {
 async function artistCalendar(employeeId, monthStart, monthEnd) {
   const [rows] = await pool.query(
     `SELECT jo.id, jo.job_order_no, jo.description, jo.sub_status,
-            jo.planned_start_at, jo.planned_end_at, jo.layout_ended_at,
+            jo.planned_start_at, jo.planned_end_at,
+            jo.layout_started_at, jo.layout_ended_at,
             c.name AS customer_name,
             -- Same expressions the Artist Incentive report and the Assigned JO list use, so a
             -- day's popup cannot quote a different figure from the other two.
@@ -489,7 +490,8 @@ async function artistCalendar(employeeId, monthStart, monthEnd) {
   if (tbl.length) {
     [nstdjoRows] = await pool.query(
       `SELECT n.id, n.nstdjo_no AS job_order_no, n.description, n.sub_status,
-              n.planned_start_at, n.planned_end_at, n.layout_ended_at,
+              n.planned_start_at, n.planned_end_at,
+              n.layout_started_at, n.layout_ended_at,
               c.name AS customer_name,
               ${nstdjoIncentiveExpression('n')} AS incentive_amount,
               '${NSTDJO_INCENTIVE_BASIS}' AS incentive_basis,
@@ -521,6 +523,7 @@ async function artistCalendar(employeeId, monthStart, monthEnd) {
     actualEndAt: r.layout_ended_at,
     done: !!r.layout_ended_at,
     running: !!Number(r.is_running),
+    startedAt: r.layout_started_at,
     day: r.planned_start_at ? String(r.planned_start_at).slice(0, 10) : null,
   });
 
@@ -653,9 +656,12 @@ async function salesCalendar(employeeIds, monthStart, monthEnd) {
 
   const [rows] = await pool.query(
     `SELECT jo.id, jo.job_order_no, jo.description, jo.status, jo.sub_status,
-            jo.delivery_date, jo.planned_start_at, jo.planned_end_at, jo.layout_ended_at,
+            jo.delivery_date, jo.planned_start_at, jo.planned_end_at,
+            jo.layout_started_at, jo.layout_ended_at,
             c.name AS customer_name,
-            CONCAT(a.first_name, ' ', a.last_name) AS artist_name
+            CONCAT(a.first_name, ' ', a.last_name) AS artist_name,
+            (SELECT COUNT(*) FROM job_order_layout_sessions s
+              WHERE s.job_order_id = jo.id AND s.ended_at IS NULL) AS is_running
        FROM job_orders jo
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
        LEFT JOIN customers c ON c.id = so.customer_id
@@ -674,9 +680,12 @@ async function salesCalendar(employeeIds, monthStart, monthEnd) {
   if (tbl.length) {
     [nstdjoRows] = await pool.query(
       `SELECT n.id, n.nstdjo_no AS job_order_no, n.description, n.status, n.sub_status,
-              n.delivery_date, n.planned_start_at, n.planned_end_at, n.layout_ended_at,
+              n.delivery_date, n.planned_start_at, n.planned_end_at,
+              n.layout_started_at, n.layout_ended_at,
               c.name AS customer_name,
-              CONCAT(a.first_name, ' ', a.last_name) AS artist_name
+              CONCAT(a.first_name, ' ', a.last_name) AS artist_name,
+              (SELECT COUNT(*) FROM non_standard_job_order_layout_sessions s
+                WHERE s.non_standard_job_order_id = n.id AND s.ended_at IS NULL) AS is_running
          FROM non_standard_job_orders n
          LEFT JOIN customers c ON c.id = n.customer_id
          LEFT JOIN employees a ON a.id = n.artist_employee_id
@@ -705,7 +714,18 @@ async function salesCalendar(employeeIds, monthStart, monthEnd) {
       // Which date this chip is actually sitting on, so the tooltip can say so rather than
       // leaving the rep to guess why a job is on the day it is.
       anchor: r.delivery_date ? 'delivery' : 'planned',
+      // Actual End comes from the SAME timestamp as the Completed status beside it. Sending
+      // one without the other is what made a row read "Completed" over an empty Actual End:
+      // the popup is shared with the artist calendar, which has always sent both, so the
+      // column was rendering a field this shape simply never included.
+      actualEndAt: r.layout_ended_at,
       done: !!r.layout_ended_at,
+      // Likewise "Running": without it the status could only ever say Completed or Not
+      // Started, and a job in the middle of layout read as untouched.
+      running: !!Number(r.is_running),
+      // Started but with no clock running is "held", which is a different thing from
+      // "not started" to a rep phoning a customer about a job nobody is working on.
+      startedAt: r.layout_started_at,
       // Sliced off the string rather than parsed into a Date: at UTC+8 a DATE column read back
       // through new Date() lands at 08:00 and can format onto the previous day.
       day: anchor ? String(anchor).slice(0, 10) : null,
@@ -831,13 +851,24 @@ router.get('/scheduled-processes/:kind/:id', requireAuth, async (req, res, next)
       const [tbl] = await pool.query("SHOW TABLES LIKE 'non_standard_job_orders'");
       if (!tbl.length) return res.status(404).json({ error: 'Not found' });
       const [[n]] = await pool.query(
-        `SELECT id, nstdjo_no, sales_rep_id, sub_status, layout_started_at, layout_ended_at
-           FROM non_standard_job_orders WHERE id = ?`, [req.params.id]);
+        `SELECT n.id, n.nstdjo_no, n.sales_rep_id, n.sub_status,
+                n.layout_started_at, n.layout_ended_at,
+                CONCAT(a.first_name, ' ', a.last_name) AS artist_name,
+                (SELECT COUNT(*) FROM non_standard_job_order_layout_sessions s
+                  WHERE s.non_standard_job_order_id = n.id AND s.ended_at IS NULL) AS open_sessions
+           FROM non_standard_job_orders n
+           LEFT JOIN employees a ON a.id = n.artist_employee_id
+          WHERE n.id = ?`, [req.params.id]);
       if (!n) return res.status(404).json({ error: 'Not found' });
       if (!unrestricted && !allowed.map(String).includes(String(n.sales_rep_id))) {
         return res.status(404).json({ error: 'Not found' });
       }
-      const status = n.layout_ended_at ? 'done' : n.layout_started_at ? 'in_progress' : 'not_started';
+      // Same three states the job order processes report, read the same way: a stage that was
+      // started but has no clock running is on hold, not in progress. Calling every started
+      // stage "in progress" is what makes a stalled job look like it is moving.
+      const status = n.layout_ended_at ? 'done'
+        : Number(n.open_sessions) > 0 ? 'in_progress'
+        : n.layout_started_at ? 'on_hold' : 'not_started';
       return res.json({
         kind,
         // Said out loud so the screen can explain the single row rather than look broken.
@@ -848,7 +879,9 @@ router.get('/scheduled-processes/:kind/:id', requireAuth, async (req, res, next)
           lineNo: 1,
           processName: 'Layout',
           itemName: null,
-          assignedTo: null,
+          // The layout stage belongs to the artist the NSTDJO was assigned to. Reporting it
+          // as Unassigned was wrong on a document that names an artist.
+          assignedTo: n.artist_name && n.artist_name.trim() ? n.artist_name : null,
           status,
           startedAt: n.layout_started_at,
           endedAt: n.layout_ended_at,
