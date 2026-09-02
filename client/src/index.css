@@ -1,45 +1,9 @@
-:root {
-  --text: #3f3d45;
-  --text-h: #08060d;
-  --bg: #f5f5f7;
-  --surface: #ffffff;
-  --border: #e2e1e6;
-  --accent: #6d28d9;
-  --accent-hover: #5b21b6;
-  --accent-bg: rgba(109, 40, 217, 0.08);
-  --danger: #dc2626;
-  --danger-bg: rgba(220, 38, 38, 0.08);
-  --success: #16a34a;
-  --warning: #f59f00;
-  --warning-bg: rgba(245, 159, 0, 0.1);
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --shadow: rgba(0, 0, 0, 0.08) 0 4px 14px -2px;
-  /* Translucent card fill, used only over the wallpaper -- see the data-bg card rule. */
-  --card-glass: rgba(255, 255, 255, 0.4);
-  /* color-scheme is set per-theme on <html> by src/utils/theme.js. */
-}
+/* The design tokens are the source of truth for colour, type, spacing and shape.
+   They used to be two :root blocks of literals right here; they now live in
+   styles/tokens.css, which also carries the dark palette this file used to hold.
+   Imported first so every rule below reads from it. */
+@import './styles/tokens.css';
 
-/* Dark palette. Driven by the data-theme attribute rather than a prefers-color-scheme
-   media query, so the topbar toggle can override the OS in BOTH directions -- a light-mode
-   user can force dark and vice versa. index.html sets the attribute before first paint;
-   src/utils/theme.js keeps it in step. */
-:root[data-theme="dark"] {
-  --text: #d1d0d6;
-  --text-h: #f3f4f6;
-  --bg: #121218;
-  --surface: #1a1a22;
-  --border: #2e2d38;
-  --accent: #a78bfa;
-  --accent-hover: #c4b5fd;
-  --accent-bg: rgba(167, 139, 250, 0.12);
-  --danger: #f87171;
-  --danger-bg: rgba(248, 113, 113, 0.12);
-  --success: #4ade80;
-  --warning: #fbbf24;
-  --warning-bg: rgba(251, 191, 36, 0.14);
-  --shadow: rgba(0, 0, 0, 0.4) 0 4px 14px -2px;
-  --card-glass: rgba(26, 26, 34, 0.4);
-}
 
 * {
   box-sizing: border-box;
@@ -144,59 +108,128 @@ button {
   cursor: pointer;
 }
 
+/* INPUT / SELECT / TEXTAREA — 36px tall, hairline border, 8px radius.
+   A textarea is the one exception to the fixed height: it is sized by its rows. */
 input, select, textarea {
   font: inherit;
-  color: var(--text-h);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 7px 10px;
+  font-size: var(--text-label);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 0 var(--space-3);
+  height: var(--control-height);
   width: 100%;
 }
+textarea {
+  height: auto;
+  padding: var(--space-2) var(--space-3);
+  line-height: var(--leading-body);
+}
+/* The focus ring is a soft halo of primary, not the old hard 2px outline, and it sits
+   OUTSIDE the control so it never eats a pixel of the field's own border. */
 input:focus, select:focus, textarea:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: -1px;
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--focus-ring);
+}
+input:disabled, select:disabled, textarea:disabled {
+  background: var(--color-neutral-bg);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
 }
 
+/* The 13px label above a field, in secondary text. Regular weight: bolding a label is
+   emphasis nobody asked for, and every field on a form would carry it. */
 label {
   display: block;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 4px;
+  font-size: var(--text-label);
+  font-weight: var(--weight-regular);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-1);
 }
 
-.field { margin-bottom: 12px; }
-.field-row { display: flex; gap: 12px; }
+.field { margin-bottom: var(--space-3); }
+.field-row { display: flex; gap: var(--space-3); }
 .field-row > .field { flex: 1; }
-.field-checkbox { display: flex; align-items: center; gap: 8px; }
-.field-checkbox input { width: auto; }
+.field-checkbox { display: flex; align-items: center; gap: var(--space-2); }
+/* A checkbox is not a text field: it must not inherit the 36px control height. */
+.field-checkbox input { width: auto; height: auto; }
 .field-checkbox label { margin: 0; }
 
+/* BUTTONS — 36px tall, 8px radius, medium weight, four variants.
+   .btn on its own IS the secondary variant: transparent on a strong hairline. That is
+   deliberate, because 728 of the 1,605 button uses in this codebase carry no variant class
+   at all, and secondary is what those should be. */
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-h);
-  padding: 7px 14px;
-  font-weight: 500;
-  transition: background 0.15s;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--control-height);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-control);
+  border: var(--border-hairline) solid var(--color-border-strong);
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: var(--text-label);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
-.btn:hover { background: var(--accent-bg); }
+.btn:hover { background: var(--color-neutral-bg); }
+/* Every variant shares one focus ring, so focus looks the same wherever it lands. */
+.btn:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--focus-ring);
+}
+
+/* PRIMARY — the only solid button. --color-on-primary rather than white: in dark mode the
+   lavender needs dark ink, and white on it measures 3.11:1. */
 .btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-on-primary);
 }
-.btn-primary:hover { background: var(--accent-hover); }
-.btn-danger { color: var(--danger); }
-.btn-danger:hover { background: var(--danger-bg); }
-.btn-warning { background: var(--warning); border-color: var(--warning); color: #fff; }
-.btn-warning:hover { opacity: 0.9; }
-.btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn-primary:hover {
+  background: var(--color-primary-text);
+  border-color: var(--color-primary-text);
+}
+
+/* GHOST — no border at all, secondary text. For the tertiary actions that should recede. */
+.btn-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+.btn-ghost:hover { background: var(--color-neutral-bg); color: var(--color-text-primary); }
+
+/* DESTRUCTIVE — outlined, never solid. A delete button that shouts in solid red on every
+   row is noise; the danger reading comes from the colour, not from the fill. */
+.btn-danger {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+  background: transparent;
+}
+.btn-danger:hover { background: var(--color-danger-bg); }
+
+/* WARNING is not in the design system's four variants, but 52 buttons use it -- Hold,
+   Resume, Sales Revision. Kept, and given the same outlined treatment as destructive so it
+   reads as a sibling rather than as a leftover. */
+.btn-warning {
+  border-color: var(--color-warning);
+  color: var(--color-warning-text);
+  background: transparent;
+}
+.btn-warning:hover { background: var(--color-warning-bg); }
+
+/* The dense variant for table rows. Shorter, but still on the scale. */
+.btn-sm {
+  height: 28px;
+  padding: 0 var(--space-3);
+  font-size: var(--text-caption);
+}
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .app-shell { display: flex; flex-direction: column; min-height: 100vh; }
@@ -436,11 +469,15 @@ label {
 
 .content { padding: 24px; flex: 1; overflow: auto; }
 
+/* CARD — a white surface on a hairline, 12px radius, flat.
+   The 16px/20px padding is the brief's explicit figure. 20px is not on the 4/8/12/16/24
+   spacing scale, so it is named here rather than left as a loose literal: the specific
+   instruction wins over the general rule, but it should be visible that it does. */
 .card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 20px;
+  background: var(--color-surface);
+  border: var(--border-hairline) solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: var(--space-4) var(--card-padding-x);
   box-shadow: var(--shadow);
 }
 
@@ -500,17 +537,40 @@ tbody tr:hover { background: var(--accent-bg); }
 .impersonation-banner strong { color: #fff; }
 .impersonation-banner .btn { background: #fff; color: #92400e; border-color: #fff; font-weight: 600; }
 
+/* BADGE — 12px on a tint, with the darker text of the same family on it. Never white on a
+   tint: every pairing below measures 8:1 or better, where white would have been around 2:1.
+   Default is the neutral pair, so a badge with no modifier is still legible. */
 .badge {
   display: inline-flex;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
+  align-items: center;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-control);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  background: var(--color-neutral-bg);
+  color: var(--color-neutral-text);
 }
-.badge-success { background: rgba(22, 163, 74, 0.12); color: var(--success); }
-.badge-muted { background: var(--border); color: var(--text); }
-.badge-danger { background: var(--danger-bg); color: var(--danger); }
-.badge-info { background: var(--accent-bg); color: var(--accent); }
+.badge-success { background: var(--color-success-bg); color: var(--color-success-text); }
+.badge-muted { background: var(--color-neutral-bg); color: var(--color-neutral-text); }
+.badge-danger { background: var(--color-danger-bg); color: var(--color-danger-text); }
+.badge-info { background: var(--color-primary-bg); color: var(--color-primary-text); }
+.badge-warning { background: var(--color-warning-bg); color: var(--color-warning-text); }
+
+/* METRIC BLOCK — a 13px muted label over a 24px number. There was no such component: the
+   dashboard rolled its own and every other screen reached for a bare <div>. */
+.metric { display: flex; flex-direction: column; gap: var(--space-1); }
+.metric-label {
+  font-size: var(--text-label);
+  font-weight: var(--weight-regular);
+  color: var(--color-text-muted);
+}
+.metric-value {
+  font-size: 24px;
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  color: var(--color-text-primary);
+}
 
 .modal-overlay {
   position: fixed;
@@ -1091,6 +1151,11 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
    cannot push the row off screen. Browsers without field-sizing (Firefox, Safari as of writing)
    ignore it and fall back to the default input width, i.e. the behaviour that is there today --
    no worse than before, and the ch-based bounds still apply. */
+/* The one place the 36px control height is wrong. This grid puts fourteen columns of
+   fields on a row; at 36px each the rows grow by a tenth and the grid fights the
+   compactness it was explicitly tuned for. 28px matches .btn-sm, so the dense contexts
+   agree with each other. */
+.spreadsheet-table input, .spreadsheet-table select { height: 28px; }
 .spreadsheet-table input, .spreadsheet-table select {
   border: 1px solid transparent;
   border-radius: 4px;
