@@ -636,18 +636,32 @@ async function artistMetrics(employeeId) {
   };
 }
 
-// The sales equivalent of artistCalendar. Two things differ, and both follow from who is
+// The sales equivalent of artistCalendar. Three things differ, and all follow from who is
 // looking at it.
 //
-// FIRST, the anchor date. The artist's calendar sits jobs on planned_start_at -- the day they
-// are meant to pick the work up. A sales rep is not doing the layout; what they carry is what
-// they promised the customer, so a job sits on its DELIVERY date. Anchoring their calendar on
-// the layout schedule would show them a month that answers a question they were not asking.
-// Where a job has no delivery date yet, it falls back to the planned start rather than
-// disappearing from the month altogether -- an invisible job order is the one failure mode a
-// calendar must not have -- and the chip says which date it is sitting on.
+// FIRST, which Job Orders are on it at all. A rep's calendar used to carry every JO they had
+// sold, including ones Production had not yet accepted -- so a date on it was a hope, not a
+// commitment, and a rep quoting it to a customer was quoting nothing. A Job Order now appears
+// only once Production has ACKNOWLEDGED it: production_stage past 'pending_for_scheduling'
+// (and past 'for_revision', which is the same job handed back to Sales, not yet accepted).
+// Acknowledge is the moment a scheduler signs up to the forecast (see production.js), so it is
+// the first moment a rep has something real to promise a customer.
 //
-// SECOND, the scope. employeeIds comes from resolveScope, so an account officer sees their own
+// SECOND, the anchor date. The artist's calendar sits jobs on planned_start_at -- the layout
+// schedule, the day the artist picks the work up. An acknowledged Job Order here sits on its
+// FORECAST window instead, planned_start_date -> planned_end_date: the days Production has
+// committed to building it. Both are guaranteed present, because Acknowledge refuses to run
+// without them. The window is sent as a span rather than one row per day -- a three-week job
+// would otherwise be sent twenty times over -- and the client walks it, exactly as the
+// planner's own production calendar does.
+//
+// Non-standard job orders are deliberately left as they were. They never enter the production
+// module at all: the table has no production_stage and no forecast columns, so there is no
+// acknowledgement to wait for and no forecast to sit on. They keep their delivery date,
+// falling back to the planned start where there is none -- an invisible job order is the one
+// failure mode a calendar must not have -- and the chip says which date it is sitting on.
+//
+// THIRD, the scope. employeeIds comes from resolveScope, so an account officer sees their own
 // jobs and a supervisor or manager sees their team's, exactly as every other figure on this
 // dashboard is scoped. There is no rep parameter to point somewhere else.
 async function salesCalendar(employeeIds, monthStart, monthEnd) {
@@ -656,7 +670,9 @@ async function salesCalendar(employeeIds, monthStart, monthEnd) {
 
   const [rows] = await pool.query(
     `SELECT jo.id, jo.job_order_no, jo.description, jo.status, jo.sub_status,
+            jo.production_stage,
             jo.delivery_date, jo.planned_start_at, jo.planned_end_at,
+            jo.planned_start_date, jo.planned_end_date,
             jo.layout_started_at, jo.layout_ended_at,
             c.name AS customer_name,
             CONCAT(a.first_name, ' ', a.last_name) AS artist_name,
@@ -667,10 +683,24 @@ async function salesCalendar(employeeIds, monthStart, monthEnd) {
        LEFT JOIN customers c ON c.id = so.customer_id
        LEFT JOIN employees a ON a.id = jo.artist_id
       WHERE jo.sales_rep_id IN (${placeholders})
-        AND COALESCE(jo.delivery_date, jo.planned_start_at) >= ?
-        AND COALESCE(jo.delivery_date, jo.planned_start_at) < ?
-      ORDER BY COALESCE(jo.delivery_date, jo.planned_start_at)`,
-    [...employeeIds, monthStart, monthEnd],
+        -- Acknowledged by Production, and nothing earlier. A NULL stage is a job order that
+        -- never reached the production floor at all; the two named stages are the ones that
+        -- sit before Acknowledge -- 'pending_for_scheduling' is waiting on it, 'for_revision'
+        -- has been pushed back to Sales to be corrected and returns through it.
+        AND jo.production_stage IS NOT NULL
+        AND jo.production_stage NOT IN ('pending_for_scheduling', 'for_revision')
+        AND jo.status <> 'Cancelled'
+        -- Belt and braces: Acknowledge cannot run without both forecast dates, but a job
+        -- migrated straight into a later stage has never been through it, and a span with a
+        -- missing end has no days to sit on.
+        AND jo.planned_start_date IS NOT NULL
+        AND jo.planned_end_date IS NOT NULL
+        -- Overlap, not containment: a forecast running across the month boundary belongs on
+        -- this month for the days it actually occupies.
+        AND jo.planned_start_date < ?
+        AND jo.planned_end_date >= ?
+      ORDER BY jo.planned_start_date, jo.job_order_no`,
+    [...employeeIds, monthEnd, monthStart],
   );
 
   // Same guard artistCalendar uses -- the NSTDJO tables are not present in every build, and a
@@ -697,8 +727,16 @@ async function salesCalendar(employeeIds, monthStart, monthEnd) {
     );
   }
 
+  // A Job Order sits on the forecast window Production acknowledged; a non-standard one has
+  // no such window and keeps sitting on its delivery date. Both come back carrying spanStart
+  // and spanEnd so the client can walk one loop over the month rather than branching on kind:
+  // for an NSTDJO the span is simply its single day.
   const shape = (kind) => (r) => {
-    const anchor = r.delivery_date || r.planned_start_at;
+    const anchor = kind === 'JO'
+      ? r.planned_start_date
+      : (r.delivery_date || r.planned_start_at);
+    const spanEnd = kind === 'JO' ? r.planned_end_date : anchor;
+    const day = (v) => (v ? String(v).slice(0, 10) : null);
     return {
       id: r.id,
       kind,
@@ -711,9 +749,14 @@ async function salesCalendar(employeeIds, monthStart, monthEnd) {
       deliveryDate: r.delivery_date,
       plannedStartAt: r.planned_start_at,
       plannedEndAt: r.planned_end_at,
+      // The forecast Production signed up to, sent on its own as well as through the span so
+      // the day popup can print the window even on a day in the middle of it.
+      forecastStart: day(r.planned_start_date),
+      forecastEnd: day(r.planned_end_date),
+      productionStage: r.production_stage || null,
       // Which date this chip is actually sitting on, so the tooltip can say so rather than
       // leaving the rep to guess why a job is on the day it is.
-      anchor: r.delivery_date ? 'delivery' : 'planned',
+      anchor: kind === 'JO' ? 'forecast' : (r.delivery_date ? 'delivery' : 'planned'),
       // Actual End comes from the SAME timestamp as the Completed status beside it. Sending
       // one without the other is what made a row read "Completed" over an empty Actual End:
       // the popup is shared with the artist calendar, which has always sent both, so the
@@ -728,7 +771,10 @@ async function salesCalendar(employeeIds, monthStart, monthEnd) {
       startedAt: r.layout_started_at,
       // Sliced off the string rather than parsed into a Date: at UTC+8 a DATE column read back
       // through new Date() lands at 08:00 and can format onto the previous day.
-      day: anchor ? String(anchor).slice(0, 10) : null,
+      day: day(anchor),
+      // The days this job occupies. Inclusive at both ends, and equal for a single-day chip.
+      spanStart: day(anchor),
+      spanEnd: day(spanEnd) || day(anchor),
     };
   };
 

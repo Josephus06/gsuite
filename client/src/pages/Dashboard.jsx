@@ -407,9 +407,12 @@ function SalesDashboard({ data, user, navigate }) {
         <ProfileCard user={user} roleLabel={ROLE_LABELS[role] || role} rings={summary.rings} activity={activity} />
         <div className="holo-card dash-chart-card">
           <h3>Scheduled JO / NSTDJO</h3>
-          {/* Jobs sit on their delivery date -- what the rep promised the customer -- not on
-              the artist's layout schedule. Clicking a chip opens the document itself rather
-              than the artist's run screen, which sales has no business driving. */}
+          {/* A Job Order appears only once Production has acknowledged it, and then occupies
+              its whole forecast window -- the days Production committed to, not the layout
+              schedule and not a delivery date nobody has accepted yet. Non-standard job orders
+              never enter production, so they keep sitting on their single delivery date.
+              Clicking a chip opens the document itself rather than the artist's run screen,
+              which sales has no business driving. */}
           <ScheduleCalendar
             month={month}
             jobs={calendar}
@@ -422,10 +425,16 @@ function SalesDashboard({ data, user, navigate }) {
             // Sales asks where the job is, not whether the artist has stopped the clock.
             statusMode="document"
             pathFor={(j) => (j.kind === 'NSTDJO' ? `/non-standard-job-orders/${j.id}` : `/job-orders/${j.id}`)}
+            // Says which date the chip is sitting on rather than leaving the rep to work it
+            // out: a Job Order names its forecast window, a non-standard one its delivery date.
             tooltipFor={(j) => [
               j.jobOrderNo,
               j.customerName || '—',
-              j.anchor === 'delivery' ? `Delivery ${String(j.day)}` : `No delivery date — planned start ${String(j.day)}`,
+              j.anchor === 'forecast'
+                ? `Forecast ${j.forecastStart} → ${j.forecastEnd}`
+                : j.anchor === 'delivery'
+                  ? `Delivery ${String(j.day)}`
+                  : `No delivery date — planned start ${String(j.day)}`,
               j.subStatus || j.status,
               j.artistName ? `Artist: ${j.artistName}` : 'No artist assigned',
             ].join(' · ')}
@@ -907,14 +916,35 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
   // parent so paging months closes it -- the day it refers to is no longer on screen.
   const [openDay, setOpenDay] = useState(null);
 
+  const pad = (n) => String(n).padStart(2, '0');
+
+  // A job occupies every day between spanStart and spanEnd, not just the first. That is what
+  // a Job Order's forecast window means -- the days Production committed to building it -- and
+  // a rep reading one chip cannot tell a one-day job from a three-week one. The walk happens
+  // here rather than the server sending the same job once per day it covers.
+  //
+  // The span fields are optional: the artist calendar shares this component and sends a single
+  // `day` per job, so a missing span collapses to that one day and it renders exactly as before.
   const byDay = new Map();
   for (const j of jobs || []) {
-    if (!j.day) continue;
-    if (!byDay.has(j.day)) byDay.set(j.day, []);
-    byDay.get(j.day).push(j);
+    const start = j.spanStart || j.day;
+    const end = j.spanEnd || j.spanStart || j.day;
+    if (!start) continue;
+    for (let d = 1; d <= daysInMonth; d += 1) {
+      const key = `${first.getFullYear()}-${pad(first.getMonth() + 1)}-${pad(d)}`;
+      // Plain YYYY-MM-DD string comparison, which sorts correctly and keeps this clear of the
+      // timezone slide the day keys are built to avoid.
+      if (key < start || key > end) continue;
+      if (!byDay.has(key)) byDay.set(key, []);
+      byDay.get(key).push(j);
+    }
   }
-
-  const pad = (n) => String(n).padStart(2, '0');
+  // Ordered the same way in every cell, so a job holds its row as its band crosses the week
+  // instead of hopping up and down as other jobs start and finish around it.
+  for (const list of byDay.values()) {
+    list.sort((a, b) => String(a.spanStart || a.day || '').localeCompare(String(b.spanStart || b.day || ''))
+      || String(a.jobOrderNo || '').localeCompare(String(b.jobOrderNo || '')));
+  }
   const todayKey = (() => {
     const t = new Date();
     return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
@@ -976,10 +1006,17 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
                 // A label, not a button: the whole day is the click target now, and a button
                 // inside a clickable cell is both invalid markup and two competing targets in
                 // the same few pixels. Opening a job happens from the day's popup.
+                // Where the window carries on into the next day, square that edge so
+                // consecutive days join into one band instead of reading as a row of
+                // separate pills -- one job repeated, not several jobs.
+                const spanStart = j.spanStart || j.day;
+                const spanEnd = j.spanEnd || spanStart;
+                const contLeft = spanStart && key > spanStart;
+                const contRight = spanEnd && key < spanEnd;
                 return (
                   <span
                     key={`${j.kind || 'JO'}-${j.id}`}
-                    className="artist-calendar-chip"
+                    className={`artist-calendar-chip${contLeft ? ' is-cont-left' : ''}${contRight ? ' is-cont-right' : ''}`}
                     style={docStatus ? docStatusStyle(docStatus) : TIMER_STATUS_STYLE[state]}
                     data-run-path={runPath}
                     title={tooltipFor
@@ -1008,7 +1045,11 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
                 <tr>
                   <th>JO / NSTDJO #</th>
                   <th>Status</th>
-                  <th>Planned End</th>
+                  {/* Two kinds of row share this column on the sales popup: an acknowledged
+                      Job Order carries a production forecast window, a non-standard one only
+                      its layout Planned End. Naming both beats a header that is wrong for
+                      half the rows under it. */}
+                  <th>{statusMode === 'document' ? 'Forecast / Planned End' : 'Planned End'}</th>
                   <th>{statusMode === 'document' ? 'Layout end' : 'Actual End'}</th>
                   {showIncentive && <th>Incentive</th>}
                   <th></th>
@@ -1059,7 +1100,14 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
                         </span>
                         {j.subStatus && <div className="muted" style={{ fontSize: '0.85em' }}>{j.subStatus}</div>}
                       </td>
-                      <td style={{ whiteSpace: 'nowrap' }}>{formatDateTime(j.plannedEndAt)}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {j.forecastStart && j.forecastEnd ? (
+                          <>
+                            {j.forecastStart} &rarr; {j.forecastEnd}
+                            <div className="muted" style={{ fontSize: '0.85em' }}>production forecast</div>
+                          </>
+                        ) : formatDateTime(j.plannedEndAt)}
+                      </td>
                       {/* Regularly a different day from the plan, and the one that decides
                           which month the incentive is credited to. Flagged when the two
                           differ so an artist can see why a job counts where it does. */}

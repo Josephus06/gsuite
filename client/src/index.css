@@ -1626,9 +1626,13 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
    few enough that each stays legible in both themes. */
 .jo-span { background: var(--jo-fill); color: var(--jo-text); box-shadow: inset 3px 0 0 var(--jo-border); }
 /* Square off whichever edge the band continues through, and drop the left marker on any day
-   that is not the window's first -- one bar with one start, not a row of pills. */
-.jo-span.is-cont-left { border-top-left-radius: 0; border-bottom-left-radius: 0; box-shadow: none; }
-.jo-span.is-cont-right { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+   that is not the window's first -- one bar with one start, not a row of pills. Written
+   against the chip rather than .jo-span so the sales dashboard's calendar joins its bands the
+   same way: its Job Orders span a forecast window too, but they are coloured by document
+   status rather than by the per-job palette, so they must square without being repainted. */
+.artist-calendar-chip.is-cont-left { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.artist-calendar-chip.is-cont-right { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.jo-span.is-cont-left { box-shadow: none; }
 
 .jo-c0 { --jo-fill: #fdf0d5; --jo-border: #d9a441; --jo-text: #6b4a10; }
 .jo-c1 { --jo-fill: #fbe0e6; --jo-border: #d9748f; --jo-text: #7a2740; }
