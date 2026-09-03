@@ -91,13 +91,30 @@ async function generateSalesOrderFromEstimate(conn, estimateId) {
     subtotal, discount_total: discountTotal, net_of_tax: netOfTax, tax_total: taxTotal, total_amount: totalAmount,
     est_gp_rate: Number(gpRate.toFixed(2)), est_gp_amount: Number(gpAmount.toFixed(2)),
   };
-  const soValues = SALES_ORDER_HEADER_FIELDS.map((f) => (
-    f === 'estimate_id' ? estimateId : (computedTotals[f] !== undefined ? computedTotals[f] : est[f])
-  ));
+  // date_created is the ONE header field that must not be copied. Every other column here
+  // is a snapshot of what the customer agreed to, but the order's date is a fact about the
+  // order, not about the estimate: it is the day the order was placed. Copying it meant an
+  // estimate raised in January and approved in September produced a September order dated
+  // January -- which back-dates it out of its own month for anything reading date_created,
+  // the as-of filter on the Sales Orders list included.
+  //
+  // Taken from the DATABASE clock (CURDATE()) rather than from JS. The row's created_at
+  // already defaults to CURRENT_TIMESTAMP, so using the same clock keeps one row from
+  // carrying two different ideas of today -- and it sidesteps the UTC slide that
+  // `new Date().toISOString().slice(0, 10)` produces here, where local time is UTC+8 and
+  // anything generated before 08:00 would be dated to the previous day.
+  const soValues = SALES_ORDER_HEADER_FIELDS
+    .filter((f) => f !== 'date_created')
+    .map((f) => (
+      f === 'estimate_id' ? estimateId : (computedTotals[f] !== undefined ? computedTotals[f] : est[f])
+    ));
+  const soPlaceholders = SALES_ORDER_HEADER_FIELDS
+    .map((f) => (f === 'date_created' ? 'CURDATE()' : '?'))
+    .join(', ');
   const tempNo = `TMP-SO-${Date.now()}`;
   const [result] = await conn.query(
     `INSERT INTO sales_orders (sales_order_no, ${SALES_ORDER_HEADER_FIELDS.join(', ')})
-     VALUES (?, ${SALES_ORDER_HEADER_FIELDS.map(() => '?').join(', ')})`,
+     VALUES (?, ${soPlaceholders})`,
     [tempNo, ...soValues]
   );
   const salesOrderId = result.insertId;
