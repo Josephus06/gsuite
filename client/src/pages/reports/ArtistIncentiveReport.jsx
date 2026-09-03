@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
 
@@ -13,6 +13,21 @@ const ROUTE = '/reports/artist-incentive';
 // earns a flat 7.50 per unit of layout work -- an amount, not a percentage.
 const money = (n) => Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const day = (v) => (v ? String(v).slice(0, 10) : '');
+
+// The two shapes the Download button offers. `layout` is the value the server switches on, so
+// the label and the value live together rather than in two places that can drift apart.
+const DOWNLOAD_OPTIONS = [
+  {
+    layout: 'all',
+    label: 'All',
+    hint: 'Everything generated: Summary by Artist, then one Detail sheet.',
+  },
+  {
+    layout: 'per-artist',
+    label: 'Per Artist',
+    hint: "One sheet per artist, holding that artist's own transactions.",
+  },
+];
 
 // Defaults to the current month, the period this is most often run for.
 const monthStart = () => {
@@ -30,6 +45,10 @@ export default function ArtistIncentiveReport() {
   const [artists, setArtists] = useState([]);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [downloading, setDownloading] = useState('');
+  const [error, setError] = useState('');
+  const menuRef = useRef(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -44,12 +63,109 @@ export default function ArtistIncentiveReport() {
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { api.get(`${ROUTE}/artists`).then(({ data: rows }) => setArtists(rows)); }, []);
 
+  // Close on a click anywhere else, or on Escape. Without it the only way out of the menu is
+  // to pick something, which on a button that downloads a file is a trap, not a shortcut.
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const onDown = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) setMenuOpen(false);
+    };
+    const onKey = (event) => { if (event.key === 'Escape') setMenuOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
+  // The workbook is asked for with the SAME filters the report on screen was run with, and the
+  // server builds it from the same query that answered that request (buildReport in
+  // routes/artistIncentiveReport.js) -- so a downloaded file cannot disagree with the screen
+  // it was downloaded from.
+  async function download(layout) {
+    setMenuOpen(false);
+    setDownloading(layout);
+    setError('');
+    try {
+      const res = await api.get(ROUTE, {
+        params: { from, to, artist_id: artistId, source, format: 'xlsx', layout },
+        responseType: 'blob',
+      });
+      // The server already names the file, after the period it covers. Read that back rather
+      // than inventing a second name here for the two to drift apart.
+      const disposition = res.headers['content-disposition'] || '';
+      const named = /filename="?([^";]+)"?/.exec(disposition);
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = named ? named[1] : 'artist-incentive.xlsx';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      // An error response to a blob request arrives AS a blob, so the usual
+      // err.response.data.error is a Blob object and renders as "[object Blob]" on screen.
+      let message = 'Failed to download the report.';
+      const body = err.response?.data;
+      if (body instanceof Blob) {
+        try { message = JSON.parse(await body.text()).error || message; } catch { /* not JSON */ }
+      } else if (body?.error) {
+        message = body.error;
+      }
+      setError(message);
+    } finally {
+      setDownloading('');
+    }
+  }
+
   return (
     <div>
       <div className="page-header">
         <h1>Artist Incentive Report</h1>
-        <div>
+        {/* print-toolbar so these controls stay out of the printout itself -- a payout sheet
+            with a Run Report button printed across the top of it is not a payout sheet. */}
+        <div className="print-toolbar">
           <button className="btn btn-sm" onClick={() => window.print()}>Print</button>{' '}
+          <div style={{ position: 'relative', display: 'inline-block' }} ref={menuRef}>
+            <button
+              className="btn btn-sm"
+              onClick={() => setMenuOpen((open) => !open)}
+              // Nothing to export until a report has been generated. A workbook built from a
+              // half-finished run because the button was clicked mid-load is worse than a
+              // button that is briefly unavailable.
+              disabled={loading || !data || !!downloading}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+            >
+              {downloading ? 'Preparing…' : 'Download'} <span style={{ fontSize: '0.8em' }}>▾</span>
+            </button>
+            {menuOpen && (
+              <div
+                role="menu"
+                style={{
+                  position: 'absolute', top: '100%', right: 0, marginTop: 4, minWidth: 260,
+                  background: 'var(--surface, #fff)', border: '1px solid var(--border, #ddd)',
+                  borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.12)', padding: 6, zIndex: 10,
+                }}
+              >
+                {DOWNLOAD_OPTIONS.map((option) => (
+                  <button
+                    key={option.layout}
+                    type="button"
+                    role="menuitem"
+                    className="link-btn"
+                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px' }}
+                    onClick={() => download(option.layout)}
+                  >
+                    <strong>{option.label}</strong>
+                    <div className="muted" style={{ fontSize: '0.85em' }}>{option.hint}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>{' '}
           <button className="btn btn-primary" onClick={load} disabled={loading}>
             {loading ? 'Loading…' : 'Run Report'}
           </button>
@@ -83,6 +199,8 @@ export default function ArtistIncentiveReport() {
           </div>
         </div>
       </div>
+
+      {error && <div className="card" style={{ color: '#b91c1c', marginBottom: 16 }}>{error}</div>}
 
       {loading && <LoadingSpinner />}
 
