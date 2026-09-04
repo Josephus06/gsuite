@@ -59,6 +59,20 @@ const DOC_STATUS_STYLE = {
 // Matched on keywords, not on an exact list: the status vocabulary differs between job orders
 // and non-standard ones and has grown over time, and an unrecognised status must still render
 // as itself in neutral rather than disappear into an unstyled badge.
+// The four production lines, in the order they are shown in the legend and the per-day
+// tallies. `key` matches what the server sends as `division` (divisionOf in
+// routes/dashboard.js); Other catches a job whose location is none of the four rather than
+// hiding it. The colours are the jo-c palette hues, which are already tuned to stay legible
+// in both themes.
+const DIVISIONS = [
+  { key: 'CNC', label: 'CNC', cls: 'div-cnc' },
+  { key: 'DPOD', label: 'DPOD', cls: 'div-dpod' },
+  { key: 'Sign', label: 'Sign', cls: 'div-sign' },
+  { key: 'LFP', label: 'LFP', cls: 'div-lfp' },
+  { key: 'Other', label: 'Other', cls: 'div-other' },
+];
+const divisionClass = (key) => DIVISIONS.find((d) => d.key === key)?.cls || 'div-other';
+
 function docStatusStyle(status) {
   const v = String(status || '').toLowerCase();
   if (v.includes('complet')) return DOC_STATUS_STYLE.completed;
@@ -406,12 +420,19 @@ function SalesDashboard({ data, user, navigate }) {
       <div className="dash-main-grid">
         <ProfileCard user={user} roleLabel={ROLE_LABELS[role] || role} rings={summary.rings} activity={activity} />
         <div className="holo-card dash-chart-card">
-          <h3>Scheduled JO / NSTDJO</h3>
-          {/* A Job Order appears only once Production has acknowledged it, and then occupies
+          <h3>Production Schedule &mdash; All Divisions</h3>
+          {/* Deliberately the WHOLE shop, not the viewer's own orders. A rep quoting a date
+              needs to know whether the line that will build it is already full, and their own
+              handful of jobs cannot tell them that. Chips are coloured by division and each
+              day carries a per-line tally, so the load reads at a glance.
+
+              A Job Order appears only once Production has acknowledged it, and then occupies
               its whole forecast window -- the days Production committed to, not the layout
               schedule and not a delivery date nobody has accepted yet. Non-standard job orders
-              never enter production, so they keep sitting on their single delivery date.
-              Clicking a chip opens the document itself rather than the artist's run screen,
+              are not here at all: they never enter production, so they have no acknowledgement
+              to wait for and no forecast to sit on.
+
+              Clicking a chip opens the Job Order itself rather than the artist's run screen,
               which sales has no business driving. */}
           <ScheduleCalendar
             month={month}
@@ -424,19 +445,20 @@ function SalesDashboard({ data, user, navigate }) {
             showIncentive={false}
             // Sales asks where the job is, not whether the artist has stopped the clock.
             statusMode="document"
-            pathFor={(j) => (j.kind === 'NSTDJO' ? `/non-standard-job-orders/${j.id}` : `/job-orders/${j.id}`)}
-            // Says which date the chip is sitting on rather than leaving the rep to work it
-            // out: a Job Order names its forecast window, a non-standard one its delivery date.
+            // Colour by production line, tally each day, and show the Division column in the
+            // day popup. This is the whole point of the card for a rep planning a promise.
+            byDivision
+            pathFor={(j) => `/job-orders/${j.id}`}
+            // The chip is now coloured by division rather than by status, so the tooltip
+            // carries the status instead -- along with whose order it is, which on a shop-wide
+            // calendar is no longer obviously the person reading it.
             tooltipFor={(j) => [
               j.jobOrderNo,
+              j.division || 'Other',
               j.customerName || '—',
-              j.anchor === 'forecast'
-                ? `Forecast ${j.forecastStart} → ${j.forecastEnd}`
-                : j.anchor === 'delivery'
-                  ? `Delivery ${String(j.day)}`
-                  : `No delivery date — planned start ${String(j.day)}`,
+              `Forecast ${j.forecastStart} → ${j.forecastEnd}`,
               j.subStatus || j.status,
-              j.artistName ? `Artist: ${j.artistName}` : 'No artist assigned',
+              j.salesRepName ? `Rep: ${j.salesRepName}` : 'No sales rep',
             ].join(' · ')}
           />
         </div>
@@ -902,7 +924,14 @@ function ProcessBreakdown({ kind, id }) {
   );
 }
 
-function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, tooltipFor, showIncentive = true, statusMode = 'timer' }) {
+function ScheduleCalendar({
+  month, jobs, loading, onMonth, navigate, pathFor, tooltipFor,
+  showIncentive = true, statusMode = 'timer',
+  // When on, chips are coloured by production division instead of by document status, each
+  // day carries a per-division tally, and a legend is drawn above the grid. Off for the
+  // artist calendar, whose jobs have no division and whose question is a timer, not a load.
+  byDivision = false,
+}) {
   // Which row's processes are open. One at a time: the popup is not tall enough for two
   // breakdowns, and the question is always about one job order.
   const [openRow, setOpenRow] = useState(null);
@@ -939,12 +968,31 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
       byDay.get(key).push(j);
     }
   }
-  // Ordered the same way in every cell, so a job holds its row as its band crosses the week
-  // instead of hopping up and down as other jobs start and finish around it.
+  // Ordered by DIVISION first when that mode is on, so a line's jobs sit together in the
+  // cell and the colour bands read as blocks rather than as stripes. Within a division, and
+  // in every other mode, ordered so a job holds its row as its band crosses the week instead
+  // of hopping up and down as other jobs start and finish around it.
+  const divisionRank = (j) => {
+    const i = DIVISIONS.findIndex((d) => d.key === (j.division || 'Other'));
+    return i < 0 ? DIVISIONS.length : i;
+  };
   for (const list of byDay.values()) {
-    list.sort((a, b) => String(a.spanStart || a.day || '').localeCompare(String(b.spanStart || b.day || ''))
+    list.sort((a, b) => (byDivision ? divisionRank(a) - divisionRank(b) : 0)
+      || String(a.spanStart || a.day || '').localeCompare(String(b.spanStart || b.day || ''))
       || String(a.jobOrderNo || '').localeCompare(String(b.jobOrderNo || '')));
   }
+
+  // How many DISTINCT jobs each line has this month. Counted over `jobs` rather than over
+  // byDay, because byDay holds one entry per day a job spans -- a three-week CNC job would
+  // otherwise be counted twenty-one times and the legend would read as a workload nobody has.
+  const monthTotals = new Map();
+  if (byDivision) {
+    for (const j of jobs || []) {
+      const key = j.division || 'Other';
+      monthTotals.set(key, (monthTotals.get(key) || 0) + 1);
+    }
+  }
+  const presentDivisions = byDivision ? DIVISIONS.filter((d) => monthTotals.get(d.key)) : [];
   const todayKey = (() => {
     const t = new Date();
     return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
@@ -972,12 +1020,34 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
         </span>
       </div>
 
+      {/* Only the divisions actually present this month, so a quiet month does not draw four
+          swatches for lines with nothing on. */}
+      {byDivision && presentDivisions.length > 0 && (
+        <div className="cal-legend">
+          {presentDivisions.map((d) => (
+            <span key={d.key} className="cal-legend-item">
+              <i className={`cal-swatch ${d.cls}`} />
+              {d.label}
+              <b>{monthTotals.get(d.key) || 0}</b>
+            </span>
+          ))}
+        </div>
+      )}
+
       <div className="artist-calendar-grid">
         {WEEKDAYS.map((w) => <div key={w} className="artist-calendar-weekday">{w}</div>)}
         {cells.map((key, i) => {
           if (!key) return <div key={`pad-${i}`} className="artist-calendar-day is-empty" />;
           const dayJobs = byDay.get(key) || [];
           const dayNo = Number(key.slice(8, 10));
+          // The load on this day, per line. This is the number a rep is actually after --
+          // "is CNC already full on the 12th" -- and it counts every job on the day, not
+          // just the three whose chips fit.
+          const dayTally = byDivision
+            ? DIVISIONS
+              .map((d) => [d, dayJobs.filter((j) => (j.division || 'Other') === d.key).length])
+              .filter(([, n]) => n > 0)
+            : [];
           return (
             <div
               key={key}
@@ -995,6 +1065,13 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
               }}
             >
               <span className="artist-calendar-daynum">{dayNo}</span>
+              {dayTally.length > 0 && (
+                <div className="cal-tally">
+                  {dayTally.map(([d, n]) => (
+                    <span key={d.key} className={`cal-tally-item ${d.cls}`}>{d.label} {n}</span>
+                  ))}
+                </div>
+              )}
               {dayJobs.slice(0, 3).map((j) => {
                 const state = j.done ? 'Completed' : j.running ? 'Running' : 'Not Started';
                 const docStatus = statusMode === 'document' && j.status ? j.status : null;
@@ -1013,11 +1090,15 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
                 const spanEnd = j.spanEnd || spanStart;
                 const contLeft = spanStart && key > spanStart;
                 const contRight = spanEnd && key < spanEnd;
+                // In division mode the colour carries the division, so it comes from a class
+                // rather than the inline status style -- the two would fight for background.
+                // Status is still on the chip tooltip and in the day popup.
+                const divCls = byDivision ? ` ${divisionClass(j.division)}` : '';
                 return (
                   <span
                     key={`${j.kind || 'JO'}-${j.id}`}
-                    className={`artist-calendar-chip${contLeft ? ' is-cont-left' : ''}${contRight ? ' is-cont-right' : ''}`}
-                    style={docStatus ? docStatusStyle(docStatus) : TIMER_STATUS_STYLE[state]}
+                    className={`artist-calendar-chip${divCls}${contLeft ? ' is-cont-left' : ''}${contRight ? ' is-cont-right' : ''}`}
+                    style={byDivision ? undefined : (docStatus ? docStatusStyle(docStatus) : TIMER_STATUS_STYLE[state])}
                     data-run-path={runPath}
                     title={tooltipFor
                       ? tooltipFor(j)
@@ -1043,7 +1124,10 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
             <table>
               <thead>
                 <tr>
-                  <th>JO / NSTDJO #</th>
+                  {/* Renamed: non-standard job orders no longer reach this calendar, but the
+                      artist calendar shares this popup and still shows them. */}
+                  <th>{byDivision ? 'JO #' : 'JO / NSTDJO #'}</th>
+                  {byDivision && <th>Division</th>}
                   <th>Status</th>
                   {/* Two kinds of row share this column on the sales popup: an acknowledged
                       Job Order carries a production forecast window, a non-standard one only
@@ -1057,7 +1141,7 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
               </thead>
               <tbody>
                 {!(byDay.get(openDay) || []).length && (
-                  <tr><td colSpan={showIncentive ? 6 : 5} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                  <tr><td colSpan={(showIncentive ? 6 : 5) + (byDivision ? 1 : 0)} className="muted" style={{ textAlign: 'center', padding: 20 }}>
                     Nothing scheduled on this day.
                   </td></tr>
                 )}
@@ -1090,7 +1174,20 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
                         </button>
                         <strong>{j.jobOrderNo}</strong>
                         {j.customerName && <div className="muted" style={{ fontSize: '0.85em' }}>{j.customerName}</div>}
+                        {/* Whose order it is. This calendar is shop-wide now, so it is no
+                            longer obviously the person reading it. */}
+                        {byDivision && j.salesRepName && (
+                          <div className="muted" style={{ fontSize: '0.85em' }}>Rep: {j.salesRepName}</div>
+                        )}
                       </td>
+                      {byDivision && (
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          <span className={`badge ${divisionClass(j.division)}`}>{j.division || 'Other'}</span>
+                          {j.jobLocationName && (
+                            <div className="muted" style={{ fontSize: '0.85em' }}>{j.jobLocationName}</div>
+                          )}
+                        </td>
+                      )}
                       <td>
                         {/* Both statuses, because they answer different questions: sub status
                             is whose hands the job is in, the timer state is how far this
@@ -1129,7 +1226,7 @@ function ScheduleCalendar({ month, jobs, loading, onMonth, navigate, pathFor, to
                     </tr>
                     {isOpen && (
                       <tr>
-                        <td colSpan={showIncentive ? 6 : 5} style={{ background: 'var(--color-neutral-bg)' }}>
+                        <td colSpan={(showIncentive ? 6 : 5) + (byDivision ? 1 : 0)} style={{ background: 'var(--color-neutral-bg)' }}>
                           <ProcessBreakdown kind={j.kind} id={j.id} />
                         </td>
                       </tr>

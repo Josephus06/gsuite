@@ -636,38 +636,52 @@ async function artistMetrics(employeeId) {
   };
 }
 
-// The sales equivalent of artistCalendar. Three things differ, and all follow from who is
-// looking at it.
+// Which production department builds a job, derived from its job location. The four lines
+// each own a warehouse ('Warehouse - CNC', 'Warehouse - DPOD', 'Warehouse - LFP',
+// 'Warehouse - Sign'), and that location is what the Job Order actually carries.
 //
-// FIRST, which Job Orders are on it at all. A rep's calendar used to carry every JO they had
-// sold, including ones Production had not yet accepted -- so a date on it was a hope, not a
-// commitment, and a rep quoting it to a customer was quoting nothing. A Job Order now appears
-// only once Production has ACKNOWLEDGED it: production_stage past 'pending_for_scheduling'
-// (and past 'for_revision', which is the same job handed back to Sales, not yet accepted).
-// Acknowledge is the moment a scheduler signs up to the forecast (see production.js), so it is
-// the first moment a rep has something real to promise a customer.
-//
-// SECOND, the anchor date. The artist's calendar sits jobs on planned_start_at -- the layout
-// schedule, the day the artist picks the work up. An acknowledged Job Order here sits on its
-// FORECAST window instead, planned_start_date -> planned_end_date: the days Production has
-// committed to building it. Both are guaranteed present, because Acknowledge refuses to run
-// without them. The window is sent as a span rather than one row per day -- a three-week job
-// would otherwise be sent twenty times over -- and the client walks it, exactly as the
-// planner's own production calendar does.
-//
-// Non-standard job orders are deliberately left as they were. They never enter the production
-// module at all: the table has no production_stage and no forecast columns, so there is no
-// acknowledgement to wait for and no forecast to sit on. They keep their delivery date,
-// falling back to the planned start where there is none -- an invisible job order is the one
-// failure mode a calendar must not have -- and the chip says which date it is sitting on.
-//
-// THIRD, the scope. employeeIds comes from resolveScope, so an account officer sees their own
-// jobs and a supervisor or manager sees their team's, exactly as every other figure on this
-// dashboard is scoped. There is no rep parameter to point somewhere else.
-async function salesCalendar(employeeIds, monthStart, monthEnd) {
-  if (!employeeIds.length) return [];
-  const placeholders = employeeIds.map(() => '?').join(', ');
+// Matched loosely on purpose. The same department is punctuated inconsistently across the
+// live data -- 'Production -  CNC' carries a double space where 'Production - CNC' does not
+// (see db/add-department-job-location.js) -- so anything anchored on an exact string would
+// silently drop a whole line's work off the calendar. A job whose location is none of the
+// four (Central, Design, or unset) is grouped as Other rather than hidden: an invisible job
+// order is the one failure mode a calendar must not have.
+const DIVISIONS = [
+  { key: 'CNC', match: /CNC/i },
+  { key: 'DPOD', match: /DPOD/i },
+  { key: 'LFP', match: /LFP/i },
+  { key: 'Sign', match: /SIGN/i },
+];
+function divisionOf(locationName) {
+  const name = String(locationName || '');
+  return DIVISIONS.find((d) => d.match.test(name))?.key || 'Other';
+}
 
+// The sales dashboard's calendar: every Job Order Production has committed to build, across
+// the whole shop, split by the department that will build it.
+//
+// FIRST, what is on it. Only Job Orders Production has ACKNOWLEDGED -- production_stage past
+// 'pending_for_scheduling' and past 'for_revision', which is the same job handed back to Sales
+// and not yet accepted. Acknowledge is the moment a scheduler signs up to the forecast (see
+// production.js), so it is the first moment a rep has something real to promise a customer.
+//
+// Non-standard job orders are deliberately NOT here any more. They never enter the production
+// module -- the table has no production_stage and no forecast columns -- so there is no
+// acknowledgement to wait for and no forecast to sit on, and carrying them meant this calendar
+// answered two different questions at once. NSTDJO work is followed from its own list.
+//
+// SECOND, the dates. A job sits on its FORECAST window, planned_start_date ->
+// planned_end_date: the days Production committed to building it, not the layout schedule and
+// not a delivery date nobody has accepted. Both are guaranteed present, because Acknowledge
+// refuses to run without them. The window is sent as a span rather than one row per day -- a
+// three-week job would otherwise be sent twenty times over -- and the client walks it.
+//
+// THIRD, the scope: THERE IS NONE, and that is the point. A rep needs the whole floor to know
+// whether the date they are about to quote is realistic -- their own three jobs say nothing
+// about a CNC line already booked solid with somebody else s work. The route still requires a
+// sales-dashboard role to reach this; what changed is that the rows are no longer filtered to
+// the caller s own sales_rep_id.
+async function salesCalendar(monthStart, monthEnd) {
   const [rows] = await pool.query(
     `SELECT jo.id, jo.job_order_no, jo.description, jo.status, jo.sub_status,
             jo.production_stage,
@@ -676,23 +690,19 @@ async function salesCalendar(employeeIds, monthStart, monthEnd) {
             jo.layout_started_at, jo.layout_ended_at,
             c.name AS customer_name,
             CONCAT(a.first_name, ' ', a.last_name) AS artist_name,
+            CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
+            loc.location_name AS job_location_name,
             (SELECT COUNT(*) FROM job_order_layout_sessions s
               WHERE s.job_order_id = jo.id AND s.ended_at IS NULL) AS is_running
        FROM job_orders jo
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
        LEFT JOIN customers c ON c.id = so.customer_id
        LEFT JOIN employees a ON a.id = jo.artist_id
-      WHERE jo.sales_rep_id IN (${placeholders})
-        -- Acknowledged by Production, and nothing earlier. A NULL stage is a job order that
-        -- never reached the production floor at all; the two named stages are the ones that
-        -- sit before Acknowledge -- 'pending_for_scheduling' is waiting on it, 'for_revision'
-        -- has been pushed back to Sales to be corrected and returns through it.
-        AND jo.production_stage IS NOT NULL
+       LEFT JOIN employees sr ON sr.id = COALESCE(jo.sales_rep_id, so.sales_rep_id)
+       LEFT JOIN locations loc ON loc.id = jo.job_location_id
+      WHERE jo.production_stage IS NOT NULL
         AND jo.production_stage NOT IN ('pending_for_scheduling', 'for_revision')
         AND jo.status <> 'Cancelled'
-        -- Belt and braces: Acknowledge cannot run without both forecast dates, but a job
-        -- migrated straight into a later stage has never been through it, and a span with a
-        -- missing end has no days to sit on.
         AND jo.planned_start_date IS NOT NULL
         AND jo.planned_end_date IS NOT NULL
         -- Overlap, not containment: a forecast running across the month boundary belongs on
@@ -700,86 +710,42 @@ async function salesCalendar(employeeIds, monthStart, monthEnd) {
         AND jo.planned_start_date < ?
         AND jo.planned_end_date >= ?
       ORDER BY jo.planned_start_date, jo.job_order_no`,
-    [...employeeIds, monthEnd, monthStart],
+    [monthEnd, monthStart],
   );
 
-  // Same guard artistCalendar uses -- the NSTDJO tables are not present in every build, and a
-  // missing table must degrade to a Job-Orders-only calendar rather than take the dashboard down.
-  let nstdjoRows = [];
-  const [tbl] = await pool.query("SHOW TABLES LIKE 'non_standard_job_orders'");
-  if (tbl.length) {
-    [nstdjoRows] = await pool.query(
-      `SELECT n.id, n.nstdjo_no AS job_order_no, n.description, n.status, n.sub_status,
-              n.delivery_date, n.planned_start_at, n.planned_end_at,
-              n.layout_started_at, n.layout_ended_at,
-              c.name AS customer_name,
-              CONCAT(a.first_name, ' ', a.last_name) AS artist_name,
-              (SELECT COUNT(*) FROM non_standard_job_order_layout_sessions s
-                WHERE s.non_standard_job_order_id = n.id AND s.ended_at IS NULL) AS is_running
-         FROM non_standard_job_orders n
-         LEFT JOIN customers c ON c.id = n.customer_id
-         LEFT JOIN employees a ON a.id = n.artist_employee_id
-        WHERE n.sales_rep_id IN (${placeholders})
-          AND COALESCE(n.delivery_date, n.planned_start_at) >= ?
-          AND COALESCE(n.delivery_date, n.planned_start_at) < ?
-        ORDER BY COALESCE(n.delivery_date, n.planned_start_at)`,
-      [...employeeIds, monthStart, monthEnd],
-    );
-  }
-
-  // A Job Order sits on the forecast window Production acknowledged; a non-standard one has
-  // no such window and keeps sitting on its delivery date. Both come back carrying spanStart
-  // and spanEnd so the client can walk one loop over the month rather than branching on kind:
-  // for an NSTDJO the span is simply its single day.
-  const shape = (kind) => (r) => {
-    const anchor = kind === 'JO'
-      ? r.planned_start_date
-      : (r.delivery_date || r.planned_start_at);
-    const spanEnd = kind === 'JO' ? r.planned_end_date : anchor;
-    const day = (v) => (v ? String(v).slice(0, 10) : null);
-    return {
-      id: r.id,
-      kind,
-      jobOrderNo: r.job_order_no,
-      description: r.description,
-      status: r.status,
-      subStatus: r.sub_status,
-      customerName: r.customer_name,
-      artistName: r.artist_name,
-      deliveryDate: r.delivery_date,
-      plannedStartAt: r.planned_start_at,
-      plannedEndAt: r.planned_end_at,
-      // The forecast Production signed up to, sent on its own as well as through the span so
-      // the day popup can print the window even on a day in the middle of it.
-      forecastStart: day(r.planned_start_date),
-      forecastEnd: day(r.planned_end_date),
-      productionStage: r.production_stage || null,
-      // Which date this chip is actually sitting on, so the tooltip can say so rather than
-      // leaving the rep to guess why a job is on the day it is.
-      anchor: kind === 'JO' ? 'forecast' : (r.delivery_date ? 'delivery' : 'planned'),
-      // Actual End comes from the SAME timestamp as the Completed status beside it. Sending
-      // one without the other is what made a row read "Completed" over an empty Actual End:
-      // the popup is shared with the artist calendar, which has always sent both, so the
-      // column was rendering a field this shape simply never included.
-      actualEndAt: r.layout_ended_at,
-      done: !!r.layout_ended_at,
-      // Likewise "Running": without it the status could only ever say Completed or Not
-      // Started, and a job in the middle of layout read as untouched.
-      running: !!Number(r.is_running),
-      // Started but with no clock running is "held", which is a different thing from
-      // "not started" to a rep phoning a customer about a job nobody is working on.
-      startedAt: r.layout_started_at,
-      // Sliced off the string rather than parsed into a Date: at UTC+8 a DATE column read back
-      // through new Date() lands at 08:00 and can format onto the previous day.
-      day: day(anchor),
-      // The days this job occupies. Inclusive at both ends, and equal for a single-day chip.
-      spanStart: day(anchor),
-      spanEnd: day(spanEnd) || day(anchor),
-    };
-  };
-
-  return [...rows.map(shape('JO')), ...nstdjoRows.map(shape('NSTDJO'))]
-    .sort((a, b) => String(a.day || '').localeCompare(String(b.day || '')));
+  const day = (v) => (v ? String(v).slice(0, 10) : null);
+  return rows.map((r) => ({
+    id: r.id,
+    kind: 'JO',
+    jobOrderNo: r.job_order_no,
+    description: r.description,
+    status: r.status,
+    subStatus: r.sub_status,
+    customerName: r.customer_name,
+    artistName: r.artist_name,
+    // Whose order it is. It is no longer necessarily the viewer s, so the calendar has to say.
+    salesRepName: r.sales_rep_name,
+    // The department that will build it, and the short key the calendar colours by.
+    jobLocationName: r.job_location_name,
+    division: divisionOf(r.job_location_name),
+    deliveryDate: r.delivery_date,
+    plannedStartAt: r.planned_start_at,
+    plannedEndAt: r.planned_end_at,
+    forecastStart: day(r.planned_start_date),
+    forecastEnd: day(r.planned_end_date),
+    productionStage: r.production_stage,
+    anchor: 'forecast',
+    actualEndAt: r.layout_ended_at,
+    done: !!r.layout_ended_at,
+    running: !!Number(r.is_running),
+    startedAt: r.layout_started_at,
+    // Sliced off the string rather than parsed into a Date: at UTC+8 a DATE column read back
+    // through new Date() lands at 08:00 and can format onto the previous day.
+    day: day(r.planned_start_date),
+    // The days this job occupies. Inclusive at both ends.
+    spanStart: day(r.planned_start_date),
+    spanEnd: day(r.planned_end_date),
+  }));
 }
 
 router.get('/', requireAuth, async (req, res, next) => {
@@ -815,7 +781,7 @@ router.get('/', requireAuth, async (req, res, next) => {
     // The dashboard opens on the current month; the calendar pages from the client via
     // GET /dashboard/sales-calendar without refetching every figure on the screen.
     const bounds = monthBounds(null);
-    const calendar = await salesCalendar(scope.employeeIds, bounds.start, bounds.end);
+    const calendar = await salesCalendar(bounds.start, bounds.end);
 
     res.json({ role: scope.role, summary, byRep, calendar, calendarMonth: bounds.month });
   } catch (err) {
@@ -846,14 +812,15 @@ router.get('/artist-calendar', requireAuth, async (req, res, next) => {
   }
 });
 
-// Lets the sales dashboard's calendar page to another month on its own. Scoped through
-// resolveScope exactly as the dashboard itself is, so paging the calendar can never widen what
-// a rep is allowed to see.
+// Lets the sales dashboard's calendar page to another month on its own. resolveScope is still
+// called, but only to establish that the caller holds a sales-dashboard role at all: the
+// calendar itself is shop-wide by design (see salesCalendar), so there is nothing to narrow.
 router.get('/sales-calendar', requireAuth, async (req, res, next) => {
   try {
     const scope = await resolveScope(req.user.id);
+    if (!scope.role) return res.status(403).json({ error: 'Not permitted' });
     const bounds = monthBounds(req.query.month);
-    const calendar = await salesCalendar(scope.employeeIds || [], bounds.start, bounds.end);
+    const calendar = await salesCalendar(bounds.start, bounds.end);
     return res.json({ month: bounds.month, calendar });
   } catch (err) {
     return next(err);

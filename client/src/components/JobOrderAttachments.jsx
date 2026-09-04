@@ -1,14 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 
-// The artist's files for a job order -- the perspective drawing and the Cutting List / Bill
-// of Materials, in whatever format they were produced. Sales approves against these, so the
-// Sales Approval transition is refused server-side until at least one exists.
+// Files attached to a Job Order. Two different sets live against the same JO and the same
+// endpoint, told apart by `kind`:
 //
-// Uploads go up as base64 in a JSON body (there is no multipart handler on the server); the
-// API mounts a larger body parser on this one endpoint to fit them.
-const KINDS = ['Perspective', 'Bill of Materials', 'Other'];
+//   Artist Attachment      the perspective drawing and Cutting List / Bill of Materials, on
+//                          the Sales-side Job Order view. Sales approves against these, so the
+//                          Sales Approval transition is refused server-side until one exists.
+//   Production Attachment  the planner's own files, on the Production JO view. Nothing is
+//                          approved against them and no transition depends on them.
+//
+// The endpoint returns every attachment on the JO regardless of kind, so each tab filters to
+// its OWN kinds. Without that, a planner's file would show up under Artist Attachment and be
+// read as a drawing Sales had approved. The two lists are disjoint on the server
+// (ARTIST_ATTACHMENT_KINDS / PRODUCTION_ATTACHMENT_KINDS in routes/jobOrders.js) -- keep them
+// that way, because this filter is what depends on it.
 const MAX_BYTES = 10 * 1024 * 1024;
+
+export const ARTIST_KINDS = ['Perspective', 'Bill of Materials', 'Other'];
+export const PRODUCTION_KINDS = ['Production Plan', 'Reference', 'Other (Production)'];
 
 // Short extension badge for the row icon: "PDF", "XLSX", or "FILE" when there is none.
 function fileExt(name) {
@@ -23,18 +33,29 @@ function fileSize(bytes) {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-// canUpload: the assigned artist (or a design supervisor / admin acting for them).
-// canDelete: System Admin only -- an attachment is the record Sales approved against.
-export default function ArtistAttachments({ jobOrderId, canUpload, canDelete, onChange }) {
+// canUpload / canDelete are decided by the caller, because the two tabs answer to different
+// people -- the assigned artist on one, the production planner on the other. The server
+// enforces the same split by kind; these only decide what to draw.
+export default function JobOrderAttachments({
+  jobOrderId,
+  kinds = ARTIST_KINDS,
+  title = 'Artist Attachment',
+  description,
+  emptyHint,
+  canUpload,
+  canDelete,
+  onChange,
+}) {
   const [rows, setRows] = useState([]);
-  const [kind, setKind] = useState(KINDS[0]);
+  const [kind, setKind] = useState(kinds[0]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef(null);
 
   function load() {
-    return api.get(`/job-orders/${jobOrderId}/attachments`).then(({ data }) => setRows(data));
+    return api.get(`/job-orders/${jobOrderId}/attachments`)
+      .then(({ data }) => setRows((data || []).filter((r) => kinds.includes(r.kind))));
   }
 
   useEffect(() => { load(); }, [jobOrderId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -110,12 +131,8 @@ export default function ArtistAttachments({ jobOrderId, canUpload, canDelete, on
     <div className="card">
       <div className="att-head">
         <div>
-          <h3>Artist Attachment</h3>
-          <p className="att-sub">
-            The perspective drawing and the Cutting List / Bill of Materials. Sales approves
-            against these, so at least one file is required before this Job Order can be sent
-            for Sales Approval.
-          </p>
+          <h3>{title}</h3>
+          {description && <p className="att-sub">{description}</p>}
         </div>
         {rows.length > 0 && <span className="att-count">{rows.length} file{rows.length === 1 ? '' : 's'}</span>}
       </div>
@@ -126,7 +143,7 @@ export default function ArtistAttachments({ jobOrderId, canUpload, canDelete, on
         <div className="att-empty">
           <div className="att-empty-mark">📎</div>
           <strong>No files attached yet</strong>
-          <span>{canUpload ? 'Attach the perspective and Bill of Materials to continue.' : 'The assigned artist has not attached anything yet.'}</span>
+          <span>{canUpload ? (emptyHint || 'Attach a file to get started.') : 'Nothing has been attached yet.'}</span>
         </div>
       ) : (
         <div className="att-list">
@@ -154,9 +171,9 @@ export default function ArtistAttachments({ jobOrderId, canUpload, canDelete, on
       {canUpload && (
         <div className="att-upload">
           <div className="att-field">
-            <label htmlFor="att-kind">Document type</label>
-            <select id="att-kind" value={kind} onChange={(e) => setKind(e.target.value)} disabled={busy}>
-              {KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+            <label htmlFor={`att-kind-${jobOrderId}`}>Document type</label>
+            <select id={`att-kind-${jobOrderId}`} value={kind} onChange={(e) => setKind(e.target.value)} disabled={busy}>
+              {kinds.map((k) => <option key={k} value={k}>{k}</option>)}
             </select>
           </div>
           <label

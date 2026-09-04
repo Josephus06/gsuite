@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
+const { isPlannerUser } = require('../lib/plannerRoles');
 const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } = require('../lib/designSupervisorVisibility');
 const { getArtistEmployeeScope } = require('../lib/artistVisibility');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
@@ -717,9 +718,12 @@ router.put('/:id/sales-approval', requireAuth, async (req, res, next) => {
     // Sales approve against the artist's drawings, so there has to be something to approve.
     // Enforced here rather than only in the UI: the button is one way in, but the endpoint
     // is the rule.
+    // Counted over the ARTIST's kinds only. Production files live in this same table, and
+    // counting them here would let a planner's reference photo satisfy the requirement that
+    // Sales have a drawing to approve -- which is the entire point of the check.
     const [[att]] = await conn.query(
-      'SELECT COUNT(*) AS n FROM job_order_attachments WHERE job_order_id = ?',
-      [req.params.id]
+      'SELECT COUNT(*) AS n FROM job_order_attachments WHERE job_order_id = ? AND kind IN (?)',
+      [req.params.id, ARTIST_ATTACHMENT_KINDS]
     );
     if (!att.n) {
       await conn.rollback();
@@ -941,11 +945,29 @@ router.delete('/:id/processes/:procId', requireAuth, requireJobOrderEdit, async 
 // in index.js). The size cap is deliberate: these rows live in the database, so an unbounded
 // upload grows the same volume that everything else writes to.
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
-const ATTACHMENT_KINDS = ['Perspective', 'Bill of Materials', 'Other'];
+
+// Two sets of files live in this one table, owned by different people and answering
+// different questions, so the kinds are kept in separate lists and must stay DISJOINT.
+// Everything downstream -- who may upload, which tab a file appears under, and whether a
+// Job Order may go for Sales Approval -- is decided by which list a kind belongs to.
+const ARTIST_ATTACHMENT_KINDS = ['Perspective', 'Bill of Materials', 'Other'];
+// The production planner's own files, attached from the Production JO screen. Named so
+// they cannot collide with the artist's 'Other'.
+const PRODUCTION_ATTACHMENT_KINDS = ['Production Plan', 'Reference', 'Other (Production)'];
+const ATTACHMENT_KINDS = [...ARTIST_ATTACHMENT_KINDS, ...PRODUCTION_ATTACHMENT_KINDS];
+const isProductionKind = (kind) => PRODUCTION_ATTACHMENT_KINDS.includes(kind);
 
 // Uploading is the assigned artist's job; anyone with can_edit on Job Orders (design
 // supervisors, admins) can also attach on their behalf. Removal is stricter -- see the
 // DELETE handler.
+// A production attachment belongs to whoever plans the floor, which is a different set of
+// people from the artist rule below: a department planner (the is_*_planner flags), or
+// anyone with can_edit on the Production page. userCan already short-circuits System Admin.
+async function canManageProductionAttachments(userId) {
+  if (await isPlannerUser(userId)) return true;
+  return userCan(userId, '/production', 'can_edit');
+}
+
 async function canManageAttachments(conn, userId, jobOrderId) {
   const [[jo]] = await conn.query('SELECT artist_id FROM job_orders WHERE id = ?', [jobOrderId]);
   if (!jo) return { ok: false, missing: true };
@@ -980,14 +1002,24 @@ router.get('/:id/attachments', requireAuth, requirePermission(ROUTE, 'can_view')
 router.post('/:id/attachments', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const access = await canManageAttachments(conn, req.user.id, req.params.id);
-    if (access.missing) return res.status(404).json({ error: 'Not found' });
-    if (!access.ok) return res.status(403).json({ error: 'Only the assigned artist can attach files to this Job Order' });
-
     const { file_name: fileName, kind, data, mime_type: mimeType } = req.body || {};
     if (!fileName || !data) return res.status(400).json({ error: 'file_name and data are required' });
     if (!ATTACHMENT_KINDS.includes(kind)) {
       return res.status(400).json({ error: `kind must be one of: ${ATTACHMENT_KINDS.join(', ')}` });
+    }
+
+    // Which rule applies is decided by the kind, so an artist cannot upload under a
+    // production kind to dodge the planner check, or the other way round.
+    if (isProductionKind(kind)) {
+      const [[exists]] = await conn.query('SELECT id FROM job_orders WHERE id = ?', [req.params.id]);
+      if (!exists) return res.status(404).json({ error: 'Not found' });
+      if (!(await canManageProductionAttachments(req.user.id))) {
+        return res.status(403).json({ error: 'Only a production planner can attach production files to this Job Order' });
+      }
+    } else {
+      const access = await canManageAttachments(conn, req.user.id, req.params.id);
+      if (access.missing) return res.status(404).json({ error: 'Not found' });
+      if (!access.ok) return res.status(403).json({ error: 'Only the assigned artist can attach files to this Job Order' });
     }
 
     // Accepts either a bare base64 string or a full data: URL, since the browser's FileReader
@@ -1049,14 +1081,30 @@ router.get('/:id/attachments/:attachmentId/file', requireAuth, requirePermission
   }
 });
 
-// Removal is System Admin only -- deliberately narrower than upload. An attachment is what
-// Sales approved against, so an artist replacing or deleting one after the fact would change
-// the record behind the approval. Artists add; only an admin takes away.
+// Removing an ARTIST attachment is System Admin only -- deliberately narrower than upload.
+// That file is what Sales approved against, so an artist replacing or deleting one after the
+// fact would change the record behind the approval. Artists add; only an admin takes away.
+//
+// A PRODUCTION attachment carries no such weight: nothing is approved against it and no
+// transition depends on it, so whoever may attach one may also remove it. Holding a planner's
+// own mis-uploaded file hostage to an admin would only teach them to upload a second copy.
 router.delete('/:id/attachments/:attachmentId', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    if (!(await isSystemAdmin(req.user.id))) {
-      return res.status(403).json({ error: 'Only a System Admin can remove an attachment' });
+    const [[target]] = await conn.query(
+      'SELECT kind FROM job_order_attachments WHERE id = ? AND job_order_id = ?',
+      [req.params.attachmentId, req.params.id]
+    );
+    if (!target) return res.status(404).json({ error: 'Not found' });
+    const allowed = isProductionKind(target.kind)
+      ? (await isSystemAdmin(req.user.id)) || (await canManageProductionAttachments(req.user.id))
+      : await isSystemAdmin(req.user.id);
+    if (!allowed) {
+      return res.status(403).json({
+        error: isProductionKind(target.kind)
+          ? 'Only a production planner can remove a production attachment'
+          : 'Only a System Admin can remove an attachment',
+      });
     }
 
     const [r] = await conn.query(

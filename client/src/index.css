@@ -1634,6 +1634,36 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .artist-calendar-chip.is-cont-right { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 .jo-span.is-cont-left { box-shadow: none; }
 
+/* Production divisions on the sales dashboard calendar. A chip is coloured by the line that
+   will build the job (CNC / DPOD / Sign / LFP), so a rep can read the shape of the month per
+   line without opening anything. Same hue family as the .jo-c* palette above, which is already
+   tuned to stay legible in both themes; each pair is a light fill with a much darker text so
+   the contrast holds when the dashboard is not following the theme toggle. */
+.div-cnc   { background: #e4ecfa; color: #22406f; }
+.div-dpod  { background: #fdf0d5; color: #6b4a10; }
+.div-sign  { background: #e2f0e6; color: #1f5133; }
+.div-lfp   { background: #fbe0e6; color: #7a2740; }
+.div-other { background: #e8ecf1; color: #2f3f4f; }
+
+/* The legend, above the grid: which colour is which line, and how many jobs each has this
+   month. Wraps rather than scrolls -- it sits in a fixed-width card. */
+.cal-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 14px;
+  align-items: center; margin: 2px 0 8px; font-size: 11px;
+}
+.cal-legend-item { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; opacity: 0.85; }
+.cal-legend-item b { font-weight: 700; opacity: 0.7; }
+.cal-swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+/* The per-day tally. Counts EVERY job on the day, including the ones past the third whose
+   chips are collapsed into "+N more" -- the load is the question, so it must not be capped by
+   how many chips happen to fit. */
+.cal-tally { display: flex; flex-wrap: wrap; gap: 2px; margin: 1px 0 2px; }
+.cal-tally-item {
+  font-size: 9px; font-weight: 700; line-height: 1.5;
+  padding: 0 3px; border-radius: 3px; white-space: nowrap;
+}
+
 .jo-c0 { --jo-fill: #fdf0d5; --jo-border: #d9a441; --jo-text: #6b4a10; }
 .jo-c1 { --jo-fill: #fbe0e6; --jo-border: #d9748f; --jo-text: #7a2740; }
 .jo-c2 { --jo-fill: #e2f0e6; --jo-border: #66a67e; --jo-text: #1f5133; }
@@ -2011,7 +2041,7 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .btn-menu-item small { font-size: 11px; color: var(--text); opacity: 0.7; }
 .btn-menu-item:hover small { color: inherit; }
 
-/* Artist Attachment tab (components/ArtistAttachments.jsx). The global
+/* Attachment tabs (components/JobOrderAttachments.jsx -- Artist and Production). The global
    "input, select, textarea { width: 100% }" rule makes an unstyled upload row stack into
    full-width blocks, so the controls here are sized explicitly. */
 .att-head {

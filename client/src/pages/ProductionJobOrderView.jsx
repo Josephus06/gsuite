@@ -9,6 +9,7 @@ import RwipCreateModal from '../components/RwipCreateModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { isNonStockItem } from '../utils/itemTypes';
 import { isPlanner } from '../utils/plannerRoles';
+import JobOrderAttachments, { PRODUCTION_KINDS } from '../components/JobOrderAttachments';
 import SalesRevisionModal from '../components/SalesRevisionModal';
 import RevisionNotice from '../components/RevisionNotice';
 import { maySalesRevise, awaitingDateDecision } from '../utils/salesRevision';
@@ -52,6 +53,12 @@ const STAGE_LABELS = {
 };
 
 // The banner is dark, so a default date input renders as a white slab in the middle of it.
+//
+// The width is set explicitly because a bare <input type="date"> takes the browser's default
+// field width, which is far wider than the mm/dd/yyyy it holds -- a slab of empty box next to
+// a short label. `fit-content` does not work here: a date input is a replaced control with its
+// own intrinsic sizing, so it has to be given a real number. 130px fits the full date plus the
+// picker icon at this font size, with border-box so the padding does not push it wider.
 const SCHEDULE_INPUT = {
   background: 'rgba(255,255,255,0.14)',
   border: '1px solid rgba(255,255,255,0.35)',
@@ -60,6 +67,8 @@ const SCHEDULE_INPUT = {
   padding: '2px 6px',
   fontSize: 13,
   colorScheme: 'dark',
+  width: 130,
+  boxSizing: 'border-box',
 };
 
 const PROCESS_COLUMNS = [
@@ -540,6 +549,10 @@ export default function ProductionJobOrderView() {
   // A department planner schedules without holding production edit rights, so the fields open
   // for them too -- matching what the server accepts.
   const canSchedule = (canEdit || isPlanner(user)) && !isTerminal;
+  // Mirrors canManageProductionAttachments on the server: a department planner, or anyone
+  // with production edit rights. Drawn from the same facts the server checks, so the button
+  // is not offered to someone the endpoint would then refuse.
+  const canManageProductionFiles = canEdit || isPlanner(user);
   const deliveryDay = jo.delivery_date ? String(jo.delivery_date).slice(0, 10) : '';
   const savedStart = jo.planned_start_date ? String(jo.planned_start_date).slice(0, 10) : '';
   const savedEnd = jo.planned_end_date ? String(jo.planned_end_date).slice(0, 10) : '';
@@ -729,6 +742,7 @@ export default function ProductionJobOrderView() {
       <div className="status-tabs" style={{ marginTop: 20 }}>
         <button className={`status-tab ${tab === 'processes' ? 'active' : ''}`} onClick={() => setTab('processes')}>Processes</button>
         <button className={`status-tab ${tab === 'related' ? 'active' : ''}`} onClick={() => setTab('related')}>Related Records</button>
+        <button className={`status-tab ${tab === 'prodfiles' ? 'active' : ''}`} onClick={() => setTab('prodfiles')}>Production Attachment</button>
         <button className={`status-tab ${tab === 'subcon' ? 'active' : ''}`} onClick={() => setTab('subcon')}>Sub Con</button>
         <button className={`status-tab ${tab === 'rwip' ? 'active' : ''}`} onClick={() => setTab('rwip')}>RWIP JO</button>
         <button className={`status-tab ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}>System Info</button>
@@ -859,6 +873,23 @@ export default function ProductionJobOrderView() {
             </table>
           </div>
         </div>
+      )}
+
+      {/* The planner's own files for this job. Deliberately separate from the Artist
+          Attachment tab on the Sales-side view: nothing here is approved against, and
+          nothing here counts toward the drawing Sales needs before approval. */}
+      {tab === 'prodfiles' && (
+        <JobOrderAttachments
+          jobOrderId={id}
+          kinds={PRODUCTION_KINDS}
+          title="Production Attachment"
+          description={'Files the production planner keeps against this Job Order -- the plan, '
+            + 'references, anything the floor needs. Separate from the artist’s drawings, and '
+            + 'not part of what Sales approved.'}
+          emptyHint="Attach the production plan or any reference the floor needs."
+          canUpload={canManageProductionFiles}
+          canDelete={canManageProductionFiles}
+        />
       )}
 
       {tab === 'subcon' && (

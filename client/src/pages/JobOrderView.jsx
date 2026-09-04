@@ -6,7 +6,7 @@ import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
-import ArtistAttachments from '../components/ArtistAttachments';
+import JobOrderAttachments, { ARTIST_KINDS } from '../components/JobOrderAttachments';
 import RevisionNotice from '../components/RevisionNotice';
 import { maySalesRevise, mayReworkJobOrder, awaitingDateDecision } from '../utils/salesRevision';
 
@@ -490,8 +490,14 @@ export default function JobOrderView() {
       )}
 
       {tab === 'attachments' && (
-        <ArtistAttachments
+        <JobOrderAttachments
           jobOrderId={id}
+          kinds={ARTIST_KINDS}
+          title="Artist Attachment"
+          description={'The perspective drawing and the Cutting List / Bill of Materials. Sales approves '
+            + 'against these, so at least one file is required before this Job Order can be sent for '
+            + 'Sales Approval.'}
+          emptyHint="Attach the perspective and Bill of Materials to continue."
           canUpload={isAssignedArtist || canEdit}
           canDelete={user?.account_type === 'System Admin'}
           onChange={loadAttachmentCount}
