@@ -103,7 +103,7 @@ router.get('/for-sales-order/:salesOrderId', requireAuth, requirePermission(ROUT
 // a ticket only ever sits in one of three states.
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { search, status } = req.query;
+    const { search, status, page = '1', limit = '10' } = req.query;
     const where = [];
     const params = [];
     if (status) { where.push('dt.status = ?'); params.push(status); }
@@ -117,6 +117,30 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    // PAGINATED SERVER-SIDE. This used to return every delivery ticket with no LIMIT while the
+    // page showed ten at a time and sliced the rest away in the browser -- 2.6 MB down the wire
+    // to render 10 rows, growing with every ticket raised. Same shape as the Sales Orders list
+    // ({ rows, total, page, limit }), which already did this correctly.
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, Number(limit) || 10));
+    const offset = (pageNum - 1) * limitNum;
+
+    // The count carries only the joins its own filters actually reference. sales_orders stays
+    // because it is an INNER join and so decides which tickets are in the list at all (26 have
+    // no matching sales order and are excluded, exactly as before); customers comes in only for
+    // the search. employees, locations and departments are LEFT joins nothing filters on, so
+    // dragging them through a count over every row is pure cost.
+    //
+    // sales_invoices is deliberately NOT here: it is a LEFT join that would multiply a ticket
+    // carrying two live invoices, and `total` must be a count of tickets. None do today, but
+    // nothing constrains that, and an inflated total silently breaks paging.
+    const countFrom = `FROM delivery_tickets dt
+       JOIN sales_orders so ON so.id = dt.sales_order_id
+       ${search ? 'LEFT JOIN customers c ON c.id = so.customer_id' : ''}`;
+    const [[{ total }]] = await pool.query(
+      `SELECT COUNT(*) AS total ${countFrom} ${whereSql}`, params
+    );
 
     const [rows] = await pool.query(
       `SELECT dt.id, dt.dt_no, dt.date_created, dt.date_due, dt.term, dt.po_no, dt.memo, dt.status,
@@ -133,10 +157,11 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN departments d ON d.id = dt.department_id
        LEFT JOIN sales_invoices si ON si.delivery_ticket_id = dt.id AND si.status != 'cancelled'
        ${whereSql}
-       ORDER BY dt.id DESC`,
-      params
+       ORDER BY dt.id DESC
+       LIMIT ? OFFSET ?`,
+      [...params, limitNum, offset]
     );
-    res.json(rows);
+    res.json({ rows, total, page: pageNum, limit: limitNum });
   } catch (err) {
     next(err);
   }

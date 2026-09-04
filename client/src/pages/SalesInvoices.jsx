@@ -21,30 +21,43 @@ function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
 export default function SalesInvoices() {
 
   const [rows, setRows] = useState([]);
+  // The server now decides the page, so the total has to come from it too -- rows.length is
+  // only ever the ten rows on screen.
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
 
-  async function load() {
+  // Asks the server for ONE page. This used to fetch every row and slice it here, which meant
+  // downloading the whole table to display ten of it -- and it made the search box a lie, since
+  // it could only match rows already downloaded. Both now happen server-side.
+  async function load(toPage = page) {
     setLoading(true);
-    const params = {};
+    const params = { page: toPage, limit: PAGE_SIZE };
     if (status) params.status = status;
     if (search) params.search = search;
-    const { data } = await api.get('/sales-invoices', { params });
-    setRows(data);
-    setLoading(false);
+    try {
+      const { data } = await api.get('/sales-invoices', { params });
+      setRows(data.rows || []);
+      setTotal(Number(data.total) || 0);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  useEffect(() => { setPage(1); load(); }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Every one of these changes which rows the SERVER should return, so each has to refetch --
+  // paging is no longer something the browser can answer out of what it already holds.
+  useEffect(() => { setPage(1); load(1); }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(page); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function runSearch() {
     setPage(1);
-    load();
+    load(1);
   }
 
-  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const pageRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageRows = rows;
 
   return (
     <div>

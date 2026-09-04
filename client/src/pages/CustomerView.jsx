@@ -37,14 +37,14 @@ export default function CustomerView() {
       api.get('/crm-pipeline/meta/stages'),
       api.get('/estimates', { params: { customer_id: id, limit: 100 } }),
       api.get('/sales-orders', { params: { customer_id: id, limit: 100 } }),
-      api.get('/sales-invoices', { params: { customer_id: id } }),
+      api.get('/sales-invoices', { params: { customer_id: id, limit: 100 } }),
     ]).then(([c, p, s, e, so, inv]) => {
       setCustomer(c.data);
       setPipeline(p.data);
       setStages(s.data);
       setEstimates(e.data.rows);
       setSalesOrders(so.data.rows);
-      setInvoices(inv.data);
+      setInvoices(inv.data.rows);
       setLoading(false);
     });
   }, [id]);

@@ -30,7 +30,10 @@ async function logAudit(conn, { invoiceId, userId, eventType, fieldName = null, 
 // Status filter), same pattern as Assembly Builds' list.
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { search, status, customer_id: customerId, sales_rep_id: salesRepId } = req.query;
+    const {
+      search, status, customer_id: customerId, sales_rep_id: salesRepId,
+      page = '1', limit = '10',
+    } = req.query;
     const where = [];
     const params = [];
     if (status) { where.push('si.status = ?'); params.push(status); }
@@ -47,6 +50,25 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
+    // PAGINATED SERVER-SIDE. This used to return every invoice with no LIMIT -- 73,202 rows and
+    // 30.6 MB measured on production -- while the page showed ten and sliced the rest away in
+    // the browser. About 2 s of that was the server and ~9 s the transfer, before the browser
+    // then parsed 30 MB of JSON to render 10 rows. Same shape as the Sales Orders list.
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.min(100, Math.max(1, Number(limit) || 10));
+    const offset = (pageNum - 1) * limitNum;
+
+    // The count carries only the joins its own filters reference. sales_orders stays -- it is an
+    // INNER join, so it decides which invoices are in the list at all, and the customer filter
+    // reads so.customer_id. customers comes in only for the search. employees, locations and
+    // departments are LEFT joins nothing filters on.
+    const countFrom = `FROM sales_invoices si
+       JOIN sales_orders so ON so.id = si.sales_order_id
+       ${search ? 'LEFT JOIN customers c ON c.id = so.customer_id' : ''}`;
+    const [[{ total }]] = await pool.query(
+      `SELECT COUNT(*) AS total ${countFrom} ${whereSql}`, params
+    );
+
     const [rows] = await pool.query(
       `SELECT si.id, si.invoice_no, si.date_created, si.date_due, si.net_of_tax, si.tax_amount,
               si.gross_amount, si.amount_due, si.bs_si_no, si.term, si.status, si.memo,
@@ -60,10 +82,11 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        LEFT JOIN departments d ON d.id = si.department_id
        ${whereSql}
-       ORDER BY si.id DESC`,
-      params
+       ORDER BY si.id DESC
+       LIMIT ? OFFSET ?`,
+      [...params, limitNum, offset]
     );
-    res.json(rows);
+    res.json({ rows, total, page: pageNum, limit: limitNum });
   } catch (err) {
     next(err);
   }
