@@ -12,6 +12,11 @@ const PAGE_SIZE = 10;
 // view (ProductionJobOrderView.jsx), which shows the same JO with a wider,
 // production-floor Processes table instead of the Sales-side Job Order view.
 const STAGE_TABS = [
+  // First, because it is what happens first: Sales forwards an advance copy so the floor can
+  // see what is coming and move materials, before the job is approved and schedulable. Not a
+  // production_stage value -- an advance copy deliberately has none -- so it is passed as its
+  // own query param, exactly as Hold is.
+  { key: 'advance_copy', label: 'Advance Copy' },
   { key: 'pending_for_scheduling', label: 'Pending for Sched.' },
   { key: 'for_revision', label: 'For Revision' },
   { key: 'in_process_with_revision', label: 'In-Process w/ Rev.' },
@@ -39,7 +44,9 @@ export default function Production() {
 
   async function load() {
     setLoading(true);
-    const params = stage === 'hold' ? { hold: 1 } : { stage };
+    const params = stage === 'hold' ? { hold: 1 }
+      : stage === 'advance_copy' ? { advance: 1 }
+      : { stage };
     if (search) params.search = search;
     const { data } = await api.get('/production', { params });
     setRows(data.rows);

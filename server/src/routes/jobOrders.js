@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { isPlannerUser } = require('../lib/plannerRoles');
+const { isAdvanceCopy } = require('../lib/advanceCopy');
 const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } = require('../lib/designSupervisorVisibility');
 const { getArtistEmployeeScope } = require('../lib/artistVisibility');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
@@ -342,6 +343,55 @@ router.put('/:id/forward-to-production', requireAuth, requirePermission('/non-st
     );
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'status', oldValue: jo.status, newValue: 'Released' });
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'sub_status', newValue: 'Approved' });
+    await conn.commit();
+    const [[updated]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
+    res.json(updated);
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
+// Forward an ADVANCE COPY to Production: let them see the job order before Sales approves it,
+// so a material that has to be moved between warehouses can be spotted and a Transfer Order
+// raised now rather than on the day the job is meant to be scheduled.
+//
+// This is NOT the RMA "Forward to Production" above. That one releases the job outright and
+// only applies to an RMA job order. This one changes no status at all -- it sets a flag, and
+// the job carries on through Design and Sales Approval exactly as before.
+//
+// Whose button it is: the job order's own sales rep. maySalesReviseJobOrder is reused because
+// it already states exactly that -- System Admin, the rep named on the job order, or another
+// Sales account with can_edit covering for them -- and it exists because almost no sales
+// account holds can_edit, so a permission check alone would lock the owning rep out of their
+// own job order.
+router.put('/:id/forward-advance-copy', requireAuth, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[jo]] = await conn.query(
+      'SELECT id, status, sales_rep_id, production_stage, advance_copy_at FROM job_orders WHERE id = ?',
+      [req.params.id]
+    );
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!(await maySalesReviseJobOrder(req.user.id, jo))) {
+      return res.status(403).json({ error: 'Only this Job Order\u2019s sales rep can forward it to Production.' });
+    }
+    if (jo.status === 'Cancelled') return res.status(409).json({ error: 'This job order is cancelled.' });
+    // Already approved: Production has the real thing, and an advance copy of a job they can
+    // already schedule would only be confusing.
+    if (jo.production_stage) {
+      return res.status(409).json({ error: 'Production already has this Job Order.' });
+    }
+    if (jo.advance_copy_at) {
+      return res.status(409).json({ error: 'This Job Order has already been forwarded to Production.' });
+    }
+
+    await conn.beginTransaction();
+    await conn.query(
+      'UPDATE job_orders SET advance_copy_at = NOW(), advance_copy_by_id = ?, updated_at = NOW() WHERE id = ?',
+      [req.user.id, req.params.id]
+    );
+    await logAudit(conn, {
+      jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated',
+      fieldName: 'advance_copy_at', oldValue: null, newValue: 'forwarded to Production (advance copy)',
+    });
     await conn.commit();
     const [[updated]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
     res.json(updated);

@@ -9,6 +9,7 @@ const {
   maySalesReviseJobOrder, REVISION_REASONS, REVISION_DELIVERY_DATE, REVISION_MATERIAL_PROCESS,
   REVISION_APPROVED, REVISION_DECLINED, DATE_CHANGE_REASONS,
 } = require('../lib/jobOrderRevision');
+const { isAdvanceCopy, advanceCopySql, ADVANCE_COPY_REFUSAL } = require('../lib/advanceCopy');
 const { PLANNER_COLUMNS, isPlanner } = require('../lib/plannerRoles');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 
@@ -33,6 +34,23 @@ async function requireProductionView(req, res, next) {
     if (isPlanner(u) || u?.is_production_supervisor) return next();
     return requirePermission(ROUTE, 'can_view')(req, res, next);
   } catch (err) { return next(err); }
+}
+
+// An advance copy is visible here and otherwise untouchable: Sales forwarded it so the floor
+// could see what is coming and move materials, not so it could be worked. Stated once and
+// called by every mutating route, rather than restated per handler where the next route added
+// would simply forget it. Routes that already require a specific production_stage (Acknowledge,
+// Sales Revision, the revision decisions) refuse an advance copy on their own, because its
+// stage is NULL -- this covers the ones gated only by permission.
+//
+// Returns true when the caller should stop.
+async function refuseAdvanceCopy(conn, jobOrderId, res) {
+  const [[jo]] = await conn.query(
+    'SELECT production_stage, advance_copy_at FROM job_orders WHERE id = ?', [jobOrderId]
+  );
+  if (!jo) { res.status(404).json({ error: 'Not found' }); return true; }
+  if (isAdvanceCopy(jo)) { res.status(409).json({ error: ADVANCE_COPY_REFUSAL }); return true; }
+  return false;
 }
 
 // Mirrors the real system's "Production > Production" ("Saved Job Order Stages")
@@ -64,7 +82,9 @@ router.get('/', requireAuth, requireProductionView, async (req, res, next) => {
       stage, hold, search, sales_rep_id: salesRepId, job_location_id: jobLocationId, customer_id: customerId,
     } = req.query;
 
-    const commonWhere = ['jo.production_stage IS NOT NULL'];
+    // Advance copies have no production_stage -- that is what makes them advance copies -- so
+    // the list has to admit them explicitly or Production would never see one.
+    const commonWhere = [`(jo.production_stage IS NOT NULL OR ${advanceCopySql('jo')})`];
     const commonParams = [];
 
     // A production department only sees its own warehouse's work. Applied to commonWhere rather
@@ -123,7 +143,16 @@ router.get('/', requireAuth, requireProductionView, async (req, res, next) => {
     const params = [...commonParams];
     if (hold === '1') {
       where.push('jo.is_on_hold = 1');
+      // An advance copy on hold is still an advance copy: it belongs in that tab and only
+      // that tab, so the counts below and this listing agree on where each row lives.
+      where.push(`NOT ${advanceCopySql('jo')}`);
+    } else if (req.query.advance === '1') {
+      // Its own tab, like Hold: driven by a column rather than by a stage value, because an
+      // advance copy deliberately has no stage.
+      where.push(advanceCopySql('jo'));
     } else if (stage && STAGE_VALUES.includes(stage)) {
+      // `production_stage = ?` already excludes advance copies, whose stage is NULL -- so a
+      // scheduler's queue never contains a job they are not allowed to schedule.
       where.push('jo.production_stage = ?');
       where.push('jo.is_on_hold = 0');
       params.push(stage);
@@ -169,7 +198,13 @@ router.get('/', requireAuth, requireProductionView, async (req, res, next) => {
     );
     const counts = Object.fromEntries(STAGE_VALUES.map((s) => [s, 0]));
     counts.hold = 0;
+    counts.advance_copy = 0;
     countRows.forEach((r) => {
+      // Checked FIRST, and identified by a null stage: commonWhere admits exactly two kinds of
+      // row, staged job orders and advance copies, so within this result set a null stage can
+      // only be an advance copy. Ahead of the hold check so a held one still counts as advance,
+      // matching where the listing above puts it.
+      if (r.production_stage === null) { counts.advance_copy += r.count; return; }
       if (r.is_on_hold) { counts.hold += r.count; return; }
       if (counts[r.production_stage] !== undefined) counts[r.production_stage] = r.count;
     });
@@ -386,6 +421,7 @@ function parseDate(v) {
 router.put('/:id/planned-dates', requireAuth, requireScheduler, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
+    if (await refuseAdvanceCopy(conn, req.params.id, res)) return;
     const start = parseDate(req.body?.planned_start_date);
     const end = parseDate(req.body?.planned_end_date);
     if (start === undefined || end === undefined) {
@@ -730,6 +766,7 @@ router.put('/:id/revision-decision', requireAuth, async (req, res, next) => {
 
 router.put('/:id/processes/:processId/complete', requireAuth, requireProductionFloor, async (req, res, next) => {
   try {
+    if (await refuseAdvanceCopy(pool, req.params.id, res)) return;
     const [[proc]] = await pool.query(
       `SELECT jop.total, jop.total_completed, jop.item_id, jop.location_id, i.item_type,
               COALESCE(jop.location_id, parent_jo.job_location_id) AS effective_location_id
@@ -801,6 +838,7 @@ router.put('/:id/processes/:processId/complete', requireAuth, requireProductionF
 router.put('/:id/assembly-build', requireAuth, requireProductionFloor, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
+    if (await refuseAdvanceCopy(conn, req.params.id, res)) return;
     const [[jo]] = await conn.query('SELECT quantity, quantity_built, production_stage, job_location_id FROM job_orders WHERE id = ?', [req.params.id]);
     if (!jo) return res.status(404).json({ error: 'Not found' });
     if (!(await assertJobOrderInScope(req, res))) return;
@@ -980,6 +1018,7 @@ router.get('/:id/rwip-draft', requireAuth, requirePermission(ROUTE, 'can_view'),
 router.post('/:id/rwip', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
+    if (await refuseAdvanceCopy(conn, req.params.id, res)) return;
     const [[jo]] = await conn.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
     if (!jo) return res.status(404).json({ error: 'Not found' });
     if (!(await assertJobOrderInScope(req, res))) return;

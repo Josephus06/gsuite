@@ -9,6 +9,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import JobOrderAttachments, { ARTIST_KINDS } from '../components/JobOrderAttachments';
 import RevisionNotice from '../components/RevisionNotice';
 import { maySalesRevise, mayReworkJobOrder, awaitingDateDecision } from '../utils/salesRevision';
+import { isAdvanceCopy, canForwardAdvanceCopy } from '../utils/advanceCopy';
 
 // Deliberately minimal Job Order detail -- mirrors the real system's layout (banner +
 // grouped info fields + Processes/RWIP JO/Sub Con/Related Records/System Info tabs +
@@ -183,6 +184,21 @@ export default function JobOrderView() {
     try { await api.put(`/job-orders/${id}/approve-rma`); await load(); } finally { setBusy(false); }
   }
 
+  // Let Production SEE this job order before Sales approves it, so a material that has to be
+  // moved between warehouses can be spotted and a Transfer Order raised now rather than on the
+  // day the job is meant to be scheduled. Changes no status: the job carries on through Design
+  // and Sales Approval exactly as before, and Production can do nothing to it but raise a TO.
+  async function handleForwardAdvanceCopy() {
+    setBusy(true);
+    setActionError('');
+    try {
+      await api.put(`/job-orders/${id}/forward-advance-copy`);
+      await load();
+    } catch (err) {
+      setActionError(err.response?.data?.error || 'Could not forward this Job Order to Production.');
+    } finally { setBusy(false); }
+  }
+
   async function handleForwardToProduction() {
     setBusy(true);
     try { await api.put(`/job-orders/${id}/forward-to-production`); await load(); } finally { setBusy(false); }
@@ -243,6 +259,9 @@ export default function JobOrderView() {
   const canApproveRma = can('/non-standard-sales-orders', 'can_approve');
   const isPendingRma = isNsjo && !jo.rma_approved_at;
   const canForwardProduction = isNsjo && !!jo.rma_approved_at && jo.status !== 'Released' && jo.status !== 'Cancelled';
+  // Whose button it is: this job order's own sales rep (maySalesRevise already states that --
+  // System Admin, the named rep, or another Sales account with can_edit covering for them).
+  const canForwardAdvance = canForwardAdvanceCopy(jo) && maySalesRevise(user, jo, canEdit);
   const canApproveRwipPerm = can('/production', 'can_approve');
   const rwipPendingApproval = isRwip && jo.status === 'Pending RMA Approval';
   const isTerminal = jo.status === 'Completed' || jo.status === 'Cancelled';
@@ -309,6 +328,23 @@ export default function JobOrderView() {
           )}
           {isPendingRma && canApproveRma && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApproveRma}>{isRmaType ? 'Approve RMA' : 'Approve'}</button>}
           {canForwardProduction && canApproveRma && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleForwardToProduction}>Forward to Production</button>}
+          {/* Distinct from the RMA button above, which releases the job outright and only ever
+              appears on an RMA job order -- hence the !isNsjo guard, so the two can never be
+              drawn together and mean different things under the same words. */}
+          {!isNsjo && canForwardAdvance && (
+            <button
+              className="btn btn-sm btn-primary" disabled={busy}
+              title="Let Production see this Job Order now so they can raise Transfer Orders for materials. They cannot schedule or edit it until you approve it."
+              onClick={handleForwardAdvanceCopy}
+            >
+              Forward to Production
+            </button>
+          )}
+          {!isNsjo && isAdvanceCopy(jo) && (
+            <span className="badge" style={{ marginLeft: 6 }} title="Production can see this Job Order and raise Transfer Orders against it. They cannot schedule or edit it until you approve it.">
+              Advance copy with Production
+            </span>
+          )}
           {rwipPendingApproval && canApproveRwipPerm && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApproveRwip}>{isRfqc ? 'Approve RFQC' : 'Approve RWIP'}</button>}
           {inDesignPhase && (isOwningSalesRep || canEdit) && jo.sub_status === 'Pending' && (
             <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleForwardToDesign}>Forward to Design Supervisor</button>

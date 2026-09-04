@@ -10,6 +10,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { isNonStockItem } from '../utils/itemTypes';
 import { isPlanner } from '../utils/plannerRoles';
 import JobOrderAttachments, { PRODUCTION_KINDS } from '../components/JobOrderAttachments';
+import { isAdvanceCopy } from '../utils/advanceCopy';
 import SalesRevisionModal from '../components/SalesRevisionModal';
 import RevisionNotice from '../components/RevisionNotice';
 import { maySalesRevise, awaitingDateDecision } from '../utils/salesRevision';
@@ -540,7 +541,14 @@ export default function ProductionJobOrderView() {
   // refused. It asks for what the server asks for instead (see requireProductionFloor in
   // routes/production.js): production edit rights, or one of the two floor role tags. What they
   // may build is still bounded by their department's warehouse, on the server.
-  const canWorkFloor = canCreateRwip || isPlanner(user) || !!user?.is_production_supervisor;
+  const canWorkFloorRole = canCreateRwip || isPlanner(user) || !!user?.is_production_supervisor;
+  // An ADVANCE COPY: Sales forwarded this so Production could see what is coming and move
+  // materials, before the job is approved. The only thing they may do to it is raise a Transfer
+  // Order -- Create TO lives on the process table below and is deliberately left alone. Every
+  // other control on this screen is withdrawn until Sales approves it, at which point it stops
+  // being an advance copy on its own (see utils/advanceCopy.js) and this all comes back.
+  const advanceCopy = isAdvanceCopy(jo);
+  const canWorkFloor = canWorkFloorRole && !advanceCopy;
   const isTerminal = jo.status === 'Completed' || jo.status === 'Cancelled';
   const isOnHold = !!jo.is_on_hold;
   // Editable in place while the job is still live; Acknowledge is offered only out of
@@ -548,7 +556,7 @@ export default function ProductionJobOrderView() {
   // progress its stage represents.
   // A department planner schedules without holding production edit rights, so the fields open
   // for them too -- matching what the server accepts.
-  const canSchedule = (canEdit || isPlanner(user)) && !isTerminal;
+  const canSchedule = (canEdit || isPlanner(user)) && !isTerminal && !advanceCopy;
   // Mirrors canManageProductionAttachments on the server: a department planner, or anyone
   // with production edit rights. Drawn from the same facts the server checks, so the button
   // is not offered to someone the endpoint would then refuse.
@@ -574,7 +582,7 @@ export default function ProductionJobOrderView() {
   // A date revision ends by answering it (below), not by the generic return button -- which the
   // server also refuses while the suggestion is unanswered, so the two agree.
   const decidingDate = canReturnRevision && awaitingDateDecision(jo);
-  const canSendForRevision = can('/production', 'can_edit') && !isOnHold
+  const canSendForRevision = !advanceCopy && can('/production', 'can_edit') && !isOnHold
     && jo.status === 'Released' && jo.production_stage === 'pending_for_scheduling'
     && num(jo.quantity_built) === 0;
   // RWIP can only be raised while the JO is in process; open RWIPs block building the mother JO.
@@ -601,7 +609,7 @@ export default function ProductionJobOrderView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/production')}>Back to Lists</button>
-          {canEdit && jo.status !== 'Cancelled' && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/job-orders/${id}/edit`, { state: { from: 'production' } })}>Edit</button>}
+          {canEdit && !advanceCopy && jo.status !== 'Cancelled' && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/job-orders/${id}/edit`, { state: { from: 'production' } })}>Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           {canSendForRevision && (
             <button className="btn btn-sm btn-warning" disabled={busy}
@@ -629,8 +637,8 @@ export default function ProductionJobOrderView() {
               onClick={() => setShowAssemblyBuild(true)}>Assembly Build</button>
           )}
           {canWorkFloor && hasUninspectedBuilds && <button className="btn btn-sm btn-primary" onClick={() => setShowQualityInspection(true)}>Quality Inspection</button>}
-          {canEdit && !isOnHold && !isTerminal && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleHold}>Hold</button>}
-          {canEdit && isOnHold && !isTerminal && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleResume}>Resume</button>}
+          {canEdit && !advanceCopy && !isOnHold && !isTerminal && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleHold}>Hold</button>}
+          {canEdit && !advanceCopy && isOnHold && !isTerminal && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleResume}>Resume</button>}
         </div>
       </div>
 
@@ -649,10 +657,30 @@ export default function ProductionJobOrderView() {
         <div className="estimate-status">
           {jo.status} <span style={{ opacity: 0.7 }}>{STAGE_LABELS[jo.production_stage] || jo.sub_status}</span>
           {isOnHold && <span className="estimate-so-link" style={{ background: 'rgba(245, 159, 0, 0.35)' }}>On Hold</span>}
+          {advanceCopy && <span className="estimate-so-link" style={{ background: 'rgba(79, 140, 247, 0.35)' }}>Advance Copy</span>}
           <button type="button" className="estimate-so-link" onClick={() => navigate(`/sales-orders/${jo.sales_order_id}`)}>
             {jo.sales_order_no}
           </button>
         </div>
+
+        {/* Otherwise this screen just looks oddly empty of buttons, and the reason -- that Sales
+            has not approved it yet -- is exactly what the person looking at it needs to know. */}
+        {advanceCopy && (
+          <div style={{
+            marginTop: 12,
+            padding: '10px 12px',
+            borderRadius: 6,
+            background: 'rgba(79, 140, 247, 0.22)',
+            border: '1px solid rgba(79, 140, 247, 0.5)',
+          }}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>Advance copy &mdash; not yet approved by Sales</div>
+            <div>
+              Sent ahead so you can see what is coming and move materials.
+              <strong> Create TO</strong> is available below; scheduling, editing and building
+              open once Sales approves this Job Order.
+            </div>
+          </div>
+        )}
 
         <div className="estimate-detail-grid">
           <div>
