@@ -2,6 +2,7 @@ import { useState } from 'react';
 import Modal from './Modal';
 import {
   REVISION_MATERIAL_PROCESS, REVISION_DELIVERY_DATE, REVISION_REASON_LABELS,
+  DATE_CHANGE_REASONS, DATE_CHANGE_REASON_LABELS,
 } from '../utils/salesRevision';
 
 // Production says WHY it is handing a job order back, because the reason decides what Sales may
@@ -11,6 +12,10 @@ import {
 export default function SalesRevisionModal({ jo, onClose, onSubmit }) {
   const [reason, setReason] = useState(REVISION_MATERIAL_PROCESS);
   const [suggested, setSuggested] = useState('');
+  // Deliberately starts empty rather than on the first reason: a pre-selected cause is one
+  // nobody chose, and "lack of material" landing on every revision by default is worse than
+  // no answer at all.
+  const [dateReason, setDateReason] = useState('');
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -22,6 +27,7 @@ export default function SalesRevisionModal({ jo, onClose, onSubmit }) {
     e.preventDefault();
     setError('');
     if (needsDate && !suggested) { setError('Choose the delivery date you are suggesting.'); return; }
+    if (needsDate && !dateReason) { setError('Choose why the delivery date has to change.'); return; }
     if (needsDate && currentDelivery && suggested === currentDelivery) {
       setError('That is already this job order’s delivery date — suggest a different one.');
       return;
@@ -32,6 +38,7 @@ export default function SalesRevisionModal({ jo, onClose, onSubmit }) {
         reason,
         note: note.trim() || null,
         suggested_delivery_date: needsDate ? suggested : null,
+        date_reason: needsDate ? dateReason : null,
       });
       onClose();
     } catch (err) {
@@ -79,6 +86,26 @@ export default function SalesRevisionModal({ jo, onClose, onSubmit }) {
               {currentDelivery
                 ? `Currently promised for ${currentDelivery}.`
                 : 'This job order has no delivery date set yet.'}
+            </span>
+          </div>
+        )}
+
+        {/* Required, and only asked for on a date revision -- a material/process revision is
+            a request to re-specify the job, and the reason for that is the spec change. */}
+        {needsDate && (
+          <div className="field">
+            <label>Reason for the date change</label>
+            <select
+              value={dateReason} required disabled={saving}
+              onChange={(e) => { setDateReason(e.target.value); setError(''); }}
+            >
+              <option value="">— Choose a reason —</option>
+              {DATE_CHANGE_REASONS.map((value) => (
+                <option key={value} value={value}>{DATE_CHANGE_REASON_LABELS[value]}</option>
+              ))}
+            </select>
+            <span className="muted" style={{ fontSize: 12 }}>
+              Sales sees this beside the date you are suggesting.
             </span>
           </div>
         )}

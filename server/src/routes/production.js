@@ -7,7 +7,7 @@ const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocatio
 const { deriveOnHand } = require('../lib/stockLedger');
 const {
   maySalesReviseJobOrder, REVISION_REASONS, REVISION_DELIVERY_DATE, REVISION_MATERIAL_PROCESS,
-  REVISION_APPROVED, REVISION_DECLINED,
+  REVISION_APPROVED, REVISION_DECLINED, DATE_CHANGE_REASONS,
 } = require('../lib/jobOrderRevision');
 const { PLANNER_COLUMNS, isPlanner } = require('../lib/plannerRoles');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
@@ -540,10 +540,18 @@ router.put('/:id/sales-revision', requireAuth, requirePermission(ROUTE, 'can_edi
     const note = String(req.body?.note || '').trim().slice(0, 500) || null;
 
     let suggested = null;
+    let dateReason = null;
     if (reason === REVISION_DELIVERY_DATE) {
       suggested = parseDate(req.body?.suggested_delivery_date);
       if (!suggested) {
         return res.status(400).json({ error: 'Suggest a delivery date in YYYY-MM-DD format.' });
+      }
+      // Required, not optional. The remark was the only place a cause was ever recorded and
+      // it was optional, so most date revisions reached Sales with a new date and nothing
+      // saying why -- leaving them to accept a slip they had not been given a reason for.
+      dateReason = String(req.body?.date_reason || '');
+      if (!DATE_CHANGE_REASONS.includes(dateReason)) {
+        return res.status(400).json({ error: 'Choose why the delivery date has to change.' });
       }
       // Proposing the date already on the job order asks Sales to decide nothing.
       if (jo.delivery_date && String(jo.delivery_date).slice(0, 10) === suggested) {
@@ -555,10 +563,13 @@ router.put('/:id/sales-revision', requireAuth, requirePermission(ROUTE, 'can_edi
     await conn.query(
       `UPDATE job_orders
           SET production_stage = 'for_revision', revision_reason = ?, revision_note = ?,
-              revision_suggested_delivery_date = ?, revision_requested_by_id = ?,
+              revision_suggested_delivery_date = ?, revision_date_reason = ?,
+              revision_requested_by_id = ?,
               revision_requested_at = NOW(), revision_date_decision = NULL, updated_at = NOW()
         WHERE id = ?`,
-      [reason, note, suggested, req.user.id, req.params.id]
+      // Cleared to NULL on a material/process revision rather than left behind: a stale
+      // "lack of material" sitting on a spec revision would read as this revision's reason.
+      [reason, note, suggested, dateReason, req.user.id, req.params.id]
     );
     await conn.query(
       `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
@@ -570,10 +581,16 @@ router.put('/:id/sales-revision', requireAuth, requirePermission(ROUTE, 'can_edi
     await conn.query(
       `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
        VALUES ('JobOrder', ?, 'Updated', 'revision_reason', ?, ?, ?)`,
-      [req.params.id, jo.revision_reason || '', suggested ? `${reason} (${suggested})` : reason, req.user.id]
+      [req.params.id, jo.revision_reason || '',
+        suggested ? `${reason} (${suggested}) -- ${dateReason}` : reason, req.user.id]
     );
     await conn.commit();
-    res.json({ production_stage: 'for_revision', revision_reason: reason, revision_suggested_delivery_date: suggested });
+    res.json({
+      production_stage: 'for_revision',
+      revision_reason: reason,
+      revision_suggested_delivery_date: suggested,
+      revision_date_reason: dateReason,
+    });
   } catch (err) {
     await conn.rollback();
     next(err);

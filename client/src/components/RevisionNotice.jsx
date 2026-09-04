@@ -1,4 +1,6 @@
-import { REVISION_DELIVERY_DATE, REVISION_REASON_LABELS } from '../utils/salesRevision';
+import {
+  REVISION_DELIVERY_DATE, REVISION_REASON_LABELS, DATE_CHANGE_REASON_LABELS,
+} from '../utils/salesRevision';
 
 const day = (v) => (v ? String(v).slice(0, 10) : '');
 
@@ -31,6 +33,15 @@ export default function RevisionNotice({ jo }) {
         <div>
           Suggested Delivery Date : <span className="hi">{suggested || '—'}</span>
           {current && <> (currently promised for <span className="hi">{current}</span>)</>}
+        </div>
+      )}
+      {/* Why the date has to move. The label falls back to the stored code so a reason added
+          to the server's list but not yet to this one still reads as something. */}
+      {isDate && jo.revision_date_reason && (
+        <div>
+          Reason : <span className="hi">
+            {DATE_CHANGE_REASON_LABELS[jo.revision_date_reason] || jo.revision_date_reason}
+          </span>
         </div>
       )}
       {!isDate && <div>Sales may change this Job Order’s materials and processes.</div>}

@@ -31,6 +31,28 @@ const REVISION_MATERIAL_PROCESS = 'material_process';
 const REVISION_DELIVERY_DATE = 'delivery_date';
 const REVISION_REASONS = [REVISION_MATERIAL_PROCESS, REVISION_DELIVERY_DATE];
 
+// WHY the promised delivery date cannot be met, picked from a fixed list rather than typed.
+// These are the answers the business already gives, and as codes they can be counted -- "how
+// many jobs slipped for lack of material this quarter" is a question a column can answer and
+// a paragraph cannot. The free-text remark stays alongside, for the detail a list cannot
+// carry.
+//
+// Only meaningful for a delivery_date revision. A material/process revision is a request to
+// re-specify the job, and the reason for that is the spec change itself.
+//
+// Codes are stored; the labels are presentation and are mirrored in
+// client/src/utils/salesRevision.js. Keep the two in step -- the client draws the dropdown
+// from its copy and the server validates against this one.
+const DATE_CHANGE_REASONS = [
+  'lack_of_material',
+  'machine_maintenance',
+  'volume_exceeds_lead_time',
+  'power_interruption',
+  'change_material',
+  'additional_process',
+  'shortage_of_consumables',
+];
+
 const REVISION_APPROVED = 'approved';
 const REVISION_DECLINED = 'declined';
 
@@ -83,6 +105,7 @@ module.exports = {
   REVISION_MATERIAL_PROCESS,
   REVISION_DELIVERY_DATE,
   REVISION_REASONS,
+  DATE_CHANGE_REASONS,
   REVISION_APPROVED,
   REVISION_DECLINED,
 };

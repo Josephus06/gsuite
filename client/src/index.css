@@ -126,6 +126,28 @@ textarea {
   padding: var(--space-2) var(--space-3);
   line-height: var(--leading-body);
 }
+
+/* A radio is a 13px glyph, not a text field, and the rule above hands every `input` a full
+   width, a control height, a border, a background and horizontal padding -- so the one radio
+   in this app rendered as a stretched bordered oval in the Sales Revision dialog.
+
+   What actually inflated it was `width: 100%` inside a FLEX row: that label lays the radio and
+   its description out side by side, so the radio took a 100%-wide flex basis and only shrank
+   back proportionally, ending up ~140px. Hence flex: none as well as width: auto -- and the
+   height, padding, border and background have to go too or it stays a bordered slab.
+
+   Scoped to radios, and that is not caution: checkboxes were MEASURED at the native 13x13 on
+   the Job Type and Chart of Accounts forms, so they are not affected and resetting them would
+   be a change to working screens rather than a fix. (`.perm-table input[type="checkbox"]`
+   further down is a separate, older local adjustment.) */
+input[type="radio"] {
+  width: auto;
+  height: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  flex: none;
+}
 /* The focus ring is a soft halo of primary, not the old hard 2px outline, and it sits
    OUTSIDE the control so it never eats a pixel of the field's own border. */
 input:focus, select:focus, textarea:focus {
