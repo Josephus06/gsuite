@@ -24,7 +24,16 @@ const DELIVERIES_ONLY = process.argv.includes('--deliveries-only'); // re-do onl
 function argVal(name, def) { const a = process.argv.find((x) => x.startsWith(`--${name}=`)); return a ? a.split('=')[1] : def; }
 const FROM = argVal('from', '2026-01-01');
 const TO = argVal('to', '2026-07-31');
-const CONCURRENCY = 4;
+// Four workers is the right default for a bulk run -- it is what makes a full year finish in
+// hours rather than a day. But the workers delete+reinsert rows for different sales orders whose
+// builds and QIs sit in the same pages, so they deadlock against EACH OTHER; the retry below
+// replays most of those, and a few still exhaust all five attempts (241 replays / 42 exhausted
+// on the 2026 run).
+//
+// Those stragglers need a pass with nothing to contend against, and `--concurrency=1` is what
+// makes that possible -- a re-run at the default still fights itself even when it is the only
+// process touching the database, which is exactly what happened repairing that run.
+const CONCURRENCY = Math.max(1, Number(argVal('concurrency', '')) || 4);
 const day = (v) => (v || '').toString().slice(0, 10);
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const dOrNull = (v) => { const s = day(v); return s && s >= '1990-01-01' ? s : null; };
