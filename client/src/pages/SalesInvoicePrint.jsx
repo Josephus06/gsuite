@@ -7,7 +7,8 @@ import InvoicePrintType2 from '../components/InvoicePrintType2';
 import { invoiceTotals } from '../utils/invoicePrint';
 
 // Two invoice print formats, picked with ?type= :
-//   Type 1 -- data-only overlay for the pre-printed "SERVICE INVOICE" pad (8.3 x 5.4in).
+//   Type 1 -- data-only overlay for the pre-printed "SERVICE INVOICE" pad (8.3 x 5.4in),
+//             printed as the top band of a portrait A4 sheet.
 //   Type 2 -- self-contained export-style INVOICE on plain A4; draws its own grid.
 // Type 1 is the default because it is the one tied to the BIR-registered stationery.
 export default function SalesInvoicePrint() {
@@ -63,7 +64,8 @@ export default function SalesInvoicePrint() {
         <div className="si-hint si-no-print">
           Guides on: 10mm grid, field outlines. Print this over a blank pre-printed form, measure any
           field that misses its box, and adjust <code>FORM</code> in <code>InvoicePrintType1.jsx</code> —
-          every position is millimetres from the top-left of the {FORM.page.width}×{FORM.page.height}mm sheet.
+          every position is millimetres from the top-left of the {FORM.page.width}×{FORM.page.height}mm form,
+          which prints at the top of a {FORM.sheet.width}×{FORM.sheet.height}mm portrait sheet.
         </div>
       )}
 

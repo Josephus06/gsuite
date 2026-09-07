@@ -12,8 +12,16 @@ import { money, qtyText, formatDate, paginate } from '../utils/invoicePrint';
 // overlay a 10mm grid and outline each field, print that onto a real form, and nudge the
 // numbers until the data sits in the blanks.
 export const FORM = {
-  // The physical CEBU GRAPHICSTAR "SERVICE INVOICE" pad measures 8.3 x 5.4 inches, landscape.
+  // The physical CEBU GRAPHICSTAR "SERVICE INVOICE" pad measures 8.3 x 5.4 inches. Every
+  // coordinate below is millimetres from the top-left of THAT FORM, never of the paper it is
+  // fed on -- `sheet` below carries the paper, so moving the form around the sheet costs
+  // nothing in re-calibration.
   page: { width: 210.8, height: 137.2 },
+
+  // The paper that actually goes through the printer: A4 portrait, with the pre-printed form
+  // occupying the top band of it. `formTop` is how far down the sheet the form starts -- raise
+  // it if the pad is fed lower down.
+  sheet: { width: 210, height: 297, formTop: 0 },
 
   baseFontPt: 8,
   fontFamily: "'Courier New', Courier, monospace", // monospace keeps columns aligned in the blanks
@@ -126,21 +134,48 @@ export default function InvoicePrintType1({ si, totals, calibrate }) {
       <style>{`
         .si-sheet {
           position: relative;
-          width: ${FORM.page.width}mm;
-          height: ${FORM.page.height}mm;
+          width: ${FORM.sheet.width}mm;
+          height: ${FORM.sheet.height}mm;
           margin: 0 auto 16px;
           background: #fff;
+          color: #000;
+          box-shadow: 0 1px 6px rgba(0,0,0,.25);
+          /* The pad is a hair wider than the sheet; clipping that overhang stops the printer
+             from seeing content past the paper edge and spilling a blank page after each. */
+          overflow: hidden;
+        }
+        /* The overlay proper -- the coordinate space every FORM measurement is written in,
+           parked wherever the pre-printed form sits on the sheet. */
+        .si-form {
+          position: absolute;
+          left: 0;
+          top: ${FORM.sheet.formTop}mm;
+          width: ${FORM.page.width}mm;
+          height: ${FORM.page.height}mm;
           font-family: ${FORM.fontFamily};
           font-size: ${FORM.baseFontPt}pt;
           line-height: 1.15;
-          color: #000;
-          box-shadow: 0 1px 6px rgba(0,0,0,.25);
         }
         @media print {
-          /* No margin: the form's own printing is the margin, and any page box would
-             shift every field off the blanks. */
-          @page { size: ${FORM.page.width}mm ${FORM.page.height}mm; margin: 0; }
-          .si-sheet { box-shadow: none; margin: 0; page-break-after: always; }
+          /* The page box is the PAPER, not the form. Orientation has no switch of its own:
+             the box being taller than it is wide IS portrait, and the form's own
+             210.8 x 137.2mm sitting here -- wider than tall -- is what used to turn every
+             sheet sideways. Lengths rather than the A4-portrait keyword pair, because CSS
+             accepts a named size or lengths but never both -- and long bond, if this ever
+             moves to it, has no CSS name at all.
+             No margin: the pre-printed artwork is the margin, and any page offset would
+             shift every field off its blank. */
+          @page { size: ${FORM.sheet.width}mm ${FORM.sheet.height}mm; margin: 0; }
+          /* On screen a sheet is a full page of paper; on paper it only has to be as tall
+             as the form band. Leaving it at the page height risks rounding one hair past
+             the box and ejecting a blank sheet after every invoice -- the break below is
+             what starts the next one, not the height. */
+          .si-sheet {
+            box-shadow: none;
+            margin: 0;
+            height: ${FORM.sheet.formTop + FORM.page.height}mm;
+            page-break-after: always;
+          }
           .si-sheet:last-child { page-break-after: auto; }
         }
       `}</style>
@@ -149,56 +184,58 @@ export default function InvoicePrintType1({ si, totals, calibrate }) {
         const isLast = pageIdx === pages.length - 1;
         return (
           <div className="si-sheet" key={pageIdx}>
-            {calibrate && <Grid page={FORM.page} />}
+            <div className="si-form">
+              {calibrate && <Grid page={FORM.page} />}
 
-            {/* Header blanks repeat on every sheet -- a continuation page is a second
-                pre-printed form with its own serial, so it has to identify its customer too. */}
-            <Field spec={FORM.header.customerName} calibrate={calibrate} name="customerName">{si.customer_name}</Field>
-            <Field spec={FORM.header.customerTin} calibrate={calibrate} name="customerTin">{si.customer_tin}</Field>
-            <Field spec={FORM.header.customerAddress} calibrate={calibrate} name="customerAddress">
-              {si.customer_address || si.bill_to_address}
-            </Field>
-            <Field spec={FORM.header.date} calibrate={calibrate} name="date">{formatDate(si.date_created, true)}</Field>
-            <Field spec={FORM.header.terms} calibrate={calibrate} name="terms">{si.term}</Field>
-
-            {pageLines.map((l, rowIdx) => {
-              const y = FORM.items.top + rowIdx * FORM.items.rowHeight;
-              const c = FORM.items.columns;
-              return (
-                <div key={l.id}>
-                  <Field spec={{ ...c.qty, y }} calibrate={calibrate && rowIdx === 0} name="qty">{qtyText(l.quantity)}</Field>
-                  <Field spec={{ ...c.unit, y }} calibrate={calibrate && rowIdx === 0} name="unit">{l.units}</Field>
-                  <Field spec={{ ...c.description, y }} calibrate={calibrate && rowIdx === 0} name="description">{l.description}</Field>
-                  <Field spec={{ ...c.unitPrice, y }} calibrate={calibrate && rowIdx === 0} name="unitPrice">{money(l.price_per_unit)}</Field>
-                  <Field spec={{ ...c.amount, y }} calibrate={calibrate && rowIdx === 0} name="amount">{money(l.gross_amount)}</Field>
-                </div>
-              );
-            })}
-
-            {isLast && (
-              <Field
-                spec={{ ...FORM.items.orderId, y: FORM.items.top + pageLines.length * FORM.items.rowHeight + FORM.items.orderId.gap }}
-                calibrate={calibrate}
-                name="orderId"
-              >
-                {`Order ID : ${si.sales_order_no || ''}${si.po_no ? `  PO/Ref. Doc: ${si.po_no}` : ''}`}
+              {/* Header blanks repeat on every sheet -- a continuation page is a second
+                  pre-printed form with its own serial, so it has to identify its customer too. */}
+              <Field spec={FORM.header.customerName} calibrate={calibrate} name="customerName">{si.customer_name}</Field>
+              <Field spec={FORM.header.customerTin} calibrate={calibrate} name="customerTin">{si.customer_tin}</Field>
+              <Field spec={FORM.header.customerAddress} calibrate={calibrate} name="customerAddress">
+                {si.customer_address || si.bill_to_address}
               </Field>
-            )}
+              <Field spec={FORM.header.date} calibrate={calibrate} name="date">{formatDate(si.date_created, true)}</Field>
+              <Field spec={FORM.header.terms} calibrate={calibrate} name="terms">{si.term}</Field>
 
-            {/* Totals print once, on the final sheet. */}
-            {isLast && totals && (
-              <>
-                <Field spec={FORM.totals.vatableSales} calibrate={calibrate} name="vatableSales">{money(totals.vatable)}</Field>
-                <Field spec={FORM.totals.vatExempt} calibrate={calibrate} name="vatExempt">{totals.exempt ? money(totals.exempt) : ''}</Field>
-                <Field spec={FORM.totals.zeroRated} calibrate={calibrate} name="zeroRated">{totals.zeroRated ? money(totals.zeroRated) : ''}</Field>
-                <Field spec={FORM.totals.vat} calibrate={calibrate} name="vat">{money(totals.vat)}</Field>
-                <Field spec={FORM.totals.totalSales} calibrate={calibrate} name="totalSales">{money(totals.totalSales)}</Field>
-                <Field spec={FORM.totals.lessWithholding} calibrate={calibrate} name="lessWithholding">
-                  {totals.withholding ? money(totals.withholding) : ''}
+              {pageLines.map((l, rowIdx) => {
+                const y = FORM.items.top + rowIdx * FORM.items.rowHeight;
+                const c = FORM.items.columns;
+                return (
+                  <div key={l.id}>
+                    <Field spec={{ ...c.qty, y }} calibrate={calibrate && rowIdx === 0} name="qty">{qtyText(l.quantity)}</Field>
+                    <Field spec={{ ...c.unit, y }} calibrate={calibrate && rowIdx === 0} name="unit">{l.units}</Field>
+                    <Field spec={{ ...c.description, y }} calibrate={calibrate && rowIdx === 0} name="description">{l.description}</Field>
+                    <Field spec={{ ...c.unitPrice, y }} calibrate={calibrate && rowIdx === 0} name="unitPrice">{money(l.price_per_unit)}</Field>
+                    <Field spec={{ ...c.amount, y }} calibrate={calibrate && rowIdx === 0} name="amount">{money(l.gross_amount)}</Field>
+                  </div>
+                );
+              })}
+
+              {isLast && (
+                <Field
+                  spec={{ ...FORM.items.orderId, y: FORM.items.top + pageLines.length * FORM.items.rowHeight + FORM.items.orderId.gap }}
+                  calibrate={calibrate}
+                  name="orderId"
+                >
+                  {`Order ID : ${si.sales_order_no || ''}${si.po_no ? `  PO/Ref. Doc: ${si.po_no}` : ''}`}
                 </Field>
-                <Field spec={FORM.totals.amountDue} calibrate={calibrate} name="amountDue">{money(totals.amountDue)}</Field>
-              </>
-            )}
+              )}
+
+              {/* Totals print once, on the final sheet. */}
+              {isLast && totals && (
+                <>
+                  <Field spec={FORM.totals.vatableSales} calibrate={calibrate} name="vatableSales">{money(totals.vatable)}</Field>
+                  <Field spec={FORM.totals.vatExempt} calibrate={calibrate} name="vatExempt">{totals.exempt ? money(totals.exempt) : ''}</Field>
+                  <Field spec={FORM.totals.zeroRated} calibrate={calibrate} name="zeroRated">{totals.zeroRated ? money(totals.zeroRated) : ''}</Field>
+                  <Field spec={FORM.totals.vat} calibrate={calibrate} name="vat">{money(totals.vat)}</Field>
+                  <Field spec={FORM.totals.totalSales} calibrate={calibrate} name="totalSales">{money(totals.totalSales)}</Field>
+                  <Field spec={FORM.totals.lessWithholding} calibrate={calibrate} name="lessWithholding">
+                    {totals.withholding ? money(totals.withholding) : ''}
+                  </Field>
+                  <Field spec={FORM.totals.amountDue} calibrate={calibrate} name="amountDue">{money(totals.amountDue)}</Field>
+                </>
+              )}
+            </div>
           </div>
         );
       })}
