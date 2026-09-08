@@ -85,6 +85,7 @@ const assetClassRoutes = require('./routes/assetClasses');
 const assetDepreciationRoutes = require('./routes/assetDepreciation');
 const assetDisposalRoutes = require('./routes/assetDisposals');
 const assetReportRoutes = require('./routes/assetReports');
+const archiverRoutes = require('./routes/archiver');
 const { ensureAssignedAtColumn } = require('./db/ensureSchema');
 const { sendTicketReminders } = require('./scripts/ticket_reminder');
 const { startSampling } = require('./lib/systemHealth');
@@ -253,6 +254,9 @@ app.use('/api/asset-disposals', assetDisposalRoutes);
 // BEFORE the general reports router so its two paths are matched here first.
 app.use('/api/reports', assetReportRoutes);
 app.use('/api/assets', assetRoutes);
+// The credentials vault. Secrets are encrypted at rest and only ever leave through
+// /api/archiver/:id/reveal, which costs a fresh emailed code -- see routes/archiver.js.
+app.use('/api/archiver', archiverRoutes);
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 

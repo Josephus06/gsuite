@@ -1,5 +1,9 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
+import Archiver from './pages/Archiver';
+import ArchiverEntryForm from './pages/ArchiverEntryForm';
+import ArchiverEntryView from './pages/ArchiverEntryView';
+import ArchiverAudit from './pages/ArchiverAudit';
 import AssetItems from './pages/AssetItems';
 import Assets from './pages/Assets';
 import AssetForm from './pages/AssetForm';
@@ -365,6 +369,11 @@ function App() {
         <Route path="/asset-transfers/:id" element={<AssetTransferView />} />
         <Route path="/asset-audits" element={<AssetAudits />} />
         <Route path="/asset-audits/:id" element={<AssetAuditView />} />
+        <Route path="/archiver" element={<Archiver />} />
+        <Route path="/archiver/new" element={<ArchiverEntryForm />} />
+        <Route path="/archiver/audit" element={<ArchiverAudit />} />
+        <Route path="/archiver/:id/edit" element={<ArchiverEntryForm />} />
+        <Route path="/archiver/:id" element={<ArchiverEntryView />} />
         <Route path="/asset-classes" element={<AssetClasses />} />
         <Route path="/asset-depreciation" element={<AssetDepreciation />} />
         <Route path="/asset-depreciation/:id" element={<AssetDepreciationView />} />
