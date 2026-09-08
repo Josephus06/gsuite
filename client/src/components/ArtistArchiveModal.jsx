@@ -11,6 +11,11 @@ import { uploadInParts, abortUpload } from '../utils/largeUpload';
 // Two steps rather than one form: pick the job order, then confirm what will be recorded against
 // it. The details are read-only on purpose -- they are snapshotted from the job order server-side,
 // and letting anyone type over them would make the archive say something the job order never did.
+// What an artist may file. Kept in step with ARTIST_FILE_TYPES on the server, which is the
+// authority and re-checks -- this list only stops the picker offering something that would be
+// refused after a long upload.
+const ACCEPTED = ['.zip', '.rar', '.pdf'];
+
 export default function ArtistArchiveModal({ onClose, onSaved, maxBytes }) {
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState([]);
@@ -47,8 +52,10 @@ export default function ArtistArchiveModal({ onClose, onSaved, maxBytes }) {
   // 4 GB, and layout archives for large-format work run to tens of gigabytes.
   async function save() {
     if (!chosen) { setError('Choose a job order.'); return; }
-    if (!picked) { setError('Choose the .zip to upload.'); return; }
-    if (!/\.zip$/i.test(picked.name)) { setError('The file must be a .zip.'); return; }
+    if (!picked) { setError('Choose the file to upload.'); return; }
+    if (!ACCEPTED.some((ext) => picked.name.toLowerCase().endsWith(ext))) {
+      setError(`The file must be one of: ${ACCEPTED.join(', ')}.`); return;
+    }
     setError(''); setSaving(true);
 
     if (picked.size <= maxBytes) {
@@ -178,11 +185,11 @@ export default function ArtistArchiveModal({ onClose, onSaved, maxBytes }) {
           </div>
 
           <div className="field">
-            <label>Layout files (.zip) *</label>
-            <input type="file" accept=".zip,application/zip" onChange={(e) => { setPicked(e.target.files?.[0] || null); setError(''); }} />
+            <label>Layout files *</label>
+            <input type="file" accept=".zip,.rar,.pdf" onChange={(e) => { setPicked(e.target.files?.[0] || null); setError(''); }} />
             {picked && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{picked.name} · {formatBytes(picked.size)}</div>}
             <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-              One .zip holding the layout, its links and its fonts.
+              A .zip or .rar holding the layout with its links and fonts, or a .pdf proof.
               {picked && picked.size > maxBytes
                 ? ` This one is ${formatBytes(picked.size)}, so it goes straight to archive storage in parts rather than into the database.`
                 : ` Files over ${formatBytes(maxBytes)} are uploaded straight to archive storage.`}

@@ -37,6 +37,7 @@ const ALLOWED_MIME = new Set([
   'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   'text/plain', 'text/csv',
   'application/zip', 'application/x-zip-compressed',
+  'application/vnd.rar', 'application/x-rar-compressed',
 ]);
 
 const trunc = (s, n) => (s == null || s === '' ? null : String(s).slice(0, n));
@@ -371,12 +372,29 @@ function readUpload(b) {
 // Artist archives: the working files for a job order, filed by the artist who did the layout.
 // ---------------------------------------------------------------------------------------------
 
-// Artwork is a folder -- the layout, its links, its fonts -- so it arrives zipped. Browsers report
-// zips inconsistently (and some report nothing at all), which is why the extension is accepted as
-// evidence alongside the MIME type rather than trusting either on its own.
-const ZIP_MIME = new Set(['application/zip', 'application/x-zip-compressed', 'multipart/x-zip', 'application/octet-stream']);
-function looksLikeZip(fileName, mime) {
-  return /\.zip$/i.test(String(fileName || '')) && ZIP_MIME.has(mime || 'application/octet-stream');
+// What an artist may archive against a job order.
+//
+// Artwork is usually a folder -- the layout, its links, its fonts -- so it arrives as one archive,
+// zip or rar. A PDF is allowed too because a print-ready proof is a single file and zipping it
+// achieves nothing.
+//
+// Keyed on the EXTENSION, with the browser's MIME type accepted only as corroboration. Browsers
+// report archives inconsistently: rar in particular comes through as any of four types depending
+// on the platform, and some report application/octet-stream for everything. Trusting the MIME
+// alone would reject perfectly good files on one machine and accept them on another.
+const ARTIST_FILE_TYPES = {
+  '.zip': { mime: 'application/zip', label: 'ZIP' },
+  '.rar': { mime: 'application/vnd.rar', label: 'RAR' },
+  '.pdf': { mime: 'application/pdf', label: 'PDF' },
+};
+const ARTIST_EXTENSIONS = Object.keys(ARTIST_FILE_TYPES);
+
+// Returns the canonical type for a filename, or null if it is not one we accept. The canonical
+// MIME is what gets stored, so the archive records one consistent type per extension however the
+// uploader's browser happened to label it.
+function artistFileType(fileName) {
+  const match = String(fileName || '').toLowerCase().match(/(\.[a-z0-9]+)$/);
+  return match ? (ARTIST_FILE_TYPES[match[1]] || null) : null;
 }
 
 // --- Large uploads, straight to object storage ------------------------------------------------
@@ -443,8 +461,9 @@ router.post('/artist/init', requireAuth, requirePermission(ROUTE, 'can_add'), as
     const b = req.body;
     const kind = b.source_kind === 'NSTDJO' ? 'NSTDJO' : 'JO';
     if (!b.source_id) return res.status(400).json({ error: 'Choose the job order this belongs to.' });
-    if (!/\.zip$/i.test(String(b.file_name || ''))) {
-      return res.status(400).json({ error: 'Artist archives must be a .zip.' });
+    const fileType = artistFileType(b.file_name);
+    if (!fileType) {
+      return res.status(400).json({ error: `Artist archives must be one of: ${ARTIST_EXTENSIONS.join(', ')}.` });
     }
     if (!storage.isConfigured()) {
       return res.status(503).json({
@@ -464,7 +483,7 @@ router.post('/artist/init', requireAuth, requirePermission(ROUTE, 'can_add'), as
     }
 
     const key = storage.buildKey({ jobOrderNo: jo.jo_no, fileName: b.file_name });
-    const created = await storage.createMultipartUpload(key, 'application/zip');
+    const created = await storage.createMultipartUpload(key, fileType.mime);
     const [[folder]] = await conn.query("SELECT id FROM archive_file_folders WHERE name = 'Artist Layout Files'");
 
     await conn.beginTransaction();
@@ -490,9 +509,9 @@ router.post('/artist/init', requireAuth, requirePermission(ROUTE, 'can_add'), as
       `INSERT INTO archive_file_versions
          (file_id, version_no, storage, storage_key, storage_bucket, upload_id, upload_status,
           upload_started_at, file_name, mime_type, size_bytes, size_bytes_large, note, uploaded_by_user_id)
-       VALUES (?, 1, 'spaces', ?,?,?, 'uploading', NOW(), ?, 'application/zip', 0, ?, ?, ?)`,
+       VALUES (?, 1, 'spaces', ?,?,?, 'uploading', NOW(), ?, ?, 0, ?, ?, ?)`,
       [fileId, created.key, created.bucket, created.uploadId, trunc(b.file_name, 255),
-        plan.size, trunc(b.note, 500) || 'Artist layout files', req.user.id],
+        fileType.mime, plan.size, trunc(b.note, 500) || 'Artist layout files', req.user.id],
     );
     await logFile(conn, req, {
       fileId, versionId: v.insertId, action: 'upload_started',
@@ -601,11 +620,16 @@ router.post('/artist', requireAuth, requirePermission(ROUTE, 'can_add'), async (
     const b = req.body;
     const kind = b.source_kind === 'NSTDJO' ? 'NSTDJO' : 'JO';
     if (!b.source_id) return res.status(400).json({ error: 'Choose the job order this belongs to.' });
-    if (!looksLikeZip(b.file_name, b.mime_type)) {
-      return res.status(400).json({ error: 'Artist archives must be a .zip — put the layout, its links and its fonts in one archive.' });
+    const fileType = artistFileType(b.file_name);
+    if (!fileType) {
+      return res.status(400).json({
+        error: `Artist archives must be one of: ${ARTIST_EXTENSIONS.join(', ')}. Put a layout and its links and fonts into one archive.`,
+      });
     }
 
-    const upload = readUpload({ ...b, mime_type: 'application/zip' });
+    // The canonical MIME for the extension, not whatever the browser claimed -- rar alone is
+    // reported four different ways depending on the platform.
+    const upload = readUpload({ ...b, mime_type: fileType.mime });
     if (upload.error) return res.status(400).json({ error: upload.error });
 
     const [[me]] = await conn.query('SELECT employee_id, account_type FROM users WHERE id = ?', [req.user.id]);
