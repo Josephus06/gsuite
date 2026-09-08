@@ -952,6 +952,54 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
   vertical-align: middle;
 }
 
+/* Progress estimate (LoadingSpinner expectedMs). The percentage sits in the middle of the
+   spinning mark, so it reads as one object rather than a number parked beside a logo. The mark
+   keeps rotating underneath; the text must NOT, hence the counter-positioned overlay rather than
+   putting the text inside the animated element. */
+.loading-spinner-dial {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+.loading-spinner-percent {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums; /* stops the width jittering as digits change */
+  color: var(--text, #1e293b);
+  pointer-events: none;
+}
+/* The chip. The mark spins and scales beneath the digits, so they need their own opaque ground
+   or they read against whichever half of the two-tone ring happens to be behind them. */
+.loading-spinner-percent > span {
+  background: var(--card, #fff);
+  border-radius: 999px;
+  padding: 1px 5px;
+  box-shadow: 0 0 0 2px var(--card, #fff);
+}
+.loading-spinner-elapsed {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+.loading-spinner-bar {
+  width: 180px;
+  height: 3px;
+  border-radius: 3px;
+  background: rgba(148, 163, 184, 0.25);
+  overflow: hidden;
+}
+.loading-spinner-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--primary, #2563eb);
+  /* Matches the tick interval, so the fill glides between samples instead of stepping. */
+  transition: width 100ms linear;
+}
+
 /* Wizard (multi-step forms, e.g. Estimates) */
 .wizard-steps {
   display: flex;

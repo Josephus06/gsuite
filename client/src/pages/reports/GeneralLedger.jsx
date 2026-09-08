@@ -1,6 +1,7 @@
 import { Fragment, useState } from 'react';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import { REPORT_TIMING } from '../../utils/reportTiming';
 import { money } from './CoaTreeRows';
 
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -84,7 +85,7 @@ export default function GeneralLedger() {
 
       {error && <div className="card" style={{ color: '#b91c1c', marginBottom: 16 }}>{error}</div>}
 
-      {loading && <LoadingSpinner />}
+      {loading && <LoadingSpinner label="Generating..." expectedMs={REPORT_TIMING.generalLedger} />}
 
       {!loading && report && (
         <div className="card">

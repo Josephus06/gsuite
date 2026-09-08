@@ -1,6 +1,7 @@
 import { Fragment, useState } from 'react';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import { REPORT_TIMING } from '../../utils/reportTiming';
 import CoaTreeRows, { money } from './CoaTreeRows';
 
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -49,7 +50,7 @@ export default function TrialBalance() {
 
       {error && <div className="card" style={{ color: '#b91c1c', marginBottom: 16 }}>{error}</div>}
 
-      {loading && <LoadingSpinner />}
+      {loading && <LoadingSpinner label="Generating..." expectedMs={REPORT_TIMING.trialBalance} />}
 
       {!loading && report && (
         <div className="card">

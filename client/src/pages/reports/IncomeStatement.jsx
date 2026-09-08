@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import { REPORT_TIMING } from '../../utils/reportTiming';
 import { money } from './CoaTreeRows';
 
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -208,7 +209,7 @@ export default function IncomeStatement() {
 
       {error && <div className="card" style={{ color: '#b91c1c', marginBottom: 16 }}>{error}</div>}
 
-      {loading && <LoadingSpinner />}
+      {loading && <LoadingSpinner label="Generating..." expectedMs={REPORT_TIMING.incomeStatement} />}
 
       {!loading && report && (
         <div className="card">

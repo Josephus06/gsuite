@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import { REPORT_TIMING } from '../../utils/reportTiming';
 import Modal from '../../components/Modal';
 import { money } from './CoaTreeRows';
 
@@ -93,7 +94,7 @@ export default function ArAging() {
 
       {error && <div className="card" style={{ color: '#b91c1c', marginBottom: 16 }}>{error}</div>}
 
-      {loading && <LoadingSpinner />}
+      {loading && <LoadingSpinner label="Generating..." expectedMs={REPORT_TIMING.arAging} />}
 
       {!loading && report && (
         <div className="card">
