@@ -121,6 +121,9 @@ export default function AssetView() {
 
   if (loading || !a) return <LoadingSpinner />;
 
+  // Scoping: within the owning department only the head may change anything. Decided server-side
+  // and reported through meta, so the buttons cannot drift from what the API will accept.
+  const canAct = meta ? (meta.scope?.can_act !== false) : true;
   const movements = a.movements || [];
   const attached = a.attached_assets || [];
   const openTransfers = a.open_transfers || [];
@@ -131,15 +134,22 @@ export default function AssetView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/assets')}>Back to Lists</button>
-          {can('/assets', 'can_edit') && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/assets/${id}/edit`)}>Edit</button>}
-          {can('/assets', 'can_edit') && <button className="btn btn-sm" onClick={() => setShowStatus(true)}>Change Status</button>}
-          {can('/assets', 'can_approve') && !a.parent_asset_id && <button className="btn btn-sm" onClick={() => setShowRelocate(true)}>Correct Location</button>}
-          {can('/asset-transfers', 'can_add') && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/asset-transfers/new?asset_id=${a.id}`)}>Transfer</button>}
-          {can('/assets', 'can_delete') && <button className="btn btn-sm btn-warning" onClick={remove}>Delete</button>}
+          {canAct && can('/assets', 'can_edit') && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/assets/${id}/edit`)}>Edit</button>}
+          {canAct && can('/assets', 'can_edit') && <button className="btn btn-sm" onClick={() => setShowStatus(true)}>Change Status</button>}
+          {canAct && can('/assets', 'can_approve') && !a.parent_asset_id && <button className="btn btn-sm" onClick={() => setShowRelocate(true)}>Correct Location</button>}
+          {canAct && can('/asset-transfers', 'can_add') && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/asset-transfers/new?asset_id=${a.id}`)}>Transfer</button>}
+          {canAct && can('/assets', 'can_delete') && <button className="btn btn-sm btn-warning" onClick={remove}>Delete</button>}
         </div>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+
+      {!canAct && (
+        <div className="error-banner">
+          You can see this asset because it belongs to your department, but only the department head can
+          transfer, edit or dispose of it.
+        </div>
+      )}
 
       {openTransfers.length > 0 && (
         <div className="error-banner">
@@ -165,7 +175,7 @@ export default function AssetView() {
           <div>
             <div>Location : <span className="hi">{a.location_name || 'Unassigned'}</span></div>
             <div>Custodian : <span className="hi">{a.custodian_name?.trim() || '—'}</span></div>
-            <div>Department : <span className="hi">{a.department_name || '—'}</span></div>
+            <div>Assigned Location : <span className="hi">{a.assigned_location_name || '—'}</span></div>
           </div>
           <div>
             <div>Serial No : <span className="hi">{a.serial_no || '—'}</span></div>
@@ -176,6 +186,7 @@ export default function AssetView() {
             {/* Category belongs to the asset type and applies to every unit of it. Brand and model
                 may be this unit's own or inherited from the type -- the marker says which, so a
                 blank is never mistaken for "nobody recorded it". */}
+            <div>Owned By : <span className="hi">{a.owning_department_name || <span style={{ color: '#fca5a5' }}>not set</span>}</span></div>
             <div>Category : <span className="hi">{a.category || '—'}</span></div>
             <div>
               Brand / Model : <span className="hi">{[a.brand, a.model].filter(Boolean).join(' ') || '—'}</span>

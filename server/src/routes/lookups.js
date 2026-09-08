@@ -29,6 +29,10 @@ const TABLES = {
   'service-items': { table: 'service_items', columns: ['item_code', 'display_name', 'unit_price', 'is_active'] },
   processes: { table: 'processes', columns: ['process_code', 'process_name', 'base_unit_id', 'minutes_per_unit', 'is_active'] },
   'user-groups': { table: 'user_groups', columns: ['name', 'is_active'] },
+  // The precise spots an asset can sit in -- '2nd Floor Server Room', 'Rack 3'. Deliberately its
+  // own list rather than the locations master: locations drive transfers, branches and the rest
+  // of the ERP, and furniture-level placements do not belong in front of every other module.
+  'asset-assigned-locations': { table: 'asset_assigned_locations', columns: ['name', 'description', 'is_active'] },
 };
 
 function resolveTable(req, res, next) {

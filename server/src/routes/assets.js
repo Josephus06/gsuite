@@ -3,6 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { resolveCustody, wouldCreateCycle, descendantIds, recordMovement } = require('../lib/assetCustody');
 const { capitalizedCost, accumulatedDepreciation, money } = require('../lib/fixedAssets');
+const { getAssetScope, visibilityClause, canActOnAsset, requireAssetView, requireAssetAction, OWNING_DEPARTMENT_SQL } = require('../lib/assetDepartmentScope');
 
 const router = express.Router();
 
@@ -32,7 +33,7 @@ const idOrNull = (v) => (v == null || v === '' ? null : v);
 // to stop anyone reading. COALESCE would reintroduce that fallback, hence the explicit CASE.
 const EFFECTIVE_LOCATION = 'CASE WHEN a.parent_asset_id IS NULL THEN a.location_id ELSE p.location_id END';
 const EFFECTIVE_CUSTODIAN = 'CASE WHEN a.parent_asset_id IS NULL THEN a.custodian_employee_id ELSE p.custodian_employee_id END';
-const EFFECTIVE_DEPARTMENT = 'CASE WHEN a.parent_asset_id IS NULL THEN a.department_id ELSE p.department_id END';
+const EFFECTIVE_ASSIGNED_LOCATION = 'CASE WHEN a.parent_asset_id IS NULL THEN a.assigned_location_id ELSE p.assigned_location_id END';
 
 async function logAudit(conn, { assetId, userId, eventType, fieldName = null, oldValue = null, newValue = null }) {
   await conn.query(
@@ -46,7 +47,10 @@ async function logAudit(conn, { assetId, userId, eventType, fieldName = null, ol
 router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [items] = await pool.query(
-      'SELECT id, item_code, display_name, category, brand, model, specification FROM asset_items WHERE is_active = TRUE ORDER BY display_name',
+      `SELECT ai.id, ai.item_code, ai.display_name, ai.category, ai.brand, ai.model, ai.specification,
+              ai.owning_department_id, d.name AS owning_department_name
+         FROM asset_items ai LEFT JOIN departments d ON d.id = ai.owning_department_id
+        WHERE ai.is_active = TRUE ORDER BY ai.display_name`,
     );
     const [locations] = await pool.query('SELECT id, location_code, location_name FROM locations WHERE is_active = TRUE ORDER BY location_name');
     const [employees] = await pool.query(
@@ -79,9 +83,25 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
       if (e.code !== 'ER_NO_SUCH_TABLE') throw e;
     }
 
+    let assignedLocations = [];
+    try {
+      const [rows] = await pool.query('SELECT id, name, description FROM asset_assigned_locations WHERE is_active = TRUE ORDER BY name');
+      assignedLocations = rows;
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE') throw e;
+    }
+    const scope = await getAssetScope(req.user.id);
+
     res.json({
       items,
       locations,
+      assigned_locations: assignedLocations,
+      scope: {
+        unrestricted: scope.unrestricted,
+        department_id: scope.departmentId,
+        is_department_head: scope.isHead,
+        can_act: scope.unrestricted || scope.isHead,
+      },
       employees,
       departments,
       categories: categories.map((c) => c.category),
@@ -99,6 +119,8 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
 router.get('/hosts', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const excludeId = req.query.exclude_id || 0;
+    const scope = await getAssetScope(req.user.id);
+    const vis = visibilityClause(scope);
     const [rows] = await pool.query(
       `SELECT a.id, a.reference_no, a.serial_no, ai.display_name AS item_name,
               loc.location_name, CONCAT(e.first_name, ' ', e.last_name) AS custodian_name
@@ -107,16 +129,23 @@ router.get('/hosts', requireAuth, requirePermission(ROUTE, 'can_view'), async (r
          LEFT JOIN locations loc ON loc.id = a.location_id
          LEFT JOIN employees e ON e.id = a.custodian_employee_id
         WHERE a.parent_asset_id IS NULL AND a.id <> ? AND a.status IN ('active', 'for_repair')
+          ${vis.sql ? `AND ${vis.sql}` : ''}
         ORDER BY ai.display_name, a.reference_no`,
-      [excludeId],
+      [excludeId, ...vis.params],
     );
     res.json(rows);
   } catch (err) { next(err); }
 });
 
-function buildListWhere(query) {
+function buildListWhere(query, scope) {
   const where = [];
   const params = [];
+
+  // Department scoping first: a user only ever lists assets their department owns.
+  if (scope) {
+    const vis = visibilityClause(scope);
+    if (vis.sql) { where.push(vis.sql); params.push(...vis.params); }
+  }
   const { search, status, location_id: locationId, custodian_employee_id: custodianId, asset_item_id: itemId, category, attached } = query;
 
   if (status) { where.push('a.status = ?'); params.push(status); }
@@ -142,7 +171,8 @@ function buildListWhere(query) {
 // month the company buys equipment.
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { whereSql, params } = buildListWhere(req.query);
+    const scope = await getAssetScope(req.user.id);
+    const { whereSql, params } = buildListWhere(req.query, scope);
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(req.query.page_size) || DEFAULT_PAGE_SIZE));
 
@@ -155,7 +185,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       LEFT JOIN asset_items pi ON pi.id = p.asset_item_id
       LEFT JOIN locations loc ON loc.id = ${EFFECTIVE_LOCATION}
       LEFT JOIN employees e ON e.id = ${EFFECTIVE_CUSTODIAN}
-      LEFT JOIN departments d ON d.id = ${EFFECTIVE_DEPARTMENT}
+      LEFT JOIN asset_assigned_locations al ON al.id = ${EFFECTIVE_ASSIGNED_LOCATION}
+      LEFT JOIN departments od ON od.id = ${OWNING_DEPARTMENT_SQL}
       ${whereSql}`;
 
     const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${fromSql}`, params);
@@ -169,7 +200,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
               ${EFFECTIVE_CUSTODIAN} AS custodian_employee_id,
               loc.location_name,
               CONCAT(e.first_name, ' ', e.last_name) AS custodian_name,
-              d.name AS department_name
+              al.name AS assigned_location_name, ${EFFECTIVE_ASSIGNED_LOCATION} AS assigned_location_id,
+              od.name AS owning_department_name, ${OWNING_DEPARTMENT_SQL} AS owning_department_id
        ${fromSql}
        ORDER BY ai.display_name, a.reference_no
        LIMIT ? OFFSET ?`,
@@ -191,7 +223,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 // invent.
 router.get('/tree', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { whereSql, params } = buildListWhere(req.query);
+    const scope = await getAssetScope(req.user.id);
+    const { whereSql, params } = buildListWhere(req.query, scope);
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(50, Math.max(1, Number(req.query.page_size) || 10));
 
@@ -224,14 +257,16 @@ router.get('/tree', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
               a.asset_item_id,
               p.reference_no AS parent_reference_no, pi.display_name AS parent_item_name,
               loc.location_name, CONCAT(e.first_name, ' ', e.last_name) AS custodian_name,
-              d.name AS department_name
+              al.name AS assigned_location_name, ${EFFECTIVE_ASSIGNED_LOCATION} AS assigned_location_id,
+              od.name AS owning_department_name, ${OWNING_DEPARTMENT_SQL} AS owning_department_id
          FROM assets a
          LEFT JOIN assets p ON p.id = a.parent_asset_id
          JOIN asset_items ai ON ai.id = a.asset_item_id
          LEFT JOIN asset_items pi ON pi.id = p.asset_item_id
          LEFT JOIN locations loc ON loc.id = ${EFFECTIVE_LOCATION}
          LEFT JOIN employees e ON e.id = ${EFFECTIVE_CUSTODIAN}
-         LEFT JOIN departments d ON d.id = ${EFFECTIVE_DEPARTMENT}
+         LEFT JOIN asset_assigned_locations al ON al.id = ${EFFECTIVE_ASSIGNED_LOCATION}
+      LEFT JOIN departments od ON od.id = ${OWNING_DEPARTMENT_SQL}
          ${whereSql ? `${whereSql} AND` : 'WHERE'} a.asset_item_id IN (?)
          ORDER BY a.reference_no`,
       [...params, itemIds],
@@ -243,7 +278,7 @@ router.get('/tree', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
   } catch (err) { next(err); }
 });
 
-router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), requireAssetView(), async (req, res, next) => {
   try {
     const [[a]] = await pool.query(
       `SELECT a.*, ai.item_code, ai.display_name AS item_name, ai.category,
@@ -255,14 +290,18 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
               ${EFFECTIVE_LOCATION} AS effective_location_id,
               ${EFFECTIVE_CUSTODIAN} AS effective_custodian_employee_id,
               loc.location_name, CONCAT(e.first_name, ' ', e.last_name) AS custodian_name,
-              d.name AS department_name, cu.display_name AS created_by_name
+              al.name AS assigned_location_name, ${EFFECTIVE_ASSIGNED_LOCATION} AS assigned_location_id,
+              od.name AS owning_department_name, ${OWNING_DEPARTMENT_SQL} AS owning_department_id,
+              ai.owning_department_id AS type_owning_department_id, a.owning_department_id AS own_owning_department_id,
+              cu.display_name AS created_by_name
          FROM assets a
          LEFT JOIN assets p ON p.id = a.parent_asset_id
          LEFT JOIN asset_items ai ON ai.id = a.asset_item_id
          LEFT JOIN asset_items pi ON pi.id = p.asset_item_id
          LEFT JOIN locations loc ON loc.id = ${EFFECTIVE_LOCATION}
          LEFT JOIN employees e ON e.id = ${EFFECTIVE_CUSTODIAN}
-         LEFT JOIN departments d ON d.id = ${EFFECTIVE_DEPARTMENT}
+         LEFT JOIN asset_assigned_locations al ON al.id = ${EFFECTIVE_ASSIGNED_LOCATION}
+      LEFT JOIN departments od ON od.id = ${OWNING_DEPARTMENT_SQL}
          LEFT JOIN users cu ON cu.id = a.created_by_user_id
         WHERE a.id = ?`,
       [req.params.id],
@@ -307,7 +346,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
   } catch (err) { next(err); }
 });
 
-router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'), requireAssetView(), async (req, res, next) => {
   try {
     const [rows] = await pool.query(
       `SELECT a.*, u.display_name AS set_by_name FROM audit_logs a LEFT JOIN users u ON u.id = a.set_by_user_id
@@ -361,12 +400,32 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const problem = await validateAsset(conn, b);
     if (problem) return res.status(400).json({ error: problem });
 
+    // Registering into another department would route straight around the scoping rule: create the
+    // aircon as IT's, and IT's head can then transfer it anywhere. The owning department is
+    // resolved the same way it is read -- the asset's override, else its type's -- so this checks
+    // what the asset will actually BE owned by, not merely what the form sent.
+    const scope = await getAssetScope(req.user.id, conn);
+    if (!scope.unrestricted) {
+      if (!scope.departmentId) {
+        return res.status(403).json({ error: 'You are not assigned to a department, so you cannot register assets.' });
+      }
+      const [[type]] = await conn.query('SELECT owning_department_id FROM asset_items WHERE id = ?', [b.asset_item_id]);
+      const owningDeptId = idOrNull(b.owning_department_id) ?? type?.owning_department_id ?? null;
+      if (String(owningDeptId ?? '') !== String(scope.departmentId)) {
+        return res.status(403).json({
+          error: owningDeptId
+            ? 'That asset type belongs to another department, so you cannot register it.'
+            : 'This asset type has no owning department set. Ask a System Admin to set one at Assets > Asset Types.',
+        });
+      }
+    }
+
     const parentId = idOrNull(b.parent_asset_id);
     // An attached unit is given no location of its own -- it inherits. Writing the form's values
     // anyway would leave a second, unmaintained answer sitting in the row.
     const locationId = parentId ? null : idOrNull(b.location_id);
     const custodianId = parentId ? null : idOrNull(b.custodian_employee_id);
-    const departmentId = parentId ? null : idOrNull(b.department_id);
+    const assignedLocationId = parentId ? null : idOrNull(b.assigned_location_id);
     if (!parentId && !locationId) return res.status(400).json({ error: 'A location is required unless the asset is attached to another asset.' });
 
     await conn.beginTransaction();
@@ -374,13 +433,13 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     // deliberate act (POST /:id/capitalize), because capitalising is what puts a figure on the
     // balance sheet and starts depreciation.
     const [r] = await conn.query(
-      `INSERT INTO assets (reference_no, asset_item_id, asset_class_id, parent_asset_id, serial_no, brand, model, specification, tag_no, location_id,
-                           custodian_employee_id, department_id, status, asset_condition, acquired_date,
+      `INSERT INTO assets (reference_no, asset_item_id, asset_class_id, owning_department_id, parent_asset_id, serial_no, brand, model, specification, tag_no, location_id,
+                           assigned_location_id, custodian_employee_id, status, asset_condition, acquired_date,
                            acquisition_cost, salvage_value, useful_life_months, in_service_date, remarks, created_by_user_id)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [String(b.reference_no).trim(), b.asset_item_id, idOrNull(b.asset_class_id), parentId, trunc(b.serial_no, 120),
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [String(b.reference_no).trim(), b.asset_item_id, idOrNull(b.asset_class_id), idOrNull(b.owning_department_id), parentId, trunc(b.serial_no, 120),
         trunc(b.brand, 120), trunc(b.model, 120), trunc(b.specification, 500), trunc(b.tag_no, 60),
-        locationId, custodianId, departmentId, b.status || 'active', b.asset_condition || 'good',
+        locationId, assignedLocationId, custodianId, b.status || 'active', b.asset_condition || 'good',
         b.acquired_date || null, numOrNull(b.acquisition_cost), numOrNull(b.salvage_value) || 0,
         numOrNull(b.useful_life_months), b.in_service_date || null, trunc(b.remarks, 1000), req.user.id],
     );
@@ -408,7 +467,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 // silently would route straight past both approvals. Location and custodian are therefore ignored
 // here for an asset that already has a movement history; see PUT /:id/relocate for the deliberate
 // correction path.
-router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), requireAssetAction(), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const assetId = req.params.id;
@@ -456,28 +515,28 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     // caller must say where -- otherwise a detached UPS ends up at no location at all.
     let locationId = existing.location_id;
     let custodianId = existing.custodian_employee_id;
-    let departmentId = existing.department_id;
+    let assignedLocationId = existing.assigned_location_id;
     if (nowAttached) {
-      locationId = null; custodianId = null; departmentId = null;
+      locationId = null; custodianId = null; assignedLocationId = null;
     } else if (wasAttached) {
       locationId = idOrNull(b.location_id);
       custodianId = idOrNull(b.custodian_employee_id);
-      departmentId = idOrNull(b.department_id);
+      assignedLocationId = idOrNull(b.assigned_location_id);
       if (!locationId) return res.status(400).json({ error: 'Detaching this asset needs a location for it to stand on its own.' });
     }
 
     await conn.beginTransaction();
     const before = await resolveCustody(assetId, conn);
     await conn.query(
-      `UPDATE assets SET reference_no = ?, asset_item_id = ?, asset_class_id = ?, parent_asset_id = ?, serial_no = ?,
+      `UPDATE assets SET reference_no = ?, asset_item_id = ?, asset_class_id = ?, owning_department_id = ?, parent_asset_id = ?, serial_no = ?,
               brand = ?, model = ?, specification = ?, tag_no = ?,
-              location_id = ?, custodian_employee_id = ?, department_id = ?, status = ?, asset_condition = ?,
+              location_id = ?, assigned_location_id = ?, custodian_employee_id = ?, status = ?, asset_condition = ?,
               acquired_date = ?, acquisition_cost = ?, salvage_value = ?, useful_life_months = ?, in_service_date = ?,
               remarks = ?, updated_at = NOW()
         WHERE id = ?`,
-      [String(b.reference_no).trim(), b.asset_item_id, idOrNull(b.asset_class_id), parentId, trunc(b.serial_no, 120),
+      [String(b.reference_no).trim(), b.asset_item_id, idOrNull(b.asset_class_id), idOrNull(b.owning_department_id), parentId, trunc(b.serial_no, 120),
         trunc(b.brand, 120), trunc(b.model, 120), trunc(b.specification, 500), trunc(b.tag_no, 60),
-        locationId, custodianId, departmentId, b.status || existing.status, b.asset_condition || existing.asset_condition,
+        locationId, assignedLocationId, custodianId, b.status || existing.status, b.asset_condition || existing.asset_condition,
         b.acquired_date || null, numOrNull(b.acquisition_cost), numOrNull(b.salvage_value) || 0,
         numOrNull(b.useful_life_months), b.in_service_date || null, trunc(b.remarks, 1000), assetId],
     );
@@ -513,11 +572,11 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 // The deliberate correction path: the register says one thing, the floor says another, and this
 // is an error being fixed rather than equipment changing hands. Gated on can_approve and it always
 // writes a ledger row with a reason, so a correction can never look like an ordinary transfer.
-router.put('/:id/relocate', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
+router.put('/:id/relocate', requireAuth, requirePermission(ROUTE, 'can_approve'), requireAssetAction(), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const assetId = req.params.id;
-    const { location_id: locationId, custodian_employee_id: custodianId, department_id: departmentId, reason } = req.body;
+    const { location_id: locationId, custodian_employee_id: custodianId, assigned_location_id: assignedLocationId, reason } = req.body;
     if (!locationId) return res.status(400).json({ error: 'A location is required.' });
     if (!reason || !String(reason).trim()) return res.status(400).json({ error: 'A reason is required for a correction.' });
 
@@ -528,8 +587,8 @@ router.put('/:id/relocate', requireAuth, requirePermission(ROUTE, 'can_approve')
     await conn.beginTransaction();
     const before = await resolveCustody(assetId, conn);
     await conn.query(
-      'UPDATE assets SET location_id = ?, custodian_employee_id = ?, department_id = ?, updated_at = NOW() WHERE id = ?',
-      [locationId, idOrNull(custodianId), idOrNull(departmentId), assetId],
+      'UPDATE assets SET location_id = ?, custodian_employee_id = ?, assigned_location_id = ?, updated_at = NOW() WHERE id = ?',
+      [locationId, idOrNull(custodianId), idOrNull(assignedLocationId), assetId],
     );
     await recordMovement(conn, {
       assetId,
@@ -559,7 +618,7 @@ router.put('/:id/relocate', requireAuth, requirePermission(ROUTE, 'can_approve')
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
-router.put('/:id/status', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/status', requireAuth, requirePermission(ROUTE, 'can_edit'), requireAssetAction(), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const { status, remarks } = req.body;
@@ -595,7 +654,7 @@ router.put('/:id/status', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
 
 // Deleting is for a mis-keyed row, not for equipment leaving the company -- that is a status of
 // retired or disposed, which keeps the history. So anything with a real past is refused.
-router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async (req, res, next) => {
+router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), requireAssetAction(), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const assetId = req.params.id;
@@ -627,7 +686,7 @@ router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async
 const COST_TYPES = new Set(['purchase', 'freight', 'installation', 'improvement', 'other']);
 
 // Cost, accumulated depreciation and net book value for one asset.
-router.get('/:id/valuation', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/:id/valuation', requireAuth, requirePermission(ROUTE, 'can_view'), requireAssetView(), async (req, res, next) => {
   try {
     const cost = await capitalizedCost(req.params.id);
     const accumulated = await accumulatedDepreciation(req.params.id);
@@ -660,7 +719,7 @@ router.get('/:id/valuation', requireAuth, requirePermission(ROUTE, 'can_view'), 
 
 // Put the asset on the balance sheet. Requires a class (which names the accounts), an in-service
 // date (which decides the first month depreciated), and a cost.
-router.post('/:id/capitalize', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
+router.post('/:id/capitalize', requireAuth, requirePermission(ROUTE, 'can_approve'), requireAssetAction(), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const assetId = req.params.id;
@@ -727,7 +786,7 @@ router.post('/:id/capitalize', requireAuth, requirePermission(ROUTE, 'can_approv
 
 // Reverse a capitalisation booked in error. Refused once depreciation has posted -- at that point
 // the ledger has entries against it, and the way out is a disposal, not an undo.
-router.post('/:id/decapitalize', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
+router.post('/:id/decapitalize', requireAuth, requirePermission(ROUTE, 'can_approve'), requireAssetAction(), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const assetId = req.params.id;
@@ -756,7 +815,7 @@ router.post('/:id/decapitalize', requireAuth, requirePermission(ROUTE, 'can_appr
 // added after the asset is in service raises the depreciable base, and the engine spreads the
 // increase over the remaining life prospectively -- no catch-up entry, which is the correct
 // treatment for a change in estimate.
-router.post('/:id/cost-lines', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
+router.post('/:id/cost-lines', requireAuth, requirePermission(ROUTE, 'can_approve'), requireAssetAction(), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const assetId = req.params.id;
@@ -786,7 +845,7 @@ router.post('/:id/cost-lines', requireAuth, requirePermission(ROUTE, 'can_approv
 
 // Removing a cost line is only safe while nothing has depreciated against it -- afterwards the
 // posted charge was computed from a base this would silently change.
-router.delete('/:id/cost-lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
+router.delete('/:id/cost-lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_approve'), requireAssetAction(), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const assetId = req.params.id;

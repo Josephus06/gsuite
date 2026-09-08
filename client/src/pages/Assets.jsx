@@ -70,7 +70,7 @@ export default function Assets() {
         <td data-label="Serial">{u.serial_no || '—'}</td>
         <td data-label="Location">{u.location_name || <span className="muted">Unassigned</span>}</td>
         <td data-label="Custodian">{u.custodian_name?.trim() || '—'}</td>
-        <td data-label="Department">{u.department_name || '—'}</td>
+        <td data-label="Assigned Location">{u.assigned_location_name || '—'}</td>
         <td data-label="Attached To">
           {u.parent_asset_id
             ? <span title="This unit is wherever its host asset is">{u.parent_item_name} · {u.parent_reference_no}</span>
@@ -167,7 +167,7 @@ export default function Assets() {
                   <div className="table-wrap">
                     <table className="responsive-cards">
                       <thead>
-                        <tr><th>Reference No</th><th>Serial</th><th>Location</th><th>Custodian</th><th>Department</th><th>Attached To</th><th>Status</th></tr>
+                        <tr><th>Reference No</th><th>Serial</th><th>Location</th><th>Assigned Location</th><th>Custodian</th><th>Attached To</th><th>Status</th></tr>
                       </thead>
                       <tbody>{(g.units || []).map(unitRow)}</tbody>
                     </table>

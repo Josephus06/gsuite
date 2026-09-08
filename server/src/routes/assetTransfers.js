@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { resolveCustody, moveAsset, approverUserIdForEmployee, TRANSFERABLE_STATUSES } = require('../lib/assetCustody');
+const { getAssetScope, visibilityClause, canActOnAsset } = require('../lib/assetDepartmentScope');
 
 const router = express.Router();
 
@@ -105,6 +106,12 @@ router.get('/available-assets', requireAuth, requirePermission(ROUTE, 'can_view'
     where.push(`NOT EXISTS (SELECT 1 FROM asset_transfer_lines l JOIN asset_transfers t ON t.id = l.transfer_id
                              WHERE l.asset_id = a.id AND t.status IN (${OPEN_STATUSES.map(() => '?').join(', ')}))`);
     params.push(...OPEN_STATUSES);
+
+    // Department scoping: you can only move equipment your own department owns.
+    const scope = await getAssetScope(req.user.id);
+    if (!scope.unrestricted && !scope.isHead) return res.json([]);
+    const vis = visibilityClause(scope);
+    if (vis.sql) { where.push(vis.sql); params.push(...vis.params); }
 
     const [rows] = await pool.query(
       `SELECT a.id, a.reference_no, a.serial_no, a.status, a.parent_asset_id,
@@ -252,6 +259,22 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
 // Writes the lines and snapshots where each asset is standing right now. The snapshot is what the
 // releasing custodian is shown when they sign, so it must be captured at request time and never
 // recomputed -- otherwise the document silently rewrites what somebody already agreed to.
+// Every asset named on a transfer is re-checked against the caller's department here, not just
+// filtered out of the picker. The picker is a convenience; this is the control -- a request can
+// name any asset id it likes.
+async function assertMayMoveAssets(conn, userId, lines) {
+  for (const l of (Array.isArray(lines) ? lines : [])) {
+    if (!l.asset_id) continue;
+    const { allowed, reason } = await canActOnAsset(userId, l.asset_id, conn);
+    if (!allowed) {
+      const [[a]] = await conn.query('SELECT reference_no FROM assets WHERE id = ?', [l.asset_id]);
+      const err = new Error(`${a?.reference_no || 'That asset'}: ${reason}`);
+      err.status = 403;
+      throw err;
+    }
+  }
+}
+
 async function writeLines(conn, transferId, lines) {
   await conn.query('DELETE FROM asset_transfer_lines WHERE transfer_id = ?', [transferId]);
   const seen = new Set();
@@ -275,6 +298,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   try {
     const b = req.body;
     if (!b.to_location_id) return res.status(400).json({ error: 'A destination location is required.' });
+
+    await assertMayMoveAssets(conn, req.user.id, b.lines);
 
     await conn.beginTransaction();
     const [r] = await conn.query(
@@ -306,6 +331,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     // releasing custodian is being asked to agree to, after they have been asked.
     if (t.status !== 'draft') return res.status(409).json({ error: 'Only a draft transfer can be edited. Cancel it and raise a new one.' });
     if (!b.to_location_id) return res.status(400).json({ error: 'A destination location is required.' });
+    await assertMayMoveAssets(conn, req.user.id, b.lines);
 
     await conn.beginTransaction();
     await conn.query(

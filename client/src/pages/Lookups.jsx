@@ -120,6 +120,11 @@ const CONFIG = [
     { name: 'minutes_per_unit', label: 'Minutes per Unit', type: 'number' },
     { name: 'is_active', label: 'Active', type: 'checkbox' },
   ] },
+  { key: 'asset-assigned-locations', label: 'Asset Assigned Locations', fields: [
+    { name: 'name', label: 'Name', type: 'text', required: true },
+    { name: 'description', label: 'Description', type: 'textarea' },
+    { name: 'is_active', label: 'Active', type: 'checkbox' },
+  ] },
   { key: 'user-groups', label: 'User Groups', fields: [
     { name: 'name', label: 'Name', type: 'text', required: true },
     { name: 'is_active', label: 'Active', type: 'checkbox' },

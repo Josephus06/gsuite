@@ -6,12 +6,12 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 const PAGE_SIZE = 15;
-const EMPTY = { item_code: '', display_name: '', category: '', brand: '', model: '', specification: '', description: '', is_active: true };
+const EMPTY = { item_code: '', display_name: '', category: '', owning_department_id: '', brand: '', model: '', specification: '', description: '', is_active: true };
 
 // Asset types -- the "UPS" / "RAM 8 GB" / "System Unit" level. The individual reference numbers
 // registered under each type live on the Assets page; this one exists so the type is spelled once
 // rather than re-typed against every unit.
-function ItemModal({ item, categories, onClose, onSaved }) {
+function ItemModal({ item, categories, departments, onClose, onSaved }) {
   const [form, setForm] = useState(() => ({ ...EMPTY, ...(item || {}) }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -45,6 +45,17 @@ function ItemModal({ item, categories, onClose, onSaved }) {
           <datalist id="asset-item-categories">
             {categories.map((c) => <option key={c} value={c} />)}
           </datalist>
+        </div>
+        <div className="field">
+          <label>Owning Department *</label>
+          <select value={form.owning_department_id || ''} onChange={(e) => set({ owning_department_id: e.target.value })}>
+            <option value="">--Select--</option>
+            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+          <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+            Every unit of this type belongs to this department. Only its people see them, and only its
+            head can transfer or dispose of them.
+          </div>
         </div>
         <div className="field">
           <label>Brand</label>
@@ -82,6 +93,7 @@ export default function AssetItems() {
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
   const [categories, setCategories] = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [applied, setApplied] = useState({ search: '', category: '', active: '' });
@@ -103,6 +115,7 @@ export default function AssetItems() {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { api.get('/asset-items/categories').then(({ data }) => setCategories(data)); }, []);
+  useEffect(() => { api.get('/asset-items/meta').then(({ data }) => setDepartments(data.departments)).catch(() => {}); }, []);
 
   function runSearch() { setPage(1); setApplied({ search, category, active }); }
 
@@ -154,7 +167,7 @@ export default function AssetItems() {
           <div className="table-wrap">
             <table className="responsive-cards">
               <thead>
-                <tr><th>Code</th><th>Asset Type</th><th>Category</th><th>Brand</th><th>Model</th><th style={{ textAlign: 'right' }}>Units</th><th>Status</th><th /></tr>
+                <tr><th>Code</th><th>Asset Type</th><th>Owning Department</th><th>Category</th><th>Brand</th><th style={{ textAlign: 'right' }}>Units</th><th>Status</th><th /></tr>
               </thead>
               <tbody>
                 {rows.length === 0 && <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>No asset types yet.</td></tr>}
@@ -162,9 +175,11 @@ export default function AssetItems() {
                   <tr key={row.id}>
                     <td data-label="Code">{row.item_code}</td>
                     <td data-label="Asset Type">{row.display_name}</td>
+                    <td data-label="Owning Department">
+                      {row.owning_department_name || <span style={{ color: '#b45309' }}>not set</span>}
+                    </td>
                     <td data-label="Category">{row.category || '—'}</td>
-                    <td data-label="Brand">{row.brand || '—'}</td>
-                    <td data-label="Model">{row.model || '—'}</td>
+                    <td data-label="Brand">{[row.brand, row.model].filter(Boolean).join(' ') || '—'}</td>
                     <td data-label="Units" style={{ textAlign: 'right' }}>{row.unit_count}</td>
                     <td data-label="Status">{row.is_active ? 'Active' : 'Inactive'}</td>
                     <td style={{ display: 'flex', gap: 6 }}>
@@ -184,6 +199,7 @@ export default function AssetItems() {
         <ItemModal
           item={editing.id ? editing : null}
           categories={categories}
+          departments={departments}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); load(); api.get('/asset-items/categories').then(({ data }) => setCategories(data)); }}
         />

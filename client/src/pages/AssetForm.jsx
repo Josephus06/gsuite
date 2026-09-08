@@ -10,7 +10,7 @@ function today() { return new Date().toISOString().slice(0, 10); }
 const EMPTY = {
   reference_no: '', asset_item_id: '', parent_asset_id: '', serial_no: '', tag_no: '',
   brand: '', model: '', specification: '',
-  location_id: '', custodian_employee_id: '', department_id: '', status: 'active',
+  location_id: '', custodian_employee_id: '', assigned_location_id: '', owning_department_id: '', status: 'active',
   asset_condition: 'good', acquired_date: today(), acquisition_cost: '', remarks: '',
   asset_class_id: '', in_service_date: '', useful_life_months: '', salvage_value: 0,
 };
@@ -51,7 +51,8 @@ export default function AssetForm() {
           // pre-filling it with the inherited value would silently turn inheritance into a copy.
           brand: a.own_brand || '', model: a.own_model || '', specification: a.own_specification || '',
           location_id: a.effective_location_id || '', custodian_employee_id: a.effective_custodian_employee_id || '',
-          department_id: a.department_id || '', status: a.status || 'active', asset_condition: a.asset_condition || 'good',
+          assigned_location_id: a.assigned_location_id || '', owning_department_id: a.own_owning_department_id || '',
+          status: a.status || 'active', asset_condition: a.asset_condition || 'good',
           acquired_date: a.acquired_date ? String(a.acquired_date).slice(0, 10) : '',
           acquisition_cost: a.acquisition_cost ?? '', remarks: a.remarks || '',
           asset_class_id: a.asset_class_id || '', salvage_value: a.salvage_value ?? 0,
@@ -87,6 +88,8 @@ export default function AssetForm() {
         acquisition_cost: form.acquisition_cost === '' ? null : Number(form.acquisition_cost),
         acquired_date: form.acquired_date || null,
         asset_class_id: form.asset_class_id || null,
+        assigned_location_id: form.assigned_location_id || null,
+        owning_department_id: form.owning_department_id || null,
         in_service_date: form.in_service_date || null,
         useful_life_months: form.useful_life_months === '' ? null : Number(form.useful_life_months),
         salvage_value: form.salvage_value === '' ? 0 : Number(form.salvage_value),
@@ -184,6 +187,27 @@ export default function AssetForm() {
           </p>
         )}
 
+        {/* Who owns the equipment, which is what decides who may see and touch it. Normally set
+            once on the asset type -- UPS to IT, Aircon to Building & Maintenance -- so this is
+            only filled in for the exception. */}
+        <h3 style={{ margin: '22px 0 8px', fontSize: 14, color: '#334155' }}>Owned by</h3>
+        <div className="field" style={{ maxWidth: 520 }}>
+          <label>Owning Department</label>
+          <select value={form.owning_department_id} onChange={(e) => set({ owning_department_id: e.target.value })}>
+            <option value="">
+              {selectedType?.owning_department_name
+                ? `${selectedType.owning_department_name} (from type)`
+                : '--Inherit from asset type--'}
+            </option>
+            {meta.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+          <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+            {selectedType?.owning_department_name
+              ? `Leave as inherited so this unit follows "${selectedType.display_name}". Only that department sees it, and only its head can transfer or dispose of it.`
+              : 'This asset type has no owning department set. Set one at Assets → Asset Types, or pick one here for this unit alone.'}
+          </div>
+        </div>
+
         <h3 style={{ margin: '22px 0 8px', fontSize: 14, color: '#334155' }}>Where it is</h3>
         <div className="field" style={{ maxWidth: 520 }}>
           <label>Attached To (host asset)</label>
@@ -235,16 +259,19 @@ export default function AssetForm() {
                   columns={[{ key: 'name', label: 'Name' }, { key: 'employee_code', label: 'Code' }, { key: 'department_name', label: 'Department' }]}
                   searchKeys={['name', 'employee_code', 'department_name']}
                   placeholder="--Select--"
-                  onSelect={(x) => set({ custodian_employee_id: x?.id || '', department_id: x?.department_id || form.department_id })}
+                  onSelect={(x) => set({ custodian_employee_id: x?.id || '' })}
                   onClear={() => set({ custodian_employee_id: '' })}
                 />
               </div>
               <div className="field">
-                <label>Department</label>
-                <select value={form.department_id} onChange={(e) => set({ department_id: e.target.value })}>
+                <label>Assigned Location</label>
+                <select value={form.assigned_location_id} onChange={(e) => set({ assigned_location_id: e.target.value })}>
                   <option value="">--Select--</option>
-                  {meta.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  {(meta.assigned_locations || []).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </select>
+                <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                  The precise spot within the location. Maintained at Lookups &gt; Asset Assigned Locations.
+                </div>
               </div>
             </div>
           </>

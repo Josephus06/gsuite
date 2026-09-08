@@ -13,6 +13,7 @@ const ROUTE = '/asset-items';
 const DEFAULT_PAGE_SIZE = 15;
 const MAX_PAGE_SIZE = 200;
 const trunc = (s, n) => (s == null || s === '' ? null : String(s).slice(0, n));
+const idOrNull = (v) => (v == null || v === '' ? null : v);
 
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
@@ -37,11 +38,20 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     // type whether or not any references exist under it yet, and a join would need care to keep
     // the zero-unit types visible.
     const [rows] = await pool.query(
-      `SELECT ai.*, (SELECT COUNT(*) FROM assets a WHERE a.asset_item_id = ai.id) AS unit_count
-         FROM asset_items ai ${whereSql} ORDER BY ai.display_name LIMIT ? OFFSET ?`,
+      `SELECT ai.*, d.name AS owning_department_name,
+              (SELECT COUNT(*) FROM assets a WHERE a.asset_item_id = ai.id) AS unit_count
+         FROM asset_items ai LEFT JOIN departments d ON d.id = ai.owning_department_id
+         ${whereSql} ORDER BY ai.display_name LIMIT ? OFFSET ?`,
       [...params, pageSize, (page - 1) * pageSize],
     );
     res.json({ rows, total, page, page_size: pageSize });
+  } catch (err) { next(err); }
+});
+
+router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [departments] = await pool.query('SELECT id, name FROM departments WHERE is_active = TRUE ORDER BY name');
+    res.json({ departments });
   } catch (err) { next(err); }
 });
 
@@ -57,9 +67,10 @@ router.get('/categories', requireAuth, requirePermission(ROUTE, 'can_view'), asy
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[row]] = await pool.query(
-      `SELECT ai.*, u.display_name AS created_by_name,
+      `SELECT ai.*, u.display_name AS created_by_name, d.name AS owning_department_name,
               (SELECT COUNT(*) FROM assets a WHERE a.asset_item_id = ai.id) AS unit_count
-         FROM asset_items ai LEFT JOIN users u ON u.id = ai.created_by_user_id WHERE ai.id = ?`,
+         FROM asset_items ai LEFT JOIN users u ON u.id = ai.created_by_user_id
+         LEFT JOIN departments d ON d.id = ai.owning_department_id WHERE ai.id = ?`,
       [req.params.id],
     );
     if (!row) return res.status(404).json({ error: 'Not found' });
@@ -97,9 +108,10 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     if (dupe) { await conn.rollback(); return res.status(400).json({ error: `Code ${code} is already used.` }); }
 
     const [r] = await conn.query(
-      `INSERT INTO asset_items (item_code, display_name, category, brand, model, specification, description, is_active, created_by_user_id)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
-      [code, trunc(b.display_name, 200), trunc(b.category, 100), trunc(b.brand, 120), trunc(b.model, 120),
+      `INSERT INTO asset_items (item_code, display_name, category, owning_department_id, brand, model, specification, description, is_active, created_by_user_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [code, trunc(b.display_name, 200), trunc(b.category, 100), idOrNull(b.owning_department_id),
+        trunc(b.brand, 120), trunc(b.model, 120),
         trunc(b.specification, 500), trunc(b.description, 1000), b.is_active === false ? 0 : 1, req.user.id],
     );
     await conn.commit();
@@ -118,9 +130,10 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       if (dupe) return res.status(400).json({ error: `Code ${String(b.item_code).trim()} is already used.` });
     }
     await pool.query(
-      `UPDATE asset_items SET item_code = COALESCE(?, item_code), display_name = ?, category = ?, brand = ?, model = ?,
-              specification = ?, description = ?, is_active = ?, updated_at = NOW() WHERE id = ?`,
-      [trunc(b.item_code, 40), trunc(b.display_name, 200), trunc(b.category, 100), trunc(b.brand, 120), trunc(b.model, 120),
+      `UPDATE asset_items SET item_code = COALESCE(?, item_code), display_name = ?, category = ?, owning_department_id = ?,
+              brand = ?, model = ?, specification = ?, description = ?, is_active = ?, updated_at = NOW() WHERE id = ?`,
+      [trunc(b.item_code, 40), trunc(b.display_name, 200), trunc(b.category, 100), idOrNull(b.owning_department_id),
+        trunc(b.brand, 120), trunc(b.model, 120),
         trunc(b.specification, 500), trunc(b.description, 1000), b.is_active === false ? 0 : 1, req.params.id],
     );
     res.json({ ok: true });
