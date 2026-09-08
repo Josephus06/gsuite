@@ -1,5 +1,14 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
+import AssetItems from './pages/AssetItems';
+import Assets from './pages/Assets';
+import AssetForm from './pages/AssetForm';
+import AssetView from './pages/AssetView';
+import AssetTransfers from './pages/AssetTransfers';
+import AssetTransferForm from './pages/AssetTransferForm';
+import AssetTransferView from './pages/AssetTransferView';
+import AssetAudits from './pages/AssetAudits';
+import AssetAuditView from './pages/AssetAuditView';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -337,6 +346,18 @@ function App() {
         <Route path="/commission-report" element={<CommissionReport />} />
         <Route path="/commission-jo-detail" element={<CommissionJoDetail />} />
         <Route path="/reports/ticket-summary" element={<TicketSummary />} />
+        {/* Assets Monitoring. /new is declared before /:id so "new" is not read as a record id. */}
+        <Route path="/asset-items" element={<AssetItems />} />
+        <Route path="/assets" element={<Assets />} />
+        <Route path="/assets/new" element={<AssetForm />} />
+        <Route path="/assets/:id/edit" element={<AssetForm />} />
+        <Route path="/assets/:id" element={<AssetView />} />
+        <Route path="/asset-transfers" element={<AssetTransfers />} />
+        <Route path="/asset-transfers/new" element={<AssetTransferForm />} />
+        <Route path="/asset-transfers/:id/edit" element={<AssetTransferForm />} />
+        <Route path="/asset-transfers/:id" element={<AssetTransferView />} />
+        <Route path="/asset-audits" element={<AssetAudits />} />
+        <Route path="/asset-audits/:id" element={<AssetAuditView />} />
         <Route path="/lookups" element={<Lookups />} />
         <Route path="/transaction-settings" element={<TransactionSettings />} />
         <Route path="/process-costing" element={<ProcessCosting />} />

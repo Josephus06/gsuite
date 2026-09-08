@@ -97,6 +97,17 @@ const NAV_STRUCTURE = [
     ],
   },
   {
+    // Assets Monitoring: company equipment tracked by reference number, separate from Inventory
+    // because these are things the company keeps and audits, not stock it consumes or sells.
+    label: 'Assets',
+    children: [
+      { route: '/assets', label: 'Assets' },
+      { route: '/asset-transfers', label: 'Asset Transfers' },
+      { route: '/asset-audits', label: 'Asset Audits' },
+      { route: '/asset-items', label: 'Asset Types' },
+    ],
+  },
+  {
     label: 'Sales',
     children: [
       { route: '/estimates', label: 'Estimates' },

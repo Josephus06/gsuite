@@ -77,6 +77,10 @@ const nonStandardSalesOrderRoutes = require('./routes/nonStandardSalesOrders');
 const warrantyCertificateRoutes = require('./routes/warrantyCertificates');
 const rwipJobOrderRoutes = require('./routes/rwipJobOrders');
 const rfqcJobOrderRoutes = require('./routes/rfqcJobOrders');
+const assetItemRoutes = require('./routes/assetItems');
+const assetRoutes = require('./routes/assets');
+const assetTransferRoutes = require('./routes/assetTransfers');
+const assetAuditRoutes = require('./routes/assetAudits');
 const { ensureAssignedAtColumn } = require('./db/ensureSchema');
 const { sendTicketReminders } = require('./scripts/ticket_reminder');
 const { startSampling } = require('./lib/systemHealth');
@@ -232,6 +236,13 @@ app.use('/api/non-standard-sales-orders', nonStandardSalesOrderRoutes);
 app.use('/api/warranty-certificates', warrantyCertificateRoutes);
 app.use('/api/rwip-job-orders', rwipJobOrderRoutes);
 app.use('/api/rfqc-job-orders', rfqcJobOrderRoutes);
+// Assets Monitoring. asset-items is the type ("UPS"), assets the individual reference numbers
+// under it, asset-transfers the dual-approval document that moves them, asset-audits the
+// month-end count sheet.
+app.use('/api/asset-items', assetItemRoutes);
+app.use('/api/asset-transfers', assetTransferRoutes);
+app.use('/api/asset-audits', assetAuditRoutes);
+app.use('/api/assets', assetRoutes);
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
