@@ -108,7 +108,8 @@ router.get('/available-assets', requireAuth, requirePermission(ROUTE, 'can_view'
 
     const [rows] = await pool.query(
       `SELECT a.id, a.reference_no, a.serial_no, a.status, a.parent_asset_id,
-              ai.display_name AS item_name, ai.category, ai.brand, ai.model,
+              ai.display_name AS item_name, ai.category,
+              COALESCE(a.brand, ai.brand) AS brand, COALESCE(a.model, ai.model) AS model,
               p.reference_no AS parent_reference_no,
               ${effLocation} AS location_id, ${effCustodian} AS custodian_employee_id,
               loc.location_name, CONCAT(e.first_name, ' ', e.last_name) AS custodian_name,
@@ -203,7 +204,8 @@ async function loadTransfer(id) {
   if (!t) return null;
   const [lines] = await pool.query(
     `SELECT l.*, a.reference_no, a.serial_no, a.status AS asset_status, a.parent_asset_id,
-            ai.display_name AS item_name, ai.category, ai.brand, ai.model,
+            ai.display_name AS item_name, ai.category,
+            COALESCE(a.brand, ai.brand) AS brand, COALESCE(a.model, ai.model) AS model,
             fl.location_name AS from_location_name,
             CONCAT(fe.first_name, ' ', fe.last_name) AS from_custodian_name,
             (SELECT COUNT(*) FROM assets c WHERE c.parent_asset_id = a.id) AS attached_count

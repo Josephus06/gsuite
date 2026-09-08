@@ -46,7 +46,7 @@ async function logAudit(conn, { assetId, userId, eventType, fieldName = null, ol
 router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [items] = await pool.query(
-      'SELECT id, item_code, display_name, category, brand, model FROM asset_items WHERE is_active = TRUE ORDER BY display_name',
+      'SELECT id, item_code, display_name, category, brand, model, specification FROM asset_items WHERE is_active = TRUE ORDER BY display_name',
     );
     const [locations] = await pool.query('SELECT id, location_code, location_name FROM locations WHERE is_active = TRUE ORDER BY location_name');
     const [employees] = await pool.query(
@@ -129,7 +129,8 @@ function buildListWhere(query) {
   if (attached === 'yes') where.push('a.parent_asset_id IS NOT NULL');
   if (attached === 'no') where.push('a.parent_asset_id IS NULL');
   if (search) {
-    where.push('(a.reference_no LIKE ? OR a.serial_no LIKE ? OR a.tag_no LIKE ? OR ai.display_name LIKE ? OR ai.brand LIKE ? OR ai.model LIKE ?)');
+    where.push('(a.reference_no LIKE ? OR a.serial_no LIKE ? OR a.tag_no LIKE ? OR ai.display_name LIKE ?'
+      + ' OR COALESCE(a.brand, ai.brand) LIKE ? OR COALESCE(a.model, ai.model) LIKE ?)');
     const like = `%${search}%`;
     params.push(like, like, like, like, like, like);
   }
@@ -161,7 +162,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const [rows] = await pool.query(
       `SELECT a.id, a.reference_no, a.serial_no, a.tag_no, a.status, a.asset_condition,
               a.parent_asset_id, a.acquired_date, a.acquisition_cost,
-              ai.id AS asset_item_id, ai.display_name AS item_name, ai.category, ai.brand, ai.model,
+              ai.id AS asset_item_id, ai.display_name AS item_name, ai.category,
+              COALESCE(a.brand, ai.brand) AS brand, COALESCE(a.model, ai.model) AS model,
               p.reference_no AS parent_reference_no, pi.display_name AS parent_item_name,
               ${EFFECTIVE_LOCATION} AS location_id,
               ${EFFECTIVE_CUSTODIAN} AS custodian_employee_id,
@@ -244,7 +246,11 @@ router.get('/tree', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[a]] = await pool.query(
-      `SELECT a.*, ai.item_code, ai.display_name AS item_name, ai.category, ai.brand, ai.model, ai.specification,
+      `SELECT a.*, ai.item_code, ai.display_name AS item_name, ai.category,
+              COALESCE(a.brand, ai.brand) AS brand, COALESCE(a.model, ai.model) AS model,
+              COALESCE(a.specification, ai.specification) AS specification,
+              ai.brand AS type_brand, ai.model AS type_model, ai.specification AS type_specification,
+              a.brand AS own_brand, a.model AS own_model, a.specification AS own_specification,
               p.reference_no AS parent_reference_no, pi.display_name AS parent_item_name,
               ${EFFECTIVE_LOCATION} AS effective_location_id,
               ${EFFECTIVE_CUSTODIAN} AS effective_custodian_employee_id,
@@ -368,11 +374,12 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     // deliberate act (POST /:id/capitalize), because capitalising is what puts a figure on the
     // balance sheet and starts depreciation.
     const [r] = await conn.query(
-      `INSERT INTO assets (reference_no, asset_item_id, asset_class_id, parent_asset_id, serial_no, tag_no, location_id,
+      `INSERT INTO assets (reference_no, asset_item_id, asset_class_id, parent_asset_id, serial_no, brand, model, specification, tag_no, location_id,
                            custodian_employee_id, department_id, status, asset_condition, acquired_date,
                            acquisition_cost, salvage_value, useful_life_months, in_service_date, remarks, created_by_user_id)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [String(b.reference_no).trim(), b.asset_item_id, idOrNull(b.asset_class_id), parentId, trunc(b.serial_no, 120), trunc(b.tag_no, 60),
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [String(b.reference_no).trim(), b.asset_item_id, idOrNull(b.asset_class_id), parentId, trunc(b.serial_no, 120),
+        trunc(b.brand, 120), trunc(b.model, 120), trunc(b.specification, 500), trunc(b.tag_no, 60),
         locationId, custodianId, departmentId, b.status || 'active', b.asset_condition || 'good',
         b.acquired_date || null, numOrNull(b.acquisition_cost), numOrNull(b.salvage_value) || 0,
         numOrNull(b.useful_life_months), b.in_service_date || null, trunc(b.remarks, 1000), req.user.id],
@@ -462,18 +469,20 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     await conn.beginTransaction();
     const before = await resolveCustody(assetId, conn);
     await conn.query(
-      `UPDATE assets SET reference_no = ?, asset_item_id = ?, asset_class_id = ?, parent_asset_id = ?, serial_no = ?, tag_no = ?,
+      `UPDATE assets SET reference_no = ?, asset_item_id = ?, asset_class_id = ?, parent_asset_id = ?, serial_no = ?,
+              brand = ?, model = ?, specification = ?, tag_no = ?,
               location_id = ?, custodian_employee_id = ?, department_id = ?, status = ?, asset_condition = ?,
               acquired_date = ?, acquisition_cost = ?, salvage_value = ?, useful_life_months = ?, in_service_date = ?,
               remarks = ?, updated_at = NOW()
         WHERE id = ?`,
-      [String(b.reference_no).trim(), b.asset_item_id, idOrNull(b.asset_class_id), parentId, trunc(b.serial_no, 120), trunc(b.tag_no, 60),
+      [String(b.reference_no).trim(), b.asset_item_id, idOrNull(b.asset_class_id), parentId, trunc(b.serial_no, 120),
+        trunc(b.brand, 120), trunc(b.model, 120), trunc(b.specification, 500), trunc(b.tag_no, 60),
         locationId, custodianId, departmentId, b.status || existing.status, b.asset_condition || existing.asset_condition,
         b.acquired_date || null, numOrNull(b.acquisition_cost), numOrNull(b.salvage_value) || 0,
         numOrNull(b.useful_life_months), b.in_service_date || null, trunc(b.remarks, 1000), assetId],
     );
 
-    for (const field of ['reference_no', 'serial_no', 'tag_no', 'status', 'asset_condition']) {
+    for (const field of ['reference_no', 'serial_no', 'tag_no', 'status', 'asset_condition', 'brand', 'model', 'specification']) {
       const oldV = existing[field];
       const newV = field === 'reference_no' ? String(b.reference_no).trim() : (b[field] ?? existing[field]);
       if (String(oldV ?? '') !== String(newV ?? '')) {

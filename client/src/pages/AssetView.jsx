@@ -173,8 +173,16 @@ export default function AssetView() {
             <div>Condition : <span className="hi">{CONDITION_LABELS[a.asset_condition] || a.asset_condition}</span></div>
           </div>
           <div>
+            {/* Category belongs to the asset type and applies to every unit of it. Brand and model
+                may be this unit's own or inherited from the type -- the marker says which, so a
+                blank is never mistaken for "nobody recorded it". */}
             <div>Category : <span className="hi">{a.category || '—'}</span></div>
-            <div>Brand / Model : <span className="hi">{[a.brand, a.model].filter(Boolean).join(' ') || '—'}</span></div>
+            <div>
+              Brand / Model : <span className="hi">{[a.brand, a.model].filter(Boolean).join(' ') || '—'}</span>
+              {(a.brand || a.model) && !a.own_brand && !a.own_model && (
+                <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>from type</span>
+              )}
+            </div>
             <div>Acquired : <span className="hi">{formatDate(a.acquired_date) || '—'}</span></div>
           </div>
         </div>

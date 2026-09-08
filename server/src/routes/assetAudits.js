@@ -118,7 +118,8 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // it was generated.
     const [lines] = await pool.query(
       `SELECT l.*, a.reference_no, a.serial_no, a.status AS asset_status, a.parent_asset_id,
-              ai.display_name AS item_name, ai.category, ai.brand, ai.model,
+              ai.display_name AS item_name, ai.category,
+              COALESCE(a.brand, ai.brand) AS brand, COALESCE(a.model, ai.model) AS model,
               el.location_name AS expected_location_name,
               CONCAT(ee.first_name, ' ', ee.last_name) AS expected_custodian_name,
               fl.location_name AS found_location_name,

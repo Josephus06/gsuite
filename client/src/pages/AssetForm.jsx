@@ -9,6 +9,7 @@ function today() { return new Date().toISOString().slice(0, 10); }
 
 const EMPTY = {
   reference_no: '', asset_item_id: '', parent_asset_id: '', serial_no: '', tag_no: '',
+  brand: '', model: '', specification: '',
   location_id: '', custodian_employee_id: '', department_id: '', status: 'active',
   asset_condition: 'good', acquired_date: today(), acquisition_cost: '', remarks: '',
   asset_class_id: '', in_service_date: '', useful_life_months: '', salvage_value: 0,
@@ -46,6 +47,9 @@ export default function AssetForm() {
         setForm({
           reference_no: a.reference_no || '', asset_item_id: a.asset_item_id || '', parent_asset_id: a.parent_asset_id || '',
           serial_no: a.serial_no || '', tag_no: a.tag_no || '',
+          // The asset's OWN values, not the resolved ones -- the form edits the override, and
+          // pre-filling it with the inherited value would silently turn inheritance into a copy.
+          brand: a.own_brand || '', model: a.own_model || '', specification: a.own_specification || '',
           location_id: a.effective_location_id || '', custodian_employee_id: a.effective_custodian_employee_id || '',
           department_id: a.department_id || '', status: a.status || 'active', asset_condition: a.asset_condition || 'good',
           acquired_date: a.acquired_date ? String(a.acquired_date).slice(0, 10) : '',
@@ -61,6 +65,8 @@ export default function AssetForm() {
 
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const isAttached = !!form.parent_asset_id;
+  const selectedType = (meta?.items || []).find((x) => String(x.id) === String(form.asset_item_id));
+  const inheritsAny = !form.brand || !form.model || !form.specification;
   // Detaching an asset that WAS attached has to say where it now stands on its own -- the server
   // refuses it otherwise, so the form asks for it rather than letting the save fail.
   const detaching = !!original?.parent_asset_id && !isAttached;
@@ -75,6 +81,9 @@ export default function AssetForm() {
       const body = {
         ...form,
         parent_asset_id: form.parent_asset_id || null,
+        brand: form.brand.trim() || null,
+        model: form.model.trim() || null,
+        specification: form.specification.trim() || null,
         acquisition_cost: form.acquisition_cost === '' ? null : Number(form.acquisition_cost),
         acquired_date: form.acquired_date || null,
         asset_class_id: form.asset_class_id || null,
@@ -146,7 +155,34 @@ export default function AssetForm() {
               {Object.entries(CONDITION_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </div>
+
+          {/* Brand, model and specification belong to THIS unit -- two aircons registered under the
+              same type can be a Carrier and a Panasonic. Left blank they inherit the type's value,
+              which is what the placeholder shows, so nothing has to be retyped for the common case. */}
+          <div className="field">
+            <label>Brand</label>
+            <input value={form.brand} onChange={(e) => set({ brand: e.target.value })}
+              placeholder={selectedType?.brand ? `${selectedType.brand} (from type)` : 'e.g. Carrier'} />
+          </div>
+          <div className="field">
+            <label>Model</label>
+            <input value={form.model} onChange={(e) => set({ model: e.target.value })}
+              placeholder={selectedType?.model ? `${selectedType.model} (from type)` : 'e.g. 2HP Inverter'} />
+          </div>
+          <div className="field">
+            <label>Specification</label>
+            <input value={form.specification} onChange={(e) => set({ specification: e.target.value })}
+              placeholder={selectedType?.specification ? `${selectedType.specification} (from type)` : 'e.g. 2HP, split type'} />
+          </div>
         </div>
+
+        {inheritsAny && (
+          <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+            Blank fields above inherit from the asset type
+            {selectedType ? ` "${selectedType.display_name}"` : ''}. Fill one in to record what this
+            particular unit is. Category is set on the asset type and applies to every unit of it.
+          </p>
+        )}
 
         <h3 style={{ margin: '22px 0 8px', fontSize: 14, color: '#334155' }}>Where it is</h3>
         <div className="field" style={{ maxWidth: 520 }}>
