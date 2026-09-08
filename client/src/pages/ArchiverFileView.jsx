@@ -203,6 +203,29 @@ export default function ArchiverFileView() {
         <button className={`status-tab ${tab === 'log' ? 'active' : ''}`} onClick={() => setTab('log')}>Activity</button>
       </div>
 
+      {/* The job order block only appears on an artist archive. These figures are the snapshot
+          taken when the work was filed, NOT a live read of the job order -- which is the point,
+          since the job order may since have been revised. */}
+      {tab === 'details' && file.source_kind && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="page-header" style={{ marginBottom: 10 }}>
+            <h2 style={{ margin: 0, fontSize: 16 }}>Job order</h2>
+            <span className="muted" style={{ fontSize: 12 }}>as recorded when these files were archived</span>
+          </div>
+          <div className="estimate-detail-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+            <div>{file.source_kind === 'NSTDJO' ? 'NSTDJO' : 'JO'} # : <span className="hi">{file.jo_no || '—'}</span></div>
+            <div>Date : <span className="hi">{formatDate(file.jo_date)}</span></div>
+            <div>Customer : <span className="hi">{file.customer_name || '—'}</span></div>
+            <div>Sales Rep. : <span className="hi">{file.sales_rep_name || '—'}</span></div>
+            <div>Artist : <span className="hi">{file.artist_name || '—'}</span></div>
+            <div>Layout - Job Type : <span className="hi">{file.layout_job_type || '—'}</span></div>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            Job Desc. : <span className="hi">{file.job_description || '—'}</span>
+          </div>
+        </div>
+      )}
+
       {tab === 'details' && (
         <div className="card">
           <div className="estimate-detail-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>

@@ -44,7 +44,9 @@ const idOrNull = (v) => (v == null || v === '' ? null : v);
 // Everything except file_data. Written out once so no query can widen into the blob by accident.
 const FILE_COLUMNS = `f.id, f.file_no, f.title, f.folder_id, f.description, f.reference_no,
   f.document_date, f.expires_on, f.owner_user_id, f.department_id, f.visibility, f.status,
-  f.current_version, f.created_by_user_id, f.created_at, f.updated_at`;
+  f.current_version, f.created_by_user_id, f.created_at, f.updated_at,
+  f.source_kind, f.source_id, f.jo_no, f.jo_date, f.customer_name, f.sales_rep_name,
+  f.artist_name, f.layout_job_type, f.job_description, f.artist_employee_id`;
 
 async function logFile(conn, req, { fileId, versionId = null, action, detail = null }) {
   await (conn || pool).query(
@@ -108,10 +110,22 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     if (folderId) { where.push('f.folder_id = ?'); params.push(folderId); }
     if (status) { where.push('f.status = ?'); params.push(status); }
     if (expiring === 'yes') where.push('f.expires_on IS NOT NULL AND f.expires_on <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)');
+    // Anything filed against a job order, i.e. the artist archives.
+    if (req.query.artist_only === 'yes') where.push('f.source_kind IS NOT NULL');
+    if (req.query.jo_no) { where.push('f.jo_no = ?'); params.push(req.query.jo_no); }
+    // "Mine" means the artist the work was filed FOR, not whoever pressed upload -- a supervisor
+    // filing on someone's behalf should still list under that artist.
+    if (req.query.mine === 'yes') {
+      const [[me]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
+      where.push('f.artist_employee_id = ?');
+      params.push(me?.employee_id || 0);
+    }
     if (search) {
-      where.push('(f.title LIKE ? OR f.description LIKE ? OR f.reference_no LIKE ? OR f.file_no LIKE ?)');
+      // The job order number is what anyone hunting for layout files will actually type.
+      where.push('(f.title LIKE ? OR f.description LIKE ? OR f.reference_no LIKE ? OR f.file_no LIKE ?'
+        + ' OR f.jo_no LIKE ? OR f.customer_name LIKE ? OR f.artist_name LIKE ?)');
       const like = `%${search}%`;
-      params.push(like, like, like, like);
+      params.push(like, like, like, like, like, like, like);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -128,6 +142,91 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       [...params, pageSize, (page - 1) * pageSize],
     );
     res.json({ rows, total, page, page_size: pageSize });
+  } catch (err) { next(err); }
+});
+
+// The job orders this user may archive against.
+//
+// Restricted to the caller's OWN assigned work, because "assigned to them" is the whole premise --
+// an artist filing someone else's job would put the wrong name on the archive permanently, since
+// the details are snapshotted. A System Admin is unrestricted, for the case where work has to be
+// filed on behalf of someone who has left.
+//
+// Deliberately NOT limited to the active layout queue the Assigned JO page uses: archiving happens
+// when the work is finished, which is exactly when a job order has left that queue.
+router.get('/my-job-orders', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const { search } = req.query;
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 40));
+
+    const [[me]] = await pool.query('SELECT employee_id, account_type FROM users WHERE id = ?', [req.user.id]);
+    const isAdmin = me?.account_type === 'System Admin';
+    if (!isAdmin && !me?.employee_id) {
+      return res.json({ rows: [], reason: 'Your account is not linked to an employee record, so no assigned job orders can be found.' });
+    }
+
+    const joWhere = [];
+    const joParams = [];
+    if (!isAdmin) { joWhere.push('jo.artist_id = ?'); joParams.push(me.employee_id); }
+    else joWhere.push('jo.artist_id IS NOT NULL');
+    if (search) {
+      joWhere.push('(jo.job_order_no LIKE ? OR jo.description LIKE ? OR c.name LIKE ?)');
+      const like = `%${search}%`;
+      joParams.push(like, like, like);
+    }
+
+    // The same sales-rep fallback the artist's worklist uses -- the job order's own rep if it has
+    // one, otherwise the sales order's -- so the archive names whoever the artist would have asked.
+    const [jos] = await pool.query(
+      `SELECT 'JO' AS source_kind, jo.id AS source_id, jo.job_order_no AS jo_no,
+              DATE(jo.created_at) AS jo_date, jo.description AS job_description,
+              c.name AS customer_name,
+              COALESCE(CONCAT(jsr.first_name, ' ', jsr.last_name),
+                       CONCAT(ssr.first_name, ' ', ssr.last_name)) AS sales_rep_name,
+              CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name, jo.artist_id AS artist_employee_id,
+              pjt.display_name AS layout_job_type,
+              (SELECT COUNT(*) FROM archive_files af WHERE af.source_kind = 'JO' AND af.source_id = jo.id) AS archived_count
+         FROM job_orders jo
+         LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
+         LEFT JOIN customers c ON c.id = so.customer_id
+         LEFT JOIN employees jsr ON jsr.id = jo.sales_rep_id
+         LEFT JOIN employees ssr ON ssr.id = so.sales_rep_id
+         LEFT JOIN employees ar ON ar.id = jo.artist_id
+         LEFT JOIN pms_job_types pjt ON pjt.id = jo.layout_job_type_id
+        WHERE ${joWhere.join(' AND ')}
+        ORDER BY jo.id DESC LIMIT ?`,
+      [...joParams, limit],
+    );
+
+    const nWhere = [];
+    const nParams = [];
+    if (!isAdmin) { nWhere.push('n.artist_employee_id = ?'); nParams.push(me.employee_id); }
+    else nWhere.push('n.artist_employee_id IS NOT NULL');
+    if (search) {
+      nWhere.push('(n.nstdjo_no LIKE ? OR n.description LIKE ? OR c.name LIKE ?)');
+      const like = `%${search}%`;
+      nParams.push(like, like, like);
+    }
+
+    const [nstdjos] = await pool.query(
+      `SELECT 'NSTDJO' AS source_kind, n.id AS source_id, n.nstdjo_no AS jo_no,
+              n.date_created AS jo_date, n.description AS job_description,
+              c.name AS customer_name,
+              CONCAT(nsr.first_name, ' ', nsr.last_name) AS sales_rep_name,
+              CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name, n.artist_employee_id,
+              pjt.display_name AS layout_job_type,
+              (SELECT COUNT(*) FROM archive_files af WHERE af.source_kind = 'NSTDJO' AND af.source_id = n.id) AS archived_count
+         FROM non_standard_job_orders n
+         LEFT JOIN customers c ON c.id = n.customer_id
+         LEFT JOIN employees nsr ON nsr.id = n.sales_rep_id
+         LEFT JOIN employees ar ON ar.id = n.artist_employee_id
+         LEFT JOIN pms_job_types pjt ON pjt.id = n.layout_job_type_id
+        WHERE ${nWhere.join(' AND ')}
+        ORDER BY n.id DESC LIMIT ?`,
+      [...nParams, limit],
+    );
+
+    res.json({ rows: [...jos, ...nstdjos], is_admin: isAdmin });
   } catch (err) { next(err); }
 });
 
@@ -235,6 +334,120 @@ function readUpload(b) {
   const checksum = crypto.createHash('sha256').update(buffer).digest('hex');
   return { buffer, mime, checksum, fileName: trunc(b.file_name, 255) };
 }
+
+// ---------------------------------------------------------------------------------------------
+// Artist archives: the working files for a job order, filed by the artist who did the layout.
+// ---------------------------------------------------------------------------------------------
+
+// Artwork is a folder -- the layout, its links, its fonts -- so it arrives zipped. Browsers report
+// zips inconsistently (and some report nothing at all), which is why the extension is accepted as
+// evidence alongside the MIME type rather than trusting either on its own.
+const ZIP_MIME = new Set(['application/zip', 'application/x-zip-compressed', 'multipart/x-zip', 'application/octet-stream']);
+function looksLikeZip(fileName, mime) {
+  return /\.zip$/i.test(String(fileName || '')) && ZIP_MIME.has(mime || 'application/octet-stream');
+}
+
+// File the working files against a job order. Snapshots the job order's details onto the archive.
+router.post('/artist', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const b = req.body;
+    const kind = b.source_kind === 'NSTDJO' ? 'NSTDJO' : 'JO';
+    if (!b.source_id) return res.status(400).json({ error: 'Choose the job order this belongs to.' });
+    if (!looksLikeZip(b.file_name, b.mime_type)) {
+      return res.status(400).json({ error: 'Artist archives must be a .zip — put the layout, its links and its fonts in one archive.' });
+    }
+
+    const upload = readUpload({ ...b, mime_type: 'application/zip' });
+    if (upload.error) return res.status(400).json({ error: upload.error });
+
+    const [[me]] = await conn.query('SELECT employee_id, account_type FROM users WHERE id = ?', [req.user.id]);
+    const isAdmin = me?.account_type === 'System Admin';
+
+    // Re-read the job order server-side rather than trusting the details the form sent. The client
+    // showed them for confirmation; what gets frozen into the archive has to come from the record.
+    let jo = null;
+    if (kind === 'JO') {
+      const [[row]] = await conn.query(
+        `SELECT jo.job_order_no AS jo_no, DATE(jo.created_at) AS jo_date, jo.description AS job_description,
+                jo.artist_id AS artist_employee_id, c.name AS customer_name,
+                COALESCE(CONCAT(jsr.first_name, ' ', jsr.last_name),
+                         CONCAT(ssr.first_name, ' ', ssr.last_name)) AS sales_rep_name,
+                CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name,
+                pjt.display_name AS layout_job_type
+           FROM job_orders jo
+           LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
+           LEFT JOIN customers c ON c.id = so.customer_id
+           LEFT JOIN employees jsr ON jsr.id = jo.sales_rep_id
+           LEFT JOIN employees ssr ON ssr.id = so.sales_rep_id
+           LEFT JOIN employees ar ON ar.id = jo.artist_id
+           LEFT JOIN pms_job_types pjt ON pjt.id = jo.layout_job_type_id
+          WHERE jo.id = ?`,
+        [b.source_id],
+      );
+      jo = row;
+    } else {
+      const [[row]] = await conn.query(
+        `SELECT n.nstdjo_no AS jo_no, n.date_created AS jo_date, n.description AS job_description,
+                n.artist_employee_id, c.name AS customer_name,
+                CONCAT(nsr.first_name, ' ', nsr.last_name) AS sales_rep_name,
+                CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name,
+                pjt.display_name AS layout_job_type
+           FROM non_standard_job_orders n
+           LEFT JOIN customers c ON c.id = n.customer_id
+           LEFT JOIN employees nsr ON nsr.id = n.sales_rep_id
+           LEFT JOIN employees ar ON ar.id = n.artist_employee_id
+           LEFT JOIN pms_job_types pjt ON pjt.id = n.layout_job_type_id
+          WHERE n.id = ?`,
+        [b.source_id],
+      );
+      jo = row;
+    }
+    if (!jo) return res.status(404).json({ error: 'That job order was not found.' });
+    if (!isAdmin && String(jo.artist_employee_id ?? '') !== String(me?.employee_id ?? '')) {
+      return res.status(403).json({ error: 'That job order is not assigned to you.' });
+    }
+
+    const [[folder]] = await conn.query("SELECT id FROM archive_file_folders WHERE name = 'Artist Layout Files'");
+
+    await conn.beginTransaction();
+    const [r] = await conn.query(
+      `INSERT INTO archive_files
+         (file_no, title, folder_id, description, reference_no, source_kind, source_id,
+          jo_no, jo_date, customer_name, sales_rep_name, artist_name, layout_job_type,
+          job_description, artist_employee_id, document_date, owner_user_id, visibility, status,
+          current_version, created_by_user_id)
+       VALUES ('', ?,?,?,?, ?,?, ?,?,?,?,?,?, ?,?, ?,?, 'shared', 'active', 1, ?)`,
+      [
+        // The title is built rather than typed: an archive people search by job order number is
+        // only findable if every row is named the same way.
+        trunc(`${jo.jo_no} — ${jo.layout_job_type || 'Layout'}`, 200),
+        folder?.id || null,
+        trunc(b.note, 2000),
+        trunc(jo.jo_no, 200),
+        kind, b.source_id,
+        trunc(jo.jo_no, 60), jo.jo_date || null, trunc(jo.customer_name, 255),
+        trunc(jo.sales_rep_name, 255), trunc(jo.artist_name, 255), trunc(jo.layout_job_type, 200),
+        trunc(jo.job_description, 500), jo.artist_employee_id || null,
+        jo.jo_date || null, req.user.id, req.user.id,
+      ],
+    );
+    const fileId = r.insertId;
+    const fileNo = `DOC-${fileId}`;
+    await conn.query('UPDATE archive_files SET file_no = ? WHERE id = ?', [fileNo, fileId]);
+
+    await conn.query(
+      `INSERT INTO archive_file_versions
+         (file_id, version_no, file_name, mime_type, size_bytes, checksum_sha256, file_data, note, uploaded_by_user_id)
+       VALUES (?, 1, ?,?,?,?,?,?,?)`,
+      [fileId, upload.fileName, upload.mime, upload.buffer.length, upload.checksum, upload.buffer,
+        trunc(b.note, 500) || 'Artist layout files', req.user.id],
+    );
+    await logFile(conn, req, { fileId, action: 'created', detail: `${fileNo} · ${jo.jo_no} · ${upload.fileName}` });
+    await conn.commit();
+    res.status(201).json({ id: fileId, file_no: fileNo, jo_no: jo.jo_no });
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
 
 router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
   const conn = await pool.getConnection();

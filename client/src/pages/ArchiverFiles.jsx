@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import ArtistArchiveModal from '../components/ArtistArchiveModal';
 import { FILE_STATUS_LABELS, formatBytes, formatDate } from '../utils/archiverLabels';
 
 const PAGE_SIZE = 20;
@@ -17,8 +18,9 @@ export default function ArchiverFiles() {
   const [meta, setMeta] = useState(null);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState({ search: '', folder_id: '', status: '', expiring: '' });
-  const [applied, setApplied] = useState({ search: '', folder_id: '', status: '', expiring: '' });
+  const [showArtist, setShowArtist] = useState(false);
+  const [filters, setFilters] = useState({ search: '', folder_id: '', status: '', expiring: '', artist_only: '', mine: '' });
+  const [applied, setApplied] = useState({ search: '', folder_id: '', status: '', expiring: '', artist_only: '', mine: '' });
 
   useEffect(() => { api.get('/archiver/files/meta').then(({ data }) => setMeta(data)).catch(() => {}); }, []);
 
@@ -56,7 +58,8 @@ export default function ArchiverFiles() {
         <h1>Files</h1>
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to="/archiver/credentials">Credentials</Link>
-          {can('/archiver/files', 'can_add') && <Link className="btn btn-primary" to="/archiver/files/new">Upload Document</Link>}
+          {can('/archiver/files', 'can_add') && <button className="btn btn-primary" onClick={() => setShowArtist(true)}>Add File to Archive as Artist</button>}
+          {can('/archiver/files', 'can_add') && <Link className="btn" to="/archiver/files/new">Upload Document</Link>}
         </div>
       </div>
 
@@ -87,6 +90,12 @@ export default function ArchiverFiles() {
           <button className="btn btn-sm" onClick={() => runSearch({ expiring: applied.expiring === 'yes' ? '' : 'yes' })}>
             {applied.expiring === 'yes' ? 'Show all' : 'Expiring in 30 days'}
           </button>
+          <button className="btn btn-sm" onClick={() => runSearch({ artist_only: applied.artist_only === 'yes' ? '' : 'yes', mine: '' })}>
+            {applied.artist_only === 'yes' ? 'Show all' : 'Artist archives'}
+          </button>
+          <button className="btn btn-sm" onClick={() => runSearch({ mine: applied.mine === 'yes' ? '' : 'yes', artist_only: '' })}>
+            {applied.mine === 'yes' ? 'Show all' : 'Archived for me'}
+          </button>
         </div>
       </div>
 
@@ -96,13 +105,13 @@ export default function ArchiverFiles() {
             <table className="responsive-cards">
               <thead>
                 <tr>
-                  <th>Document</th><th>Folder</th><th>File</th><th>Size</th>
+                  <th>Document</th><th>JO / NSTDJO</th><th>Folder</th><th>File</th><th>Size</th>
                   <th>Document Date</th><th>Expires</th><th>Ver</th><th>Owner</th><th>Status</th><th />
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && (
-                  <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                  <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: 20 }}>
                     No documents. Ones you own, that are shared with you, or marked company-wide appear here.
                   </td></tr>
                 )}
@@ -113,6 +122,18 @@ export default function ArchiverFiles() {
                       <div className="muted" style={{ fontSize: 11 }}>
                         {r.file_no}{r.visibility === 'company' ? ' · company-wide' : ''}
                       </div>
+                    </td>
+                    {/* Only artist archives carry a job order; everything else shows a dash rather
+                        than an empty cell, so the column reads as "not applicable", not "missing". */}
+                    <td data-label="JO / NSTDJO">
+                      {r.jo_no ? (
+                        <>
+                          <strong>{r.jo_no}</strong>
+                          <div className="muted" style={{ fontSize: 11 }}>
+                            {[r.customer_name, r.artist_name].filter(Boolean).join(' · ')}
+                          </div>
+                        </>
+                      ) : '—'}
                     </td>
                     <td data-label="Folder">{r.folder_name || '—'}</td>
                     <td data-label="File" style={{ fontSize: 12 }}>{r.file_name || '—'}</td>
@@ -131,6 +152,14 @@ export default function ArchiverFiles() {
         )}
         <Pagination page={page} totalPages={totalPages} onChange={setPage} />
       </div>
+
+      {showArtist && meta && (
+        <ArtistArchiveModal
+          maxBytes={meta.max_bytes}
+          onClose={() => setShowArtist(false)}
+          onSaved={(d) => { setShowArtist(false); navigate(`/archiver/files/${d.id}`); }}
+        />
+      )}
     </div>
   );
 }
