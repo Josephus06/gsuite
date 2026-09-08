@@ -8,6 +8,13 @@ import AssetTransfers from './pages/AssetTransfers';
 import AssetTransferForm from './pages/AssetTransferForm';
 import AssetTransferView from './pages/AssetTransferView';
 import AssetAudits from './pages/AssetAudits';
+import AssetClasses from './pages/AssetClasses';
+import AssetDepreciation from './pages/AssetDepreciation';
+import AssetDepreciationView from './pages/AssetDepreciationView';
+import AssetDisposals from './pages/AssetDisposals';
+import AssetDisposalForm from './pages/AssetDisposalForm';
+import AssetDisposalView from './pages/AssetDisposalView';
+import FixedAssetRollForward from './pages/FixedAssetRollForward';
 import AssetAuditView from './pages/AssetAuditView';
 import Layout from './components/Layout';
 import Login from './pages/Login';
@@ -358,6 +365,14 @@ function App() {
         <Route path="/asset-transfers/:id" element={<AssetTransferView />} />
         <Route path="/asset-audits" element={<AssetAudits />} />
         <Route path="/asset-audits/:id" element={<AssetAuditView />} />
+        <Route path="/asset-classes" element={<AssetClasses />} />
+        <Route path="/asset-depreciation" element={<AssetDepreciation />} />
+        <Route path="/asset-depreciation/:id" element={<AssetDepreciationView />} />
+        <Route path="/asset-disposals" element={<AssetDisposals />} />
+        <Route path="/asset-disposals/new" element={<AssetDisposalForm />} />
+        <Route path="/asset-disposals/:id/edit" element={<AssetDisposalForm />} />
+        <Route path="/asset-disposals/:id" element={<AssetDisposalView />} />
+        <Route path="/reports/fixed-asset-roll-forward" element={<FixedAssetRollForward />} />
         <Route path="/lookups" element={<Lookups />} />
         <Route path="/transaction-settings" element={<TransactionSettings />} />
         <Route path="/process-costing" element={<ProcessCosting />} />

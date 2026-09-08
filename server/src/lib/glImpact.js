@@ -735,6 +735,86 @@ async function linesByParent(sql, parentCol, ids, chunkSize = 1000) {
   return byParent;
 }
 
+// A depreciation run is stored as the first of the month it covers but posts on the month's last
+// day. Computed on the string rather than through a Date, so it cannot be shifted by a timezone --
+// the same trap that put dateStrings:true in db.js.
+function lastDayOfMonth(period) {
+  const [y, m] = String(period).slice(0, 7).split('-').map(Number);
+  return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`;
+}
+
+// Depreciation run: Dr depreciation expense, Cr accumulated depreciation.
+//
+// Aggregated by account pair rather than one debit/credit per asset. A month can carry hundreds of
+// lines that all post to the same two accounts, and the ledger wants the period's charge, not a
+// row per machine -- the per-asset detail lives on the run document, which is where anyone asking
+// "which assets made up this figure?" should be looking.
+//
+// The account CODES come off the line, not from the class, because they were snapshotted when the
+// run was built; re-pointing a class next year must not restate what last year's Trial Balance said.
+async function computeAssetDepreciationRunGl(lines) {
+  const byPair = new Map();
+  for (const l of lines) {
+    const amount = Number(l.amount) || 0;
+    if (!amount || !l.expense_account_code || !l.accumulated_account_code) continue;
+    const key = `${l.expense_account_code}|${l.accumulated_account_code}`;
+    byPair.set(key, (byPair.get(key) || 0) + amount);
+  }
+  const rows = [];
+  for (const [key, total] of byPair) {
+    const amount = Number(total.toFixed(2));
+    if (!amount) continue;
+    const [expenseCode, accumCode] = key.split('|');
+    const expense = await coaByCode(expenseCode);
+    const accumulated = await coaByCode(accumCode);
+    if (!expense || !accumulated) continue;
+    rows.push({ account_code: expense.account_code, account_name: expense.account_name, debit: amount, credit: 0 });
+    rows.push({ account_code: accumulated.account_code, account_name: accumulated.account_name, debit: 0, credit: amount });
+  }
+  return rows;
+}
+
+// Disposal: remove the asset's cost and the accumulated depreciation standing against it, bring in
+// the proceeds, and let the gain or loss fall out as the balancing figure.
+//
+//   Dr Accumulated Depreciation  (all depreciation taken to date)
+//   Dr Cash / Receivable         (proceeds, when sold)
+//   Cr Fixed Asset - cost        (full capitalised cost)
+//   Dr/Cr Gain or Loss           (proceeds - net book value)
+//
+// The gain/loss line is computed from the other three rather than trusted from the document, so the
+// entry balances by construction even if a stored figure were ever stale.
+async function computeAssetDisposalGl(d) {
+  const cost = Number(d.cost_at_disposal) || 0;
+  const accumulated = Number(d.accumulated_at_disposal) || 0;
+  const proceeds = Number(d.proceeds) || 0;
+  if (!cost && !accumulated && !proceeds) return [];
+  if (!d.cost_account_id || !d.accumulated_account_id) return [];
+
+  const costAcct = await coaById(d.cost_account_id);
+  const accumAcct = await coaById(d.accumulated_account_id);
+  if (!costAcct || !accumAcct) return [];
+
+  const rows = [];
+  if (accumulated) rows.push({ account_code: accumAcct.account_code, account_name: accumAcct.account_name, debit: accumulated, credit: 0 });
+  if (proceeds && d.proceeds_account_id) {
+    const cash = await coaById(d.proceeds_account_id);
+    if (cash) rows.push({ account_code: cash.account_code, account_name: cash.account_name, debit: proceeds, credit: 0 });
+  }
+  if (cost) rows.push({ account_code: costAcct.account_code, account_name: costAcct.account_name, debit: 0, credit: cost });
+
+  // Whatever it takes to balance: a credit is a gain, a debit is a loss. Their chart uses one
+  // account (30803 Gain/Loss on Sale of Asset) for both directions.
+  const debits = rows.reduce((n, r) => n + r.debit, 0);
+  const credits = rows.reduce((n, r) => n + r.credit, 0);
+  const diff = Number((credits - debits).toFixed(2));
+  if (diff && d.gain_loss_account_id) {
+    const gl = await coaById(d.gain_loss_account_id);
+    if (gl) rows.push({ account_code: gl.account_code, account_name: gl.account_name, debit: diff > 0 ? diff : 0, credit: diff < 0 ? -diff : 0 });
+  }
+  return rows;
+}
+
 async function getPostedGlLines({ toDate, fromDate }) {
   const dateFilter = (col) => {
     const clauses = [`${col} <= ?`];
@@ -1231,6 +1311,46 @@ async function getPostedGlLines({ toDate, fromDate }) {
     }
   }
 
+  // Asset Depreciation Runs
+  //
+  // Dated to the LAST day of the period they cover, not the first: depreciation is the expense of a
+  // month that has finished, so September's charge belongs at 30 September. Only posted runs
+  // count -- a voided one leaves the ledger entirely, which is safe because accumulated
+  // depreciation is summed from posted lines rather than stored on the asset.
+  {
+    const { sql, params } = dateFilter('LAST_DAY(r.period_month)');
+    const [headers] = await pool.query(
+      `SELECT r.* FROM asset_depreciation_runs r WHERE r.status = 'posted' AND ${sql}`, params
+    );
+    const linesBy = await linesByParent(
+      'SELECT * FROM asset_depreciation_lines WHERE run_id IN (?)', 'run_id',
+      headers.map((h) => h.id));
+    for (const run of headers) {
+      const lines = linesBy.get(run.id) || [];
+      const rows = await computeAssetDepreciationRunGl(lines);
+      push(rows, {
+        entry_date: lastDayOfMonth(run.period_month), source_type: 'asset_depreciation_run',
+        source_no: run.run_no, source_id: run.id, memo: run.memo || `Depreciation for ${String(run.period_month).slice(0, 7)}`,
+        location_id: null, department_id: null,
+      });
+    }
+  }
+
+  // Asset Disposals
+  {
+    const { sql, params } = dateFilter('d.disposal_date');
+    const [headers] = await pool.query(
+      `SELECT d.* FROM asset_disposals d WHERE d.status = 'posted' AND ${sql}`, params
+    );
+    for (const d of headers) {
+      const rows = await computeAssetDisposalGl(d);
+      push(rows, {
+        entry_date: d.disposal_date, source_type: 'asset_disposal', source_no: d.disposal_no, source_id: d.id,
+        memo: d.reason || d.memo || null, location_id: null, department_id: null,
+      });
+    }
+  }
+
   return out;
   } finally {
     endRefRun();
@@ -1251,5 +1371,7 @@ module.exports = {
   computeVendorBillGl,
   computeInventoryAdjustmentGl,
   computeBillCreditGl,
+  computeAssetDepreciationRunGl,
+  computeAssetDisposalGl,
   getPostedGlLines,
 };

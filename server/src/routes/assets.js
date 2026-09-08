@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { resolveCustody, wouldCreateCycle, descendantIds, recordMovement } = require('../lib/assetCustody');
+const { capitalizedCost, accumulatedDepreciation, money } = require('../lib/fixedAssets');
 
 const router = express.Router();
 
@@ -57,6 +58,27 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
     const [categories] = await pool.query(
       "SELECT DISTINCT category FROM asset_items WHERE category IS NOT NULL AND category <> '' ORDER BY category",
     );
+    // Accounting reference data. Wrapped because the custody register must keep working on an
+    // install where add-fixed-asset-accounting.js has not been run yet -- the asset pages should
+    // degrade to custody-only, not 500.
+    let classes = [];
+    let settings = null;
+    try {
+      const [rows] = await pool.query(
+        `SELECT c.id, c.name, c.is_depreciable, c.default_useful_life_months,
+                ca.account_code AS cost_account_code, aa.account_code AS accumulated_account_code
+           FROM asset_classes c
+           LEFT JOIN chart_of_accounts ca ON ca.id = c.cost_account_id
+           LEFT JOIN chart_of_accounts aa ON aa.id = c.accumulated_depreciation_account_id
+          WHERE c.is_active = TRUE ORDER BY c.name`,
+      );
+      classes = rows;
+      const [[s]] = await pool.query('SELECT capitalization_threshold, default_useful_life_months FROM asset_settings WHERE id = 1');
+      settings = s || null;
+    } catch (e) {
+      if (e.code !== 'ER_NO_SUCH_TABLE') throw e;
+    }
+
     res.json({
       items,
       locations,
@@ -65,6 +87,9 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
       categories: categories.map((c) => c.category),
       statuses: [...STATUSES],
       conditions: [...CONDITIONS],
+      asset_classes: classes,
+      settings,
+      accounting_enabled: !!settings,
     });
   } catch (err) { next(err); }
 });
@@ -339,14 +364,18 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     if (!parentId && !locationId) return res.status(400).json({ error: 'A location is required unless the asset is attached to another asset.' });
 
     await conn.beginTransaction();
+    // Accounting attributes are recorded here but do NOT capitalise the asset -- that is a separate,
+    // deliberate act (POST /:id/capitalize), because capitalising is what puts a figure on the
+    // balance sheet and starts depreciation.
     const [r] = await conn.query(
-      `INSERT INTO assets (reference_no, asset_item_id, parent_asset_id, serial_no, tag_no, location_id,
+      `INSERT INTO assets (reference_no, asset_item_id, asset_class_id, parent_asset_id, serial_no, tag_no, location_id,
                            custodian_employee_id, department_id, status, asset_condition, acquired_date,
-                           acquisition_cost, remarks, created_by_user_id)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [String(b.reference_no).trim(), b.asset_item_id, parentId, trunc(b.serial_no, 120), trunc(b.tag_no, 60),
+                           acquisition_cost, salvage_value, useful_life_months, in_service_date, remarks, created_by_user_id)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [String(b.reference_no).trim(), b.asset_item_id, idOrNull(b.asset_class_id), parentId, trunc(b.serial_no, 120), trunc(b.tag_no, 60),
         locationId, custodianId, departmentId, b.status || 'active', b.asset_condition || 'good',
-        b.acquired_date || null, numOrNull(b.acquisition_cost), trunc(b.remarks, 1000), req.user.id],
+        b.acquired_date || null, numOrNull(b.acquisition_cost), numOrNull(b.salvage_value) || 0,
+        numOrNull(b.useful_life_months), b.in_service_date || null, trunc(b.remarks, 1000), req.user.id],
     );
     const assetId = r.insertId;
 
@@ -390,6 +419,28 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     );
     if (openTransfer) return res.status(409).json({ error: `This asset is on transfer ${openTransfer.transfer_no}, which is still in progress. Finish or cancel it first.` });
 
+    // Once depreciation has posted, two fields are frozen. Useful life and salvage value are NOT:
+    // revising those is a change in accounting estimate, which the engine absorbs prospectively
+    // over the remaining life without a correcting entry. But the class decides which accounts the
+    // charge lands in, and the in-service date decides which month it started -- changing either
+    // after the fact would leave posted entries pointing at a history that no longer exists.
+    const [[posted]] = await conn.query(
+      `SELECT COUNT(*) n FROM asset_depreciation_lines l JOIN asset_depreciation_runs r ON r.id = l.run_id
+        WHERE l.asset_id = ? AND r.status = 'posted'`,
+      [assetId],
+    ).catch(() => [[{ n: 0 }]]);
+    if (posted.n > 0) {
+      const newClass = idOrNull(b.asset_class_id);
+      if (String(newClass ?? '') !== String(existing.asset_class_id ?? '')) {
+        return res.status(409).json({ error: 'This asset already has posted depreciation, so its class cannot be changed. Dispose of it and re-register it if it truly belongs elsewhere.' });
+      }
+      const newInService = b.in_service_date || null;
+      const oldInService = existing.in_service_date ? String(existing.in_service_date).slice(0, 10) : null;
+      if (String(newInService ?? '') !== String(oldInService ?? '')) {
+        return res.status(409).json({ error: 'This asset already has posted depreciation, so its in-service date cannot be changed.' });
+      }
+    }
+
     const parentId = idOrNull(b.parent_asset_id);
     const wasAttached = existing.parent_asset_id != null;
     const nowAttached = parentId != null;
@@ -411,13 +462,15 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     await conn.beginTransaction();
     const before = await resolveCustody(assetId, conn);
     await conn.query(
-      `UPDATE assets SET reference_no = ?, asset_item_id = ?, parent_asset_id = ?, serial_no = ?, tag_no = ?,
+      `UPDATE assets SET reference_no = ?, asset_item_id = ?, asset_class_id = ?, parent_asset_id = ?, serial_no = ?, tag_no = ?,
               location_id = ?, custodian_employee_id = ?, department_id = ?, status = ?, asset_condition = ?,
-              acquired_date = ?, acquisition_cost = ?, remarks = ?, updated_at = NOW()
+              acquired_date = ?, acquisition_cost = ?, salvage_value = ?, useful_life_months = ?, in_service_date = ?,
+              remarks = ?, updated_at = NOW()
         WHERE id = ?`,
-      [String(b.reference_no).trim(), b.asset_item_id, parentId, trunc(b.serial_no, 120), trunc(b.tag_no, 60),
+      [String(b.reference_no).trim(), b.asset_item_id, idOrNull(b.asset_class_id), parentId, trunc(b.serial_no, 120), trunc(b.tag_no, 60),
         locationId, custodianId, departmentId, b.status || existing.status, b.asset_condition || existing.asset_condition,
-        b.acquired_date || null, numOrNull(b.acquisition_cost), trunc(b.remarks, 1000), assetId],
+        b.acquired_date || null, numOrNull(b.acquisition_cost), numOrNull(b.salvage_value) || 0,
+        numOrNull(b.useful_life_months), b.in_service_date || null, trunc(b.remarks, 1000), assetId],
     );
 
     for (const field of ['reference_no', 'serial_no', 'tag_no', 'status', 'asset_condition']) {
@@ -550,6 +603,197 @@ router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async
     await logAudit(conn, { assetId, userId: req.user.id, eventType: 'Deleted' });
     await conn.commit();
     res.status(204).send();
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
+// ---------------------------------------------------------------------------------------------
+// Fixed-asset accounting: capitalisation and the cost ledger.
+//
+// Capitalising is deliberately a separate act from registering. The register records that a UPS
+// exists and who has it; capitalising says it goes on the balance sheet and starts depreciating.
+// Those are different decisions, made by different people, and folding them together would mean
+// whoever tags a new monitor also, silently, books an asset.
+// ---------------------------------------------------------------------------------------------
+
+const COST_TYPES = new Set(['purchase', 'freight', 'installation', 'improvement', 'other']);
+
+// Cost, accumulated depreciation and net book value for one asset.
+router.get('/:id/valuation', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const cost = await capitalizedCost(req.params.id);
+    const accumulated = await accumulatedDepreciation(req.params.id);
+    const [lines] = await pool.query(
+      `SELECT l.*, u.display_name AS created_by_name FROM asset_cost_lines l
+         LEFT JOIN users u ON u.id = l.created_by_user_id
+        WHERE l.asset_id = ? ORDER BY l.line_no`,
+      [req.params.id],
+    );
+    const [depreciation] = await pool.query(
+      `SELECT r.run_no, r.period_month, r.status, l.amount, l.opening_accumulated, l.closing_accumulated
+         FROM asset_depreciation_lines l JOIN asset_depreciation_runs r ON r.id = l.run_id
+        WHERE l.asset_id = ? AND r.status = 'posted' ORDER BY r.period_month DESC`,
+      [req.params.id],
+    );
+    const [[disposal]] = await pool.query(
+      "SELECT id, disposal_no, disposal_date, disposal_type, proceeds, gain_loss, status FROM asset_disposals WHERE asset_id = ? AND status <> 'voided' ORDER BY id DESC LIMIT 1",
+      [req.params.id],
+    );
+    res.json({
+      capitalized_cost: cost,
+      accumulated_depreciation: accumulated,
+      net_book_value: money(cost - accumulated),
+      cost_lines: lines,
+      depreciation_history: depreciation,
+      disposal: disposal || null,
+    });
+  } catch (err) { next(err); }
+});
+
+// Put the asset on the balance sheet. Requires a class (which names the accounts), an in-service
+// date (which decides the first month depreciated), and a cost.
+router.post('/:id/capitalize', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const assetId = req.params.id;
+    const [[asset]] = await conn.query('SELECT * FROM assets WHERE id = ?', [assetId]);
+    if (!asset) return res.status(404).json({ error: 'Not found' });
+    if (asset.is_capitalized) return res.status(409).json({ error: 'This asset is already capitalised.' });
+    if (asset.parent_asset_id) return res.status(400).json({ error: 'An attached asset has no cost of its own. Capitalise its host, or detach it first.' });
+
+    const b = req.body || {};
+    const classId = idOrNull(b.asset_class_id) || asset.asset_class_id;
+    if (!classId) return res.status(400).json({ error: 'An asset class is required -- it decides which accounts this asset posts to.' });
+    const [[cls]] = await conn.query('SELECT * FROM asset_classes WHERE id = ?', [classId]);
+    if (!cls) return res.status(400).json({ error: 'Asset class not found.' });
+    if (!cls.cost_account_id) return res.status(400).json({ error: `The class "${cls.name}" has no cost account set.` });
+
+    const inServiceDate = b.in_service_date || asset.in_service_date || asset.acquired_date;
+    if (!inServiceDate) return res.status(400).json({ error: 'An in-service date is required -- depreciation starts from the month it was placed in service.' });
+
+    // The opening cost line. Everything after this (freight, installation, later improvements) is
+    // another line, and capitalised cost is always their sum.
+    const existingCost = await capitalizedCost(assetId, conn);
+    const openingAmount = numOrNull(b.amount) ?? numOrNull(asset.acquisition_cost) ?? 0;
+    if (!existingCost && !openingAmount) return res.status(400).json({ error: 'A cost is required to capitalise an asset.' });
+
+    const [[settings]] = await conn.query('SELECT capitalization_threshold, default_useful_life_months FROM asset_settings WHERE id = 1');
+    const total = existingCost || openingAmount;
+    const threshold = Number(settings?.capitalization_threshold || 0);
+    // The threshold is policy, so it is enforced -- but an explicit override is allowed and
+    // recorded, because there are always assets a company capitalises below its own floor.
+    if (total < threshold && b.override_threshold !== true) {
+      return res.status(400).json({
+        error: `This asset costs ${total.toLocaleString()} which is below the capitalisation threshold of ${threshold.toLocaleString()}. Expense it, or capitalise it explicitly with an override.`,
+        threshold,
+        amount: total,
+        can_override: true,
+      });
+    }
+
+    const life = numOrNull(b.useful_life_months) || asset.useful_life_months || cls.default_useful_life_months || settings?.default_useful_life_months || null;
+    if (cls.is_depreciable && !life) return res.status(400).json({ error: 'A useful life in months is required for a depreciable asset.' });
+
+    await conn.beginTransaction();
+    if (!existingCost && openingAmount) {
+      await conn.query(
+        `INSERT INTO asset_cost_lines (asset_id, line_no, cost_type, description, amount, incurred_date, created_by_user_id)
+         VALUES (?, 1, 'purchase', ?, ?, ?, ?)`,
+        [assetId, trunc(b.description, 500) || 'Acquisition cost', openingAmount, asset.acquired_date || inServiceDate, req.user.id],
+      );
+    }
+    await conn.query(
+      `UPDATE assets SET is_capitalized = TRUE, asset_class_id = ?, in_service_date = ?, useful_life_months = ?,
+              salvage_value = ?, depreciation_method = 'straight_line', updated_at = NOW()
+        WHERE id = ?`,
+      [classId, inServiceDate, life, numOrNull(b.salvage_value) ?? asset.salvage_value ?? 0, assetId],
+    );
+    await logAudit(conn, {
+      assetId, userId: req.user.id, eventType: 'Approved', fieldName: 'is_capitalized',
+      oldValue: 'false', newValue: `true (${cls.name}, ${total}, ${life || 'n/a'} months${total < threshold ? ', threshold overridden' : ''})`,
+    });
+    await conn.commit();
+    res.json({ ok: true, capitalized_cost: await capitalizedCost(assetId), useful_life_months: life });
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
+// Reverse a capitalisation booked in error. Refused once depreciation has posted -- at that point
+// the ledger has entries against it, and the way out is a disposal, not an undo.
+router.post('/:id/decapitalize', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const assetId = req.params.id;
+    const [[asset]] = await conn.query('SELECT id, is_capitalized FROM assets WHERE id = ?', [assetId]);
+    if (!asset) return res.status(404).json({ error: 'Not found' });
+    if (!asset.is_capitalized) return res.status(409).json({ error: 'This asset is not capitalised.' });
+
+    const [[posted]] = await conn.query(
+      `SELECT COUNT(*) n FROM asset_depreciation_lines l JOIN asset_depreciation_runs r ON r.id = l.run_id
+        WHERE l.asset_id = ? AND r.status = 'posted'`,
+      [assetId],
+    );
+    if (posted.n > 0) return res.status(409).json({ error: `This asset has ${posted.n} posted depreciation entr${posted.n === 1 ? 'y' : 'ies'}. Dispose of it instead of reversing the capitalisation.` });
+    const [[disposed]] = await conn.query("SELECT id FROM asset_disposals WHERE asset_id = ? AND status = 'posted' LIMIT 1", [assetId]);
+    if (disposed) return res.status(409).json({ error: 'This asset has a posted disposal.' });
+
+    await conn.beginTransaction();
+    await conn.query('UPDATE assets SET is_capitalized = FALSE, updated_at = NOW() WHERE id = ?', [assetId]);
+    await logAudit(conn, { assetId, userId: req.user.id, eventType: 'Updated', fieldName: 'is_capitalized', oldValue: 'true', newValue: 'false' });
+    await conn.commit();
+    res.json({ ok: true });
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
+// Add a cost to an asset: freight and installation at acquisition, an improvement later. A line
+// added after the asset is in service raises the depreciable base, and the engine spreads the
+// increase over the remaining life prospectively -- no catch-up entry, which is the correct
+// treatment for a change in estimate.
+router.post('/:id/cost-lines', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const assetId = req.params.id;
+    const b = req.body || {};
+    const amount = numOrNull(b.amount);
+    if (!amount || amount <= 0) return res.status(400).json({ error: 'An amount greater than zero is required.' });
+    if (b.cost_type && !COST_TYPES.has(b.cost_type)) return res.status(400).json({ error: `Unknown cost type: ${b.cost_type}` });
+
+    const [[asset]] = await conn.query('SELECT id, is_capitalized FROM assets WHERE id = ?', [assetId]);
+    if (!asset) return res.status(404).json({ error: 'Not found' });
+    const [[disposed]] = await conn.query("SELECT disposal_no FROM asset_disposals WHERE asset_id = ? AND status = 'posted' LIMIT 1", [assetId]);
+    if (disposed) return res.status(409).json({ error: `This asset was disposed of by ${disposed.disposal_no}; its cost can no longer change.` });
+
+    await conn.beginTransaction();
+    const [[{ nextNo }]] = await conn.query('SELECT COALESCE(MAX(line_no), 0) + 1 AS nextNo FROM asset_cost_lines WHERE asset_id = ?', [assetId]);
+    await conn.query(
+      `INSERT INTO asset_cost_lines (asset_id, line_no, cost_type, description, amount, incurred_date, source_type, source_id, created_by_user_id)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+      [assetId, nextNo, b.cost_type || 'other', trunc(b.description, 500), amount, b.incurred_date || null,
+        trunc(b.source_type, 50), idOrNull(b.source_id), req.user.id],
+    );
+    await logAudit(conn, { assetId, userId: req.user.id, eventType: 'Updated', fieldName: 'capitalized_cost', newValue: `+${amount} (${b.cost_type || 'other'})` });
+    await conn.commit();
+    res.status(201).json({ ok: true, capitalized_cost: await capitalizedCost(assetId) });
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
+// Removing a cost line is only safe while nothing has depreciated against it -- afterwards the
+// posted charge was computed from a base this would silently change.
+router.delete('/:id/cost-lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const assetId = req.params.id;
+    const [[posted]] = await conn.query(
+      `SELECT COUNT(*) n FROM asset_depreciation_lines l JOIN asset_depreciation_runs r ON r.id = l.run_id
+        WHERE l.asset_id = ? AND r.status = 'posted'`,
+      [assetId],
+    );
+    if (posted.n > 0) return res.status(409).json({ error: 'Depreciation has already posted against this cost. Add a negative adjusting line instead of deleting history.' });
+
+    await conn.beginTransaction();
+    const [r] = await conn.query('DELETE FROM asset_cost_lines WHERE id = ? AND asset_id = ?', [req.params.lineId, assetId]);
+    if (!r.affectedRows) { await conn.rollback(); return res.status(404).json({ error: 'Cost line not found.' }); }
+    await logAudit(conn, { assetId, userId: req.user.id, eventType: 'Updated', fieldName: 'capitalized_cost', newValue: 'cost line removed' });
+    await conn.commit();
+    res.json({ ok: true, capitalized_cost: await capitalizedCost(assetId) });
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 

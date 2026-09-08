@@ -105,6 +105,10 @@ const NAV_STRUCTURE = [
       { route: '/asset-transfers', label: 'Asset Transfers' },
       { route: '/asset-audits', label: 'Asset Audits' },
       { route: '/asset-items', label: 'Asset Types' },
+      { route: '/asset-classes', label: 'Asset Classes' },
+      { route: '/asset-depreciation', label: 'Depreciation' },
+      { route: '/asset-disposals', label: 'Disposals' },
+      { route: '/reports/fixed-asset-roll-forward', label: 'Roll Forward Report' },
     ],
   },
   {

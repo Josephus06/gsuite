@@ -81,6 +81,10 @@ const assetItemRoutes = require('./routes/assetItems');
 const assetRoutes = require('./routes/assets');
 const assetTransferRoutes = require('./routes/assetTransfers');
 const assetAuditRoutes = require('./routes/assetAudits');
+const assetClassRoutes = require('./routes/assetClasses');
+const assetDepreciationRoutes = require('./routes/assetDepreciation');
+const assetDisposalRoutes = require('./routes/assetDisposals');
+const assetReportRoutes = require('./routes/assetReports');
 const { ensureAssignedAtColumn } = require('./db/ensureSchema');
 const { sendTicketReminders } = require('./scripts/ticket_reminder');
 const { startSampling } = require('./lib/systemHealth');
@@ -242,6 +246,12 @@ app.use('/api/rfqc-job-orders', rfqcJobOrderRoutes);
 app.use('/api/asset-items', assetItemRoutes);
 app.use('/api/asset-transfers', assetTransferRoutes);
 app.use('/api/asset-audits', assetAuditRoutes);
+app.use('/api/asset-classes', assetClassRoutes);
+app.use('/api/asset-depreciation', assetDepreciationRoutes);
+app.use('/api/asset-disposals', assetDisposalRoutes);
+// Fixed-asset reports mount under /api/reports alongside the existing financial statements,
+// BEFORE the general reports router so its two paths are matched here first.
+app.use('/api/reports', assetReportRoutes);
 app.use('/api/assets', assetRoutes);
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));

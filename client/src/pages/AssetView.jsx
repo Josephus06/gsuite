@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import AssetAccountingPanel from '../components/AssetAccountingPanel';
 import { CONDITION_LABELS, MOVEMENT_LABELS, STATUS_LABELS } from '../utils/assetLabels';
 
 function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : ''; }
@@ -197,6 +198,7 @@ export default function AssetView() {
 
       <div className="status-tabs" style={{ marginTop: 20 }}>
         <button className={`status-tab ${tab === 'details' ? 'active' : ''}`} onClick={() => setTab('details')}>Details</button>
+        <button className={`status-tab ${tab === 'accounting' ? 'active' : ''}`} onClick={() => setTab('accounting')}>Accounting</button>
         <button className={`status-tab ${tab === 'attached' ? 'active' : ''}`} onClick={() => setTab('attached')}>Attached Assets ({attached.length})</button>
         <button className={`status-tab ${tab === 'movements' ? 'active' : ''}`} onClick={() => setTab('movements')}>Movement History ({movements.length})</button>
         <button className={`status-tab ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}>System Info</button>
@@ -218,6 +220,8 @@ export default function AssetView() {
           </div>
         </div>
       )}
+
+      {tab === 'accounting' && <AssetAccountingPanel asset={a} meta={meta} onChanged={load} />}
 
       {tab === 'attached' && (
         <div className="card">

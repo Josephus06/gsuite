@@ -11,6 +11,7 @@ const EMPTY = {
   reference_no: '', asset_item_id: '', parent_asset_id: '', serial_no: '', tag_no: '',
   location_id: '', custodian_employee_id: '', department_id: '', status: 'active',
   asset_condition: 'good', acquired_date: today(), acquisition_cost: '', remarks: '',
+  asset_class_id: '', in_service_date: '', useful_life_months: '', salvage_value: 0,
 };
 
 // Register one unit, or correct its record.
@@ -49,6 +50,9 @@ export default function AssetForm() {
           department_id: a.department_id || '', status: a.status || 'active', asset_condition: a.asset_condition || 'good',
           acquired_date: a.acquired_date ? String(a.acquired_date).slice(0, 10) : '',
           acquisition_cost: a.acquisition_cost ?? '', remarks: a.remarks || '',
+          asset_class_id: a.asset_class_id || '', salvage_value: a.salvage_value ?? 0,
+          useful_life_months: a.useful_life_months || '',
+          in_service_date: a.in_service_date ? String(a.in_service_date).slice(0, 10) : '',
         });
       }
       setLoading(false);
@@ -73,6 +77,10 @@ export default function AssetForm() {
         parent_asset_id: form.parent_asset_id || null,
         acquisition_cost: form.acquisition_cost === '' ? null : Number(form.acquisition_cost),
         acquired_date: form.acquired_date || null,
+        asset_class_id: form.asset_class_id || null,
+        in_service_date: form.in_service_date || null,
+        useful_life_months: form.useful_life_months === '' ? null : Number(form.useful_life_months),
+        salvage_value: form.salvage_value === '' ? 0 : Number(form.salvage_value),
       };
       if (id) { await api.put(`/assets/${id}`, body); navigate(`/assets/${id}`); }
       else { const { data } = await api.post('/assets', body); navigate(`/assets/${data.id}`); }
@@ -221,6 +229,45 @@ export default function AssetForm() {
             <textarea rows={2} value={form.remarks} onChange={(e) => set({ remarks: e.target.value })} />
           </div>
         </div>
+
+        {/* Recording these does NOT capitalise the asset -- that is done from the Accounting tab,
+            because putting something on the balance sheet is accounting's call, not the tagger's. */}
+        {meta.accounting_enabled && (
+          <>
+            <h3 style={{ margin: '22px 0 8px', fontSize: 14, color: '#334155' }}>Accounting</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+              <div className="field">
+                <label>Asset Class</label>
+                <select value={form.asset_class_id} onChange={(e) => {
+                  const cls = (meta.asset_classes || []).find((c) => String(c.id) === e.target.value);
+                  set({ asset_class_id: e.target.value, useful_life_months: form.useful_life_months || cls?.default_useful_life_months || '' });
+                }}>
+                  <option value="">--None--</option>
+                  {(meta.asset_classes || []).map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}{c.is_depreciable ? '' : ' (not depreciated)'}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label>In-Service Date</label>
+                <input type="date" value={form.in_service_date} onChange={(e) => set({ in_service_date: e.target.value })} />
+              </div>
+              <div className="field">
+                <label>Useful Life (months)</label>
+                <input type="number" value={form.useful_life_months} onChange={(e) => set({ useful_life_months: e.target.value })} />
+              </div>
+              <div className="field">
+                <label>Salvage Value</label>
+                <input type="number" step="0.01" value={form.salvage_value} onChange={(e) => set({ salvage_value: e.target.value })} />
+              </div>
+            </div>
+            <p className="muted" style={{ fontSize: 12 }}>
+              {original?.is_capitalized
+                ? 'This asset is capitalised. Useful life and salvage value may be revised — the change is spread over the remaining life. Class and in-service date are fixed once depreciation has posted.'
+                : 'Recording these does not capitalise the asset. Capitalise it from the Accounting tab once it is ready to go on the balance sheet.'}
+            </p>
+          </>
+        )}
       </div>
     </div>
   );
