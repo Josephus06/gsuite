@@ -4,6 +4,7 @@ import Modal from './Modal';
 import LoadingSpinner from './LoadingSpinner';
 import { formatBytes, formatDate } from '../utils/archiverLabels';
 import { readFileAsBase64 } from '../utils/archiverUpload';
+import { uploadInParts, abortUpload } from '../utils/largeUpload';
 
 // An artist files the working files for a job order they were assigned.
 //
@@ -21,6 +22,8 @@ export default function ArtistArchiveModal({ onClose, onSaved, maxBytes }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [progress, setProgress] = useState(null);
+  const [abort, setAbort] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -35,20 +38,58 @@ export default function ArtistArchiveModal({ onClose, onSaved, maxBytes }) {
 
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Two paths, chosen by size.
+  //
+  // Small enough for the in-database route: one request, and the file stays in the database where
+  // the office box can reach it with the internet down.
+  //
+  // Anything larger goes straight to object storage in parts. It has to: a MySQL LONGBLOB caps at
+  // 4 GB, and layout archives for large-format work run to tens of gigabytes.
   async function save() {
     if (!chosen) { setError('Choose a job order.'); return; }
     if (!picked) { setError('Choose the .zip to upload.'); return; }
     if (!/\.zip$/i.test(picked.name)) { setError('The file must be a .zip.'); return; }
     setError(''); setSaving(true);
+
+    if (picked.size <= maxBytes) {
+      try {
+        const payload = await readFileAsBase64(picked, maxBytes);
+        const { data } = await api.post('/archiver/files/artist', {
+          source_kind: chosen.source_kind, source_id: chosen.source_id, note, ...payload,
+        });
+        onSaved(data);
+      } catch (e) {
+        setError(e.response?.data?.error || e.message || 'Upload failed.');
+        setSaving(false);
+      }
+      return;
+    }
+
+    const controller = new AbortController();
+    setAbort(() => () => controller.abort());
+    let versionId = null;
     try {
-      const payload = await readFileAsBase64(picked, maxBytes);
-      const { data } = await api.post('/archiver/files/artist', {
-        source_kind: chosen.source_kind, source_id: chosen.source_id, note, ...payload,
+      const { data: init } = await api.post('/archiver/files/artist/init', {
+        source_kind: chosen.source_kind, source_id: chosen.source_id, note,
+        file_name: picked.name, size_bytes: picked.size,
       });
-      onSaved(data);
+      versionId = init.version_id;
+      setProgress({ sent: 0, total: picked.size, part: 0, partCount: init.part_count });
+
+      await uploadInParts({
+        api, file: picked, versionId,
+        partSize: init.part_size, partCount: init.part_count,
+        onProgress: setProgress, signal: controller.signal,
+      });
+      onSaved({ id: init.file_id, file_no: init.file_no, jo_no: init.jo_no });
     } catch (e) {
+      // Always clean up at the storage end. Parts already sent sit in the bucket otherwise --
+      // invisible, and still billed.
+      if (versionId) await abortUpload(api, versionId);
       setError(e.response?.data?.error || e.message || 'Upload failed.');
       setSaving(false);
+      setProgress(null);
+      setAbort(null);
     }
   }
 
@@ -141,7 +182,10 @@ export default function ArtistArchiveModal({ onClose, onSaved, maxBytes }) {
             <input type="file" accept=".zip,application/zip" onChange={(e) => { setPicked(e.target.files?.[0] || null); setError(''); }} />
             {picked && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{picked.name} · {formatBytes(picked.size)}</div>}
             <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-              One .zip holding the layout, its links and its fonts. Up to {formatBytes(maxBytes)}.
+              One .zip holding the layout, its links and its fonts.
+              {picked && picked.size > maxBytes
+                ? ` This one is ${formatBytes(picked.size)}, so it goes straight to archive storage in parts rather than into the database.`
+                : ` Files over ${formatBytes(maxBytes)} are uploaded straight to archive storage.`}
             </div>
           </div>
           <div className="field">
@@ -149,10 +193,33 @@ export default function ArtistArchiveModal({ onClose, onSaved, maxBytes }) {
             <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Final approved layout, revision 2..." />
           </div>
 
+          {/* A 150GB upload runs for hours. Without a live figure the dialog is indistinguishable
+              from a hung one, and somebody will close the tab and lose the whole transfer. */}
+          {progress && (
+            <div className="card" style={{ marginTop: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
+                <strong>
+                  {formatBytes(progress.sent)} of {formatBytes(progress.total)}
+                  {' '}({Math.floor((progress.sent / progress.total) * 100)}%)
+                </strong>
+                <span className="muted">part {progress.part} of {progress.partCount}</span>
+              </div>
+              <div className="loading-spinner-bar" style={{ width: '100%' }}>
+                <span style={{ width: `${(progress.sent / progress.total) * 100}%` }} />
+              </div>
+              <p className="muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
+                Uploading straight to storage. Keep this tab open — closing it stops the transfer.
+                A failed part is retried on its own, so a brief drop-out will not restart the whole file.
+              </p>
+            </div>
+          )}
+
           <div className="modal-actions">
-            <button type="button" className="btn" onClick={onClose}>Cancel</button>
+            <button type="button" className="btn" onClick={() => { if (abort) abort(); onClose(); }}>
+              {saving ? 'Cancel upload' : 'Cancel'}
+            </button>
             <button type="button" className="btn btn-primary" disabled={saving || !picked} onClick={save}>
-              {saving ? 'Uploading...' : 'Archive Files'}
+              {saving ? (progress ? `Uploading ${Math.floor((progress.sent / progress.total) * 100)}%` : 'Starting...') : 'Archive Files'}
             </button>
           </div>
         </>

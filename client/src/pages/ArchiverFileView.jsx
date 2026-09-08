@@ -118,6 +118,23 @@ export default function ArchiverFileView() {
   async function download(version) {
     setBusy(true); setError('');
     try {
+      // A version stored in object storage is fetched from there directly on a short-lived signed
+      // URL -- the bytes never come through the app, which is the only workable answer at tens of
+      // gigabytes. Small in-database versions still stream through as a blob.
+      if (version.storage === 'spaces') {
+        const { data } = await api.get(`/archiver/files/${id}/versions/${version.id}/download`);
+        const a = document.createElement('a');
+        a.href = data.url;
+        a.rel = 'noreferrer noopener';
+        // No `download` attribute: it is ignored cross-origin. The signed URL carries a
+        // Content-Disposition instead, which is what actually names the saved file.
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        if (tab === 'log') loadLogs();
+        return;
+      }
+
       const res = await api.get(`/archiver/files/${id}/versions/${version.id}/download`, { responseType: 'blob' });
       const url = URL.createObjectURL(res.data);
       const a = document.createElement('a');
@@ -159,7 +176,9 @@ export default function ArchiverFileView() {
         <div />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn btn-sm" onClick={() => navigate('/archiver/files')}>Back to Lists</button>
-          {current && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => download(current)}>Download</button>}
+          {current && (!current.upload_status || current.upload_status === 'complete') && (
+            <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => download(current)}>Download</button>
+          )}
           {mine.can_edit && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/archiver/files/${id}/edit`)}>Edit</button>}
           {mine.can_edit && meta && <button className="btn btn-sm" onClick={() => setShowVersion(true)}>New Version</button>}
           {mine.can_edit && meta && <button className="btn btn-sm" onClick={() => setShowShare(true)}>Share</button>}
@@ -262,7 +281,18 @@ export default function ArchiverFileView() {
                     <td data-label="Uploaded">{formatDateTime(v.created_at)}</td>
                     <td data-label="By">{v.uploaded_by_name || '—'}</td>
                     <td data-label="Note">{v.note || '—'}</td>
-                    <td><button className="btn btn-sm" disabled={busy} onClick={() => download(v)}>Download</button></td>
+                    <td>
+                      {/* A multipart upload can run for hours and can fail halfway. Offering
+                          Download on a version that is still arriving would hand someone a
+                          truncated archive that looks complete. */}
+                      {v.upload_status && v.upload_status !== 'complete' ? (
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          {v.upload_status === 'uploading' ? 'uploading…' : v.upload_status}
+                        </span>
+                      ) : (
+                        <button className="btn btn-sm" disabled={busy} onClick={() => download(v)}>Download</button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

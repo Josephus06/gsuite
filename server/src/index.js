@@ -147,10 +147,15 @@ app.use((req, res, next) => {
     return carouselUploadJson(req, res, next);
   }
   // An archived document is capped at 25MB by routes/archiverFiles.js, which base64 inflates to
-  // ~34MB on the wire. It reuses the carousel's 36mb parser rather than adding a fourth, and is
-  // scoped to the only two routes that accept a document -- creating one, and adding a version.
+  // ~34MB on the wire. It reuses the carousel's 36mb parser rather than adding a fourth.
+  //
+  // THREE routes accept a document, and every one of them has to be listed here or it silently
+  // falls through to the 2mb parser below and answers "request entity too large" -- which is what
+  // happened to /artist when it was added after this block was written. If a fourth upload route
+  // is ever added to that module, it belongs in this list on the same commit.
   if (req.method === 'POST'
     && (/^\/api\/archiver\/files\/?$/.test(req.path)
+      || /^\/api\/archiver\/files\/artist\/?$/.test(req.path)
       || /^\/api\/archiver\/files\/\d+\/versions\/?$/.test(req.path))) {
     return carouselUploadJson(req, res, next);
   }

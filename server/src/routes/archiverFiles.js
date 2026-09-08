@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const pool = require('../db');
 const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
+const storage = require('../lib/objectStorage');
 
 const router = express.Router();
 
@@ -132,7 +133,10 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total FROM archive_files f ${whereSql}`, params);
     const [rows] = await pool.query(
       `SELECT ${FILE_COLUMNS}, fo.name AS folder_name, o.display_name AS owner_name, d.name AS department_name,
-              v.file_name, v.mime_type, v.size_bytes, v.created_at AS version_uploaded_at
+              v.file_name, v.mime_type, v.created_at AS version_uploaded_at,
+              -- size_bytes is INT and caps at ~2GB; size_bytes_large is the real figure.
+              COALESCE(v.size_bytes_large, v.size_bytes) AS size_bytes,
+              v.storage, v.upload_status
          FROM archive_files f
          LEFT JOIN archive_file_folders fo ON fo.id = f.folder_id
          LEFT JOIN users o ON o.id = f.owner_user_id
@@ -249,7 +253,9 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     );
     // Note the absent file_data: version history is a list of what exists, not the bytes.
     const [versions] = await pool.query(
-      `SELECT v.id, v.version_no, v.file_name, v.mime_type, v.size_bytes, v.checksum_sha256,
+      `SELECT v.id, v.version_no, v.file_name, v.mime_type, v.checksum_sha256,
+              COALESCE(v.size_bytes_large, v.size_bytes) AS size_bytes,
+              v.storage, v.upload_status, v.upload_started_at,
               v.note, v.created_at, u.display_name AS uploaded_by_name
          FROM archive_file_versions v LEFT JOIN users u ON u.id = v.uploaded_by_user_id
         WHERE v.file_id = ? ORDER BY v.version_no DESC`,
@@ -289,11 +295,37 @@ router.get('/:id/versions/:versionId/download', requireAuth, requirePermission(R
     const access = await fileAccess(req.user.id, req.params.id);
     if (!access.found || !access.canView) return res.status(404).json({ error: 'Not found' });
 
+    // file_data is selected LAST and only for the in-database path -- see the branch below, which
+    // returns before it is ever touched for a stored-in-Spaces version.
     const [[v]] = await pool.query(
-      'SELECT file_name, mime_type, size_bytes, file_data, version_no FROM archive_file_versions WHERE id = ? AND file_id = ?',
+      `SELECT file_name, mime_type, size_bytes, size_bytes_large, version_no,
+              storage, storage_key, upload_status
+         FROM archive_file_versions WHERE id = ? AND file_id = ?`,
       [req.params.versionId, req.params.id],
     );
     if (!v) return res.status(404).json({ error: 'Version not found' });
+
+    // A large file is fetched straight from storage on a short-lived signed URL. The bytes never
+    // pass through this server: streaming 150 GB through Node would hold a connection open for
+    // hours for no benefit, when storage can serve it directly.
+    if (v.storage === 'spaces') {
+      if (v.upload_status !== 'complete') {
+        return res.status(409).json({ error: `This upload is ${v.upload_status} and cannot be downloaded yet.` });
+      }
+      const url = await storage.signDownload(v.storage_key, v.file_name);
+      await logFile(null, req, {
+        fileId: req.params.id, versionId: req.params.versionId,
+        action: 'downloaded', detail: `v${v.version_no} ${v.file_name} (storage)`,
+      });
+      // Handed back as JSON rather than a 302, so the client can show progress and errors instead
+      // of the browser silently following a redirect it cannot report on.
+      return res.json({ url, expires_in: storage.DOWNLOAD_URL_TTL, file_name: v.file_name, size_bytes: v.size_bytes_large });
+    }
+
+    const [[blob]] = await pool.query(
+      'SELECT file_data FROM archive_file_versions WHERE id = ?', [req.params.versionId],
+    );
+    v.file_data = blob?.file_data;
 
     await logFile(null, req, {
       fileId: req.params.id, versionId: req.params.versionId,
@@ -346,6 +378,221 @@ const ZIP_MIME = new Set(['application/zip', 'application/x-zip-compressed', 'mu
 function looksLikeZip(fileName, mime) {
   return /\.zip$/i.test(String(fileName || '')) && ZIP_MIME.has(mime || 'application/octet-stream');
 }
+
+// --- Large uploads, straight to object storage ------------------------------------------------
+//
+// Layout archives run to tens of gigabytes, which cannot go in the database: a LONGBLOB caps at
+// 4 GB and the droplet has ~55 GB of disk. So the browser uploads DIRECTLY to object storage and
+// this server only ever handles metadata and signatures -- proxying 150 GB through Node would tie
+// up the process for hours.
+//
+// The sequence, driven by the client:
+//   1. POST /artist/init      -> creates the archive row and a multipart upload, returns part plan
+//   2. GET  /upload/:id/part  -> one presigned URL per part, fetched as the upload reaches it
+//   3. POST /upload/:id/complete -> finishes the multipart and marks the archive usable
+//   4. POST /upload/:id/abort -> cleans up if it fails or is cancelled
+//
+// An archive is not a usable file until step 3. A half-uploaded 150 GB object that looks like an
+// archive is worse than no archive at all, so upload_status gates it.
+
+// Everything needed to snapshot a job order onto an archive, shared by the small-file and
+// large-file paths so the two cannot record different things about the same job.
+async function readJobOrderForArchive(conn, kind, sourceId) {
+  if (kind === 'JO') {
+    const [[row]] = await conn.query(
+      `SELECT jo.job_order_no AS jo_no, DATE(jo.created_at) AS jo_date, jo.description AS job_description,
+              jo.artist_id AS artist_employee_id, c.name AS customer_name,
+              COALESCE(CONCAT(jsr.first_name, ' ', jsr.last_name),
+                       CONCAT(ssr.first_name, ' ', ssr.last_name)) AS sales_rep_name,
+              CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name,
+              pjt.display_name AS layout_job_type
+         FROM job_orders jo
+         LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
+         LEFT JOIN customers c ON c.id = so.customer_id
+         LEFT JOIN employees jsr ON jsr.id = jo.sales_rep_id
+         LEFT JOIN employees ssr ON ssr.id = so.sales_rep_id
+         LEFT JOIN employees ar ON ar.id = jo.artist_id
+         LEFT JOIN pms_job_types pjt ON pjt.id = jo.layout_job_type_id
+        WHERE jo.id = ?`,
+      [sourceId],
+    );
+    return row;
+  }
+  const [[row]] = await conn.query(
+    `SELECT n.nstdjo_no AS jo_no, n.date_created AS jo_date, n.description AS job_description,
+            n.artist_employee_id, c.name AS customer_name,
+            CONCAT(nsr.first_name, ' ', nsr.last_name) AS sales_rep_name,
+            CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name,
+            pjt.display_name AS layout_job_type
+       FROM non_standard_job_orders n
+       LEFT JOIN customers c ON c.id = n.customer_id
+       LEFT JOIN employees nsr ON nsr.id = n.sales_rep_id
+       LEFT JOIN employees ar ON ar.id = n.artist_employee_id
+       LEFT JOIN pms_job_types pjt ON pjt.id = n.layout_job_type_id
+      WHERE n.id = ?`,
+    [sourceId],
+  );
+  return row;
+}
+
+// Start a large artist upload. Creates the archive row and the multipart upload, and hands back
+// the part plan the browser will follow.
+router.post('/artist/init', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const b = req.body;
+    const kind = b.source_kind === 'NSTDJO' ? 'NSTDJO' : 'JO';
+    if (!b.source_id) return res.status(400).json({ error: 'Choose the job order this belongs to.' });
+    if (!/\.zip$/i.test(String(b.file_name || ''))) {
+      return res.status(400).json({ error: 'Artist archives must be a .zip.' });
+    }
+    if (!storage.isConfigured()) {
+      return res.status(503).json({
+        error: 'Large-file storage is not configured on this server, so files above the in-database limit cannot be archived. Ask a System Administrator to set up the archive bucket.',
+      });
+    }
+
+    const plan = storage.planUpload(b.size_bytes);
+    if (plan.error) return res.status(400).json({ error: plan.error });
+
+    const [[me]] = await conn.query('SELECT employee_id, account_type FROM users WHERE id = ?', [req.user.id]);
+    const isAdmin = me?.account_type === 'System Admin';
+    const jo = await readJobOrderForArchive(conn, kind, b.source_id);
+    if (!jo) return res.status(404).json({ error: 'That job order was not found.' });
+    if (!isAdmin && String(jo.artist_employee_id ?? '') !== String(me?.employee_id ?? '')) {
+      return res.status(403).json({ error: 'That job order is not assigned to you.' });
+    }
+
+    const key = storage.buildKey({ jobOrderNo: jo.jo_no, fileName: b.file_name });
+    const created = await storage.createMultipartUpload(key, 'application/zip');
+    const [[folder]] = await conn.query("SELECT id FROM archive_file_folders WHERE name = 'Artist Layout Files'");
+
+    await conn.beginTransaction();
+    const [r] = await conn.query(
+      `INSERT INTO archive_files
+         (file_no, title, folder_id, description, reference_no, source_kind, source_id,
+          jo_no, jo_date, customer_name, sales_rep_name, artist_name, layout_job_type,
+          job_description, artist_employee_id, document_date, owner_user_id, visibility, status,
+          current_version, created_by_user_id)
+       VALUES ('', ?,?,?,?, ?,?, ?,?,?,?,?,?, ?,?, ?,?, 'shared', 'active', 1, ?)`,
+      [trunc(`${jo.jo_no} — ${jo.layout_job_type || 'Layout'}`, 200), folder?.id || null,
+        trunc(b.note, 2000), trunc(jo.jo_no, 200), kind, b.source_id,
+        trunc(jo.jo_no, 60), jo.jo_date || null, trunc(jo.customer_name, 255),
+        trunc(jo.sales_rep_name, 255), trunc(jo.artist_name, 255), trunc(jo.layout_job_type, 200),
+        trunc(jo.job_description, 500), jo.artist_employee_id || null,
+        jo.jo_date || null, req.user.id, req.user.id],
+    );
+    const fileId = r.insertId;
+    const fileNo = `DOC-${fileId}`;
+    await conn.query('UPDATE archive_files SET file_no = ? WHERE id = ?', [fileNo, fileId]);
+
+    const [v] = await conn.query(
+      `INSERT INTO archive_file_versions
+         (file_id, version_no, storage, storage_key, storage_bucket, upload_id, upload_status,
+          upload_started_at, file_name, mime_type, size_bytes, size_bytes_large, note, uploaded_by_user_id)
+       VALUES (?, 1, 'spaces', ?,?,?, 'uploading', NOW(), ?, 'application/zip', 0, ?, ?, ?)`,
+      [fileId, created.key, created.bucket, created.uploadId, trunc(b.file_name, 255),
+        plan.size, trunc(b.note, 500) || 'Artist layout files', req.user.id],
+    );
+    await logFile(conn, req, {
+      fileId, versionId: v.insertId, action: 'upload_started',
+      detail: `${jo.jo_no} · ${b.file_name} · ${(plan.size / 1024 ** 3).toFixed(2)}GB in ${plan.partCount} parts`,
+    });
+    await conn.commit();
+
+    res.status(201).json({
+      file_id: fileId, file_no: fileNo, version_id: v.insertId,
+      part_size: plan.partSize, part_count: plan.partCount, jo_no: jo.jo_no,
+    });
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
+// One presigned URL for one part. Signed on demand rather than all at once: 1,500 URLs would be a
+// huge response, and they expire long before a multi-hour upload would reach the last of them.
+router.get('/upload/:versionId/part', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
+  try {
+    const partNumber = Number(req.query.part_number);
+    if (!Number.isInteger(partNumber) || partNumber < 1 || partNumber > storage.MAX_PARTS) {
+      return res.status(400).json({ error: 'Invalid part number.' });
+    }
+    const [[v]] = await pool.query(
+      `SELECT v.*, f.owner_user_id FROM archive_file_versions v
+         JOIN archive_files f ON f.id = v.file_id WHERE v.id = ?`,
+      [req.params.versionId],
+    );
+    if (!v || v.storage !== 'spaces') return res.status(404).json({ error: 'Upload not found.' });
+    if (v.upload_status !== 'uploading') return res.status(409).json({ error: `This upload is already ${v.upload_status}.` });
+    // Only whoever started the upload may keep feeding it parts.
+    if (String(v.uploaded_by_user_id) !== String(req.user.id) && !(await isSystemAdmin(req.user.id))) {
+      return res.status(403).json({ error: 'This upload belongs to someone else.' });
+    }
+    res.json({ url: await storage.signPart(v.storage_key, v.upload_id, partNumber), part_number: partNumber });
+  } catch (err) { next(err); }
+});
+
+// Finish the upload. The size is read back from storage rather than trusted from the browser --
+// it is the only way to know the object is actually all there.
+router.post('/upload/:versionId/complete', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const parts = Array.isArray(req.body?.parts) ? req.body.parts : null;
+    if (!parts || !parts.length) return res.status(400).json({ error: 'No uploaded parts were reported.' });
+
+    const [[v]] = await conn.query('SELECT * FROM archive_file_versions WHERE id = ?', [req.params.versionId]);
+    if (!v || v.storage !== 'spaces') return res.status(404).json({ error: 'Upload not found.' });
+    if (v.upload_status !== 'uploading') return res.status(409).json({ error: `This upload is already ${v.upload_status}.` });
+    if (String(v.uploaded_by_user_id) !== String(req.user.id) && !(await isSystemAdmin(req.user.id))) {
+      return res.status(403).json({ error: 'This upload belongs to someone else.' });
+    }
+
+    const done = await storage.completeMultipartUpload(v.storage_key, v.upload_id, parts.map((p) => ({
+      PartNumber: Number(p.part_number ?? p.PartNumber), ETag: String(p.etag ?? p.ETag),
+    })));
+    const head = await storage.headObject(v.storage_key);
+
+    await conn.beginTransaction();
+    await conn.query(
+      `UPDATE archive_file_versions
+          SET upload_status = 'complete', storage_etag = ?, size_bytes_large = ?,
+              size_bytes = LEAST(?, 2147483647), upload_id = NULL
+        WHERE id = ?`,
+      [done.etag || head.etag, head.size, head.size, v.id],
+    );
+    await logFile(conn, req, {
+      fileId: v.file_id, versionId: v.id, action: 'upload_completed',
+      detail: `${(head.size / 1024 ** 3).toFixed(2)}GB in ${parts.length} parts`,
+    });
+    await conn.commit();
+    res.json({ ok: true, size_bytes: head.size });
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
+// Cancel or clean up after a failure. Aborting the multipart matters for more than tidiness:
+// abandoned parts stay in the bucket, invisible and still billed.
+router.post('/upload/:versionId/abort', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[v]] = await conn.query('SELECT * FROM archive_file_versions WHERE id = ?', [req.params.versionId]);
+    if (!v || v.storage !== 'spaces') return res.status(404).json({ error: 'Upload not found.' });
+    if (String(v.uploaded_by_user_id) !== String(req.user.id) && !(await isSystemAdmin(req.user.id))) {
+      return res.status(403).json({ error: 'This upload belongs to someone else.' });
+    }
+    if (v.upload_status === 'uploading' && v.upload_id) {
+      try { await storage.abortMultipartUpload(v.storage_key, v.upload_id); }
+      catch { /* already gone at the storage end; the row still has to be cleaned up */ }
+    }
+
+    await conn.beginTransaction();
+    // The archive row exists only to hold this upload, so an abandoned upload takes it with it --
+    // otherwise the list fills with entries that look like archives and contain nothing.
+    const [[{ n }]] = await conn.query('SELECT COUNT(*) n FROM archive_file_versions WHERE file_id = ?', [v.file_id]);
+    await conn.query('DELETE FROM archive_file_versions WHERE id = ?', [v.id]);
+    if (n <= 1) await conn.query('DELETE FROM archive_files WHERE id = ?', [v.file_id]);
+    await logFile(conn, req, { fileId: n <= 1 ? null : v.file_id, action: 'upload_aborted', detail: v.file_name });
+    await conn.commit();
+    res.json({ ok: true });
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
 
 // File the working files against a job order. Snapshots the job order's details onto the archive.
 router.post('/artist', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
