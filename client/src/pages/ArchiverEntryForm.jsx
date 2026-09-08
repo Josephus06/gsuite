@@ -34,13 +34,13 @@ export default function ArchiverEntryForm() {
 
   useEffect(() => {
     (async () => {
-      const { data: m } = await api.get('/archiver/meta');
+      const { data: m } = await api.get('/archiver/credentials/meta');
       setMeta(m);
       if (id) {
         // Note what comes back has NO secret in it -- the API never returns one outside a verified
         // reveal, so an edit form starts with the password field blank by design.
-        const { data: e } = await api.get(`/archiver/${id}`);
-        if (!e.my_access?.can_edit) { navigate(`/archiver/${id}`, { replace: true }); return; }
+        const { data: e } = await api.get(`/archiver/credentials/${id}`);
+        if (!e.my_access?.can_edit) { navigate(`/archiver/credentials/${id}`, { replace: true }); return; }
         setHadSecret(!!e.has_secret);
         setForm({
           title: e.title || '', entry_type: e.entry_type || 'subscription', category_id: e.category_id || '',
@@ -79,8 +79,8 @@ export default function ArchiverEntryForm() {
       };
       // An empty password field means "leave it as it is", never "erase it".
       if (!form.secret) delete body.secret;
-      if (id) { await api.put(`/archiver/${id}`, body); navigate(`/archiver/${id}`); }
-      else { const { data } = await api.post('/archiver', body); navigate(`/archiver/${data.id}`); }
+      if (id) { await api.put(`/archiver/credentials/${id}`, body); navigate(`/archiver/credentials/${id}`); }
+      else { const { data } = await api.post('/archiver/credentials', body); navigate(`/archiver/credentials/${data.id}`); }
     } catch (e) { setError(e.response?.data?.error || 'Save failed.'); setSaving(false); }
   }
 
@@ -91,7 +91,7 @@ export default function ArchiverEntryForm() {
       <div className="page-header">
         <div style={{ fontWeight: 600 }}>Archiver</div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(id ? `/archiver/${id}` : '/archiver')}>Back</button>
+          <button className="btn btn-sm" onClick={() => navigate(id ? `/archiver/credentials/${id}` : '/archiver/credentials')}>Back</button>
           <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
         </div>
       </div>

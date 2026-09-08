@@ -21,13 +21,13 @@ export default function Archiver() {
   const [filters, setFilters] = useState({ search: '', category_id: '', entry_type: '', status: '', expiring: '' });
   const [applied, setApplied] = useState({ search: '', category_id: '', entry_type: '', status: '', expiring: '' });
 
-  useEffect(() => { api.get('/archiver/meta').then(({ data }) => setMeta(data)).catch(() => {}); }, []);
+  useEffect(() => { api.get('/archiver/credentials/meta').then(({ data }) => setMeta(data)).catch(() => {}); }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     const params = { page, page_size: PAGE_SIZE };
     for (const [k, v] of Object.entries(applied)) if (v) params[k] = v;
-    const { data } = await api.get('/archiver', { params });
+    const { data } = await api.get('/archiver/credentials', { params });
     setRows(data.rows); setTotal(data.total); setLoading(false);
   }, [page, applied]);
 
@@ -60,8 +60,8 @@ export default function Archiver() {
       <div className="page-header">
         <h1>Archiver</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          {can('/archiver', 'can_approve') && <Link className="btn btn-sm" to="/archiver/audit">Audit Log</Link>}
-          {can('/archiver', 'can_add') && <Link className="btn btn-primary" to="/archiver/new">Add Entry</Link>}
+          {can('/archiver/credentials', 'can_approve') && <Link className="btn btn-sm" to="/archiver/credentials/audit">Audit Log</Link>}
+          {can('/archiver/credentials', 'can_add') && <Link className="btn btn-primary" to="/archiver/credentials/new">Add Entry</Link>}
         </div>
       </div>
 
@@ -135,7 +135,7 @@ export default function Archiver() {
                 {rows.map((r) => (
                   <tr key={r.id}>
                     <td data-label="Entry">
-                      <button type="button" className="link-btn" onClick={() => navigate(`/archiver/${r.id}`)}>{r.title}</button>
+                      <button type="button" className="link-btn" onClick={() => navigate(`/archiver/credentials/${r.id}`)}>{r.title}</button>
                       <div className="muted" style={{ fontSize: 11 }}>{r.entry_no}</div>
                     </td>
                     <td data-label="Vendor">{r.vendor || '—'}</td>
@@ -146,7 +146,7 @@ export default function Archiver() {
                     <td data-label="Renews / Expires">{renewalCell(r)}</td>
                     <td data-label="Owner">{r.owner_name || '—'}</td>
                     <td data-label="Status">{ARCHIVE_STATUS_LABELS[r.status] || r.status}</td>
-                    <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/archiver/${r.id}`)}>Open</button></td>
+                    <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/archiver/credentials/${r.id}`)}>Open</button></td>
                   </tr>
                 ))}
               </tbody>

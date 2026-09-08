@@ -4,6 +4,10 @@ import Archiver from './pages/Archiver';
 import ArchiverEntryForm from './pages/ArchiverEntryForm';
 import ArchiverEntryView from './pages/ArchiverEntryView';
 import ArchiverAudit from './pages/ArchiverAudit';
+import ArchiverFiles from './pages/ArchiverFiles';
+import ArchiverFileForm from './pages/ArchiverFileForm';
+import ArchiverFileView from './pages/ArchiverFileView';
+import ArchiverKnowledgeBase from './pages/ArchiverKnowledgeBase';
 import AssetItems from './pages/AssetItems';
 import Assets from './pages/Assets';
 import AssetForm from './pages/AssetForm';
@@ -369,11 +373,17 @@ function App() {
         <Route path="/asset-transfers/:id" element={<AssetTransferView />} />
         <Route path="/asset-audits" element={<AssetAudits />} />
         <Route path="/asset-audits/:id" element={<AssetAuditView />} />
-        <Route path="/archiver" element={<Archiver />} />
-        <Route path="/archiver/new" element={<ArchiverEntryForm />} />
-        <Route path="/archiver/audit" element={<ArchiverAudit />} />
-        <Route path="/archiver/:id/edit" element={<ArchiverEntryForm />} />
-        <Route path="/archiver/:id" element={<ArchiverEntryView />} />
+        <Route path="/archiver" element={<Navigate to="/archiver/credentials" replace />} />
+        <Route path="/archiver/credentials" element={<Archiver />} />
+        <Route path="/archiver/credentials/new" element={<ArchiverEntryForm />} />
+        <Route path="/archiver/credentials/audit" element={<ArchiverAudit />} />
+        <Route path="/archiver/credentials/:id/edit" element={<ArchiverEntryForm />} />
+        <Route path="/archiver/credentials/:id" element={<ArchiverEntryView />} />
+        <Route path="/archiver/files" element={<ArchiverFiles />} />
+        <Route path="/archiver/files/new" element={<ArchiverFileForm />} />
+        <Route path="/archiver/files/:id/edit" element={<ArchiverFileForm />} />
+        <Route path="/archiver/files/:id" element={<ArchiverFileView />} />
+        <Route path="/archiver/knowledge-base" element={<ArchiverKnowledgeBase />} />
         <Route path="/asset-classes" element={<AssetClasses />} />
         <Route path="/asset-depreciation" element={<AssetDepreciation />} />
         <Route path="/asset-depreciation/:id" element={<AssetDepreciationView />} />

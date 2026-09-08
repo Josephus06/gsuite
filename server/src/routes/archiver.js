@@ -26,7 +26,7 @@ const router = express.Router();
 //
 // Page permission decides who may use the Archiver at all; archive_entry_shares decides which
 // entries a given person can see. Someone with no share does not learn that an entry exists.
-const ROUTE = '/archiver';
+const ROUTE = '/archiver/credentials';
 
 const ENTRY_TYPES = new Set(['subscription', 'licence', 'account', 'api_key', 'certificate', 'other']);
 const STATUSES = new Set(['active', 'expired', 'cancelled', 'archived']);

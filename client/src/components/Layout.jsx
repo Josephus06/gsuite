@@ -27,9 +27,16 @@ const NAV_STRUCTURE = [
   // The company profile flipbook -- reference material anyone may show a customer,
   // so it sits at top level rather than inside a category dropdown.
   { route: '/product', label: 'Product' },
-  // The credentials vault. Top level because it is used across every department, and its own
-  // per-entry sharing decides what anyone actually sees inside it.
-  { route: '/archiver', label: 'Archiver' },
+  {
+    // Used across every department, and each module carries its own per-entry sharing, so the
+    // page permission only decides who may open the section at all.
+    label: 'Archiver',
+    children: [
+      { route: '/archiver/files', label: 'Files' },
+      { route: '/archiver/knowledge-base', label: 'Knowledge Based' },
+      { route: '/archiver/credentials', label: 'Credentials' },
+    ],
+  },
   {
     label: 'CRM',
     children: [

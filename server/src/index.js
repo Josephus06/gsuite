@@ -86,6 +86,7 @@ const assetDepreciationRoutes = require('./routes/assetDepreciation');
 const assetDisposalRoutes = require('./routes/assetDisposals');
 const assetReportRoutes = require('./routes/assetReports');
 const archiverRoutes = require('./routes/archiver');
+const archiverFileRoutes = require('./routes/archiverFiles');
 const { ensureAssignedAtColumn } = require('./db/ensureSchema');
 const { sendTicketReminders } = require('./scripts/ticket_reminder');
 const { startSampling } = require('./lib/systemHealth');
@@ -143,6 +144,14 @@ const isFeedWrite = (req) => (
 const carouselUploadJson = express.json({ limit: '36mb' });
 app.use((req, res, next) => {
   if (req.method === 'POST' && /^\/api\/dashboard-carousel\/?$/.test(req.path)) {
+    return carouselUploadJson(req, res, next);
+  }
+  // An archived document is capped at 25MB by routes/archiverFiles.js, which base64 inflates to
+  // ~34MB on the wire. It reuses the carousel's 36mb parser rather than adding a fourth, and is
+  // scoped to the only two routes that accept a document -- creating one, and adding a version.
+  if (req.method === 'POST'
+    && (/^\/api\/archiver\/files\/?$/.test(req.path)
+      || /^\/api\/archiver\/files\/\d+\/versions\/?$/.test(req.path))) {
     return carouselUploadJson(req, res, next);
   }
   return (req.method === 'POST'
@@ -254,9 +263,10 @@ app.use('/api/asset-disposals', assetDisposalRoutes);
 // BEFORE the general reports router so its two paths are matched here first.
 app.use('/api/reports', assetReportRoutes);
 app.use('/api/assets', assetRoutes);
-// The credentials vault. Secrets are encrypted at rest and only ever leave through
-// /api/archiver/:id/reveal, which costs a fresh emailed code -- see routes/archiver.js.
-app.use('/api/archiver', archiverRoutes);
+// The Archiver, three modules under one section. Credentials keeps secrets encrypted at rest and
+// only ever releases one through /credentials/:id/reveal, which costs a fresh emailed code.
+app.use('/api/archiver/credentials', archiverRoutes);
+app.use('/api/archiver/files', archiverFileRoutes);
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 

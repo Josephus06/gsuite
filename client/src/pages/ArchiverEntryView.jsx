@@ -45,7 +45,7 @@ function RevealModal({ entry, meta, onClose, onRevealed }) {
 
   async function requestCode() {
     setError(''); setBusy(true);
-    try { await api.post(`/archiver/${entry.id}/request-code`); setStage('sent'); }
+    try { await api.post(`/archiver/credentials/${entry.id}/request-code`); setStage('sent'); }
     catch (e) { setError(e.response?.data?.error || 'Could not send a code.'); }
     finally { setBusy(false); }
   }
@@ -54,7 +54,7 @@ function RevealModal({ entry, meta, onClose, onRevealed }) {
     if (!/^\d{6}$/.test(code.trim())) { setError('Enter the 6-digit code.'); return; }
     setError(''); setBusy(true);
     try {
-      const { data } = await api.post(`/archiver/${entry.id}/reveal`, { code: code.trim() });
+      const { data } = await api.post(`/archiver/credentials/${entry.id}/reveal`, { code: code.trim() });
       setSecret(data.secret);
       setStage('shown');
       setCode('');
@@ -159,7 +159,7 @@ function ShareModal({ entry, meta, onClose, onSaved }) {
   async function save() {
     if (!userId) { setError('Choose someone to share with.'); return; }
     setError(''); setSaving(true);
-    try { await api.post(`/archiver/${entry.id}/shares`, { user_id: userId, can_reveal: canReveal, can_edit: canEdit }); onSaved(); }
+    try { await api.post(`/archiver/credentials/${entry.id}/shares`, { user_id: userId, can_reveal: canReveal, can_edit: canEdit }); onSaved(); }
     catch (e) { setError(e.response?.data?.error || 'Could not share.'); setSaving(false); }
   }
 
@@ -210,16 +210,16 @@ export default function ArchiverEntryView() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  const load = useCallback(() => api.get(`/archiver/${id}`).then(({ data }) => { setEntry(data); setLoading(false); }), [id]);
+  const load = useCallback(() => api.get(`/archiver/credentials/${id}`).then(({ data }) => { setEntry(data); setLoading(false); }), [id]);
   useEffect(() => { load().catch(() => setLoading(false)); }, [load]);
-  useEffect(() => { api.get('/archiver/meta').then(({ data }) => setMeta(data)).catch(() => {}); }, []);
-  const loadLogs = useCallback(() => api.get(`/archiver/${id}/access-logs`).then(({ data }) => setLogs(data)), [id]);
+  useEffect(() => { api.get('/archiver/credentials/meta').then(({ data }) => setMeta(data)).catch(() => {}); }, []);
+  const loadLogs = useCallback(() => api.get(`/archiver/credentials/${id}/access-logs`).then(({ data }) => setLogs(data)), [id]);
   useEffect(() => { if (tab === 'log') loadLogs(); }, [tab, loadLogs]);
 
   async function removeShare(userId, name) {
     if (!confirm(`Remove ${name}'s access to this entry?`)) return;
     setBusy(true); setError('');
-    try { await api.delete(`/archiver/${id}/shares/${userId}`); await load(); }
+    try { await api.delete(`/archiver/credentials/${id}/shares/${userId}`); await load(); }
     catch (e) { setError(e.response?.data?.error || 'Could not remove access.'); }
     finally { setBusy(false); }
   }
@@ -227,7 +227,7 @@ export default function ArchiverEntryView() {
   async function remove() {
     if (!confirm('Delete this entry? The stored password is destroyed and cannot be recovered.')) return;
     setBusy(true); setError('');
-    try { await api.delete(`/archiver/${id}`); navigate('/archiver'); }
+    try { await api.delete(`/archiver/credentials/${id}`); navigate('/archiver/credentials'); }
     catch (e) { setError(e.response?.data?.error || 'Delete failed.'); setBusy(false); }
   }
 
@@ -239,13 +239,13 @@ export default function ArchiverEntryView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-sm" onClick={() => navigate('/archiver')}>Back to Lists</button>
-          {mine.can_edit && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/archiver/${id}/edit`)}>Edit</button>}
+          <button className="btn btn-sm" onClick={() => navigate('/archiver/credentials')}>Back to Lists</button>
+          {mine.can_edit && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/archiver/credentials/${id}/edit`)}>Edit</button>}
           {mine.can_edit && meta && <button className="btn btn-sm" onClick={() => setShowShare(true)}>Share</button>}
           {entry.has_secret && mine.can_reveal && (
             <button className="btn btn-sm btn-primary" onClick={() => setShowReveal(true)}>Reveal Password</button>
           )}
-          {can('/archiver', 'can_delete') && mine.via !== 'share' && (
+          {can('/archiver/credentials', 'can_delete') && mine.via !== 'share' && (
             <button className="btn btn-sm btn-warning" disabled={busy} onClick={remove}>Delete</button>
           )}
         </div>

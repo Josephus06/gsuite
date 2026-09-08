@@ -26,7 +26,7 @@ export default function ArchiverAudit() {
     const params = { page, page_size: PAGE_SIZE };
     for (const [k, v] of Object.entries(applied)) if (v) params[k] = v;
     try {
-      const { data } = await api.get('/archiver/audit/all', { params });
+      const { data } = await api.get('/archiver/credentials/audit/all', { params });
       setRows(data.rows); setTotal(data.total);
     } catch (e) { setError(e.response?.data?.error || 'Could not load the audit log.'); }
     setLoading(false);
@@ -41,7 +41,7 @@ export default function ArchiverAudit() {
     <div>
       <div className="page-header">
         <h1>Archiver Audit Log</h1>
-        <Link className="btn btn-sm" to="/archiver">Back to Archiver</Link>
+        <Link className="btn btn-sm" to="/archiver/credentials">Back to Archiver</Link>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
@@ -89,7 +89,7 @@ export default function ArchiverAudit() {
                     <td data-label="Who">{l.user_name || '—'}</td>
                     <td data-label="Entry">
                       {l.entry_id
-                        ? <Link className="link-btn" to={`/archiver/${l.entry_id}`}>{l.entry_no || l.entry_id}</Link>
+                        ? <Link className="link-btn" to={`/archiver/credentials/${l.entry_id}`}>{l.entry_no || l.entry_id}</Link>
                         : <span className="muted">{l.detail?.split(' ')[0] || 'deleted'}</span>}
                       {l.title && <div className="muted" style={{ fontSize: 11 }}>{l.title}</div>}
                     </td>
