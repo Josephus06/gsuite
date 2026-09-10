@@ -169,6 +169,7 @@ const NAV_STRUCTURE = [
       // has its own row, so it needs no override.
       { route: '/quality-inspections', permRoute: '/production', label: 'Quality Inspection' },
       { route: '/item-deliveries', label: 'Item Delivery' },
+      { route: '/itineraries', label: 'Itinerary' },
     ],
   },
   {
