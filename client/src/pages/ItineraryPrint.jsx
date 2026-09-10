@@ -163,13 +163,13 @@ export default function ItineraryPrint() {
               <th className="itn-c-so">SO Number</th>
               <th className="itn-c-date">Delivery Date</th>
               <th className="itn-c-cust">Customer</th>
-              <th className="itn-c-qty">Qty to Deliver</th>
+              <th className="itn-c-qty">Qty</th>
               <th className="itn-c-pf">Partial / Full</th>
               <th className="itn-c-addr">Delivery Address</th>
-              <th className="itn-c-pic">Person in Charge</th>
+              <th className="itn-c-pic">Contact Person</th>
               <th className="itn-c-odo">Odometer</th>
               <th className="itn-c-toa">Time of Arrival</th>
-              <th className="itn-c-sig">Signature</th>
+              <th className="itn-c-sig">Name & Signature</th>
             </tr>
           </thead>
           <tbody>
