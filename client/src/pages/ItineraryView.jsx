@@ -312,7 +312,7 @@ function EditStopModal({ stop, onClose, onSaved }) {
             onChange={(e) => setForm({ ...form, customer_name: e.target.value })} />
         </div>
         <div className="field">
-          <label>Qty to Deliver</label>
+          <label>Qty</label>
           <input type="number" min="0" step="0.0001" value={form.qty_to_deliver}
             onChange={(e) => setForm({ ...form, qty_to_deliver: e.target.value })} />
         </div>
@@ -325,7 +325,7 @@ function EditStopModal({ stop, onClose, onSaved }) {
           </select>
         </div>
         <div className="field">
-          <label>Person in Charge</label>
+          <label>Contact Person</label>
           <input value={form.person_in_charge} maxLength={150}
             onChange={(e) => setForm({ ...form, person_in_charge: e.target.value })} />
         </div>
@@ -518,13 +518,13 @@ export default function ItineraryView() {
                 <th>SO Number</th>
                 <th>Delivery Date</th>
                 <th>Customer</th>
-                <th>Qty to Deliver</th>
+                <th>Qty</th>
                 <th>Partial / Full</th>
                 <th>Delivery Address</th>
-                <th>Person in Charge</th>
+                <th>Contact Person</th>
                 <th>Odometer</th>
                 <th>Time of Arrival</th>
-                <th>Signature</th>
+                <th>Name & Signature</th>
                 <th>Status</th>
                 <th />
               </tr>
@@ -556,19 +556,19 @@ export default function ItineraryView() {
                   </td>
                   <td data-label="Delivery Date">{fmtDate(s.delivery_date)}</td>
                   <td data-label="Customer">{s.customer_name || '—'}</td>
-                  <td data-label="Qty to Deliver">{qty(s.qty_to_deliver)}</td>
+                  <td data-label="Qty">{qty(s.qty_to_deliver)}</td>
                   <td data-label="Partial / Full">
                     <span className={`badge ${s.fulfillment_type === 'partial' ? 'badge-warning' : 'badge-muted'}`}>
                       {s.fulfillment_type === 'partial' ? 'Partial' : 'Full'}
                     </span>
                   </td>
                   <td data-label="Delivery Address" style={{ maxWidth: 220, fontSize: 12 }}>{s.delivery_address || '—'}</td>
-                  <td data-label="Person in Charge">{s.person_in_charge || '—'}</td>
+                  <td data-label="Contact Person">{s.person_in_charge || '—'}</td>
                   {/* Written on the printed sheet by the driver; kept here so it can be
                       keyed back in afterwards. */}
                   <td data-label="Odometer">{s.odometer || '—'}</td>
                   <td data-label="Time of Arrival">{fmtTime(s.time_of_arrival) || '—'}</td>
-                  <td data-label="Signature">
+                  <td data-label="Name & Signature">
                     {s.has_signature ? (
                       <button type="button" className="link-btn" onClick={() => setViewSig(s)}>
                         {s.signed_by_name || 'View'}
