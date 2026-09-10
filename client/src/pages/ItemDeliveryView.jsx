@@ -20,6 +20,86 @@ function qty(v) {
 }
 function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
 
+// Recording how a delivery went out and what it cost, after the fact.
+//
+// Kept out of the banner because it is an editing surface, not a summary: the banner shows the
+// current answer, this is where it gets corrected when the courier's fare finally lands.
+function DeliveryMethodCard({ d, onSaved }) {
+  const [methods, setMethods] = useState([]);
+  const [methodId, setMethodId] = useState(d.delivery_method_id ? String(d.delivery_method_id) : '');
+  const [cost, setCost] = useState(d.delivery_cost == null ? '' : String(d.delivery_cost));
+  const [reference, setReference] = useState(d.delivery_reference || '');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.get('/item-deliveries/meta/delivery-methods').then(({ data }) => setMethods(data)).catch(() => setMethods([]));
+  }, []);
+
+  const chosen = methods.find((m) => String(m.id) === String(methodId));
+  const dirty = String(methodId) !== String(d.delivery_method_id || '')
+    || String(cost) !== String(d.delivery_cost == null ? '' : d.delivery_cost)
+    || String(reference) !== String(d.delivery_reference || '');
+
+  async function save() {
+    setError(''); setSaved(false); setSaving(true);
+    try {
+      await api.put(`/item-deliveries/${d.id}/delivery-method`, {
+        delivery_method_id: methodId,
+        delivery_cost: cost,
+        delivery_reference: reference,
+      });
+      setSaved(true);
+      onSaved();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not save the delivery method.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ marginTop: 20 }}>
+      <h3 className="subsection" style={{ marginTop: 0 }}>Delivery Method &amp; Cost</h3>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="review-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+        <div className="field">
+          <label>Delivered Via</label>
+          <select value={methodId} onChange={(e) => { setMethodId(e.target.value); setSaved(false); }}>
+            <option value="">--Not specified--</option>
+            {methods.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+        </div>
+        <div className="field">
+          <label>Cost</label>
+          <input
+            type="number" min="0" step="0.01" value={cost}
+            onChange={(e) => { setCost(e.target.value); setSaved(false); }}
+            placeholder="0.00"
+          />
+        </div>
+        <div className="field">
+          <label>{chosen && chosen.is_third_party ? 'Booking Reference' : 'Reference / Plate No.'}</label>
+          <input
+            value={reference} maxLength={80}
+            onChange={(e) => { setReference(e.target.value); setSaved(false); }}
+          />
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button type="button" className="btn btn-sm btn-primary" disabled={saving || !dirty} onClick={save}>
+          {saving ? 'Saving...' : 'Save Delivery Method'}
+        </button>
+        {saved && !dirty && <span className="muted" style={{ fontSize: 13 }}>Saved.</span>}
+        <span className="muted" style={{ fontSize: 12 }}>
+          Changes are recorded in System Info.
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export default function ItemDeliveryView() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -37,10 +117,12 @@ export default function ItemDeliveryView() {
 
   useEffect(() => { load(); }, [id]);
 
+  function loadAuditLogs() {
+    return api.get(`/item-deliveries/${id}/audit-logs`).then(({ data }) => setAuditLogs(data));
+  }
+
   useEffect(() => {
-    if (tab === 'system') {
-      api.get(`/item-deliveries/${id}/audit-logs`).then(({ data }) => setAuditLogs(data));
-    }
+    if (tab === 'system') loadAuditLogs();
   }, [tab, id]);
 
   async function handleCancel() {
@@ -106,9 +188,20 @@ export default function ItemDeliveryView() {
           </div>
           <div>
             <div>Memo : <span className="hi">{d.memo}</span></div>
+            <div>Delivered Via : <span className="hi">{d.delivery_method_name || 'Not specified'}</span></div>
+            <div>Delivery Cost : <span className="hi">{d.delivery_cost == null ? '--' : money(d.delivery_cost)}</span></div>
+            {d.delivery_reference && <div>Reference : <span className="hi">{d.delivery_reference}</span></div>}
           </div>
         </div>
       </div>
+
+      {/* The fare usually lands after the goods do -- with the booking confirmation, or on the
+          courier's monthly statement -- so this stays editable rather than being frozen at
+          dispatch. Every change is written to the audit log, since it is the figure the
+          month-end report totals. */}
+      {canEdit && !isCancelled && (
+        <DeliveryMethodCard d={d} onSaved={() => { load(); loadAuditLogs(); }} />
+      )}
 
       <div className="status-tabs" style={{ marginTop: 20 }}>
         <button className={`status-tab ${tab === 'items' ? 'active' : ''}`} onClick={() => setTab('items')}>Items</button>

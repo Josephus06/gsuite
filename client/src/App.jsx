@@ -59,6 +59,7 @@ import JobTypes from './pages/JobTypes';
 import JobTypeEdit from './pages/JobTypeEdit';
 import AssignedJobOrders from './pages/AssignedJobOrders';
 import ArtistIncentiveReport from './pages/reports/ArtistIncentiveReport';
+import DeliverySummary from './pages/reports/DeliverySummary';
 import AssignedJobOrderRun from './pages/AssignedJobOrderRun';
 import Production from './pages/Production';
 import ProductionJobOrderView from './pages/ProductionJobOrderView';
@@ -362,6 +363,7 @@ function App() {
         <Route path="/commission-report" element={<CommissionReport />} />
         <Route path="/commission-jo-detail" element={<CommissionJoDetail />} />
         <Route path="/reports/ticket-summary" element={<TicketSummary />} />
+        <Route path="/reports/delivery-summary" element={<DeliverySummary />} />
         {/* Assets Monitoring. /new is declared before /:id so "new" is not read as a record id. */}
         <Route path="/asset-items" element={<AssetItems />} />
         <Route path="/assets" element={<Assets />} />

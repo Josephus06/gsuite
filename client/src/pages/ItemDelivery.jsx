@@ -23,6 +23,10 @@ export default function ItemDelivery() {
   const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
   const [memo, setMemo] = useState('');
   const [qtyToDeliver, setQtyToDeliver] = useState({});
+  const [methods, setMethods] = useState([]);
+  const [methodId, setMethodId] = useState('');
+  const [cost, setCost] = useState('');
+  const [reference, setReference] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -30,6 +34,14 @@ export default function ItemDelivery() {
   useEffect(() => {
     api.get(`/item-deliveries/for-sales-order/${id}`).then(({ data: d }) => { setData(d); setLoading(false); });
   }, [id]);
+
+  // Its own call rather than part of the form payload: the list is tiny, rarely changes, and
+  // keeping it separate means adding a courier does not touch the delivery endpoint.
+  useEffect(() => {
+    api.get('/item-deliveries/meta/delivery-methods').then(({ data: m }) => setMethods(m)).catch(() => setMethods([]));
+  }, []);
+
+  const chosen = methods.find((m) => String(m.id) === String(methodId));
 
   if (loading || !data) return <LoadingSpinner />;
 
@@ -39,10 +51,19 @@ export default function ItemDelivery() {
       .map((l) => ({ job_order_id: l.job_order_id, qty_to_deliver: qtyToDeliver[l.job_order_id] || 0 }))
       .filter((l) => Number(l.qty_to_deliver) > 0);
     if (!payload.length) { setError('Enter a Qty to Deliver for at least one item.'); return; }
+    if (!methodId) { setError('Choose how this is being delivered.'); return; }
 
     setSaving(true);
     try {
-      const { data: created } = await api.post('/item-deliveries', { sales_order_id: Number(id), date_created: dateCreated, memo, lines: payload });
+      const { data: created } = await api.post('/item-deliveries', {
+        sales_order_id: Number(id),
+        date_created: dateCreated,
+        memo,
+        lines: payload,
+        delivery_method_id: methodId,
+        delivery_cost: cost,
+        delivery_reference: reference,
+      });
       navigate(`/item-deliveries/${created.id}`);
     } catch (err) {
       setError(err.response?.data?.error || 'Save failed');
@@ -80,6 +101,40 @@ export default function ItemDelivery() {
           <div className="field">
             <label>Created Form</label>
             <div><button type="button" className="link-btn" onClick={() => navigate(`/sales-orders/${id}`)}>{data.sales_order_no}</button></div>
+          </div>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginTop: 20 }}>
+        <h3 className="subsection" style={{ marginTop: 0 }}>Delivery Method</h3>
+        <div className="review-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+          <div className="field">
+            <label>Delivered Via *</label>
+            <select value={methodId} onChange={(e) => { setMethodId(e.target.value); setError(''); }}>
+              <option value="">--Select--</option>
+              {methods.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label>Cost</label>
+            <input
+              type="number" min="0" step="0.01" value={cost}
+              onChange={(e) => setCost(e.target.value)}
+              placeholder={chosen && !chosen.is_third_party ? 'Fuel, allowance -- optional' : '0.00'}
+            />
+            {/* The courier's fare is usually confirmed after the goods leave, so this is never
+                forced at dispatch -- it can be filled in on the delivery afterwards. */}
+            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+              Leave blank if the fare is not known yet -- you can add it later on the delivery.
+            </div>
+          </div>
+          <div className="field">
+            <label>{chosen && chosen.is_third_party ? 'Booking Reference' : 'Reference / Plate No.'}</label>
+            <input
+              value={reference} maxLength={80}
+              onChange={(e) => setReference(e.target.value)}
+              placeholder={chosen && chosen.is_third_party ? 'Lalamove booking ref' : 'Van or driver'}
+            />
           </div>
         </div>
       </div>

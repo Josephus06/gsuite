@@ -23,6 +23,43 @@ async function logAudit(conn, { deliveryId, userId, eventType, fieldName = null,
   );
 }
 
+// Validates the delivery-method fields shared by create and edit.
+//
+// The cost is allowed through without a method only when it is blank. A figure attached to no
+// method is unattributable at month end -- it would land in the "Not specified" bucket and
+// quietly inflate a total nobody can trace back to a courier.
+async function readDeliveryMethod(body, conn) {
+  const q = conn || pool;
+  const raw = body.delivery_method_id;
+  const methodId = raw === '' || raw === null || raw === undefined ? null : Number(raw);
+  if (methodId !== null && !Number.isInteger(methodId)) return { error: 'Invalid delivery method.' };
+
+  let method = null;
+  if (methodId !== null) {
+    const [[m]] = await q.query('SELECT id, name, is_active FROM delivery_methods WHERE id = ?', [methodId]);
+    if (!m) return { error: 'Unknown delivery method.' };
+    if (!m.is_active) return { error: `${m.name} is no longer available as a delivery method.` };
+    method = m;
+  }
+
+  const rawCost = body.delivery_cost;
+  let cost = null;
+  if (rawCost !== '' && rawCost !== null && rawCost !== undefined) {
+    cost = Number(rawCost);
+    if (!Number.isFinite(cost) || cost < 0) return { error: 'Delivery cost must be zero or more.' };
+    if (cost > 99999999.99) return { error: 'Delivery cost is out of range.' };
+    cost = Math.round(cost * 100) / 100;
+  }
+  if (cost !== null && methodId === null) {
+    return { error: 'Choose how this was delivered before recording what it cost.' };
+  }
+
+  const ref = body.delivery_reference == null || String(body.delivery_reference).trim() === ''
+    ? null : String(body.delivery_reference).trim().slice(0, 80);
+
+  return { methodId, cost, ref, method };
+}
+
 // Powers the Item Delivery create form -- only JO lines with something both Built and
 // QI'd that hasn't shipped yet show up (min(quantity_built, quantity_inspected) -
 // quantity_delivered > 0), matching the real screen excluding lines that haven't
@@ -39,6 +76,13 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const params = [];
     if (customerId) { where.push('so.customer_id = ?'); params.push(customerId); }
     if (asOf) { where.push('del.date_created <= ?'); params.push(asOf); }
+    // 'none' rather than an empty string, which would be indistinguishable from "no filter" --
+    // and the unrecorded deliveries are exactly the set someone will want to go and fill in.
+    if (req.query.delivery_method_id === 'none') where.push('del.delivery_method_id IS NULL');
+    else if (req.query.delivery_method_id) {
+      where.push('del.delivery_method_id = ?');
+      params.push(req.query.delivery_method_id);
+    }
     if (search) {
       where.push('(del.delivery_no LIKE ? OR so.sales_order_no LIKE ? OR c.name LIKE ?)');
       params.push(`%${search}%`, `%${search}%`, `%${search}%`);
@@ -47,7 +91,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     const baseFrom = `FROM item_deliveries del
        JOIN sales_orders so ON so.id = del.sales_order_id
-       LEFT JOIN customers c ON c.id = so.customer_id`;
+       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN delivery_methods dm ON dm.id = del.delivery_method_id`;
 
     const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${baseFrom} ${whereSql}`, params);
 
@@ -57,6 +102,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     const [rows] = await pool.query(
       `SELECT del.id, del.delivery_no, del.date_created, del.status, so.sales_order_no, c.name AS customer_name,
+              del.delivery_cost, del.delivery_reference, dm.name AS delivery_method_name,
               (SELECT COALESCE(SUM(qty_delivered), 0) FROM item_delivery_lines WHERE item_delivery_id = del.id) AS total_qty_delivered
        ${baseFrom} ${whereSql}
        ORDER BY del.id DESC
@@ -112,16 +158,31 @@ router.get('/by-sales-order/:salesOrderId', requireAuth, requirePermission(ROUTE
   }
 });
 
+// The methods a delivery can be booked against. Two segments, so it can never be read as an
+// /:id -- but it is declared above that route anyway, which is the habit that stops the next
+// single-segment endpoint being swallowed.
+router.get('/meta/delivery-methods', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, code, name, is_third_party FROM delivery_methods
+        WHERE is_active = TRUE ORDER BY sort_order, name`,
+    );
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[d]] = await pool.query(
       `SELECT del.*, so.sales_order_no, so.contact_email, so.contact_title, so.contact_phone,
-              c.name AS customer_name, cc.contact_name, u.display_name AS created_by_name
+              c.name AS customer_name, cc.contact_name, u.display_name AS created_by_name,
+              dm.name AS delivery_method_name, dm.is_third_party AS delivery_is_third_party
        FROM item_deliveries del
        JOIN sales_orders so ON so.id = del.sales_order_id
        LEFT JOIN customers c ON c.id = so.customer_id
        LEFT JOIN customer_contacts cc ON cc.id = so.contact_person_id
        LEFT JOIN users u ON u.id = del.created_by_user_id
+       LEFT JOIN delivery_methods dm ON dm.id = del.delivery_method_id
        WHERE del.id = ?`,
       [req.params.id]
     );
@@ -174,6 +235,9 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
     if (!salesOrderId) return res.status(400).json({ error: 'Sales Order is required.' });
     await assertPeriodOpen(dateCreated, 'non_gl', conn);
 
+    const dm = await readDeliveryMethod(req.body, conn);
+    if (dm.error) return res.status(400).json({ error: dm.error });
+
     const submitted = (Array.isArray(lines) ? lines : []).filter((l) => Number(l.qty_to_deliver || 0) > 0);
     if (!submitted.length) return res.status(400).json({ error: 'Enter a Qty to Deliver for at least one item.' });
 
@@ -197,9 +261,11 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
 
     await conn.beginTransaction();
     const [result] = await conn.query(
-      `INSERT INTO item_deliveries (delivery_no, sales_order_id, date_created, memo, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?)`,
-      [salesOrderId, dateCreated || new Date().toISOString().slice(0, 10), memo || null, req.user.id]
+      `INSERT INTO item_deliveries (delivery_no, sales_order_id, date_created, memo, created_by_user_id,
+                                   delivery_method_id, delivery_cost, delivery_reference)
+       VALUES ('', ?, ?, ?, ?, ?, ?, ?)`,
+      [salesOrderId, dateCreated || new Date().toISOString().slice(0, 10), memo || null, req.user.id,
+        dm.methodId, dm.cost, dm.ref]
     );
     const deliveryId = result.insertId;
     await conn.query('UPDATE item_deliveries SET delivery_no = ? WHERE id = ?', [`ID-${deliveryId}`, deliveryId]);
@@ -227,10 +293,85 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
     const newStatus = computeSalesOrderStatus(freshLines);
     await conn.query('UPDATE sales_orders SET status = ?, updated_at = NOW() WHERE id = ?', [newStatus, salesOrderId]);
     await logAudit(conn, { deliveryId, userId: req.user.id, eventType: 'Created', fieldName: 'delivery_no', newValue: `ID-${deliveryId}` });
+    if (dm.method) {
+      await logAudit(conn, {
+        deliveryId, userId: req.user.id, eventType: 'Created', fieldName: 'delivery_method', newValue: dm.method.name,
+      });
+    }
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM item_deliveries WHERE id = ?', [deliveryId]);
     res.status(201).json(row);
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// Recording how it went out, and what that cost, after the delivery itself was saved.
+//
+// This is not an afterthought -- it is the normal case. The courier's fare is known when the
+// booking is confirmed or when the monthly statement arrives, both of which are after the goods
+// have left. Without this route the month-end figure could only ever be as good as what someone
+// guessed at the moment of dispatch.
+//
+// Every change is written to the audit log field by field, because this is the number the
+// month-end report adds up: whoever reconciles the courier bill needs to see who changed a fare
+// and when, not just its latest value.
+router.put('/:id/delivery-method', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[d]] = await conn.query(
+      `SELECT del.status, del.delivery_method_id, del.delivery_cost, del.delivery_reference,
+              dm.name AS delivery_method_name
+         FROM item_deliveries del
+         LEFT JOIN delivery_methods dm ON dm.id = del.delivery_method_id
+        WHERE del.id = ?`,
+      [req.params.id],
+    );
+    if (!d) return res.status(404).json({ error: 'Not found' });
+    // A cancelled delivery never went anywhere, so it has no method and no fare. Letting one be
+    // costed would put spend into the month-end total for goods that were never shipped.
+    if (d.status === 'cancelled') {
+      return res.status(409).json({ error: 'This delivery is cancelled, so it cannot be costed.' });
+    }
+
+    const dm = await readDeliveryMethod(req.body, conn);
+    if (dm.error) return res.status(400).json({ error: dm.error });
+
+    await conn.beginTransaction();
+    await conn.query(
+      'UPDATE item_deliveries SET delivery_method_id = ?, delivery_cost = ?, delivery_reference = ? WHERE id = ?',
+      [dm.methodId, dm.cost, dm.ref, req.params.id],
+    );
+
+    // Compared as strings so 150 and '150.00' do not read as a change every time the form is
+    // saved -- the audit log is only useful while it holds real edits.
+    const money = (v) => (v === null || v === undefined ? null : Number(v).toFixed(2));
+    const changes = [
+      ['delivery_method', d.delivery_method_name || null, dm.method ? dm.method.name : null],
+      ['delivery_cost', money(d.delivery_cost), money(dm.cost)],
+      ['delivery_reference', d.delivery_reference || null, dm.ref],
+    ];
+    for (const [fieldName, oldValue, newValue] of changes) {
+      if (String(oldValue ?? '') === String(newValue ?? '')) continue;
+      await logAudit(conn, {
+        deliveryId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName, oldValue, newValue,
+      });
+    }
+    await conn.commit();
+
+    const [[row]] = await pool.query(
+      `SELECT del.id, del.delivery_method_id, del.delivery_cost, del.delivery_reference,
+              dm.name AS delivery_method_name, dm.is_third_party AS delivery_is_third_party
+         FROM item_deliveries del
+         LEFT JOIN delivery_methods dm ON dm.id = del.delivery_method_id
+        WHERE del.id = ?`,
+      [req.params.id],
+    );
+    res.json(row);
   } catch (err) {
     await conn.rollback();
     next(err);

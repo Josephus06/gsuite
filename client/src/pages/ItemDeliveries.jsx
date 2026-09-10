@@ -88,13 +88,14 @@ export default function ItemDeliveries() {
                     <th>Date Created</th>
                     <th>Customer</th>
                     <th>Total Qty Delivered</th>
+                    <th>Delivered Via</th>
                     <th>Status</th>
                     <th></th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.length === 0 && (
-                    <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>No item deliveries found.</td></tr>
+                    <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>No item deliveries found.</td></tr>
                   )}
                   {rows.map((row) => (
                     <tr key={row.id}>
@@ -103,6 +104,10 @@ export default function ItemDeliveries() {
                       <td data-label="Date Created">{row.date_created ? String(row.date_created).slice(0, 10) : ''}</td>
                       <td data-label="Customer">{row.customer_name}</td>
                       <td data-label="Total Qty Delivered">{row.total_qty_delivered}</td>
+                      <td data-label="Delivered Via">
+                        {row.delivery_method_name || <span className="muted">Not specified</span>}
+                        {row.delivery_cost != null && <div className="muted" style={{ fontSize: 11 }}>{Number(row.delivery_cost).toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>}
+                      </td>
                       <td data-label="Status">{row.status === 'cancelled' ? <span className="badge badge-muted">Cancelled</span> : <span className="badge badge-success">Saved</span>}</td>
                       <td><Link className="btn btn-sm btn-primary" to={`/item-deliveries/${row.id}`}>View</Link></td>
                     </tr>

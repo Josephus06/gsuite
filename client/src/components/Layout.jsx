@@ -218,6 +218,7 @@ const NAV_STRUCTURE = [
           { route: '/reports/balance-sheet', label: 'Balance Sheet' },
           { route: '/reports/ar-aging', label: 'AR Aging' },
           { route: '/reports/general-ledger', label: 'General Ledger' },
+          { route: '/reports/delivery-summary', label: 'Delivery Summary' },
         ],
       },
     ],
