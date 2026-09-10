@@ -198,6 +198,9 @@ export default function SalesOrderView() {
   // (fully) invoiced -- mirrors the Create SI form's own eligibility filter.
   const hasInvoiceableLine = lines.some((l) => l.job_order_id && Number(l.quantity_delivered || 0) > Number(l.quantity_invoiced || 0));
   const canEdit = can('/sales-orders', 'can_edit');
+  // Raising a delivery is Item Delivery's own permission now, not Sales Orders'. Without this
+  // the button would show to anyone who can read the order and only fail on save.
+  const canRaiseDelivery = can('/item-deliveries', 'can_add');
   const subtotal = lines.reduce((s, l) => s + num(l.subtotal), 0);
   const discountTotal = lines.reduce((s, l) => s + num(l.disc_amount), 0);
   const netOfTax = subtotal - discountTotal;
@@ -211,7 +214,7 @@ export default function SalesOrderView() {
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/sales-orders')}>Back</button>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a Sales Order isn't implemented in this build -- amend the originating Estimate instead">Edit</button>}
-          {hasDeliverableLine && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/sales-orders/${id}/item-delivery/new`)}>Item Delivery</button>}
+          {hasDeliverableLine && canRaiseDelivery && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/sales-orders/${id}/item-delivery/new`)}>Item Delivery</button>}
           {hasInvoiceableLine && (
             <div style={{ position: 'relative' }}>
               <button className="btn btn-sm btn-primary" onClick={() => setShowBillMenu((s) => !s)}>Bill ▾</button>

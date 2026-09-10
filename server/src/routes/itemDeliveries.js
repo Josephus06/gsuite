@@ -6,10 +6,14 @@ const { computeItemDeliveryGl } = require('../lib/glImpact');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 
 const router = express.Router();
-// Reached from a Sales Order's Item Delivery button, not its own page in the nav --
-// reuses Sales Orders' permission scope, same treatment as Item Fulfillment/Receipt
-// reusing Transfer Orders' and Quality Inspection reusing Production's.
-const ROUTE = '/sales-orders';
+// Its own permission scope. It used to borrow Sales Orders', which made "may I raise a
+// delivery" mean "may I edit a sales order" -- two different jobs, and it left Item Delivery
+// impossible to find in the permission grid because it had no page row at all.
+//
+//   can_add     create a delivery
+//   can_edit    record or correct the method, cost and reference
+//   can_delete  cancel one, putting the quantity back on the Job Order
+const ROUTE = '/item-deliveries';
 
 // GL Impact computation lives in server/src/lib/glImpact.js (computeItemDeliveryGl),
 // shared with the Reports engine so the reports can never drift from what this tab shows.
@@ -228,7 +232,7 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
 // capped at that JO's own min(quantity_built, quantity_inspected) minus whatever's
 // already been delivered, so you can never deliver more than what's both been built and
 // cleared inspection.
-router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const { sales_order_id: salesOrderId, date_created: dateCreated, memo, lines } = req.body;
@@ -380,7 +384,7 @@ router.put('/:id/delivery-method', requireAuth, requirePermission(ROUTE, 'can_ed
   }
 });
 
-router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_delete'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[d]] = await conn.query('SELECT status, sales_order_id, date_created FROM item_deliveries WHERE id = ?', [req.params.id]);
