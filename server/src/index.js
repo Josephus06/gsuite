@@ -87,6 +87,7 @@ const assetDisposalRoutes = require('./routes/assetDisposals');
 const assetReportRoutes = require('./routes/assetReports');
 const archiverRoutes = require('./routes/archiver');
 const archiverFileRoutes = require('./routes/archiverFiles');
+const archiverKnowledgeRoutes = require('./routes/archiverKnowledge');
 const { ensureAssignedAtColumn } = require('./db/ensureSchema');
 const { sendTicketReminders } = require('./scripts/ticket_reminder');
 const { startSampling } = require('./lib/systemHealth');
@@ -156,7 +157,9 @@ app.use((req, res, next) => {
   if (req.method === 'POST'
     && (/^\/api\/archiver\/files\/?$/.test(req.path)
       || /^\/api\/archiver\/files\/artist\/?$/.test(req.path)
-      || /^\/api\/archiver\/files\/\d+\/versions\/?$/.test(req.path))) {
+      || /^\/api\/archiver\/files\/\d+\/versions\/?$/.test(req.path)
+      // Knowledge Base attachments take the same in-database route and the same 25MB ceiling.
+      || /^\/api\/archiver\/knowledge-base\/topics\/\d+\/files\/?$/.test(req.path))) {
     return carouselUploadJson(req, res, next);
   }
   return (req.method === 'POST'
@@ -272,6 +275,7 @@ app.use('/api/assets', assetRoutes);
 // only ever releases one through /credentials/:id/reveal, which costs a fresh emailed code.
 app.use('/api/archiver/credentials', archiverRoutes);
 app.use('/api/archiver/files', archiverFileRoutes);
+app.use('/api/archiver/knowledge-base', archiverKnowledgeRoutes);
 
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 

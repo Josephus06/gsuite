@@ -8,6 +8,7 @@ import ArchiverFiles from './pages/ArchiverFiles';
 import ArchiverFileForm from './pages/ArchiverFileForm';
 import ArchiverFileView from './pages/ArchiverFileView';
 import ArchiverKnowledgeBase from './pages/ArchiverKnowledgeBase';
+import ArchiverKnowledgeTopic from './pages/ArchiverKnowledgeTopic';
 import AssetItems from './pages/AssetItems';
 import Assets from './pages/Assets';
 import AssetForm from './pages/AssetForm';
@@ -384,6 +385,7 @@ function App() {
         <Route path="/archiver/files/:id/edit" element={<ArchiverFileForm />} />
         <Route path="/archiver/files/:id" element={<ArchiverFileView />} />
         <Route path="/archiver/knowledge-base" element={<ArchiverKnowledgeBase />} />
+        <Route path="/archiver/knowledge-base/:id" element={<ArchiverKnowledgeTopic />} />
         <Route path="/asset-classes" element={<AssetClasses />} />
         <Route path="/asset-depreciation" element={<AssetDepreciation />} />
         <Route path="/asset-depreciation/:id" element={<AssetDepreciationView />} />

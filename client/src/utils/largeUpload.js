@@ -52,11 +52,18 @@ async function putPart({ url, blob, signal }) {
 //
 //   api        the axios client, used only for the small control calls
 //   file       the browser File
-//   versionId  from /artist/init
+//   versionId  the upload's id, from whichever init endpoint started it
 //   partSize / partCount  the plan the server worked out
 //   onProgress({ sent, total, part, partCount })
 //   signal     an AbortSignal, so a cancel actually stops mid-transfer
-export async function uploadInParts({ api, file, versionId, partSize, partCount, onProgress, signal }) {
+//   basePath   where /:id/part and /:id/complete live. Artist archives and the knowledge base
+//              start their uploads on different routes but drive them identically, so the path is
+//              a parameter rather than a second copy of this function.
+const ARTIST_BASE = '/archiver/files/upload';
+
+export async function uploadInParts({
+  api, file, versionId, partSize, partCount, onProgress, signal, basePath = ARTIST_BASE,
+}) {
   const parts = [];
   let sent = 0;
 
@@ -69,7 +76,7 @@ export async function uploadInParts({ api, file, versionId, partSize, partCount,
 
     // Signed as we reach it, not all up front: a presigned URL expires, and the last of 1,500
     // would be long dead by the time a slow line got to it.
-    const { data } = await api.get(`/archiver/files/upload/${versionId}/part`, {
+    const { data } = await api.get(`${basePath}/${versionId}/part`, {
       params: { part_number: partNumber },
       signal,
     });
@@ -81,14 +88,14 @@ export async function uploadInParts({ api, file, versionId, partSize, partCount,
     onProgress?.({ sent, total: file.size, part: partNumber, partCount });
   }
 
-  const { data } = await api.post(`/archiver/files/upload/${versionId}/complete`, { parts }, { signal });
+  const { data } = await api.post(`${basePath}/${versionId}/complete`, { parts }, { signal });
   return data;
 }
 
 // Best-effort cleanup. Called when an upload fails or is cancelled, so the parts already in the
 // bucket are discarded -- abandoned multipart uploads are invisible and still billed.
-export async function abortUpload(api, versionId) {
-  try { await api.post(`/archiver/files/upload/${versionId}/abort`); }
+export async function abortUpload(api, versionId, basePath = ARTIST_BASE) {
+  try { await api.post(`${basePath}/${versionId}/abort`); }
   catch { /* the upload may already be gone; nothing useful to do with a failure here */ }
 }
 
