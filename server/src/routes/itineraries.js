@@ -216,7 +216,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // the image itself is fetched per stop.
     const [stops] = await pool.query(
       `SELECT s.id, s.sequence_no, s.sales_order_id, s.delivery_date, s.customer_name,
-              s.qty_to_deliver, s.fulfillment_type, s.delivery_address, s.person_in_charge,
+              s.qty_to_deliver, s.fulfillment_type, s.delivery_address, s.person_in_charge, s.odometer,
               s.time_of_arrival, s.signed_by_name, s.signed_at, s.status, s.remarks,
               (s.signature_data IS NOT NULL) AS has_signature,
               so.sales_order_no, so.status AS so_status
@@ -405,6 +405,7 @@ router.put('/stops/:stopId', requireAuth, requirePermission(ROUTE, 'can_edit'), 
       fulfillment_type: () => (req.body.fulfillment_type === 'partial' ? 'partial' : 'full'),
       delivery_address: () => trunc(req.body.delivery_address, 500),
       person_in_charge: () => trunc(req.body.person_in_charge, 150),
+      odometer: () => trunc(req.body.odometer, 30),
       customer_name: () => trunc(req.body.customer_name, 255),
       remarks: () => trunc(req.body.remarks, 500),
       time_of_arrival: () => req.body.time_of_arrival || null,

@@ -62,6 +62,7 @@ import ArtistIncentiveReport from './pages/reports/ArtistIncentiveReport';
 import DeliverySummary from './pages/reports/DeliverySummary';
 import Itineraries from './pages/Itineraries';
 import ItineraryView from './pages/ItineraryView';
+import ItineraryPrint from './pages/ItineraryPrint';
 import AssignedJobOrderRun from './pages/AssignedJobOrderRun';
 import Production from './pages/Production';
 import ProductionJobOrderView from './pages/ProductionJobOrderView';
@@ -295,6 +296,7 @@ function App() {
         <Route path="/item-deliveries" element={<ItemDeliveries />} />
         <Route path="/itineraries" element={<Itineraries />} />
         <Route path="/itineraries/:id" element={<ItineraryView />} />
+        <Route path="/itineraries/:id/print" element={<ItineraryPrint />} />
         <Route path="/item-deliveries/:id" element={<ItemDeliveryView />} />
         <Route path="/sales-invoices" element={<SalesInvoices />} />
         <Route path="/sales-invoices/:id" element={<SalesInvoiceView />} />

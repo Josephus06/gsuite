@@ -285,6 +285,7 @@ function EditStopModal({ stop, onClose, onSaved }) {
     fulfillment_type: stop.fulfillment_type || 'full',
     delivery_address: stop.delivery_address || '',
     person_in_charge: stop.person_in_charge || '',
+    odometer: stop.odometer || '',
     remarks: stop.remarks || '',
   });
   const [saving, setSaving] = useState(false);
@@ -327,6 +328,12 @@ function EditStopModal({ stop, onClose, onSaved }) {
           <label>Person in Charge</label>
           <input value={form.person_in_charge} maxLength={150}
             onChange={(e) => setForm({ ...form, person_in_charge: e.target.value })} />
+        </div>
+        <div className="field">
+          <label>Odometer</label>
+          <input value={form.odometer} maxLength={30}
+            onChange={(e) => setForm({ ...form, odometer: e.target.value })}
+            placeholder="Reading written on the sheet" />
         </div>
         <div className="field">
           <label>Remarks</label>
@@ -419,7 +426,7 @@ export default function ItineraryView() {
         <div />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn btn-sm" onClick={() => navigate('/itineraries')}>Back</button>
-          <button className="btn btn-sm" onClick={() => window.print()}>Print</button>
+          <button className="btn btn-sm" onClick={() => navigate(`/itineraries/${id}/print`)}>Print</button>
           {canEdit && !cancelled && (
             <button className="btn btn-sm btn-primary" onClick={() => setShowAdd(true)}>Add Sales Orders</button>
           )}
@@ -515,6 +522,7 @@ export default function ItineraryView() {
                 <th>Partial / Full</th>
                 <th>Delivery Address</th>
                 <th>Person in Charge</th>
+                <th>Odometer</th>
                 <th>Time of Arrival</th>
                 <th>Signature</th>
                 <th>Status</th>
@@ -523,7 +531,7 @@ export default function ItineraryView() {
             </thead>
             <tbody>
               {stops.length === 0 && (
-                <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                <tr><td colSpan={13} className="muted" style={{ textAlign: 'center', padding: 20 }}>
                   No stops yet. Add the Sales Orders this run will deliver.
                 </td></tr>
               )}
@@ -556,6 +564,9 @@ export default function ItineraryView() {
                   </td>
                   <td data-label="Delivery Address" style={{ maxWidth: 220, fontSize: 12 }}>{s.delivery_address || '—'}</td>
                   <td data-label="Person in Charge">{s.person_in_charge || '—'}</td>
+                  {/* Written on the printed sheet by the driver; kept here so it can be
+                      keyed back in afterwards. */}
+                  <td data-label="Odometer">{s.odometer || '—'}</td>
                   <td data-label="Time of Arrival">{fmtTime(s.time_of_arrival) || '—'}</td>
                   <td data-label="Signature">
                     {s.has_signature ? (
