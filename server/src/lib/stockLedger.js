@@ -23,30 +23,31 @@
 // scale that by conversion_factor before touching stock, so those branches scale the same way
 // and report the real Base Unit movement.
 //
-// THE OTHER BRANCHES ARE NOT ALL BASE UNIT, WHICH THIS COMMENT USED TO CLAIM.
+// THE OTHER BRANCHES WERE NOT ALL BASE UNIT, WHICH THIS COMMENT USED TO CLAIM.
 //
-// Each branch now carries a `uom` -- the unit the source document actually recorded -- instead of
-// the reader having to assume. NULL means the branch was scaled to Base Unit above and the item's
-// base unit applies. Where uom comes back as something else, the quantity is in THAT unit and is
-// being summed as though it were Base Unit:
+// Every branch now carries a `uom` -- the unit the source document actually recorded -- and its
+// quantity is brought up to Base Unit by `toBase` below when that unit is not already the base
+// one. Until 2026-09-10 only the two purchase branches did this, so one roll of tarpaulin
+// received moved 1,722 SQFT while the same roll transferred out moved 1, and both were added to
+// the same running balance. 11,098 fulfilment lines across 579 items were affected.
 //
-//   Item Fulfillment / Item Receipt   tol.uom  -- the Transfer Order line's unit, frequently the
-//                                     Stock Unit ("1" meaning 1 ROLL). transferOrders.js moves it
-//                                     into inventory_locations unscaled, so a 1-roll transfer of
-//                                     an item at 1,722 SQFT/ROLL is counted as 1 SQFT. 11,098
-//                                     fulfilment lines are affected. NOT fixed here: correcting
-//                                     the arithmetic moves every stock figure this ledger feeds,
-//                                     including the Production screen's On Hand, and that is a
-//                                     decision about live stock rather than a reporting tweak.
-//   Assembly Build                    abl.unit -- reads SQFT, i.e. genuinely Base Unit.
-//   Inventory Adjustment              ial.unit -- the delta is Base Unit when the line was written
-//                                     by inventoryAdjustments.js, which scales by conversion_factor.
-//                                     Migrated rows store unit_used as 'StockUnit'/'BaseUnit'
-//                                     while that code compares against 'stock'/'base', so the
-//                                     scaling silently does not apply to them.
+// Where each branch's unit comes from:
 //
-// Surfacing the unit is what lets the Bin Card show which rows are trustworthy rather than
-// presenting a running total that quietly adds rolls to square feet.
+//   Receiving Report / Vendor Return  no uom -- already scaled in the SELECT, must not scale twice
+//   Item Fulfillment / Item Receipt   tol.uom  -- the Transfer Order line's unit, usually Stock
+//   Assembly Build                    abl.unit -- almost always the base unit already
+//   Inventory Adjustment              ial.unit -- base when written by inventoryAdjustments.js,
+//                                     the stock unit on migrated rows
+//
+// The Bin Card still shows the unit per row, which is what makes this auditable rather than a
+// silent correction: the reader can see which quantity came in which unit.
+//
+// STILL OUTSTANDING, deliberately not changed here:
+//   - transferOrders.js writes the fulfilment quantity into inventory_locations.qty_on_hand
+//     unscaled, so that stored snapshot is still wrong. This ledger no longer reads it.
+//   - inventoryAdjustments.js scales when unit_used === 'stock', but every stored row reads
+//     'StockUnit' or 'BaseUnit', so the comparison never matches and editing a legacy line
+//     silently stops scaling it.
 
 // filterByItem pushes `item_id IN (?)` into every branch rather than wrapping the union and
 // filtering outside it. Same rows either way, but each branch then uses its own item_id index
@@ -56,6 +57,23 @@
 function movementsSql(filterByItem = false) {
   const and = (alias) => (filterByItem ? ` AND ${alias}.item_id IN (?)` : '');
   const where = (alias) => (filterByItem ? ` WHERE ${alias}.item_id IN (?)` : '');
+
+  // Brings a movement up to Base Unit.
+  //
+  // A line records its own unit. Where that is already the item's base unit the quantity stands;
+  // where it is the Stock/Purchase Unit -- "1" meaning 1 ROLL of something held in square feet --
+  // it is multiplied by conversion_factor, exactly as Purchase Order receiving has always done.
+  // One roll of tarpaulin received and the same roll transferred out now both move 1,722 SQFT
+  // instead of 1,722 in and 1 out.
+  //
+  // Compared case-insensitively against the base unit's code, which is how the two are written:
+  // uom holds 'ROLL' / 'SHT' / 'GAL' against a base of 'SQFT' / 'LTR', or the base code itself
+  // when the line was already entered in base units. A NULL unit means the branch scaled the
+  // quantity before this point, so it must not be scaled twice.
+  const toBase = (qty, uom, inv, base) => `(${qty}) * CASE
+      WHEN ${uom} IS NULL OR UPPER(${uom}) = UPPER(COALESCE(${base}.code, ''))
+      THEN 1 ELSE COALESCE(NULLIF(${inv}.conversion_factor, 0), 1) END`;
+
   return `
   SELECT r.date_created AS trans_date, r.receipt_no AS trans_no, 'Receiving Report' AS trans_type,
          po.po_no AS ref_no, rl.item_id, NULL AS from_location_id, NULL AS from_location_name,
@@ -82,36 +100,40 @@ function movementsSql(filterByItem = false) {
 
   SELECT f.date_created, f.fulfillment_no, 'Item Fulfillment',
          tord.to_no, fl.item_id, tord.withdraw_from_location_id, wloc.location_name, NULL, NULL,
-         0, fl.qty_fulfilled, i.average_cost, f.id, f.created_at, tol.uom
+         0, ${toBase('fl.qty_fulfilled', 'tol.uom', 'i', 'bu')}, i.average_cost, f.id, f.created_at, tol.uom
   FROM item_fulfillment_lines fl
   JOIN item_fulfillments f ON f.id = fl.item_fulfillment_id
   JOIN transfer_orders tord ON tord.id = f.transfer_order_id
   LEFT JOIN transfer_order_lines tol ON tol.id = fl.transfer_order_line_id
   LEFT JOIN locations wloc ON wloc.id = tord.withdraw_from_location_id
-  LEFT JOIN inventories i ON i.id = fl.item_id${where('fl')}
+  LEFT JOIN inventories i ON i.id = fl.item_id
+  LEFT JOIN units_of_measure bu ON bu.id = i.base_unit_id${where('fl')}
 
   UNION ALL
 
   SELECT r2.date_created, r2.receipt_no, 'Item Receipt',
          f2.fulfillment_no, rl3.item_id, NULL, NULL, tord2.transfer_to_location_id, tloc.location_name,
-         rl3.qty_received, 0, i2.average_cost, r2.id, r2.created_at, tol3.uom
+         ${toBase('rl3.qty_received', 'tol3.uom', 'i2', 'bu2')}, 0, i2.average_cost, r2.id, r2.created_at, tol3.uom
   FROM item_receipt_lines rl3
   JOIN item_receipts r2 ON r2.id = rl3.item_receipt_id
   JOIN item_fulfillments f2 ON f2.id = r2.item_fulfillment_id
   JOIN transfer_orders tord2 ON tord2.id = r2.transfer_order_id
   LEFT JOIN transfer_order_lines tol3 ON tol3.id = rl3.transfer_order_line_id
   LEFT JOIN locations tloc ON tloc.id = tord2.transfer_to_location_id
-  LEFT JOIN inventories i2 ON i2.id = rl3.item_id${where('rl3')}
+  LEFT JOIN inventories i2 ON i2.id = rl3.item_id
+  LEFT JOIN units_of_measure bu2 ON bu2.id = i2.base_unit_id${where('rl3')}
 
   UNION ALL
 
   SELECT ab.date_created, ab.ab_no, 'Assembly Build',
          jo.job_order_no, abl.item_id, abl.location_id, aloc.location_name, NULL, NULL,
-         0, abl.total_qty_to_build, NULL, ab.id, ab.created_at, abl.unit
+         0, ${toBase('abl.total_qty_to_build', 'abl.unit', 'i3', 'bu3')}, NULL, ab.id, ab.created_at, abl.unit
   FROM assembly_build_lines abl
   JOIN assembly_builds ab ON ab.id = abl.assembly_build_id
   JOIN job_orders jo ON jo.id = ab.job_order_id
   LEFT JOIN locations aloc ON aloc.id = abl.location_id
+  LEFT JOIN inventories i3 ON i3.id = abl.item_id
+  LEFT JOIN units_of_measure bu3 ON bu3.id = i3.base_unit_id
   WHERE abl.item_id IS NOT NULL AND abl.location_id IS NOT NULL${and('abl')}
 
   UNION ALL
@@ -120,10 +142,14 @@ function movementsSql(filterByItem = false) {
          NULL, ial.item_id,
          IF(ial.new_qty - ial.qty_on_hand < 0, ial.location_id, NULL), IF(ial.new_qty - ial.qty_on_hand < 0, iloc.location_name, NULL),
          IF(ial.new_qty - ial.qty_on_hand >= 0, ial.location_id, NULL), IF(ial.new_qty - ial.qty_on_hand >= 0, iloc.location_name, NULL),
-         GREATEST(ial.new_qty - ial.qty_on_hand, 0), GREATEST(-(ial.new_qty - ial.qty_on_hand), 0), ial.est_unit_cost, ia.id, ia.updated_at, ial.unit
+         ${toBase('GREATEST(ial.new_qty - ial.qty_on_hand, 0)', 'ial.unit', 'i4', 'bu4')},
+         ${toBase('GREATEST(-(ial.new_qty - ial.qty_on_hand), 0)', 'ial.unit', 'i4', 'bu4')},
+         ial.est_unit_cost, ia.id, ia.updated_at, ial.unit
   FROM inventory_adjustment_lines ial
   JOIN inventory_adjustments ia ON ia.id = ial.inventory_adjustment_id
   LEFT JOIN locations iloc ON iloc.id = ial.location_id
+  LEFT JOIN inventories i4 ON i4.id = ial.item_id
+  LEFT JOIN units_of_measure bu4 ON bu4.id = i4.base_unit_id
   WHERE ia.status = 'approved'${and('ial')}
 `;
 }
