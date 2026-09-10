@@ -33,7 +33,7 @@ export default function BinCardReport() {
   const [inventoryItems, setInventoryItems] = useState([]);
   const [locations, setLocations] = useState([]);
   const [rows, setRows] = useState(null);
-  const [unitLabels, setUnitLabels] = useState({ stock_unit_label: 'Stock Unit', base_unit_label: 'Base Unit' });
+  const [unitLabels, setUnitLabels] = useState({ stock_unit_label: 'Stock Unit', base_unit_label: 'Base Unit', base_unit_code: '' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [page, setPage] = useState(1);
@@ -59,7 +59,11 @@ export default function BinCardReport() {
     try {
       const { data } = await api.get('/bin-card-reports', { params });
       setRows(data.rows);
-      setUnitLabels({ stock_unit_label: data.stock_unit_label, base_unit_label: data.base_unit_label });
+      setUnitLabels({
+        stock_unit_label: data.stock_unit_label,
+        base_unit_label: data.base_unit_label,
+        base_unit_code: data.base_unit_code,
+      });
       setMeta({
         reconciled: data.reconciled,
         window_from: data.window_from,
@@ -76,6 +80,14 @@ export default function BinCardReport() {
 
   const totalPages = Math.max(1, Math.ceil((rows?.length || 0) / PAGE_SIZE));
   const pageRows = rows ? rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) : [];
+  // The unit a row's quantity is actually in. A movement that was scaled to Base Unit carries no
+  // uom of its own, so the item's base unit applies; one that carries a different unit is being
+  // summed into the balance as though it were Base Unit, which it is not.
+  const baseUom = unitLabels.base_unit_code || unitLabels.base_unit_label || '—';
+  const rowUom = (r) => r.uom || baseUom;
+  const mismatched = (r) => !r.is_opening && !!r.uom && !!unitLabels.base_unit_code
+    && String(r.uom).toUpperCase() !== String(unitLabels.base_unit_code).toUpperCase();
+  const mismatchCount = (rows || []).filter(mismatched).length;
 
   return (
     <div>
@@ -148,6 +160,17 @@ export default function BinCardReport() {
         </div>
       )}
 
+      {/* A running balance that adds rolls to square feet is not a balance. Say so plainly rather
+          than letting the reader trust the last row. */}
+      {mismatchCount > 0 && (
+        <div className="error-banner" style={{ marginBottom: 8 }}>
+          {mismatchCount} of these movements {mismatchCount === 1 ? 'was' : 'were'} recorded in a
+          unit other than {baseUom} (marked in the UOM column) but {mismatchCount === 1 ? 'is' : 'are'} added
+          into the balance as {baseUom}. The Balance columns below are not reliable for this item until
+          that is corrected.
+        </div>
+      )}
+
       <div className="card">
         {loading ? <LoadingSpinner /> : (
           <div className="table-wrap">
@@ -161,6 +184,7 @@ export default function BinCardReport() {
                   <th>Transfer To</th>
                   <th>Qty In</th>
                   <th>Qty Out</th>
+                  <th>UOM</th>
                   <th>Rate</th>
                   <th>Balance(Stock Unit / {unitLabels.stock_unit_label})</th>
                   <th>Balance(Base Unit / {unitLabels.base_unit_label})</th>
@@ -168,10 +192,10 @@ export default function BinCardReport() {
               </thead>
               <tbody>
                 {rows === null && (
-                  <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>Select an Item and click Generate.</td></tr>
+                  <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: 20 }}>Select an Item and click Generate.</td></tr>
                 )}
                 {rows !== null && rows.length === 0 && (
-                  <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>No transactions found.</td></tr>
+                  <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: 20 }}>No transactions found.</td></tr>
                 )}
                 {pageRows.map((r, idx) => (
                   <tr key={idx} style={r.is_opening ? { fontWeight: 600 } : undefined}>
@@ -182,6 +206,15 @@ export default function BinCardReport() {
                     <td>{r.to_location_name || ''}</td>
                     <td>{Number(r.qty_in) ? qtyFmt(r.qty_in) : ''}</td>
                     <td>{Number(r.qty_out) ? qtyFmt(r.qty_out) : ''}</td>
+                    {/* The unit this row's quantity is really in. A bare "1.0000" against an
+                        item stocked in rolls tells you nothing; "1.0000 ROLL" next to a balance
+                        kept in SQFT tells you the balance is wrong. */}
+                    <td style={mismatched(r) ? { color: '#b45309', fontWeight: 600 } : undefined}>
+                      {r.is_opening ? '' : rowUom(r)}
+                      {mismatched(r) && (
+                        <span title={`Counted into the balance as ${baseUom}, but recorded in ${r.uom}.`}> !</span>
+                      )}
+                    </td>
                     <td>{moneyFmt(r.rate)}</td>
                     <td>{qtyFmt(r.balance_stock)}</td>
                     <td>{qtyFmt(r.balance_base)}</td>

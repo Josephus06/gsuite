@@ -21,7 +21,32 @@
 // PO Qty / Rec. Qty / Qty to Return are always entered in Purchase Unit (confirmed: "5 qty for
 // tarpaulin" on a PO means 5 ROLL, not 5 SQFT) -- purchaseOrders.js's receive/return endpoints
 // scale that by conversion_factor before touching stock, so those branches scale the same way
-// and report the real Base Unit movement. Everything here is Base Unit.
+// and report the real Base Unit movement.
+//
+// THE OTHER BRANCHES ARE NOT ALL BASE UNIT, WHICH THIS COMMENT USED TO CLAIM.
+//
+// Each branch now carries a `uom` -- the unit the source document actually recorded -- instead of
+// the reader having to assume. NULL means the branch was scaled to Base Unit above and the item's
+// base unit applies. Where uom comes back as something else, the quantity is in THAT unit and is
+// being summed as though it were Base Unit:
+//
+//   Item Fulfillment / Item Receipt   tol.uom  -- the Transfer Order line's unit, frequently the
+//                                     Stock Unit ("1" meaning 1 ROLL). transferOrders.js moves it
+//                                     into inventory_locations unscaled, so a 1-roll transfer of
+//                                     an item at 1,722 SQFT/ROLL is counted as 1 SQFT. 11,098
+//                                     fulfilment lines are affected. NOT fixed here: correcting
+//                                     the arithmetic moves every stock figure this ledger feeds,
+//                                     including the Production screen's On Hand, and that is a
+//                                     decision about live stock rather than a reporting tweak.
+//   Assembly Build                    abl.unit -- reads SQFT, i.e. genuinely Base Unit.
+//   Inventory Adjustment              ial.unit -- the delta is Base Unit when the line was written
+//                                     by inventoryAdjustments.js, which scales by conversion_factor.
+//                                     Migrated rows store unit_used as 'StockUnit'/'BaseUnit'
+//                                     while that code compares against 'stock'/'base', so the
+//                                     scaling silently does not apply to them.
+//
+// Surfacing the unit is what lets the Bin Card show which rows are trustworthy rather than
+// presenting a running total that quietly adds rolls to square feet.
 
 // filterByItem pushes `item_id IN (?)` into every branch rather than wrapping the union and
 // filtering outside it. Same rows either way, but each branch then uses its own item_id index
@@ -35,7 +60,7 @@ function movementsSql(filterByItem = false) {
   SELECT r.date_created AS trans_date, r.receipt_no AS trans_no, 'Receiving Report' AS trans_type,
          po.po_no AS ref_no, rl.item_id, NULL AS from_location_id, NULL AS from_location_name,
          rl.location_id AS to_location_id, loc.location_name AS to_location_name,
-         rl.qty_received * COALESCE(i0.conversion_factor, 1) AS qty_in, 0 AS qty_out, rl.rate, r.id AS sort_id, r.created_at AS sort_ts
+         rl.qty_received * COALESCE(i0.conversion_factor, 1) AS qty_in, 0 AS qty_out, rl.rate, r.id AS sort_id, r.created_at AS sort_ts, NULL AS uom
   FROM purchase_order_receipt_lines rl
   JOIN purchase_order_receipts r ON r.id = rl.purchase_order_receipt_id
   JOIN purchase_orders po ON po.id = r.purchase_order_id
@@ -46,7 +71,7 @@ function movementsSql(filterByItem = false) {
 
   SELECT vr.date_created, vr.return_no, 'Vendor Return',
          po2.po_no, rl2.item_id, rl2.location_id, loc2.location_name, NULL, NULL,
-         0, rl2.qty_returned * COALESCE(i1.conversion_factor, 1), rl2.rate, vr.id, vr.created_at
+         0, rl2.qty_returned * COALESCE(i1.conversion_factor, 1), rl2.rate, vr.id, vr.created_at, NULL
   FROM purchase_return_lines rl2
   JOIN purchase_returns vr ON vr.id = rl2.purchase_return_id
   JOIN purchase_orders po2 ON po2.id = vr.purchase_order_id
@@ -57,10 +82,11 @@ function movementsSql(filterByItem = false) {
 
   SELECT f.date_created, f.fulfillment_no, 'Item Fulfillment',
          tord.to_no, fl.item_id, tord.withdraw_from_location_id, wloc.location_name, NULL, NULL,
-         0, fl.qty_fulfilled, i.average_cost, f.id, f.created_at
+         0, fl.qty_fulfilled, i.average_cost, f.id, f.created_at, tol.uom
   FROM item_fulfillment_lines fl
   JOIN item_fulfillments f ON f.id = fl.item_fulfillment_id
   JOIN transfer_orders tord ON tord.id = f.transfer_order_id
+  LEFT JOIN transfer_order_lines tol ON tol.id = fl.transfer_order_line_id
   LEFT JOIN locations wloc ON wloc.id = tord.withdraw_from_location_id
   LEFT JOIN inventories i ON i.id = fl.item_id${where('fl')}
 
@@ -68,11 +94,12 @@ function movementsSql(filterByItem = false) {
 
   SELECT r2.date_created, r2.receipt_no, 'Item Receipt',
          f2.fulfillment_no, rl3.item_id, NULL, NULL, tord2.transfer_to_location_id, tloc.location_name,
-         rl3.qty_received, 0, i2.average_cost, r2.id, r2.created_at
+         rl3.qty_received, 0, i2.average_cost, r2.id, r2.created_at, tol3.uom
   FROM item_receipt_lines rl3
   JOIN item_receipts r2 ON r2.id = rl3.item_receipt_id
   JOIN item_fulfillments f2 ON f2.id = r2.item_fulfillment_id
   JOIN transfer_orders tord2 ON tord2.id = r2.transfer_order_id
+  LEFT JOIN transfer_order_lines tol3 ON tol3.id = rl3.transfer_order_line_id
   LEFT JOIN locations tloc ON tloc.id = tord2.transfer_to_location_id
   LEFT JOIN inventories i2 ON i2.id = rl3.item_id${where('rl3')}
 
@@ -80,7 +107,7 @@ function movementsSql(filterByItem = false) {
 
   SELECT ab.date_created, ab.ab_no, 'Assembly Build',
          jo.job_order_no, abl.item_id, abl.location_id, aloc.location_name, NULL, NULL,
-         0, abl.total_qty_to_build, NULL, ab.id, ab.created_at
+         0, abl.total_qty_to_build, NULL, ab.id, ab.created_at, abl.unit
   FROM assembly_build_lines abl
   JOIN assembly_builds ab ON ab.id = abl.assembly_build_id
   JOIN job_orders jo ON jo.id = ab.job_order_id
@@ -93,7 +120,7 @@ function movementsSql(filterByItem = false) {
          NULL, ial.item_id,
          IF(ial.new_qty - ial.qty_on_hand < 0, ial.location_id, NULL), IF(ial.new_qty - ial.qty_on_hand < 0, iloc.location_name, NULL),
          IF(ial.new_qty - ial.qty_on_hand >= 0, ial.location_id, NULL), IF(ial.new_qty - ial.qty_on_hand >= 0, iloc.location_name, NULL),
-         GREATEST(ial.new_qty - ial.qty_on_hand, 0), GREATEST(-(ial.new_qty - ial.qty_on_hand), 0), ial.est_unit_cost, ia.id, ia.updated_at
+         GREATEST(ial.new_qty - ial.qty_on_hand, 0), GREATEST(-(ial.new_qty - ial.qty_on_hand), 0), ial.est_unit_cost, ia.id, ia.updated_at, ial.unit
   FROM inventory_adjustment_lines ial
   JOIN inventory_adjustments ia ON ia.id = ial.inventory_adjustment_id
   LEFT JOIN locations iloc ON iloc.id = ial.location_id

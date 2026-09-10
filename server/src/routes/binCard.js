@@ -159,6 +159,11 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     res.json({
       stock_unit_label: unitInfo.stock_unit_title ? `${unitInfo.stock_unit_title} (${unitInfo.stock_unit_code})` : (unitInfo.stock_unit_code || 'Stock Unit'),
       base_unit_label: unitInfo.base_unit_title ? `${unitInfo.base_unit_title} (${unitInfo.base_unit_code})` : (unitInfo.base_unit_code || 'Base Unit'),
+      // The bare codes as well as the labels. Every Qty In/Out on this report is in the Base
+      // Unit -- see lib/stockLedger.js, which scales each branch by conversion_factor -- so the
+      // rows need a short code to repeat, not the full "Square Foot (SQFT)" title.
+      stock_unit_code: unitInfo.stock_unit_code || null,
+      base_unit_code: unitInfo.base_unit_code || null,
       conversion_factor: conversionFactor,
       // What the reader needs to know about which view they are looking at: whether it is
       // anchored to live's own opening balance, and from when.
