@@ -74,9 +74,22 @@ export default function ItineraryPrint() {
         .itn-meta div span { font-weight: 700; }
 
         .itn-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-        .itn-table th, .itn-table td { border: 1px solid #111827; padding: 3px 4px; vertical-align: top; }
-        .itn-table th { background: #e5e7eb; font-size: 8pt; text-align: center; text-transform: uppercase; letter-spacing: .2px; }
-        .itn-table td { font-size: 8.5pt; }
+        /* white-space MUST be reset here. index.css sets white-space: nowrap on every th and td
+           globally, and a fixed-layout table inherits it, so a customer name simply runs on across
+           the columns beside it instead of wrapping -- which is what was happening to "SCRUMPTIOUS
+           FOOD AND BEVERAGE CORP" and to the "QTY TO DELIVER" heading. break-word covers the
+           other case: one long unbroken token, like an address with no spaces in it.
+           (No backticks in this comment: the whole block is a JS template literal.) */
+        .itn-table th, .itn-table td {
+          border: 1px solid #111827; padding: 3px 4px; vertical-align: top;
+          white-space: normal; overflow-wrap: break-word; word-break: break-word;
+          /* Without border-box the 4px side padding on eleven cells sits OUTSIDE the declared
+             widths, pushing a table meant to be 281mm out to 307mm -- past the printable area.
+             With it, the mm figures below are the finished column widths. */
+          box-sizing: border-box;
+        }
+        .itn-table th { background: #e5e7eb; font-size: 8pt; text-align: center; text-transform: uppercase; letter-spacing: .2px; line-height: 1.15; }
+        .itn-table td { font-size: 8.5pt; line-height: 1.2; }
         /* The hand-written columns need real height; 16mm is about right for a signature scrawl
            and keeps roughly nine drops on one landscape page. */
         .itn-table tbody tr { height: 16mm; }
