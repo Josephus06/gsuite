@@ -37,19 +37,22 @@ function AddStopsModal({ itineraryId, onClose, onSaved }) {
   const [rows, setRows] = useState([]);
   const [picked, setPicked] = useState(new Set());
   const [search, setSearch] = useState('');
+  const [showAll, setShowAll] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const load = useCallback(async (q) => {
+  const load = useCallback(async (q, all) => {
     setLoading(true);
     try {
-      const { data } = await api.get('/itineraries/schedulable', { params: { search: q || undefined } });
+      const { data } = await api.get('/itineraries/schedulable', {
+        params: { search: q || undefined, all: all ? 1 : undefined },
+      });
       setRows(data);
     } catch (e) { setError(e.response?.data?.error || 'Could not load Sales Orders.'); }
     setLoading(false);
   }, []);
-  useEffect(() => { load(''); }, [load]);
+  useEffect(() => { load(search, showAll); }, [load, showAll]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function toggle(id) {
     setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -71,10 +74,18 @@ function AddStopsModal({ itineraryId, onClose, onSaved }) {
         <label>Search</label>
         <input value={search} placeholder="SO number or customer"
           onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && load(search)} />
+          onKeyDown={(e) => e.key === 'Enter' && load(search, showAll)} />
         <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-          Sales Orders with quantity that is built, QI-passed and not yet delivered.
+          {showAll
+            ? 'Every Sales Order holding quantity that is built, QI-passed and not yet delivered — whatever its status.'
+            : 'Sales Orders awaiting delivery, with quantity that is built, QI-passed and not yet delivered.'}
         </div>
+        {/* A few orders read 'billed' while still holding undelivered stock. They are out of the
+            way by default, but reachable -- otherwise that stock could never be put on a run. */}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontWeight: 400 }}>
+          <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
+          <span style={{ fontSize: 13 }}>Also show orders already billed or invoiced that still hold stock</span>
+        </label>
       </div>
 
       {loading ? <LoadingSpinner /> : (

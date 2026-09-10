@@ -100,10 +100,30 @@ router.delete('/drivers/:id', requireAuth, requirePermission(ROUTE, 'can_delete'
 
 // --- the Sales Orders available to schedule -----------------------------------------------
 
+// The statuses that actually owe a shipment.
+//
+// 'pending_delivery' is ready stock with nothing delivered yet. 'partially_delivered' is the same
+// obligation half-met -- computeSalesOrderStatus reserves it for "there's ready stock sitting
+// undelivered on some line, an action is owed (ship it)", which is precisely what the Partial/Full
+// column on a stop exists for. Excluding it would strand every part-shipped order.
+//
+// Deliberately NOT here: 'pending_billing_partially_delivered', which means deliveries have caught
+// up with everything ready and the rest simply is not produced yet, and 'billed'/'pending_billing',
+// which are finished as far as the warehouse is concerned.
+const PENDING_DELIVERY_STATUSES = ['pending_delivery', 'partially_delivered'];
+
 router.get('/schedulable', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const where = ["so.status <> 'cancelled'", `${READY_QTY_SQL} > 0`];
     const params = [];
+
+    // Restricted to orders whose status says a delivery is owed. `all=1` lifts it, because a
+    // handful of orders read 'billed' while still holding undelivered stock -- an inconsistency
+    // worth being able to see rather than one the run sheet hides forever.
+    if (req.query.all !== '1') {
+      where.push(`so.status IN (${PENDING_DELIVERY_STATUSES.map(() => '?').join(', ')})`);
+      params.push(...PENDING_DELIVERY_STATUSES);
+    }
     if (req.query.search) {
       where.push('(so.sales_order_no LIKE ? OR c.name LIKE ?)');
       params.push(`%${req.query.search}%`, `%${req.query.search}%`);
