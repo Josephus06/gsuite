@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../db');
 
-const PERMISSION_ACTIONS = new Set(['can_view', 'can_add', 'can_edit', 'can_delete', 'can_approve', 'can_print']);
+const PERMISSION_ACTIONS = new Set(['can_view', 'can_add', 'can_edit', 'can_view_all', 'can_delete', 'can_approve', 'can_print']);
 
 // System Admin is the one role defined by the account itself rather than by a permission
 // row -- create-account-type-permissions.js seeds it full access on every page. The JWT

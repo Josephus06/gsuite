@@ -1,7 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const pool = require('../db');
-const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const storage = require('../lib/objectStorage');
 
 const router = express.Router();
@@ -73,11 +73,18 @@ async function fileAccess(userId, fileId, conn) {
   const [[share]] = await q.query('SELECT can_edit FROM archive_file_shares WHERE file_id = ? AND user_id = ?', [fileId, userId]);
   if (share) return { found: true, file, canView: true, canEdit: !!share.can_edit, via: 'share' };
   if (file.visibility === 'company') return { found: true, file, canView: true, canEdit: false, via: 'company' };
+
+  // Checked last, so it only ever widens what someone can see. A supervisor who also holds an
+  // explicit share keeps the edit right that share gave them -- putting this test any earlier
+  // would quietly take it away. Read-only on its own: seeing someone's layout files is a
+  // supervisory need, editing them is not.
+  if (await userCan(userId, ROUTE, 'can_view_all')) return { found: true, file, canView: true, canEdit: false, via: 'view_all' };
   return { found: true, file, canView: false, canEdit: false };
 }
 
 async function visibilityClause(userId) {
-  if (await isSystemAdmin(userId)) return { sql: null, params: [] };
+  // A null clause means no restriction at all -- the whole archive.
+  if (await isSystemAdmin(userId) || await userCan(userId, ROUTE, 'can_view_all')) return { sql: null, params: [] };
   return {
     sql: `(f.visibility = 'company' OR f.owner_user_id = ?
            OR EXISTS (SELECT 1 FROM archive_file_shares s WHERE s.file_id = f.id AND s.user_id = ?))`,

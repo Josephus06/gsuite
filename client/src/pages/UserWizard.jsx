@@ -19,6 +19,9 @@ const PERMISSION_ACTIONS = [
   { key: 'can_view', label: 'Can View' },
   { key: 'can_add', label: 'Can Add' },
   { key: 'can_edit', label: 'Can Update' },
+  // Whose records you see once you are on the screen, as opposed to whether you may open it
+  // at all. Without it a page shows a person only their own rows; with it, everyone's.
+  { key: 'can_view_all', label: 'Can View All' },
   { key: 'can_delete', label: 'Can Delete' },
   { key: 'can_approve', label: 'Can Approve' },
   // Printing a Job Order is granted separately from viewing one -- the printed sheet is what
@@ -153,7 +156,7 @@ export default function UserWizard() {
 
   function togglePerm(pageId, key) {
     setPermMap((prev) => {
-      const current = prev[pageId] || { page_id: pageId, can_view: false, can_add: false, can_edit: false, can_delete: false, can_approve: false, can_print: false };
+      const current = prev[pageId] || { page_id: pageId, can_view: false, can_add: false, can_edit: false, can_view_all: false, can_delete: false, can_approve: false, can_print: false };
       return { ...prev, [pageId]: { ...current, [key]: !current[key] } };
     });
   }
@@ -170,6 +173,7 @@ export default function UserWizard() {
         can_view: !!r.can_view,
         can_add: !!r.can_add,
         can_edit: !!r.can_edit,
+        can_view_all: !!r.can_view_all,
         can_delete: !!r.can_delete,
         can_approve: !!r.can_approve,
         can_print: !!r.can_print,

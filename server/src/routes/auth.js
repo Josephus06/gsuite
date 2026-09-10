@@ -214,7 +214,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
     user.default_branch = defaultBranch || null;
 
     const [permissions] = await pool.query(
-      `SELECT p.route, upp.can_view, upp.can_add, upp.can_edit, upp.can_delete, upp.can_approve, upp.can_print
+      `SELECT p.route, upp.can_view, upp.can_add, upp.can_edit, upp.can_view_all, upp.can_delete, upp.can_approve, upp.can_print
        FROM user_page_permissions upp
        JOIN pages p ON p.id = upp.page_id
        WHERE upp.user_id = ?`,
@@ -233,7 +233,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
         && !permissions.some((perm) => perm.route === '/production')) {
       permissions.push({
         route: '/production',
-        can_view: 1, can_add: 0, can_edit: 0, can_delete: 0, can_approve: 0, can_print: 0,
+        can_view: 1, can_add: 0, can_edit: 0, can_view_all: 0, can_delete: 0, can_approve: 0, can_print: 0,
       });
     }
 
