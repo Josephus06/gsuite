@@ -1426,7 +1426,9 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 }
 
 @media print {
-  .topnav, .print-toolbar { display: none !important; }
+  /* Anything that floats over the page belongs to the screen, not the paper. The chat assistant
+     sits in Layout, so it was rendering onto every printed document in the app. */
+  .topnav, .print-toolbar, .chat-widget, .toast-stack { display: none !important; }
   .content { padding: 0 !important; }
   .print-sheet { box-shadow: none; max-width: none; }
 }

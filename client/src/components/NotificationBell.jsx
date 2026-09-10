@@ -261,7 +261,9 @@ export default function NotificationBell() {
         )}
       </div>
 
-      <div style={{ position: 'fixed', top: 20, right: 20, zIndex: 400, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {/* Classed so print can hide it: a toast that happens to be on screen when someone hits
+          Print would otherwise land in the corner of the paper. */}
+      <div className="toast-stack" style={{ position: 'fixed', top: 20, right: 20, zIndex: 400, display: 'flex', flexDirection: 'column', gap: 10 }}>
         {toasts.map((t) => (
           <div
             key={t.id}
