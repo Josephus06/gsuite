@@ -426,7 +426,10 @@ router.get('/:id/route', requireAuth, requirePermission(ROUTE, 'can_view'), asyn
       // degrades the map rather than breaking the page.
       return res.json({ geometry: null, error: route.error, detail: route.detail || null });
     }
-    const legs = await fetchLegs(points);
+    // ORS returns per-leg detail in the same response, so this is normally already populated.
+    // fetchLegs is only a fallback for a provider that does not, and currently declines rather
+    // than spending a request per leg while the primary is down.
+    const legs = route.legs || await fetchLegs(points);
 
     await pool.query(
       `UPDATE delivery_itineraries

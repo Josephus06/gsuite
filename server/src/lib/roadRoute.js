@@ -3,21 +3,33 @@ const crypto = require('crypto');
 // Road routing for a delivery run: the actual streets between the starting point and each stop,
 // with distance and drive time per leg.
 //
-// GraphHopper, on their free plan. Chosen over the public OSRM demo server, which works and needs
-// no key but whose operators ask people not to use it in production -- putting a company's daily
-// dispatch on that is borrowing something we were told not to borrow. Measured against the real
-// route first: Mandaue to Cebu Doctors Hospital comes back 10.81km / 24 min, against 7.4km as the
-// crow flies, so the straight line was understating the journey by about a third.
+// TWO PROVIDERS, tried in order. OpenRouteService first; GraphHopper if it fails and a key exists.
+// That is not belt-and-braces for its own sake -- ORS publishes scheduled maintenance windows (one
+// ran the afternoon this was written), and a dispatcher watching a van should not lose the line
+// because a third party is doing an upgrade.
 //
-// EVERY RESULT IS CACHED against a fingerprint of the ordered points. A route only changes when
-// the points do -- reorder the stops, move a pin, change the origin. Opening the run, refreshing
-// the driver's position every 30 seconds and printing all reuse it. Without that a dispatcher
-// leaving the page open would spend a request a minute redrawing a line that had not moved.
-const ENDPOINT = 'https://graphhopper.com/api/1/route';
+//   ORS          2,000 directions/day, and returns PER-LEG detail in the same response
+//   GraphHopper    500/day, per-leg only on paid plans -- so a 4-stop run cost 5 requests there
+//
+// That per-leg difference is why ORS leads: the same run now costs one request instead of five.
+//
+// Both are measured against real Cebu geography before being trusted. Mandaue to Cebu Doctors
+// Hospital: 10.80km / 21 min by ORS, 10.81km / 24 min by GraphHopper, against 7.4km as the crow
+// flies -- so the straight line was understating the journey by about a third either way.
+//
+// EVERY RESULT IS CACHED against a fingerprint of the ordered points (see routes/itineraries.js).
+// A route only changes when the points do.
+
+// api.openrouteservice.org is being retired in favour of api.heigit.org. The new host does NOT
+// mirror the old paths -- /v2/... 404s there; the prefix is /openrouteservice/v2/... Verified
+// against both before switching, because a deprecated host that works today is worth less than the
+// successor that will work next year.
+const ORS_URL = 'https://api.heigit.org/openrouteservice/v2/directions/driving-car/geojson';
+const GH_URL = 'https://graphhopper.com/api/1/route';
 const TIMEOUT_MS = 12000;
-// GraphHopper's free plan allows a handful of points per request and a few hundred requests a day.
-// A delivery run with more stops than this is not a routing problem, it is a planning one.
-const MAX_POINTS = 20;
+// ORS accepts far more, but a delivery run with more stops than this is not a routing problem,
+// it is a planning one.
+const MAX_POINTS = 25;
 
 // The fingerprint. Coordinates are rounded to five decimals -- about a metre, far finer than a
 // delivery address needs -- so floating-point noise between reads cannot invalidate a cache that
@@ -42,53 +54,98 @@ function pointsFor(run, stops) {
   return points;
 }
 
-async function fetchRoute(points) {
+async function withTimeout(fn) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try { return await fn(controller.signal); }
+  finally { clearTimeout(timer); }
+}
+
+// OpenRouteService. GeoJSON in, GeoJSON out; coordinates are [lng, lat] both ways.
+async function fetchFromOrs(points) {
+  const key = process.env.ORS_API_KEY;
+  if (!key) return { error: 'no_key' };
+  const body = JSON.stringify({ coordinates: points.map(([lat, lng]) => [lng, lat]) });
+
+  const res = await withTimeout((signal) => fetch(ORS_URL, {
+    method: 'POST', signal, body,
+    headers: { Authorization: key, 'Content-Type': 'application/json' },
+  }));
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json?.features?.length) {
+    const detail = json?.error?.message || json?.error || res.status;
+    return { error: 'routing_failed', detail: String(detail).slice(0, 200) };
+  }
+
+  const f = json.features[0];
+  const props = f.properties || {};
+  return {
+    provider: 'ors',
+    // [lng, lat] out of GeoJSON; Leaflet wants [lat, lng]. Flipped here, once, rather than in the
+    // component -- getting this backwards puts Cebu in Somalia.
+    geometry: (f.geometry?.coordinates || []).map(([lng, lat]) => [lat, lng]),
+    // Per leg, in the same response. This is the reason ORS leads.
+    legs: (props.segments || []).map((s, i) => ({
+      from: i, to: i + 1,
+      distance_m: Math.round(s.distance || 0),
+      duration_s: Math.round(s.duration || 0),
+    })),
+    distance_m: Math.round(props.summary?.distance || 0),
+    duration_s: Math.round(props.summary?.duration || 0),
+  };
+}
+
+// GraphHopper, the fallback. Returns no per-leg detail on the free plan, so legs come back null
+// rather than being bought with N more requests -- the total is what matters when the primary is
+// already down.
+async function fetchFromGraphHopper(points) {
   const key = process.env.GRAPHHOPPER_API_KEY;
   if (!key) return { error: 'no_key' };
+  const qs = points.map(([lat, lng]) => `point=${lat},${lng}`).join('&');
+  const url = `${GH_URL}?${qs}&profile=car&points_encoded=false&instructions=false&key=${encodeURIComponent(key)}`;
+
+  const res = await withTimeout((signal) => fetch(url, { signal }));
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json?.paths?.length) {
+    return { error: 'routing_failed', detail: String(json?.message || res.status).slice(0, 200) };
+  }
+  const path = json.paths[0];
+  return {
+    provider: 'graphhopper',
+    geometry: (path.points?.coordinates || []).map(([lng, lat]) => [lat, lng]),
+    legs: null,
+    distance_m: Math.round(path.distance || 0),
+    duration_s: Math.round((path.time || 0) / 1000),
+  };
+}
+
+async function fetchRoute(points) {
   if (points.length < 2) return { error: 'not_enough_points' };
   if (points.length > MAX_POINTS) return { error: 'too_many_points' };
 
-  const qs = points.map(([lat, lng]) => `point=${lat},${lng}`).join('&');
-  const url = `${ENDPOINT}?${qs}&profile=car&points_encoded=false&instructions=false&key=${encodeURIComponent(key)}`;
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  try {
-    const res = await fetch(url, { signal: controller.signal });
-    const body = await res.json();
-    if (!res.ok || !body.paths || !body.paths.length) {
-      // The service's own message is far more useful than a generic failure -- it says "outside
-      // supported area" or "quota exceeded", and the planner should see which.
-      return { error: 'routing_failed', detail: String(body.message || res.status).slice(0, 200) };
+  const attempts = [];
+  for (const [name, fn] of [['ors', fetchFromOrs], ['graphhopper', fetchFromGraphHopper]]) {
+    try {
+      const out = await fn(points);
+      if (!out.error) return out;
+      // A missing key is not a failure worth reporting -- it just means that provider is not
+      // configured here.
+      if (out.error !== 'no_key') attempts.push(`${name}: ${out.detail || out.error}`);
+    } catch (err) {
+      attempts.push(`${name}: ${err.name === 'AbortError' ? 'timeout' : err.message}`);
     }
-    const path = body.paths[0];
-    return {
-      // GeoJSON is [lng, lat]; Leaflet wants [lat, lng]. Flipped here, once, rather than in the
-      // component -- getting this backwards puts Cebu in Somalia.
-      geometry: (path.points?.coordinates || []).map(([lng, lat]) => [lat, lng]),
-      legs: (path.details?.legs || []).length ? path.details.legs : null,
-      distance_m: Math.round(path.distance || 0),
-      duration_s: Math.round((path.time || 0) / 1000),
-    };
-  } catch (err) {
-    if (err.name === 'AbortError') return { error: 'timeout' };
-    return { error: 'unreachable', detail: String(err.message).slice(0, 200) };
-  } finally { clearTimeout(timer); }
+  }
+  return {
+    error: attempts.length ? 'routing_failed' : 'no_key',
+    detail: attempts.join(' | ').slice(0, 300) || null,
+  };
 }
 
-// Leg-by-leg distance and time, so the planner can see that stop 3 is the long one.
-//
-// Asked for as separate two-point routes rather than read out of the multi-point response:
-// GraphHopper returns per-leg detail only on paid plans, and a handful of extra cached requests
-// costs less than being wrong about which drop eats the morning.
-async function fetchLegs(points) {
-  const legs = [];
-  for (let i = 0; i < points.length - 1; i += 1) {
-    const r = await fetchRoute([points[i], points[i + 1]]);
-    if (r.error) return null;
-    legs.push({ from: i, to: i + 1, distance_m: r.distance_m, duration_s: r.duration_s });
-  }
-  return legs;
+// Kept for the caller that asks for legs separately. ORS supplies them inline, so this is only
+// reached when GraphHopper served the route -- and there it would cost a request per leg, which is
+// not worth spending while the primary provider is down.
+async function fetchLegs() {
+  return null;
 }
 
 // --- has the driver left the planned route? ---------------------------------------------------
