@@ -173,6 +173,9 @@ import ProcessFlow from './pages/ProcessFlow';
 import Hrd from './pages/Hrd';
 import Product from './pages/Product';
 import HrdRoom from './pages/HrdRoom';
+import HrViolations from './pages/HrViolations';
+import HrIncidentReports from './pages/HrIncidentReports';
+import HrIncidentReportView from './pages/HrIncidentReportView';
 import NonStandardJobOrders from './pages/NonStandardJobOrders';
 import NonStandardJobOrderView from './pages/NonStandardJobOrderView';
 import NonStandardSalesOrders from './pages/NonStandardSalesOrders';
@@ -235,6 +238,9 @@ function App() {
         <Route path="/sales-orders/:id" element={<SalesOrderView />} />
         <Route path="/hrd" element={<Hrd />} />
         <Route path="/product" element={<Product />} />
+        <Route path="/hrd/violations" element={<HrViolations />} />
+        <Route path="/hrd/incident-reports" element={<HrIncidentReports />} />
+        <Route path="/hrd/incident-reports/:id" element={<HrIncidentReportView />} />
         <Route path="/hrd/:id" element={<HrdRoom />} />
         <Route path="/non-standard-job-orders" element={<NonStandardJobOrders />} />
         <Route path="/non-standard-job-orders/:id" element={<NonStandardJobOrderView />} />

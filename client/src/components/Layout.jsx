@@ -21,9 +21,19 @@ const NAV_STRUCTURE = [
   // The clickable order-to-cash chart -- a guide to the other modules rather than a
   // module of its own, so it sits at top level next to Dashboard.
   { route: '/process-flow', label: 'Manual' },
-  // HR document rooms. Top level next to Manual: it is reference material for everyone,
-  // not part of the order-to-cash chain the category dropdowns describe.
-  { route: '/hrd', label: 'HRD' },
+  // HRD. Top level next to Manual rather than inside a category dropdown: none of this belongs to
+  // the order-to-cash chain the other menus describe. Files are the document rooms it began as;
+  // Violation and Incident Report are the disciplinary pair, one raising the other.
+  // NTE and Memo follow the same chain and are not built yet, so they are not listed -- a menu
+  // entry that leads nowhere is worse than one that is missing.
+  {
+    label: 'HRD',
+    children: [
+      { route: '/hrd', label: 'Files' },
+      { route: '/hrd/violations', label: 'Violation' },
+      { route: '/hrd/incident-reports', label: 'Incident Report' },
+    ],
+  },
   // The company profile flipbook -- reference material anyone may show a customer,
   // so it sits at top level rather than inside a category dropdown.
   { route: '/product', label: 'Product' },
