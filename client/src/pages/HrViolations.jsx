@@ -72,6 +72,15 @@ function ChargeModal({ types, onClose, onSaved }) {
 
   const chosen = types.find((t) => String(t.id) === String(form.violation_type_id));
 
+  // Grouped in the order the server returns them, which is the code of conduct's own order.
+  // Anything with no category falls under a plain heading rather than vanishing from the list.
+  const grouped = [...types.reduce((m, t) => {
+    const key = t.category || 'Uncategorised';
+    if (!m.has(key)) m.set(key, []);
+    m.get(key).push(t);
+    return m;
+  }, new Map())];
+
   return (
     <Modal title="Charge a Violation" onClose={onClose} large>
       {error && <div className="error-banner">{error}</div>}
@@ -139,13 +148,16 @@ function ChargeModal({ types, onClose, onSaved }) {
       <div className="review-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
         <div className="field">
           <label>Violation *</label>
+          {/* Grouped under the code-of-conduct headings rather than prefixed with them. These run
+              to 78 characters, so "heading — name" on every line would push the actual violation
+              off the end of the dropdown. */}
           <select value={form.violation_type_id}
             onChange={(e) => setForm({ ...form, violation_type_id: e.target.value })}>
             <option value="">--Select--</option>
-            {types.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.category ? `${t.category} — ` : ''}{t.name}
-              </option>
+            {grouped.map(([category, items]) => (
+              <optgroup key={category} label={category}>
+                {items.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </optgroup>
             ))}
           </select>
           {types.length === 0 && (
@@ -197,6 +209,7 @@ function ChargeModal({ types, onClose, onSaved }) {
 function TypesModal({ onClose, onChanged, canEdit, canDelete }) {
   const empty = { name: '', code: '', category: '', severity: 'minor', description: '', sort_order: 0 };
   const [rows, setRows] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [form, setForm] = useState(empty);
   const [editing, setEditing] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -206,6 +219,10 @@ function TypesModal({ onClose, onChanged, canEdit, canDelete }) {
   const load = useCallback(() => api.get('/hr-violations/types', { params: { include_inactive: 1 } })
     .then(({ data }) => setRows(data)), []);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    api.get('/hr-violations/meta/categories')
+      .then(({ data }) => setCategories(data.categories || [])).catch(() => setCategories([]));
+  }, []);
 
   async function save() {
     if (!form.name.trim()) { setError('A violation name is required.'); return; }
@@ -269,8 +286,13 @@ function TypesModal({ onClose, onChanged, canEdit, canDelete }) {
             </div>
             <div className="field">
               <label>Category</label>
-              <input value={form.category || ''} maxLength={60} placeholder="e.g. Attendance"
-                onChange={(e) => setForm({ ...form, category: e.target.value })} />
+              {/* Fetched rather than hard-coded here, so the wording exists in one place and the
+                  dropdown can never offer something the server would reject. */}
+              <select value={form.category || ''}
+                onChange={(e) => setForm({ ...form, category: e.target.value })}>
+                <option value="">--Select--</option>
+                {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
             </div>
             <div className="field">
               <label>Severity</label>

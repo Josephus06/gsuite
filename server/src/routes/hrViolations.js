@@ -15,6 +15,26 @@ const ROUTE = '/hrd/violations';
 const IR_ROUTE = '/hrd/incident-reports';
 
 const SEVERITIES = ['minor', 'major', 'grave'];
+
+// The eight headings the company's code of conduct is organised under. A fixed list, not free
+// text: these are the sections a charge gets cited against, and "Offenses against Properties"
+// typed three slightly different ways would split one heading into three when HR looks at what
+// its people are actually being charged with.
+//
+// Kept server-side and served to the client, so the wording exists once. The two longest run to
+// 78 and 72 characters, which is why both category columns are VARCHAR(120) -- see
+// add-hr-violation-categories.js.
+const VIOLATION_CATEGORIES = [
+  'Offenses against the Person',
+  'Offenses against Properties',
+  'Offenses against Company Interest and Policies',
+  'Offenses against Cleanliness, Safety, Health, Security, and Public Order',
+  'Offenses against Decency, Good Custom, Honor, Morality, Honesty, and Integrity',
+  'Offenses against Administration',
+  'Offenses against Authority (Insubordination)',
+  'Other Offenses',
+];
+
 const trunc = (s, n) => (s == null || String(s).trim() === '' ? null : String(s).trim().slice(0, n));
 
 // --- the lookup ---------------------------------------------------------------------------
@@ -41,15 +61,29 @@ function readType(body) {
   const name = trunc(body.name, 150);
   if (!name) return { error: 'A violation name is required.' };
   const severity = SEVERITIES.includes(body.severity) ? body.severity : 'minor';
+
+  // Validated against the list rather than trimmed to fit. A category that is not one of the eight
+  // is a mistake worth saying out loud -- silently storing it would leave a charge filed under a
+  // heading the code of conduct does not have.
+  const category = trunc(body.category, 120);
+  if (category !== null && !VIOLATION_CATEGORIES.includes(category)) {
+    return { error: 'Choose one of the listed categories.' };
+  }
+
   return {
     name,
     severity,
+    category,
     code: trunc(body.code, 30),
-    category: trunc(body.category, 60),
     description: trunc(body.description, 1000),
     sortOrder: Number.isFinite(Number(body.sort_order)) ? Number(body.sort_order) : 0,
   };
 }
+
+// The wording lives on the server, so the dropdown and the validation can never disagree.
+router.get('/meta/categories', requireAuth, requirePermission(ROUTE, 'can_view'), (req, res) => {
+  res.json({ categories: VIOLATION_CATEGORIES, severities: SEVERITIES });
+});
 
 router.post('/types', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
