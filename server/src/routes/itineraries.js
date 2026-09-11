@@ -3,6 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 // Minted here, spent there: the token generator lives with the driver routes it authorises.
 const { newToken } = require('./driverRuns');
+const { routeKey, pointsFor, fetchRoute, fetchLegs } = require('../lib/roadRoute');
 
 const router = express.Router();
 
@@ -382,6 +383,67 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     params.push(req.params.id);
     await pool.query(`UPDATE delivery_itineraries SET ${fields.join(', ')} WHERE id = ?`, params);
     return res.json({ ok: true });
+  } catch (err) { return next(err); }
+});
+
+// The road route for a run: starting point, then each pinned stop in order.
+//
+// Served from cache unless the points have changed. `?refresh=1` forces a re-route, for when a
+// road has changed or a result looked wrong -- rare, and deliberate rather than automatic.
+router.get('/:id/route', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [[run]] = await pool.query(
+      `SELECT id, origin_latitude, origin_longitude, route_key, route_geometry, route_legs,
+              route_distance_m, route_duration_s, route_cached_at
+         FROM delivery_itineraries WHERE id = ?`, [req.params.id],
+    );
+    if (!run) return res.status(404).json({ error: 'Not found' });
+
+    const [stops] = await pool.query(
+      'SELECT latitude, longitude FROM delivery_itinerary_stops WHERE itinerary_id = ? ORDER BY sequence_no, id',
+      [req.params.id],
+    );
+    const points = pointsFor(run, stops);
+    if (points.length < 2) {
+      return res.json({ geometry: null, reason: 'Pin the starting point and at least one stop.' });
+    }
+
+    const key = routeKey(points);
+    if (run.route_key === key && run.route_geometry && req.query.refresh !== '1') {
+      return res.json({
+        geometry: JSON.parse(run.route_geometry),
+        legs: run.route_legs ? JSON.parse(run.route_legs) : null,
+        distance_m: run.route_distance_m,
+        duration_s: run.route_duration_s,
+        cached_at: run.route_cached_at,
+        cached: true,
+      });
+    }
+
+    const route = await fetchRoute(points);
+    if (route.error) {
+      // A straight line is still drawn by the client when this fails, so routing being down
+      // degrades the map rather than breaking the page.
+      return res.json({ geometry: null, error: route.error, detail: route.detail || null });
+    }
+    const legs = await fetchLegs(points);
+
+    await pool.query(
+      `UPDATE delivery_itineraries
+          SET route_key = ?, route_geometry = ?, route_legs = ?, route_distance_m = ?,
+              route_duration_s = ?, route_cached_at = NOW()
+        WHERE id = ?`,
+      [key, JSON.stringify(route.geometry), legs ? JSON.stringify(legs) : null,
+        route.distance_m, route.duration_s, req.params.id],
+    );
+
+    return res.json({
+      geometry: route.geometry,
+      legs,
+      distance_m: route.distance_m,
+      duration_s: route.duration_s,
+      cached: false,
+    });
   } catch (err) { return next(err); }
 });
 

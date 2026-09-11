@@ -33,6 +33,13 @@ function fmtTime(v) {
 // informs and one that misleads -- a phone indoors routinely reports hundreds of metres.
 const VAGUE_ACCURACY_M = 500;
 
+const km = (m) => (m == null ? null : (m / 1000).toFixed(1) + ' km');
+const mins = (s) => {
+  if (s == null) return null;
+  const m = Math.round(s / 60);
+  return m < 60 ? m + ' min' : Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+};
+
 // A numbered pin for a stop, green once delivered. Built as HTML rather than an image so there is
 // no icon asset to resolve and the number is legible at any zoom.
 function stopIcon(n, delivered) {
@@ -60,6 +67,7 @@ export default function DriverMap({ itineraryId, driverName, origin, stops = [] 
   const map = useRef(null);
   const layer = useRef(null);
   const [data, setData] = useState(null);
+  const [route, setRoute] = useState(null);
   const [error, setError] = useState('');
   const [live, setLive] = useState(true);
 
@@ -74,6 +82,23 @@ export default function DriverMap({ itineraryId, driverName, origin, stops = [] 
   }, [itineraryId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // The road route. Asked for separately from the driver's position and NOT on the 30-second
+  // refresh: a route only changes when the stops or pins do, and the server serves it from cache
+  // until then. Re-requesting it every refresh would spend the routing quota on an unchanged line.
+  //
+  // Keyed on the pinned points so reordering stops or moving a pin does fetch a fresh one.
+  const pinKey = JSON.stringify([
+    origin?.latitude, origin?.longitude,
+    ...stops.map((s) => [s.latitude, s.longitude]),
+  ]);
+  useEffect(() => {
+    let alive = true;
+    api.get(`/itineraries/${itineraryId}/route`)
+      .then(({ data: r }) => { if (alive) setRoute(r); })
+      .catch(() => { if (alive) setRoute(null); });
+    return () => { alive = false; };
+  }, [itineraryId, pinKey]);
 
   // Polled rather than pushed. The driver reports every 30 seconds at best, so a socket would buy
   // nothing over asking on the same cadence -- and this page is open on a desk, not a phone.
@@ -115,7 +140,13 @@ export default function DriverMap({ itineraryId, driverName, origin, stops = [] 
       L.marker(at, { icon: stopIcon(i + 1, s.status === 'delivered') }).addTo(layer.current)
         .bindPopup(`<strong>${i + 1}. ${s.customer_name || ''}</strong><br>${s.delivery_address || ''}`);
     });
-    if (planned.length > 1) {
+    // The road route when we have one; the straight sequence only as a fallback, and kept dashed
+    // so it never looks like a claimed route. Routing being unavailable degrades the map rather
+    // than emptying it.
+    if (route?.geometry?.length > 1) {
+      L.polyline(route.geometry, { color: '#0f172a', weight: 4, opacity: 0.65 }).addTo(layer.current);
+      everything.push(...route.geometry);
+    } else if (planned.length > 1) {
       L.polyline(planned, { color: '#0f172a', weight: 2, opacity: 0.45, dashArray: '6 6' }).addTo(layer.current);
     }
 
@@ -151,7 +182,7 @@ export default function DriverMap({ itineraryId, driverName, origin, stops = [] 
     // Leaflet measures the container when it is created; inside a card that was still laying out,
     // that measurement is wrong and half the tiles never load.
     setTimeout(() => map.current && map.current.invalidateSize(), 0);
-  }, [data, driverName, origin, stops]);
+  }, [data, route, driverName, origin, stops]);
 
   const latest = data?.latest;
   const vague = latest && Number(latest.accuracy_m) > VAGUE_ACCURACY_M;
@@ -173,6 +204,27 @@ export default function DriverMap({ itineraryId, driverName, origin, stops = [] 
 
       <div ref={holder} style={{ height: 340, borderRadius: 10, overflow: 'hidden', background: '#e5e7eb' }} />
 
+      {route?.distance_m != null && (
+        <div style={{ fontSize: 13, marginTop: 8 }}>
+          <strong>{km(route.distance_m)}</strong> and about <strong>{mins(route.duration_s)}</strong> driving
+          for the whole run{route.legs?.length ? ', by road' : ''}.
+          {route.legs?.length > 0 && (
+            <div className="muted" style={{ marginTop: 4 }}>
+              {route.legs.map((l, i) => (
+                <span key={l.from}>
+                  {i === 0 ? 'Start' : i}&nbsp;&rarr;&nbsp;{i + 1}: {km(l.distance_m)} / {mins(l.duration_s)}
+                  {i < route.legs.length - 1 ? ' · ' : ''}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {route?.error && (
+        <div className="muted" style={{ fontSize: 12, marginTop: 8, color: '#b45309' }}>
+          Road routing unavailable ({route.error}). The dashed line shows the stop order instead.
+        </div>
+      )}
       <div className="muted" style={{ fontSize: 13, marginTop: 8 }}>
         {latest ? (
           <>
