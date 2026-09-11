@@ -70,6 +70,7 @@ const hrIncidentReportRoutes = require('./routes/hrIncidentReports');
 const dashboardCarouselRoutes = require('./routes/dashboardCarousel');
 const productFlipbookRoutes = require('./routes/productFlipbook');
 const ticketReportRoutes = require('./routes/ticketReport');
+const driverRunRoutes = require('./routes/driverRuns');
 const deliverySummaryReportRoutes = require('./routes/deliverySummaryReport');
 const itineraryRoutes = require('./routes/itineraries');
 const artistIncentiveReportRoutes = require('./routes/artistIncentiveReport');
@@ -191,6 +192,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/lookups', lookupRoutes);
 // Unauthenticated: the customer-facing quote site is the only caller. See routes/publicQuotes.js.
 app.use('/api/public', publicQuoteRoutes);
+// Unauthenticated: the driver's own run sheet, opened from a tokenised link. See routes/driverRuns.js.
+app.use('/api/driver', driverRunRoutes);
 app.use('/api/web-products', webProductRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/users', userRoutes);

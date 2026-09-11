@@ -1,6 +1,8 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+// Minted here, spent there: the token generator lives with the driver routes it authorises.
+const { newToken } = require('./driverRuns');
 
 const router = express.Router();
 
@@ -287,6 +289,42 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     fields.push('updated_at = NOW()');
     params.push(req.params.id);
     await pool.query(`UPDATE delivery_itineraries SET ${fields.join(', ')} WHERE id = ?`, params);
+    return res.json({ ok: true });
+  } catch (err) { return next(err); }
+});
+
+// Minting the driver's link. An authenticated action on purpose: issuing a credential is the
+// office's to do, never the holder's.
+//
+// Re-issuing replaces the old token, which is also how a link is revoked -- share it to the wrong
+// group chat and you generate a new one, and the old link stops opening anything.
+router.post('/:id/driver-link', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const [[run]] = await pool.query(
+      'SELECT id, itinerary_date, status FROM delivery_itineraries WHERE id = ?', [req.params.id]);
+    if (!run) return res.status(404).json({ error: 'Not found' });
+    if (run.status === 'cancelled') return res.status(409).json({ error: 'This run is cancelled.' });
+
+    // A week after the run date. Long enough for a late signature or a driver who forgot to close
+    // one off; short enough that the link in last month's chat thread is already dead.
+    const token = newToken();
+    await pool.query(
+      `UPDATE delivery_itineraries
+          SET driver_token = ?, driver_token_expires_at = DATE_ADD(?, INTERVAL 7 DAY), updated_at = NOW()
+        WHERE id = ?`,
+      [token, run.itinerary_date, req.params.id],
+    );
+    return res.json({ token, path: `/driver/${token}` });
+  } catch (err) { return next(err); }
+});
+
+router.delete('/:id/driver-link', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const [r] = await pool.query(
+      'UPDATE delivery_itineraries SET driver_token = NULL, driver_token_expires_at = NULL, updated_at = NOW() WHERE id = ?',
+      [req.params.id],
+    );
+    if (!r.affectedRows) return res.status(404).json({ error: 'Not found' });
     return res.json({ ok: true });
   } catch (err) { return next(err); }
 });

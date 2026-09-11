@@ -408,6 +408,28 @@ export default function ItineraryView() {
     finally { setBusy(false); }
   }
 
+  // Mints the link and puts it on the clipboard, because the next thing anyone does with it is
+  // paste it into a message to the driver. Re-issuing replaces the previous token, which is also
+  // how a link shared with the wrong person is revoked.
+  async function makeDriverLink() {
+    if (it.driver_token && !confirm('Generate a new link? The one already sent will stop working.')) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const { data } = await api.post(`/itineraries/${id}/driver-link`);
+      const url = `${window.location.origin}${data.path}`;
+      try {
+        await navigator.clipboard.writeText(url);
+        setNotice(`Driver link copied — ${url}`);
+      } catch {
+        // Clipboard needs a secure context and permission; on plain HTTP it simply refuses.
+        // Showing the URL is worth more than reporting that the copy failed.
+        setNotice(`Driver link: ${url}`);
+      }
+      await load();
+    } catch (e) { setError(e.response?.data?.error || 'Could not create the link.'); }
+    finally { setBusy(false); }
+  }
+
   async function removeRun() {
     if (!confirm('Delete this itinerary?')) return;
     setBusy(true); setError('');
@@ -429,6 +451,9 @@ export default function ItineraryView() {
           <button className="btn btn-sm" onClick={() => navigate(`/itineraries/${id}/print`)}>Print</button>
           {canEdit && !cancelled && (
             <button className="btn btn-sm btn-primary" onClick={() => setShowAdd(true)}>Add Sales Orders</button>
+          )}
+          {canEdit && !cancelled && (
+            <button className="btn btn-sm" disabled={busy} onClick={makeDriverLink}>Driver Link</button>
           )}
           {canEdit && !cancelled && it.status === 'draft' && (
             <button className="btn btn-sm" disabled={busy} onClick={() => patch({ status: 'scheduled' })}>Mark Scheduled</button>
@@ -462,6 +487,8 @@ export default function ItineraryView() {
             <h4>Run</h4>
             <div>Date : <span className="hi">{fmtDate(it.itinerary_date)}</span></div>
             <div>Stops : <span className="hi">{delivered} of {stops.length} delivered</span></div>
+            <div>Start Odometer : <span className="hi">{it.beginning_odometer || '—'}</span></div>
+            <div>Driver Link : <span className="hi">{it.driver_token ? 'issued' : 'not issued'}</span></div>
             <div>Prepared By : <span className="hi">{it.created_by_name || '—'}</span></div>
           </div>
           <div>

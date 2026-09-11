@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import ProtectedRoute from './components/ProtectedRoute';
+import DriverRun from './pages/DriverRun';
 import Archiver from './pages/Archiver';
 import ArchiverEntryForm from './pages/ArchiverEntryForm';
 import ArchiverEntryView from './pages/ArchiverEntryView';
@@ -192,6 +193,8 @@ function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* Public by design -- the token IS the credential. See routes/driverRuns.js. */}
+      <Route path="/driver/:token" element={<DriverRun />} />
       {/* Standalone printable certificate -- protected but rendered without the app chrome. */}
       <Route path="/warranty-certificates/:id/print" element={<ProtectedRoute><WarrantyCertificatePrint /></ProtectedRoute>} />
       {/* Pre-printed Billing Statement overlay -- no app chrome, since anything else on the
