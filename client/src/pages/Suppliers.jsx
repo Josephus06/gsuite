@@ -1,11 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
 
-const EMPTY = { supplier_code: '', name: '', company_name: '', tin: '', payment_term_id: '', is_active: true };
+const EMPTY = {
+  supplier_code: '', name: '', company_name: '', tin: '', payment_term_id: '', is_active: true,
+  address: '', contact_no: '', mobile_no: '', office_no: '', fax_no: '', email: '',
+  credit_term: '', term_days: '', payee_name: '', bank_name: '', bank_account_name: '',
+  bank_account_no: '',
+};
 const EMPTY_CONTACT = { contact_name: '', title: '', email: '', phone: '', is_primary: false };
 const EMPTY_ADDRESS = { address_line: '', is_default: false };
 
@@ -19,6 +24,7 @@ export default function Suppliers() {
   const [newAddress, setNewAddress] = useState(EMPTY_ADDRESS);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
 
   async function load() {
     setLoading(true);
@@ -38,10 +44,11 @@ export default function Suppliers() {
 
   async function openEdit(row) {
     const { data } = await api.get(`/suppliers/${row.id}`);
-    setForm({
-      supplier_code: data.supplier_code || '', name: data.name, company_name: data.company_name || '',
-      tin: data.tin || '', payment_term_id: data.payment_term_id || '', is_active: !!data.is_active,
-    });
+    // Every key in EMPTY, filled from the record -- so a field the supplier has no value for still
+    // renders as a controlled empty input rather than an uncontrolled one.
+    setForm(Object.fromEntries(Object.keys(EMPTY).map((k) => (
+      k === 'is_active' ? [k, !!data.is_active] : [k, data[k] ?? '']
+    ))));
     setEditing(data);
     setNewContact(EMPTY_CONTACT);
     setNewAddress(EMPTY_ADDRESS);
@@ -100,11 +107,26 @@ export default function Suppliers() {
     openEdit(editing);
   }
 
+  // Filtered here rather than on the server: the endpoint hands back the whole list in one array
+  // and seven other pages rely on that shape for their supplier dropdowns. With 1,700-odd
+  // suppliers after the live import, ten to a page, this box is the only practical way to reach
+  // one -- paging to it would mean 170-odd pages.
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => ['supplier_code', 'name', 'company_name', 'tin', 'address',
+      'contact_no', 'mobile_no', 'email']
+      .some((f) => String(r[f] || '').toLowerCase().includes(q)));
+  }, [rows, search]);
+
   const columns = [
     { key: 'supplier_code', label: 'Code' },
     { key: 'name', label: 'Name' },
     { key: 'company_name', label: 'Company' },
-    { key: 'payment_term_name', label: 'Payment Term' },
+    { key: 'contact_no', label: 'Contact' },
+    // Imported suppliers carry live's free-text credit term and no payment_terms row to point at,
+    // so the column falls back to the text rather than showing 820 blanks.
+    { key: 'payment_term_name', label: 'Payment Term', render: (r) => r.payment_term_name || r.credit_term || '' },
     { key: 'is_active', label: 'Status', render: (r) => (r.is_active ? <span className="badge badge-success">Active</span> : <span className="badge badge-muted">Inactive</span>) },
   ];
 
@@ -115,11 +137,24 @@ export default function Suppliers() {
         {can('/suppliers', 'can_add') && <button className="btn btn-primary" onClick={openCreate}>Add Supplier</button>}
       </div>
       <div className="card">
+        <div className="field" style={{ maxWidth: 380, marginBottom: 12 }}>
+          <label>Search</label>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Name, code, company, TIN, contact or address..."
+          />
+        </div>
+        {!loading && (
+          <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+            {search ? `${visible.length} of ${rows.length} suppliers` : `${rows.length} suppliers`}
+          </div>
+        )}
         {loading ? <LoadingSpinner /> : (
           <DataTable
             paginate
             columns={columns}
-            rows={rows}
+            rows={visible}
             actions={(row) => (
               <>
                 {can('/suppliers', 'can_edit') && <button className="btn btn-sm" onClick={() => openEdit(row)}>Edit</button>}
@@ -167,6 +202,85 @@ export default function Suppliers() {
                 <label htmlFor="sup-active">Active</label>
               </div>
             </div>
+            {/* Everything below came across from the live system with the supplier import. The
+                `address` box here is live's single address line; the Addresses list further down
+                is this system's own multi-address table and is kept separate on purpose. */}
+            <div className="subsection">
+              <h3>Contact Details</h3>
+              <div className="field">
+                <label>Address</label>
+                <input value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
+              </div>
+              <div className="field-row">
+                <div className="field">
+                  <label>Contact No.</label>
+                  <input value={form.contact_no} onChange={(e) => setForm({ ...form, contact_no: e.target.value })} />
+                </div>
+                <div className="field">
+                  <label>Mobile No.</label>
+                  <input value={form.mobile_no} onChange={(e) => setForm({ ...form, mobile_no: e.target.value })} />
+                </div>
+              </div>
+              <div className="field-row">
+                <div className="field">
+                  <label>Office No.</label>
+                  <input value={form.office_no} onChange={(e) => setForm({ ...form, office_no: e.target.value })} />
+                </div>
+                <div className="field">
+                  <label>Fax No.</label>
+                  <input value={form.fax_no} onChange={(e) => setForm({ ...form, fax_no: e.target.value })} />
+                </div>
+              </div>
+              <div className="field-row">
+                <div className="field">
+                  <label>Email</label>
+                  <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+                </div>
+                <div className="field" />
+              </div>
+            </div>
+
+            <div className="subsection">
+              <h3>Credit Terms</h3>
+              <div className="field-row">
+                <div className="field">
+                  {/* Free text, matching live -- "30 DAYS", "50%DP - 50%DLVRY" and so on. The
+                      Payment Term dropdown above is this system's own lookup; a supplier can
+                      carry either, and the list shows the dropdown value in preference. */}
+                  <label>Credit Term</label>
+                  <input value={form.credit_term} onChange={(e) => setForm({ ...form, credit_term: e.target.value })} />
+                </div>
+                <div className="field">
+                  <label>Term (days)</label>
+                  <input type="number" min="0" value={form.term_days} onChange={(e) => setForm({ ...form, term_days: e.target.value })} />
+                </div>
+              </div>
+            </div>
+
+            <div className="subsection">
+              <h3>Payee &amp; Bank</h3>
+              <div className="field-row">
+                <div className="field">
+                  <label>Payee Name</label>
+                  <input value={form.payee_name} onChange={(e) => setForm({ ...form, payee_name: e.target.value })} />
+                </div>
+                <div className="field">
+                  <label>Bank Name</label>
+                  <input value={form.bank_name} onChange={(e) => setForm({ ...form, bank_name: e.target.value })} />
+                </div>
+              </div>
+              <div className="field-row">
+                <div className="field">
+                  <label>Bank Account Name</label>
+                  <input value={form.bank_account_name} onChange={(e) => setForm({ ...form, bank_account_name: e.target.value })} />
+                </div>
+                <div className="field">
+                  <label>Bank Account No.</label>
+                  <input value={form.bank_account_no} onChange={(e) => setForm({ ...form, bank_account_no: e.target.value })} />
+                </div>
+              </div>
+            </div>
+
             <div className="modal-actions">
               <button type="button" className="btn" onClick={() => setEditing(null)}>Close</button>
               <button type="submit" className="btn btn-primary">Save</button>

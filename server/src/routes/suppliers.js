@@ -5,7 +5,21 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const router = express.Router();
 const ROUTE = '/suppliers';
 
-const FIELDS = ['supplier_code', 'name', 'company_name', 'tin', 'payment_term_id', 'is_active'];
+// Everything a supplier record holds. The block after `is_active` came across from the live system
+// with the supplier import -- address, contact numbers, credit terms and payee/bank details -- and
+// is editable here so the two systems do not drift apart.
+//
+// `live_pk` and `live_id` are deliberately NOT here: they are the link back to the live record and
+// are set by the importer alone, never typed in.
+const FIELDS = ['supplier_code', 'name', 'company_name', 'tin', 'payment_term_id', 'is_active',
+  'address', 'contact_no', 'mobile_no', 'office_no', 'fax_no', 'email',
+  'credit_term', 'term_days', 'payee_name', 'bank_name', 'bank_account_name', 'bank_account_no'];
+
+// An empty box or an unselected <select> posts '', and "not filled in" is NULL, not ''. It matters
+// most for payment_term_id and term_days, which are INT: '' there either becomes 0 or errors
+// outright depending on the server's SQL mode, and a payment term of 0 points at no row at all.
+// Applying it to the text columns too keeps a cleared field matching what the importer stores.
+const blankToNull = (value) => (value === '' || value === undefined ? null : value);
 
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
@@ -37,7 +51,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const values = FIELDS.map((f) => (req.body[f] === undefined ? null : req.body[f]));
+    const values = FIELDS.map((f) => blankToNull(req.body[f]));
     const [result] = await conn.query(
       `INSERT INTO suppliers (${FIELDS.join(', ')}) VALUES (${FIELDS.map(() => '?').join(', ')})`,
       values
@@ -71,10 +85,16 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
-    const values = FIELDS.map((f) => (req.body[f] === undefined ? null : req.body[f]));
+    // Only the fields actually SENT are written. This matters now that a supplier carries the
+    // twelve imported columns: the old version wrote every field in FIELDS, using null for any the
+    // caller omitted, so a client that posted just a name and a code would silently blank the
+    // address, TIN, credit term and bank details that came across from the live system.
+    // Clearing a field on purpose still works -- that sends the field, as an empty string.
+    const present = FIELDS.filter((f) => req.body[f] !== undefined);
+    if (present.length === 0) return res.status(400).json({ error: 'Nothing to update' });
     await pool.query(
-      `UPDATE suppliers SET ${FIELDS.map((f) => `${f} = ?`).join(', ')}, updated_at = NOW() WHERE id = ?`,
-      [...values, req.params.id]
+      `UPDATE suppliers SET ${present.map((f) => `${f} = ?`).join(', ')}, updated_at = NOW() WHERE id = ?`,
+      [...present.map((f) => blankToNull(req.body[f])), req.params.id]
     );
     const [[row]] = await pool.query('SELECT * FROM suppliers WHERE id = ?', [req.params.id]);
     if (!row) return res.status(404).json({ error: 'Not found' });
