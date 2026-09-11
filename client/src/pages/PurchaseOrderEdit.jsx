@@ -38,17 +38,26 @@ export default function PurchaseOrderEdit() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [unavailable, setUnavailable] = useState([]);
 
+  // The Purchase Order itself is fatal if it will not load -- there is nothing to edit without it.
+  // The six lookups beside it are NOT: they sit behind six different permissions, and rolling them
+  // into one Promise.all meant a single 403 on any of them made the whole PO uneditable, reported
+  // as "Failed to load Purchase Order" when the order had loaded perfectly well. Each now fills in
+  // on its own, and anything unreadable is named in a banner instead of blocking the screen.
   useEffect(() => {
-    Promise.all([
-      api.get(`/purchase-orders/${id}`),
-      api.get('/suppliers'),
-      api.get('/lookups/payment-terms'),
-      api.get('/lookups/taxes'),
-      api.get('/lookups/locations'),
-      api.get('/lookups/departments'),
-      api.get('/inventory'),
-    ]).then(([poRes, supRes, termRes, taxRes, locRes, deptRes, itemRes]) => {
+    const load = (label, req, apply) => req
+      .then(({ data }) => apply(data))
+      .catch(() => setUnavailable((u) => (u.includes(label) ? u : [...u, label])));
+
+    load('Suppliers', api.get('/suppliers'), setSuppliers);
+    load('Terms', api.get('/lookups/payment-terms'), setTerms);
+    load('Tax codes', api.get('/lookups/taxes'), setTaxes);
+    load('Locations', api.get('/lookups/locations'), setLocations);
+    load('Departments', api.get('/lookups/departments'), setDepartments);
+    load('Items', api.get('/inventory'), setItems);
+
+    api.get(`/purchase-orders/${id}`).then((poRes) => {
       const p = poRes.data;
       setPo(p);
       setDateCreated(p.date_created ? String(p.date_created).slice(0, 10) : '');
@@ -68,12 +77,6 @@ export default function PurchaseOrderEdit() {
         locked: !!l.purchase_requisition_line_id || Number(l.received_qty || 0) > 0 || Number(l.billed_qty || 0) > 0,
         purchase_requisition_line_id: l.purchase_requisition_line_id || null,
       })));
-      setSuppliers(supRes.data);
-      setTerms(termRes.data);
-      setTaxes(taxRes.data);
-      setLocations(locRes.data);
-      setDepartments(deptRes.data);
-      setItems(itemRes.data);
       setLoading(false);
     }).catch((err) => {
       setError(err.response?.data?.error || 'Failed to load Purchase Order');
@@ -158,6 +161,13 @@ export default function PurchaseOrderEdit() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {unavailable.length > 0 && (
+        <div className="warning-banner">
+          Could not load: {unavailable.join(', ')}. You may not have permission to view
+          {unavailable.length === 1 ? ' it' : ' them'}, so the matching fields are empty — ask an
+          administrator to grant access.
+        </div>
+      )}
 
       <div className="card">
         <div className="review-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>

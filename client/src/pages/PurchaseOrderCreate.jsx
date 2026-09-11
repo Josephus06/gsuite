@@ -32,25 +32,28 @@ export default function PurchaseOrderCreate() {
   const [lines, setLines] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [unavailable, setUnavailable] = useState([]);
 
+  // Each lookup is loaded on its own instead of through Promise.all, which rejects as a whole the
+  // moment any one of its promises does. These seven calls sit behind SEVEN DIFFERENT permissions,
+  // so a user without Job Orders access got a 403 on that one request and lost every dropdown on
+  // the form -- supplier, term, tax, location, department, service items -- with nothing on screen
+  // to say why. The form looked broken rather than restricted.
+  //
+  // Now one unreadable lookup only empties its own control, and whatever failed is named in a
+  // banner, so the next person sees "you cannot read Job Orders" instead of an empty Supplier list.
   useEffect(() => {
-    Promise.all([
-      api.get('/suppliers'),
-      api.get('/lookups/payment-terms'),
-      api.get('/lookups/taxes'),
-      api.get('/lookups/locations'),
-      api.get('/lookups/departments'),
-      api.get('/job-orders', { params: { limit: 1000 } }),
-      api.get('/inventory', { params: { item_type: 'Service' } }),
-    ]).then(([supRes, termRes, taxRes, locRes, deptRes, joRes, svcRes]) => {
-      setSuppliers(supRes.data);
-      setTerms(termRes.data);
-      setTaxes(taxRes.data);
-      setLocations(locRes.data);
-      setDepartments(deptRes.data);
-      setJobOrders(joRes.data.rows || []);
-      setServiceItems(svcRes.data);
-    });
+    const load = (label, req, apply) => req
+      .then(({ data }) => apply(data))
+      .catch(() => setUnavailable((u) => (u.includes(label) ? u : [...u, label])));
+
+    load('Suppliers', api.get('/suppliers'), setSuppliers);
+    load('Terms', api.get('/lookups/payment-terms'), setTerms);
+    load('Tax codes', api.get('/lookups/taxes'), setTaxes);
+    load('Locations', api.get('/lookups/locations'), setLocations);
+    load('Departments', api.get('/lookups/departments'), setDepartments);
+    load('Job Orders', api.get('/job-orders', { params: { limit: 1000 } }), (d) => setJobOrders(d.rows || []));
+    load('Service items', api.get('/inventory', { params: { item_type: 'Service' } }), setServiceItems);
   }, []);
 
   function addLine(item) {
@@ -126,6 +129,15 @@ export default function PurchaseOrderCreate() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {/* Named rather than silent: an empty Supplier picker with no explanation is what sent people
+          looking for a bug in the supplier list. */}
+      {unavailable.length > 0 && (
+        <div className="warning-banner">
+          Could not load: {unavailable.join(', ')}. You may not have permission to view
+          {unavailable.length === 1 ? ' it' : ' them'}, so the matching fields are empty — ask an
+          administrator to grant access.
+        </div>
+      )}
 
       <div className="card">
         <div className="review-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
