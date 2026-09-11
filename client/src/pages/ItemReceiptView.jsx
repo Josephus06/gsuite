@@ -32,8 +32,7 @@ export default function ItemReceiptView() {
 
   if (loading || !data) return <LoadingSpinner />;
 
-  // No permission page of its own -- inherits the Transfer Order's edit right.
-  const canEdit = can('/transfer-orders', 'can_edit');
+  const canEdit = can('/item-receipts', 'can_edit');
 
   return (
     <div>

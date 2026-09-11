@@ -39,9 +39,7 @@ export default function ItemFulfillmentView() {
 
   if (loading || !data) return <LoadingSpinner />;
 
-  // Item Fulfillment has no permission page of its own -- it hangs off the Transfer
-  // Order, so it inherits the TO's edit right.
-  const canEdit = can('/transfer-orders', 'can_edit');
+  const canEdit = can('/item-fulfillments', 'can_edit');
 
   return (
     <div>

@@ -8,6 +8,16 @@ const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const router = express.Router();
 const ROUTE = '/transfer-orders';
 
+// Item Fulfillment and Item Receipt have their own permission pages -- they are separate jobs
+// done by different warehouses, and used to ride on the Transfer Order's can_approve, so one
+// switch governed both fulfilling and receiving. See db/add-fulfillment-receipt-pages.js.
+//
+// The rule below is that an endpoint is gated by the PAGE IT SERVES, not by the entity it
+// returns. So the fulfillment list shown inside a Transfer Order stays on ROUTE: revoking Item
+// Fulfillment access should not blank out a panel in the middle of the Transfer Order screen.
+const FULFILLMENT_ROUTE = '/item-fulfillments';
+const RECEIPT_ROUTE = '/item-receipts';
+
 // qty_on_hand is joined live from the withdraw-from location rather than read off the
 // line's own stored column -- that column is only a creation-time snapshot, so it goes
 // stale the moment stock moves afterward (e.g. an Inventory Adjustment approved after
@@ -130,7 +140,7 @@ function locationRequestorFilters(where, params, query, toAlias) {
 // Paginated: this list holds 41,001 fulfilments after the transfer-order migration, and it
 // used to return every one of them, with a second query fanning out to all their lines to
 // derive a status.
-router.get('/item-fulfillments', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/item-fulfillments', requireAuth, requirePermission(FULFILLMENT_ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const { search, page = '1', limit = '10' } = req.query;
     const where = [];
@@ -184,7 +194,7 @@ router.get('/item-fulfillments', requireAuth, requirePermission(ROUTE, 'can_view
 });
 
 // Paginated for the same reason as the fulfilments list above: 40,584 receipts.
-router.get('/item-receipts', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/item-receipts', requireAuth, requirePermission(RECEIPT_ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const { search, page = '1', limit = '10' } = req.query;
     const where = [];
@@ -276,7 +286,7 @@ router.get('/:id/item-fulfillments', requireAuth, requirePermission(ROUTE, 'can_
 // To's), not Withdraw From's, since this document's own numbers (Fulfill/Received) are
 // about what's landed (or about to land) there -- matches how Item Receipt's view shows
 // the identical figure for the same items.
-router.get('/item-fulfillments/:fulfillmentId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/item-fulfillments/:fulfillmentId', requireAuth, requirePermission(FULFILLMENT_ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[f]] = await pool.query(
       `SELECT f.*, u.display_name AS created_by_name,
@@ -313,7 +323,9 @@ router.get('/item-fulfillments/:fulfillmentId', requireAuth, requirePermission(R
   }
 });
 
-router.get('/item-fulfillments/:fulfillmentId/item-receipts', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+// Serves the Related Records panel on the Item Fulfillment view, so it is gated on the
+// fulfillment's own can_view rather than the receipt's -- same reasoning as the TO panel above.
+router.get('/item-fulfillments/:fulfillmentId/item-receipts', requireAuth, requirePermission(FULFILLMENT_ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [rows] = await pool.query(
       `SELECT r.*, u.display_name AS created_by_name FROM item_receipts r
@@ -331,7 +343,7 @@ router.get('/item-fulfillments/:fulfillmentId/item-receipts', requireAuth, requi
 // saving one is what actually lands stock at Transfer To. Always raised against one
 // specific Item Fulfillment batch (never the Transfer Order directly), since a line can
 // be fulfilled across several batches and each is received independently.
-router.post('/item-fulfillments/:fulfillmentId/item-receipts', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
+router.post('/item-fulfillments/:fulfillmentId/item-receipts', requireAuth, requirePermission(RECEIPT_ROUTE, 'can_add'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[f]] = await conn.query(
@@ -424,7 +436,7 @@ router.post('/item-fulfillments/:fulfillmentId/item-receipts', requireAuth, requ
 // Item Fulfillment line's running totals (not just this one receipt's own qty), so the
 // document reads as a status snapshot, not just a transaction amount -- matching how the
 // real screen shows the exact same figures here as on the Item Fulfillment it closes.
-router.get('/item-receipts/:receiptId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/item-receipts/:receiptId', requireAuth, requirePermission(RECEIPT_ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[r]] = await pool.query(
       `SELECT r.*, u.display_name AS created_by_name,
@@ -819,7 +831,7 @@ router.delete('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_e
 // transactions -- `fulfilled` is a running total capped at that line's own qty (or
 // Adjusted Qty, if the requestor tweaked it). The Transfer Order only flips to
 // "fulfilled" once every line's running total has caught all the way up.
-router.post('/:id/item-fulfillments', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
+router.post('/:id/item-fulfillments', requireAuth, requirePermission(FULFILLMENT_ROUTE, 'can_add'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[t]] = await conn.query(

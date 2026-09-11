@@ -102,8 +102,10 @@ const NAV_STRUCTURE = [
           { route: '/inventory-adjustments', label: 'Inventory Adjustments' },
           { route: '/rmis', label: 'RMI' },
           { route: '/transfer-orders', label: 'Transfer Orders' },
-          { route: '/item-fulfillments', permRoute: '/transfer-orders', label: 'Item Fulfillments' },
-          { route: '/item-receipts', permRoute: '/transfer-orders', label: 'Item Receipts' },
+          // Both have their own `pages` row now, so no permRoute override: the nav checks the
+          // link's own route. They used to borrow the Transfer Order's scope.
+          { route: '/item-fulfillments', label: 'Item Fulfillments' },
+          { route: '/item-receipts', label: 'Item Receipts' },
           { route: '/office-supply-requisitions', label: 'Office Supply Requisition' },
         ],
       },

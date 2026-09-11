@@ -87,7 +87,13 @@ export default function TransferOrderView() {
   if (loading || !to) return <LoadingSpinner />;
 
   const canEdit = can('/transfer-orders', 'can_edit');
-  const canApprove = can('/transfer-orders', 'can_approve');
+  // Fulfilling and receiving are separate jobs done by the two warehouses, and each now has its
+  // own permission page. They both used to be can_approve on the Transfer Order, so one switch
+  // let a person do both ends of the transfer.
+  // Named "may..." to keep them distinct from canStillFulfill / canReceive just below, which are
+  // about the transfer's STATUS rather than the user's rights. Both have to hold.
+  const mayFulfill = can('/item-fulfillments', 'can_add');
+  const mayReceive = can('/item-receipts', 'can_add');
   const isPending = to.status === 'pending_fulfillment';
   const canStillFulfill = CAN_STILL_FULFILL.includes(to.status);
   const canReceive = CAN_RECEIVE.includes(to.status);
@@ -100,8 +106,8 @@ export default function TransferOrderView() {
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/transfer-orders')}>Back</button>
           {canEdit && isPending && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/transfer-orders/${id}/edit`)}>Edit</button>}
-          {canApprove && canStillFulfill && lines.length > 0 && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfillModal(true)}>Fulfill</button>}
-          {canApprove && canReceive && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfillmentsPicker(true)}>Receive</button>}
+          {mayFulfill && canStillFulfill && lines.length > 0 && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfillModal(true)}>Fulfill</button>}
+          {mayReceive && canReceive && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfillmentsPicker(true)}>Receive</button>}
           {canEdit && canCancel && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
         </div>
