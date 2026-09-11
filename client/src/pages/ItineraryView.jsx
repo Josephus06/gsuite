@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import DriverMap from '../components/DriverMap';
 
 const STATUS_BADGE = {
   draft: 'badge-muted', scheduled: 'badge-info', dispatched: 'badge-warning',
@@ -528,6 +529,9 @@ export default function ItineraryView() {
           </div>
         </div>
       )}
+
+      {/* Only once a link has been issued -- before that there is nothing that could report. */}
+      {it.driver_token && <DriverMap itineraryId={id} driverName={it.driver_name} />}
 
       <div className="card" style={{ marginTop: 16 }}>
         <div className="page-header" style={{ marginBottom: 12 }}>

@@ -212,6 +212,61 @@ router.post('/:token/stops/:stopId/sign', async (req, res, next) => {
   } catch (err) { return next(err); }
 });
 
+// --- where the van is ---------------------------------------------------------------------
+//
+// Reported by the driver's phone while the run page is open. The browser refuses location on an
+// insecure origin, so this only ever fires over HTTPS.
+
+// Location data about a person, kept only as long as it is useful. A trail from three months ago
+// answers no question anybody asks and is a liability to hold, so writes prune as they go rather
+// than waiting for a job somebody has to remember to schedule.
+const POSITION_RETENTION_DAYS = 30;
+// A fix every 30 seconds is the plan; anything faster is a client misbehaving or retrying, and
+// there is no reason to store two points a second apart.
+const MIN_SECONDS_BETWEEN_FIXES = 10;
+
+router.post('/:token/position', async (req, res, next) => {
+  try {
+    const { run, error, status } = await runForToken(req.params.token);
+    if (error) return res.status(status).json({ error });
+
+    const lat = Number(req.body.latitude);
+    const lng = Number(req.body.longitude);
+    // Range-checked rather than trusted. This endpoint takes no credential beyond the token, and
+    // a nonsense pair would put the map somewhere in the Atlantic.
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90
+        || !Number.isFinite(lng) || lng < -180 || lng > 180) {
+      return res.status(400).json({ error: 'Invalid position.' });
+    }
+
+    const [[last]] = await pool.query(
+      'SELECT recorded_at FROM delivery_driver_positions WHERE itinerary_id = ? ORDER BY recorded_at DESC LIMIT 1',
+      [run.id],
+    );
+    if (last && (Date.now() - new Date(last.recorded_at).getTime()) < MIN_SECONDS_BETWEEN_FIXES * 1000) {
+      // Accepted, not stored. Telling the phone it failed would only make it retry.
+      return res.json({ ok: true, skipped: 'too soon' });
+    }
+
+    const round = (v, d) => (Number.isFinite(Number(v)) ? Number(Number(v).toFixed(d)) : null);
+    await pool.query(
+      `INSERT INTO delivery_driver_positions
+         (itinerary_id, latitude, longitude, accuracy_m, speed_kph, heading_deg)
+       VALUES (?,?,?,?,?,?)`,
+      [run.id, lat, lng,
+        Number.isFinite(Number(req.body.accuracy_m)) ? Math.round(Number(req.body.accuracy_m)) : null,
+        round(req.body.speed_kph, 2),
+        Number.isFinite(Number(req.body.heading_deg)) ? Math.round(Number(req.body.heading_deg)) : null],
+    );
+
+    await pool.query(
+      'DELETE FROM delivery_driver_positions WHERE recorded_at < DATE_SUB(NOW(), INTERVAL ? DAY)',
+      [POSITION_RETENTION_DAYS],
+    );
+    return res.json({ ok: true });
+  } catch (err) { return next(err); }
+});
+
 // Minted by the office, not here -- issuing a credential is not something an unauthenticated
 // caller gets to do. Exported for routes/itineraries.js to use.
 function newToken() {

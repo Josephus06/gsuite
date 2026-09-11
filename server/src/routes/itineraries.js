@@ -293,6 +293,37 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
   } catch (err) { return next(err); }
 });
 
+// The driver's trail for this run. What the map on the itinerary screen draws.
+//
+// Capped and thinned rather than returned whole: a full day at a fix every 30 seconds is ~2,800
+// points, which is more line than any screen can show a difference across. The most recent fix is
+// always returned exactly -- that is the one the planner is actually looking at.
+router.get('/:id/positions', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [[latest]] = await pool.query(
+      `SELECT latitude, longitude, accuracy_m, speed_kph, heading_deg, recorded_at
+         FROM delivery_driver_positions WHERE itinerary_id = ?
+        ORDER BY recorded_at DESC LIMIT 1`, [req.params.id],
+    );
+
+    const [count] = await pool.query(
+      'SELECT COUNT(*) AS n FROM delivery_driver_positions WHERE itinerary_id = ?', [req.params.id]);
+    const total = Number(count[0].n);
+    // Every nth row, so the shape of the route survives however long the run was.
+    const step = Math.max(1, Math.ceil(total / 300));
+
+    const [trail] = await pool.query(
+      `SELECT latitude, longitude, accuracy_m, recorded_at FROM (
+         SELECT p.*, ROW_NUMBER() OVER (ORDER BY p.recorded_at) AS rn
+           FROM delivery_driver_positions p WHERE p.itinerary_id = ?
+       ) x WHERE MOD(x.rn - 1, ?) = 0 ORDER BY recorded_at`,
+      [req.params.id, step],
+    );
+
+    return res.json({ latest: latest || null, trail, total, sampled_every: step });
+  } catch (err) { return next(err); }
+});
+
 // Minting the driver's link. An authenticated action on purpose: issuing a credential is the
 // office's to do, never the holder's.
 //

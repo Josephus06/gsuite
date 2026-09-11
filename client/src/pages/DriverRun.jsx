@@ -178,6 +178,52 @@ function Stop({ stop, token, index, onChanged }) {
   );
 }
 
+// Reports where the phone is, every 30 seconds, while this page is open.
+//
+// Deliberately opt-in and visible. This tracks a person, so the driver taps to start it, can stop
+// it at any time, and the page says plainly what it is doing -- a run sheet that quietly reported
+// someone's location would be a nasty thing to discover.
+//
+// It only works over HTTPS. Browsers refuse geolocation on an insecure origin, which is why this
+// reports nothing on the plain-HTTP office and droplet boxes.
+function useLocationSharing(token) {
+  const [state, setState] = useState('off'); // off | asking | on | denied | unsupported
+  const [lastSent, setLastSent] = useState(null);
+  const timer = useRef(null);
+
+  const send = useCallback((pos) => {
+    const c = pos.coords;
+    api.post(`/driver/${token}/position`, {
+      latitude: c.latitude,
+      longitude: c.longitude,
+      accuracy_m: c.accuracy,
+      // The browser reports metres per second; the office reads km/h.
+      speed_kph: c.speed === null || c.speed === undefined ? null : c.speed * 3.6,
+      heading_deg: c.heading === null || c.heading === undefined ? null : c.heading,
+    }).then(() => setLastSent(new Date())).catch(() => {});
+  }, [token]);
+
+  const stop = useCallback(() => {
+    if (timer.current) { clearInterval(timer.current); timer.current = null; }
+    setState('off');
+  }, []);
+
+  const start = useCallback(() => {
+    if (!navigator.geolocation) { setState('unsupported'); return; }
+    setState('asking');
+    const tick = () => navigator.geolocation.getCurrentPosition(
+      (pos) => { setState('on'); send(pos); },
+      (err) => setState(err.code === err.PERMISSION_DENIED ? 'denied' : 'on'),
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 15000 },
+    );
+    tick();
+    timer.current = setInterval(tick, 30000);
+  }, [send]);
+
+  useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
+  return { state, lastSent, start, stop };
+}
+
 export default function DriverRun() {
   const { token } = useParams();
   const [run, setRun] = useState(null);
@@ -185,6 +231,7 @@ export default function DriverRun() {
   const [error, setError] = useState('');
   const [begin, setBegin] = useState('');
   const [busy, setBusy] = useState(false);
+  const location = useLocationSharing(token);
 
   const load = useCallback(async () => {
     try {
@@ -217,6 +264,38 @@ export default function DriverRun() {
       <div style={{ ...S.muted, marginBottom: 12 }}>{delivered} of {stops.length} delivered</div>
 
       {error && <div style={S.err}>{error}</div>}
+
+      {/* Said out loud, not buried. The driver chooses to share and can stop whenever. */}
+      <div style={{ ...S.card, background: location.state === 'on' ? '#f0fdf4' : '#f8fafc' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+          <div>
+            <strong style={{ fontSize: 15 }}>
+              {location.state === 'on' ? 'Sharing your location' : 'Location sharing is off'}
+            </strong>
+            <div style={S.muted}>
+              {location.state === 'on'
+                ? `The office can see where you are while this page is open.${location.lastSent ? ` Last sent ${fmtTime(location.lastSent)}.` : ''}`
+                : location.state === 'denied'
+                  ? 'Your phone blocked location. Allow it in your browser settings if the office needs it.'
+                  : location.state === 'unsupported'
+                    ? 'This phone cannot share location.'
+                    : location.state === 'asking'
+                      ? 'Waiting for your phone to allow it…'
+                      : 'Turn this on so the office can see where you are during the run.'}
+            </div>
+          </div>
+          <button type="button"
+            style={{ ...S.btnQuiet, width: 'auto', whiteSpace: 'nowrap' }}
+            onClick={() => (location.state === 'on' ? location.stop() : location.start())}>
+            {location.state === 'on' ? 'Stop' : 'Share'}
+          </button>
+        </div>
+        {location.state === 'on' && (
+          <div style={{ ...S.muted, marginTop: 8, fontSize: 12 }}>
+            Updates stop when you lock the phone or switch apps. Come back to this page to resume.
+          </div>
+        )}
+      </div>
 
       {/* The run's starting reading. Every stop's leg is measured from here, so it is asked for
           once, up front, rather than being guessed backwards from the first stop. */}
