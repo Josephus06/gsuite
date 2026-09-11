@@ -44,11 +44,31 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   try {
     const {
       status, search, with_counts: withCounts, item_type: itemType,
-      include_jo_services: includeJoServices,
+      include_jo_services: includeJoServices, include_inactive: includeInactive,
     } = req.query;
 
     const commonWhere = [];
     const commonParams = [];
+
+    // RETIRED ITEMS ARE HIDDEN BY DEFAULT.
+    //
+    // This one endpoint is the item picker for every form in the build -- Estimate, Job Order,
+    // Purchase Order, Purchase Requisition, Transfer Order, Inventory Adjustment, Landed Cost,
+    // Job Type materials, Credit Memo, Delivery Ticket, Web Products. Marking an item inactive is
+    // how the business says "stop using this", and until now it carried on being offered
+    // everywhere, so the flag meant nothing outside the Inventory list's own tabs.
+    //
+    // Defaulting to hidden rather than adding an opt-in flag at each call site is deliberate: the
+    // next form somebody builds gets the safe behaviour without having to know to ask for it.
+    //
+    // Two ways back in:
+    //   ?status=...            the Inventory / Service Items / Non-Inventories tabs, whose filters
+    //                          already pin is_active themselves (including the Inactive tab), so
+    //                          this must not fight them.
+    //   ?include_inactive=1    for reads of the past rather than data entry -- the Bin Card and
+    //                          Stock Ledger pickers, where a discontinued item still has stock on
+    //                          a shelf and a history worth reading.
+    if (!status && includeInactive !== '1') commonWhere.push('i.is_active = 1');
     if (search) {
       commonWhere.push('(i.item_code LIKE ? OR i.display_name LIKE ? OR i.sales_description LIKE ?)');
       commonParams.push(`%${search}%`, `%${search}%`, `%${search}%`);

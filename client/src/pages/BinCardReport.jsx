@@ -44,7 +44,9 @@ export default function BinCardReport() {
   const [meta, setMeta] = useState(null);
 
   useEffect(() => {
-    api.get('/inventory').then(({ data }) => setInventoryItems(data));
+    // include_inactive: a discontinued item still has stock on a shelf and a history worth
+    // reading. This is a report, not a form -- hiding it here would hide real stock.
+    api.get('/inventory', { params: { include_inactive: 1 } }).then(({ data }) => setInventoryItems(data));
     api.get('/lookups/locations').then(({ data }) => setLocations(data));
   }, []);
 
