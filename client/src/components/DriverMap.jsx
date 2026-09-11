@@ -68,13 +68,21 @@ export default function DriverMap({ itineraryId, driverName, origin, stops = [] 
   const layer = useRef(null);
   const [data, setData] = useState(null);
   const [route, setRoute] = useState(null);
+  const [liveRoute, setLiveRoute] = useState(null);
   const [error, setError] = useState('');
   const [live, setLive] = useState(true);
 
+  // Position and live route are fetched together on the same 30-second beat. The live route is
+  // cheap to ask for: the server answers most calls from arithmetic and cache, and only routes
+  // again when the driver has actually left the planned way or a stop has been delivered.
   const load = useCallback(async () => {
     try {
-      const { data: d } = await api.get(`/itineraries/${itineraryId}/positions`);
-      setData(d);
+      const [pos, live] = await Promise.all([
+        api.get(`/itineraries/${itineraryId}/positions`),
+        api.get(`/itineraries/${itineraryId}/live-route`).catch(() => ({ data: null })),
+      ]);
+      setData(pos.data);
+      setLiveRoute(live.data);
       setError('');
     } catch (e) {
       setError(e.response?.data?.error || 'Could not load the driver position.');
@@ -150,6 +158,13 @@ export default function DriverMap({ itineraryId, driverName, origin, stops = [] 
       L.polyline(planned, { color: '#0f172a', weight: 2, opacity: 0.45, dashArray: '6 6' }).addTo(layer.current);
     }
 
+    // The way ahead from where the driver actually is. Drawn over the plan rather than replacing
+    // it, because the difference between the two IS the information.
+    if (liveRoute?.geometry?.length > 1 && liveRoute.state === 'off_route') {
+      L.polyline(liveRoute.geometry, { color: '#d97706', weight: 4, opacity: 0.85 }).addTo(layer.current);
+      everything.push(...liveRoute.geometry);
+    }
+
     const trail = (data.trail || []).map((p) => [Number(p.latitude), Number(p.longitude)]);
     everything.push(...trail);
     if (trail.length > 1) {
@@ -182,7 +197,7 @@ export default function DriverMap({ itineraryId, driverName, origin, stops = [] 
     // Leaflet measures the container when it is created; inside a card that was still laying out,
     // that measurement is wrong and half the tiles never load.
     setTimeout(() => map.current && map.current.invalidateSize(), 0);
-  }, [data, route, driverName, origin, stops]);
+  }, [data, route, liveRoute, driverName, origin, stops]);
 
   const latest = data?.latest;
   const vague = latest && Number(latest.accuracy_m) > VAGUE_ACCURACY_M;
@@ -220,6 +235,43 @@ export default function DriverMap({ itineraryId, driverName, origin, stops = [] 
           )}
         </div>
       )}
+      {/* Said in words as well as colour. "Off the planned route" is the thing a dispatcher acts
+          on -- a line changing shade is easy to miss on a screen nobody is staring at. */}
+      {liveRoute?.state === 'off_route' && (
+        <div style={{
+          fontSize: 13, marginTop: 8, padding: '8px 10px', borderRadius: 8,
+          background: '#fffbeb', border: '1px solid #fcd34d', color: '#92400e',
+        }}>
+          <strong>Driver is off the planned route</strong>
+          {liveRoute.deviation?.distance_m != null
+            ? ` — about ${liveRoute.deviation.distance_m}m from it.` : '.'}
+          {liveRoute.distance_m != null && (
+            <> The amber line is the way on from where they are: <strong>{km(liveRoute.distance_m)}</strong>,
+              about <strong>{mins(liveRoute.duration_s)}</strong>
+              {liveRoute.stops_remaining ? ` for ${liveRoute.stops_remaining} remaining stop${liveRoute.stops_remaining === 1 ? '' : 's'}` : ''}.
+            </>
+          )}
+        </div>
+      )}
+      {liveRoute?.state === 'on_route' && liveRoute.deviation?.known && (
+        <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+          On the planned route ({liveRoute.deviation.distance_m}m from it).
+        </div>
+      )}
+      {liveRoute?.deviation?.reason === 'fix_too_vague' && (
+        <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+          {/* Honest about not knowing: a fix this vague is consistent with being on the route and
+              with being nowhere near it. */}
+          Cannot tell whether they are on route — that fix is only accurate to
+          {' '}{liveRoute.deviation.accuracy_m}m.
+        </div>
+      )}
+      {liveRoute?.state === 'all_delivered' && (
+        <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+          Every stop delivered — nothing left to route.
+        </div>
+      )}
+
       {route?.error && (
         <div className="muted" style={{ fontSize: 12, marginTop: 8, color: '#b45309' }}>
           Road routing unavailable ({route.error}). The dashed line shows the stop order instead.

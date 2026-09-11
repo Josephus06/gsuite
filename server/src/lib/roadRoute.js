@@ -91,4 +91,64 @@ async function fetchLegs(points) {
   return legs;
 }
 
-module.exports = { routeKey, pointsFor, fetchRoute, fetchLegs, MAX_POINTS };
+// --- has the driver left the planned route? ---------------------------------------------------
+//
+// Answered with arithmetic, not another routing request. This is checked every time the driver's
+// position refreshes -- every 30 seconds while a run is out -- and asking a routing service that
+// often would exhaust a free plan by lunchtime. Distance from a point to a polyline is a few lines
+// of maths; spending an API call on it would be absurd.
+
+// Metres per degree at Cebu's latitude. An equirectangular approximation: wrong by a fraction of a
+// percent over a city, and this is deciding "within 200m or not", not surveying a boundary.
+const M_PER_DEG_LAT = 110574;
+const mPerDegLng = (lat) => 111320 * Math.cos((lat * Math.PI) / 180);
+
+// Shortest distance from p to the segment ab, all in metres, projected flat around p.
+function distanceToSegment(p, a, b) {
+  const kx = mPerDegLng(p[0]);
+  const ax = (a[1] - p[1]) * kx; const ay = (a[0] - p[0]) * M_PER_DEG_LAT;
+  const bx = (b[1] - p[1]) * kx; const by = (b[0] - p[0]) * M_PER_DEG_LAT;
+  const dx = bx - ax; const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  // A zero-length segment is just a point; routing geometry does contain repeated coordinates.
+  if (len2 === 0) return Math.hypot(ax, ay);
+  // How far along ab the perpendicular from p falls, clamped to the segment's ends.
+  let t = -((ax * dx + ay * dy) / len2);
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(ax + t * dx, ay + t * dy);
+}
+
+function distanceToPath(point, path) {
+  if (!Array.isArray(path) || path.length < 2) return null;
+  let best = Infinity;
+  for (let i = 0; i < path.length - 1; i += 1) {
+    const d = distanceToSegment(point, path[i], path[i + 1]);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+// How far off the planned line counts as "gone another way".
+//
+// 200m, because city streets run parallel and a GPS fix is routinely 20-50m out; a tighter figure
+// would cry deviation every time the van passed a block over. A fix whose OWN accuracy is worse
+// than this cannot answer the question at all -- a 500m-accurate position is consistent with being
+// on the route and with being nowhere near it -- so those are reported as unknown rather than
+// guessed.
+const DEVIATION_M = 200;
+
+function deviation(position, plannedGeometry) {
+  if (!position || !plannedGeometry?.length) return { known: false };
+  const accuracy = Number(position.accuracy_m);
+  if (Number.isFinite(accuracy) && accuracy > DEVIATION_M) {
+    return { known: false, reason: 'fix_too_vague', accuracy_m: Math.round(accuracy) };
+  }
+  const d = distanceToPath([Number(position.latitude), Number(position.longitude)], plannedGeometry);
+  if (d === null) return { known: false };
+  return { known: true, distance_m: Math.round(d), off_route: d > DEVIATION_M };
+}
+
+module.exports = {
+  routeKey, pointsFor, fetchRoute, fetchLegs, MAX_POINTS,
+  distanceToPath, deviation, DEVIATION_M,
+};

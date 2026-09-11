@@ -3,7 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 // Minted here, spent there: the token generator lives with the driver routes it authorises.
 const { newToken } = require('./driverRuns');
-const { routeKey, pointsFor, fetchRoute, fetchLegs } = require('../lib/roadRoute');
+const { routeKey, pointsFor, fetchRoute, fetchLegs, deviation } = require('../lib/roadRoute');
 
 const router = express.Router();
 
@@ -442,6 +442,94 @@ router.get('/:id/route', requireAuth, requirePermission(ROUTE, 'can_view'), asyn
       legs,
       distance_m: route.distance_m,
       duration_s: route.duration_s,
+      cached: false,
+    });
+  } catch (err) { return next(err); }
+});
+
+// THE LIVE ROUTE: the way ahead from where the driver actually is.
+//
+// The planned route above is office -> stop 1 -> stop 2, decided before anyone set off. Once the
+// van is moving, two things make it stale: stops get delivered, and drivers take a different way.
+// This answers "from here, what is left" -- and it only asks the routing service when the answer
+// would actually differ.
+//
+// Three guards, because this is polled every 30 seconds while a run is out and a free routing plan
+// would not survive that:
+//   1. deviation is measured with arithmetic, not a routing call (see lib/roadRoute.js)
+//   2. a re-route only happens when the driver is genuinely off the planned line, or when the set
+//      of remaining stops has changed
+//   3. and never more often than MIN_RELIVE_MS regardless
+//
+// Held in memory rather than in a column: this is transient by nature, it changes as the van
+// moves, and a restart costs exactly one extra routing request.
+const liveCache = new Map();
+const MIN_RELIVE_MS = 90 * 1000;
+
+router.get('/:id/live-route', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [[run]] = await pool.query(
+      'SELECT id, route_geometry FROM delivery_itineraries WHERE id = ?', [req.params.id]);
+    if (!run) return res.status(404).json({ error: 'Not found' });
+
+    const [[position]] = await pool.query(
+      `SELECT latitude, longitude, accuracy_m, recorded_at FROM delivery_driver_positions
+        WHERE itinerary_id = ? ORDER BY recorded_at DESC LIMIT 1`, [req.params.id]);
+    if (!position) return res.json({ state: 'no_position' });
+
+    const planned = run.route_geometry ? JSON.parse(run.route_geometry) : null;
+    const off = deviation(position, planned);
+
+    // Stops still to be made. A delivered stop is behind the van, and routing through it would
+    // send the driver back the way they came.
+    const [remaining] = await pool.query(
+      `SELECT id, sequence_no, latitude, longitude FROM delivery_itinerary_stops
+        WHERE itinerary_id = ? AND status <> 'delivered' AND latitude IS NOT NULL
+        ORDER BY sequence_no, id`, [req.params.id],
+    );
+    if (!remaining.length) return res.json({ state: 'all_delivered', deviation: off });
+
+    const remainingKey = remaining.map((s) => s.id).join(',');
+    const cached = liveCache.get(run.id);
+    const sameStops = cached && cached.remainingKey === remainingKey;
+    const fresh = cached && (Date.now() - cached.at) < MIN_RELIVE_MS;
+
+    // On the planned route: return WITHOUT routing, cache or no cache. The planned line already
+    // shows the way ahead, so there is nothing to draw and nothing to ask for. An earlier version
+    // required a cache entry here, which meant the very first on-route check spent a routing
+    // request to learn that nothing had changed -- exactly the waste the arithmetic exists to
+    // avoid, and the case that happens on every run before any deviation.
+    if (off.known && !off.off_route) {
+      return res.json({
+        state: 'on_route', deviation: off, geometry: null, stops_remaining: remaining.length,
+      });
+    }
+    if (fresh && sameStops) {
+      return res.json({
+        state: 'off_route', deviation: off, geometry: cached.geometry,
+        distance_m: cached.distance_m, duration_s: cached.duration_s,
+        stops_remaining: remaining.length, cached: true,
+      });
+    }
+
+    const points = [
+      [Number(position.latitude), Number(position.longitude)],
+      ...remaining.map((s) => [Number(s.latitude), Number(s.longitude)]),
+    ];
+    const route = await fetchRoute(points);
+    if (route.error) return res.json({ state: 'route_failed', deviation: off, error: route.error });
+
+    liveCache.set(run.id, {
+      at: Date.now(), remainingKey, geometry: route.geometry,
+      distance_m: route.distance_m, duration_s: route.duration_s,
+    });
+    return res.json({
+      state: off.known && off.off_route ? 'off_route' : 'on_route',
+      deviation: off,
+      geometry: route.geometry,
+      distance_m: route.distance_m,
+      duration_s: route.duration_s,
+      stops_remaining: remaining.length,
       cached: false,
     });
   } catch (err) { return next(err); }
