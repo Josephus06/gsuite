@@ -65,9 +65,18 @@ function readType(body) {
   // Validated against the list rather than trimmed to fit. A category that is not one of the eight
   // is a mistake worth saying out loud -- silently storing it would leave a charge filed under a
   // heading the code of conduct does not have.
-  const category = trunc(body.category, 120);
-  if (category !== null && !VIOLATION_CATEGORIES.includes(category)) {
-    return { error: 'Choose one of the listed categories.' };
+  //
+  // Matched case-insensitively and stored in the canonical wording. Entries typed before this list
+  // existed read "Offenses Against Company Interest and Policies" with a capital A; that is the
+  // same heading, and refusing to save it would strand rows HR can no longer edit. What it will
+  // NOT do is accept a heading that differs in its words rather than its case -- "Offenses Against
+  // a Person" is close to "Offenses against the Person" but choosing between them is a person's
+  // job, not a string comparison's.
+  const raw = trunc(body.category, 120);
+  let category = null;
+  if (raw !== null) {
+    category = VIOLATION_CATEGORIES.find((c) => c.toLowerCase() === raw.toLowerCase()) || null;
+    if (!category) return { error: 'Choose one of the listed categories.' };
   }
 
   return {
