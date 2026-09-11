@@ -6,6 +6,7 @@ import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import DriverMap from '../components/DriverMap';
 import AddressPicker from '../components/AddressPicker';
+import DriverQrModal from '../components/DriverQrModal';
 
 const STATUS_BADGE = {
   draft: 'badge-muted', scheduled: 'badge-info', dispatched: 'badge-warning',
@@ -379,6 +380,7 @@ export default function ItineraryView() {
   const [notice, setNotice] = useState('');
   // Held locally so typing in the starting address does not re-render the whole run on each key.
   const [origin, setOrigin] = useState({ address: '', latitude: null, longitude: null });
+  const [qrUrl, setQrUrl] = useState(null);
 
   const canEdit = can('/itineraries', 'can_edit');
   const canDelete = can('/itineraries', 'can_delete');
@@ -428,23 +430,27 @@ export default function ItineraryView() {
   // Mints the link and puts it on the clipboard, because the next thing anyone does with it is
   // paste it into a message to the driver. Re-issuing replaces the previous token, which is also
   // how a link shared with the wrong person is revoked.
+  // Mints the link and shows it as a QR for the driver to scan. Scanning beats sending: no message
+  // to forward, no address to mistype, and nothing left sitting in a chat thread.
+  //
+  // Re-issuing replaces the previous token, which is also how a link that reached the wrong person
+  // is revoked -- hence the warning before overwriting one that has already gone out.
   async function makeDriverLink() {
-    if (it.driver_token && !confirm('Generate a new link? The one already sent will stop working.')) return;
+    if (it.driver_token && !confirm('Generate a new link? The QR already given out will stop working.')) return;
     setBusy(true); setError(''); setNotice('');
     try {
       const { data } = await api.post(`/itineraries/${id}/driver-link`);
-      const url = `${window.location.origin}${data.path}`;
-      try {
-        await navigator.clipboard.writeText(url);
-        setNotice(`Driver link copied — ${url}`);
-      } catch {
-        // Clipboard needs a secure context and permission; on plain HTTP it simply refuses.
-        // Showing the URL is worth more than reporting that the copy failed.
-        setNotice(`Driver link: ${url}`);
-      }
+      setQrUrl(`${window.location.origin}${data.path}`);
       await load();
     } catch (e) { setError(e.response?.data?.error || 'Could not create the link.'); }
     finally { setBusy(false); }
+  }
+
+  // Re-opens the QR for a link already issued, without minting a new one -- a driver whose phone
+  // died should not cost everyone else their link.
+  function showExistingQr() {
+    if (!it.driver_token) return;
+    setQrUrl(`${window.location.origin}/driver/${it.driver_token}`);
   }
 
   async function removeRun() {
@@ -469,8 +475,15 @@ export default function ItineraryView() {
           {canEdit && !cancelled && (
             <button className="btn btn-sm btn-primary" onClick={() => setShowAdd(true)}>Add Sales Orders</button>
           )}
+          {/* Once a link exists, the common action is showing the QR again -- not minting a new
+              one, which would break the QR the driver already scanned. */}
+          {canEdit && !cancelled && it.driver_token && (
+            <button className="btn btn-sm btn-primary" disabled={busy} onClick={showExistingQr}>Driver QR</button>
+          )}
           {canEdit && !cancelled && (
-            <button className="btn btn-sm" disabled={busy} onClick={makeDriverLink}>Driver Link</button>
+            <button className="btn btn-sm" disabled={busy} onClick={makeDriverLink}>
+              {it.driver_token ? 'New QR' : 'Driver QR'}
+            </button>
           )}
           {canEdit && !cancelled && it.status === 'draft' && (
             <button className="btn btn-sm" disabled={busy} onClick={() => patch({ status: 'scheduled' })}>Mark Scheduled</button>
@@ -707,6 +720,14 @@ export default function ItineraryView() {
       )}
       {viewSig && (
         <SignatureModal stop={viewSig} onClose={() => setViewSig(null)} />
+      )}
+      {qrUrl && (
+        <DriverQrModal
+          url={qrUrl}
+          itineraryNo={it.itinerary_no}
+          driverName={it.driver_name}
+          onClose={() => setQrUrl(null)}
+        />
       )}
     </div>
   );

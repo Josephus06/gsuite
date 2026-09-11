@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
+import QRCode from 'qrcode';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 // The run sheet as it goes out on paper.
@@ -29,6 +30,7 @@ export default function ItineraryPrint() {
   const { id } = useParams();
   const [it, setIt] = useState(null);
   const [sigs, setSigs] = useState({});
+  const [qr, setQr] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -48,6 +50,17 @@ export default function ItineraryPrint() {
       .catch(() => null)))
       .then((pairs) => setSigs(Object.fromEntries(pairs.filter(Boolean))));
     return () => urls.forEach((u) => URL.revokeObjectURL(u));
+  }, [it]);
+
+  // The driver's QR, printed on the sheet they are already holding -- nothing to send, nothing to
+  // mistype. Only when a link has been issued; a run without one prints exactly as before.
+  //
+  // Drawn in the browser, so the token never travels to a QR service to be turned into an image.
+  useEffect(() => {
+    if (!it?.driver_token) return;
+    QRCode.toDataURL(`${window.location.origin}/driver/${it.driver_token}`, { width: 240, margin: 1 })
+      .then(setQr)
+      .catch(() => setQr(''));
   }, [it]);
 
   if (loading) return <LoadingSpinner />;
@@ -141,9 +154,20 @@ export default function ItineraryPrint() {
             <div className="itn-brand">GRAPHIC<span>STAR</span></div>
             <div className="itn-brand-sub">IMAGING CORP.</div>
           </div>
-          <div className="itn-title">
-            <h1>DELIVERY ITINERARY</h1>
-            <div className="itn-no">{it.itinerary_no}</div>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6mm' }}>
+            {/* 30mm, not smaller. The driver URL is 108 characters, which makes a 45x45-module
+                QR; at 22mm that is 0.47mm per module, below what a phone reliably reads off paper
+                under warehouse lighting. 30mm gives 0.64mm and scans comfortably. */}
+            {qr && (
+              <div style={{ textAlign: 'center' }}>
+                <img src={qr} alt="Driver run QR" style={{ width: '30mm', height: '30mm', display: 'block' }} />
+                <div style={{ fontSize: '6pt', letterSpacing: '.2px' }}>SCAN TO START</div>
+              </div>
+            )}
+            <div className="itn-title">
+              <h1>DELIVERY ITINERARY</h1>
+              <div className="itn-no">{it.itinerary_no}</div>
+            </div>
           </div>
         </div>
 
