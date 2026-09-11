@@ -29,6 +29,21 @@ const READY_QTY_SQL = `
     WHERE sol.sales_order_id = so.id
       AND LEAST(jo.quantity_built, jo.quantity_inspected) - jo.quantity_delivered > 0)`;
 
+// Latitude and longitude move together or not at all -- a stop holding one of them would sit at
+// the equator or on the Greenwich meridian, which is worse than not being on the map.
+function readPoint(body, latKey, lngKey) {
+  const has = body[latKey] !== undefined || body[lngKey] !== undefined;
+  if (!has) return { skip: true };
+  const lat = body[latKey] === null || body[latKey] === '' ? null : Number(body[latKey]);
+  const lng = body[lngKey] === null || body[lngKey] === '' ? null : Number(body[lngKey]);
+  if (lat === null || lng === null) return { lat: null, lng: null };
+  if (!Number.isFinite(lat) || lat < -90 || lat > 90
+      || !Number.isFinite(lng) || lng < -180 || lng > 180) {
+    return { error: 'That position is not on the map.' };
+  }
+  return { lat, lng };
+}
+
 async function nextItineraryNo(conn, id) {
   await conn.query('UPDATE delivery_itineraries SET itinerary_no = ? WHERE id = ?', [`ITN-${id}`, id]);
   return `ITN-${id}`;
@@ -201,6 +216,72 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   } catch (err) { next(err); }
 });
 
+// --- address suggestions --------------------------------------------------------------------
+//
+// Proxied rather than called from the browser, for three reasons: the upstream sees one User-Agent
+// it can identify and rate-limit fairly instead of every workstation separately; swapping provider
+// later is a change here rather than in the client; and the browser never talks to a third party,
+// so a customer address is not handed to one by every keystroke on a page.
+//
+// Photon is komoot's free OpenStreetMap geocoder, built for type-ahead -- unlike Nominatim, whose
+// usage policy asks people not to use it for autocomplete. No key, no billing. Measured against
+// real Cebu addresses before adopting it: Ayala Center, SM City, Cebu Doctors Hospital and
+// J.S. Alinsug Street in Mandaue all resolve correctly.
+//
+// It will NOT find everything. Philippine addressing is house-number-and-barangay in places OSM
+// has never mapped, which is exactly why the client can drop a pin by hand instead.
+const GEOCODE_URL = 'https://photon.komoot.io/api/';
+// Biases results toward Cebu without excluding anywhere else -- a nearby match beats an alphabetical
+// one when somebody types "San Jose".
+const BIAS = { lat: 10.3157, lon: 123.8854 };
+
+function describe(f) {
+  const p = f.properties || {};
+  const line = [p.name, p.housenumber && p.street ? `${p.housenumber} ${p.street}` : p.street,
+    p.district, p.city || p.county, p.state, p.country];
+  // Deduplicated: OSM often repeats the locality as both district and city, and "Cebu City,
+  // Cebu City" reads like a bug.
+  const seen = new Set();
+  return line.filter((x) => x && !seen.has(x) && seen.add(x)).join(', ');
+}
+
+router.get('/geocode', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 3) return res.json([]);
+
+    const url = `${GEOCODE_URL}?q=${encodeURIComponent(q)}&limit=6&lat=${BIAS.lat}&lon=${BIAS.lon}`;
+    // Bounded: a geocoder having a slow day must not hold a request open while somebody types.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    let out = [];
+    try {
+      const r = await fetch(url, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'GSUITE-ERP/1.0 (delivery itinerary address lookup)' },
+      });
+      if (r.ok) {
+        const body = await r.json();
+        out = (body.features || [])
+          .filter((f) => f.geometry?.coordinates?.length === 2)
+          .map((f) => ({
+            label: describe(f),
+            latitude: Number(f.geometry.coordinates[1]),
+            longitude: Number(f.geometry.coordinates[0]),
+          }))
+          .filter((f) => f.label);
+      }
+    } finally { clearTimeout(timer); }
+
+    // An empty list, never a 500. The address field has to keep working when the geocoder is
+    // unreachable -- typing it by hand and pinning it is the fallback, not an error state.
+    return res.json(out);
+  } catch (err) {
+    if (err.name === 'AbortError') return res.json([]);
+    return next(err);
+  }
+});
+
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[it]] = await pool.query(
@@ -218,7 +299,8 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // the image itself is fetched per stop.
     const [stops] = await pool.query(
       `SELECT s.id, s.sequence_no, s.sales_order_id, s.delivery_date, s.customer_name,
-              s.qty_to_deliver, s.fulfillment_type, s.delivery_address, s.person_in_charge, s.odometer,
+              s.qty_to_deliver, s.fulfillment_type, s.delivery_address, s.latitude, s.longitude,
+              s.person_in_charge, s.odometer,
               s.time_of_arrival, s.signed_by_name, s.signed_at, s.status, s.remarks,
               (s.signature_data IS NOT NULL) AS has_signature,
               so.sales_order_no, so.status AS so_status
@@ -277,6 +359,16 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       fields.push('driver_id = ?'); params.push(driverId);
     }
     if (req.body.plate_no !== undefined) { fields.push('plate_no = ?'); params.push(trunc(req.body.plate_no, 30)); }
+    // Where the run starts. Free text plus an optional pin, the same shape as a stop: the office
+    // is usually one fixed place, but a run that begins at a branch or a supplier is normal.
+    if (req.body.origin_name !== undefined) { fields.push('origin_name = ?'); params.push(trunc(req.body.origin_name, 200)); }
+    if (req.body.origin_address !== undefined) { fields.push('origin_address = ?'); params.push(trunc(req.body.origin_address, 500)); }
+    const origin = readPoint(req.body, 'origin_latitude', 'origin_longitude');
+    if (origin.error) return res.status(400).json({ error: origin.error });
+    if (!origin.skip) {
+      fields.push('origin_latitude = ?', 'origin_longitude = ?');
+      params.push(origin.lat, origin.lng);
+    }
     if (req.body.remarks !== undefined) { fields.push('remarks = ?'); params.push(trunc(req.body.remarks, 500)); }
     if (req.body.status !== undefined) {
       if (!STATUSES.includes(req.body.status)) return res.status(400).json({ error: 'Unknown status.' });
@@ -479,6 +571,9 @@ router.put('/stops/:stopId', requireAuth, requirePermission(ROUTE, 'can_edit'), 
       remarks: () => trunc(req.body.remarks, 500),
       time_of_arrival: () => req.body.time_of_arrival || null,
     };
+
+    const pt = readPoint(req.body, 'latitude', 'longitude');
+    if (pt.error) return res.status(400).json({ error: pt.error });
     const fields = [];
     const params = [];
     for (const [col, read] of Object.entries(map)) {
@@ -492,6 +587,10 @@ router.put('/stops/:stopId', requireAuth, requirePermission(ROUTE, 'can_edit'), 
     if (req.body.status !== undefined) {
       if (!STOP_STATUSES.includes(req.body.status)) return res.status(400).json({ error: 'Unknown stop status.' });
       fields.push('status = ?'); params.push(req.body.status);
+    }
+    if (!pt.skip) {
+      fields.push('latitude = ?', 'longitude = ?');
+      params.push(pt.lat, pt.lng);
     }
     if (!fields.length) return res.json({ ok: true });
     fields.push('updated_at = NOW()');

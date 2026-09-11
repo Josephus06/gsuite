@@ -33,7 +33,29 @@ function fmtTime(v) {
 // informs and one that misleads -- a phone indoors routinely reports hundreds of metres.
 const VAGUE_ACCURACY_M = 500;
 
-export default function DriverMap({ itineraryId, driverName }) {
+// A numbered pin for a stop, green once delivered. Built as HTML rather than an image so there is
+// no icon asset to resolve and the number is legible at any zoom.
+function stopIcon(n, delivered) {
+  const bg = delivered ? '#16a34a' : '#0f172a';
+  return L.divIcon({
+    className: '',
+    html: `<div style="width:24px;height:24px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);`
+      + `background:${bg};border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);`
+      + `display:flex;align-items:center;justify-content:center">`
+      + `<span style="transform:rotate(45deg);color:#fff;font:700 11px/1 system-ui">${n}</span></div>`,
+    iconSize: [24, 24], iconAnchor: [12, 24],
+  });
+}
+
+const originIcon = L.divIcon({
+  className: '',
+  html: '<div style="width:22px;height:22px;border-radius:4px;background:#b45309;border:2px solid #fff;'
+    + 'box-shadow:0 1px 4px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center">'
+    + '<span style="color:#fff;font:700 11px/1 system-ui">S</span></div>',
+  iconSize: [22, 22], iconAnchor: [11, 11],
+});
+
+export default function DriverMap({ itineraryId, driverName, origin, stops = [] }) {
   const holder = useRef(null);
   const map = useRef(null);
   const layer = useRef(null);
@@ -72,8 +94,33 @@ export default function DriverMap({ itineraryId, driverName }) {
   useEffect(() => {
     if (!map.current || !layer.current || !data) return;
     layer.current.clearLayers();
+    const everything = [];
+
+    // The plan: starting point, then the stops in delivery order. Dashed, because it is the
+    // intended sequence rather than a road route -- drawing it solid would imply the van goes in
+    // a straight line between drops.
+    const planned = [];
+    if (origin?.latitude != null && origin?.longitude != null) {
+      const at = [Number(origin.latitude), Number(origin.longitude)];
+      planned.push(at);
+      everything.push(at);
+      L.marker(at, { icon: originIcon }).addTo(layer.current)
+        .bindPopup(`<strong>Start</strong><br>${origin.name || 'Starting point'}`);
+    }
+    stops.forEach((s, i) => {
+      if (s.latitude == null || s.longitude == null) return;
+      const at = [Number(s.latitude), Number(s.longitude)];
+      planned.push(at);
+      everything.push(at);
+      L.marker(at, { icon: stopIcon(i + 1, s.status === 'delivered') }).addTo(layer.current)
+        .bindPopup(`<strong>${i + 1}. ${s.customer_name || ''}</strong><br>${s.delivery_address || ''}`);
+    });
+    if (planned.length > 1) {
+      L.polyline(planned, { color: '#0f172a', weight: 2, opacity: 0.45, dashArray: '6 6' }).addTo(layer.current);
+    }
 
     const trail = (data.trail || []).map((p) => [Number(p.latitude), Number(p.longitude)]);
+    everything.push(...trail);
     if (trail.length > 1) {
       L.polyline(trail, { color: '#4f46e5', weight: 3, opacity: 0.6 }).addTo(layer.current);
     }
@@ -93,14 +140,18 @@ export default function DriverMap({ itineraryId, driverName }) {
       }).addTo(layer.current).bindPopup(
         `${driverName || 'Driver'}<br>${fmtTime(data.latest.recorded_at)}`,
       );
+      everything.push(at);
+      // Follow the van once it is reporting -- that is the thing being watched.
       map.current.setView(at, Math.max(map.current.getZoom(), 14));
-    } else if (trail.length) {
-      map.current.fitBounds(L.latLngBounds(trail).pad(0.2));
+    } else if (everything.length > 1) {
+      map.current.fitBounds(L.latLngBounds(everything).pad(0.2));
+    } else if (everything.length === 1) {
+      map.current.setView(everything[0], 15);
     }
     // Leaflet measures the container when it is created; inside a card that was still laying out,
     // that measurement is wrong and half the tiles never load.
     setTimeout(() => map.current && map.current.invalidateSize(), 0);
-  }, [data, driverName]);
+  }, [data, driverName, origin, stops]);
 
   const latest = data?.latest;
   const vague = latest && Number(latest.accuracy_m) > VAGUE_ACCURACY_M;

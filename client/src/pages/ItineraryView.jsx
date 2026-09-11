@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import DriverMap from '../components/DriverMap';
+import AddressPicker from '../components/AddressPicker';
 
 const STATUS_BADGE = {
   draft: 'badge-muted', scheduled: 'badge-info', dispatched: 'badge-warning',
@@ -285,6 +286,8 @@ function EditStopModal({ stop, onClose, onSaved }) {
     qty_to_deliver: stop.qty_to_deliver ?? '',
     fulfillment_type: stop.fulfillment_type || 'full',
     delivery_address: stop.delivery_address || '',
+    latitude: stop.latitude ?? null,
+    longitude: stop.longitude ?? null,
     person_in_charge: stop.person_in_charge || '',
     odometer: stop.odometer || '',
     remarks: stop.remarks || '',
@@ -342,11 +345,14 @@ function EditStopModal({ stop, onClose, onSaved }) {
             onChange={(e) => setForm({ ...form, remarks: e.target.value })} />
         </div>
       </div>
-      <div className="field">
-        <label>Delivery Address</label>
-        <textarea rows={2} value={form.delivery_address} maxLength={500}
-          onChange={(e) => setForm({ ...form, delivery_address: e.target.value })} />
-      </div>
+      <AddressPicker
+        value={form.delivery_address}
+        latitude={form.latitude}
+        longitude={form.longitude}
+        onChange={({ address, latitude, longitude }) => setForm({
+          ...form, delivery_address: address, latitude, longitude,
+        })}
+      />
       <div className="modal-actions">
         <button type="button" className="btn" onClick={onClose}>Cancel</button>
         <button type="button" className="btn btn-primary" disabled={saving} onClick={save}>
@@ -371,12 +377,22 @@ export default function ItineraryView() {
   const [viewSig, setViewSig] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  // Held locally so typing in the starting address does not re-render the whole run on each key.
+  const [origin, setOrigin] = useState({ address: '', latitude: null, longitude: null });
 
   const canEdit = can('/itineraries', 'can_edit');
   const canDelete = can('/itineraries', 'can_delete');
 
   const load = useCallback(() => api.get(`/itineraries/${id}`)
-    .then(({ data }) => { setIt(data); setLoading(false); }), [id]);
+    .then(({ data }) => {
+      setIt(data);
+      setOrigin({
+        address: data.origin_address || '',
+        latitude: data.origin_latitude ?? null,
+        longitude: data.origin_longitude ?? null,
+      });
+      setLoading(false);
+    }), [id]);
   useEffect(() => { load().catch(() => setLoading(false)); }, [load]);
   useEffect(() => { api.get('/itineraries/drivers').then(({ data }) => setDrivers(data)).catch(() => setDrivers([])); }, []);
 
@@ -527,11 +543,53 @@ export default function ItineraryView() {
                 onBlur={(e) => e.target.value !== (it.plate_no || '') && patch({ plate_no: e.target.value })} />
             </div>
           </div>
+
+          {/* Where the run starts. Pinned, it becomes the first point on the map, so the route
+              reads office → 1 → 2 → 3 rather than beginning at whichever stop happens to be first. */}
+          <h3 className="subsection">Starting Point</h3>
+          <div className="field">
+            <label>Name</label>
+            <input defaultValue={it.origin_name || ''} maxLength={200} disabled={busy}
+              placeholder="e.g. Head Office, Mandaue warehouse"
+              onBlur={(e) => e.target.value !== (it.origin_name || '') && patch({ origin_name: e.target.value })} />
+          </div>
+          <AddressPicker
+            label="Starting Address"
+            value={origin.address}
+            latitude={origin.latitude}
+            longitude={origin.longitude}
+            placeholder="Where the van leaves from"
+            onChange={({ address, latitude, longitude }) => {
+              setOrigin({ address, latitude, longitude });
+              // Saved as soon as a pin is chosen; free typing is saved when the field loses focus
+              // via the same patch, so nothing is lost either way.
+              if (latitude !== null && latitude !== undefined) {
+                patch({ origin_address: address, origin_latitude: latitude, origin_longitude: longitude });
+              }
+            }}
+          />
+          <button className="btn btn-sm" disabled={busy}
+            onClick={() => patch({
+              origin_address: origin.address,
+              origin_latitude: origin.latitude,
+              origin_longitude: origin.longitude,
+            })}>
+            Save Starting Point
+          </button>
         </div>
       )}
 
       {/* Only once a link has been issued -- before that there is nothing that could report. */}
-      {it.driver_token && <DriverMap itineraryId={id} driverName={it.driver_name} />}
+      {/* Shown once there is anything to draw: a pinned start, a pinned stop, or a driver
+          reporting. Before that an empty map is just a picture of Cebu. */}
+      {(it.driver_token || it.origin_latitude || stops.some((s) => s.latitude != null)) && (
+        <DriverMap
+          itineraryId={id}
+          driverName={it.driver_name}
+          origin={{ name: it.origin_name, latitude: it.origin_latitude, longitude: it.origin_longitude }}
+          stops={stops}
+        />
+      )}
 
       <div className="card" style={{ marginTop: 16 }}>
         <div className="page-header" style={{ marginBottom: 12 }}>
