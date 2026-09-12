@@ -576,7 +576,7 @@ router.post('/lines/:lineId/reallocate', requireAuth, requirePermission(ROUTE, '
     // Every submitted line must genuinely belong to this same item+location pool --
     // otherwise stock earmarked for one item could get reassigned to an unrelated one.
     const [poolLines] = await conn.query(
-      `SELECT tol.id, tol.qty, tol.adjusted_qty, tol.committed FROM transfer_order_lines tol
+      `SELECT tol.id, tol.qty, tol.adjusted_qty, tol.committed, tol.fulfilled FROM transfer_order_lines tol
        JOIN transfer_orders t ON t.id = tol.transfer_order_id
        WHERE tol.item_id = ? AND t.withdraw_from_location_id = ? AND t.status IN (?)`,
       [line.item_id, line.withdraw_from_location_id, OPEN_TO_STATUSES]
@@ -587,9 +587,14 @@ router.post('/lines/:lineId/reallocate', requireAuth, requirePermission(ROUTE, '
       const target = poolById.get(Number(s.transfer_order_line_id));
       if (!target) return res.status(400).json({ error: 'One of the selected orders is no longer eligible.' });
       const committedQty = Number(s.committed);
-      const cap = Number(target.adjusted_qty ?? target.qty);
+      // Capped at what the line has LEFT to fulfil, not at what it originally ordered. Reserving
+      // against the full ordered qty let stock be committed that could never be shipped: this
+      // line ordered 3,817.0233 with 192 already gone, so a reservation of 3,626 sat 0.9767 above
+      // the 3,625.0233 still outstanding and fulfilment refused it every time -- a dead end, since
+      // Reallocate was the screen that had just accepted it.
+      const cap = Number(target.adjusted_qty ?? target.qty) - Number(target.fulfilled || 0);
       if (!(committedQty >= 0) || committedQty > cap) {
-        return res.status(409).json({ error: `Committed qty can't exceed that order's own ordered qty (${cap}).` });
+        return res.status(409).json({ error: `Committed qty can't exceed what that order still has to fulfill (${cap}).` });
       }
     }
 

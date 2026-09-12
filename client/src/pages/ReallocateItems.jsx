@@ -157,8 +157,13 @@ export default function ReallocateItems() {
                     <td>{qty(ordered)}</td>
                     <td>{qty(remaining)}</td>
                     <td>
+                      {/* Capped at Quantity Remaining, the column immediately to the left. There
+                          was no max at all, so stock could be reserved against a quantity the
+                          order had already shipped -- 3,626 against a line with 3,625.0233 left
+                          -- which fulfilment then refused, with Reallocate the only screen
+                          offering a way out and no way out in it. */}
                       <input
-                        type="number" step="0.0001" style={{ width: 100 }}
+                        type="number" step="0.0001" min="0" max={remaining} style={{ width: 100 }}
                         value={committedInputs[c.transfer_order_line_id] ?? 0}
                         onChange={(e) => setCommittedInputs((prev) => ({ ...prev, [c.transfer_order_line_id]: e.target.value }))}
                       />
