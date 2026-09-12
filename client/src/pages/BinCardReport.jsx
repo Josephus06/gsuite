@@ -82,24 +82,20 @@ export default function BinCardReport() {
 
   const totalPages = Math.max(1, Math.ceil((rows?.length || 0) / PAGE_SIZE));
   const pageRows = rows ? rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) : [];
-  // The unit a row's quantity is actually in. A movement that was scaled to Base Unit carries no
-  // uom of its own, so the item's base unit applies; one that carries a different unit is being
-  // summed into the balance as though it were Base Unit, which it is not.
+  // The unit the source document recorded. A movement already scaled to Base Unit carries no uom
+  // of its own, so the item's base unit is shown.
   const baseUom = unitLabels.base_unit_code || unitLabels.base_unit_label || '—';
   const rowUom = (r) => r.uom || baseUom;
-  // Must match the ledger's own rule in stockLedger.js `toBase`, or the warning contradicts the
-  // balance it is warning about. A unit counts as the base unit written either as its CODE
-  // ('SQFT') or its TITLE ('Square Foot'), and MM/CM/IN/FT are dimension units off the job order's
-  // length and width, never a quantity to convert. Flagging those was the false alarm on this
-  // report: rows that the ledger handles correctly were being called unreliable.
-  const DIMENSION_UNITS = ['MM', 'CM', 'IN', 'FT'];
-  const isBaseUnit = (u) => {
-    const v = String(u).toUpperCase();
-    return v === String(unitLabels.base_unit_code || '').toUpperCase()
-      || v === String(unitLabels.base_unit_label || '').toUpperCase()
-      || DIMENSION_UNITS.includes(v);
-  };
-  const mismatched = (r) => !r.is_opening && !!r.uom && !!unitLabels.base_unit_code && !isBaseUnit(r.uom);
+  // The server decides this, using the same helper the ledger converts by (stockLedger.js
+  // `unitIsConvertible`). Comparing unit spellings here is what produced the false alarm: the
+  // check was against the base CODE alone, so "Square Foot" against a base of SQFT -- the same
+  // unit spelled out -- and the MM/IN that job-order lines carry as their length/width unit were
+  // all reported as unreliable while the ledger was converting them correctly.
+  //
+  // A row is only a problem now when it is in some other unit AND the item has no conversion
+  // factor to bring it across, which is the one case where the quantity really does land in the
+  // balance unconverted.
+  const mismatched = (r) => !r.is_opening && !!r.uom && r.uom_convertible === false;
   const mismatchCount = (rows || []).filter(mismatched).length;
 
   return (
@@ -174,13 +170,16 @@ export default function BinCardReport() {
       )}
 
       {/* A running balance that adds rolls to square feet is not a balance. Say so plainly rather
-          than letting the reader trust the last row. */}
+          than letting the reader trust the last row -- but only when it is actually true. The
+          ledger converts a stock unit into the base unit using the item's conversion factor, so
+          the movements that remain a problem are the ones it has no factor to convert WITH. */}
       {mismatchCount > 0 && (
         <div className="error-banner" style={{ marginBottom: 8 }}>
           {mismatchCount} of these movements {mismatchCount === 1 ? 'was' : 'were'} recorded in a
-          unit other than {baseUom} (marked in the UOM column) but {mismatchCount === 1 ? 'is' : 'are'} added
-          into the balance as {baseUom}. The Balance columns below are not reliable for this item until
-          that is corrected.
+          unit other than {baseUom} (marked in the UOM column), and this item has no conversion
+          factor to bring {mismatchCount === 1 ? 'it' : 'them'} across, so
+          {mismatchCount === 1 ? ' it is' : ' they are'} added into the balance unconverted. Set the
+          item&apos;s conversion factor to correct the Balance columns below.
         </div>
       )}
 
@@ -219,13 +218,14 @@ export default function BinCardReport() {
                     <td>{r.to_location_name || ''}</td>
                     <td>{Number(r.qty_in) ? qtyFmt(r.qty_in) : ''}</td>
                     <td>{Number(r.qty_out) ? qtyFmt(r.qty_out) : ''}</td>
-                    {/* The unit this row's quantity is really in. A bare "1.0000" against an
-                        item stocked in rolls tells you nothing; "1.0000 ROLL" next to a balance
-                        kept in SQFT tells you the balance is wrong. */}
+                    {/* The unit the source document recorded, shown for every row so the reader
+                        can see where each quantity came from -- "2.0000 ROLL" converted into a
+                        balance kept in SQFT. Only the rows that could NOT be converted are marked;
+                        a converted one is not an error and is no longer coloured like one. */}
                     <td style={mismatched(r) ? { color: '#b45309', fontWeight: 600 } : undefined}>
                       {r.is_opening ? '' : rowUom(r)}
                       {mismatched(r) && (
-                        <span title={`Counted into the balance as ${baseUom}, but recorded in ${r.uom}.`}> !</span>
+                        <span title={`Recorded in ${r.uom}, but this item has no conversion factor, so it goes into the ${baseUom} balance unconverted.`}> !</span>
                       )}
                     </td>
                     <td>{moneyFmt(r.rate)}</td>

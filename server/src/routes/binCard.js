@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
-const { movementsSql } = require('../lib/stockLedger');
+const { movementsSql, unitIsConvertible } = require('../lib/stockLedger');
 
 const router = express.Router();
 const ROUTE = '/bin-card-reports';
@@ -122,9 +122,22 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     );
 
     let balanceBase = openingBase;
+    // uom_convertible is decided HERE, by the same helper the ledger's own conversion uses, rather
+    // than by the browser comparing strings. The report was previously flagging any unit whose
+    // spelling differed from the base CODE -- so "Square Foot" against a base of SQFT, and the
+    // MM/IN that job-order lines carry as their length/width unit, were all marked unreliable
+    // even though the ledger converts them correctly. A warning that contradicts the number
+    // beside it is worse than no warning.
     const withBalance = rows.map((r) => {
       balanceBase += Number(r.qty_in) - Number(r.qty_out);
-      return { ...r, balance_base: balanceBase, balance_stock: balanceBase / conversionFactor };
+      return {
+        ...r,
+        balance_base: balanceBase,
+        balance_stock: balanceBase / conversionFactor,
+        uom_convertible: unitIsConvertible(
+          r.uom, unitInfo.base_unit_code, unitInfo.base_unit_title, unitInfo.conversion_factor,
+        ),
+      };
     });
 
     // The opening balance is itself a row of the ledger -- the one every other balance is
@@ -147,6 +160,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
         balance_base: openingBase,
         balance_stock: openingBase / conversionFactor,
         is_opening: true,
+        // Carries no unit of its own -- it is a balance, already in the base unit.
+        uom_convertible: true,
       });
     }
 

@@ -263,4 +263,33 @@ async function deriveOnHand(db, itemIds) {
   return byPair;
 }
 
-module.exports = { movementsSql, deriveOnHand };
+// The SQL rule in `toBase`, expressed once in JavaScript so callers can ask the same question
+// about a row they are displaying. The Bin Card used to re-implement this in the browser and drift
+// out of step with it -- flagging rows the ledger had converted perfectly well, and telling the
+// reader the balance was unreliable when it was not.
+const DIMENSION_UNITS = ['MM', 'CM', 'IN', 'FT'];
+
+// True when the recorded unit IS the base unit, so the quantity needs no conversion. NULL means
+// the branch scaled it already. Both spellings of a unit count -- code 'SQFT' and title
+// 'Square Foot' are the same unit -- and a dimension code is the job order's length/width unit,
+// never the quantity's.
+function unitIsBase(uom, baseCode, baseTitle) {
+  if (uom === null || uom === undefined || uom === '') return true;
+  const v = String(uom).trim().toUpperCase();
+  return v === String(baseCode || '').trim().toUpperCase()
+    || v === String(baseTitle || '').trim().toUpperCase()
+    || DIMENSION_UNITS.includes(v);
+}
+
+// Whether a row's quantity could actually be brought to the base unit. A unit that is not the base
+// one is converted with the item's conversion factor -- but an item with no factor, or a factor of
+// exactly 1 alongside a differently-named unit, has nothing to convert WITH, so the quantity goes
+// into the balance unchanged and the balance cannot be trusted. That, and only that, is what the
+// Bin Card's warning is about.
+function unitIsConvertible(uom, baseCode, baseTitle, conversionFactor) {
+  if (unitIsBase(uom, baseCode, baseTitle)) return true;
+  const f = Number(conversionFactor);
+  return Number.isFinite(f) && f > 0 && f !== 1;
+}
+
+module.exports = { movementsSql, deriveOnHand, unitIsBase, unitIsConvertible, DIMENSION_UNITS };
