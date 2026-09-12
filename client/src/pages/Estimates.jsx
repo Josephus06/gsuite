@@ -241,7 +241,11 @@ export default function Estimates() {
                       <td data-label="Contract Description">{row.contract_description}</td>
                       <td data-label="Sales Rep.">{row.sales_rep_name}</td>
                       <td data-label="Prepared By">{row.prepared_by_name}</td>
-                      <td data-label="Total Amount">{money(row.total_amount)}</td>
+                      {/* effective_total_amount, not total_amount: the stored header is blank on
+                          estimates nobody has run "Recalculate from Job Orders" on, so it showed
+                          0.00 for estimates that plainly had money in their lines. The server
+                          falls back between the two. */}
+                      <td data-label="Total Amount">{money(row.effective_total_amount)}</td>
                       <td>
                         <div style={{ display: 'flex', gap: 6 }}>
                           <Link className="btn btn-sm btn-primary" to={`/estimates/${row.id}`}>View</Link>

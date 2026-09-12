@@ -183,14 +183,30 @@ export default function EstimateView() {
   if (loading || !estimate) return <LoadingSpinner />;
 
   const jobOrders = estimate.jobOrders || [];
-  const subtotal = jobOrders.reduce((s, jo) => s + num(jo.subtotal), 0);
-  const discountTotal = jobOrders.reduce((s, jo) => s + num(jo.disc_amount), 0);
-  const netOfTax = subtotal - discountTotal;
-  const taxTotal = jobOrders.reduce((s, jo) => s + num(jo.tax_amount), 0);
-  const totalAmount = netOfTax + taxTotal;
+  // Computed from the lines whenever there ARE lines -- they are the truth, and the header
+  // aggregates are only written when someone clicks "Recalculate from Job Orders" in the Billing
+  // step, so they go stale.
+  //
+  // But 68,281 estimates here are migrated history that arrived as a header and nothing else: no
+  // job order lines at all. Reducing over an empty array gives 0, so every one of those showed
+  // "Total Amount 0.00" on this screen while the Saved Estimates list showed the real figure off
+  // the header. With no lines to compute from, the stored header is the only record there is, so
+  // it is used instead of inventing a zero. Same fallback the list makes.
+  const hasLines = jobOrders.length > 0;
+  const subtotal = hasLines ? jobOrders.reduce((s, jo) => s + num(jo.subtotal), 0) : num(estimate.subtotal);
+  const discountTotal = hasLines
+    ? jobOrders.reduce((s, jo) => s + num(jo.disc_amount), 0) : num(estimate.discount_total);
+  const netOfTax = hasLines ? subtotal - discountTotal : num(estimate.net_of_tax);
+  const taxTotal = hasLines ? jobOrders.reduce((s, jo) => s + num(jo.tax_amount), 0) : num(estimate.tax_total);
+  const totalAmount = hasLines ? netOfTax + taxTotal : num(estimate.total_amount);
   const totalCost = jobOrders.reduce((s, jo) => s + (jo.processes || []).reduce((ps, p) => ps + num(p.total_cost), 0), 0);
-  const gpAmount = netOfTax - totalCost;
-  const gpRate = netOfTax ? (gpAmount / netOfTax) * 100 : 0;
+  // Same fallback, and it matters more here: with no lines there are no processes either, so the
+  // cost reduces to 0 and the margin would read as a flat 100% -- a confident, entirely invented
+  // number. The stored figures are used instead.
+  const gpAmount = hasLines ? netOfTax - totalCost : num(estimate.est_gp_amount);
+  const gpRate = hasLines
+    ? (netOfTax ? (gpAmount / netOfTax) * 100 : 0)
+    : num(estimate.est_gp_rate);
 
   const isPending = estimate.status === 'pending_supervisor_approval' || estimate.status === 'pending_customer_approval';
   const canEdit = can('/estimates', 'can_edit');

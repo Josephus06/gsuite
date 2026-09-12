@@ -219,9 +219,35 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const limitNum = Math.min(100, Math.max(1, Number(limit) || 10));
     const offset = (pageNum - 1) * limitNum;
 
+    // The money shown in the list comes from TWO places, because neither one covers every estimate:
+    //
+    //   68,852 estimates carry a header total and NO job order lines at all -- migrated history,
+    //          where only the header came across. Computing from lines would show them all 0.00.
+    //       26 estimates have real job order lines but a header total of 0, because the header
+    //          aggregates are only written when someone opens the Billing step and clicks
+    //          "Recalculate from Job Orders". These are the ones showing a blank 0.00 while
+    //          holding anything from 324.00 to 25,303.00 in their lines.
+    //
+    // The stored header WINS whenever it is set, and the lines are only used to fill a blank. The
+    // other way round is tempting -- lines look more like source data, and EstimateView's footer
+    // already computes that way -- but it is wrong here: on 69 estimates the line sum comes to an
+    // exact multiple of the header (2,872,694.31 against 5,745,388.62; 1,008,000 against
+    // 3,024,000), which is duplicated lines, not a stale header. Preferring lines would restate
+    // approved estimates at double their value. Filling a blank can only ever add information;
+    // overriding a figure someone has already approved can destroy it.
+    //
+    // This changes exactly 26 rows out of 70,120. The 348 rows that the other rule would have
+    // moved -- 263 of them by less than a centavo -- stay as they are.
+    const effectiveTotal = `CASE
+        WHEN COALESCE(e.total_amount, 0) <> 0 THEN e.total_amount
+        ELSE (SELECT COALESCE(SUM(jo.subtotal), 0) - COALESCE(SUM(jo.disc_amount), 0)
+                     + COALESCE(SUM(jo.tax_amount), 0)
+                FROM estimate_job_orders jo WHERE jo.estimate_id = e.id) END`;
+
     const [rows] = await pool.query(
       `SELECT e.*, c.name AS customer_name, CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
-              CONCAT(pb.first_name, ' ', pb.last_name) AS prepared_by_name, loc.location_name
+              CONCAT(pb.first_name, ' ', pb.last_name) AS prepared_by_name, loc.location_name,
+              ${effectiveTotal} AS effective_total_amount
        ${baseFrom} ${whereSql}
        ORDER BY e.id DESC
        LIMIT ? OFFSET ?`,
