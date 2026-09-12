@@ -5,6 +5,7 @@ const { computeTransitGl } = require('../lib/glImpact');
 const { isNonStockItem } = require('../lib/itemTypes');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { deriveOnHand } = require('../lib/stockLedger');
+const { insertNumbered } = require('../lib/docNumber');
 
 const router = express.Router();
 const ROUTE = '/transfer-orders';
@@ -669,13 +670,9 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
 // stale snapshot, cannot see the row the winner just committed, computes the same number again,
 // and fails on every attempt. A separate autocommit connection sees the current committed state,
 // which is what "the next free number" has to mean.
-async function nextDocNo(pool_, table, column, prefix) {
-  const [[mx]] = await pool_.query(
-    'SELECT COALESCE(MAX(CAST(SUBSTRING(??, ?) AS UNSIGNED)), 0) AS n FROM ?? WHERE ?? REGEXP ?',
-    [column, prefix.length + 1, table, column, `^${prefix}[0-9]+$`]
-  );
-  return `${prefix}${mx.n + 1}`;
-}
+// Both helpers now live in lib/docNumber.js. Purchase orders turned out to have exactly this
+// collision -- PO-19571 held by row 438, with 498 more queued behind it -- so the fix is shared
+// rather than copied a second time.
 
 // Insert a row whose document number has to be unique, and write that number in the INSERT
 // itself.
@@ -685,18 +682,6 @@ async function nextDocNo(pool_, table, column, prefix) {
 // all. Reading the maximum and inserting still is not atomic, so a clash is retried rather than
 // prevented: the loser simply takes the next number. A duplicate-key error does not abort a MySQL
 // transaction, so the retry is safe inside the caller's.
-async function insertNumbered(conn, { table, column, prefix, run }) {
-  for (let attempt = 0; ; attempt += 1) {
-    const no = await nextDocNo(pool, table, column, prefix);
-    try {
-      const [result] = await run(no);
-      return { id: result.insertId, no };
-    } catch (err) {
-      // Anything but a number clash is a real failure, and so is losing the race five times.
-      if (err.code !== 'ER_DUP_ENTRY' || attempt >= 4) throw err;
-    }
-  }
-}
 
 // Creates the TO header plus one line per material passed in `lines` -- this is how the
 // Production module's "Create TO" button (only shown when a Job Order has short

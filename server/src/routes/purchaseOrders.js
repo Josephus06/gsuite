@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
+const { insertNumbered } = require('../lib/docNumber');
 
 const router = express.Router();
 const ROUTE = '/purchase-orders';
@@ -232,13 +233,16 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       });
       const totalAmount = netOfTax + taxAmount;
 
-      const [result] = await conn.query(
-        `INSERT INTO purchase_orders (po_no, date_created, supplier_id, ref_no, memo, subtotal, discount_amount, net_of_tax, tax_amount, total_amount, status, created_by_user_id)
-         VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_approval', ?)`,
-        [dateCreated || new Date().toISOString().slice(0, 10), supplierId, refNo || null, memo || null, subtotal, discountAmount, netOfTax, taxAmount, totalAmount, req.user.id]
-      );
-      const poId = result.insertId;
-      await conn.query('UPDATE purchase_orders SET po_no = ? WHERE id = ?', [`PO-${poId}`, poId]);
+      const { id: poId, no: poNo } = await insertNumbered(conn, {
+        table: 'purchase_orders',
+        column: 'po_no',
+        prefix: 'PO-',
+        run: (no) => conn.query(
+          `INSERT INTO purchase_orders (po_no, date_created, supplier_id, ref_no, memo, subtotal, discount_amount, net_of_tax, tax_amount, total_amount, status, created_by_user_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_approval', ?)`,
+          [no, dateCreated || new Date().toISOString().slice(0, 10), supplierId, refNo || null, memo || null, subtotal, discountAmount, netOfTax, taxAmount, totalAmount, req.user.id]
+        ),
+      });
 
       for (const l of computed) {
         await conn.query(
@@ -253,7 +257,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
           await conn.query('UPDATE purchase_requisition_lines SET po_qty = po_qty + ? WHERE id = ?', [l.qty, l.purchase_requisition_line_id]);
         }
       }
-      await logAudit(conn, { poId, userId: req.user.id, eventType: 'Created', fieldName: 'po_no', newValue: `PO-${poId}` });
+      await logAudit(conn, { poId, userId: req.user.id, eventType: 'Created', fieldName: 'po_no', newValue: poNo });
       createdPOs.push(poId);
     }
 
@@ -397,15 +401,18 @@ router.post('/:id/landed-costs', requireAuth, requirePermission(ROUTE, 'can_add'
     const totalAmount = netOfTax + taxAmount;
 
     await conn.beginTransaction();
-    const [result] = await conn.query(
-      `INSERT INTO purchase_orders (po_no, type, parent_purchase_order_id, date_created, supplier_id, term_id, memo,
-         subtotal, discount_amount, net_of_tax, tax_amount, total_amount, status, created_by_user_id)
-       VALUES ('', 'PO2', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_approval', ?)`,
-      [req.params.id, dateCreated || new Date().toISOString().slice(0, 10), supplierId, termId || null, memo || null,
-        subtotal, discountAmount, netOfTax, taxAmount, totalAmount, req.user.id]
-    );
-    const poId = result.insertId;
-    await conn.query('UPDATE purchase_orders SET po_no = ? WHERE id = ?', [`PO-${poId}`, poId]);
+    const { id: poId, no: poNo } = await insertNumbered(conn, {
+      table: 'purchase_orders',
+      column: 'po_no',
+      prefix: 'PO-',
+      run: (no) => conn.query(
+        `INSERT INTO purchase_orders (po_no, type, parent_purchase_order_id, date_created, supplier_id, term_id, memo,
+           subtotal, discount_amount, net_of_tax, tax_amount, total_amount, status, created_by_user_id)
+         VALUES (?, 'PO2', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_approval', ?)`,
+        [no, req.params.id, dateCreated || new Date().toISOString().slice(0, 10), supplierId, termId || null, memo || null,
+          subtotal, discountAmount, netOfTax, taxAmount, totalAmount, req.user.id]
+      ),
+    });
 
     for (const l of computed) {
       await conn.query(
@@ -417,7 +424,7 @@ router.post('/:id/landed-costs', requireAuth, requirePermission(ROUTE, 'can_add'
           l.rate || 0, l.disc_percent || 0, l.lineDiscAmount, l.lineNetOfTax, l.tax_code_id || null, l.lineTaxAmount, l.extPrice]
       );
     }
-    await logAudit(conn, { poId, userId: req.user.id, eventType: 'Created', fieldName: 'po_no', newValue: `PO-${poId}` });
+    await logAudit(conn, { poId, userId: req.user.id, eventType: 'Created', fieldName: 'po_no', newValue: poNo });
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM purchase_orders WHERE id = ?', [poId]);
@@ -471,15 +478,18 @@ router.post('/direct', requireAuth, requirePermission(ROUTE, 'can_add'), async (
     const initialStatus = 'pending_approval_gm';
 
     await conn.beginTransaction();
-    const [result] = await conn.query(
-      `INSERT INTO purchase_orders (po_no, type, date_created, need_by_date, supplier_id, term_id, ref_no, memo,
-         subtotal, discount_amount, net_of_tax, tax_amount, total_amount, status, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [poCategory, dateCreated || new Date().toISOString().slice(0, 10), needByDate || null, supplierId, termId || null, refNo || null, memo || null,
-        subtotal, discountAmount, netOfTax, taxAmount, totalAmount, initialStatus, req.user.id]
-    );
-    const poId = result.insertId;
-    await conn.query('UPDATE purchase_orders SET po_no = ? WHERE id = ?', [`PO-${poId}`, poId]);
+    const { id: poId, no: poNo } = await insertNumbered(conn, {
+      table: 'purchase_orders',
+      column: 'po_no',
+      prefix: 'PO-',
+      run: (no) => conn.query(
+        `INSERT INTO purchase_orders (po_no, type, date_created, need_by_date, supplier_id, term_id, ref_no, memo,
+           subtotal, discount_amount, net_of_tax, tax_amount, total_amount, status, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [no, poCategory, dateCreated || new Date().toISOString().slice(0, 10), needByDate || null, supplierId, termId || null, refNo || null, memo || null,
+          subtotal, discountAmount, netOfTax, taxAmount, totalAmount, initialStatus, req.user.id]
+      ),
+    });
 
     for (const l of computed) {
       await conn.query(
@@ -493,7 +503,7 @@ router.post('/direct', requireAuth, requirePermission(ROUTE, 'can_add'), async (
           l.lineDiscAmount, l.lineNetOfTax, l.tax_code_id || null, l.lineTaxAmount, l.extPrice]
       );
     }
-    await logAudit(conn, { poId, userId: req.user.id, eventType: 'Created', fieldName: 'po_no', newValue: `PO-${poId}` });
+    await logAudit(conn, { poId, userId: req.user.id, eventType: 'Created', fieldName: 'po_no', newValue: poNo });
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM purchase_orders WHERE id = ?', [poId]);
