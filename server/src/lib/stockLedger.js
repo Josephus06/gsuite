@@ -282,14 +282,18 @@ function unitIsBase(uom, baseCode, baseTitle) {
 }
 
 // Whether a row's quantity could actually be brought to the base unit. A unit that is not the base
-// one is converted with the item's conversion factor -- but an item with no factor, or a factor of
-// exactly 1 alongside a differently-named unit, has nothing to convert WITH, so the quantity goes
-// into the balance unchanged and the balance cannot be trusted. That, and only that, is what the
-// Bin Card's warning is about.
+// one is converted with the item's conversion factor, so the only genuinely broken case is an item
+// with NO usable factor -- null or zero -- where the quantity lands in the balance unconverted.
+//
+// A factor of exactly 1 is NOT that case, even though the unit is spelled differently. It means
+// one of these is one of those: a 1-litre can of reducer is stock unit CAN, base unit LTR,
+// factor 1, and multiplying by 1 is the correct conversion. Treating 1 as "no factor" would have
+// raised the warning on 3,375 movements across 83 items that are handled correctly, which is the
+// same crying-wolf problem this whole change is undoing.
 function unitIsConvertible(uom, baseCode, baseTitle, conversionFactor) {
   if (unitIsBase(uom, baseCode, baseTitle)) return true;
   const f = Number(conversionFactor);
-  return Number.isFinite(f) && f > 0 && f !== 1;
+  return Number.isFinite(f) && f > 0;
 }
 
 module.exports = { movementsSql, deriveOnHand, unitIsBase, unitIsConvertible, DIMENSION_UNITS };
