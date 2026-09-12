@@ -4,6 +4,7 @@ import api from '../api/client';
 import DataTable from '../components/DataTable';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { isBaseUnit } from '../utils/unitUsed';
 
 // Mirrors the real system's "Inventory Adjustments" Add/Edit form: the Adjustments
 // section (Add Material / Upload Material) appears as soon as an Adjustment Account is
@@ -217,7 +218,10 @@ export default function InventoryAdjustmentEdit() {
               {
                 key: 'unit_used', label: 'Unit Used',
                 render: (l) => (
-                  <select defaultValue={l.unit_used || 'stock'} onChange={(e) => commitLine(l.id, { unit_used: e.target.value })}>
+                  // Normalised, because a migrated line stores 'StockUnit'/'BaseUnit' and neither
+                  // matches an option value -- so a base-unit adjustment opened here showed
+                  // "Stock Unit", and saving any other field would have committed that back.
+                  <select defaultValue={isBaseUnit(l.unit_used) ? 'base' : 'stock'} onChange={(e) => commitLine(l.id, { unit_used: e.target.value })}>
                     <option value="stock">Stock Unit</option>
                     <option value="base">Base Unit</option>
                   </select>

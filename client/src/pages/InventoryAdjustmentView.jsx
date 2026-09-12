@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { isBaseUnit } from '../utils/unitUsed';
 
 // Mirrors the real system's Inventory Adjustment detail screen: banner + Details +
 // Items/GL Impact/System Info tabs. GL Impact is derived on the fly from
@@ -16,6 +17,12 @@ const STATUS_LABELS = {
   approved: 'Approved',
   cancelled: 'Cancelled',
 };
+
+// The unit a figure is in, set small and muted beside it so the number still reads as the number.
+function Unit({ u }) {
+  if (!u) return null;
+  return <span className="muted" style={{ marginLeft: 4, fontSize: '0.85em' }}>{u}</span>;
+}
 
 function money(v) {
   const n = Number(v);
@@ -145,13 +152,18 @@ export default function InventoryAdjustmentView() {
                     <td>{l.item_code} {l.item_name ? `— ${l.item_name}` : ''}</td>
                     <td>{l.location_name}</td>
                     <td>{l.department_name}</td>
-                    <td>{l.qty_on_hand}</td>
-                    <td>{l.unit_used === 'base' ? 'Base Unit' : 'Stock Unit'}</td>
+                    {/* Each quantity carries its own unit, because the three of them are NOT all
+                        in the same one and the row was unreadable without saying so: a sheet of
+                        4'x8' acrylic is 32 SQFT, so "Qty on Hand 96, Adjust By 2, New Qty 160"
+                        beside a UOM of SHT looks like arithmetic that does not add up until you
+                        know that 96 and 160 are square feet while the 2 is sheets. */}
+                    <td>{l.qty_on_hand}<Unit u={l.unit} /></td>
+                    <td>{isBaseUnit(l.unit_used) ? 'Base Unit' : 'Stock Unit'}</td>
                     <td>{l.uom_title}</td>
                     <td>{l.unit}</td>
                     <td>{money(l.current_value)}</td>
-                    <td>{l.adjust_qty_by}</td>
-                    <td>{l.new_qty}</td>
+                    <td>{l.adjust_qty_by}<Unit u={l.uom_title} /></td>
+                    <td>{l.new_qty}<Unit u={l.unit} /></td>
                     <td>{money(l.est_unit_cost)}</td>
                     <td>{money(l.est_unit_cost_base)}</td>
                     <td>{l.memo}</td>
