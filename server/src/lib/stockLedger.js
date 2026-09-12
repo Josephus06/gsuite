@@ -34,10 +34,15 @@
 // Where each branch's unit comes from:
 //
 //   Receiving Report / Vendor Return  no uom -- already scaled in the SELECT, must not scale twice
-//   Item Fulfillment / Item Receipt   tol.uom  -- the Transfer Order line's unit, usually Stock
+//   Item Fulfillment / Item Receipt   tol.uom  -- USUALLY the stock unit, but on JO-driven lines
+//                                     it is the dimension unit the length/width were keyed in
+//                                     (MM/IN) while the quantity is already in the base unit
 //   Assembly Build                    abl.unit -- almost always the base unit already
 //   Inventory Adjustment              ial.unit -- base when written by inventoryAdjustments.js,
 //                                     the stock unit on migrated rows
+//
+// A unit is recognised as "already base" by its CODE or its TITLE ('SQFT' and 'Square Foot' are
+// one unit), and dimension codes never trigger a conversion. See toBase.
 //
 // The Bin Card still shows the unit per row, which is what makes this auditable rather than a
 // silent correction: the reader can see which quantity came in which unit.
@@ -70,8 +75,31 @@ function movementsSql(filterByItem = false) {
   // uom holds 'ROLL' / 'SHT' / 'GAL' against a base of 'SQFT' / 'LTR', or the base code itself
   // when the line was already entered in base units. A NULL unit means the branch scaled the
   // quantity before this point, so it must not be scaled twice.
+  // Two ways a unit can already BE the base unit, and the second one was missed until 2026-09-12:
+  //
+  //   code   'SQFT'        what units_of_measure.code holds
+  //   title  'Square Foot' what units_of_measure.title holds -- and what some lines record
+  //
+  // They are the same unit written two ways. Comparing only against the code meant a line saying
+  // "Square Foot" looked like a foreign unit and was multiplied by the conversion factor, so an
+  // adjustment of 96 SQFT posted as 3,072. 18 lines were affected (10 inventory adjustments,
+  // 7 assembly builds, 1 transfer order).
+  //
+  // MM / CM / IN / FT are never quantity units here. They are the unit the LENGTH and WIDTH were
+  // keyed in -- a job order cutting 900mm x 430mm out of a sheet -- while the quantity itself is
+  // the resulting area in the base unit. transfer_order_lines.uom carries that dimension unit on
+  // JO-driven lines, so 192 SQFT fulfilled was being read as "192 MM", found not to match SQFT,
+  // and multiplied by 32 to 6,144. No item in this database is stocked in a linear unit, so a
+  // dimension code can never legitimately mean a quantity to convert.
+  //
+  // Everything else that differs from the base IS a stock-unit count -- 11,410 transfer order
+  // lines say "2 ROLL" or "1 SHT" and genuinely need the factor. That is why the unit is not
+  // simply ignored here: dropping the conversion would understate a roll of tarpaulin by 984x.
   const toBase = (qty, uom, inv, base) => `(${qty}) * CASE
-      WHEN ${uom} IS NULL OR UPPER(${uom}) = UPPER(COALESCE(${base}.code, ''))
+      WHEN ${uom} IS NULL
+        OR UPPER(${uom}) = UPPER(COALESCE(${base}.code, ''))
+        OR UPPER(${uom}) = UPPER(COALESCE(${base}.title, ''))
+        OR UPPER(${uom}) IN ('MM', 'CM', 'IN', 'FT')
       THEN 1 ELSE COALESCE(NULLIF(${inv}.conversion_factor, 0), 1) END`;
 
   return `

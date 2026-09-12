@@ -155,14 +155,17 @@ export default function TransferOrderView() {
             <table>
               <thead>
                 <tr>
-                  <th>Item</th><th>JO #</th><th>TO Count</th><th>Qty</th><th>UOM</th><th>Unit</th>
+                  {/* No UOM column: on job-order-driven lines it holds the unit the length and
+                      width were keyed in (MM/IN), not the unit of Qty beside it. Unit has the
+                      real one. */}
+                  <th>Item</th><th>JO #</th><th>TO Count</th><th>Qty</th><th>Unit</th>
                   <th>Adjusted Qty</th><th>New Qty</th><th>Committed</th><th>Fulfilled</th><th>Received</th>
                   <th>Back Ordered</th><th>Qty On Hand</th><th>Memo</th><th></th>
                 </tr>
               </thead>
               <tbody>
                 {lines.length === 0 && (
-                  <tr><td colSpan={15} className="muted" style={{ textAlign: 'center', padding: 20 }}>No materials.</td></tr>
+                  <tr><td colSpan={14} className="muted" style={{ textAlign: 'center', padding: 20 }}>No materials.</td></tr>
                 )}
                 {lines.map((l) => (
                   <tr key={l.id}>
@@ -176,7 +179,6 @@ export default function TransferOrderView() {
                     ) : (l.job_order_no || '—')}</td>
                     <td>{l.to_count}</td>
                     <td>{qty(l.qty)}</td>
-                    <td>{l.uom}</td>
                     <td>{l.unit}</td>
                     <td>
                       {canStillFulfill && canEdit ? (

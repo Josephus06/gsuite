@@ -93,7 +93,11 @@ export default function ItemFulfillmentView() {
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>Item</th><th>Fulfill</th><th>Received</th><th>Qty On Hand</th><th>UOM</th><th>Unit</th></tr>
+                {/* No UOM column. It showed transfer_order_lines.uom, which on job-order-driven
+                    lines is the unit the LENGTH and WIDTH were keyed in -- "MM" beside a quantity
+                    of 192 that is 192 square feet. Sitting next to the quantities it read as
+                    their unit, which it is not. Unit already carries the real one. */}
+                <tr><th>Item</th><th>Fulfill</th><th>Received</th><th>Qty On Hand</th><th>Unit</th></tr>
               </thead>
               <tbody>
                 {data.lines.map((l, idx) => (
@@ -107,7 +111,6 @@ export default function ItemFulfillmentView() {
                     <td>{qty(l.qty_fulfilled)}</td>
                     <td>{qty(l.received)}</td>
                     <td>{qty(l.qty_on_hand)}</td>
-                    <td>{l.uom}</td>
                     <td>{l.unit}</td>
                   </tr>
                 ))}

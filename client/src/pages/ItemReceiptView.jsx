@@ -87,7 +87,9 @@ export default function ItemReceiptView() {
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>Item</th><th>Fulfill</th><th>Received</th><th>Qty On Hand</th><th>UOM</th><th>Unit</th></tr>
+                {/* UOM dropped for the same reason as the Item Fulfillment view: it is the job
+                    order's dimension unit, not the quantity's. */}
+                <tr><th>Item</th><th>Fulfill</th><th>Received</th><th>Qty On Hand</th><th>Unit</th></tr>
               </thead>
               <tbody>
                 {data.lines.map((l, idx) => (
@@ -101,7 +103,6 @@ export default function ItemReceiptView() {
                     <td>{qty(l.qty_fulfilled)}</td>
                     <td>{qty(l.received)}</td>
                     <td>{qty(l.qty_on_hand)}</td>
-                    <td>{l.uom}</td>
                     <td>{l.unit}</td>
                   </tr>
                 ))}

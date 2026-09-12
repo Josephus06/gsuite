@@ -87,8 +87,19 @@ export default function BinCardReport() {
   // summed into the balance as though it were Base Unit, which it is not.
   const baseUom = unitLabels.base_unit_code || unitLabels.base_unit_label || '—';
   const rowUom = (r) => r.uom || baseUom;
-  const mismatched = (r) => !r.is_opening && !!r.uom && !!unitLabels.base_unit_code
-    && String(r.uom).toUpperCase() !== String(unitLabels.base_unit_code).toUpperCase();
+  // Must match the ledger's own rule in stockLedger.js `toBase`, or the warning contradicts the
+  // balance it is warning about. A unit counts as the base unit written either as its CODE
+  // ('SQFT') or its TITLE ('Square Foot'), and MM/CM/IN/FT are dimension units off the job order's
+  // length and width, never a quantity to convert. Flagging those was the false alarm on this
+  // report: rows that the ledger handles correctly were being called unreliable.
+  const DIMENSION_UNITS = ['MM', 'CM', 'IN', 'FT'];
+  const isBaseUnit = (u) => {
+    const v = String(u).toUpperCase();
+    return v === String(unitLabels.base_unit_code || '').toUpperCase()
+      || v === String(unitLabels.base_unit_label || '').toUpperCase()
+      || DIMENSION_UNITS.includes(v);
+  };
+  const mismatched = (r) => !r.is_opening && !!r.uom && !!unitLabels.base_unit_code && !isBaseUnit(r.uom);
   const mismatchCount = (rows || []).filter(mismatched).length;
 
   return (
