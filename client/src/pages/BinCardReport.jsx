@@ -85,7 +85,10 @@ export default function BinCardReport() {
   // The unit the source document recorded. A movement already scaled to Base Unit carries no uom
   // of its own, so the item's base unit is shown.
   const baseUom = unitLabels.base_unit_code || unitLabels.base_unit_label || '—';
-  const rowUom = (r) => r.uom || baseUom;
+  // The unit of the Qty In/Out beside it -- the unit the source document was written in, which the
+  // server works out per row. An adjustment entered as 2 SHT reads "2 ... SHT" here and still moves
+  // the balances by 2 SHT and 64 SQFT, because the balance columns stay in Base Unit.
+  const rowUom = (r) => r.doc_uom || r.uom || baseUom;
   // The server decides this, using the same helper the ledger converts by (stockLedger.js
   // `unitIsConvertible`). Comparing unit spellings here is what produced the false alarm: the
   // check was against the base CODE alone, so "Square Foot" against a base of SQFT -- the same
@@ -216,8 +219,12 @@ export default function BinCardReport() {
                     <td>{r.ref_no || '—'}</td>
                     <td>{r.from_location_name || ''}</td>
                     <td>{r.to_location_name || ''}</td>
-                    <td>{Number(r.qty_in) ? qtyFmt(r.qty_in) : ''}</td>
-                    <td>{Number(r.qty_out) ? qtyFmt(r.qty_out) : ''}</td>
+                    {/* The quantity as the document recorded it, not as it was converted: an
+                        adjustment of 2 sheets reads 2, beside a UOM of SHT, while the balance
+                        columns move by the 64 square feet that is. Falls back to the Base Unit
+                        figure on a row with no document unit of its own. */}
+                    <td>{Number(r.qty_in) ? qtyFmt(r.doc_qty_in ?? r.qty_in) : ''}</td>
+                    <td>{Number(r.qty_out) ? qtyFmt(r.doc_qty_out ?? r.qty_out) : ''}</td>
                     {/* The unit the source document recorded, shown for every row so the reader
                         can see where each quantity came from -- "2.0000 ROLL" converted into a
                         balance kept in SQFT. Only the rows that could NOT be converted are marked;

@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
-const { movementsSql, unitIsConvertible } = require('../lib/stockLedger');
+const { movementsSql, unitIsBase, unitIsConvertible, toDocQty } = require('../lib/stockLedger');
 
 const router = express.Router();
 const ROUTE = '/bin-card-reports';
@@ -130,8 +130,25 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     // beside it is worse than no warning.
     const withBalance = rows.map((r) => {
       balanceBase += Number(r.qty_in) - Number(r.qty_out);
+      // Qty In/Out are reported in the unit the SOURCE DOCUMENT used, while the balances stay in
+      // Base Unit -- an adjustment of 2 SHT reads "2 SHT" and moves the balance 64 SQFT, which is
+      // the row the warehouse can actually check against the paperwork. qty_in/qty_out keep the
+      // Base Unit figures so nothing downstream that sums them has to change.
+      // Labelled with the BASE unit whenever the document's unit is not a separate quantity unit:
+      // no unit at all, the base unit under either spelling, or a dimension code like MM that a
+      // job-order line carries for its length and width. Those rows are already in the base unit,
+      // so "192 MM" would name the wrong one -- it is 192 square feet.
+      const docUom = unitIsBase(r.doc_uom, unitInfo.base_unit_code, unitInfo.base_unit_title)
+        ? (unitInfo.base_unit_title || unitInfo.base_unit_code)
+        : r.doc_uom;
+      const toDoc = (q) => toDocQty(
+        q, r.doc_uom, unitInfo.base_unit_code, unitInfo.base_unit_title, unitInfo.conversion_factor,
+      );
       return {
         ...r,
+        doc_uom: docUom,
+        doc_qty_in: toDoc(r.qty_in),
+        doc_qty_out: toDoc(r.qty_out),
         balance_base: balanceBase,
         balance_stock: balanceBase / conversionFactor,
         uom_convertible: unitIsConvertible(
@@ -162,6 +179,9 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
         is_opening: true,
         // Carries no unit of its own -- it is a balance, already in the base unit.
         uom_convertible: true,
+        doc_uom: null,
+        doc_qty_in: null,
+        doc_qty_out: null,
       });
     }
 

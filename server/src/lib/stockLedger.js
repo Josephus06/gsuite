@@ -106,29 +106,33 @@ function movementsSql(filterByItem = false) {
   SELECT r.date_created AS trans_date, r.receipt_no AS trans_no, 'Receiving Report' AS trans_type,
          po.po_no AS ref_no, rl.item_id, NULL AS from_location_id, NULL AS from_location_name,
          rl.location_id AS to_location_id, loc.location_name AS to_location_name,
-         rl.qty_received * COALESCE(i0.conversion_factor, 1) AS qty_in, 0 AS qty_out, rl.rate, r.id AS sort_id, r.created_at AS sort_ts, NULL AS uom
+         rl.qty_received * COALESCE(i0.conversion_factor, 1) AS qty_in, 0 AS qty_out, rl.rate, r.id AS sort_id, r.created_at AS sort_ts, NULL AS uom,
+         pu0.title AS doc_uom
   FROM purchase_order_receipt_lines rl
   JOIN purchase_order_receipts r ON r.id = rl.purchase_order_receipt_id
   JOIN purchase_orders po ON po.id = r.purchase_order_id
   LEFT JOIN locations loc ON loc.id = rl.location_id
-  LEFT JOIN inventories i0 ON i0.id = rl.item_id${where('rl')}
+  LEFT JOIN inventories i0 ON i0.id = rl.item_id
+  LEFT JOIN units_of_measure pu0 ON pu0.id = i0.purchase_unit_id${where('rl')}
 
   UNION ALL
 
   SELECT vr.date_created, vr.return_no, 'Vendor Return',
          po2.po_no, rl2.item_id, rl2.location_id, loc2.location_name, NULL, NULL,
-         0, rl2.qty_returned * COALESCE(i1.conversion_factor, 1), rl2.rate, vr.id, vr.created_at, NULL
+         0, rl2.qty_returned * COALESCE(i1.conversion_factor, 1), rl2.rate, vr.id, vr.created_at, NULL,
+         pu1.title
   FROM purchase_return_lines rl2
   JOIN purchase_returns vr ON vr.id = rl2.purchase_return_id
   JOIN purchase_orders po2 ON po2.id = vr.purchase_order_id
   LEFT JOIN locations loc2 ON loc2.id = rl2.location_id
-  LEFT JOIN inventories i1 ON i1.id = rl2.item_id${where('rl2')}
+  LEFT JOIN inventories i1 ON i1.id = rl2.item_id
+  LEFT JOIN units_of_measure pu1 ON pu1.id = i1.purchase_unit_id${where('rl2')}
 
   UNION ALL
 
   SELECT f.date_created, f.fulfillment_no, 'Item Fulfillment',
          tord.to_no, fl.item_id, tord.withdraw_from_location_id, wloc.location_name, NULL, NULL,
-         0, ${toBase('fl.qty_fulfilled', 'tol.uom', 'i', 'bu')}, i.average_cost, f.id, f.created_at, tol.uom
+         0, ${toBase('fl.qty_fulfilled', 'tol.uom', 'i', 'bu')}, i.average_cost, f.id, f.created_at, tol.uom, tol.uom
   FROM item_fulfillment_lines fl
   JOIN item_fulfillments f ON f.id = fl.item_fulfillment_id
   JOIN transfer_orders tord ON tord.id = f.transfer_order_id
@@ -141,7 +145,7 @@ function movementsSql(filterByItem = false) {
 
   SELECT r2.date_created, r2.receipt_no, 'Item Receipt',
          f2.fulfillment_no, rl3.item_id, NULL, NULL, tord2.transfer_to_location_id, tloc.location_name,
-         ${toBase('rl3.qty_received', 'tol3.uom', 'i2', 'bu2')}, 0, i2.average_cost, r2.id, r2.created_at, tol3.uom
+         ${toBase('rl3.qty_received', 'tol3.uom', 'i2', 'bu2')}, 0, i2.average_cost, r2.id, r2.created_at, tol3.uom, tol3.uom
   FROM item_receipt_lines rl3
   JOIN item_receipts r2 ON r2.id = rl3.item_receipt_id
   JOIN item_fulfillments f2 ON f2.id = r2.item_fulfillment_id
@@ -155,7 +159,7 @@ function movementsSql(filterByItem = false) {
 
   SELECT ab.date_created, ab.ab_no, 'Assembly Build',
          jo.job_order_no, abl.item_id, abl.location_id, aloc.location_name, NULL, NULL,
-         0, ${toBase('abl.total_qty_to_build', 'abl.unit', 'i3', 'bu3')}, NULL, ab.id, ab.created_at, abl.unit
+         0, ${toBase('abl.total_qty_to_build', 'abl.unit', 'i3', 'bu3')}, NULL, ab.id, ab.created_at, abl.unit, abl.unit
   FROM assembly_build_lines abl
   JOIN assembly_builds ab ON ab.id = abl.assembly_build_id
   JOIN job_orders jo ON jo.id = ab.job_order_id
@@ -172,12 +176,18 @@ function movementsSql(filterByItem = false) {
          IF(ial.new_qty - ial.qty_on_hand >= 0, ial.location_id, NULL), IF(ial.new_qty - ial.qty_on_hand >= 0, iloc.location_name, NULL),
          ${toBase('GREATEST(ial.new_qty - ial.qty_on_hand, 0)', 'ial.unit', 'i4', 'bu4')},
          ${toBase('GREATEST(-(ial.new_qty - ial.qty_on_hand), 0)', 'ial.unit', 'i4', 'bu4')},
-         ial.est_unit_cost, ia.id, ia.updated_at, ial.unit
+         ial.est_unit_cost, ia.id, ia.updated_at, ial.unit,
+         -- The unit the adjustment was ENTERED in, which is not ial.unit. ial.unit is the unit the
+         -- stored quantities are in (Base Unit on anything this app wrote); Unit Used is what the
+         -- person chose, and "2" against a 4'x8' sheet means 2 SHT.
+         CASE WHEN LOWER(ial.unit_used) IN ('base', 'baseunit') THEN bu4.title
+              ELSE COALESCE(su4.title, bu4.title) END
   FROM inventory_adjustment_lines ial
   JOIN inventory_adjustments ia ON ia.id = ial.inventory_adjustment_id
   LEFT JOIN locations iloc ON iloc.id = ial.location_id
   LEFT JOIN inventories i4 ON i4.id = ial.item_id
   LEFT JOIN units_of_measure bu4 ON bu4.id = i4.base_unit_id
+  LEFT JOIN units_of_measure su4 ON su4.id = i4.stock_unit_id
   WHERE ia.status = 'approved'${and('ial')}
 `;
 }
@@ -296,4 +306,20 @@ function unitIsConvertible(uom, baseCode, baseTitle, conversionFactor) {
   return Number.isFinite(f) && f > 0;
 }
 
-module.exports = { movementsSql, deriveOnHand, unitIsBase, unitIsConvertible, DIMENSION_UNITS };
+// Turns a Base Unit quantity back into the quantity the source document actually recorded, so a
+// report can show what was written down rather than what it was converted to. An adjustment of
+// 2 SHT against a 4'x8' acrylic sheet moves 64 SQFT of stock; this gives back the 2.
+//
+// Derived from the base figure rather than read from the document, deliberately: dividing by the
+// same factor the conversion multiplied by cannot disagree with the balance it sits beside, which
+// a separately-stored raw quantity eventually would.
+function toDocQty(baseQty, docUom, baseCode, baseTitle, conversionFactor) {
+  const q = Number(baseQty) || 0;
+  if (unitIsBase(docUom, baseCode, baseTitle)) return q;
+  const f = Number(conversionFactor);
+  return Number.isFinite(f) && f > 0 ? q / f : q;
+}
+
+module.exports = {
+  movementsSql, deriveOnHand, unitIsBase, unitIsConvertible, toDocQty, DIMENSION_UNITS,
+};
