@@ -9,6 +9,16 @@ const ROUTE = '/inventory-adjustments';
 
 const STATUS_VALUES = ['pending_approval', 'approved', 'cancelled'];
 
+// unit_used is stored two ways. Lines written by this file hold 'stock' / 'base'; lines that came
+// across in the migration hold 'StockUnit' (7,333) / 'BaseUnit' (286). Anything compared with a
+// bare `=== 'stock'` therefore silently mis-reads every migrated row, so both spellings are folded
+// here and nothing downstream compares the raw column.
+//
+// Stock is the default because that is what the form defaults to: an adjustment of "2" against a
+// 4'x8' acrylic sheet means 2 SHEETS, which is 64 SQFT.
+const unitUsedIsBase = (v) => ['base', 'baseunit'].includes(String(v || '').trim().toLowerCase());
+const normaliseUnitUsed = (v) => (unitUsedIsBase(v) ? 'base' : 'stock');
+
 // Shared line-row select: UOM reflects whichever unit is toggled (Stock Unit / Base
 // Unit) via unit_used, falling back to Base Unit if the item has no Stock Unit set.
 // est_unit_cost (== inventories.average_cost) is priced per Stock/Purchase Unit (e.g.
@@ -17,7 +27,8 @@ const STATUS_VALUES = ['pending_approval', 'approved', 'cancelled'];
 // (pesos per SQFT), for display next to Qty on Hand/New Qty which are always Base Unit.
 const LINE_SELECT = `
   SELECT l.*, i.item_code, i.display_name AS item_name, i.asset_account_id,
-         CASE WHEN l.unit_used = 'base' THEN bu.title ELSE COALESCE(su.title, bu.title) END AS uom_title,
+         CASE WHEN LOWER(l.unit_used) IN ('base', 'baseunit') THEN bu.title
+              ELSE COALESCE(su.title, bu.title) END AS uom_title,
          l.est_unit_cost / COALESCE(NULLIF(i.conversion_factor, 0), 1) AS est_unit_cost_base,
          loc.location_name, d.name AS department_name
   FROM inventory_adjustment_lines l
@@ -205,7 +216,7 @@ router.post('/:id/lines', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
       `INSERT INTO inventory_adjustment_lines
          (inventory_adjustment_id, line_no, item_id, location_id, department_id, qty_on_hand, unit, unit_used, current_value, adjust_qty_by, new_qty, est_unit_cost)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
-      [req.params.id, nextLine, itemId, locationId || null, departmentId || null, qtyOnHand, unit?.title || null, unitUsed === 'base' ? 'base' : 'stock', qtyOnHand * (estUnitCost / conversionFactor), qtyOnHand, estUnitCost]
+      [req.params.id, nextLine, itemId, locationId || null, departmentId || null, qtyOnHand, unit?.title || null, normaliseUnitUsed(unitUsed), qtyOnHand * (estUnitCost / conversionFactor), qtyOnHand, estUnitCost]
     );
     await recomputeTotal(conn, req.params.id);
     await conn.commit();
@@ -259,7 +270,11 @@ router.put('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_edit
     // before blurring Adjust Qty By could silently revert Unit Used back to Stock).
     const adjustQtyBy = req.body.adjust_qty_by !== undefined ? Number(req.body.adjust_qty_by || 0) : Number(line.adjust_qty_by || 0);
     const memo = req.body.memo !== undefined ? (req.body.memo || null) : line.memo;
-    const unitUsed = req.body.unit_used !== undefined ? (req.body.unit_used === 'base' ? 'base' : 'stock') : (line.unit_used || 'stock');
+    // Normalised on BOTH paths. The fallback is the one that mattered: an untouched migrated line
+    // carries 'StockUnit', which `=== 'stock'` reads as false, so editing any other field on it --
+    // a location, a memo -- recomputed New Qty with no conversion at all and wrote the unscaled
+    // figure back. On the 4'x8' acrylic that turns 2 sheets into 2 SQFT instead of 64.
+    const unitUsed = normaliseUnitUsed(req.body.unit_used !== undefined ? req.body.unit_used : line.unit_used);
     // Qty on Hand/New Qty are always tracked in Base Unit (matches Bin Card and every
     // other stock-moving feature); est_unit_cost (average_cost) is priced per Stock/
     // Purchase Unit. Adjust Qty By is only already in Base Unit when Unit Used = Base
