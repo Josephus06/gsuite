@@ -911,11 +911,12 @@ router.post('/:id/item-fulfillments', requireAuth, requirePermission(FULFILLMENT
       if (qtyToFulfill > committedRemaining) {
         return res.status(409).json({ error: `Qty to Fulfill for ${line.item_code} exceeds its committed qty (${committedRemaining} available) -- reallocate stock to this order first.` });
       }
-      const [[stock]] = await conn.query(
-        'SELECT qty_on_hand FROM inventory_locations WHERE inventory_id = ? AND location_id = ?',
-        [line.item_id, t.withdraw_from_location_id]
-      );
-      const available = Number(stock?.qty_on_hand || 0);
+      // From the ledger, because Reallocate now hands out commitments against the ledger figure.
+      // Left on inventory_locations this gate would have contradicted the one before it: stock
+      // could be committed to a line up to the real balance and then refused at fulfilment for
+      // exceeding the stale snapshot, with no way forward from either screen.
+      const onHandByPair = await deriveOnHand(conn, [line.item_id]);
+      const available = Number(onHandByPair.get(`${line.item_id}|${t.withdraw_from_location_id}`) || 0);
       if (qtyToFulfill > available) {
         return res.status(409).json({ error: `Qty to Fulfill for ${line.item_code} exceeds what's on hand at the withdraw-from location (${available}).` });
       }
