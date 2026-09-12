@@ -907,7 +907,16 @@ router.post('/:id/item-fulfillments', requireAuth, requirePermission(FULFILLMENT
       // line's reserved share of a pool that other pending Transfer Order lines may
       // also be claiming (see /lines/:lineId/reallocate). A freshly-raised line sits at
       // Committed 0 until someone reallocates stock to it.
-      const committedRemaining = Number(line.committed || 0) - Number(line.fulfilled || 0);
+      // `committed` is what is still reserved and unshipped -- it is decremented as each
+      // fulfilment goes out -- so it IS the cap, with no further subtraction. Taking
+      // `committed - fulfilled` double-counted any reservation made after a partial shipment:
+      // TO-38243's acrylic was ordered 1,965.2871, shipped 192, then re-reserved at 1,773.2871
+      // (the remainder), and the old arithmetic offered only 1,581.2871 of it.
+      //
+      // Over-fulfilment is still impossible: the ordered-balance gate above caps this at
+      // qty - fulfilled regardless of what `committed` says, which also covers legacy rows left
+      // holding a reservation that was never decremented.
+      const committedRemaining = Number(line.committed || 0);
       if (qtyToFulfill > committedRemaining) {
         return res.status(409).json({ error: `Qty to Fulfill for ${line.item_code} exceeds its committed qty (${committedRemaining} available) -- reallocate stock to this order first.` });
       }
@@ -946,8 +955,27 @@ router.post('/:id/item-fulfillments', requireAuth, requirePermission(FULFILLMENT
           'UPDATE inventory_locations SET qty_on_hand = qty_on_hand - ? WHERE inventory_id = ? AND location_id = ?',
           [qtyToFulfill, line.item_id, t.withdraw_from_location_id]
         );
+        // Shipping a reservation CONSUMES it, so the location's reserved pool frees up by the
+        // same amount. Without this the pool stayed reserved against stock that had already
+        // left the building, and every later reallocation of that item started from an
+        // overstated committed figure.
+        await conn.query(
+          `UPDATE inventory_locations SET qty_committed = GREATEST(COALESCE(qty_committed, 0) - ?, 0)
+            WHERE inventory_id = ? AND location_id = ?`,
+          [qtyToFulfill, line.item_id, t.withdraw_from_location_id]
+        );
       }
-      await conn.query('UPDATE transfer_order_lines SET fulfilled = fulfilled + ? WHERE id = ?', [qtyToFulfill, line.id]);
+      // committed comes DOWN as fulfilled goes up: it is the quantity still reserved and not yet
+      // shipped, which is what "Committed" means on the Transfer Order and on Reallocate Items.
+      // It used to be left alone, so a line that had been fully shipped still showed its original
+      // reservation and the fulfilment cap had to subtract `fulfilled` from it -- which then
+      // under-counted any reservation made AFTER a partial shipment, because that figure was
+      // already net of it. GREATEST keeps a legacy row that was never decremented from going
+      // negative.
+      await conn.query(
+        'UPDATE transfer_order_lines SET fulfilled = fulfilled + ?, committed = GREATEST(committed - ?, 0) WHERE id = ?',
+        [qtyToFulfill, qtyToFulfill, line.id]
+      );
       await conn.query(
         `INSERT INTO item_fulfillment_lines (item_fulfillment_id, transfer_order_line_id, item_id, qty_fulfilled, memo)
          VALUES (?, ?, ?, ?, ?)`,
