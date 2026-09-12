@@ -4,6 +4,7 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeTransitGl } = require('../lib/glImpact');
 const { isNonStockItem } = require('../lib/itemTypes');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
+const { deriveOnHand } = require('../lib/stockLedger');
 
 const router = express.Router();
 const ROUTE = '/transfer-orders';
@@ -496,12 +497,35 @@ router.get('/lines/:lineId/reallocate', requireAuth, requirePermission(ROUTE, 'c
       return res.status(409).json({ error: 'This is a Service item -- it holds no stock, so there is nothing to reallocate. It can be fulfilled directly.' });
     }
 
-    const [[item]] = await pool.query('SELECT id, item_code, display_name FROM inventories WHERE id = ?', [line.item_id]);
+    const [[item]] = await pool.query(
+      `SELECT i.id, i.item_code, i.display_name, i.conversion_factor,
+              su.title AS stock_unit_title, bu.title AS base_unit_title
+         FROM inventories i
+         LEFT JOIN units_of_measure su ON su.id = i.stock_unit_id
+         LEFT JOIN units_of_measure bu ON bu.id = i.base_unit_id
+        WHERE i.id = ?`,
+      [line.item_id]
+    );
     const [[location]] = await pool.query('SELECT id, location_name FROM locations WHERE id = ?', [line.withdraw_from_location_id]);
+    // On Hand comes from the MOVEMENT LEDGER, not inventory_locations.
+    //
+    // That snapshot table holds 21 rows for 8,346 item/location pairs the ledger knows about, and
+    // not one of them agrees with it. For this item at Warehouse - Central it read 160 while the
+    // Bin Card showed 447.999 -- the 160 being whatever the last approved adjustment happened to
+    // set it to. Reallocating against a figure the Bin Card contradicts is how someone commits
+    // stock that is not there, or refuses to commit stock that is.
+    //
+    // deriveOnHand anchors exactly as the Bin Card does (the source system's Beginning Balance plus
+    // the movements since), so this screen and that report cannot disagree.
+    //
+    // qty_committed still comes from the snapshot: a commitment is a promise against future work,
+    // not a movement, so there is nothing in the ledger to derive it from.
     const [[stock]] = await pool.query(
-      'SELECT qty_on_hand, qty_committed FROM inventory_locations WHERE inventory_id = ? AND location_id = ?',
+      'SELECT qty_committed FROM inventory_locations WHERE inventory_id = ? AND location_id = ?',
       [line.item_id, line.withdraw_from_location_id]
     );
+    const onHandByPair = await deriveOnHand(pool, [line.item_id]);
+    const qtyOnHandBase = Number(onHandByPair.get(`${line.item_id}|${line.withdraw_from_location_id}`) || 0);
 
     const [candidates] = await pool.query(
       `SELECT tol.id AS transfer_order_line_id, tol.qty, tol.adjusted_qty, tol.fulfilled, tol.committed, tol.uom, tol.unit,
@@ -513,10 +537,16 @@ router.get('/lines/:lineId/reallocate', requireAuth, requirePermission(ROUTE, 'c
       [line.item_id, line.withdraw_from_location_id, OPEN_TO_STATUSES]
     );
 
+    // Both figures are in BASE units; the conversion factor goes with them so the screen can show
+    // the Stock Unit column as something other than a copy of the Base Unit one, which is what it
+    // had been displaying.
     res.json({
       item, location,
-      qty_on_hand: Number(stock?.qty_on_hand || 0),
+      qty_on_hand: qtyOnHandBase,
       qty_committed: Number(stock?.qty_committed || 0),
+      conversion_factor: Number(item?.conversion_factor) || 1,
+      stock_unit_title: item?.stock_unit_title || null,
+      base_unit_title: item?.base_unit_title || null,
       triggering_line_id: Number(req.params.lineId),
       candidates,
     });

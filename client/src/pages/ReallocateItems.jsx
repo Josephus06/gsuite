@@ -68,6 +68,11 @@ export default function ReallocateItems() {
 
   if (loading || !data) return <LoadingSpinner />;
 
+  // Base Unit -> Stock Unit. A factor of 1 (or a missing one) leaves the two equal, which is
+  // correct for an item whose stock unit IS its base unit.
+  const factor = Number(data.conversion_factor) > 0 ? Number(data.conversion_factor) : 1;
+  const toStock = (v) => Number(v || 0) / factor;
+
   return (
     <div>
       <div className="page-header">
@@ -93,13 +98,26 @@ export default function ReallocateItems() {
         </div>
 
         <div className="estimate-detail-grid" style={{ marginTop: 16 }}>
+          {/* SU and BU were rendering the SAME field, so both columns printed 160.0000 for an item
+              held in sheets of 32 square feet -- the two can only be equal when the conversion
+              factor is 1. The server sends both figures in Base Unit plus that factor; the Stock
+              Unit column is the base figure divided down, exactly as the Bin Card derives its own
+              Balance(Stock Unit). */}
           <div>
-            <div>Quantity On Hand (SU) : <span className="hi">{qty(data.qty_on_hand)}</span></div>
-            <div>Quantity Committed (SU) : <span className="hi">{qty(data.qty_committed)}</span></div>
+            <div>Quantity On Hand (SU) : <span className="hi">{qty(toStock(data.qty_on_hand))}</span>
+              {data.stock_unit_title && <span className="muted"> {data.stock_unit_title}</span>}
+            </div>
+            <div>Quantity Committed (SU) : <span className="hi">{qty(toStock(data.qty_committed))}</span>
+              {data.stock_unit_title && <span className="muted"> {data.stock_unit_title}</span>}
+            </div>
           </div>
           <div>
-            <div>Quantity On Hand (BU) : <span className="hi">{qty(data.qty_on_hand)}</span></div>
-            <div>Quantity Committed (BU) : <span className="hi">{qty(data.qty_committed)}</span></div>
+            <div>Quantity On Hand (BU) : <span className="hi">{qty(data.qty_on_hand)}</span>
+              {data.base_unit_title && <span className="muted"> {data.base_unit_title}</span>}
+            </div>
+            <div>Quantity Committed (BU) : <span className="hi">{qty(data.qty_committed)}</span>
+              {data.base_unit_title && <span className="muted"> {data.base_unit_title}</span>}
+            </div>
           </div>
           <div>
             <div>Quantity Required : <span className="hi">—</span></div>
