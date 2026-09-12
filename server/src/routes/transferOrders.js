@@ -593,11 +593,13 @@ router.post('/lines/:lineId/reallocate', requireAuth, requirePermission(ROUTE, '
       }
     }
 
-    const [[stock]] = await conn.query(
-      'SELECT qty_on_hand FROM inventory_locations WHERE inventory_id = ? AND location_id = ?',
-      [line.item_id, line.withdraw_from_location_id]
-    );
-    const onHand = Number(stock?.qty_on_hand || 0);
+    // Derived from the ledger, exactly as the GET above derives the figure it SHOWS. When this
+    // check read inventory_locations instead, the screen offered 3,756 square feet on hand and
+    // then refused a commitment of 3,626 for exceeding 3,500 -- the stale snapshot -- which reads
+    // as the form calling itself a liar. Whatever the user is shown has to be what they are held
+    // to.
+    const onHandByPair = await deriveOnHand(conn, [line.item_id]);
+    const onHand = Number(onHandByPair.get(`${line.item_id}|${line.withdraw_from_location_id}`) || 0);
 
     const submittedById = new Map(submitted.map((s) => [Number(s.transfer_order_line_id), Number(s.committed)]));
     let newTotal = 0;
