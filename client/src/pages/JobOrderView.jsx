@@ -525,6 +525,11 @@ export default function JobOrderView() {
         </div>
       )}
 
+      {/* The artist attaches once the layout is Done -- what Sales approves against should be the
+          finished drawing, not a work in progress. Mirrors canManageAttachments in
+          routes/jobOrders.js, which is the gate that actually enforces it; this only means the
+          artist sees why, instead of being refused after picking a file. Anyone with can_edit is
+          unaffected: their reason for attaching has nothing to do with the layout run. */}
       {tab === 'attachments' && (
         <JobOrderAttachments
           jobOrderId={id}
@@ -534,7 +539,10 @@ export default function JobOrderView() {
             + 'against these, so at least one file is required before this Job Order can be sent for '
             + 'Sales Approval.'}
           emptyHint="Attach the perspective and Bill of Materials to continue."
-          canUpload={isAssignedArtist || canEdit}
+          canUpload={(isAssignedArtist && !!jo.layout_ended_at) || canEdit}
+          uploadBlockedHint={isAssignedArtist && !jo.layout_ended_at
+            ? 'Mark the layout Done on your Assigned JO before attaching the perspective and Bill of Materials.'
+            : null}
           canDelete={user?.account_type === 'System Admin'}
           onChange={loadAttachmentCount}
         />

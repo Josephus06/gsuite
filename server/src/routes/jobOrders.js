@@ -1018,11 +1018,21 @@ async function canManageProductionAttachments(userId) {
   return userCan(userId, '/production', 'can_edit');
 }
 
+// THE ARTIST ATTACHES AFTER THE LAYOUT IS DONE, not while it is still running or on hold.
+// layout_ended_at is what "Done" sets on the Assigned JO screen, so it is the test. What Sales
+// approves against should be the finished drawing, and a file attached mid-run is a work in
+// progress that nothing distinguishes from the final one once it is sitting in the list.
+//
+// The rule is on the ARTIST only. Anyone holding can_edit on Job Orders -- a supervisor fixing a
+// missing file, Sales attaching a mark-up -- is unaffected, because their reason for attaching has
+// nothing to do with whether the layout run has finished.
 async function canManageAttachments(conn, userId, jobOrderId) {
-  const [[jo]] = await conn.query('SELECT artist_id FROM job_orders WHERE id = ?', [jobOrderId]);
+  const [[jo]] = await conn.query('SELECT artist_id, layout_ended_at FROM job_orders WHERE id = ?', [jobOrderId]);
   if (!jo) return { ok: false, missing: true };
   const [[me]] = await conn.query('SELECT employee_id FROM users WHERE id = ?', [userId]);
-  if (me?.employee_id && jo.artist_id === me.employee_id) return { ok: true };
+  if (me?.employee_id && jo.artist_id === me.employee_id) {
+    return jo.layout_ended_at ? { ok: true } : { ok: false, notDone: true };
+  }
   const [[page]] = await conn.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
   const [[perm]] = await conn.query(
     'SELECT can_edit AS allowed FROM user_page_permissions WHERE user_id = ? AND page_id = ?',
@@ -1069,6 +1079,11 @@ router.post('/:id/attachments', requireAuth, async (req, res, next) => {
     } else {
       const access = await canManageAttachments(conn, req.user.id, req.params.id);
       if (access.missing) return res.status(404).json({ error: 'Not found' });
+      if (access.notDone) {
+        return res.status(409).json({
+          error: 'Mark the layout Done on your Assigned JO before attaching files to this Job Order.',
+        });
+      }
       if (!access.ok) return res.status(403).json({ error: 'Only the assigned artist can attach files to this Job Order' });
     }
 

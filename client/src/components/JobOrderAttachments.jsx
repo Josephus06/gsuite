@@ -43,6 +43,9 @@ export default function JobOrderAttachments({
   description,
   emptyHint,
   canUpload,
+  // Why uploading is unavailable, when it is unavailable for a reason the viewer can act on --
+  // as opposed to simply not being their job. Shown in place of the upload box.
+  uploadBlockedHint,
   canDelete,
   onChange,
 }) {
@@ -143,7 +146,7 @@ export default function JobOrderAttachments({
         <div className="att-empty">
           <div className="att-empty-mark">📎</div>
           <strong>No files attached yet</strong>
-          <span>{canUpload ? (emptyHint || 'Attach a file to get started.') : 'Nothing has been attached yet.'}</span>
+          <span>{canUpload ? (emptyHint || 'Attach a file to get started.') : (uploadBlockedHint || 'Nothing has been attached yet.')}</span>
         </div>
       ) : (
         <div className="att-list">
@@ -166,6 +169,12 @@ export default function JobOrderAttachments({
             </div>
           ))}
         </div>
+      )}
+
+      {/* Said here too, not only in the empty state: once a file exists the empty state is gone,
+          and the upload box simply vanishing is the least informative way to refuse someone. */}
+      {!canUpload && uploadBlockedHint && rows.length > 0 && (
+        <div className="muted" style={{ marginTop: 12 }}>{uploadBlockedHint}</div>
       )}
 
       {canUpload && (
