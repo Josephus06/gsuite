@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { useAuth } from '../context/useAuth';
 
 const SEVERITY_BADGE = { minor: 'badge-muted', major: 'badge-warning', grave: 'badge-danger' };
 const STATUS_BADGE = {
@@ -26,11 +27,15 @@ const pretty = (s) => (s ? String(s).replace(/_/g, ' ') : '');
 
 export default function HrIncidentReports() {
   const navigate = useNavigate();
+  const { can } = useAuth();
   const [data, setData] = useState({ rows: [], counts: {} });
   const [status, setStatus] = useState('open');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const canDelete = can('/hrd/incident-reports', 'can_delete');
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -45,6 +50,16 @@ export default function HrIncidentReports() {
 
   useEffect(() => { load(); }, [load]);
   const counts = data.counts || {};
+
+  // Said plainly, because the charge goes with the report and there is no undo: an employee's
+  // conduct record loses this entry entirely.
+  async function remove(r) {
+    if (!confirm(`Delete ${r.incident_no} and the charge behind it (${r.violation_no} — ${r.employee_name})?\n\nThis cannot be undone.`)) return;
+    setBusy(true); setError('');
+    try { await api.delete(`/hr-incident-reports/${r.id}`); await load(); }
+    catch (e) { setError(e.response?.data?.error || 'Could not delete that incident report.'); }
+    finally { setBusy(false); }
+  }
 
   return (
     <div>
@@ -131,8 +146,14 @@ export default function HrIncidentReports() {
                     </td>
                     <td data-label="Recommendation">{pretty(r.recommendation) || '—'}</td>
                     <td>
-                      <button className="btn btn-sm btn-primary"
-                        onClick={() => navigate(`/hrd/incident-reports/${r.id}`)}>Evaluate</button>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button className="btn btn-sm btn-primary"
+                          onClick={() => navigate(`/hrd/incident-reports/${r.id}`)}>Evaluate</button>
+                        {canDelete && (
+                          <button className="btn btn-sm btn-danger" disabled={busy}
+                            onClick={() => remove(r)}>Delete</button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

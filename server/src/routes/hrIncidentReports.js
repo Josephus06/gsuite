@@ -153,6 +153,33 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
   } catch (err) { return next(err); }
 });
 
+// Deleting a report takes its charge with it. The two are one record split across two tables --
+// a report is raised by filing a charge and can be raised no other way, so a charge left behind
+// would sit outside HR's queue with no route back into it.
+//
+// Unlike withdrawal on the Violations side, an evaluated report is NOT protected here. That guard
+// exists to stop the supervisor who filed a charge from pulling it once HR has ruled; this is HR
+// deleting from their own queue, which is the decision that guard defers to. can_delete on this
+// page is the grant that says who may do it.
+router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[ir]] = await conn.query('SELECT id, violation_id FROM hr_incident_reports WHERE id = ?', [req.params.id]);
+    if (!ir) return res.status(404).json({ error: 'Not found' });
+
+    await conn.beginTransaction();
+    await conn.query('DELETE FROM hr_incident_reports WHERE id = ?', [ir.id]);
+    await conn.query('DELETE FROM hr_violations WHERE id = ?', [ir.violation_id]);
+    await conn.commit();
+    return res.json({ ok: true });
+  } catch (err) {
+    await conn.rollback();
+    return next(err);
+  } finally {
+    conn.release();
+  }
+});
+
 router.get('/meta/options', requireAuth, requirePermission(ROUTE, 'can_view'), (req, res) => {
   res.json({ statuses: STATUSES, recommendations: RECOMMENDATIONS });
 });

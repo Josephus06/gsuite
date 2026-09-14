@@ -44,6 +44,7 @@ export default function HrIncidentReportView() {
   const [saved, setSaved] = useState('');
 
   const canEvaluate = can('/hrd/incident-reports', 'can_edit');
+  const canDelete = can('/hrd/incident-reports', 'can_delete');
 
   const load = useCallback(() => api.get(`/hr-incident-reports/${id}`).then(({ data }) => {
     setIr(data);
@@ -67,6 +68,15 @@ export default function HrIncidentReportView() {
     finally { setBusy(false); }
   }
 
+  // The charge goes with the report -- one is raised by the other and cannot exist without it --
+  // so the confirmation names both. There is no undo.
+  async function remove() {
+    if (!confirm(`Delete ${ir.incident_no} and the charge behind it (${ir.violation_no} — ${ir.employee_name})?\n\nThis cannot be undone.`)) return;
+    setBusy(true); setError(''); setSaved('');
+    try { await api.delete(`/hr-incident-reports/${id}`); navigate('/hrd/incident-reports'); }
+    catch (e) { setError(e.response?.data?.error || 'Could not delete this incident report.'); setBusy(false); }
+  }
+
   if (loading) return <LoadingSpinner />;
   if (!ir) return <div className="error-banner">Incident report not found.</div>;
 
@@ -80,6 +90,9 @@ export default function HrIncidentReportView() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn btn-sm" onClick={() => navigate('/hrd/incident-reports')}>Back</button>
           <button className="btn btn-sm" onClick={() => window.print()}>Print</button>
+          {canDelete && (
+            <button className="btn btn-sm btn-danger" disabled={busy} onClick={remove}>Delete</button>
+          )}
         </div>
       </div>
 
