@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { useAuth } from '../context/useAuth';
 import { FUND_TYPES, PURPOSE_LABELS, TYPE_LABELS, money } from '../utils/requestForms';
 
 // Filling out a form, and revising one. The same page does both: an edit is the same boxes with
@@ -21,11 +22,18 @@ export default function FormEdit() {
   const { id } = useParams();
   const [params] = useSearchParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const isNew = !id;
 
   const [type, setType] = useState(params.get('type') || '');
   const [form, setForm] = useState({
-    department: '', name: '',
+    // Both default to whoever is filling the form in -- their name, and the department on their
+    // default login branch, which is the same source an Estimate auto-fills from. Editable, because
+    // somebody does occasionally file one on a colleague's behalf, and both are STORED on the form
+    // rather than read back from the user, so a printed document does not change its mind years
+    // later when somebody moves department.
+    department: isNew ? (user?.default_branch?.department_name || '') : '',
+    name: isNew ? (user?.display_name || '') : '',
     week_no: '', form_no: '', date_from: '', date_to: '',
     cash_advance_amount: '', cash_advance_date: '', previous_balance: '', starting_balance: '',
     purposes: [], purpose_other_text: '',
