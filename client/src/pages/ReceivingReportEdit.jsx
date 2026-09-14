@@ -50,6 +50,11 @@ export default function ReceivingReportEdit() {
             item_code: l.item_code, item_name: l.item_name, item_id: l.item_id,
             po_qty: l.qty, received_qty: l.received_qty,
             location_id: l.location_id || '',
+            // Carried from the purchase order line and shown read-only. A receipt is a delivery
+            // against an order that is already charged to a department, so there is no second
+            // decision to make here -- and nothing to keep in step, because the receipt has no
+            // department of its own to drift from the order's.
+            department_name: l.department_name || '',
             qty_received: Number(l.qty) - Number(l.received_qty),
             rate: l.rate, disc_percent: l.disc_percent,
             tax_code_id: l.tax_code_id || '',
@@ -142,13 +147,13 @@ export default function ReceivingReportEdit() {
           <table>
             <thead>
               <tr>
-                <th>Item</th><th>Location</th><th>PO Qty</th><th>Already Received</th><th>Rec. Qty</th>
+                <th>Item</th><th>Location</th><th>Department</th><th>PO Qty</th><th>Already Received</th><th>Rec. Qty</th>
                 <th>Rate</th><th>Discount %</th><th>Tax Code</th><th>Ext. Price</th>
               </tr>
             </thead>
             <tbody>
               {lines.length === 0 && (
-                <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 20 }}>Every line on this PO has already been fully received.</td></tr>
+                <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>Every line on this PO has already been fully received.</td></tr>
               )}
               {lines.map((l) => {
                 const calc = lineCalc(l);
@@ -163,6 +168,7 @@ export default function ReceivingReportEdit() {
                         onSelect={(loc) => updateLine(l.purchase_order_line_id, { location_id: loc.id })}
                       />
                     </td>
+                    <td>{l.department_name || '—'}</td>
                     <td>{qty(l.po_qty)}</td>
                     <td>{qty(l.received_qty)}</td>
                     <td>

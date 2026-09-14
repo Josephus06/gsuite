@@ -95,7 +95,7 @@ export default function ReceivingReportView() {
             <table>
               <thead>
                 <tr>
-                  <th>Item</th><th>Location</th><th>Qty Received</th><th>Rate</th><th>Disc %</th>
+                  <th>Item</th><th>Location</th><th>Department</th><th>Qty Received</th><th>Rate</th><th>Disc %</th>
                   <th>Net of Tax</th><th>Tax Code</th><th>Tax Amt</th><th>Ext. Price</th>
                 </tr>
               </thead>
@@ -109,6 +109,8 @@ export default function ReceivingReportView() {
                       </button>
                     </td>
                     <td>{l.location_name || '—'}</td>
+                    {/* From the purchase order line -- a receipt carries no department of its own. */}
+                    <td>{l.department_name || '—'}</td>
                     <td>{qty(l.qty_received)}</td>
                     <td>{money(l.rate)}</td>
                     <td>{l.disc_percent}</td>

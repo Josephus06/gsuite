@@ -111,11 +111,18 @@ router.get('/:id', requireAuth, requireReceiptView, async (req, res, next) => {
     if (!receipt) return res.status(404).json({ error: 'Not found' });
 
     const [lines] = await pool.query(
-      `SELECT rl.*, i.item_code, i.display_name AS item_name, loc.location_name, t.code AS tax_code
+      // Department comes from the PURCHASE ORDER LINE, not from the receipt. A receipt line holds
+      // no department of its own -- there is no column for one -- and that is the right shape: a
+      // delivery is made against an order that is already charged to a department, so reading it
+      // through the link means the two can never disagree.
+      `SELECT rl.*, i.item_code, i.display_name AS item_name, loc.location_name, t.code AS tax_code,
+              d.name AS department_name
          FROM purchase_order_receipt_lines rl
          LEFT JOIN inventories i ON i.id = rl.item_id
          LEFT JOIN locations loc ON loc.id = rl.location_id
          LEFT JOIN taxes t ON t.id = rl.tax_code_id
+         LEFT JOIN purchase_order_lines pol ON pol.id = rl.purchase_order_line_id
+         LEFT JOIN departments d ON d.id = pol.department_id
         WHERE rl.purchase_order_receipt_id = ?`,
       [req.params.id]
     );
