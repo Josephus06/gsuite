@@ -241,10 +241,10 @@ export default function ArtistIncentiveReport() {
           <h3 className="subsection" style={{ marginTop: 0 }}>Detail</h3>
           <div className="table-wrap">
             <table className="table-centered">
-              <thead><tr><th>Source</th><th>Doc #</th><th>Artist</th><th>Customer</th><th>Sales Rep</th><th>Job Desc</th><th>Layout - Job Type</th><th>Actual End</th><th>Basis</th><th>Incentive</th></tr></thead>
+              <thead><tr><th>Source</th><th>Doc #</th><th>Artist</th><th>Customer</th><th>Sales Rep</th><th>Job Desc</th><th>Layout - Job Type</th><th>Actual End</th><th>Archive</th><th>Basis</th><th>Incentive</th></tr></thead>
               <tbody>
                 {data.rows.length === 0 && (
-                  <tr><td colSpan={10} className="muted" style={{ padding: 20 }}>No completed layouts in this period.</td></tr>
+                  <tr><td colSpan={11} className="muted" style={{ padding: 20 }}>No completed layouts in this period.</td></tr>
                 )}
                 {data.rows.map((row) => (
                   <tr key={`${row.source}-${row.id}`}>
@@ -256,6 +256,13 @@ export default function ArtistIncentiveReport() {
                     <td>{row.description}</td>
                     <td>{row.layout_job_type_name || ''}</td>
                     <td>{day(row.actual_end)}</td>
+                    {/* Whether the layout has been filed in the Archiver. NOT ARCHIVED is the
+                        one worth spotting, so it is the one that carries a colour. */}
+                    <td>
+                      <span className={`badge ${row.is_archived ? 'badge-success' : 'badge-warning'}`}>
+                        {row.is_archived ? 'ARCHIVED' : 'NOT ARCHIVED'}
+                      </span>
+                    </td>
                     {/* A JO shows its flat amount x layout qty; an NSTDJO's incentive is
                         spread across its materials lines, so there is no single figure. */}
                     <td>{row.incentive_basis}</td>

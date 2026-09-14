@@ -19,6 +19,21 @@ const { buildArtistIncentiveWorkbook } = require('../lib/artistIncentiveWorkbook
 // have signed it off.
 const COMPLETED_STATUS = 'COMPLETED';
 
+// Has this job's layout been put into the Archiver yet?
+//
+// The archive links back to the live record by (source_kind, source_id) -- add-archiver-artist-files.js
+// -- so this asks the question the Archiver's own "JO / NSTDJO" column answers, rather than matching
+// on the document number, which is a display string.
+//
+// Only an ACTIVE archive row counts. A file that has been deleted or superseded is not an archive of
+// anything, and showing such a job as ARCHIVED would tell a supervisor the layout is safely filed
+// when it is not -- the one mistake this column exists to prevent.
+//
+// EXISTS, not a JOIN: a job with three archived files is still one row in this report.
+const ARCHIVED_EXPR = (kind, alias) => `EXISTS (
+  SELECT 1 FROM archive_files af
+   WHERE af.source_kind = '${kind}' AND af.source_id = ${alias}.id AND af.status = 'active')`;
+
 // account_type on the USER account, not a field on the employee record -- the same value the
 // Job Order assignment picker filters by (routes/employees.js, ?account_type=Artist).
 const ARTIST_ACCOUNT_TYPE = 'Artist';
@@ -77,7 +92,8 @@ async function buildReport(req) {
             pjt.display_name AS layout_job_type_name,
             COALESCE(NULLIF(jo.layout_qty, 0), 1) AS layout_qty,
             ${joIncentiveBasis('jo')} AS incentive_basis,
-            ${jobOrderIncentiveExpression('jo')} AS incentive_amount
+            ${jobOrderIncentiveExpression('jo')} AS incentive_amount,
+            ${ARCHIVED_EXPR('JO', 'jo')} AS is_archived
        FROM job_orders jo
        LEFT JOIN employees e ON e.id = jo.artist_id
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
@@ -97,7 +113,8 @@ async function buildReport(req) {
             pjt.display_name AS layout_job_type_name,
             COALESCE(NULLIF(n.layout_qty, 0), 1) AS layout_qty,
             '${NSTDJO_INCENTIVE_BASIS}' AS incentive_basis,
-            ${nstdjoIncentiveExpression('n')} AS incentive_amount
+            ${nstdjoIncentiveExpression('n')} AS incentive_amount,
+            ${ARCHIVED_EXPR('NSTDJO', 'n')} AS is_archived
        FROM non_standard_job_orders n
        LEFT JOIN employees e ON e.id = n.artist_employee_id
        LEFT JOIN employees sr ON sr.id = n.sales_rep_id
@@ -108,7 +125,9 @@ async function buildReport(req) {
   ) : [[]];
 
   const rows = [...joRows, ...nRows]
-    .map((r) => ({ ...r, incentive_amount: Number(r.incentive_amount || 0) }))
+    // is_archived arrives from MySQL as 1/0; make it a real boolean once, here, so neither the
+    // screen nor the workbook has to remember that 0 is a truthy-looking number in some contexts.
+    .map((r) => ({ ...r, incentive_amount: Number(r.incentive_amount || 0), is_archived: !!r.is_archived }))
     .sort((a, b) => new Date(b.actual_end) - new Date(a.actual_end));
 
   // Per-artist subtotals, so the report reads as a payout sheet rather than a log.

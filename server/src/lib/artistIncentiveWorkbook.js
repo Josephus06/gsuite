@@ -31,6 +31,10 @@ const DETAIL_COLUMNS = [
   { header: 'Job Desc', key: 'description', width: 46 },
   { header: 'Layout - Job Type', key: 'layout_job_type_name', width: 38 },
   { header: 'Actual End', key: 'actual_end', width: 13 },
+  // Whether the layout has been filed in the Archiver. Written as words rather than a tick or a
+  // bare 0/1 so the column reads the same in Excel's own autofilter, which is how this sheet is
+  // actually used -- filtering to NOT ARCHIVED is the point of having it.
+  { header: 'Archive', key: 'archived', width: 15 },
   { header: 'Basis', key: 'incentive_basis', width: 16 },
   { header: 'Incentive', key: 'incentive_amount', width: 13 },
 ];
@@ -119,6 +123,7 @@ function detailRows(rows) {
     description: r.description || '',
     layout_job_type_name: r.layout_job_type_name || '',
     actual_end: day(r.actual_end),
+    archived: r.is_archived ? 'ARCHIVED' : 'NOT ARCHIVED',
     incentive_basis: r.incentive_basis || '',
     incentive_amount: Number(r.incentive_amount || 0),
   }));
