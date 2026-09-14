@@ -6,8 +6,12 @@
 //
 //   get_bill_payments {searchKey,limit,offset} -> payment headers (user_pk=BPAY#, sl_pk=VB#)
 //
-// bank_account_id / ap_account_id are NOT NULL FKs into chart_of_accounts; live only names the
-// bank in Title_COA, so we default to Cash in Bank (11000) / Accounts Payable-Trade (20100).
+// bank_account_id / ap_account_id are NOT NULL FKs into chart_of_accounts. Live names the bank in
+// Title_COA -- by NAME, not code -- and every distinct value it uses matches a chart_of_accounts
+// row here, so the account is resolved from it. Cash in Bank (11000) is only the fallback for a
+// name that does not match; it used to be the answer for every payment, which put all 868 on one
+// account when the money came out of four. ap_account_id still defaults to Accounts Payable-Trade
+// (20100), which is what live shows for these.
 // Resumable (skips payments already imported) + idempotent.
 //   node src/db/import-bill-payments.js --from=2026-01-01 --to=2026-07-31 --dry-run
 //   node src/db/import-bill-payments.js --from=2026-01-01 --to=2026-07-31
@@ -66,6 +70,8 @@ async function main() {
   const methodByName = new Map(methods.map((m) => [norm(m.name), m.id]));
   const cashMethodId = methodByName.get('cash') || methods[0]?.id;
   const [[bank]] = await pool.query("SELECT id FROM chart_of_accounts WHERE account_code = '11000' LIMIT 1");
+  const [coaRows] = await pool.query('SELECT id, account_name FROM chart_of_accounts');
+  const coaByName = new Map(coaRows.map((c) => [norm(c.account_name), c.id]));
   const [[ap]] = await pool.query("SELECT id FROM chart_of_accounts WHERE account_code = '20100' LIMIT 1");
   const bankId = bank ? bank.id : null;
   const apId = ap ? ap.id : null;
@@ -111,6 +117,9 @@ async function main() {
     const supplierId = supByName.get(norm(bp.Name_Accnt)) || vb.supplier_id_placeholder || null;
     if (!supplierId || !bankId || !cashMethodId) { failed += 1; continue; } // NOT NULL guards
     const methodId = methodByName.get(norm(bp.PaymentMethod_TransH)) || cashMethodId;
+    // The account the money actually left, by name, falling back to the default only when live
+    // names one this build does not have.
+    const payBankId = coaByName.get(norm(bp.Title_COA)) || bankId;
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
@@ -120,7 +129,7 @@ async function main() {
            total_amount, status)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [bp.user_pk, day(bp.DateCreated_TransH) || FROM, trunc(bp.Type_TransH, 60) || 'Bill Payment', supplierId,
-         trunc(bp.Name_Accnt, 255), apId, bankId, methodId, trunc(bp.ReferrenceNO_TransH, 191),
+         trunc(bp.Name_Accnt, 255), apId, payBankId, methodId, trunc(bp.ReferrenceNO_TransH, 191),
          day(bp.CheckDate_TransH) || null, trunc(bp.CheckNo_TransH, 60), trunc(bp.Memo_TransH, 500),
          num(bp.TotalAmount_TransH), paymentStatus(bp.Status_TransH)]);
       const payId = r.insertId;
