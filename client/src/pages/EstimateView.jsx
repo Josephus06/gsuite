@@ -225,6 +225,11 @@ export default function EstimateView() {
   // The real system only shows Print once an estimate has cleared supervisor
   // approval -- printing a still-pending quotation isn't meaningful yet.
   const canShowPrint = estimate.status === 'pending_customer_approval' || estimate.status === 'approved';
+  // The button says whose approval it is recording. Out of supervisor approval it is the
+  // supervisor's own decision, so plain "Approve"; out of pending customer approval the person
+  // clicking is entering what the CUSTOMER has said, which is a different act -- and the one place
+  // where "Approve" could be read as the operator approving it themselves.
+  const approveLabel = estimate.status === 'pending_customer_approval' ? 'Approved by Customer' : 'Approve';
 
   return (
     <div>
@@ -234,7 +239,7 @@ export default function EstimateView() {
           <button className="btn btn-sm" onClick={() => navigate('/estimates')}>Back</button>
           {canEdit && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/estimates/${id}/edit`)}>Edit</button>}
           {canShowPrint && <button className="btn btn-sm btn-primary" onClick={() => window.open(`/estimates/${id}/print`, '_blank')}>Print</button>}
-          {canEdit && isPending && canShowApprove && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>Approve</button>}
+          {canEdit && isPending && canShowApprove && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>{approveLabel}</button>}
           {canEdit && isPending && <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setStatus('disapproved')}>Disapprove</button>}
           {/* Only while the estimate is actually waiting on the customer -- sending one that is
               already approved or cancelled would confuse the person receiving it. */}

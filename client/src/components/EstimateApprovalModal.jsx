@@ -86,8 +86,11 @@ export default function EstimateApprovalModal({ estimateId, nextStatus, onClose,
             </table>
           </div>
 
+          {/* Matches the button that opened this. nextStatus 'approved' is only reached from
+              pending customer approval, so that is the step where what is being recorded is the
+              CUSTOMER's decision rather than the operator's own. */}
           <button type="button" className="btn btn-primary" style={{ width: '100%', marginTop: 16 }} disabled={saving} onClick={approve}>
-            {saving ? 'Approving...' : 'Approve'}
+            {saving ? 'Approving...' : (nextStatus === 'approved' ? 'Approved by Customer' : 'Approve')}
           </button>
         </div>
       )}
