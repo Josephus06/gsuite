@@ -29,6 +29,9 @@ router.get('/canvass-lines', requireAuth, requirePermission(ROUTE, 'can_view'), 
       `SELECT prl.id AS purchase_requisition_line_id, prl.purchase_requisition_id, pr.pr_no,
               prl.item_id, i.item_code, i.display_name AS item_name, prl.purchase_description,
               prl.job_order_id, jo.job_order_no, prl.qty, prl.po_qty, prl.purchase_unit, prl.unit_title,
+              -- The requisition's own department, so the PO line it becomes starts out charged to
+              -- whoever asked for it rather than to a blank the buyer has to fill in per line.
+              pr.department_id,
               COALESCE((SELECT SUM(qty_on_hand) FROM inventory_locations WHERE inventory_id = prl.item_id), 0) AS qty_on_hand
        FROM purchase_requisition_lines prl
        JOIN purchase_requisitions pr ON pr.id = prl.purchase_requisition_id

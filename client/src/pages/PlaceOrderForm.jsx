@@ -40,6 +40,16 @@ export default function PlaceOrderForm() {
     api.get('/lookups/departments').then(({ data }) => setDepartments(data)).catch(() => {});
   }, []);
 
+  // Resolved by NAME, not by a hardcoded id: the two installs number their rows differently, so an
+  // id baked in here would point at the right row on one and at something else on the other. If
+  // either name is ever changed the lookup simply finds nothing and the field starts blank, which
+  // is the behaviour these fields had before -- a missing default, never a wrong one.
+  const idByName = (list, key, name) => (
+    list.find((x) => String(x[key] || '').trim().toLowerCase() === name.toLowerCase())?.id || ''
+  );
+  const defaultLocationId = idByName(locations, 'location_name', 'Warehouse - Central');
+  const defaultDepartmentId = idByName(departments, 'name', 'Supply Chain');
+
   async function openPicker() {
     setShowPicker(true);
     const { data } = await api.get('/purchase-requisitions', { params: {} });
@@ -62,7 +72,19 @@ export default function PlaceOrderForm() {
       ...prev,
       ...data
         .filter((l) => !prev.some((p) => p.purchase_requisition_line_id === l.purchase_requisition_line_id))
-        .map((l) => ({ ...l, po_qty_input: l.remaining, supplier_id: '', supplier_name: '', rate: 0, disc_percent: 0, tax_code_id: '', tax_code: '', location_id: '', department_id: '' })),
+        .map((l) => ({
+          ...l,
+          po_qty_input: l.remaining,
+          supplier_id: '', supplier_name: '', rate: 0, disc_percent: 0, tax_code_id: '', tax_code: '',
+          // Both started blank and had to be picked on every line, which on a long canvass is the
+          // same two choices over and over. Warehouse - Central and Supply Chain are what they are
+          // in practice: 16,637 of the existing purchase order lines are Central and 16,723 are
+          // Supply Chain, each the largest group by a wide margin.
+          location_id: defaultLocationId,
+          // The requisition's OWN department wins where it has one -- a PR raised by Production
+          // should not arrive charged to Supply Chain -- and Supply Chain is only the fallback.
+          department_id: l.department_id || defaultDepartmentId,
+        })),
     ]);
   }
 
