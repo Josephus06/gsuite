@@ -15,6 +15,19 @@ function moneyFmt(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
+
+// One balance cell in the Item picker. `undefined` means not asked for yet and `null` means the
+// request is in flight -- both show a dash rather than a 0, because an unknown balance and an
+// empty bin are not the same answer to "how much is there".
+function balanceCell(entry, amountKey, unitKey) {
+  if (!entry) return <span className="muted">—</span>;
+  return (
+    <>
+      {qtyFmt(entry[amountKey])}
+      {entry[unitKey] && <span className="muted" style={{ marginLeft: 4, fontSize: '0.85em' }}>{entry[unitKey]}</span>}
+    </>
+  );
+}
 function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
 
 // Mirrors the real "Bin Card" report -- a chronological, per-Item (+ optional
@@ -42,6 +55,10 @@ export default function BinCardReport() {
   // actually brought over and disagrees with the source system on 55% of item+location pairs.
   const [fullHistory, setFullHistory] = useState(false);
   const [meta, setMeta] = useState(null);
+  // item_id -> { balance_base, balance_stock, ... }, filled in for the rows the Item picker has
+  // on screen. Not for the whole catalogue: a balance is a sum over every movement ever recorded,
+  // and asking for all 6,547 items takes 15 seconds against about 40ms for a page of ten.
+  const [pickerBalances, setPickerBalances] = useState({ locationId: null, byItem: {} });
 
   useEffect(() => {
     // include_inactive: a discontinued item still has stock on a shelf and a history worth
@@ -49,6 +66,53 @@ export default function BinCardReport() {
     api.get('/inventory', { params: { include_inactive: 1 } }).then(({ data }) => setInventoryItems(data));
     api.get('/lookups/locations').then(({ data }) => setLocations(data));
   }, []);
+
+  // The balances in the picker are for the location the report is set to, and for Warehouse -
+  // Central when it has not been set -- the warehouse nearly everything moves through, and the
+  // one the person opening this report is almost always asking about. The column headers name
+  // whichever it is, so the figure is never unattributed.
+  const balanceLocation = location
+    || locations.find((l) => String(l.location_name || '').trim().toLowerCase() === 'warehouse - central')
+    || null;
+
+  // A cached figure belongs to the location it was asked for, so the cache carries that location
+  // with it and anything held for a different one is simply not used. Keying it this way rather
+  // than clearing on change means no effect has to fire to keep the two in step.
+  const balanceLocationId = balanceLocation?.id ?? null;
+  const balancesFor = pickerBalances.locationId === balanceLocationId ? pickerBalances.byItem : {};
+
+  // Asked for per visible page as the picker is paged or searched, and only for ids not already
+  // held. Re-opening the picker or stepping back to a page costs nothing.
+  async function loadPickerBalances(visible) {
+    const missing = visible.map((i) => i.id).filter((id) => balancesFor[id] === undefined);
+    if (!missing.length) return;
+    // Marked pending first so a second page turn does not re-request the same ids. A cache held
+    // for another location is dropped here rather than merged into.
+    const keep = (prev) => (prev.locationId === balanceLocationId ? prev.byItem : {});
+    setPickerBalances((prev) => {
+      const byItem = { ...keep(prev) };
+      missing.forEach((id) => { byItem[id] = null; });
+      return { locationId: balanceLocationId, byItem };
+    });
+    try {
+      const { data } = await api.get('/bin-card-reports/balances', {
+        params: { item_ids: missing.join(','), location_id: balanceLocationId || undefined },
+      });
+      setPickerBalances((prev) => {
+        const byItem = { ...keep(prev) };
+        data.forEach((b) => { byItem[b.item_id] = b; });
+        return { locationId: balanceLocationId, byItem };
+      });
+    } catch {
+      // A balance that will not load must not stop someone picking an item; the cell stays blank,
+      // and the id is released so turning back to the page tries again.
+      setPickerBalances((prev) => {
+        const byItem = { ...keep(prev) };
+        missing.forEach((id) => { if (byItem[id] === null) delete byItem[id]; });
+        return { locationId: balanceLocationId, byItem };
+      });
+    }
+  }
 
   async function generate() {
     setError('');
@@ -115,9 +179,25 @@ export default function BinCardReport() {
               <label>Item:</label>
               <EntityPicker
                 label="Item" items={inventoryItems} value={item?.id || ''} getLabel={(i) => i.display_name}
-                columns={[{ key: 'item_code', label: 'Code' }, { key: 'display_name', label: 'Name' }]}
+                columns={[
+                  { key: 'item_code', label: 'Code' },
+                  { key: 'display_name', label: 'Name' },
+                  // Each row is a different item with its own units, so the unit cannot go in the
+                  // header the way it does on the report itself -- it goes beside each figure.
+                  {
+                    key: 'balance_stock',
+                    label: `Balance (Stock Unit)${balanceLocation ? ` — ${balanceLocation.location_name}` : ''}`,
+                    render: (i) => balanceCell(balancesFor[i.id], 'balance_stock', 'stock_unit_title'),
+                  },
+                  {
+                    key: 'balance_base',
+                    label: `Balance (Base Unit)${balanceLocation ? ` — ${balanceLocation.location_name}` : ''}`,
+                    render: (i) => balanceCell(balancesFor[i.id], 'balance_base', 'base_unit_title'),
+                  },
+                ]}
                 searchKeys={['item_code', 'display_name']}
                 onSelect={(i) => setItem(i)}
+                onVisibleItems={loadPickerBalances}
               />
             </div>
             <div className="field">

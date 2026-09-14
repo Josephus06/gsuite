@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Modal from './Modal';
 import Pagination from './Pagination';
 
@@ -9,7 +9,7 @@ const PAGE_SIZE = 10;
 // blank a required reference and only find out at save time.
 export default function EntityPicker({
   label, items, value, getLabel, columns, searchKeys, onSelect, placeholder, required, disabled,
-  triggerLabel, triggerClassName, isSelectable, headerExtra, onClear,
+  triggerLabel, triggerClassName, isSelectable, headerExtra, onClear, onVisibleItems,
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -36,6 +36,19 @@ export default function EntityPicker({
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // Optional hook for a caller that wants to show something per row it cannot afford to compute
+  // for the whole list -- a stock balance, say, which costs a query over every movement ever
+  // recorded. Only the ten rows actually on screen are announced, so the cost follows what the
+  // user is looking at rather than the size of the catalogue.
+  //
+  // Keyed on the ids rather than the array: pageItems is rebuilt every render, so depending on it
+  // directly would call the caller forever.
+  const visibleKey = pageItems.map((i) => i.id).join(',');
+  useEffect(() => {
+    if (open && onVisibleItems) onVisibleItems(pageItems);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleKey, open]);
 
   function openPicker() {
     if (disabled) return;
