@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { insertNumbered } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 
@@ -199,19 +200,22 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       await conn.query('UPDATE bill_credits SET applied_amount = applied_amount + ? WHERE id = ?', [Number(l.applied_amount), l.bill_credit_id]);
     }
 
-    const [result] = await conn.query(
-      `INSERT INTO bill_payments
-         (bill_payment_no, date_created, payment_type, supplier_id, payee_name, office_location_id, ap_account_id,
-          bank_account_id, payment_method_id, reference_no, check_date, check_no, memo, total_amount, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        dateCreated || new Date().toISOString().slice(0, 10), paymentType || 'full', supplierId, payeeName || null,
-        officeLocationId || null, apAccountId || null, bankAccountId, paymentMethodId, referenceNo || null,
-        checkDate || null, checkNo || null, memo || null, totalAmount, req.user.id,
-      ]
-    );
-    const paymentId = result.insertId;
-    await conn.query('UPDATE bill_payments SET bill_payment_no = ? WHERE id = ?', [`BPAY-${paymentId}`, paymentId]);
+    const { id: paymentId } = await insertNumbered(conn, {
+      table: 'bill_payments',
+      column: 'bill_payment_no',
+      prefix: 'BPAY-',
+      run: (no) => conn.query(
+        `INSERT INTO bill_payments
+           (bill_payment_no, date_created, payment_type, supplier_id, payee_name, office_location_id, ap_account_id,
+            bank_account_id, payment_method_id, reference_no, check_date, check_no, memo, total_amount, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          no, dateCreated || new Date().toISOString().slice(0, 10), paymentType || 'full', supplierId, payeeName || null,
+          officeLocationId || null, apAccountId || null, bankAccountId, paymentMethodId, referenceNo || null,
+          checkDate || null, checkNo || null, memo || null, totalAmount, req.user.id,
+        ]
+      ),
+    });
 
     for (const l of submittedApply) {
       await conn.query(

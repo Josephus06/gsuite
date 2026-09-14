@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { insertNumbered } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeCustomerRefundGl } = require('../lib/glImpact');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
@@ -164,19 +165,22 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     await assertPeriodOpen(dateCreated, 'ar', conn);
 
     await conn.beginTransaction();
-    const [result] = await conn.query(
-      `INSERT INTO customer_refunds
-         (customer_refund_no, date_created, customer_id, department_id, office_location_id, account_id,
-          ar_account_id, payment_method_id, refund_amount, memo, issued_by_user_id, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        dateCreated || new Date().toISOString().slice(0, 10), customerId, departmentId || null,
-        officeLocationId || null, accId, arId, paymentMethodId || null, refundTotal, memo || null,
-        req.user.id, req.user.id,
-      ]
-    );
-    const refundId = result.insertId;
-    await conn.query('UPDATE customer_refunds SET customer_refund_no = ? WHERE id = ?', [`CRFND-${refundId}`, refundId]);
+    const { id: refundId } = await insertNumbered(conn, {
+      table: 'customer_refunds',
+      column: 'customer_refund_no',
+      prefix: 'CRFND-',
+      run: (no) => conn.query(
+        `INSERT INTO customer_refunds
+           (customer_refund_no, date_created, customer_id, department_id, office_location_id, account_id,
+            ar_account_id, payment_method_id, refund_amount, memo, issued_by_user_id, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          no, dateCreated || new Date().toISOString().slice(0, 10), customerId, departmentId || null,
+          officeLocationId || null, accId, arId, paymentMethodId || null, refundTotal, memo || null,
+          req.user.id, req.user.id,
+        ]
+      ),
+    });
 
     for (const l of prepared) {
       await conn.query(

@@ -637,13 +637,16 @@ router.post('/:id/receipts', requireAuth, requirePermission(ROUTE, 'can_edit'), 
     const totalAmount = netOfTax + taxAmount;
 
     await conn.beginTransaction();
-    const [result] = await conn.query(
-      `INSERT INTO purchase_order_receipts (receipt_no, purchase_order_id, date_created, ref_no, memo, is_on_hold, subtotal, discount_amount, net_of_tax, tax_amount, total_amount, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [req.params.id, dateCreated || new Date().toISOString().slice(0, 10), refNo || null, memo || null, !!isOnHold, subtotal, discountAmount, netOfTax, taxAmount, totalAmount, req.user.id]
-    );
-    const receiptId = result.insertId;
-    await conn.query('UPDATE purchase_order_receipts SET receipt_no = ? WHERE id = ?', [`RR-${receiptId}`, receiptId]);
+    const { id: receiptId } = await insertNumbered(conn, {
+      table: 'purchase_order_receipts',
+      column: 'receipt_no',
+      prefix: 'RR-',
+      run: (no) => conn.query(
+        `INSERT INTO purchase_order_receipts (receipt_no, purchase_order_id, date_created, ref_no, memo, is_on_hold, subtotal, discount_amount, net_of_tax, tax_amount, total_amount, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [no, req.params.id, dateCreated || new Date().toISOString().slice(0, 10), refNo || null, memo || null, !!isOnHold, subtotal, discountAmount, netOfTax, taxAmount, totalAmount, req.user.id]
+      ),
+    });
 
     for (const l of computed) {
       await conn.query(
@@ -794,13 +797,16 @@ router.post('/:id/returns', requireAuth, requirePermission(ROUTE, 'can_edit'), a
     const totalAmount = netOfTax + taxAmount;
 
     await conn.beginTransaction();
-    const [result] = await conn.query(
-      `INSERT INTO purchase_returns (return_no, purchase_order_id, date_created, ref_no, memo, subtotal, discount_amount, net_of_tax, tax_amount, total_amount, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [req.params.id, dateCreated || new Date().toISOString().slice(0, 10), refNo || null, memo || null, subtotal, discountAmount, netOfTax, taxAmount, totalAmount, req.user.id]
-    );
-    const returnId = result.insertId;
-    await conn.query('UPDATE purchase_returns SET return_no = ? WHERE id = ?', [`VR-${returnId}`, returnId]);
+    const { id: returnId } = await insertNumbered(conn, {
+      table: 'purchase_returns',
+      column: 'return_no',
+      prefix: 'VR-',
+      run: (no) => conn.query(
+        `INSERT INTO purchase_returns (return_no, purchase_order_id, date_created, ref_no, memo, subtotal, discount_amount, net_of_tax, tax_amount, total_amount, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [no, req.params.id, dateCreated || new Date().toISOString().slice(0, 10), refNo || null, memo || null, subtotal, discountAmount, netOfTax, taxAmount, totalAmount, req.user.id]
+      ),
+    });
 
     for (const l of computed) {
       await conn.query(

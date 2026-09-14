@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { insertNumbered } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeVendorBillGl } = require('../lib/glImpact');
@@ -302,22 +303,25 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     }
 
     await conn.beginTransaction();
-    const [result] = await conn.query(
-      `INSERT INTO vendor_bills
-         (bill_no, purchase_order_id, date_created, date_due, term, reference_no, account_id, office_location_id,
-          memo, subtotal, discount_amount, net_of_tax, tax_amount, gross_amount, wtax_id, wtax_description,
-          wtax_amount, amount_due, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        purchaseOrderId, dateCreated || new Date().toISOString().slice(0, 10), dateDue || null, term || null,
-        referenceNo || null, accountId || null, officeLocationId || null, memo || null,
-        subtotal, discountAmount, netOfTax, taxAmount, grossAmount, wtaxId || null, wtaxDescription,
-        wtaxAmount, amountDue, req.user.id,
-      ]
-    );
-    const billId = result.insertId;
     // The record itself is always a "Vendor Bill" (VB-#), matching the real system.
-    await conn.query('UPDATE vendor_bills SET bill_no = ? WHERE id = ?', [`VB-${billId}`, billId]);
+    const { id: billId } = await insertNumbered(conn, {
+      table: 'vendor_bills',
+      column: 'bill_no',
+      prefix: 'VB-',
+      run: (no) => conn.query(
+        `INSERT INTO vendor_bills
+           (bill_no, purchase_order_id, date_created, date_due, term, reference_no, account_id, office_location_id,
+            memo, subtotal, discount_amount, net_of_tax, tax_amount, gross_amount, wtax_id, wtax_description,
+            wtax_amount, amount_due, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          no, purchaseOrderId, dateCreated || new Date().toISOString().slice(0, 10), dateDue || null, term || null,
+          referenceNo || null, accountId || null, officeLocationId || null, memo || null,
+          subtotal, discountAmount, netOfTax, taxAmount, grossAmount, wtaxId || null, wtaxDescription,
+          wtaxAmount, amountDue, req.user.id,
+        ]
+      ),
+    });
 
     for (const l of computedLines) {
       await conn.query(
