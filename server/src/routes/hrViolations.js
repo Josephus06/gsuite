@@ -43,6 +43,16 @@ const trunc = (s, n) => (s == null || String(s).trim() === '' ? null : String(s)
 // list of offences is its code of conduct and inventing entries would let somebody be charged
 // under a rule that was never adopted.
 
+// Violations are listed in handbook order -- Section 1.1, 1.2, ... 1.10 -- which means sorting the
+// code as two NUMBERS, not as text. Plain string ordering puts "Section 3.8" after "Section 3.49"
+// because it compares character by character, and HR reads down this list against the printed
+// handbook. The major number is what sits before the first dot after the word, the minor what
+// follows it. A code that is blank or shaped some other way sorts to the end rather than pretending
+// to be section zero.
+const CODE_ORDER = `
+  CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(t.code, '.', 1), ' ', -1) AS UNSIGNED),
+  CAST(SUBSTRING_INDEX(t.code, '.', -1) AS UNSIGNED)`;
+
 router.get('/types', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const includeInactive = req.query.include_inactive === '1';
@@ -51,7 +61,10 @@ router.get('/types', requireAuth, requirePermission(ROUTE, 'can_view'), async (r
               (SELECT COUNT(*) FROM hr_violations v WHERE v.violation_type_id = t.id) AS times_charged
          FROM hr_violation_types t
         ${includeInactive ? '' : 'WHERE t.is_active = TRUE'}
-        ORDER BY t.is_active DESC, t.sort_order, t.category, t.name`,
+        ORDER BY t.is_active DESC,
+                 (t.code IS NULL OR t.code = ''),
+                 ${CODE_ORDER},
+                 t.code, t.sort_order, t.name`,
     );
     res.json(rows);
   } catch (err) { next(err); }
