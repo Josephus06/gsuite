@@ -225,7 +225,7 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
                           onChange={(e) => updateLine(l.purchase_order_line_id, { qty: e.target.value })}
                         />
                       </td>
-                      <td>{l.unit_title}</td>
+                      <td>{l.purchase_unit || l.unit_title}</td>
                       <td>{money(l.rate)}</td>
                       <td>
                         <input

@@ -151,7 +151,7 @@ export default function VendorBillView() {
                     <td>{l.location_name}</td>
                     <td>{l.department_name}</td>
                     <td>{qty(l.qty)}</td>
-                    <td>{l.unit_title}</td>
+                    <td>{l.purchase_unit || l.unit_title}</td>
                     <td>{money(l.rate)}</td>
                     <td>{money(l.unit_price)}</td>
                     <td>{l.disc_percent}</td>

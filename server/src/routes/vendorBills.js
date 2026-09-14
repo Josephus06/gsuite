@@ -66,7 +66,7 @@ router.get('/for-purchase-order/:poId', requireAuth, requirePermission(ROUTE, 'c
     const [lines] = await pool.query(
       `SELECT pol.id AS purchase_order_line_id, pol.item_id, i.item_code, i.display_name AS item_name,
               pol.purchase_description, pol.location_id, loc.location_name, pol.department_id, d.name AS department_name,
-              pol.received_qty, pol.billed_qty, pol.unit_title, pol.rate, pol.disc_percent,
+              pol.received_qty, pol.billed_qty, pol.unit_title, pol.purchase_unit, pol.rate, pol.disc_percent,
               pol.tax_code_id, t.code AS tax_code, t.rate AS tax_rate
        FROM purchase_order_lines pol
        LEFT JOIN inventories i ON i.id = pol.item_id
@@ -172,7 +172,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     if (!vb) return res.status(404).json({ error: 'Not found' });
 
     const [lines] = await pool.query(
-      `SELECT vbl.*, i.item_code, i.display_name AS item_name, pol.purchase_description, pol.unit_title,
+      `SELECT vbl.*, i.item_code, i.display_name AS item_name, pol.purchase_description, pol.unit_title, pol.purchase_unit,
               loc.location_name, d.name AS department_name, t.code AS tax_code
        FROM vendor_bill_lines vbl
        LEFT JOIN inventories i ON i.id = vbl.item_id

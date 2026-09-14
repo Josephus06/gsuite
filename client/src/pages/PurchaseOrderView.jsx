@@ -227,7 +227,12 @@ export default function PurchaseOrderView() {
                     )}
                     {po.type === 'PO3' && <td>{l.job_order_no || '—'}</td>}
                     <td>{qty(l.qty)}</td>
-                    <td>{l.unit_title}</td>
+                    {/* The unit of the Qty beside it, which is the PURCHASE unit -- receiving
+                        multiplies this quantity by the item's conversion factor. Showing
+                        unit_title here labelled 1 ROLL of tarpaulin as "Square Foot", the unit it
+                        becomes once received rather than the one it was ordered in. Falls back to
+                        unit_title for rows saved before purchase_unit was recorded properly. */}
+                    <td>{l.purchase_unit || l.unit_title}</td>
                     <td>{money(l.rate)}</td>
                     <td>{l.disc_percent}</td>
                     <td>{money(l.net_of_tax)}</td>
