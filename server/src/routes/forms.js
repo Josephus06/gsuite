@@ -2,6 +2,9 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { insertNumbered } = require('../lib/docNumber');
+const {
+  DEPARTMENT_NOTED_TYPES, isDepartmentNoter, departmentsHeadedBy, notersFor,
+} = require('../lib/formNoters');
 
 const router = express.Router();
 
@@ -21,6 +24,14 @@ const router = express.Router();
 // The source gated these on roles -- 'unitadmin' noted, 'administrator' approved. Two actions on
 // the approval page say the same thing in the vocabulary this system already has, and keep the two
 // stages separately grantable.
+//
+// EXCEPT FOR NOTING A LIQUIDATION OR A PAYMENT, which is not a permission at all: it is the head
+// of the department the form came from, read off that department's ticket approver list. A
+// permission cannot express "for YOUR department only", and an expense claim noted by the head of
+// some other department is not the sign-off anybody wanted. See lib/formNoters.js.
+//
+// So a head needs no grant on /forms/approval to note their own department's forms, and holding
+// can_edit there does NOT let somebody note a liquidation from a department they do not head.
 const ROUTE = '/forms';
 const APPROVAL_ROUTE = '/forms/approval';
 
@@ -50,6 +61,15 @@ const time = (v) => (v == null || String(v).trim() === '' ? null : String(v).sli
 
 function badType(type) {
   return !TYPES.includes(type);
+}
+
+// The department picker sends a NAME, since that is what prints. Exact match only: a fuzzy match
+// would route somebody's expense claim to the head of a department it never came from, which is
+// worse than leaving it unrouted and saying so.
+async function resolveDepartmentId(q, name) {
+  if (!name) return null;
+  const [[d]] = await q.query('SELECT id FROM departments WHERE name = ? LIMIT 1', [name]);
+  return d ? d.id : null;
 }
 
 // Items are required on the three money forms and meaningless on a business trip. Returns an error
@@ -120,12 +140,45 @@ async function loadFull(id) {
   return doc;
 }
 
-// Who may look at one form. Its owner always; anyone holding can_view_all on /forms; and the
-// approvers, who cannot rule on what they cannot read.
+// Who may look at one form. Its owner always; anyone holding can_view_all on /forms; the approvers,
+// who cannot rule on what they cannot read; and the head of the department it came from, for the
+// same reason -- they are the one who has to note it.
 async function maySee(userId, doc) {
-  if (doc.user_id === userId) return true;
+  // Heading the department comes first because it is the one route in that does NOT depend on a
+  // page grant -- a head may hold nothing on /forms and still have to note this.
+  if (await isDepartmentNoter(userId, doc.department_id)) return true;
+  if (await userCan(userId, APPROVAL_ROUTE, 'can_view')) return true;
   if (await userCan(userId, ROUTE, 'can_view_all')) return true;
-  return userCan(userId, APPROVAL_ROUTE, 'can_view');
+  // Your own form, provided you still hold the module at all.
+  return doc.user_id === userId && userCan(userId, ROUTE, 'can_view');
+}
+
+// May this user note this particular form, and if not, why not? One answer used by the button, the
+// endpoint and the explanation on screen, so the three cannot disagree.
+async function mayNote(userId, doc) {
+  if (DEPARTMENT_NOTED_TYPES.includes(doc.type)) {
+    if (!doc.department_id) {
+      return {
+        allowed: false,
+        reason: doc.department
+          ? `"${doc.department}" is not a department in this system, so nobody heads it. An approver can still approve this directly.`
+          : 'This form has no department, so there is no head to note it. An approver can still approve it directly.',
+      };
+    }
+    if (await isDepartmentNoter(userId, doc.department_id)) return { allowed: true };
+
+    const heads = await notersFor(doc.department_id);
+    return {
+      allowed: false,
+      reason: heads.length
+        ? `Only the head of ${doc.department} can note this: ${heads.map((h) => h.display_name).join(' or ')}.`
+        : `${doc.department} has no head recorded, so nobody can note this. Add one under that department's ticket approvers, or have an approver approve it directly.`,
+    };
+  }
+
+  // Business trip and revolving fund keep the plain permission gate.
+  if (await userCan(userId, APPROVAL_ROUTE, 'can_edit')) return { allowed: true };
+  return { allowed: false, reason: 'You do not have permission to note this form.' };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -166,10 +219,25 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
 // The approval queue. Only what has actually been sent for a decision -- a draft is nobody's
 // business but its owner's.
-router.get('/approval/queue', requireAuth, requirePermission(APPROVAL_ROUTE, 'can_view'), async (req, res, next) => {
+//
+// Two ways in, because noting a liquidation is not a permission: either can_view on the approval
+// page, which shows everything, or heading a department, which shows that department's forms. A
+// head who had to be granted the whole approval page to find their own team's expense claims would
+// also be granted sight of every other department's.
+router.get('/approval/queue', requireAuth, async (req, res, next) => {
   try {
+    const canSeeAll = await userCan(req.user.id, APPROVAL_ROUTE, 'can_view');
+    const headOf = canSeeAll ? [] : await departmentsHeadedBy(req.user.id);
+    if (!canSeeAll && headOf.length === 0) {
+      return res.status(403).json({ error: 'You do not have permission to perform this action' });
+    }
+
     const where = ['f.status IN (?)'];
     const params = [WORKFLOW_STATUSES];
+    if (!canSeeAll) {
+      where.push('f.department_id IN (?)');
+      params.push(headOf);
+    }
     if (req.query.status && WORKFLOW_STATUSES.includes(req.query.status)) {
       where.push('f.status = ?'); params.push(req.query.status);
     }
@@ -207,7 +275,10 @@ router.get('/meta/options', requireAuth, requirePermission(ROUTE, 'can_view'), a
   } catch (err) { next(err); }
 });
 
-router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+// Opening one form. Gated by maySee ALONE, not by can_view on /forms as well: the head of a
+// department has to be able to open the forms only they can note, and heading a department is not
+// a page grant. Requiring both would leave a head able to note a form they cannot read.
+router.get('/:id', requireAuth, async (req, res, next) => {
   try {
     const doc = await loadFull(req.params.id);
     if (!doc) return res.status(404).json({ error: 'Not found' });
@@ -215,7 +286,17 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
 
     doc.type_label = TYPE_LABELS[doc.type] || doc.type;
     doc.is_owner = doc.user_id === req.user.id;
-    doc.can_note = await userCan(req.user.id, APPROVAL_ROUTE, 'can_edit');
+
+    const note = await mayNote(req.user.id, doc);
+    doc.can_note = note.allowed;
+    // Why not, when not -- shown against a form that is sitting at SUBMITTED, so a dead end reads
+    // as "waiting on X" rather than as a missing button.
+    doc.note_blocked_reason = note.allowed ? null : note.reason;
+    // Who it is waiting on, named, whoever is looking. The owner wants to know who to chase.
+    doc.noters = DEPARTMENT_NOTED_TYPES.includes(doc.type)
+      ? (await notersFor(doc.department_id)).map((h) => h.display_name)
+      : [];
+
     doc.can_approve = await userCan(req.user.id, APPROVAL_ROUTE, 'can_approve');
     return res.json(doc);
   } catch (err) { return next(err); }
@@ -306,12 +387,17 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
     // A form starts as a DRAFT even though the button says Save: nothing reaches an approver until
     // its owner submits it, which is a second, deliberate action.
+    // The department is stored twice on purpose: the NAME is what prints and is frozen, the ID is
+    // the live link that says whose head has to note it. See db/add-form-department-id.js.
+    const departmentName = trunc(req.body.department, 255);
+    const departmentId = await resolveDepartmentId(conn, departmentName);
+
     const { id, no } = await insertNumbered(conn, {
       table: 'form_requests', column: 'request_no', prefix: 'REQ-',
       run: (docNo) => conn.query(
-        `INSERT INTO form_requests (request_no, type, user_id, department, name, status)
-         VALUES (?, ?, ?, ?, ?, 'draft')`,
-        [docNo, type, req.user.id, trunc(req.body.department, 255), trunc(req.body.name, 255)],
+        `INSERT INTO form_requests (request_no, type, user_id, department, department_id, name, status)
+         VALUES (?, ?, ?, ?, ?, ?, 'draft')`,
+        [docNo, type, req.user.id, departmentName, departmentId, trunc(req.body.name, 255)],
       ),
     });
 
@@ -388,9 +474,10 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 
     await conn.beginTransaction();
 
+    const departmentName = trunc(req.body.department, 255);
     await conn.query(
-      'UPDATE form_requests SET department = ?, name = ?, updated_at = NOW() WHERE id = ?',
-      [trunc(req.body.department, 255), trunc(req.body.name, 255), doc.id],
+      'UPDATE form_requests SET department = ?, department_id = ?, name = ?, updated_at = NOW() WHERE id = ?',
+      [departmentName, await resolveDepartmentId(conn, departmentName), trunc(req.body.name, 255), doc.id],
     );
 
     // Lines are replaced wholesale rather than diffed. They carry nothing worth preserving across
@@ -469,10 +556,17 @@ router.post('/:id/submit', requireAuth, requirePermission(ROUTE, 'can_add'), asy
   } catch (err) { return next(err); }
 });
 
-router.post('/:id/note', requireAuth, requirePermission(APPROVAL_ROUTE, 'can_edit'), async (req, res, next) => {
+// Noting. Deliberately NOT wrapped in requirePermission: who may note depends on the form's type
+// and its department, which cannot be known before the form is loaded.
+router.post('/:id/note', requireAuth, async (req, res, next) => {
   try {
-    const [[doc]] = await pool.query('SELECT id, status FROM form_requests WHERE id = ?', [req.params.id]);
+    const [[doc]] = await pool.query(
+      'SELECT id, type, status, department_id, department FROM form_requests WHERE id = ?', [req.params.id]);
     if (!doc) return res.status(404).json({ error: 'Not found' });
+
+    const { allowed, reason } = await mayNote(req.user.id, doc);
+    if (!allowed) return res.status(403).json({ error: reason });
+
     if (doc.status !== 'submitted') return res.status(409).json({ error: 'Only a submitted form can be noted.' });
 
     await pool.query(

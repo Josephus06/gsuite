@@ -237,6 +237,26 @@ router.get('/me', requireAuth, async (req, res, next) => {
       });
     }
 
+    // Same reasoning for the head of a department and the Forms approval queue. Noting a
+    // liquidation or a payment is not a permission -- it is being the head of the department the
+    // form came from, read off that department's ticket approver list (lib/formNoters.js). The
+    // client builds its menu from permission rows alone, so without this a head would have no way
+    // to reach the queue holding the forms only they can note.
+    //
+    // can_view only. It opens the page; the page then shows just their own departments' forms, and
+    // whether they may note any given one is still decided per form by the server.
+    const [headOf] = await pool.query(
+      `SELECT 1 FROM department_ticket_approvers a JOIN departments d ON d.id = a.department_id
+        WHERE a.user_id = ? AND d.is_active = TRUE LIMIT 1`,
+      [user.id]
+    );
+    if (headOf.length && !permissions.some((perm) => perm.route === '/forms/approval')) {
+      permissions.push({
+        route: '/forms/approval',
+        can_view: 1, can_add: 0, can_edit: 0, can_view_all: 0, can_delete: 0, can_approve: 0, can_print: 0,
+      });
+    }
+
     // Read off the token, not the database -- being impersonated is a property of this
     // session, not of the account. Two admins can be acting as the same user at once, and
     // only their own tokens know it.

@@ -113,7 +113,7 @@ async function main() {
       UNIQUE KEY uq_form_requests_no (request_no),
       KEY idx_form_requests_type_status (type, status),
       KEY idx_form_requests_user_status (user_id, status)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
   // rejection_remark is per LINE, not per form: an approver sends one back saying which expense is
   // the problem, and the owner needs to see it against that row.
@@ -130,7 +130,7 @@ async function main() {
       KEY idx_form_request_items_doc (form_request_id),
       CONSTRAINT fk_form_request_items_doc FOREIGN KEY (form_request_id)
         REFERENCES form_requests (id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
   // reimbursement_amount and ending_balance are COMPUTED on save (sum of items, and starting
   // balance less that sum) rather than typed. They are stored because the printed form shows them
@@ -154,7 +154,7 @@ async function main() {
       UNIQUE KEY uq_form_liquidation_doc (form_request_id),
       CONSTRAINT fk_form_liquidation_doc FOREIGN KEY (form_request_id)
         REFERENCES form_requests (id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
   await createTable('form_liquidation_purposes', `
     CREATE TABLE form_liquidation_purposes (
@@ -167,7 +167,7 @@ async function main() {
       KEY idx_form_liquidation_purposes_doc (form_request_id),
       CONSTRAINT fk_form_liquidation_purposes_doc FOREIGN KEY (form_request_id)
         REFERENCES form_requests (id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
   await createTable('form_payment_details', `
     CREATE TABLE form_payment_details (
@@ -182,7 +182,7 @@ async function main() {
       UNIQUE KEY uq_form_payment_doc (form_request_id),
       CONSTRAINT fk_form_payment_doc FOREIGN KEY (form_request_id)
         REFERENCES form_requests (id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
   await createTable('form_revolving_fund_details', `
     CREATE TABLE form_revolving_fund_details (
@@ -202,7 +202,7 @@ async function main() {
       UNIQUE KEY uq_form_revolving_doc (form_request_id),
       CONSTRAINT fk_form_revolving_doc FOREIGN KEY (form_request_id)
         REFERENCES form_requests (id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
   // speedometer readings are VARCHAR, matching the source: the printed sheet is hand-filled and
   // the figure arrives written as "120,000 km" as often as a bare number.
@@ -226,7 +226,7 @@ async function main() {
       UNIQUE KEY uq_form_business_trip_doc (form_request_id),
       CONSTRAINT fk_form_business_trip_doc FOREIGN KEY (form_request_id)
         REFERENCES form_requests (id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
   console.log('');
   const hasViewAll = await columnExists('user_page_permissions', 'can_view_all');

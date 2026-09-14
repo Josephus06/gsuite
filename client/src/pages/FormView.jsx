@@ -74,7 +74,12 @@ export default function FormView() {
   const mayEdit = doc.is_owner && ['draft', 'rejected'].includes(doc.status) && can('/forms', 'can_edit');
   const maySubmit = doc.is_owner && doc.status === 'draft' && can('/forms', 'can_add');
   const mayDiscard = doc.is_owner && doc.status === 'draft' && can('/forms', 'can_delete');
+  // Noting a liquidation or a payment belongs to the head of the department it came from, not to a
+  // permission, so the server decides and this only draws the answer. When it says no, it says WHY
+  // -- most departments have no head recorded yet, and a missing button with no explanation reads
+  // as the module being broken rather than as the form waiting on somebody.
   const mayNote = doc.can_note && doc.status === 'submitted';
+  const noteBlocked = doc.status === 'submitted' && !doc.can_note && doc.note_blocked_reason;
   const mayDecide = doc.can_approve && ['submitted', 'noted'].includes(doc.status);
 
   async function discard() {
@@ -126,6 +131,10 @@ export default function FormView() {
         </div>
       </div>
 
+      {noteBlocked && (
+        <div className="muted" style={{ marginBottom: 8 }}>{doc.note_blocked_reason}</div>
+      )}
+
       {doc.status === 'rejected' && (
         <div className="error-banner">
           <strong>Returned by {doc.rejected_by_name || 'an approver'}</strong>
@@ -141,6 +150,11 @@ export default function FormView() {
         <Line label="Date Created">{fmtDate(doc.created_at)}</Line>
         <Line label="Submitted">{fmtDate(doc.submitted_at)}</Line>
         <Line label="Noted">{doc.noted_at ? `${fmtDate(doc.noted_at)} by ${doc.noted_by_name || '—'}` : null}</Line>
+        {/* Named whoever is looking, so the person who filed it knows who to chase rather than
+            having to ask who heads their own department. */}
+        <Line label="To Be Noted By">
+          {!doc.noted_at && (doc.noters || []).length ? doc.noters.join(' or ') : null}
+        </Line>
         <Line label="Approved">{doc.approved_at ? `${fmtDate(doc.approved_at)} by ${doc.approved_by_name || '—'}` : null}</Line>
       </div>
 
