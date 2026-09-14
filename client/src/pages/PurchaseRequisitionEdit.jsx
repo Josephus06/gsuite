@@ -4,6 +4,8 @@ import api from '../api/client';
 import DataTable from '../components/DataTable';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { useAuth } from '../context/useAuth';
+import { useItemBalances, balanceColumns } from '../utils/itemBalances';
 
 function departmentLabel(d) { return d ? d.name : ''; }
 function employeeLabel(e) { return e ? `${e.first_name} ${e.last_name}` : ''; }
@@ -15,6 +17,7 @@ export default function PurchaseRequisitionEdit() {
   const { id } = useParams();
   const navigate = useNavigate();
   const isNew = !id;
+  const { user } = useAuth();
 
   const [form, setForm] = useState({
     date_created: new Date().toISOString().slice(0, 10), date_needed: '',
@@ -22,19 +25,31 @@ export default function PurchaseRequisitionEdit() {
   });
   const [lines, setLines] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [inventoryItems, setInventoryItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // Warehouse - Central, the warehouse nearly everything moves through and the one a buyer is
+  // asking about when they check whether something needs ordering. Named in the column headers so
+  // the figure is never unattributed, and resolved by name because the installs number their
+  // locations differently.
+  const balanceLocation = locations.find(
+    (l) => String(l.location_name || '').trim().toLowerCase() === 'warehouse - central',
+  ) || null;
+  const { balances: pickerBalances, load: loadPickerBalances } = useItemBalances(balanceLocation?.id ?? null);
+
   useEffect(() => {
     Promise.all([
+      api.get('/lookups/locations'),
       api.get('/lookups/departments'),
       api.get('/employees'),
       api.get('/inventory'),
       isNew ? Promise.resolve(null) : api.get(`/purchase-requisitions/${id}`),
-    ]).then(([deptRes, empRes, invRes, prRes]) => {
+    ]).then(([locRes, deptRes, empRes, invRes, prRes]) => {
+      setLocations(locRes.data);
       setDepartments(deptRes.data);
       setEmployees(empRes.data);
       setInventoryItems(invRes.data);
@@ -49,17 +64,42 @@ export default function PurchaseRequisitionEdit() {
           memo: pr.memo || '',
         });
         setLines((pr.lines || []).map((l) => ({ ...l, _key: l.id })));
+      } else {
+        // Defaults for a NEW requisition only -- an existing one keeps whatever it was saved
+        // with, including a deliberately empty field.
+        //
+        // Requested From is matched by NAME rather than a hardcoded id, because the installs
+        // number their departments differently; if it is ever renamed the field simply starts
+        // empty, which is what it did before.
+        //
+        // Requestor is whoever is filling the form in. users.employee_id is the link -- the
+        // picker lists employees, and the session carries that id from /auth/me -- so a user
+        // with no employee record behind them falls back to an empty field rather than a guess.
+        const supplyChain = (deptRes.data || []).find(
+          (d) => String(d.name || '').trim().toLowerCase() === 'supply chain',
+        );
+        const me = (empRes.data || []).find((e) => String(e.id) === String(user?.employee_id));
+        setForm((f) => ({
+          ...f,
+          department_id: supplyChain?.id || '',
+          requestor_id: me?.id || '',
+        }));
       }
       setLoading(false);
     });
-  }, [id, isNew]);
+  }, [id, isNew, user?.employee_id]);
 
   function addLine(item) {
     setLines((prev) => [...prev, {
       _key: `new-${Date.now()}`,
       item_id: item.id, item_code: item.item_code, item_name: item.display_name,
       purchase_description: item.display_name, job_order_id: null, job_order_no: '',
-      qty_on_hand: 0, qty: 1,
+      // Was hardcoded to 0, so the Qty on Hand column read 0.00 for every material however much
+      // was on the shelf. Taken from the balance the picker has just shown, in STOCK units so it
+      // matches the Qty beside it -- a buyer comparing "have 3, need 2" should not be reading one
+      // in rolls and the other in square feet. Falls back to 0 only if the balance never loaded.
+      qty_on_hand: Number(pickerBalances[item.id]?.balance_stock ?? 0),
+      qty: 1,
       // Purchase Unit is the unit the Qty is ORDERED in, so it comes from the item's Purchase
       // Unit -- ROLL for a tarpaulin held in square feet. It used to copy the base unit title,
       // which read "Square Foot" against an item bought by the roll and only looked right on the
@@ -182,9 +222,14 @@ export default function PurchaseRequisitionEdit() {
         <div style={{ marginTop: 10 }}>
           <EntityPicker
             label="Item" items={inventoryItems} value="" getLabel={(i) => i.display_name}
-            columns={[{ key: 'item_code', label: 'Code' }, { key: 'display_name', label: 'Name' }]}
+            columns={[
+              { key: 'item_code', label: 'Code' },
+              { key: 'display_name', label: 'Name' },
+              ...balanceColumns(pickerBalances, balanceLocation?.location_name),
+            ]}
             searchKeys={['item_code', 'display_name']}
             onSelect={addLine}
+            onVisibleItems={loadPickerBalances}
             triggerLabel="Add Material"
             triggerClassName="btn btn-primary"
           />

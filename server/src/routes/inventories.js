@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { deriveOnHand } = require('../lib/stockLedger');
 
 const router = express.Router();
 const ROUTE = '/inventory';
@@ -142,6 +143,67 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     }
 
     res.json({ rows, counts });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Closing balances for a HANDFUL of items at one location, for an Item picker to show while
+// somebody is choosing what to add to a document or report on.
+//
+// Item ids are required and capped, deliberately. deriveOnHand sums the whole movement union, and
+// asking it for all 6,547 items takes 15 seconds -- far too slow to sit in front of a page load.
+// For the ten rows the picker actually has on screen it is about 40ms, so the picker asks per page
+// as the user turns through it.
+//
+// Same helper the Reallocate screen and Production use, and it agrees with this report's own
+// closing balance to the fourth decimal -- verified against SIGN-ACRYLIC-CLEAR at Warehouse -
+// Central, 674.7119 from both. A second way of computing "what is on the shelf" would be free to
+// disagree with the report it sits next to.
+//
+// Lives here rather than under the Bin Card because the Purchase Requisition picker wants the same
+// figures, and its users have no reason to hold Bin Card permission. Anyone who can open an item
+// picker can already read /inventory.
+router.get('/balances', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const ids = String(req.query.item_ids || '').split(',')
+      .map((s) => Number(s.trim())).filter((n) => Number.isInteger(n) && n > 0).slice(0, 50);
+    if (!ids.length) return res.json([]);
+
+    // No location means the whole company, matching what the report itself does when its Location
+    // is left empty.
+    const locationId = Number(req.query.location_id) || null;
+
+    const [items] = await pool.query(
+      `SELECT i.id, i.conversion_factor, bu.title AS base_unit_title, su.title AS stock_unit_title
+         FROM inventories i
+         LEFT JOIN units_of_measure bu ON bu.id = i.base_unit_id
+         LEFT JOIN units_of_measure su ON su.id = i.stock_unit_id
+        WHERE i.id IN (?)`,
+      [ids],
+    );
+
+    const byPair = await deriveOnHand(pool, ids);
+    const totalFor = (itemId) => {
+      if (locationId) return Number(byPair.get(`${itemId}|${locationId}`) || 0);
+      let sum = 0;
+      for (const [pair, bal] of byPair) {
+        if (pair.slice(0, pair.indexOf('|')) === String(itemId)) sum += Number(bal) || 0;
+      }
+      return sum;
+    };
+
+    res.json(items.map((i) => {
+      const base = totalFor(i.id);
+      const factor = Number(i.conversion_factor) > 0 ? Number(i.conversion_factor) : 1;
+      return {
+        item_id: i.id,
+        balance_base: base,
+        balance_stock: base / factor,
+        base_unit_title: i.base_unit_title,
+        stock_unit_title: i.stock_unit_title,
+      };
+    }));
   } catch (err) {
     next(err);
   }
