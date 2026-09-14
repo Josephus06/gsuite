@@ -15,6 +15,11 @@ const router = express.Router();
 //   draft -> submitted -> noted -> approved
 //                     \-> rejected -> (owner edits) -> back to noted or submitted
 //
+// EVERY STEP IS REQUIRED. Approving reads only from NOTED, so a department head's sign-off cannot
+// be skipped by whoever approves. The source allowed submitted -> approved directly; it does not
+// here. A form from a department with no head recorded therefore has nowhere to go until one is,
+// which is why the refusal says so by name.
+//
 // TWO PAGES GATE THIS, and the split is the point:
 //
 //   /forms           the person filing. can_add raises and submits, can_edit revises, can_delete
@@ -578,11 +583,31 @@ router.post('/:id/note', requireAuth, async (req, res, next) => {
 
 router.post('/:id/approve', requireAuth, requirePermission(APPROVAL_ROUTE, 'can_approve'), async (req, res, next) => {
   try {
-    const [[doc]] = await pool.query('SELECT id, status FROM form_requests WHERE id = ?', [req.params.id]);
+    const [[doc]] = await pool.query(
+      'SELECT id, type, status, department, department_id FROM form_requests WHERE id = ?', [req.params.id]);
     if (!doc) return res.status(404).json({ error: 'Not found' });
-    // Noting is a step, not a gate: a submitted form can be approved without it, as in the source.
-    if (!['submitted', 'noted'].includes(doc.status)) {
-      return res.status(409).json({ error: 'Only a submitted or noted form can be approved.' });
+
+    // NOTING IS A GATE, not a step that can be skipped. The source allowed submitted -> approved
+    // directly; here a form must be noted by its department's head first, so the head's sign-off
+    // cannot be bypassed by whoever approves.
+    //
+    // The cost of that is real and deliberate: a form from a department with no head recorded has
+    // nowhere to go, so the refusal names who is missing rather than just saying no.
+    if (doc.status === 'submitted') {
+      const heads = DEPARTMENT_NOTED_TYPES.includes(doc.type) ? await notersFor(doc.department_id) : [];
+      if (DEPARTMENT_NOTED_TYPES.includes(doc.type) && heads.length === 0) {
+        return res.status(409).json({
+          error: `This has to be noted before it can be approved, and ${doc.department || 'its department'} has no head recorded to note it. Add one under that department's ticket approvers.`,
+        });
+      }
+      return res.status(409).json({
+        error: heads.length
+          ? `This has to be noted first, by ${heads.map((h) => h.display_name).join(' or ')}.`
+          : 'This has to be noted before it can be approved.',
+      });
+    }
+    if (doc.status !== 'noted') {
+      return res.status(409).json({ error: 'Only a noted form can be approved.' });
     }
 
     await pool.query(

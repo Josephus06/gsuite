@@ -80,7 +80,13 @@ export default function FormView() {
   // as the module being broken rather than as the form waiting on somebody.
   const mayNote = doc.can_note && doc.status === 'submitted';
   const noteBlocked = doc.status === 'submitted' && !doc.can_note && doc.note_blocked_reason;
-  const mayDecide = doc.can_approve && ['submitted', 'noted'].includes(doc.status);
+  // Approving reads only from NOTED -- the head's sign-off is a gate, not a step to skip. Rejecting
+  // still works from SUBMITTED: sending something back does not need the head to have seen it first.
+  const mayApprove = doc.can_approve && doc.status === 'noted';
+  const mayReject = doc.can_approve && ['submitted', 'noted'].includes(doc.status);
+  // Said plainly to the approver looking at a form they cannot yet act on, so a missing Approve
+  // button reads as "waiting on the head" rather than as something broken.
+  const awaitingNote = doc.can_approve && doc.status === 'submitted';
 
   async function discard() {
     if (!confirm(`Discard ${doc.request_no}? This cannot be undone.`)) return;
@@ -107,12 +113,12 @@ export default function FormView() {
             <button className="btn btn-sm btn-primary" disabled={busy}
               onClick={() => act('note', null, 'Noted.')}>Note</button>
           )}
-          {mayDecide && (
-            <>
-              <button className="btn btn-sm btn-success" disabled={busy}
-                onClick={() => act('approve', null, 'Approved.')}>Approve</button>
-              <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setRejecting(true)}>Reject</button>
-            </>
+          {mayApprove && (
+            <button className="btn btn-sm btn-success" disabled={busy}
+              onClick={() => act('approve', null, 'Approved.')}>Approve</button>
+          )}
+          {mayReject && (
+            <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setRejecting(true)}>Reject</button>
           )}
           {mayDiscard && <button className="btn btn-sm btn-danger" disabled={busy} onClick={discard}>Discard</button>}
         </div>
@@ -133,6 +139,14 @@ export default function FormView() {
 
       {noteBlocked && (
         <div className="muted" style={{ marginBottom: 8 }}>{doc.note_blocked_reason}</div>
+      )}
+
+      {awaitingNote && (
+        <div className="muted" style={{ marginBottom: 8 }}>
+          {(doc.noters || []).length
+            ? `This has to be noted by ${doc.noters.join(' or ')} before it can be approved.`
+            : 'This has to be noted before it can be approved.'}
+        </div>
       )}
 
       {doc.status === 'rejected' && (
