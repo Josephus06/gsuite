@@ -25,6 +25,23 @@ export default function BillPaymentView() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [editingRelease, setEditingRelease] = useState(false);
+  const [releaseDate, setReleaseDate] = useState('');
+  const [savingRelease, setSavingRelease] = useState(false);
+
+  async function saveRelease() {
+    setSavingRelease(true);
+    setError('');
+    try {
+      await api.put(`/bill-payments/${id}/date-released`, { date_released: releaseDate || null });
+      await load();
+      setEditingRelease(false);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not save Date Released.');
+    } finally {
+      setSavingRelease(false);
+    }
+  }
 
   function load() {
     return api.get(`/bill-payments/${id}`).then(({ data }) => { setBp(data); setLoading(false); });
@@ -96,6 +113,37 @@ export default function BillPaymentView() {
           </div>
           <div>
             <div>Payment Method : <span className="hi">{bp.payment_method_name}</span></div>
+            {/* The day the money actually went out, which is not the day the payment was raised.
+                Set here after the fact, as the source system does -- and the Disbursement Report
+                is keyed on it, so a payment without one does not appear in any date range. */}
+            <div>
+              Date Released : {editingRelease ? (
+                <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                  <input
+                    type="date"
+                    value={releaseDate}
+                    onChange={(e) => setReleaseDate(e.target.value)}
+                    style={{ width: 160 }}
+                  />
+                  <button className="btn btn-sm btn-primary" disabled={savingRelease} onClick={saveRelease}>Save</button>
+                  <button className="btn btn-sm" disabled={savingRelease} onClick={() => setEditingRelease(false)}>Cancel</button>
+                </span>
+              ) : (
+                <>
+                  <span className="hi">{bp.date_released ? formatDate(bp.date_released) : '—'}</span>
+                  {canEdit && bp.status !== 'voided' && (
+                    <button
+                      type="button"
+                      className="link-btn"
+                      style={{ marginLeft: 8 }}
+                      onClick={() => { setReleaseDate(bp.date_released ? String(bp.date_released).slice(0, 10) : ''); setEditingRelease(true); }}
+                    >
+                      Edit
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
             {bp.check_date && <div>Check Date : <span className="hi">{formatDate(bp.check_date)}</span></div>}
             {bp.check_no && <div>Check No : <span className="hi">{bp.check_no}</span></div>}
             <div>Payment Type : <span className="hi">{bp.payment_type}</span></div>

@@ -244,6 +244,43 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   }
 });
 
+// Date Released on its own, the way the source system edits it: a payment is raised on one day
+// and the money actually handed over on another, and that second date is set once it happens. It
+// is the only field a posted payment can still change, so this is a narrow endpoint rather than a
+// general PUT -- nothing else about a payment that has already moved money should be editable.
+//
+// Clearing it back to empty is allowed: a release recorded by mistake has to be retractable, and
+// the payment then reads as not yet released, which is what it is.
+router.put('/:id/date-released', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const raw = req.body.date_released;
+    const dateReleased = raw === '' || raw === null || raw === undefined ? null : String(raw).slice(0, 10);
+    if (dateReleased && !/^\d{4}-\d{2}-\d{2}$/.test(dateReleased)) {
+      return res.status(400).json({ error: 'Date Released must be a date.' });
+    }
+
+    const [[bp]] = await pool.query('SELECT status, date_released FROM bill_payments WHERE id = ?', [req.params.id]);
+    if (!bp) return res.status(404).json({ error: 'Not found' });
+    if (bp.status === 'voided') {
+      return res.status(409).json({ error: 'This Bill Payment is voided -- it released nothing.' });
+    }
+
+    await pool.query('UPDATE bill_payments SET date_released = ? WHERE id = ?', [dateReleased, req.params.id]);
+    const conn = await pool.getConnection();
+    try {
+      await logAudit(conn, {
+        paymentId: req.params.id, userId: req.user.id, eventType: 'Updated',
+        fieldName: 'date_released', oldValue: bp.date_released, newValue: dateReleased,
+      });
+    } finally {
+      conn.release();
+    }
+    res.json({ ok: true, date_released: dateReleased });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {

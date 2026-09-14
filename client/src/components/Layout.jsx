@@ -232,6 +232,7 @@ const NAV_STRUCTURE = [
           { route: '/reports/ar-aging', label: 'AR Aging' },
           { route: '/reports/general-ledger', label: 'General Ledger' },
           { route: '/reports/delivery-summary', label: 'Delivery Summary' },
+          { route: '/reports/disbursement', label: 'Disbursement Report' },
         ],
       },
     ],
