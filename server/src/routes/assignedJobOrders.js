@@ -18,6 +18,9 @@ const ROUTE = '/assigned-jo';
 //   'Sales Approval'                        -> sent, waiting on Sales
 //   'Approved'                              -> signed off; this is what earns the incentive
 const ARTIST_QUEUE_SUB_STATUSES = ['For Artist', 'For Artist (Revision)', 'Sales Approval', 'Approved'];
+// Matches CANCELLED_STATUS in routes/nonStandardJobOrders.js. A cancelled order keeps the sub
+// status it was cancelled at, so the sub status alone cannot say whether it is still live work.
+const CANCELLED_STATUS = 'Cancelled';
 
 async function logAudit(conn, { jobOrderId, userId, eventType, fieldName = null, oldValue = null, newValue = null }) {
   await conn.query(
@@ -101,7 +104,13 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN employees nsr ON nsr.id = n.sales_rep_id
        LEFT JOIN pms_job_types pjt ON pjt.id = n.layout_job_type_id
        WHERE n.artist_employee_id = ?
-         AND n.sub_status IN (?)${nstdjoLocationClause}
+         AND n.sub_status IN (?)
+         -- Cancelling an NSTDJO deliberately LEAVES its sub status alone, so the record still
+         -- says where it was cancelled (routes/nonStandardJobOrders.js). The consequence is that
+         -- one cancelled at "For Artist" stays in that artist's queue for ever, asking for work
+         -- nobody wants any more. The NSTDJO list page already excludes them the same way; this
+         -- queue had simply never been told.
+         AND n.status <> '${CANCELLED_STATUS}'${nstdjoLocationClause}
        ORDER BY n.id DESC`,
       [me.employee_id, ARTIST_QUEUE_SUB_STATUSES, ...locationParams]
     );
@@ -182,6 +191,9 @@ router.get('/running', requireAuth, requirePermission(ROUTE, 'can_view'), async 
          JOIN non_standard_job_orders n ON n.id = s.non_standard_job_order_id
          LEFT JOIN pms_job_types pjt ON pjt.id = n.layout_job_type_id
         WHERE s.ended_at IS NULL AND n.artist_employee_id = ? AND n.layout_ended_at IS NULL
+          -- Same reason as the queue above: a timer left running on an order that has since been
+          -- cancelled would keep counting against work that is no longer wanted.
+          AND n.status <> '${CANCELLED_STATUS}'
         ORDER BY s.started_at DESC LIMIT 1`,
       [me.employee_id],
     );
