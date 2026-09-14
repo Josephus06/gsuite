@@ -92,6 +92,57 @@ router.get('/for-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can
   }
 });
 
+// The same payload as /for-invoice, for a payment raised from the Customer Payments list rather
+// than from one invoice's Accept Payment button. Nothing is pre-selected because nothing singled
+// an invoice out -- the customer handed over money and the person entering it decides what it
+// settles.
+//
+// Deliberately the SAME SHAPE, so one modal serves both ways in: apply_lines are all this
+// customer's still-open invoices, credit_lines their open credit memos. sales_invoice_id and
+// amount_due are the two fields that only make sense when an invoice started it, and they are
+// absent here rather than faked.
+//
+// Declared above `/:id` -- Express matches in the order routes are registered, so a literal
+// segment has to come first or `/:id` swallows it.
+router.get('/for-customer/:customerId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [[customer]] = await pool.query(
+      'SELECT id AS customer_id, name AS customer_name FROM customers WHERE id = ?', [req.params.customerId]);
+    if (!customer) return res.status(404).json({ error: 'Customer not found' });
+
+    const [applyLines] = await pool.query(
+      `SELECT si.id AS sales_invoice_id, si.invoice_no, si.date_created, si.gross_amount, si.amount_due,
+              c.name AS customer_name
+         FROM sales_invoices si
+         JOIN sales_orders so ON so.id = si.sales_order_id
+         LEFT JOIN customers c ON c.id = so.customer_id
+        WHERE so.customer_id = ? AND si.status != 'cancelled' AND si.amount_due > 0
+        ORDER BY si.id DESC`,
+      [req.params.customerId],
+    );
+
+    const [creditLines] = await pool.query(
+      `SELECT id AS credit_memo_id, credit_memo_no, date_created, gross_amount, applied_amount,
+              (gross_amount - applied_amount) AS remaining
+         FROM credit_memos
+        WHERE customer_id = ? AND status = 'open' AND applied_amount < gross_amount
+        ORDER BY id DESC`,
+      [req.params.customerId],
+    );
+
+    res.json({
+      ...customer,
+      office_location_id: null,
+      department_id: null,
+      memo: null,
+      apply_lines: applyLines,
+      credit_lines: creditLines,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/by-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [rows] = await pool.query(

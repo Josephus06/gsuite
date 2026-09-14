@@ -3,6 +3,9 @@ import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import EntityPicker from '../components/EntityPicker';
+import CustomerPaymentModal from '../components/CustomerPaymentModal';
+import { useAuth } from '../context/useAuth';
 
 const PAGE_SIZE = 10;
 // A saved payment sits NOT DEPOSITED until a bank deposit sweeps it into the bank.
@@ -15,6 +18,11 @@ function money(v) {
 function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
 
 export default function CustomerPayments() {
+  const { can } = useAuth();
+  // Raising a payment starts with the CUSTOMER, because that is the only thing known when someone
+  // walks in and hands money over. Which invoices it settles is decided in the form afterwards.
+  const [customers, setCustomers] = useState([]);
+  const [newFor, setNewFor] = useState(null);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('');
@@ -33,6 +41,12 @@ export default function CustomerPayments() {
 
   useEffect(() => { setPage(1); load(); }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Only for the Add picker, and only when the button is there to use it.
+  useEffect(() => {
+    if (!can('/customer-payments', 'can_add')) return;
+    api.get('/customers').then(({ data }) => setCustomers(Array.isArray(data) ? data : (data?.rows || []))).catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   function runSearch() {
     setPage(1);
     load();
@@ -45,6 +59,16 @@ export default function CustomerPayments() {
     <div>
       <div className="page-header">
         <h1>Customer Payments</h1>
+        {can('/customer-payments', 'can_add') && (
+          <EntityPicker
+            label="Customer" items={customers} value="" getLabel={(c) => c?.name}
+            columns={[{ key: 'customer_code', label: 'Code' }, { key: 'name', label: 'Name' }]}
+            searchKeys={['customer_code', 'name']}
+            onSelect={(c) => setNewFor(c)}
+            triggerLabel="Add Customer Payment"
+            triggerClassName="btn btn-primary"
+          />
+        )}
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
@@ -112,6 +136,15 @@ export default function CustomerPayments() {
         )}
         <Pagination page={page} totalPages={totalPages} onChange={setPage} />
       </div>
+
+      {/* The same form an invoice's Accept Payment button opens, entered from the customer end. */}
+      {newFor && (
+        <CustomerPaymentModal
+          customerId={newFor.id}
+          onClose={() => setNewFor(null)}
+          onSaved={() => { setNewFor(null); load(); }}
+        />
+      )}
     </div>
   );
 }

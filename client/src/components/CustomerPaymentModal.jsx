@@ -19,7 +19,11 @@ const PAYMENT_TYPES = ['Full Payment', 'Partial Payment', 'Advance Payment'];
 // not just the one the button was pressed from -- a single payment routinely settles
 // several at once -- with the source invoice ticked by default. CREDITS offsets the
 // payment with the customer's own open Credit Memos, which move no cash.
-export default function CustomerPaymentModal({ invoiceId, onClose, onSaved }) {
+// Two ways in, one form. `invoiceId` is the Accept Payment button on an open invoice, which ticks
+// that invoice for its full balance because settling exactly it is the overwhelmingly common case.
+// `customerId` is Add on the Customer Payments list: the customer handed over money and nothing
+// has singled out an invoice, so every open one is listed and none is ticked.
+export default function CustomerPaymentModal({ invoiceId, customerId, onClose, onSaved }) {
   const [data, setData] = useState(null);
   const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
   const [department, setDepartment] = useState(null);
@@ -33,6 +37,10 @@ export default function CustomerPaymentModal({ invoiceId, onClose, onSaved }) {
   const [memo, setMemo] = useState('');
   const [tab, setTab] = useState('apply');
   const [applyAmounts, setApplyAmounts] = useState({});   // sales_invoice_id -> string
+  // Entered from the customer end the list is every open invoice they have -- hundreds, for a
+  // regular account. The filter narrows what is DRAWN only: anything already ticked stays in the
+  // payment whether or not the filter is hiding it, and the APPLY tab total keeps showing it.
+  const [applyFilter, setApplyFilter] = useState('');
   const [creditAmounts, setCreditAmounts] = useState({}); // credit_memo_id -> string
   const [departments, setDepartments] = useState([]);
   const [users, setUsers] = useState([]);
@@ -44,7 +52,9 @@ export default function CustomerPaymentModal({ invoiceId, onClose, onSaved }) {
 
   useEffect(() => {
     Promise.all([
-      api.get(`/customer-payments/for-invoice/${invoiceId}`),
+      api.get(invoiceId
+        ? `/customer-payments/for-invoice/${invoiceId}`
+        : `/customer-payments/for-customer/${customerId}`),
       api.get('/lookups/departments'),
       api.get('/users'),
       api.get('/lookups/payment-methods'),
@@ -59,15 +69,20 @@ export default function CustomerPaymentModal({ invoiceId, onClose, onSaved }) {
       setMemo(d.memo || '');
       if (d.department_id) setDepartment({ id: d.department_id, name: d.department_name });
       // The invoice the button was pressed from starts ticked for its full remaining
-      // balance -- the overwhelmingly common case is settling exactly that.
-      setApplyAmounts({ [d.sales_invoice_id]: String(Number(d.amount_due).toFixed(2)) });
-      setPaymentAmount(String(Number(d.amount_due).toFixed(2)));
+      // balance -- the overwhelmingly common case is settling exactly that. Started from the
+      // customer instead, nothing is ticked and the amount is left blank: presuming which
+      // invoices a walk-in payment settles is exactly the guess that produces a misapplied one.
+      if (d.sales_invoice_id) {
+        setApplyAmounts({ [d.sales_invoice_id]: String(Number(d.amount_due).toFixed(2)) });
+        setPaymentAmount(String(Number(d.amount_due).toFixed(2)));
+      }
       setLoading(false);
     }).catch((err) => {
-      setError(err.response?.data?.error || 'Could not load this Invoice.');
+      setError(err.response?.data?.error
+        || (invoiceId ? 'Could not load this Invoice.' : 'Could not load this Customer.'));
       setLoading(false);
     });
-  }, [invoiceId]);
+  }, [invoiceId, customerId]);
 
   if (loading) {
     return <div className="modal-overlay"><div className="modal modal-xl"><LoadingSpinner /></div></div>;
@@ -83,6 +98,12 @@ export default function CustomerPaymentModal({ invoiceId, onClose, onSaved }) {
     );
   }
 
+  // A ticked invoice stays visible even when the filter would hide it, so nothing being paid
+  // can scroll out of sight.
+  const applyQuery = applyFilter.trim().toLowerCase();
+  const visibleApplyLines = !applyQuery ? (data?.apply_lines || []) : (data?.apply_lines || []).filter(
+    (l) => applyAmounts[l.sales_invoice_id] !== undefined || String(l.invoice_no || '').toLowerCase().includes(applyQuery)
+  );
   const appliedToInvoices = Object.values(applyAmounts).reduce((s, v) => s + (Number(v) || 0), 0);
   const appliedToCredits = Object.values(creditAmounts).reduce((s, v) => s + (Number(v) || 0), 0);
   const appliedAmount = appliedToInvoices + appliedToCredits;
@@ -208,7 +229,16 @@ export default function CustomerPaymentModal({ invoiceId, onClose, onSaved }) {
           </div>
 
           {tab === 'apply' && (
-            <div className="table-wrap" style={{ marginTop: 12 }}>
+            <div style={{ marginTop: 12 }}>
+              {data.apply_lines.length > 10 && (
+                <div className="field" style={{ marginBottom: 8 }}>
+                  <input
+                    value={applyFilter} onChange={(e) => setApplyFilter(e.target.value)}
+                    placeholder={`Find among ${data.apply_lines.length} open invoices...`}
+                  />
+                </div>
+              )}
+              <div className="table-wrap" style={{ maxHeight: 380, overflowY: 'auto' }}>
               <table>
                 <thead>
                   <tr><th></th><th>Invoice #</th><th>Customer</th><th>Date Created</th><th>Original Amount</th><th>Amount Due</th><th>Applied Amount</th></tr>
@@ -217,7 +247,10 @@ export default function CustomerPaymentModal({ invoiceId, onClose, onSaved }) {
                   {data.apply_lines.length === 0 && (
                     <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>This customer has no open invoices.</td></tr>
                   )}
-                  {data.apply_lines.map((l) => {
+                  {data.apply_lines.length > 0 && visibleApplyLines.length === 0 && (
+                    <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>No invoice matches "{applyFilter}".</td></tr>
+                  )}
+                  {visibleApplyLines.map((l) => {
                     const checked = applyAmounts[l.sales_invoice_id] !== undefined;
                     return (
                       <tr key={l.sales_invoice_id}>
@@ -249,6 +282,7 @@ export default function CustomerPaymentModal({ invoiceId, onClose, onSaved }) {
                   })}
                 </tbody>
               </table>
+              </div>
             </div>
           )}
 
