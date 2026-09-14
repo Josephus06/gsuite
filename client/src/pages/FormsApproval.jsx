@@ -6,11 +6,10 @@ import { STATUS_BADGE, TYPE_LABELS, fmtDate, money, pretty } from '../utils/requ
 
 // The approval queue -- what is waiting on a decision, rather than what you filed.
 //
-// Drafts never appear: a form nobody has submitted is its owner's business alone. The default view
-// is what still needs someone (submitted and noted); Approved and Rejected are there to look back
-// at, not to work through.
+// Drafts never appear: a form nobody has submitted is its owner's business alone. Submitted opens
+// first because it is where a form waits longest -- on its department head. Approved and Rejected
+// are there to look back at, not to work through.
 const TABS = [
-  { key: 'open', label: 'Needs a Decision' },
   { key: 'submitted', label: 'Submitted' },
   { key: 'noted', label: 'Noted' },
   { key: 'approved', label: 'Approved' },
@@ -20,7 +19,7 @@ const TABS = [
 export default function FormsApproval() {
   const navigate = useNavigate();
   const [rows, setRows] = useState([]);
-  const [tab, setTab] = useState('open');
+  const [tab, setTab] = useState('submitted');
   const [type, setType] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -29,11 +28,9 @@ export default function FormsApproval() {
     setLoading(true); setError('');
     try {
       const { data } = await api.get('/forms/approval/queue', {
-        params: { status: tab === 'open' ? undefined : tab, type: type || undefined },
+        params: { status: tab, type: type || undefined },
       });
-      // "Needs a decision" is the two live statuses. Filtered here rather than with another query
-      // parameter, since the queue endpoint already returns exactly the four workflow statuses.
-      setRows(tab === 'open' ? data.filter((r) => ['submitted', 'noted'].includes(r.status)) : data);
+      setRows(data);
     } catch (e) { setError(e.response?.data?.error || 'Could not load the approval queue.'); }
     setLoading(false);
   }, [tab, type]);
