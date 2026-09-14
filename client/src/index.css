@@ -2254,3 +2254,29 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .artist-calendar-day.is-clickable:focus-visible { outline: 2px solid #7c6fe8; outline-offset: -2px; }
 /* The chips inside are labels now, not buttons -- the day owns the click. */
 .artist-calendar-day.is-clickable .artist-calendar-chip { cursor: pointer; }
+
+/* Contingency block under an estimate job order's process list -- the buffer added on top of what
+   the processes come to, and the Total it produces. Right-aligned under the money columns it
+   belongs to, the way the source system lays it out. */
+.contingency-box {
+  margin: 10px 0 0 auto;
+  max-width: 420px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.contingency-row {
+  display: grid;
+  grid-template-columns: 1fr 70px 150px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.contingency-row:last-child { margin-bottom: 0; }
+.contingency-label { font-weight: 600; }
+.contingency-row input { width: 100%; }
+.contingency-total {
+  border-top: 1px solid var(--border, #e5e7eb);
+  padding-top: 8px;
+  text-align: right;
+}

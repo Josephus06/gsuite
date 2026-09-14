@@ -55,6 +55,10 @@ const EMPTY_JO = {
   price_per_unit: '', subtotal: '', disc_percent: '', disc_per_unit: '', disc_amount: '', disc_price_per_unit: '',
   net_of_tax: '', tax_code_id: '', tax_amount: '', gross_amount: '', length: '', width: '', height: '', uom: '',
   shipping: '', remarks: '', memo: '', delivery_date: '', delivery_time: '', gp_rate: '', gp_amount: '',
+  // Contingency is entered under the process list rather than as a column in the job order table,
+  // so it is in this list only to be saved and loaded -- see JOB_ORDER_COLUMNS, which it is
+  // deliberately absent from.
+  contingency_percent: '', contingency_amount: '',
 };
 
 const EMPTY_PROC = {
@@ -64,6 +68,13 @@ const EMPTY_PROC = {
   disc_material_price: '', net_of_tax: '', tax_amount: '', gross_amount: '',
   remarks: '', memo: '', gp_rate: '', process_cost: '', material_cost: '',
   total_cost: '', total_price: '',
+};
+
+// Money as it reads on the sheet. Only used by the contingency block; every other figure in this
+// wizard is an input carrying its own raw value.
+const money = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "";
 };
 
 const JOB_ORDER_FIELDS = Object.keys(EMPTY_JO);
@@ -573,13 +584,51 @@ export default function EstimateWizard() {
   // GP Amount = Net of Tax - (sum of process lines' Total Cost), GP Rate = GP Amount /
   // Net of Tax x 100 -- the same margin formula as each process line's own GP Rate, just
   // rolled up to the job-order's totals. Both are fully derived, never typed into.
-  async function recalcJobOrderSubtotal(joIdx, processes) {
-    const subtotal = Number(processes.reduce((s, p) => s + (Number(p.net_of_tax) || 0), 0).toFixed(2));
+  // CONTINGENCY sits between the process lines and the job order's Subtotal: the processes come to
+  // a base, a buffer is added on top of it, and everything downstream -- discount, tax, Gross,
+  // GP -- works from the result. On a base of 100 a contingency of 10% adds 10 and the Subtotal
+  // becomes 110, which is what the real system's Total under the process list shows.
+  //
+  // The PERCENTAGE IS OF THE BASE, not of the inflated Subtotal. Taking it off the Subtotal would
+  // make the figure refer to itself and 10% of 100 would no longer be 10.
+  //
+  // Percent and amount are each other's mirror and `trigger` says which one the person typed, so
+  // the other is derived and the typed one is left exactly as entered. That is why both are
+  // stored: entering an AMOUNT of 142.56 against a base of 10,357.45 gives 1.376401%, a number
+  // nobody would type, and rounding it for storage would move the money on the next recalculation.
+  function contingencyFor(base, jo, overrides = {}, trigger = null) {
+    const pctRaw = overrides.contingency_percent ?? jo?.contingency_percent;
+    const amtRaw = overrides.contingency_amount ?? jo?.contingency_amount;
+    const pct = Number(pctRaw) || 0;
+    const amt = Number(amtRaw) || 0;
+
+    if (trigger === 'contingency_amount') {
+      return {
+        contingency_amount: amtRaw === '' || amtRaw == null ? null : Number(amt.toFixed(2)),
+        contingency_percent: base ? Number(((amt / base) * 100).toFixed(6)) : null,
+      };
+    }
+    if (trigger === 'contingency_percent') {
+      return {
+        contingency_percent: pctRaw === '' || pctRaw == null ? null : Number(pct.toFixed(6)),
+        contingency_amount: base ? Number(((base * pct) / 100).toFixed(2)) : null,
+      };
+    }
+    // Not typed into -- a process line changed underneath it. The percentage is what was agreed,
+    // so it holds and the amount follows the new base.
+    if (pct) return { contingency_percent: pct, contingency_amount: Number(((base * pct) / 100).toFixed(2)) };
+    return { contingency_percent: pctRaw === '' || pctRaw == null ? null : pct, contingency_amount: amt ? Number(amt.toFixed(2)) : null };
+  }
+
+  async function recalcJobOrderSubtotal(joIdx, processes, extra = {}, trigger = null) {
+    const base = Number(processes.reduce((s, p) => s + (Number(p.net_of_tax) || 0), 0).toFixed(2));
     const totalCost = Number(processes.reduce((s, p) => s + (Number(p.total_cost) || 0), 0).toFixed(2));
     const jo = jobOrdersRef.current[joIdx];
+    const cont = contingencyFor(base, jo, extra, trigger);
+    const subtotal = Number((base + (Number(cont.contingency_amount) || 0)).toFixed(2));
     const discPercent = Number(jo?.disc_percent) || 0;
     const qty = Number(jo?.quantity) || 0;
-    const overrides = { subtotal };
+    const overrides = { subtotal, ...cont };
     if (discPercent) {
       overrides.disc_amount = Number((subtotal * discPercent / 100).toFixed(2));
     }
@@ -589,6 +638,14 @@ export default function EstimateWizard() {
     overrides.gp_amount = Number((overrides.net_of_tax - totalCost).toFixed(2));
     overrides.gp_rate = overrides.net_of_tax ? Number((overrides.gp_amount / overrides.net_of_tax * 100).toFixed(2)) : null;
     await commitJobOrderRow(joIdx, overrides);
+  }
+
+  // Typing in either contingency box. Routed through the same recalculation the process lines use
+  // so the Subtotal, tax, Gross and GP all move together -- a contingency that changed the total
+  // without changing the tax on it would be a quietly wrong quote.
+  async function commitContingency(joIdx, key, value) {
+    const jo = jobOrdersRef.current[joIdx];
+    await recalcJobOrderSubtotal(joIdx, jo?.processes || [], { [key]: value }, key);
   }
 
   async function ensureBracketsLoaded(processId) {
@@ -1265,6 +1322,37 @@ export default function EstimateWizard() {
                                     ))}
                                   </tbody>
                                 </table>
+                              </div>
+                              {/* Contingency and the resulting Total, under the process list where
+                                  the real system puts them. Typing in either box fills the other:
+                                  a percentage of the process base, or an amount that reveals what
+                                  percentage it is. */}
+                              <div className="contingency-box">
+                                <div className="contingency-row">
+                                  <span className="contingency-label">Contingency</span>
+                                  <span className="muted">%</span>
+                                  <input
+                                    type="number" step="0.000001" min="0"
+                                    defaultValue={jo.contingency_percent ?? ''}
+                                    key={`cp-${jo.id}-${jo.contingency_percent ?? ''}`}
+                                    onBlur={(e) => commitContingency(idx, 'contingency_percent', e.target.value)}
+                                  />
+                                </div>
+                                <div className="contingency-row">
+                                  <span className="contingency-label" />
+                                  <span className="muted">Amount</span>
+                                  <input
+                                    type="number" step="0.01" min="0"
+                                    defaultValue={jo.contingency_amount ?? ''}
+                                    key={`ca-${jo.id}-${jo.contingency_amount ?? ''}`}
+                                    onBlur={(e) => commitContingency(idx, 'contingency_amount', e.target.value)}
+                                  />
+                                </div>
+                                <div className="contingency-row contingency-total">
+                                  <span className="contingency-label">Total</span>
+                                  <span />
+                                  <strong>{money(jo.subtotal)}</strong>
+                                </div>
                               </div>
                               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                                 <button type="button" className="btn btn-sm btn-primary" disabled={!jo.job_type_id} onClick={() => openProcessPicker(idx, jo.job_type_id)}>

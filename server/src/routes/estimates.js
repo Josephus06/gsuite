@@ -27,6 +27,9 @@ const JOB_ORDER_FIELDS = [
   'disc_percent', 'disc_per_unit', 'disc_amount', 'disc_price_per_unit', 'net_of_tax', 'tax_code_id', 'tax_amount',
   'gross_amount', 'length', 'width', 'height', 'uom', 'shipping', 'remarks', 'memo', 'delivery_date', 'delivery_time',
   'gp_rate', 'gp_amount',
+  // Contingency: the buffer added on top of what the processes come to, kept as both the percent
+  // and the amount because each is the other's mirror and only one of them was typed.
+  'contingency_percent', 'contingency_amount',
 ];
 
 const PROCESS_FIELDS = [
@@ -39,7 +42,15 @@ const PROCESS_FIELDS = [
 
 // sales_order_lines mirrors estimate_job_orders minus nstdjo_no/disc_per_unit, which
 // don't carry forward to the order snapshot.
-const SALES_ORDER_LINE_FIELDS = JOB_ORDER_FIELDS.filter((f) => f !== 'nstdjo_no' && f !== 'disc_per_unit');
+//
+// The contingency pair is dropped for a different reason: sales_order_lines has no columns for it
+// and needs none. Contingency is how the job order's Subtotal was ARRIVED AT -- the amount is
+// already inside it -- so the order snapshot carries the money without carrying the working. The
+// percentage only means anything against the estimate's own process lines, which the order does
+// not hold.
+const SALES_ORDER_LINE_FIELDS = JOB_ORDER_FIELDS.filter(
+  (f) => !['nstdjo_no', 'disc_per_unit', 'contingency_percent', 'contingency_amount'].includes(f),
+);
 const SALES_ORDER_HEADER_FIELDS = [
   'estimate_id', 'date_created', 'customer_id', 'contact_person_id', 'contact_email', 'contact_title', 'contact_phone',
   'blanket_po_id', 'blanket_po_memo', 'sales_rep_id', 'sales_division_id', 'office_location_id',

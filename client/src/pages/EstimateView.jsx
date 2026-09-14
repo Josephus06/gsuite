@@ -26,6 +26,10 @@ const JOB_VIEW_COLUMNS = [
   { key: 'quantity', label: 'Qty' },
   { key: 'units', label: 'Units' },
   { key: 'price_per_unit', label: 'Price/Unit' },
+  // Shown before Subtotal because that is where it acts: the processes come to a base, the
+  // contingency is added, and Subtotal is the result. Blank where none was allowed for.
+  { key: 'contingency_percent', label: 'Contingency %' },
+  { key: 'contingency_amount', label: 'Contingency Amt' },
   { key: 'subtotal', label: 'Subtotal' },
   { key: 'disc_percent', label: 'Disc %' },
   { key: 'disc_amount', label: 'Disc Amt' },
