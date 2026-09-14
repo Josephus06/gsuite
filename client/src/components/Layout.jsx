@@ -34,6 +34,16 @@ const NAV_STRUCTURE = [
       { route: '/hrd/incident-reports', label: 'Incident Report' },
     ],
   },
+  // Forms. The four company request forms -- liquidation, payment, business trip, revolving fund --
+  // ported from the Booking system. Top level rather than inside a category: anyone in any
+  // department files these, so burying them under one department's menu would be wrong.
+  {
+    label: 'Forms',
+    children: [
+      { route: '/forms', label: 'My Forms' },
+      { route: '/forms/approval', label: 'Approval Queue' },
+    ],
+  },
   // The company profile flipbook -- reference material anyone may show a customer,
   // so it sits at top level rather than inside a category dropdown.
   { route: '/product', label: 'Product' },

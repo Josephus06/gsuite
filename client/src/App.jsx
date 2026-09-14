@@ -187,6 +187,11 @@ import WarrantyCertificateView from './pages/WarrantyCertificateView';
 import WarrantyCertificatePrint from './pages/WarrantyCertificatePrint';
 import SalesInvoicePrint from './pages/SalesInvoicePrint';
 import JobOrderPrint from './pages/JobOrderPrint';
+import Forms from './pages/Forms';
+import FormEdit from './pages/FormEdit';
+import FormView from './pages/FormView';
+import FormsApproval from './pages/FormsApproval';
+import FormPrint from './pages/FormPrint';
 import NonStandardSalesOrderWizard from './pages/NonStandardSalesOrderWizard';
 import NonStandardSalesOrderView from './pages/NonStandardSalesOrderView';
 
@@ -203,6 +208,8 @@ function App() {
       <Route path="/sales-invoices/:id/print" element={<ProtectedRoute><SalesInvoicePrint /></ProtectedRoute>} />
       {/* Printable production sheet. Standalone so the app chrome never lands on the page. */}
       <Route path="/job-orders/:id/print" element={<ProtectedRoute><JobOrderPrint /></ProtectedRoute>} />
+      {/* The four request forms, printed on their own sheet -- standalone for the same reason. */}
+      <Route path="/forms/:id/print" element={<ProtectedRoute><FormPrint /></ProtectedRoute>} />
       <Route
         element={
           <ProtectedRoute>
@@ -245,6 +252,13 @@ function App() {
         <Route path="/hrd/violations" element={<HrViolations />} />
         <Route path="/hrd/incident-reports" element={<HrIncidentReports />} />
         <Route path="/hrd/incident-reports/:id" element={<HrIncidentReportView />} />
+        {/* Forms. /new and /approval are literal segments, so they must precede /:id -- the
+            router matches in order and "new" would otherwise be read as a form id. */}
+        <Route path="/forms" element={<Forms />} />
+        <Route path="/forms/new" element={<FormEdit />} />
+        <Route path="/forms/approval" element={<FormsApproval />} />
+        <Route path="/forms/:id" element={<FormView />} />
+        <Route path="/forms/:id/edit" element={<FormEdit />} />
         <Route path="/hrd/:id" element={<HrdRoom />} />
         <Route path="/non-standard-job-orders" element={<NonStandardJobOrders />} />
         <Route path="/non-standard-job-orders/:id" element={<NonStandardJobOrderView />} />
