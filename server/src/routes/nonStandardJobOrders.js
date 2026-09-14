@@ -424,7 +424,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       `SELECT dta.user_id FROM users u
          JOIN employees e ON e.id = u.employee_id
          JOIN departments d ON d.id = e.department_id
-         JOIN department_ticket_approvers dta ON dta.department_id = d.id
+         JOIN department_ticket_approvers dta ON dta.department_id = d.id AND dta.can_approve_ticket = 1
         WHERE u.id = ?`,
       [req.user.id],
     );
@@ -1219,7 +1219,7 @@ async function replicateNonStandardJobOrder(userId, sourceId) {
       `SELECT dta.user_id FROM users u
          JOIN employees e ON e.id = u.employee_id
          JOIN departments d ON d.id = e.department_id
-         JOIN department_ticket_approvers dta ON dta.department_id = d.id
+         JOIN department_ticket_approvers dta ON dta.department_id = d.id AND dta.can_approve_ticket = 1
         WHERE u.id = ?`,
       [userId],
     );

@@ -217,6 +217,19 @@ export default function Lookups() {
     loadApprovers(editing);
   }
 
+  // Ticked straight through, like adding and removing -- this section is its own
+  // immediately-persisted list and never waits on the form's Save button. The row is updated
+  // locally first so the box does not visibly lag the click, then reloaded from the server.
+  async function setApproverRole(u, patch) {
+    setApprovers((rows) => rows.map((r) => (r.id === u.id ? { ...r, ...patch } : r)));
+    try {
+      await api.put(`/lookups/departments/${editing}/ticket-approvers/${u.id}`, patch);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not change that.');
+    }
+    loadApprovers(editing);
+  }
+
   // General Managers: same immediately-persisted list pattern as Ticket Approvers
   // above, just company-wide rather than per-department -- `rows` already holds the
   // current GM list since GET /lookups/general-managers matches the generic load().
@@ -401,16 +414,43 @@ export default function Lookups() {
 
             {activeKey === 'departments' && editing !== 'new' && (
               <div className="field">
-                <label>Ticket Approvers</label>
+                <label>Department Heads</label>
+                {/* One list, two jobs, ticked per person. They were the same list already -- the
+                    Forms module read the ticket approvers to decide who notes an expense claim --
+                    so the boxes make that explicit rather than letting one grant imply the other. */}
                 <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
-                  Any ticket created by someone in this department needs sign-off from one of these people before the receiving department can assign it. Leave empty for no approval gate.
+                  Tickets: any ticket created by someone in this department needs sign-off from one of these people
+                  before the receiving department can assign it. Forms: a liquidation or request for payment filed
+                  from this department is noted by one of them. Leave empty for no approval gate.
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
-                  {approvers.length === 0 && <div className="muted">No approvers tagged.</div>}
+                  {approvers.length === 0 && <div className="muted">No heads tagged.</div>}
+                  {approvers.length > 0 && (
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', fontSize: 11 }} className="muted">
+                      <span style={{ flex: 1 }}></span>
+                      <span style={{ width: 110, textAlign: 'center' }}>Approve ticket</span>
+                      <span style={{ width: 110, textAlign: 'center' }}>Note form</span>
+                      <span style={{ width: 74 }}></span>
+                    </div>
+                  )}
                   {approvers.map((a) => (
-                    <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span>{a.display_name}</span>
-                      <button type="button" className="btn btn-sm btn-danger" onClick={() => removeApprover(a)}>Remove</button>
+                    <div key={a.id} style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                      <span style={{ flex: 1 }}>{a.display_name}</span>
+                      <span style={{ width: 110, textAlign: 'center' }}>
+                        <input
+                          type="checkbox" checked={!!a.can_approve_ticket}
+                          aria-label={`${a.display_name} can approve tickets`}
+                          onChange={(e) => setApproverRole(a, { can_approve_ticket: e.target.checked })}
+                        />
+                      </span>
+                      <span style={{ width: 110, textAlign: 'center' }}>
+                        <input
+                          type="checkbox" checked={!!a.can_note_form}
+                          aria-label={`${a.display_name} can note a request form`}
+                          onChange={(e) => setApproverRole(a, { can_note_form: e.target.checked })}
+                        />
+                      </span>
+                      <button type="button" className="btn btn-sm btn-danger" style={{ width: 74 }} onClick={() => removeApprover(a)}>Remove</button>
                     </div>
                   ))}
                 </div>

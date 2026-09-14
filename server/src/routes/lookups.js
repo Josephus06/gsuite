@@ -50,10 +50,18 @@ router.get('/', requireAuth, (req, res) => {
 // which doesn't fit the generic single-row-payload CRUD below -- a small dedicated
 // sub-resource instead. Placed before /:key/:id so Express matches these first (they
 // have a different segment shape anyway, but keeping them together for clarity).
+//
+// The list is the department's HEADS, and each row says which of two jobs that person does:
+//   can_approve_ticket   signs off tickets raised by this department
+//   can_note_form        notes this department's liquidations and requests for payment
+// Both are on by default when somebody is added -- naming a head who does neither would be an
+// empty row -- and either can be unticked per person.
 router.get('/departments/:id/ticket-approvers', requireAuth, requirePermission('/lookups', 'can_view'), async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT u.id, u.display_name, u.username FROM department_ticket_approvers dta
+      `SELECT u.id, u.display_name, u.username,
+              dta.can_approve_ticket, dta.can_note_form
+       FROM department_ticket_approvers dta
        JOIN users u ON u.id = dta.user_id
        WHERE dta.department_id = ? ORDER BY u.display_name`,
       [req.params.id]
@@ -68,13 +76,43 @@ router.post('/departments/:id/ticket-approvers', requireAuth, requirePermission(
   try {
     const { user_id: userId } = req.body;
     if (!userId) return res.status(400).json({ error: 'user_id is required.' });
+    // Adding somebody who is already on the list updates their two flags rather than doing
+    // nothing, so the same endpoint serves the checkboxes.
+    const approveTicket = req.body.can_approve_ticket === undefined ? 1 : (req.body.can_approve_ticket ? 1 : 0);
+    const noteForm = req.body.can_note_form === undefined ? 1 : (req.body.can_note_form ? 1 : 0);
     await pool.query(
-      'INSERT IGNORE INTO department_ticket_approvers (department_id, user_id) VALUES (?, ?)',
-      [req.params.id, userId]
+      `INSERT INTO department_ticket_approvers (department_id, user_id, can_approve_ticket, can_note_form)
+       VALUES (?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE can_approve_ticket = VALUES(can_approve_ticket), can_note_form = VALUES(can_note_form)`,
+      [req.params.id, userId, approveTicket, noteForm]
     );
     res.status(201).json({ ok: true });
   } catch (err) {
     next(err);
+  }
+});
+
+// Changing what one of them does, without removing and re-adding them.
+router.put('/departments/:id/ticket-approvers/:userId', requireAuth, requirePermission('/lookups', 'can_edit'), async (req, res, next) => {
+  try {
+    const fields = [];
+    const params = [];
+    if (req.body.can_approve_ticket !== undefined) {
+      fields.push('can_approve_ticket = ?'); params.push(req.body.can_approve_ticket ? 1 : 0);
+    }
+    if (req.body.can_note_form !== undefined) {
+      fields.push('can_note_form = ?'); params.push(req.body.can_note_form ? 1 : 0);
+    }
+    if (!fields.length) return res.json({ ok: true });
+    params.push(req.params.id, req.params.userId);
+    const [r] = await pool.query(
+      `UPDATE department_ticket_approvers SET ${fields.join(', ')} WHERE department_id = ? AND user_id = ?`,
+      params
+    );
+    if (!r.affectedRows) return res.status(404).json({ error: 'That person is not on this department\'s list.' });
+    return res.json({ ok: true });
+  } catch (err) {
+    return next(err);
   }
 });
 

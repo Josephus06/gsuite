@@ -247,7 +247,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
     // whether they may note any given one is still decided per form by the server.
     const [headOf] = await pool.query(
       `SELECT 1 FROM department_ticket_approvers a JOIN departments d ON d.id = a.department_id
-        WHERE a.user_id = ? AND d.is_active = TRUE LIMIT 1`,
+        WHERE a.user_id = ? AND a.can_note_form = 1 AND d.is_active = TRUE LIMIT 1`,
       [user.id]
     );
     if (headOf.length && !permissions.some((perm) => perm.route === '/forms/approval')) {
