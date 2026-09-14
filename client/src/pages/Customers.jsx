@@ -27,6 +27,9 @@ export default function Customers() {
   const [newAddress, setNewAddress] = useState(EMPTY_ADDRESS);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  // Filtered here rather than at the server: the list endpoint hands over every customer
+  // anyway, so narrowing in the browser is instant and costs no round-trip per keystroke.
+  const [search, setSearch] = useState('');
 
   async function load() {
     setLoading(true);
@@ -122,6 +125,14 @@ export default function Customers() {
     openEdit(editing);
   }
 
+  // Code, name, company and TIN -- the four things anyone actually has to hand when looking
+  // a customer up. Every term must match somewhere, so "ACME 123" narrows rather than widens.
+  const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const visibleRows = terms.length === 0 ? rows : rows.filter((r) => {
+    const hay = [r.customer_code, r.name, r.company_name, r.tin].map((v) => String(v || '').toLowerCase()).join(' ');
+    return terms.every((t) => hay.includes(t));
+  });
+
   const columns = [
     { key: 'customer_code', label: 'Code' },
     { key: 'name', label: 'Name' },
@@ -137,12 +148,32 @@ export default function Customers() {
         <h1>Customers</h1>
         {can('/customers', 'can_add') && <button className="btn btn-primary" onClick={openCreate}>Add Customer</button>}
       </div>
+      {!loading && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="filter-grid">
+            <div className="field">
+              <label>General Searching</label>
+              <input
+                value={search} onChange={(e) => setSearch(e.target.value)}
+                placeholder="Code, Name, Company or TIN..."
+              />
+            </div>
+          </div>
+          <div className="muted" style={{ marginTop: 8 }}>
+            {terms.length === 0
+              ? `${rows.length.toLocaleString()} customers`
+              : `${visibleRows.length.toLocaleString()} of ${rows.length.toLocaleString()} customers`}
+          </div>
+        </div>
+      )}
+
       <div className="card">
         {loading ? <LoadingSpinner /> : (
           <DataTable
             paginate
             columns={columns}
-            rows={rows}
+            rows={visibleRows}
+            emptyLabel={terms.length ? `No customer matches "${search.trim()}".` : 'No customers yet.'}
             actions={(row) => (
               <>
                 <button className="btn btn-sm btn-primary" onClick={() => navigate(`/customers/${row.id}`)}>View</button>
