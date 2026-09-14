@@ -61,7 +61,12 @@ export default function PurchaseOrderCreate() {
       _key: `new-${Date.now()}`,
       item_id: item.id, item_code: item.item_code, item_name: item.display_name,
       purchase_description: item.display_name, location_id: '', department_id: '', job_order_id: '',
-      qty: 1, purchase_unit: item.base_unit_title || '', unit_title: item.base_unit_title || '',
+      qty: 1,
+      // The unit PO Qty is entered in, which is the item's PURCHASE unit -- receiving multiplies
+      // this quantity by conversion_factor, so labelling it with the base unit described the
+      // wrong number. Base unit stays as Unit Title, what it converts into.
+      purchase_unit: item.purchase_unit_title || item.base_unit_title || '',
+      unit_title: item.base_unit_title || '',
       rate: 0, disc_percent: 0, tax_code_id: '', memo: '',
     }]);
   }

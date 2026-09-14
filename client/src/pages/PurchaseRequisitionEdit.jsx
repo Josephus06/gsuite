@@ -59,7 +59,15 @@ export default function PurchaseRequisitionEdit() {
       _key: `new-${Date.now()}`,
       item_id: item.id, item_code: item.item_code, item_name: item.display_name,
       purchase_description: item.display_name, job_order_id: null, job_order_no: '',
-      qty_on_hand: 0, qty: 1, purchase_unit: item.base_unit_title || '', unit_title: item.base_unit_title || '',
+      qty_on_hand: 0, qty: 1,
+      // Purchase Unit is the unit the Qty is ORDERED in, so it comes from the item's Purchase
+      // Unit -- ROLL for a tarpaulin held in square feet. It used to copy the base unit title,
+      // which read "Square Foot" against an item bought by the roll and only looked right on the
+      // items whose purchase and base units happen to be the same thing. Purchase Order receiving
+      // scales this quantity by conversion_factor precisely because it is in purchase units.
+      purchase_unit: item.purchase_unit_title || item.base_unit_title || '',
+      // Unit Title stays the BASE unit: what the order converts into once received.
+      unit_title: item.base_unit_title || '',
     }]);
   }
 

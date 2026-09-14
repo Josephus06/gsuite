@@ -50,7 +50,11 @@ export default function LandedCostEdit() {
     setLines((prev) => [...prev, {
       _key: `new-${Date.now()}`,
       item_id: item.id, item_code: item.item_code, item_name: item.display_name,
-      purchase_description: item.display_name, qty: 1, purchase_unit: item.base_unit_title || '', unit_title: item.base_unit_title || '',
+      purchase_description: item.display_name, qty: 1,
+      // Landed cost is apportioned over a purchased quantity, so the same rule applies: the qty
+      // is in the item's purchase unit, with the base unit as Unit Title.
+      purchase_unit: item.purchase_unit_title || item.base_unit_title || '',
+      unit_title: item.base_unit_title || '',
       rate: 0, disc_percent: 0, tax_code_id: '', tax_code: '',
     }]);
   }

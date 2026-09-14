@@ -119,6 +119,10 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const [rows] = await pool.query(
       `SELECT i.*, c.name AS category_name, u.code AS base_unit_code, u.title AS base_unit_title,
               su.code AS stock_unit_code, pu.code AS purchase_unit_code, slu.code AS sales_unit_code,
+              -- The purchase unit's TITLE as well as its code. Forms that record what a quantity
+              -- was ordered in store the title ('Square Foot', 'Piece'), and without this the
+              -- Purchase Requisition had only the base unit's title to fall back on.
+              pu.title AS purchase_unit_title, su.title AS stock_unit_title,
               ea.account_name AS expense_account_name,
               COALESCE((SELECT SUM(il.qty_on_hand) FROM inventory_locations il WHERE il.inventory_id = i.id), 0) AS total_qty_on_hand
        ${baseFrom} ${whereSql}

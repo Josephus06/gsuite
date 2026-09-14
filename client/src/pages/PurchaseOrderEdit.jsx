@@ -90,7 +90,11 @@ export default function PurchaseOrderEdit() {
       id: null,
       item_id: item.id, item_code: item.item_code, item_name: item.display_name,
       purchase_description: item.display_name, location_id: '', department_id: '', job_order_id: '',
-      qty: 1, purchase_unit: item.base_unit_title || '', unit_title: item.base_unit_title || '',
+      qty: 1,
+      // As in PurchaseOrderCreate: PO Qty is in the item's PURCHASE unit, and receiving scales it
+      // by conversion_factor. Unit Title keeps the base unit.
+      purchase_unit: item.purchase_unit_title || item.base_unit_title || '',
+      unit_title: item.base_unit_title || '',
       rate: 0, disc_percent: 0, tax_code_id: '',
       locked: false, purchase_requisition_line_id: null,
     }]);
