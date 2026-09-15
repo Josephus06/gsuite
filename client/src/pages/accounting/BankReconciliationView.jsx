@@ -19,6 +19,9 @@ const day = (v) => (v ? String(v).slice(0, 10) : '');
 // "one candidate" and "several candidates" say what the reviewer has to check.
 const CONFIDENCE = {
   exact: { label: 'Cheque no. matches', className: 'badge-success' },
+  // Matched on the cheque number alone, and the amounts disagree. The loudest thing on the screen,
+  // because it is the one case where the match is certain and something is genuinely wrong.
+  ref_amount_differs: { label: 'Cheque no. matches — AMOUNT DIFFERS', className: 'badge-danger' },
   strong: { label: 'Only candidate', className: 'badge-info' },
   weak: { label: 'Several candidates — check', className: 'badge-warning' },
   manual: { label: 'Matched by hand', className: 'badge-muted' },
@@ -241,6 +244,15 @@ export default function BankReconciliationView() {
                             <div style={{ marginTop: 2 }}>
                               <span className={`badge ${conf.className}`} style={{ fontSize: 10 }}>{conf.label}</span>
                             </div>
+                            {/* Both figures, side by side, when they disagree. Saying only "amount
+                                differs" would send somebody to another screen to find out by how
+                                much -- and by how much is the whole question. */}
+                            {l.match.confidence === 'ref_amount_differs' && (
+                              <div style={{ fontSize: 11, color: 'var(--danger, #b91c1c)', marginTop: 2 }}>
+                                Bank {money(l.amount)} vs document {money(l.match.document.amount)}
+                                {' '}(off by {money(Math.abs(Number(l.amount) - Number(l.match.document.amount)))})
+                              </div>
+                            )}
                           </>
                         ) : l.status === 'bank_only' ? (
                           <span className="muted">{l.note || 'Bank charge / interest'}</span>

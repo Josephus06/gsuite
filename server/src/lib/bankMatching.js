@@ -10,13 +10,20 @@
 // the whole algorithm -- a weak amount-only guess must never take a document that a later line
 // could have claimed by its cheque number.
 //
-//   1. exact   the statement line quotes the document's reference (cheque number) AND the amount
-//              agrees. A cheque number is unique enough that this is not really a guess.
-//   2. strong  amount and direction agree, inside the date window, and exactly ONE document is a
-//              candidate. Nothing else it could be.
-//   3. weak    amount agrees but several documents could be it. The nearest by date is proposed
-//              and flagged weak, because on these statements several cheques a week share a round
-//              amount and only a person can say which one the bank took.
+//   1. exact              the statement quotes the document's cheque number AND the amount agrees.
+//   1b ref_amount_differs the statement quotes the cheque number and the amount does NOT agree.
+//                         Still matched -- a cheque number identifies one cheque, while an amount
+//                         identifies a value dozens of cheques share -- and flagged, because the
+//                         bank taking a different figure from the one written is precisely what a
+//                         reconciliation is for. It will not balance until somebody explains it.
+//   2. strong             the transaction date AND the amount agree. Run to exhaustion before
+//                         anything looser, so a line never takes a document belonging to another
+//                         line that could have matched it exactly.
+//   3. strong / weak      the amount agrees and the date is within the window -- a cheque clears
+//                         days after it is handed over, so the date rarely agrees exactly. Strong
+//                         when only one document could be it, weak when several could, because on
+//                         these statements several cheques a week share a round amount and only a
+//                         person can say which one the bank took.
 //
 // Everything left over stays unmatched: statement lines with nothing to match (bank charges,
 // interest, a document never entered) and documents the statement does not show (outstanding
@@ -54,11 +61,23 @@ function referenceCandidates(line) {
   );
 }
 
-const normalisedRef = (movement) => {
-  const raw = String(movement.reference || '').trim();
-  const digits = raw.replace(/\D/g, '').replace(/^0+/, '');
-  return digits || null;
-};
+// The digit runs in a DOCUMENT's reference, same treatment as the statement line's.
+//
+// Stripping every non-digit and welding what is left together looks equivalent and is not: real
+// cheque_number values here read "200045270466 - 02/08/2021" -- the number with the cheque date
+// appended -- and concatenating gives 20004527046602082021, a twenty-digit figure matching
+// nothing, while the sibling stored as a bare "200045270466" matched everything quoting it. The
+// document's own number became unreachable. Runs keep 200045270466 addressable as itself.
+//
+// The FIRST run is the primary key: banks and clerks write the number first and the date after,
+// so when two documents answer to the same quoted number, the one for which it is the primary is
+// the better bet.
+function referenceKeys(movement) {
+  const raw = String(movement.reference || '');
+  return (raw.match(/\d{4,}/g) || []).map((s) => s.replace(/^0+/, '')).filter(Boolean);
+}
+
+const normalisedRef = (movement) => referenceKeys(movement)[0] || null;
 
 // statementLines and movements are plain rows; nothing is written here. Returns the proposals and
 // what was left over on both sides.
@@ -90,17 +109,60 @@ function proposeMatches(statementLines, movements, { windowDays = DATE_WINDOW_DA
     });
   };
 
-  // Pass 1 -- the statement quotes the cheque number.
+  // THE CHEQUE NUMBER COMES FIRST, BEFORE ANY AMOUNT IS CONSIDERED.
+  //
+  // A cheque number identifies one cheque. An amount identifies a value that dozens of cheques
+  // share. So when the statement quotes a number we hold on this account, that IS the cheque --
+  // and if the amounts then disagree, that is a DISCREPANCY TO REPORT, not a reason to pretend
+  // they are unrelated documents. The earlier version required both to agree before matching at
+  // all, which quietly hid exactly the case a reconciliation exists to catch: the bank took a
+  // different figure from the one written.
+  //
+  // Indexed by reference rather than scanned, since this pass no longer has an amount to narrow by.
+  // Indexed under EVERY digit run the reference contains, so "200045270466 - 02/08/2021" is found
+  // by the number as well as by the date somebody appended to it.
+  const byRef = new Map();
+  for (const m of movements) {
+    for (const key of referenceKeys(m)) {
+      if (!byRef.has(key)) byRef.set(key, []);
+      byRef.get(key).push(m);
+    }
+  }
+
   for (const line of statementLines) {
     if (takenLines.has(line.id)) continue;
     const refs = referenceCandidates(line);
     if (!refs.size) continue;
-    const candidates = available(cents(line.amount));
-    const hit = candidates.find((m) => {
-      const ref = normalisedRef(m);
-      return ref && refs.has(ref);
+
+    // Every document whose number this line quotes. Usually one; more only when two documents on
+    // the same account somehow carry the same cheque number.
+    const hits = [...refs]
+      .flatMap((r) => byRef.get(r) || [])
+      .filter((m) => !takenMovements.has(`${m.source_kind}:${m.source_id}`));
+    if (!hits.length) continue;
+
+    // Prefer the one whose amount also agrees -- that is the ordinary case and the one that needs
+    // no further thought. Deduplicated because a document can be reached by more than one of its
+    // own digit runs.
+    const unique = [...new Map(hits.map((m) => [`${m.source_kind}:${m.source_id}`, m])).values()];
+    const agreeing = unique.find((m) => cents(m.amount) === cents(line.amount));
+    if (agreeing) {
+      claim(line, agreeing, 'exact');
+      continue;
+    }
+
+    // The number matches and the amount does not. When several documents answer to that number,
+    // take the one it is the PRIMARY number for, and failing that the nearest by date -- guessing
+    // is unavoidable here, so guess in the order a person would.
+    const ranked = [...unique].sort((a, b) => {
+      const aPrimary = refs.has(normalisedRef(a)) ? 0 : 1;
+      const bPrimary = refs.has(normalisedRef(b)) ? 0 : 1;
+      if (aPrimary !== bPrimary) return aPrimary - bPrimary;
+      return daysApart(a.txn_date, line.txn_date) - daysApart(b.txn_date, line.txn_date);
     });
-    if (hit) claim(line, hit, 'exact');
+    // Matched deliberately, flagged loudly: the reconciliation will not balance until somebody
+    // explains the difference, which is the point.
+    claim(line, ranked[0], 'ref_amount_differs');
   }
 
   // Passes 2 and 3 take the MOST CONSTRAINED LINE FIRST -- the one with fewest candidates left.
@@ -112,30 +174,41 @@ function proposeMatches(statementLines, movements, { windowDays = DATE_WINDOW_DA
   // sixty. A line with one possible document must be allowed to take it before a line with five
   // does. Recomputed each round because every claim changes what is left.
   const remaining = () => statementLines.filter((l) => !takenLines.has(l.id));
-  const candidatesFor = (line) => available(cents(line.amount))
-    .filter((m) => daysApart(m.txn_date, line.txn_date) <= windowDays)
+  const candidatesWithin = (line, days) => available(cents(line.amount))
+    .filter((m) => daysApart(m.txn_date, line.txn_date) <= days)
     .sort((a, b) => daysApart(a.txn_date, line.txn_date) - daysApart(b.txn_date, line.txn_date));
 
-  // Pass 2 -- nothing else it could be.
-  for (;;) {
-    const next = remaining()
-      .map((line) => ({ line, candidates: candidatesFor(line) }))
-      .find((x) => x.candidates.length === 1);
-    if (!next) break;
-    claim(next.line, next.candidates[0], 'strong');
-  }
+  // Amount and date, in two rounds: the SAME DAY first, then anywhere in the window.
+  //
+  // Running the same-day round to exhaustion before the loose one is what stops a line dated the
+  // 3rd taking a document dated the 5th while the line dated the 5th, which that document
+  // actually belongs to, is left with nothing. Same reasoning as taking the most constrained line
+  // first, one level up: commit to what is certain before spending anything on what is merely
+  // possible.
+  const roundsOf = (days, exactDay) => {
+    for (;;) {
+      const options = remaining()
+        .map((line) => ({ line, candidates: candidatesWithin(line, days) }))
+        .filter((x) => x.candidates.length > 0)
+        // Fewest candidates first: a line with one possible document must be allowed to take it
+        // before a line with five does. Recomputed each round because every claim changes what is
+        // left.
+        .sort((a, b) => a.candidates.length - b.candidates.length);
+      if (!options.length) break;
+      const { line, candidates } = options[0];
+      // On the same day, one candidate is as good as a reference; across the window it is only
+      // "nothing else it could be". Several candidates is a guess either way.
+      const confidence = candidates.length === 1 ? 'strong' : (exactDay ? 'strong' : 'weak');
+      claim(line, candidates[0], confidence);
+    }
+  };
 
-  // Pass 3 -- several candidates; propose the nearest by date and say it is a guess. Fewest
-  // candidates first again, so the tightest choices are made while the most is still available.
-  for (;;) {
-    const options = remaining()
-      .map((line) => ({ line, candidates: candidatesFor(line) }))
-      .filter((x) => x.candidates.length > 0)
-      .sort((a, b) => a.candidates.length - b.candidates.length);
-    if (!options.length) break;
-    // A single candidate can reappear here as earlier claims free nothing but narrow others.
-    claim(options[0].line, options[0].candidates[0], options[0].candidates.length === 1 ? 'strong' : 'weak');
-  }
+  // Pass 2 -- the transaction date and the amount both agree.
+  roundsOf(0, true);
+
+  // Pass 3 -- the amount agrees and the date is close. A cheque clears days after it is handed
+  // over and a deposit posts a day or two after it is made, so the date rarely agrees exactly.
+  roundsOf(windowDays, false);
 
   return {
     proposals,
