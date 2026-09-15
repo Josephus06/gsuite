@@ -166,7 +166,7 @@ router.get('/meta/accounts', requireAuth, requirePermission(ROUTE, 'can_view'), 
 
 // Everything the working screen needs: the statement, what each line is matched to, and the book
 // movements still outstanding.
-async function loadWorkspace(id, { fullOutstanding = false } = {}) {
+async function loadWorkspace(id) {
   const [[recon]] = await pool.query(
     `SELECT r.*, a.account_code, a.account_name,
             u.display_name AS reconciled_by_name, c.display_name AS created_by_name
@@ -203,100 +203,18 @@ async function loadWorkspace(id, { fullOutstanding = false } = {}) {
   // Outstanding = a book movement no match in this reconciliation has claimed. Those are the
   // deposits in transit and unpresented cheques the statement is reconciled by.
   const claimed = new Set(matches.map((m) => `${m.source_kind}:${m.source_id}`));
-  const allOutstanding = movements.filter((m) => !claimed.has(`${m.source_kind}:${m.source_id}`));
+  const outstanding = movements.filter((m) => !claimed.has(`${m.source_kind}:${m.source_id}`));
 
-  // THE ARITHMETIC USES EVERY OUTSTANDING ITEM, whatever month it is from. A cheque issued in June
-  // and still unpresented in August is an August outstanding item -- that is what "outstanding"
-  // means. Dropping the older ones would make the difference unreconcilable by exactly their total.
   const book = await bookBalance(recon.account_id, recon.statement_date);
   const summary = reconciliationSummary({
-    statementBalance: recon.statement_balance, bookBalance: book, outstanding: allOutstanding,
+    statementBalance: recon.statement_balance, bookBalance: book, outstanding,
   });
-
-  // THE LIST, THOUGH, IS SPLIT AT THE START OF THE STATEMENT MONTH.
-  //
-  // On BREC-1 the all-time list is 554 items of which ONE falls in the statement month; the rest
-  // run back to February 2021. A list that long is not read, and the month's own items -- the ones
-  // somebody can still do something about -- are lost in it. On the EWB account it is 16,025 rows,
-  // which is also a payload nobody should be sending to a browser to render a tab.
-  //
-  // So the month is listed and everything older is carried as ONE figure, which still counts in
-  // the summary above. Nothing is hidden: the count and the totals are stated, and the Excel
-  // export lists every item.
-  const monthStart = `${String(recon.statement_date).slice(0, 7)}-01`;
-  const inMonth = allOutstanding.filter((m) => String(m.txn_date).slice(0, 10) >= monthStart);
-  const earlier = allOutstanding.filter((m) => String(m.txn_date).slice(0, 10) < monthStart);
-
-  const sum = (rows, sign) => Number(rows
-    .filter((m) => (sign > 0 ? Number(m.amount) > 0 : Number(m.amount) < 0))
-    .reduce((s, m) => s + Number(m.amount), 0).toFixed(2));
-
-  const broughtForward = {
-    count: earlier.length,
-    deposits_in_transit: sum(earlier, 1),
-    outstanding_payments: Math.abs(sum(earlier, -1)),
-    oldest: earlier.length ? String(earlier[0].txn_date).slice(0, 10) : null,
-  };
 
   // What still needs a person. Finishing is refused while this is non-zero.
   const awaiting = lines.filter((l) => l.status === 'matched' || l.status === 'unmatched').length;
 
-  return {
-    ...recon,
-    lines,
-    // The month's own outstanding items -- or every one of them, for the export.
-    outstanding: fullOutstanding ? allOutstanding : inMonth,
-    outstanding_total: allOutstanding.length,
-    brought_forward: broughtForward,
-    statement_month: String(recon.statement_date).slice(0, 7),
-    summary,
-    awaiting_review: awaiting,
-  };
+  return { ...recon, lines, outstanding, summary, awaiting_review: awaiting };
 }
-
-// Outstanding documents to match a statement line against BY HAND, searched over every one of them
-// regardless of month.
-//
-// The workspace lists only the statement month's outstanding items, because the all-time list runs
-// to 554 rows on one account and 16,025 on another. But Find must still reach the old ones: a line
-// on an August statement is very often a cheque issued in June, and that is exactly the case
-// somebody opens Find for. So the screen gets the month and this gets everything.
-router.get('/:id/outstanding', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
-  try {
-    const [[recon]] = await pool.query('SELECT * FROM bank_reconciliations WHERE id = ?', [req.params.id]);
-    if (!recon) return res.status(404).json({ error: 'Not found' });
-
-    const movements = await outstandingMovements(recon.account_id, {
-      asOf: recon.statement_date, includeReconciliationId: recon.id,
-    });
-    const [matches] = await pool.query(
-      'SELECT source_kind, source_id FROM bank_reconciliation_matches WHERE reconciliation_id = ?', [req.params.id]);
-    const claimed = new Set(matches.map((m) => `${m.source_kind}:${m.source_id}`));
-
-    let rows = movements.filter((m) => !claimed.has(`${m.source_kind}:${m.source_id}`));
-
-    // Amount first: it is the strongest filter and the one Find opens with.
-    if (req.query.amount !== undefined && req.query.amount !== '') {
-      const cents = Math.round(Number(req.query.amount) * 100);
-      rows = rows.filter((m) => Math.round(Number(m.amount) * 100) === cents);
-    }
-    const search = String(req.query.search || '').trim().toLowerCase();
-    if (search) {
-      rows = rows.filter((m) => `${m.doc_no} ${m.reference || ''} ${m.party || ''} ${m.memo || ''}`
-        .toLowerCase().includes(search));
-    }
-
-    // Nearest by date to the line being matched, when one is given -- a cheque clears close to when
-    // it was released, so that ordering puts the likely answer first.
-    if (req.query.near) {
-      const near = new Date(String(req.query.near).slice(0, 10));
-      rows.sort((a, b) => Math.abs(new Date(String(a.txn_date).slice(0, 10)) - near)
-        - Math.abs(new Date(String(b.txn_date).slice(0, 10)) - near));
-    }
-
-    return res.json({ total: rows.length, rows: rows.slice(0, 200) });
-  } catch (err) { return next(err); }
-});
 
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
@@ -659,9 +577,7 @@ router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async
 
 router.get('/:id/export', requireAuth, requirePermission(ROUTE, 'can_print'), async (req, res, next) => {
   try {
-    // The export is the supporting schedule for the statement, so it lists EVERY outstanding item,
-    // not just the month the screen shows.
-    const data = await loadWorkspace(req.params.id, { fullOutstanding: true });
+    const data = await loadWorkspace(req.params.id);
     if (!data) return res.status(404).json({ error: 'Not found' });
 
     const wb = new ExcelJS.Workbook();

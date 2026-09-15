@@ -196,7 +196,6 @@ export default function BankReconciliationView() {
         <button className={`status-tab ${tab === 'review' ? 'active' : ''}`} onClick={() => setTab('review')}>
           Statement ({data.lines.length})
         </button>
-        {/* The month's own count, not the all-time one: the tab says what the tab shows. */}
         <button className={`status-tab ${tab === 'outstanding' ? 'active' : ''}`} onClick={() => setTab('outstanding')}>
           Outstanding ({data.outstanding.length})
         </button>
@@ -299,42 +298,6 @@ export default function BankReconciliationView() {
             Documents in the book that this statement does not show — deposits not yet credited and
             cheques not yet presented. These are what reconcile the two balances above.
           </div>
-
-          {/* Everything older than the statement month as ONE line. It is still counted in the
-              figures above -- a cheque issued in June and unpresented in August is an August
-              outstanding item -- but listing 553 of them buries the one item from this month that
-              somebody can actually act on. */}
-          {data.brought_forward?.count > 0 && (
-            <div className="card" style={{ background: 'var(--surface-2, #f3f4f6)', marginBottom: 10 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-                <span>
-                  <strong>Brought forward</strong>
-                  <span className="muted">
-                    {' '}— {data.brought_forward.count.toLocaleString()} item(s) from before{' '}
-                    {data.statement_month}
-                    {data.brought_forward.oldest ? `, back to ${data.brought_forward.oldest}` : ''}
-                  </span>
-                </span>
-                <span>
-                  {data.brought_forward.deposits_in_transit > 0 && (
-                    <span style={{ marginRight: 14 }}>
-                      deposits {money(data.brought_forward.deposits_in_transit)}
-                    </span>
-                  )}
-                  {data.brought_forward.outstanding_payments > 0 && (
-                    <span>cheques ({money(data.brought_forward.outstanding_payments)})</span>
-                  )}
-                </span>
-              </div>
-              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-                Counted in the figures above. Every one of them is listed in the Export.
-              </div>
-            </div>
-          )}
-
-          <div className="muted" style={{ marginBottom: 8, fontSize: 12 }}>
-            Showing items dated within {data.statement_month}.
-          </div>
           <div className="table-wrap" style={{ maxHeight: 520, overflowY: 'auto' }}>
             <table>
               <thead>
@@ -342,9 +305,7 @@ export default function BankReconciliationView() {
               </thead>
               <tbody>
                 {data.outstanding.length === 0 && (
-                  <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>
-                    Nothing outstanding dated within {data.statement_month}.
-                  </td></tr>
+                  <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>Nothing outstanding.</td></tr>
                 )}
                 {data.outstanding.slice(0, 500).map((m) => (
                   <tr key={`${m.source_kind}:${m.source_id}`}>
@@ -380,8 +341,8 @@ export default function BankReconciliationView() {
 
       {matchFor && (
         <FindDocument
-          reconciliationId={id}
           line={matchFor}
+          movements={data.outstanding}
           onClose={() => setMatchFor(null)}
           onPick={async (m) => {
             setMatchFor(null);
@@ -592,37 +553,17 @@ function ImportStatement({ reconciliationId, onClose, onDone }) {
 
 // Matching a line by hand. Defaults to documents of the same amount, because that is nearly always
 // what it is -- but the whole outstanding list is searchable for the times it is not.
-// Searches the SERVER, across every outstanding document on the account rather than the statement
-// month the screen lists. A line on an August statement is very often a cheque issued in June, and
-// that is precisely when somebody opens this.
-function FindDocument({ reconciliationId, line, onClose, onPick }) {
+function FindDocument({ line, movements, onClose, onPick }) {
   const [search, setSearch] = useState('');
   const [sameAmountOnly, setSameAmountOnly] = useState(true);
-  const [shown, setShown] = useState([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    let cancelled = false;
-    const t = setTimeout(() => {
-      setLoading(true);
-      api.get(`/bank-reconciliation/${reconciliationId}/outstanding`, {
-        params: {
-          amount: sameAmountOnly ? line.amount : undefined,
-          search: search.trim() || undefined,
-          near: line.txn_date,
-        },
-      }).then(({ data }) => {
-        if (cancelled) return;
-        setShown(data.rows || []);
-        setTotal(data.total || 0);
-        setLoading(false);
-      }).catch(() => { if (!cancelled) setLoading(false); });
-      // Debounced, so typing a cheque number does not fire a request per keystroke against an
-      // account with 16,000 outstanding documents.
-    }, search ? 250 : 0);
-    return () => { cancelled = true; clearTimeout(t); };
-  }, [reconciliationId, line.amount, line.txn_date, search, sameAmountOnly]);
+  const cents = (v) => Math.round(Number(v || 0) * 100);
+  const terms = search.trim().toLowerCase();
+  const shown = movements.filter((m) => {
+    if (sameAmountOnly && cents(m.amount) !== cents(line.amount)) return false;
+    if (!terms) return true;
+    return `${m.doc_no} ${m.reference || ''} ${m.party || ''} ${m.memo || ''}`.toLowerCase().includes(terms);
+  }).slice(0, 200);
 
   return (
     <Modal title={`Find the document for ${money(line.amount)}`} onClose={onClose} large>
@@ -641,10 +582,7 @@ function FindDocument({ reconciliationId, line, onClose, onPick }) {
         <table>
           <thead><tr><th>Date</th><th>Document</th><th>Reference</th><th>Payee</th><th style={{ textAlign: 'right' }}>Amount</th><th></th></tr></thead>
           <tbody>
-            {loading && (
-              <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>Searching…</td></tr>
-            )}
-            {!loading && shown.length === 0 && (
+            {shown.length === 0 && (
               <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>
                 Nothing outstanding matches. Untick the amount filter, or mark the line as a bank charge.
               </td></tr>
@@ -661,13 +599,6 @@ function FindDocument({ reconciliationId, line, onClose, onPick }) {
             ))}
           </tbody>
         </table>
-      </div>
-      {/* Searched across EVERY outstanding document, not just the statement month the tab lists --
-          said outright so nobody assumes an older cheque is out of reach. */}
-      <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-        {total > shown.length
-          ? `Showing ${shown.length} of ${total.toLocaleString()} matching outstanding documents — narrow the search.`
-          : `${total.toLocaleString()} matching outstanding document(s), any month.`}
       </div>
       <div className="modal-actions">
         <button className="btn" onClick={onClose}>Cancel</button>
