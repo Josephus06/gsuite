@@ -3,6 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { insertNumbered } = require('../lib/docNumber');
+const { isApproved } = require('../lib/poStatus');
 
 const router = express.Router();
 const ROUTE = '/purchase-orders';
@@ -54,11 +55,35 @@ router.get('/canvass-lines', requireAuth, requirePermission(ROUTE, 'can_view'), 
 // AND not yet billed at all). Once ANY billing has happened the bucket is driven by
 // bill_status rather than receipt_status, since you can't un-bill your way back to
 // "pending receipt" -- billing is always the further-along axis.
+// TWO VOCABULARIES LIVE IN purchase_orders.status, and this has to read both.
+//
+// The app writes codes -- 'pending_approval', 'approved', 'cancelled'. The import from the live
+// system wrote that system's LABELS -- 'Fully Billed', 'Approved by General Manager', 'Pending
+// Approval for GM'. On the droplet that is 19,475 rows of labels against 6 rows of codes.
+//
+// Comparing only against codes therefore matched almost nothing: 'Pending Approval' is not
+// 'pending_approval' (space, not underscore), and 'Fully Billed' was not consulted at all, so
+// 19,295 purchase orders fell through to ELSE and showed as Pending Receipt -- while the PO itself
+// displayed "Fully Billed" from the same column. Two screens, one column, opposite answers.
+// 'Cancelled' matched only by the accident of MySQL comparing case-insensitively.
+//
+// Normalised at READ time rather than rewritten in the table: these labels came from the source
+// system and Sync from Source will write them again, so a one-off UPDATE would be undone by the
+// next sync and this would be back.
+const STATUS_NORM = "LOWER(REPLACE(po.status, ' ', '_'))";
 const LIST_STATUS_CASE = `
   CASE
-    WHEN po.status = 'pending_approval' THEN 'pending_approval'
-    WHEN po.status = 'pending_approval_gm' THEN 'pending_approval_gm'
-    WHEN po.status = 'cancelled' THEN 'cancelled'
+    WHEN ${STATUS_NORM} = 'pending_approval' THEN 'pending_approval'
+    -- 'Pending Approval for GM' as well as the app's own 'pending_approval_gm'.
+    WHEN ${STATUS_NORM} IN ('pending_approval_gm', 'pending_approval_for_gm') THEN 'pending_approval_gm'
+    WHEN ${STATUS_NORM} = 'cancelled' THEN 'cancelled'
+    -- The source's own settled states are taken at their word. They are the further-along axis:
+    -- a PO the live system calls Fully Billed is not awaiting receipt whatever receipt_status,
+    -- which the import never populated, happens to say.
+    WHEN ${STATUS_NORM} = 'fully_billed' THEN 'fully_billed'
+    WHEN ${STATUS_NORM} = 'partially_billed' THEN 'partially_billed'
+    WHEN ${STATUS_NORM} = 'pending_billing' THEN 'pending_billing'
+    -- Then the workflow this system drives itself, for POs raised here.
     WHEN po.bill_status = 'fully_billed' THEN 'fully_billed'
     WHEN po.bill_status = 'partially_billed' THEN 'partially_billed'
     WHEN po.receipt_status = 'fully_received' THEN 'pending_billing'
@@ -405,7 +430,8 @@ router.post('/:id/landed-costs', requireAuth, requirePermission(ROUTE, 'can_add'
     const [[parent]] = await conn.query('SELECT type, status FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!parent) return res.status(404).json({ error: 'Not found' });
     if (parent.type === 'PO2') return res.status(409).json({ error: 'A Landed Cost PO cannot itself have a Landed Cost.' });
-    if (parent.status !== 'approved') return res.status(409).json({ error: 'The parent Purchase Order must be Approved before adding a Landed Cost.' });
+    // isApproved, not a literal compare: an imported PO says 'Approved by General Manager'.
+    if (!isApproved(parent.status)) return res.status(409).json({ error: 'The parent Purchase Order must be Approved before adding a Landed Cost.' });
 
     const { date_created: dateCreated, supplier_id: supplierId, term_id: termId, memo, lines } = req.body;
     await assertPeriodOpen(dateCreated, 'non_gl', conn);
@@ -607,7 +633,9 @@ router.post('/:id/receipts', requireAuth, requirePermission(ROUTE, 'can_edit'), 
   try {
     const [[po]] = await conn.query('SELECT id, status, receipt_status FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!po) return res.status(404).json({ error: 'Not found' });
-    if (po.status !== 'approved') return res.status(409).json({ error: 'This Purchase Order must be Approved before it can be received.' });
+    // isApproved, not a literal compare -- see lib/poStatus.js. Comparing to the code alone made
+    // every imported PO unreceivable, because 'Approved by General Manager' is not 'approved'.
+    if (!isApproved(po.status)) return res.status(409).json({ error: 'This Purchase Order must be Approved before it can be received.' });
 
     const { date_created: dateCreated, ref_no: refNo, memo, is_on_hold: isOnHold, lines } = req.body;
     const submitted = (Array.isArray(lines) ? lines : []).filter((l) => l.purchase_order_line_id && Number(l.qty_received) > 0);

@@ -5,12 +5,20 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import VendorBillModal from '../components/VendorBillModal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { isApprovedPo, isSettledPo, normalisePoStatus } from '../utils/poStatus';
 
+// Keyed on the NORMALISED status, so the source's own settled states have a label here rather than
+// being printed raw -- and so this screen names a purchase order exactly as the list does.
 const STATUS_LABELS = {
   pending_approval: 'Pending Approval',
   pending_approval_gm: 'Pending Approval for GM',
   approved: 'Approved',
   cancelled: 'Cancelled',
+  pending_billing: 'Pending Billing',
+  partially_billed: 'Partially Billed',
+  fully_billed: 'Fully Billed',
+  partially_received: 'Partially Received',
+  fully_received: 'Fully Received',
 };
 
 const RECEIPT_STATUS_LABELS = {
@@ -24,13 +32,18 @@ const RECEIPT_STATUS_LABELS = {
 // (waiting on a Vendor Bill) to "Billed" once every received line has also been fully
 // billed, with SubStatus showing "Fully Received" separately throughout.
 function statusLabel(po) {
-  if (po.status === 'approved') {
+  // Normalised first, so an imported 'Approved by General Manager' is read as approved rather than
+  // falling past every branch to be printed verbatim.
+  const st = normalisePoStatus(po.status);
+  if (st === 'approved') {
     if (po.receipt_status === 'fully_received') {
       return po.bill_status === 'fully_billed' ? 'Billed' : 'Pending Billing';
     }
     return po.approved_by_gm_user_id ? 'Approved by General Manager' : 'Approved by Supervisor';
   }
-  return STATUS_LABELS[po.status] || po.status;
+  // The source's settled states say more than receipt_status ever will for an imported PO, so they
+  // are shown as they are -- and they are now what the LIST says too.
+  return STATUS_LABELS[st] || STATUS_LABELS[po.status] || po.status;
 }
 
 function qty(v) {
@@ -115,17 +128,23 @@ export default function PurchaseOrderView() {
 
   const canEdit = can('/purchase-orders', 'can_edit');
   const canApprovePO = can('/purchase-orders', 'can_approve');
-  const canCancel = po.status !== 'cancelled';
+  // Normalised: an imported PO says 'Cancelled', 'Approved by General Manager', 'Fully Billed' --
+  // comparing to the app's own codes was wrong about almost every purchase order in the database.
+  const st = normalisePoStatus(po.status);
+  const canCancel = st !== 'cancelled';
   // Mirrors the real system: Edit only appears before approval -- once a PO is
   // Approved it may already have Receiving Reports / Vendor Bills built on top of its
   // lines, and this build has no undo path for that, same reasoning as every other
   // transaction type here only supporting Cancel (never Edit) once posted.
-  const showEdit = canEdit && (po.status === 'pending_approval' || po.status === 'pending_approval_gm');
+  const showEdit = canEdit && (st === 'pending_approval' || st === 'pending_approval_gm');
   const showApprove = canApprovePO && (
-    (po.status === 'pending_approval' && !!user?.is_purchasing_supervisor)
-    || (po.status === 'pending_approval_gm' && (user?.account_type === 'System Admin' || user?.account_type === 'General Manager'))
+    (st === 'pending_approval' && !!user?.is_purchasing_supervisor)
+    || (st === 'pending_approval_gm' && (user?.account_type === 'System Admin' || user?.account_type === 'General Manager'))
   );
-  const showReceive = canEdit && po.type !== 'PO2' && po.status === 'approved' && po.receipt_status !== 'fully_received';
+  // Receivable when approved by EITHER route and not already settled by the source. Requiring the
+  // literal code 'approved' hid this button on every imported purchase order.
+  const showReceive = canEdit && po.type !== 'PO2' && isApprovedPo(po.status)
+    && !isSettledPo(po.status) && po.receipt_status !== 'fully_received';
   const showVendorReturn = canEdit && po.type !== 'PO2' && po.receipt_status !== 'not_received';
   // "Bill" only makes sense once at least one line has been received but not yet
   // (fully) billed -- mirrors the Create Vendor Bill form's own eligibility filter.
