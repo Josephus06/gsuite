@@ -104,6 +104,24 @@ router.get('/for-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can
 //
 // Declared above `/:id` -- Express matches in the order routes are registered, so a literal
 // segment has to come first or `/:id` swallows it.
+// Who can be named as having issued the receipt, for the "Issued By" picker on the payment form.
+//
+// The form used to read the full /users list for this, which is gated on the USERS ADMIN PAGE.
+// That is the wrong gate: it meant anyone allowed to take a customer's money also had to be
+// allowed to administer user accounts, and Accounting quite reasonably is not. The whole form
+// died on that one 403 -- the fetches run in a Promise.all, so a single refusal takes the lot.
+//
+// Gated by the page it serves, like every other endpoint here, and it returns NAMES ONLY: the
+// same display names already printed on every document in the system, not the account records
+// /users hands to the admin screens.
+router.get('/meta/issuers', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT id, display_name FROM users WHERE is_active = 1 ORDER BY display_name');
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
 router.get('/for-customer/:customerId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[customer]] = await pool.query(

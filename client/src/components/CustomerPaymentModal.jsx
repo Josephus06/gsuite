@@ -56,7 +56,9 @@ export default function CustomerPaymentModal({ invoiceId, customerId, onClose, o
         ? `/customer-payments/for-invoice/${invoiceId}`
         : `/customer-payments/for-customer/${customerId}`),
       api.get('/lookups/departments'),
-      api.get('/users'),
+      // Names for the Issued By picker, served by this page rather than by the users admin page --
+      // taking a payment must not require the right to administer accounts.
+      api.get('/customer-payments/meta/issuers'),
       api.get('/lookups/payment-methods'),
       api.get('/lookups/chart-of-accounts'),
     ]).then(([srcRes, deptRes, userRes, methodRes, acctRes]) => {
