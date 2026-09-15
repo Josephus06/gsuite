@@ -231,6 +231,7 @@ const NAV_STRUCTURE = [
         title: 'Manage Accounting',
         items: [
           { route: '/manage-accounting-period', label: 'Manage Accounting Period' },
+          { route: '/accounting/bank-reconciliation', label: 'Bank Reconciliation' },
         ],
       },
       {
