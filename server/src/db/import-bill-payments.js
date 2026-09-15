@@ -1,8 +1,13 @@
-// Migrates Bill Payments (BPAY-####) -- the cash that settles a Vendor Bill. Run AFTER
-// import-vendor-bills.js. A payment's sl_pk on the live list IS the vendor-bill number it pays,
-// so we match it straight to a local vendor_bill by bill_no (which also scopes payments to the
-// bills we imported -- i.e. to in-window POs' bills). One bill_payment_line per payment links it
-// to that bill.
+// Migrates Bill Payments (BPAY-####) -- money paid to a supplier. Run AFTER import-vendor-bills.js.
+// A payment's sl_pk on the live list IS the vendor-bill number it pays, so we match it straight to
+// a local vendor_bill by bill_no. One bill_payment_line per payment links it to that bill.
+//
+// NOT EVERY PAYMENT SETTLES A BILL. 3,720 of live's 13,715 carry no sl_pk -- utilities, payroll,
+// freight, the expenses that never had a purchase order -- and 3,664 of those moved real money,
+// 74.3M of it. They are imported header-only. Excluding them was the original reading of "bill
+// payment" and it left the bank reconciliation blind to a third of the disbursements.
+//
+// Scope is still the bills we hold: a payment naming a bill this build does not have is skipped.
 //
 //   get_bill_payments {searchKey,limit,offset} -> payment headers (user_pk=BPAY#, sl_pk=VB#)
 //
@@ -84,7 +89,7 @@ async function main() {
 
   // Page all bill payments; keep those in the window whose bill we imported.
   const pays = [];
-  let scanned = 0, noBill = 0;
+  let scanned = 0, noBill = 0, billless = 0;
   for (let offset = 0; offset < 120000; offset += 200) {
     let list;
     try { list = listRows(await apiRetry(token, 'get_bill_payments', { searchKey: '', limit: 200, offset })); }
@@ -94,13 +99,21 @@ async function main() {
       scanned += 1;
       const d = day(bp.DateCreated_TransH);
       if (d < FROM || d > TO) continue;
-      const vb = vbByNo.get(bp.sl_pk);
-      if (!vb) { noBill += 1; continue; } // payment for a bill outside our scope
+      // A payment with no sl_pk settles no vendor bill at all -- 3,720 of live's 13,715, and
+      // 3,664 of those moved real money (74.3M of utilities, payroll and freight, expenses that
+      // never had a purchase order behind them). They are disbursements like any other and the
+      // bank cares about them, so they are imported headers-only, without a bill_payment_line.
+      // A payment that DOES name a bill we do not hold is still skipped: that one is out of scope,
+      // not bill-less, and importing it would silently drop the link it is supposed to carry.
+      const vb = bp.sl_pk ? vbByNo.get(bp.sl_pk) : null;
+      if (bp.sl_pk && !vb) { noBill += 1; continue; }
+      if (!vb) billless += 1;
       pays.push({ bp, vb });
     }
     if (list.length < 200) break;
   }
-  console.log(`Scanned ${scanned} payment(s); ${pays.length} in window for imported bills (${noBill} for out-of-scope bills).`);
+  console.log(`Scanned ${scanned} payment(s); ${pays.length} in window (${billless} settle no vendor bill), `
+    + `${noBill} skipped for bills this build does not hold.`);
 
   const targets = pays.filter(({ bp }) => !havePay.has(bp.user_pk));
   console.log(`${targets.length} bill payment(s) to import (new only).\n`);
@@ -114,7 +127,10 @@ async function main() {
 
   let created = 0, failed = 0;
   for (const { bp, vb } of targets) {
-    const supplierId = supByName.get(norm(bp.Name_Accnt)) || vb.supplier_id_placeholder || null;
+    // Name_Accnt first, because a bill-less payment has no bill to borrow a supplier from. Every
+    // one of the 3,720 bill-less payments matches a local supplier by name, checked before this
+    // was written, so none of them fall through to the guard below.
+    const supplierId = supByName.get(norm(bp.Name_Accnt)) || (vb ? vb.supplier_id_placeholder : null) || null;
     if (!supplierId || !bankId || !cashMethodId) { failed += 1; continue; } // NOT NULL guards
     const methodId = methodByName.get(norm(bp.PaymentMethod_TransH)) || cashMethodId;
     // The account the money actually left, by name, falling back to the default only when live
@@ -133,9 +149,13 @@ async function main() {
          day(bp.CheckDate_TransH) || null, trunc(bp.CheckNo_TransH, 60), trunc(bp.Memo_TransH, 500),
          num(bp.TotalAmount_TransH), paymentStatus(bp.Status_TransH)]);
       const payId = r.insertId;
-      await conn.query(
-        'INSERT INTO bill_payment_lines (bill_payment_id, vendor_bill_id, applied_amount) VALUES (?,?,?)',
-        [payId, vb.id, num(bp.TotalAmount_TransH)]);
+      // No line for a bill-less payment. vendor_bill_id is nullable, but a line that names neither
+      // a bill nor a bill credit says nothing the header does not already say.
+      if (vb) {
+        await conn.query(
+          'INSERT INTO bill_payment_lines (bill_payment_id, vendor_bill_id, applied_amount) VALUES (?,?,?)',
+          [payId, vb.id, num(bp.TotalAmount_TransH)]);
+      }
       await conn.commit();
       havePay.add(bp.user_pk); created += 1;
       if (created % 200 === 0) console.log(`  ...${created}/${targets.length} payments`);
