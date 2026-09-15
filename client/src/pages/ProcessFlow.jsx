@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
+import api from '../api/client';
 import { NODE_W, NODE_H, DIAMOND } from '../data/processFlow';
 import { FLOWS, DEFAULT_FLOW } from '../data/flows';
 
@@ -100,6 +101,8 @@ export default function ProcessFlow() {
   const [zoom, setZoom] = useState(null); // null = fit to width
   const [fitScale, setFitScale] = useState(1);
   const [flowKey, setFlowKey] = useState(DEFAULT_FLOW);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState('');
   const wrapRef = useRef(null);
 
   const flow = FLOWS.find((f) => f.key === flowKey) || FLOWS[0];
@@ -139,6 +142,53 @@ export default function ProcessFlow() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // The PDF is rendered server-side, from the layout THIS page just computed -- the elbow routing
+  // above is fiddly enough that a second implementation would drift from what is on screen, and the
+  // PDF is meant to be this chart. So the finished node boxes and edge paths go with the request.
+  async function downloadPdf() {
+    setPdfBusy(true);
+    setPdfError('');
+    try {
+      const res = await api.post('/manual/pdf', {
+        title: flow.title,
+        blurb: flow.blurb,
+        canvas: { w: CANVAS_W, h: CANVAS_H },
+        legend: LEGEND,
+        guides: GUIDES,
+        // Node order is reading order: the chart is laid out top to bottom, and the step-by-step
+        // follows the same sequence.
+        nodes: NODES.map((n) => {
+          const b = boxes[n.id];
+          return { id: n.id, label: n.label, kind: n.kind, x: b.x, y: b.y, w: b.w, h: b.h };
+        }),
+        edges: edges.map((e) => ({ d: e.d, label: e.label, tone: e.tone, labelX: e.labelX, labelY: e.labelY })),
+      }, { responseType: 'blob' });
+
+      const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const a = document.createElement('a');
+      a.href = url;
+      const named = /filename="?([^";]+)"?/.exec(res.headers['content-disposition'] || '');
+      a.download = named ? named[1] : 'workflow-manual.pdf';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      // An error answering a blob request arrives AS a blob, so the usual err.response.data.error
+      // is a Blob and would render as "[object Blob]".
+      let message = 'Could not build the PDF.';
+      const body = err.response?.data;
+      if (body instanceof Blob) {
+        try { message = JSON.parse(await body.text()).error || message; } catch { /* not JSON */ }
+      } else if (body?.error) {
+        message = body.error;
+      }
+      setPdfError(message);
+    } finally {
+      setPdfBusy(false);
+    }
+  }
+
   const scale = zoom ?? fitScale;
   const guide = openId ? GUIDES[openId] : null;
   const openNode = openId ? boxes[openId] : null;
@@ -163,8 +213,13 @@ export default function ProcessFlow() {
           <button className="btn btn-sm" onClick={() => setZoom((z) => Math.max(0.3, (z ?? fitScale) - 0.15))}>−</button>
           <button className="btn btn-sm" onClick={() => setZoom(null)}>Fit</button>
           <button className="btn btn-sm" onClick={() => setZoom((z) => Math.min(2, (z ?? fitScale) + 0.15))}>+</button>
+          <button className="btn btn-sm btn-primary" disabled={pdfBusy} onClick={downloadPdf}>
+            {pdfBusy ? 'Building…' : 'Download PDF'}
+          </button>
         </div>
       </div>
+
+      {pdfError && <div className="error-banner">{pdfError}</div>}
 
       <div className="card" style={{ marginBottom: 12 }}>
         <p className="muted" style={{ fontSize: 13, margin: 0 }}>{flow.blurb}</p>
