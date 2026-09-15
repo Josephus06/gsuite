@@ -121,6 +121,15 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
 // The bank accounts that can be reconciled, with where each one got to last time -- so the next
 // statement's opening balance is not a figure somebody has to go and look up.
+//
+// POSTABLE ACCOUNTS, not active ones, and the distinction matters here more than anywhere.
+// Filtering on is_active returns the twelve SUMMARY headers -- "Eastwest Bank", "Bank of the
+// Philippine Islands" -- which are the only bank rows flagged active, and which hold no
+// transactions whatsoever. The accounts that actually carry the cheques and deposits, like
+// 11301 EWB Disb Acct. 200001413952 with its 9,610 cheques, are all is_active = 0.
+//
+// So the rule is the one routes/cheques.js already uses to fill its own bank picker: everything
+// that is not a summary. Same accounts, same list, nothing to reconcile that cannot be paid from.
 router.get('/meta/accounts', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [rows] = await pool.query(
@@ -132,7 +141,7 @@ router.get('/meta/accounts', requireAuth, requirePermission(ROUTE, 'can_view'), 
                 WHERE r.account_id = a.id AND r.status = 'reconciled'
                 ORDER BY r.statement_date DESC, r.id DESC LIMIT 1) AS last_statement_date
          FROM chart_of_accounts a
-        WHERE a.detail_type = 'Bank' AND a.is_active = TRUE
+        WHERE a.detail_type = 'Bank' AND (a.is_summary = 0 OR a.is_summary IS NULL)
         ORDER BY a.account_code`,
     );
     res.json(rows);

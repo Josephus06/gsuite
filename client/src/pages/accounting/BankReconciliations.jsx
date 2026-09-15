@@ -3,7 +3,17 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Modal from '../../components/Modal';
+import MonthYearPicker from '../../components/MonthYearPicker';
 import { useAuth } from '../../context/useAuth';
+
+// A bank statement covers a month, so the month is what gets picked -- and the statement date is
+// the LAST DAY of it, which is the date the closing balance belongs to. Typing a date invites
+// somebody to enter the 1st and reconcile a month that has not happened.
+function monthEnd(year, month) {
+  // Day 0 of the next month is the last day of this one, and it gets February right.
+  const d = new Date(year, month, 0);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 // Bank Reconciliation -- the list, and starting a new one.
 //
@@ -22,6 +32,7 @@ export default function BankReconciliations() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [starting, setStarting] = useState(false);
+  const [month, setMonth] = useState(null);
   const [form, setForm] = useState({ account_id: '', statement_date: '', opening_balance: '', statement_balance: '' });
 
   const load = useCallback(async () => {
@@ -64,7 +75,7 @@ export default function BankReconciliations() {
       <div className="page-header">
         <h1>Bank Reconciliation</h1>
         {can('/accounting/bank-reconciliation', 'can_add') && (
-          <button className="btn btn-primary" onClick={() => { setForm({ account_id: '', statement_date: '', opening_balance: '', statement_balance: '' }); setStarting(true); }}>
+          <button className="btn btn-primary" onClick={() => { setForm({ account_id: '', statement_date: '', opening_balance: '', statement_balance: '' }); setMonth(null); setStarting(true); }}>
             New Reconciliation
           </button>
         )}
@@ -150,9 +161,20 @@ export default function BankReconciliations() {
           </div>
           <div className="field-row">
             <div className="field">
-              <label>Statement Date</label>
-              <input type="date" value={form.statement_date}
-                onChange={(e) => setForm({ ...form, statement_date: e.target.value })} />
+              <label>Statement Month</label>
+              <MonthYearPicker
+                value={month}
+                onChange={(v) => {
+                  setMonth(v);
+                  setForm((f) => ({ ...f, statement_date: v ? monthEnd(v.year, v.month) : '' }));
+                }}
+                placeholder="Select month"
+              />
+              {form.statement_date && (
+                <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                  Reconciling to {form.statement_date} — the closing date of that statement.
+                </div>
+              )}
             </div>
             <div className="field">
               <label>Opening Balance</label>
