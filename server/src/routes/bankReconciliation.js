@@ -1,5 +1,6 @@
 const express = require('express');
 const ExcelJS = require('exceljs');
+const XLSX = require('xlsx');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { insertNumbered } = require('../lib/docNumber');
@@ -21,36 +22,47 @@ const trunc = (v, n) => (v == null || String(v).trim() === '' ? null : String(v)
 const money = (v) => Number(Number(v || 0).toFixed(2));
 
 // Statement files arrive as a data URL, the way every other upload in this system does, and are
-// parsed server-side. exceljs reads both .xlsx and .csv, so no new dependency and no format lock:
-// the importer is told which column means what rather than assuming one bank's layout, because
-// these 49 accounts span EWB, BPI, BDO, CBC and Security Bank and no two will agree.
-async function parseStatement(dataUrl, fileName) {
+// parsed server-side.
+//
+// READ WITH SheetJS, NOT exceljs, and the reason is the sample Metrobank sent: it is a legacy .xls
+// (OLE2/BIFF), which exceljs cannot read AT ALL -- and worse, does not fail on. It returns a
+// workbook with zero sheets, so the only symptom is "that file has no sheets" on a file that
+// plainly has 208 rows. Banks export what they export; being unable to read the format the bank
+// actually sends is not a position to be in. SheetJS reads .xls, .xlsx and .csv through one call,
+// so all three go down one path. exceljs is still what WRITES the exports.
+//
+// No format is assumed beyond "a grid of cells" -- the importer is told which column means what,
+// because these accounts span Metrobank, EWB, BPI, BDO, CBC and Security Bank and no two of their
+// exports agree on anything, including how many blank columns to leave between the real ones.
+// No fileName parameter: the format is detected from the file's own bytes, so a statement saved
+// with the wrong extension -- or none -- still reads.
+function parseStatement(dataUrl) {
   const base64 = String(dataUrl).split(',')[1];
   if (!base64) throw Object.assign(new Error('That file could not be read.'), { status: 400 });
   const buffer = Buffer.from(base64, 'base64');
 
-  const workbook = new ExcelJS.Workbook();
-  if (/\.csv$/i.test(fileName || '')) {
-    const { Readable } = require('stream');
-    await workbook.csv.read(Readable.from(buffer.toString('utf8')));
-  } else {
-    await workbook.xlsx.load(buffer);
+  let workbook;
+  try {
+    workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true, raw: false });
+  } catch (err) {
+    throw Object.assign(new Error(`That file could not be read as a spreadsheet (${err.message}).`), { status: 400 });
   }
-  const sheet = workbook.worksheets[0];
-  if (!sheet) throw Object.assign(new Error('That file has no sheets.'), { status: 400 });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) {
+    throw Object.assign(new Error('That file has no sheets.'), { status: 400 });
+  }
 
-  const rows = [];
-  sheet.eachRow((row) => {
-    // .values is 1-based with a leading hole; slice it off so column 1 is index 0.
-    rows.push(row.values.slice(1).map((v) => {
-      if (v == null) return '';
-      if (typeof v === 'object' && v.richText) return v.richText.map((t) => t.text).join('');
-      if (typeof v === 'object' && v.text) return v.text;
-      if (v instanceof Date) return v.toISOString().slice(0, 10);
-      return v;
-    }));
+  // header:1 gives raw rows; defval keeps blank cells in place so column indexes stay aligned --
+  // Metrobank's export leaves an empty column A and three more between its real ones, and dropping
+  // them would shift every mapping the user chose.
+  const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
+    header: 1, defval: '', blankrows: true, raw: false,
   });
-  return rows;
+  return rows.map((row) => row.map((v) => {
+    if (v == null) return '';
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    return v;
+  }));
 }
 
 // A cell that is meant to be a number, however the bank wrote it: "1,234.56", "(1,234.56)" for a
@@ -260,7 +272,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 // which column is the date, which the amount, and so on. Nothing is stored.
 router.post('/preview', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
   try {
-    const rows = await parseStatement(req.body.data, req.body.file_name);
+    const rows = parseStatement(req.body.data);
     res.json({
       total_rows: rows.length,
       columns: Math.max(...rows.map((r) => r.length), 0),
@@ -291,7 +303,7 @@ router.post('/:id/import', requireAuth, requirePermission(ROUTE, 'can_add'), asy
     }
     if (map.date === undefined) return res.status(400).json({ error: 'Say which column holds the date.' });
 
-    const rows = await parseStatement(req.body.data, req.body.file_name);
+    const rows = parseStatement(req.body.data);
     const skip = Number(req.body.skip_rows) || 0;
     const body = rows.slice(skip);
 

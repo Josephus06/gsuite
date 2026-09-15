@@ -43,7 +43,15 @@ const daysApart = (a, b) => {
 // -- so pull every plausible number out and see whether one of them IS the document's reference.
 function referenceCandidates(line) {
   const text = `${line.reference || ''} ${line.description || ''}`;
-  return new Set((text.match(/\d{4,}/g) || []).map((s) => s.replace(/^0+/, '') || '0'));
+  return new Set(
+    (text.match(/\d{4,}/g) || [])
+      .map((s) => s.replace(/^0+/, ''))
+      // An all-zero field means "no cheque number", not cheque number zero. Metrobank writes
+      // 0000000000 in the Check Number column on every deposit and transfer; keeping it would turn
+      // that into a reference every such line shares, and the first document whose own reference
+      // normalised to nothing would be matched to all of them as if the numbers agreed.
+      .filter(Boolean),
+  );
 }
 
 const normalisedRef = (movement) => {
