@@ -680,6 +680,24 @@ router.get('/:id/print', requireAuth, requirePermission(ROUTE, 'can_print'), asy
     }
 
     doc.type_label = TYPE_LABELS[doc.type] || doc.type;
+
+    // The three signatures, fetched HERE and nowhere else. They are a few KB of PNG each and only
+    // the printed sheet has anywhere to put them -- loading them on every form view would put
+    // three images through the wire to render a screen that shows none of them.
+    //
+    // Read from the user the WORKFLOW RECORDED -- owner, noted_by, approved_by -- not from whoever
+    // is printing. The signature is drawn onto a decision that was already made and already
+    // attributed; it never makes one. Where somebody has no signature on file the line stays blank
+    // to be signed by hand, exactly as the form worked before.
+    const signers = [doc.user_id, doc.noted_by, doc.approved_by].filter(Boolean);
+    if (signers.length) {
+      const [sigs] = await pool.query(
+        'SELECT id, signature_data FROM users WHERE id IN (?) AND signature_data IS NOT NULL', [signers]);
+      const byId = new Map(sigs.map((s) => [String(s.id), s.signature_data]));
+      doc.owner_signature = byId.get(String(doc.user_id)) || null;
+      doc.noted_signature = byId.get(String(doc.noted_by)) || null;
+      doc.approved_signature = byId.get(String(doc.approved_by)) || null;
+    }
     return res.json(doc);
   } catch (err) { return next(err); }
 });

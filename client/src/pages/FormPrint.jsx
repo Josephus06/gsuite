@@ -34,24 +34,34 @@ function Field({ label, value, width }) {
 
 // Three signatures across the foot of every form: who filed it, who noted it, who approved it.
 // A business trip prints before approval, so its third box is left blank to be signed by hand.
+//
+// The drawn signature sits ABOVE the name and the rule, the way a hand-signed form reads: the mark
+// on the line, the typed name under it. Where the person has none on file the space is simply left
+// empty to sign by hand, which is how every one of these printed before signatures existed -- so a
+// missing signature degrades to the old behaviour rather than to a broken layout.
+function Signature({ image, name, role }) {
+  return (
+    <div className="rf-sign">
+      <div className="rf-sign-ink">
+        {image ? <img src={image} alt="" /> : null}
+      </div>
+      <div className="rf-sign-name">{name || ''}</div>
+      <div className="rf-sign-rule" />
+      <div className="rf-sign-role">{role}</div>
+    </div>
+  );
+}
+
 function Signatures({ doc }) {
   return (
     <div className="rf-signs">
-      <div className="rf-sign">
-        <div className="rf-sign-name">{doc.owner_name || ''}</div>
-        <div className="rf-sign-rule" />
-        <div className="rf-sign-role">Requested By</div>
-      </div>
-      <div className="rf-sign">
-        <div className="rf-sign-name">{doc.noted_by_name || doc.detail?.noted_by_name || ''}</div>
-        <div className="rf-sign-rule" />
-        <div className="rf-sign-role">Noted By</div>
-      </div>
-      <div className="rf-sign">
-        <div className="rf-sign-name">{doc.approved_by_name || ''}</div>
-        <div className="rf-sign-rule" />
-        <div className="rf-sign-role">Approved By</div>
-      </div>
+      <Signature image={doc.owner_signature} name={doc.owner_name} role="Requested By" />
+      <Signature
+        image={doc.noted_signature}
+        name={doc.noted_by_name || doc.detail?.noted_by_name}
+        role="Noted By"
+      />
+      <Signature image={doc.approved_signature} name={doc.approved_by_name} role="Approved By" />
     </div>
   );
 }
@@ -149,6 +159,10 @@ export default function FormPrint() {
                    line-height: 10px; font-size: 10px; }
         .rf-signs { display: flex; gap: 24px; margin-top: 34px; }
         .rf-sign { flex: 1; text-align: center; }
+        /* A fixed height whether or not there is ink, so the three lines stay level when only
+           some of the signers have a signature on file. */
+        .rf-sign-ink { height: 38px; display: flex; align-items: flex-end; justify-content: center; }
+        .rf-sign-ink img { max-height: 38px; max-width: 100%; object-fit: contain; }
         .rf-sign-name { font-size: 11px; min-height: 15px; }
         .rf-sign-rule { border-top: 1px solid #333; margin-top: 2px; }
         .rf-sign-role { font-size: 10px; text-transform: uppercase; color: #444; margin-top: 3px; }

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
+import SignaturePad from '../components/SignaturePad';
 import { PLANNER_FLAGS } from '../utils/plannerRoles';
 
 // Mirrors the real system's "Add / Update User" screen: a 4-step wizard (User
@@ -31,6 +32,9 @@ const PERMISSION_ACTIONS = [
 
 const EMPTY_ACCOUNT = {
   is_active: true, username: '', password: '', email: '', display_name: '', employee_id: '', default_branch_id: '',
+  // The drawn signature, as a data URL. null means "cleared"; undefined means "not touched", which
+  // is what stops a save from wiping one that already exists.
+  signature_data: null, signature_set_at: null,
 };
 
 const EMPTY_ACCOUNT_TYPE = {
@@ -107,6 +111,7 @@ export default function UserWizard() {
       setAccount({
         is_active: !!data.is_active, username: data.username, password: '', email: data.email,
         display_name: data.display_name, employee_id: data.employee_id || '', default_branch_id: data.default_branch_id || '',
+        signature_data: data.signature_data || null, signature_set_at: data.signature_set_at || null,
       });
       setAccountType({
         user_group_id: data.user_group_id || '', account_type: data.account_type || '',
@@ -288,6 +293,21 @@ export default function UserWizard() {
                 searchKeys={['first_name', 'last_name']}
                 onSelect={handleEmployeeSelect}
               />
+            </div>
+            <div className="field">
+              <label>Signature</label>
+              {/* Captured once and reused wherever this person signs off -- the Requested By /
+                  Noted By / Approved By lines on printed documents. Drawing here is for an admin
+                  registering somebody; each person can also redraw their own under Profile. */}
+              <SignaturePad
+                value={account.signature_data}
+                onChange={(data) => setAccount((a) => ({ ...a, signature_data: data }))}
+              />
+              {account.signature_set_at && (
+                <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                  On file since {String(account.signature_set_at).slice(0, 10)}.
+                </div>
+              )}
             </div>
             <div className="wizard-actions">
               <span />

@@ -89,7 +89,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
   try {
     const [[user]] = await pool.query(
       `SELECT id, username, email, display_name, employee_id, default_branch_id, is_active, last_login_at, created_at,
-              supervisor_id, ${ACCOUNT_TYPE_FIELDS.join(', ')}
+              supervisor_id, signature_data, signature_set_at, ${ACCOUNT_TYPE_FIELDS.join(', ')}
        FROM users WHERE id = ?`,
       [req.params.id]
     );
@@ -144,6 +144,13 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
        VALUES (?, ?, ?, ?, ?, ?, ?, ${ACCOUNT_TYPE_FIELDS.map(() => '?').join(', ')})`,
       [employee_id || null, username, email, passwordHash, display_name, default_branch_id || null, is_active ?? true, ...accountTypeValues]
     );
+    // Written after the insert rather than in it, so the signature columns stay out of the
+    // VALUES list every other field shares -- and so registering somebody on an older client
+    // that knows nothing about signatures is unaffected.
+    if (req.body.signature_data) {
+      await pool.query('UPDATE users SET signature_data = ?, signature_set_at = NOW() WHERE id = ?',
+        [req.body.signature_data, result.insertId]);
+    }
     await saveSalesDivisions(result.insertId, req.body.sales_division_ids);
     await saveSupervisors(result.insertId, supervisorIdsFrom(req.body) || []);
     const [[row]] = await pool.query(
@@ -170,6 +177,24 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (password) {
       fields.push('password_hash = ?');
       values.push(await bcrypt.hash(password, 10));
+    }
+
+    // The signature is written only when the form actually sends one, unlike the fields above,
+    // which are written verbatim on every PUT. A screen that does not show the signature pad --
+    // or an API caller that has never heard of it -- must not silently erase somebody's
+    // signature simply by saving their account. `null` still clears it, deliberately, which is
+    // how Clear then Save removes one.
+    if (req.body.signature_data !== undefined) {
+      const sig = req.body.signature_data;
+      if (sig !== null && !/^data:image\/(png|jpeg);base64,/.test(String(sig))) {
+        return res.status(400).json({ error: 'A signature must be an image.' });
+      }
+      // A drawn signature is a few KB. A cap stops a pasted photograph filling a MEDIUMTEXT.
+      if (sig !== null && String(sig).length > 2 * 1024 * 1024) {
+        return res.status(400).json({ error: 'That signature image is too large.' });
+      }
+      fields.push('signature_data = ?', 'signature_set_at = ?');
+      values.push(sig, sig ? new Date() : null);
     }
 
     await pool.query(`UPDATE users SET ${fields.join(', ')}, updated_at = NOW() WHERE id = ?`, [...values, req.params.id]);
