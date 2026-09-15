@@ -2,14 +2,16 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
-import {
-  CANVAS_W, CANVAS_H, NODE_W, NODE_H, DIAMOND, NODES, EDGES, GUIDES, LEGEND,
-} from '../data/processFlow';
+import { NODE_W, NODE_H, DIAMOND } from '../data/processFlow';
+import { FLOWS, DEFAULT_FLOW } from '../data/flows';
 
-// Process Flow: the order-to-cash chart from the operations manual, drawn as clickable
-// nodes. Clicking any box opens the how-to for that step. The chart itself is pure
-// layout data (client/src/data/processFlow.js) -- nothing here talks to the API, so the
-// page works even for a user whose permissions hide most of the modules it describes.
+// The Manual: a workflow drawn as clickable nodes, where every box opens the how-to for that
+// step. Which workflow is chosen from the dropdown -- the order-to-cash chart, or Bank
+// Reconciliation.
+//
+// The charts are pure layout data (client/src/data/*.js) and this page knows only how to draw
+// "a flow", so a new manual is a new data file and nothing else. Nothing here talks to the API,
+// so the page works even for a user whose permissions hide most of the modules it describes.
 
 const STUB = 18;      // how far an edge leaves a node before it may turn
 const CORNER = 8;     // corner radius on the elbows
@@ -97,13 +99,17 @@ export default function ProcessFlow() {
   const [hoverId, setHoverId] = useState(null);
   const [zoom, setZoom] = useState(null); // null = fit to width
   const [fitScale, setFitScale] = useState(1);
+  const [flowKey, setFlowKey] = useState(DEFAULT_FLOW);
   const wrapRef = useRef(null);
+
+  const flow = FLOWS.find((f) => f.key === flowKey) || FLOWS[0];
+  const { CANVAS_W, CANVAS_H, NODES, EDGES, GUIDES, LEGEND } = flow.data;
 
   const boxes = useMemo(() => {
     const map = {};
     NODES.forEach((n) => { map[n.id] = nodeBox(n); });
     return map;
-  }, []);
+  }, [NODES]);
 
   const edges = useMemo(() => EDGES.map((e, i) => {
     const a = port(boxes[e.from], e.fromSide || 'bottom', e.fromOffset || 0);
@@ -113,7 +119,7 @@ export default function ProcessFlow() {
     // branch it labels rather than floating between two nodes.
     const anchor = pts[1] || pts[0];
     return { ...e, key: `${e.from}-${e.to}-${i}`, d: roundedPath(pts), labelX: anchor.x, labelY: anchor.y };
-  }), [boxes]);
+  }), [boxes, EDGES]);
 
   useLayoutEffect(() => {
     const el = wrapRef.current;
@@ -123,7 +129,9 @@ export default function ProcessFlow() {
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+    // Re-measured when the flow changes: the two charts are different widths, so a fit computed
+    // for one leaves the other cropped or adrift.
+  }, [CANVAS_W]);
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') setOpenId(null); };
@@ -140,8 +148,18 @@ export default function ProcessFlow() {
   return (
     <div>
       <div className="page-header">
-        <h1>Process Flow</h1>
+        <h1>{flow.title}</h1>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {/* Which manual. Switching resets the open guide and the zoom, because a step id and a
+              fit scale both belong to the chart they came from. */}
+          <select
+            value={flowKey}
+            aria-label="Workflow"
+            onChange={(e) => { setFlowKey(e.target.value); setOpenId(null); setZoom(null); }}
+            style={{ minWidth: 200 }}
+          >
+            {FLOWS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+          </select>
           <button className="btn btn-sm" onClick={() => setZoom((z) => Math.max(0.3, (z ?? fitScale) - 0.15))}>−</button>
           <button className="btn btn-sm" onClick={() => setZoom(null)}>Fit</button>
           <button className="btn btn-sm" onClick={() => setZoom((z) => Math.min(2, (z ?? fitScale) + 0.15))}>+</button>
@@ -149,10 +167,7 @@ export default function ProcessFlow() {
       </div>
 
       <div className="card" style={{ marginBottom: 12 }}>
-        <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-          The full order-to-cash process, start to finish. Click any box to open the step-by-step
-          guide for that stage — where it lives, who can do it, and what to click.
-        </p>
+        <p className="muted" style={{ fontSize: 13, margin: 0 }}>{flow.blurb}</p>
         <div className="pf-legend">
           {LEGEND.map((l) => (
             <span key={l.kind} className="pf-legend-item">
