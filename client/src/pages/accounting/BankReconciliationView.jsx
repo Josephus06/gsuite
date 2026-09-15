@@ -70,6 +70,25 @@ export default function BankReconciliationView() {
     } finally { setBusy(false); }
   }
 
+  // The confirmation names what is actually lost -- the imported statement and the review done so
+  // far -- because "delete this reconciliation" does not convey that somebody's afternoon of
+  // ticking goes with it. What it does NOT lose is any document: those are released, not deleted.
+  async function remove() {
+    const reviewed = data.lines.filter((l) => l.status === 'confirmed' || l.status === 'bank_only').length;
+    const detail = data.lines.length
+      ? `\n\nIts ${data.lines.length} imported statement line(s)${reviewed ? ` and ${reviewed} confirmed match(es)` : ''} go with it, and the documents it had claimed go back to outstanding.`
+      : '';
+    if (!confirm(`Delete ${data.recon_no}?${detail}\n\nThis cannot be undone.`)) return;
+    setBusy(true); setError('');
+    try {
+      await api.delete(`/bank-reconciliation/${id}`);
+      navigate('/accounting/bank-reconciliation');
+    } catch (e) {
+      setError(e.response?.data?.error || 'Could not delete that.');
+      setBusy(false);
+    }
+  }
+
   if (loading) return <LoadingSpinner />;
   if (!data) return <div className="error-banner">{error || 'Not found.'}</div>;
 
@@ -112,6 +131,12 @@ export default function BankReconciliationView() {
           {!open && can('/accounting/bank-reconciliation', 'can_approve') && (
             <button className="btn btn-sm btn-warning" disabled={busy}
               onClick={() => act(() => api.post(`/bank-reconciliation/${id}/reopen`), 'Reopened.')}>Reopen</button>
+          )}
+          {/* Only while open -- a finished reconciliation has to be reopened first, which the
+              server enforces too. Deleting releases every document it had claimed, so a false
+              start does not hold cheques hostage on a reconciliation nobody is working. */}
+          {open && can('/accounting/bank-reconciliation', 'can_delete') && (
+            <button className="btn btn-sm btn-danger" disabled={busy} onClick={remove}>Delete</button>
           )}
         </div>
       </div>
