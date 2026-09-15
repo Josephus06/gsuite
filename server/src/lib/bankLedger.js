@@ -6,11 +6,15 @@ const pool = require('../db');
 // 710 carry a journal entry, and bank deposits and bill payments carry none at all. The GL would
 // give an almost empty book side to weigh a full bank statement against.
 //
-// Three sources, unioned the way lib/stockLedger.js unions its six:
+// The one exception is the journal typed by hand, which is a document in its own right rather than
+// the shadow of one -- see the `journal` source below for why only those, and never the mirrors.
+//
+// Four sources, unioned the way lib/stockLedger.js unions its six:
 //
 //   cheque        money out   cheques.account_id          on date_released
 //   bill_payment  money out   bill_payments.bank_account_id on date_released
 //   deposit       money in    bank_deposits.account_id    on date_created
+//   journal       either way  journal_lines.account_id    on journals.date_created
 //
 // SIGN CONVENTION: positive is money INTO the account, negative is money OUT. The bank statement
 // is normalised the same way at import, so the two sides can be compared without either having to
@@ -21,7 +25,8 @@ const pool = require('../db');
 //
 // date_released, not date_created, for both money-out sources: a cheque written in March and
 // handed over in May hits the bank in May, and reconciling it against March would leave two
-// statements each looking wrong.
+// statements each looking wrong. Deposits and journals have nothing to release, so they are dated
+// by date_created.
 
 // The date each source is considered to have hit the bank, per source.
 const SOURCE_SQL = {
@@ -46,6 +51,31 @@ const SOURCE_SQL = {
            d.total_amount AS amount
       FROM bank_deposits d
      WHERE d.account_id = ? AND d.status <> 'void'`,
+  // The bank charges, checkbook fees, corrections and one-off receipts that no cheque or deposit
+  // explains -- 3,550 lines across the bank accounts, and the reason a statement showed movements
+  // the book could not account for at all.
+  //
+  // ONLY HAND-TYPED ENTRIES. A journal carrying source_type is the GL mirror of a document already
+  // unioned above: all 728 of them are cheques, and 721 of those reverse a VOIDED cheque, which
+  // this ledger deliberately leaves out. Union them and the book double-counts by 50.4M.
+  //
+  // One row per LINE, not per entry. A journal may touch the same bank account more than once and
+  // each touch is its own movement; keying on the line id also keeps (source_kind, source_id)
+  // unique, which is what bank_reconciliation_matches relies on to stop a document being cleared
+  // twice.
+  //
+  // 'SAVED' is not a draft -- routes/journals.js writes it on create, after the entry has already
+  // been balanced. Only a voided journal is excluded.
+  journal: `
+    SELECT 'journal' AS source_kind, jl.id AS source_id, j.journal_no AS doc_no,
+           NULL AS reference, j.date_created AS txn_date,
+           jl.party_name AS party, COALESCE(NULLIF(jl.memo, ''), j.memo) AS memo,
+           (jl.debit - jl.credit) AS amount
+      FROM journal_lines jl
+      JOIN journals j ON j.id = jl.journal_id
+     WHERE jl.account_id = ? AND j.source_type IS NULL
+       AND j.status <> 'void' AND j.voided_at IS NULL
+       AND (jl.debit <> 0 OR jl.credit <> 0)`,
 };
 
 // Movements on one account up to and including `asOf`, excluding anything already cleared on ANY
