@@ -20,12 +20,31 @@ const pool = require('../db');
 // stale snapshot, cannot see the row the winner just committed, computes the same number again,
 // and fails on every attempt. A separate autocommit connection sees the current committed state,
 // which is what "the next free number" has to mean.
-async function nextDocNo(table, column, prefix) {
-  const [[mx]] = await pool.query(
-    'SELECT COALESCE(MAX(CAST(SUBSTRING(??, ?) AS UNSIGNED)), 0) AS n FROM ?? WHERE ?? REGEXP ?',
-    [column, prefix.length + 1, table, column, `^${prefix}[0-9]+$`],
-  );
-  return `${prefix}${mx.n + 1}`;
+// ...AND ALSO ON THE CALLER'S CONNECTION, taking whichever is higher.
+//
+// The pool alone is not enough, and the case it misses is not exotic: one request that creates
+// SEVERAL numbered documents in one transaction. A Purchase Order request splits its lines by
+// supplier and inserts one PO per group, all before committing. The pool cannot see rows this
+// transaction has not committed, so the second PO computed the SAME number as the first and
+// collided with its own sibling -- immediately, not by blocking, because they share a
+// transaction. Every retry recomputed the same number from the same pool, so all five failed and
+// the whole request rolled back. Measured on the droplet: five attempts, all 'PO-20088', and no
+// PO-20088 in the table afterwards because the rollback took the first one with it.
+//
+// So: the pool answers "what has everyone else committed", the caller's connection answers "what
+// have I taken already", and the next number has to clear both.
+async function nextDocNo(table, column, prefix, conn = null) {
+  const sql = 'SELECT COALESCE(MAX(CAST(SUBSTRING(??, ?) AS UNSIGNED)), 0) AS n FROM ?? WHERE ?? REGEXP ?';
+  const params = [column, prefix.length + 1, table, column, `^${prefix}[0-9]+$`];
+
+  const [[committed]] = await pool.query(sql, params);
+  let highest = Number(committed.n);
+
+  if (conn) {
+    const [[mine]] = await conn.query(sql, params);
+    highest = Math.max(highest, Number(mine.n));
+  }
+  return `${prefix}${highest + 1}`;
 }
 
 // Insert a row whose document number has to be unique, writing that number in the INSERT itself.
@@ -37,7 +56,9 @@ async function nextDocNo(table, column, prefix) {
 // does not abort a MySQL transaction, so the retry is safe inside the caller's.
 async function insertNumbered(conn, { table, column, prefix, run }) {
   for (let attempt = 0; ; attempt += 1) {
-    const no = await nextDocNo(table, column, prefix);
+    // The caller's connection is passed in, so a second document created in the same transaction
+    // sees the first one and takes the number after it rather than colliding with it.
+    const no = await nextDocNo(table, column, prefix, conn);
     try {
       const [result] = await run(no);
       return { id: result.insertId, no };
