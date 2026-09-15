@@ -98,9 +98,13 @@ const CONFIG = [
     { name: 'value', label: 'Value', type: 'number', step: '0.0001' },
     { name: 'is_active', label: 'Active', type: 'checkbox' },
   ] },
+  // item_id is the inventory item a Landed Cost PO line records for this charge. Editable here
+  // because it is the only place to set it, and a landed cost without one cannot be put on a PO --
+  // the picker on that screen shows it greyed with the reason rather than hiding it.
   { key: 'landed-costs', label: 'Landed Costs', fields: [
     { name: 'name', label: 'Name', type: 'text', required: true },
     { name: 'allocation_method', label: 'Allocation Method', type: 'select', options: ['By Value', 'By Quantity', 'By Weight'] },
+    { name: 'item_id', label: 'Inventory Item', type: 'ref', ref: 'landed-cost-items', refLabel: 'label' },
     { name: 'is_active', label: 'Active', type: 'checkbox' },
   ] },
   // Non-Inventory Items and Service Items used to be thin four-column tabs here. They are full
@@ -248,7 +252,14 @@ export default function Lookups() {
     setError('');
     const payload = {};
     for (const f of active.fields) {
-      payload[f.name] = form[f.name] === '' && (f.type === 'ref' || f.type === 'user-ref') ? null : form[f.name];
+      // An empty SELECT is nothing chosen, which for a nullable ENUM column means NULL -- sending
+      // '' instead is rejected outright ("Data truncated for column ..."), because '' is not one of
+      // the enum's values. That is why editing a Landed Cost failed: every row holds '' for
+      // allocation_method, the select shows nothing, and saving handed '' straight back.
+      const blank = form[f.name] === '' || form[f.name] === undefined;
+      payload[f.name] = blank && (f.type === 'ref' || f.type === 'user-ref' || f.type === 'select')
+        ? null
+        : form[f.name];
     }
     try {
       if (editing === 'new') {

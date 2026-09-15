@@ -24,7 +24,9 @@ const TABLES = {
   reasons: { table: 'reasons', columns: ['reason_type', 'name', 'is_active'] },
   'sales-divisions': { table: 'sales_divisions', columns: ['name', 'is_active'] },
   'discount-items': { table: 'discount_items', columns: ['name', 'discount_type', 'value', 'is_active'] },
-  'landed-costs': { table: 'landed_costs', columns: ['name', 'allocation_method', 'is_active'] },
+  // item_id is the inventory item a Landed Cost PO line records for this charge. Listed here so
+  // the generic save writes it -- a column absent from this list is silently ignored.
+  'landed-costs': { table: 'landed_costs', columns: ['name', 'allocation_method', 'item_id', 'is_active'] },
   'non-inventories': { table: 'non_inventories', columns: ['item_code', 'display_name', 'unit_price', 'is_active'] },
   'service-items': { table: 'service_items', columns: ['item_code', 'display_name', 'unit_price', 'is_active'] },
   processes: { table: 'processes', columns: ['process_code', 'process_name', 'base_unit_id', 'minutes_per_unit', 'is_active'] },
@@ -56,6 +58,28 @@ router.get('/', requireAuth, (req, res) => {
 //   can_note_form        notes this department's liquidations and requests for payment
 // Both are on by default when somebody is added -- naming a head who does neither would be an
 // empty row -- and either can be unticked per person.
+// The inventory items a Landed Cost may point at, for the Inventory Item picker on that lookup.
+//
+// READ-ONLY, and its own route rather than an entry in TABLES above, deliberately: every key in
+// that map gets generic create, update AND DELETE. Listing `inventories` there to fill one
+// dropdown would expose the item master to deletion through the lookups screen, which is not a
+// trade worth making for a picker.
+//
+// Placed before /:key so the generic handler never sees it.
+router.get('/landed-cost-items', requireAuth, requirePermission('/lookups', 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, item_code, display_name,
+              CONCAT(item_code, ' — ', COALESCE(display_name, '')) AS label
+         FROM inventories
+        ORDER BY item_code`,
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/departments/:id/ticket-approvers', requireAuth, requirePermission('/lookups', 'can_view'), async (req, res, next) => {
   try {
     const [rows] = await pool.query(

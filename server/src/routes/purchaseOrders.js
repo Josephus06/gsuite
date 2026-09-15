@@ -346,6 +346,39 @@ router.put('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve'),
   }
 });
 
+// What may go on a Landed Cost PO: the charges defined in Master Lists > Landed Costs, and
+// nothing else.
+//
+// The picker used to offer the whole inventory -- thousands of stock items, none of which belongs
+// on a freight charge. The landed costs themselves already exist as inventory items and every
+// existing PO-2 line already points at one, so the LINE does not change; only what can be chosen.
+//
+// Each lookup entry carries the item it stands for (landed_costs.item_id, see
+// db/add-landed-cost-item.js), rather than being matched to one by name -- renaming a landed cost
+// must not silently remove it from this list.
+//
+// An entry with no item linked is deliberately still returned, marked unusable, so the screen can
+// say WHY a charge somebody expects is not selectable instead of simply not showing it.
+router.get('/meta/landed-cost-items', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      // The unit titles come along because a landed cost line records the quantity in the item's
+      // purchase unit, exactly as an ordinary PO line does -- the form should not have to fetch
+      // the whole inventory again just to learn them.
+      `SELECT lc.id AS landed_cost_id, lc.name, lc.allocation_method,
+              i.id, i.item_code, i.display_name,
+              pu.title AS purchase_unit_title, bu.title AS base_unit_title
+         FROM landed_costs lc
+         LEFT JOIN inventories i ON i.id = lc.item_id
+         LEFT JOIN units_of_measure pu ON pu.id = i.purchase_unit_id
+         LEFT JOIN units_of_measure bu ON bu.id = i.base_unit_id
+        WHERE lc.is_active = TRUE
+        ORDER BY lc.name`,
+    );
+    res.json(rows.map((r) => ({ ...r, usable: !!r.id })));
+  } catch (err) { next(err); }
+});
+
 // Landed Cost (PO-2): a sub-PO tied to an already-Approved, non-PO2 parent PO, used for
 // freight/customs/etc. charges. Not sourced from any Purchase Requisition line.
 router.get('/:id/landed-costs', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {

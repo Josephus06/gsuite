@@ -19,7 +19,7 @@ export default function LandedCostEdit() {
   const [suppliers, setSuppliers] = useState([]);
   const [terms, setTerms] = useState([]);
   const [taxes, setTaxes] = useState([]);
-  const [inventoryItems, setInventoryItems] = useState([]);
+  const [landedCosts, setLandedCosts] = useState([]);
   const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
   const [supplierId, setSupplierId] = useState('');
   const [termId, setTermId] = useState('');
@@ -35,22 +35,35 @@ export default function LandedCostEdit() {
       api.get('/suppliers'),
       api.get('/lookups/payment-terms'),
       api.get('/lookups/taxes'),
-      api.get('/inventory'),
-    ]).then(([poRes, supRes, termRes, taxRes, invRes]) => {
+      // The charges from Master Lists > Landed Costs, not the whole inventory. A landed cost PO is
+      // for freight, customs and cutting; offering thousands of stock items here was an invitation
+      // to put one of them on a freight charge.
+      api.get('/purchase-orders/meta/landed-cost-items'),
+    ]).then(([poRes, supRes, termRes, taxRes, lcRes]) => {
       setParent(poRes.data);
       setSuppliers(supRes.data);
       setTerms(termRes.data);
       setTaxes(taxRes.data);
-      setInventoryItems(invRes.data);
+      setLandedCosts(lcRes.data);
       setLoading(false);
     });
   }, [id]);
 
   function addLine(item) {
+    // A landed cost with no inventory item behind it cannot go on a PO line, which needs one.
+    // Refused here with the reason rather than silently adding a line that will not save.
+    if (!item.id) {
+      setError(`"${item.name}" has no item linked to it. Set one on Master Lists > Landed Costs before using it here.`);
+      return;
+    }
+    setError('');
     setLines((prev) => [...prev, {
       _key: `new-${Date.now()}`,
+      // The line still records the INVENTORY ITEM, exactly as it always has -- all 907 existing
+      // landed cost lines point at one, and everything downstream joins on it. Only what can be
+      // chosen has narrowed.
       item_id: item.id, item_code: item.item_code, item_name: item.display_name,
-      purchase_description: item.display_name, qty: 1,
+      purchase_description: item.name, qty: 1,
       // Landed cost is apportioned over a purchased quantity, so the same rule applies: the qty
       // is in the item's purchase unit, with the base unit as Unit Title.
       purchase_unit: item.purchase_unit_title || item.base_unit_title || '',
@@ -189,9 +202,20 @@ export default function LandedCostEdit() {
 
         <div style={{ marginTop: 10 }}>
           <EntityPicker
-            label="Item" items={inventoryItems} value="" getLabel={(i) => i.display_name}
-            columns={[{ key: 'item_code', label: 'Code' }, { key: 'display_name', label: 'Name' }]}
-            searchKeys={['item_code', 'display_name']}
+            label="Landed Cost" items={landedCosts} value=""
+            getLabel={(i) => i.name}
+            columns={[
+              { key: 'name', label: 'Landed Cost' },
+              { key: 'item_code', label: 'Item', render: (i) => i.item_code || '—' },
+              // Says outright which entries cannot be used and why, instead of leaving somebody to
+              // wonder why picking one does nothing.
+              {
+                key: 'usable',
+                label: '',
+                render: (i) => (i.usable ? '' : <span className="badge badge-warning">no item linked</span>),
+              },
+            ]}
+            searchKeys={['name', 'item_code']}
             onSelect={addLine}
             triggerLabel="Add Item"
             triggerClassName="btn btn-primary"
