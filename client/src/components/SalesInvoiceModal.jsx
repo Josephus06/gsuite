@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import EntityPicker from './EntityPicker';
+import EstimatePicker from './EstimatePicker';
 import LoadingSpinner from './LoadingSpinner';
 
 function qty(v) {
@@ -17,16 +18,22 @@ function addDays(dateStr, days) {
   return d.toISOString().slice(0, 10);
 }
 
-// Mirrors the real "Create SI" popup, reached two ways: from a Sales Order's Bill
-// dropdown, or from a Delivery Ticket's own Bill > SI (pass deliveryTicketId). Every line
-// is a straight copy of already-computed billing figures -- there's no per-line "amount
-// to invoice" input on the real screen, just Delete to exclude a line entirely.
+// Mirrors the real "Create SI" popup, reached three ways: from a Sales Order's Bill
+// dropdown, from a Delivery Ticket's own Bill > SI (pass deliveryTicketId), or from Create
+// New on the invoice list (pass fromEstimate). Every line is a straight copy of
+// already-computed billing figures -- there's no per-line "amount to invoice" input on the
+// real screen, just Delete to exclude a line entirely.
 //
 // From a Sales Order it bills each line's remaining (Delivered minus already-Invoiced)
 // gap. From a Delivery Ticket it bills that ticket's own stored lines verbatim, ad-hoc
 // "Add Item" charges included, and converts the ticket -- so the lines are fixed and
 // Delete is hidden: you cannot half-convert a ticket.
-export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, onClose, onSaved }) {
+//
+// From an Estimate the form opens EMPTY, with an Estimate field to fill in first -- there is
+// no source document until one is picked, which is the difference between this and the other
+// two. The Estimate's own lines are billed as they stand, and their JO # column is blank
+// because no Job Order exists yet: those are raised when the Estimate becomes a Sales Order.
+export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, fromEstimate, onClose, onSaved }) {
   const [data, setData] = useState(null);
   const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
   const [dateDue, setDateDue] = useState('');
@@ -46,24 +53,32 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, onCl
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // Only ever set in the Estimate flow: which Estimate this invoice is being raised against.
+  // Null until one is picked, which is why the form can be open with no source at all.
+  const [estimate, setEstimate] = useState(null);
 
   const fromTicket = Boolean(deliveryTicketId);
 
   useEffect(() => {
+    // Nothing to source from yet in the Estimate flow -- the lookups still load, so the
+    // Sales Rep and Office Location fields work while an Estimate is being chosen.
     const source = fromTicket
       ? `/sales-invoices/for-delivery-ticket/${deliveryTicketId}`
-      : `/sales-invoices/for-sales-order/${salesOrderId}`;
+      : fromEstimate
+        ? (estimate ? `/sales-invoices/for-estimate/${estimate.id}` : null)
+        : `/sales-invoices/for-sales-order/${salesOrderId}`;
     Promise.all([
-      api.get(source),
+      source ? api.get(source) : Promise.resolve(null),
       api.get('/employees'),
       api.get('/lookups/locations'),
       api.get('/lookups/departments'),
     ]).then(([srcRes, empRes, locRes, deptRes]) => {
-      const d = srcRes.data;
-      setData(d);
       setEmployees(empRes.data);
       setLocations(locRes.data);
       setDepartments(deptRes.data);
+      if (!srcRes) { setData({ lines: [] }); setLoading(false); return; }
+      const d = srcRes.data;
+      setData(d);
       setBillToAddress(d.shipping_address || '');
       // A ticket already carries its own Term/PO #/Memo, chosen when it was raised --
       // carry them onto the invoice rather than falling back to the customer's default.
@@ -79,7 +94,7 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, onCl
       setError(err.response?.data?.error || 'Could not load this record.');
       setLoading(false);
     });
-  }, [salesOrderId, deliveryTicketId, fromTicket]);
+  }, [salesOrderId, deliveryTicketId, fromTicket, fromEstimate, estimate]);
 
   if (loading || (!data && !error)) {
     return (
@@ -101,8 +116,9 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, onCl
   }
 
   // A ticket-sourced line may be an ad-hoc charge with no sales_order_line_id at all, so
-  // it needs its own key; SO-sourced lines keep using theirs.
-  const lineKey = (l, idx) => l.delivery_ticket_line_id ?? l.sales_order_line_id ?? idx;
+  // it needs its own key; SO-sourced lines keep using theirs, and estimate-sourced lines
+  // are keyed on the estimate line they came from.
+  const lineKey = (l, idx) => l.delivery_ticket_line_id ?? l.sales_order_line_id ?? l.estimate_job_order_id ?? idx;
   const includedLines = data.lines.filter((l, idx) => !excludedIds.has(lineKey(l, idx)));
   const subtotal = includedLines.reduce((s, l) => s + Number(l.subtotal || 0), 0);
   const discountAmount = includedLines.reduce((s, l) => s + Number(l.disc_amount || 0), 0);
@@ -114,16 +130,23 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, onCl
 
   async function handleSave() {
     setError('');
+    if (fromEstimate && !estimate) { setError('Choose an Estimate first.'); return; }
     if (!includedLines.length) { setError('Include at least one item.'); return; }
     setSaving(true);
     try {
       const { data: si } = await api.post('/sales-invoices', {
         // Billing a ticket sends its id and nothing about lines -- the server bills the
-        // ticket in full, which is what converting it means.
-        ...(fromTicket
-          ? { delivery_ticket_id: deliveryTicketId, sales_order_id: data.sales_order_id }
-          : { sales_order_line_ids: includedLines.map((l) => l.sales_order_line_id) }),
-        sales_order_id: fromTicket ? data.sales_order_id : salesOrderId,
+        // ticket in full, which is what converting it means. Billing an Estimate sends no
+        // sales_order_id at all, because there isn't one.
+        ...(fromEstimate
+          ? {
+            estimate_id: estimate.id,
+            estimate_job_order_ids: includedLines.map((l) => l.estimate_job_order_id),
+          }
+          : fromTicket
+            ? { delivery_ticket_id: deliveryTicketId, sales_order_id: data.sales_order_id }
+            : { sales_order_line_ids: includedLines.map((l) => l.sales_order_line_id) }),
+        ...(fromEstimate ? {} : { sales_order_id: fromTicket ? data.sales_order_id : salesOrderId }),
         date_created: dateCreated,
         date_due: dateDue,
         term,
@@ -149,18 +172,50 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, onCl
       <div className="modal modal-xl" style={{ padding: 0, overflow: 'hidden' }}>
         <div className="estimate-banner" style={{ borderRadius: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <h2 style={{ margin: 0, color: '#fff' }}>{fromTicket ? `Create SI from ${data.dt_no}` : 'Create SI'}</h2>
+
           <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 24, lineHeight: 1, cursor: 'pointer' }}>×</button>
         </div>
 
         <div style={{ padding: 24 }}>
           {error && <div className="error-banner">{error}</div>}
 
+          {/* The Estimate has already been billed at least once. Not an error -- an estimate can
+              legitimately be billed in stages -- but nothing else on this form would say so, and
+              raising the same invoice twice is the mistake this is here to prevent. */}
+          {fromEstimate && data.prior_invoice_count > 0 && (
+            <div className="error-banner" style={{ background: '#fef3c7', color: '#92400e' }}>
+              {data.estimate_no} already has {data.prior_invoice_count} invoice(s) against it,
+              totalling {money(data.prior_invoiced_amount)}. Check this is not a duplicate.
+            </div>
+          )}
+          {/* Converted already, so its work flows through a Sales Order that bills on delivered
+              quantities. Billing the Estimate as well would bill the same work twice. */}
+          {fromEstimate && data.sales_order_no && (
+            <div className="error-banner" style={{ background: '#fef3c7', color: '#92400e' }}>
+              {data.estimate_no} has already become {data.sales_order_no}. That Sales Order bills
+              on what has been delivered — invoicing the Estimate here bills the same work again.
+            </div>
+          )}
+
           <div className="review-grid" style={{ gridTemplateColumns: '1fr 1fr 260px' }}>
             <div>
+              {fromEstimate && (
+                <div className="field">
+                  <label>Estimate</label>
+                  <EstimatePicker
+                    value={estimate?.id || ''}
+                    selectedLabel={estimate ? `${estimate.estimate_no}${estimate.customer_name ? ` — ${estimate.customer_name}` : ''}` : ''}
+                    // The spinner is raised here rather than in the effect: picking an Estimate
+                    // is the event that causes the reload, and setting it inside the effect
+                    // starts a second render for no reason.
+                    onSelect={(e) => { setLoading(true); setEstimate(e); setExcludedIds(new Set()); }}
+                  />
+                </div>
+              )}
               <div className="field"><label>Date</label><input type="date" value={dateCreated} onChange={(e) => setDateCreated(e.target.value)} /></div>
               <div className="field"><label>Date Due</label><input type="date" value={dateDue} onChange={(e) => setDateDue(e.target.value)} /></div>
               <div>Customer : <span className="hi">{data.customer_name}</span></div>
-              <div>Created Form : <span className="hi">{fromTicket ? `${data.dt_no} (${data.sales_order_no})` : data.sales_order_no}</span></div>
+              <div>Created Form : <span className="hi">{fromTicket ? `${data.dt_no} (${data.sales_order_no})` : fromEstimate ? (data.estimate_no || '—') : data.sales_order_no}</span></div>
               <div className="field">
                 <label>Sales Rep</label>
                 <EntityPicker
@@ -228,7 +283,11 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, onCl
               </thead>
               <tbody>
                 {data.lines.length === 0 && (
-                  <tr><td colSpan={17} className="muted" style={{ textAlign: 'center', padding: 20 }}>Nothing left to invoice.</td></tr>
+                  <tr><td colSpan={17} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                    {fromEstimate
+                      ? (estimate ? 'This Estimate has no line items to invoice.' : 'Choose an Estimate to bill.')
+                      : 'Nothing left to invoice.'}
+                  </td></tr>
                 )}
                 {data.lines.map((l, idx) => {
                   const key = lineKey(l, idx);
@@ -236,7 +295,11 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, onCl
                   return (
                     <tr key={key} style={excluded ? { opacity: 0.4, textDecoration: 'line-through' } : undefined}>
                       <td>{idx + 1}</td>
-                      <td>{l.job_order_no || '—'}</td>
+                      {/* Blank on an estimate line, and blank is the truth: the Job Order does
+                          not exist until the Estimate is converted into a Sales Order. */}
+                      <td title={fromEstimate ? 'No Job Order until this Estimate becomes a Sales Order' : undefined}>
+                        {l.job_order_no || '—'}
+                      </td>
                       <td>{l.item_name}</td>
                       <td>{l.description}</td>
                       <td>{l.job_location_name}</td>

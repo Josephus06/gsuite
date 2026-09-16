@@ -37,7 +37,9 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const where = [];
     const params = [];
     if (status) { where.push('si.status = ?'); params.push(status); }
-    if (customerId) { where.push('so.customer_id = ?'); params.push(customerId); }
+    // An invoice raised from an Estimate has no Sales Order, so the customer is whichever of the
+    // two sources it actually has. Same COALESCE everywhere the customer is read below.
+    if (customerId) { where.push('COALESCE(so.customer_id, e.customer_id) = ?'); params.push(customerId); }
     if (salesRepId) { where.push('si.sales_rep_id = ?'); params.push(salesRepId); }
     // An Account Officer sees only their own invoices; a Supervisor sees theirs plus their
     // reports'. Same rule Estimates and Sales Orders already apply -- see lib/salesVisibility.js,
@@ -45,8 +47,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const salesScope = await getSalesRepEmployeeScope(req.user.id);
     if (salesScope) { where.push('si.sales_rep_id IN (?)'); params.push(salesScope); }
     if (search) {
-      where.push('(si.invoice_no LIKE ? OR so.sales_order_no LIKE ? OR c.name LIKE ?)');
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      where.push('(si.invoice_no LIKE ? OR so.sales_order_no LIKE ? OR e.estimate_no LIKE ? OR c.name LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -58,13 +60,16 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const limitNum = Math.min(100, Math.max(1, Number(limit) || 10));
     const offset = (pageNum - 1) * limitNum;
 
-    // The count carries only the joins its own filters reference. sales_orders stays -- it is an
-    // INNER join, so it decides which invoices are in the list at all, and the customer filter
-    // reads so.customer_id. customers comes in only for the search. employees, locations and
-    // departments are LEFT joins nothing filters on.
+    // The count carries only the joins its own filters reference. sales_orders and estimates are
+    // both LEFT joins now and neither decides membership -- an invoice has exactly one of the two,
+    // and an INNER join on sales_orders would have hidden every estimate-sourced invoice from the
+    // list entirely. customers comes in for the search and the customer filter; employees,
+    // locations and departments are LEFT joins nothing filters on.
+    const needsSource = Boolean(search || customerId);
     const countFrom = `FROM sales_invoices si
-       JOIN sales_orders so ON so.id = si.sales_order_id
-       ${search ? 'LEFT JOIN customers c ON c.id = so.customer_id' : ''}`;
+       LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+       LEFT JOIN estimates e ON e.id = si.estimate_id
+       ${needsSource ? 'LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id)' : ''}`;
     const [[{ total }]] = await pool.query(
       `SELECT COUNT(*) AS total ${countFrom} ${whereSql}`, params
     );
@@ -72,12 +77,13 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const [rows] = await pool.query(
       `SELECT si.id, si.invoice_no, si.date_created, si.date_due, si.net_of_tax, si.tax_amount,
               si.gross_amount, si.amount_due, si.bs_si_no, si.term, si.status, si.memo,
-              so.sales_order_no, c.name AS customer_name,
+              so.sales_order_no, e.estimate_no, c.name AS customer_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               loc.location_name AS office_location_name, d.name AS department_name
        FROM sales_invoices si
-       JOIN sales_orders so ON so.id = si.sales_order_id
-       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+       LEFT JOIN estimates e ON e.id = si.estimate_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id)
        LEFT JOIN employees sr ON sr.id = si.sales_rep_id
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        LEFT JOIN departments d ON d.id = si.department_id
@@ -159,6 +165,76 @@ router.get('/for-sales-order/:salesOrderId', requireAuth, requirePermission(ROUT
   }
 });
 
+// Powers Create SI when it was raised straight from the invoice list against an Estimate, with no
+// Sales Order behind it at all.
+//
+// Nothing is netted off here, unlike the Sales Order path: there are no Job Orders yet, so there
+// is no delivered-minus-invoiced gap to bill. The Estimate's own lines ARE the invoice, and their
+// stored money columns are used as they stand -- they were priced and approved on the Estimate,
+// and recomputing them would quietly restate an approved figure.
+//
+// job_order_no is deliberately absent from every line. The JO # column stays empty until the
+// Estimate is converted into a Sales Order and its Job Orders raised.
+router.get('/for-estimate/:estimateId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [[est]] = await pool.query(
+      `SELECT e.id AS estimate_id, e.estimate_no, e.credit_term, e.sales_rep_id, e.office_location_id,
+              e.shipping_address, e.memo, e.sales_order_id, e.status,
+              c.name AS customer_name,
+              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
+              loc.location_name AS office_location_name,
+              so.sales_order_no
+       FROM estimates e
+       LEFT JOIN customers c ON c.id = e.customer_id
+       LEFT JOIN employees sr ON sr.id = e.sales_rep_id
+       LEFT JOIN locations loc ON loc.id = e.office_location_id
+       LEFT JOIN sales_orders so ON so.id = e.sales_order_id
+       WHERE e.id = ?`,
+      [req.params.estimateId]
+    );
+    if (!est) return res.status(404).json({ error: 'Not found' });
+
+    // Same visibility rule the estimate list applies -- an Account Officer cannot invoice an
+    // estimate they are not allowed to see.
+    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    if (salesScope && !salesScope.includes(est.sales_rep_id)) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+
+    const [lines] = await pool.query(
+      `SELECT ejo.id AS estimate_job_order_id, ejo.job_type_id, jt.display_name AS item_name,
+              ejo.description, ejo.job_location_id, loc.location_name AS job_location_name,
+              ejo.quantity, ejo.units, ejo.price_per_unit, ejo.disc_percent, ejo.disc_price_per_unit,
+              ejo.subtotal, ejo.disc_amount, ejo.net_of_tax, ejo.tax_amount, ejo.gross_amount,
+              t.code AS tax_code, ejo.nstdjo_no
+       FROM estimate_job_orders ejo
+       LEFT JOIN job_types jt ON jt.id = ejo.job_type_id
+       LEFT JOIN locations loc ON loc.id = ejo.job_location_id
+       LEFT JOIN taxes t ON t.id = ejo.tax_code_id
+       WHERE ejo.estimate_id = ?
+       ORDER BY ejo.line_no`,
+      [req.params.estimateId]
+    );
+
+    // Already invoiced off this Estimate. Not a block -- part-billing an estimate across several
+    // invoices is legitimate -- but the form says so, because nothing else would.
+    const [[prior]] = await pool.query(
+      `SELECT COUNT(*) AS n, COALESCE(SUM(gross_amount), 0) AS billed
+         FROM sales_invoices WHERE estimate_id = ? AND status <> 'cancelled'`,
+      [req.params.estimateId]
+    );
+
+    res.json({
+      ...est,
+      lines,
+      prior_invoice_count: Number(prior.n),
+      prior_invoiced_amount: Number(prior.billed),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Powers Create SI when it was reached from a Delivery Ticket's own Bill > SI button
 // rather than from the Sales Order. The invoice bills exactly what the ticket says --
 // its stored lines, ad-hoc "Add Item" charges included -- so nothing is recomputed from
@@ -234,7 +310,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // header blanks sit above the line items. The address falls back to any address on file
     // when no BILLING one is flagged default, since most customers carry only one.
     const [[si]] = await pool.query(
-      `SELECT si.*, so.sales_order_no, c.name AS customer_name, dt.dt_no,
+      `SELECT si.*, so.sales_order_no, e.estimate_no, c.name AS customer_name, dt.dt_no,
               c.tin AS customer_tin, c.company_name AS customer_company,
               COALESCE(
                 (SELECT ca.address_line FROM customer_addresses ca
@@ -246,9 +322,10 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
               loc.location_name AS office_location_name, d.name AS department_name,
               u.display_name AS created_by_name
        FROM sales_invoices si
-       JOIN sales_orders so ON so.id = si.sales_order_id
+       LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+       LEFT JOIN estimates e ON e.id = si.estimate_id
        LEFT JOIN delivery_tickets dt ON dt.id = si.delivery_ticket_id
-       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id)
        LEFT JOIN employees sr ON sr.id = si.sales_rep_id
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        LEFT JOIN departments d ON d.id = si.department_id
@@ -268,12 +345,17 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // invoice print has an Item Code column for. It is resolved through the job order first
     // and the sales-order line only as a fallback: sales_order_line_id is set on just 4 of
     // ~118,000 invoice lines, while job_order_id is set on ~88% of them.
+    //
+    // An estimate-sourced line has neither, which is why it carries its own job_type_id -- it is
+    // the last resort here rather than the first, so nothing changes for the lines that already
+    // resolve. job_order_no stays null on those lines and the JO # column reads empty, which is
+    // the truth: no Job Order exists until the Estimate is converted.
     const [lines] = await pool.query(
-      `SELECT sil.*, jo.job_order_no, jt.item_code
+      `SELECT sil.*, jo.job_order_no, jt.item_code, jt.display_name AS item_name
        FROM sales_invoice_lines sil
        LEFT JOIN job_orders jo ON jo.id = sil.job_order_id
        LEFT JOIN sales_order_lines sol ON sol.id = sil.sales_order_line_id
-       LEFT JOIN job_types jt ON jt.id = COALESCE(jo.job_type_id, sol.job_type_id)
+       LEFT JOIN job_types jt ON jt.id = COALESCE(jo.job_type_id, sol.job_type_id, sil.job_type_id)
        WHERE sil.sales_invoice_id = ?`,
       [req.params.id]
     );
@@ -402,6 +484,102 @@ async function billDeliveryTicket(req, res, conn) {
 // Saving is what actually marks each included SO line as billed -- every line's own
 // quantity_delivered - quantity_invoiced gap gets caught up in one shot (the real form
 // has no per-line "amount to invoice" input, just Delete to exclude a line entirely).
+// Bills an Estimate directly. Reached from Create New on the invoice list, for work that is
+// invoiced before it is ever converted into a Sales Order.
+//
+// What this deliberately does NOT do, against the Sales Order path:
+//   - no delivered-minus-invoiced arithmetic: there are no Job Orders to have delivered anything
+//   - no job_orders.quantity_invoiced update, for the same reason
+//   - no Sales Order status recompute: there is no Sales Order
+// The Estimate's own line figures are written through as they stand, because they were priced and
+// approved there. The invoice is still an INV-#, as every invoice in this build is.
+async function billEstimate(req, res, conn) {
+  const {
+    estimate_id: estimateId, date_created: dateCreated, date_due: dateDue, term, bs_si_no: bsSiNo,
+    po_no: poNo, sales_rep_id: salesRepId, office_location_id: officeLocationId, department_id: departmentId,
+    bill_to_address: billToAddress, memo, withholding_tax_pct: withholdingTaxPct,
+    estimate_job_order_ids: submitted,
+  } = req.body;
+
+  const [[est]] = await conn.query('SELECT id, estimate_no, sales_rep_id FROM estimates WHERE id = ?', [estimateId]);
+  if (!est) return res.status(404).json({ error: 'That Estimate no longer exists.' });
+
+  // The same visibility rule as everywhere else: an Account Officer cannot bill an estimate they
+  // are not allowed to see. Checked on the server because the picker being filtered is not a
+  // restriction.
+  const salesScope = await getSalesRepEmployeeScope(req.user.id);
+  if (salesScope && !salesScope.includes(est.sales_rep_id)) {
+    return res.status(404).json({ error: 'That Estimate no longer exists.' });
+  }
+
+  const submittedIds = (Array.isArray(submitted) ? submitted : []).map(Number).filter(Boolean);
+  if (!submittedIds.length) return res.status(400).json({ error: 'Include at least one item.' });
+
+  const [lines] = await conn.query(
+    `SELECT ejo.*, t.code AS tax_code
+       FROM estimate_job_orders ejo
+       LEFT JOIN taxes t ON t.id = ejo.tax_code_id
+      WHERE ejo.estimate_id = ? AND ejo.id IN (?)`,
+    [estimateId, submittedIds]
+  );
+  if (lines.length !== submittedIds.length) {
+    return res.status(400).json({ error: 'One of the selected items is no longer on this Estimate.' });
+  }
+
+  const num = (v) => Number(v || 0);
+  const subtotal = lines.reduce((s, l) => s + num(l.subtotal), 0);
+  const discountAmount = lines.reduce((s, l) => s + num(l.disc_amount), 0);
+  const netOfTax = lines.reduce((s, l) => s + num(l.net_of_tax), 0);
+  const taxAmount = lines.reduce((s, l) => s + num(l.tax_amount), 0);
+  const grossAmount = lines.reduce((s, l) => s + num(l.gross_amount), 0);
+  const ewtAmount = netOfTax * (num(withholdingTaxPct) / 100);
+  const amountDue = grossAmount - ewtAmount;
+  await assertPeriodOpen(dateCreated, 'ar', conn);
+
+  await conn.beginTransaction();
+  const [result] = await conn.query(
+    `INSERT INTO sales_invoices
+       (invoice_no, sales_order_id, estimate_id, date_created, date_due, term, bs_si_no, po_no, sales_rep_id,
+        office_location_id, department_id, bill_to_address, memo, withholding_tax_pct, subtotal,
+        discount_amount, net_of_tax, ewt_amount, tax_amount, gross_amount, amount_due, created_by_user_id)
+     VALUES ('', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      estimateId, dateCreated || new Date().toISOString().slice(0, 10), dateDue || null, term || null,
+      bsSiNo || null, poNo || null, salesRepId || null, officeLocationId || null, departmentId || null,
+      billToAddress || null, memo || null, withholdingTaxPct || 0, subtotal, discountAmount, netOfTax,
+      ewtAmount, taxAmount, grossAmount, amountDue, req.user.id,
+    ]
+  );
+  const invoiceId = result.insertId;
+  await conn.query('UPDATE sales_invoices SET invoice_no = ? WHERE id = ?', [`INV-${invoiceId}`, invoiceId]);
+
+  for (const l of lines) {
+    await conn.query(
+      `INSERT INTO sales_invoice_lines
+         (sales_invoice_id, sales_order_line_id, estimate_job_order_id, job_type_id, job_order_id, description,
+          job_location_id, quantity, units, price_per_unit, subtotal, disc_percent, disc_amount,
+          disc_price_per_unit, net_of_tax, tax_code, tax_amount, gross_amount)
+       VALUES (?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        invoiceId, l.id, l.job_type_id, l.description, l.job_location_id, l.quantity, l.units,
+        l.price_per_unit, l.subtotal, l.disc_percent, l.disc_amount, l.disc_price_per_unit,
+        l.net_of_tax, l.tax_code, l.tax_amount, l.gross_amount,
+      ]
+    );
+  }
+
+  await logAudit(conn, {
+    invoiceId, userId: req.user.id, eventType: 'Created', fieldName: 'invoice_no', newValue: `INV-${invoiceId}`,
+  });
+  await logAudit(conn, {
+    invoiceId, userId: req.user.id, eventType: 'Created', fieldName: 'estimate_id', newValue: est.estimate_no,
+  });
+  await conn.commit();
+
+  const [[row]] = await pool.query('SELECT * FROM sales_invoices WHERE id = ?', [invoiceId]);
+  return res.status(201).json(row);
+}
+
 router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
@@ -410,6 +588,14 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
       po_no: poNo, sales_rep_id: salesRepId, office_location_id: officeLocationId, department_id: departmentId,
       bill_to_address: billToAddress, memo, withholding_tax_pct: withholdingTaxPct, sales_order_line_ids: lineIds,
     } = req.body;
+
+    // Raising an invoice against an Estimate is its own path: no Sales Order, no Job Orders, and
+    // so nothing to net off or to advance a status on. Checked before the Sales Order guard below,
+    // which would otherwise reject it for the very thing that makes it what it is.
+    if (req.body.estimate_id) {
+      return billEstimate(req, res, conn);
+    }
+
     if (!salesOrderId) return res.status(400).json({ error: 'Sales Order is required.' });
 
     // Billing a Delivery Ticket is a different path entirely: the ticket's own lines are

@@ -191,7 +191,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   try {
     const {
       status, search, sales_rep_id: salesRepId, office_location_id: officeLocationId, as_of: asOf,
-      customer_id: customerId, page = '1', limit = '10',
+      customer_id: customerId, with_job_orders: withJobOrders, page = '1', limit = '10',
     } = req.query;
 
     // Filters other than status (used both for the list itself and for the tab
@@ -203,6 +203,12 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     if (officeLocationId) { commonWhere.push('e.office_location_id = ?'); commonParams.push(officeLocationId); }
     if (asOf) { commonWhere.push('e.date_created <= ?'); commonParams.push(asOf); }
     if (customerId) { commonWhere.push('e.customer_id = ?'); commonParams.push(customerId); }
+    // Only estimates that actually carry job order lines. 68,852 of 70,120 estimates are migrated
+    // headers with no lines at all -- offering those to a picker that exists to turn lines into
+    // invoice lines would be offering a dead end. Used by Create New on the invoice list.
+    if (withJobOrders === '1' || withJobOrders === 'true') {
+      commonWhere.push('EXISTS (SELECT 1 FROM estimate_job_orders ejo WHERE ejo.estimate_id = e.id)');
+    }
     if (search) {
       commonWhere.push('(e.estimate_no LIKE ? OR c.name LIKE ? OR e.contract_description LIKE ?)');
       commonParams.push(`%${search}%`, `%${search}%`, `%${search}%`);

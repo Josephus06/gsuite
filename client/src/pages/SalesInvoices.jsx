@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import SyncFromSourceButton from '../components/SyncFromSourceButton';
+import SalesInvoiceModal from '../components/SalesInvoiceModal';
+import { useAuth } from '../context/useAuth';
 
 const PAGE_SIZE = 10;
 const STATUS_LABELS = { saved: 'Open', cancelled: 'Void' };
@@ -19,6 +21,13 @@ function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
 // types), so Type always reads "SI" and there's no Type filter -- everything else
 // (columns, Status filter, search) mirrors the real screen.
 export default function SalesInvoices() {
+  const navigate = useNavigate();
+  const { can } = useAuth();
+  // Raising an invoice from here goes through the same POST as the Sales Order flow, which the
+  // server gates on can_edit -- so gate the button on the same thing rather than on can_add,
+  // which would show a button that only fails on Save.
+  const mayCreate = can('/sales-invoices', 'can_edit');
+  const [showCreate, setShowCreate] = useState(false);
 
   const [rows, setRows] = useState([]);
   // The server now decides the page, so the total has to come from it too -- rows.length is
@@ -63,8 +72,21 @@ export default function SalesInvoices() {
     <div>
       <div className="page-header">
         <h1>Saved Invoices</h1>
-        <SyncFromSourceButton module="sales_invoices" onDone={load} />
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {mayCreate && (
+            <button className="btn btn-primary" onClick={() => setShowCreate(true)}>Create New</button>
+          )}
+          <SyncFromSourceButton module="sales_invoices" onDone={load} />
+        </div>
       </div>
+
+      {showCreate && (
+        <SalesInvoiceModal
+          fromEstimate
+          onClose={() => setShowCreate(false)}
+          onSaved={(si) => { setShowCreate(false); navigate(`/sales-invoices/${si.id}`); }}
+        />
+      )}
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="filter-grid">
