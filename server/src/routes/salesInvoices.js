@@ -174,8 +174,10 @@ router.get('/for-sales-order/:salesOrderId', requireAuth, requirePermission(ROUT
 // stored money columns are used as they stand -- they were priced and approved on the Estimate,
 // and recomputing them would quietly restate an approved figure.
 //
-// job_order_no is deliberately absent from every line. The JO # column stays empty until the
-// Estimate is converted into a Sales Order and its Job Orders raised.
+// The JO # column is empty only while there is genuinely no Job Order. Once an Estimate has been
+// converted, its lines DO have one -- sales_order_lines.estimate_job_order_id points straight back
+// here -- and 3,515 of the 4,721 estimate lines resolve to one. Showing a dash for those was
+// wrong: it read as "this work has no Job Order" when the truth was "this form never looked".
 router.get('/for-estimate/:estimateId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[est]] = await pool.query(
@@ -213,11 +215,15 @@ router.get('/for-estimate/:estimateId', requireAuth, requirePermission(ROUTE, 'c
               ejo.description, ejo.job_location_id, loc.location_name AS job_location_name,
               ejo.quantity, ejo.units, ejo.price_per_unit, ejo.disc_percent, ejo.disc_price_per_unit,
               ejo.subtotal, ejo.disc_amount, ejo.net_of_tax, ejo.tax_amount, ejo.gross_amount,
-              t.code AS tax_code, ejo.nstdjo_no
+              t.code AS tax_code, ejo.nstdjo_no,
+              jo.id AS job_order_id, jo.job_order_no,
+              jo.quantity_delivered, jo.quantity_invoiced
        FROM estimate_job_orders ejo
        LEFT JOIN job_types jt ON jt.id = ejo.job_type_id
        LEFT JOIN locations loc ON loc.id = ejo.job_location_id
        LEFT JOIN taxes t ON t.id = ejo.tax_code_id
+       LEFT JOIN sales_order_lines sol ON sol.estimate_job_order_id = ejo.id
+       LEFT JOIN job_orders jo ON jo.id = sol.job_order_id
        WHERE ejo.estimate_id = ?
        ORDER BY ejo.line_no`,
       [req.params.estimateId]
@@ -530,10 +536,15 @@ async function billEstimate(req, res, conn) {
   const submittedIds = (Array.isArray(submitted) ? submitted : []).map(Number).filter(Boolean);
   if (!submittedIds.length) return res.status(400).json({ error: 'Include at least one item.' });
 
+  // job_order_id comes along when the Estimate has been converted, so the saved invoice shows the
+  // same JO # the form did. It is recorded, NOT billed: quantity_invoiced is left alone, because
+  // that running total belongs to the Sales Order path and tracks delivered-versus-invoiced. An
+  // estimate-sourced invoice has not delivered anything.
   const [lines] = await conn.query(
-    `SELECT ejo.*, t.code AS tax_code
+    `SELECT ejo.*, t.code AS tax_code, sol.job_order_id
        FROM estimate_job_orders ejo
        LEFT JOIN taxes t ON t.id = ejo.tax_code_id
+       LEFT JOIN sales_order_lines sol ON sol.estimate_job_order_id = ejo.id
       WHERE ejo.estimate_id = ? AND ejo.id IN (?)`,
     [estimateId, submittedIds]
   );
@@ -574,9 +585,9 @@ async function billEstimate(req, res, conn) {
          (sales_invoice_id, sales_order_line_id, estimate_job_order_id, job_type_id, job_order_id, description,
           job_location_id, quantity, units, price_per_unit, subtotal, disc_percent, disc_amount,
           disc_price_per_unit, net_of_tax, tax_code, tax_amount, gross_amount)
-       VALUES (?, NULL, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        invoiceId, l.id, l.job_type_id, l.description, l.job_location_id, l.quantity, l.units,
+        invoiceId, l.id, l.job_type_id, l.job_order_id || null, l.description, l.job_location_id, l.quantity, l.units,
         l.price_per_unit, l.subtotal, l.disc_percent, l.disc_amount, l.disc_price_per_unit,
         l.net_of_tax, l.tax_code, l.tax_amount, l.gross_amount,
       ]
@@ -755,11 +766,18 @@ router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
     if (!si) return res.status(404).json({ error: 'Not found' });
     if (si.status === 'cancelled') return res.status(409).json({ error: 'This Sales Invoice is already cancelled.' });
 
-    const [lines] = await conn.query('SELECT job_order_id, sales_order_line_id, quantity FROM sales_invoice_lines WHERE sales_invoice_id = ?', [req.params.id]);
+    const [lines] = await conn.query(
+      'SELECT job_order_id, sales_order_line_id, estimate_job_order_id, quantity FROM sales_invoice_lines WHERE sales_invoice_id = ?',
+      [req.params.id]
+    );
 
     await conn.beginTransaction();
     for (const l of lines) {
-      if (l.job_order_id) {
+      // Give back only what was taken. An estimate-sourced line carries a job_order_id for
+      // reference -- so the invoice shows the JO # the work became -- but billing it never
+      // advanced quantity_invoiced, so giving that quantity back here would credit a job order
+      // for an invoice that never debited it.
+      if (l.job_order_id && !l.estimate_job_order_id) {
         await conn.query('UPDATE job_orders SET quantity_invoiced = GREATEST(quantity_invoiced - ?, 0) WHERE id = ?', [l.quantity, l.job_order_id]);
       }
     }

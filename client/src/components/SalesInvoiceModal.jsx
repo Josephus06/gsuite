@@ -295,9 +295,12 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, from
                   return (
                     <tr key={key} style={excluded ? { opacity: 0.4, textDecoration: 'line-through' } : undefined}>
                       <td>{idx + 1}</td>
-                      {/* Blank on an estimate line, and blank is the truth: the Job Order does
-                          not exist until the Estimate is converted into a Sales Order. */}
-                      <td title={fromEstimate ? 'No Job Order until this Estimate becomes a Sales Order' : undefined}>
+                      {/* Blank only while there genuinely is no Job Order -- an Estimate that has
+                          been converted shows the JO its line became. */}
+                      <td title={fromEstimate && !l.job_order_no
+                        ? 'No Job Order yet -- one is raised when this Estimate becomes a Sales Order'
+                        : undefined}
+                      >
                         {l.job_order_no || '—'}
                       </td>
                       <td>{l.item_name}</td>
