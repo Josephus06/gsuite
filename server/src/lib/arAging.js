@@ -94,8 +94,9 @@ async function buildArAging(asOf, filters = {}) {
   const [invoices] = await pool.query(
     `SELECT si.id, so.customer_id, c.name AS customer_name, si.date_created, si.date_due, si.gross_amount
      FROM sales_invoices si
-     JOIN sales_orders so ON so.id = si.sales_order_id
-     JOIN customers c ON c.id = so.customer_id
+     LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+     LEFT JOIN estimates e ON e.id = si.estimate_id
+     JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id)
      WHERE si.status != 'cancelled' AND si.date_created <= ?${invLoc.sql}${nameClause}`,
     [asOf, ...invLoc.params, ...nameParam]
   );
@@ -239,8 +240,9 @@ async function buildArAgingCustomerDetails(customerId, asOf) {
                         JOIN credit_memos cm ON cm.id = cma.credit_memo_id
                         WHERE cma.sales_invoice_id = si.id AND cm.status != 'voided' AND cm.date_created <= ?), 0) AS settled
      FROM sales_invoices si
-     JOIN sales_orders so ON so.id = si.sales_order_id
-     WHERE so.customer_id = ? AND si.status != 'cancelled' AND si.date_created <= ?`,
+     LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+     LEFT JOIN estimates e ON e.id = si.estimate_id
+     WHERE COALESCE(so.customer_id, e.customer_id) = ? AND si.status != 'cancelled' AND si.date_created <= ?`,
     [asOf, asOf, customerId, asOf]
   );
 
@@ -314,8 +316,10 @@ async function buildArAgingCustomerLedger(customerId, asOf) {
 
   const [invoices] = await pool.query(
     `SELECT si.id, si.invoice_no, si.date_created, si.gross_amount
-     FROM sales_invoices si JOIN sales_orders so ON so.id = si.sales_order_id
-     WHERE so.customer_id = ? AND si.status != 'cancelled' AND si.date_created <= ?`,
+     FROM sales_invoices si
+     LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+     LEFT JOIN estimates e ON e.id = si.estimate_id
+     WHERE COALESCE(so.customer_id, e.customer_id) = ? AND si.status != 'cancelled' AND si.date_created <= ?`,
     [customerId, asOf]
   );
   for (const si of invoices) {

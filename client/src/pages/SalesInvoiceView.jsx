@@ -113,13 +113,23 @@ export default function SalesInvoiceView() {
   // Both actions settle or reduce what's owed, so they only make sense while something is
   // still owed and the invoice hasn't been voided.
   const isSettleable = si.status !== 'cancelled' && Number(si.amount_due) > 0;
+  // Each of these belongs to the module that actually receives the record, not to Sales
+  // Invoices -- the same rule SalesOrderView already applies to Item Delivery. Accepting a
+  // payment POSTs to /customer-payments and a credit memo to /credit-memos, and both servers
+  // ask for can_add on their OWN page. Gating them on Sales Invoices' can_edit hid the button
+  // from people the server would have allowed, which is how an account with customer-payment
+  // rights ended up unable to take a payment against an invoice it could read.
+  const canTakePayment = can('/customer-payments', 'can_add');
+  const canRaiseCreditMemo = can('/credit-memos', 'can_add');
 
   return (
     <div>
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(`/sales-orders/${si.sales_order_id}`)}>Back</button>
+          {/* Back to wherever this invoice came from -- an estimate-sourced one has no Sales
+              Order to go back to, so it returns to the invoice list. */}
+          <button className="btn btn-sm" onClick={() => navigate(si.sales_order_id ? `/sales-orders/${si.sales_order_id}` : '/sales-invoices')}>Back</button>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Invoice isn't implemented in this build">Edit</button>}
           <ButtonMenu
             label="Print"
@@ -128,8 +138,8 @@ export default function SalesInvoiceView() {
               { label: 'Type 2', hint: 'Plain paper, full invoice', onClick: () => window.open(`/sales-invoices/${id}/print?type=2`, '_blank') },
             ]}
           />
-          {canEdit && isSettleable && <button className="btn btn-sm btn-primary" onClick={() => setShowPaymentModal(true)}>Accept Payment</button>}
-          {canEdit && isSettleable && <button className="btn btn-sm btn-primary" onClick={() => setShowCreditMemoModal(true)}>Credit Memo</button>}
+          {canTakePayment && isSettleable && <button className="btn btn-sm btn-primary" onClick={() => setShowPaymentModal(true)}>Accept Payment</button>}
+          {canRaiseCreditMemo && isSettleable && <button className="btn btn-sm btn-primary" onClick={() => setShowCreditMemoModal(true)}>Credit Memo</button>}
           {canEdit && isSaved && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Void</button>}
         </div>
       </div>
@@ -146,7 +156,16 @@ export default function SalesInvoiceView() {
         <div className="estimate-detail-grid">
           <div>
             <div>Customer : <span className="hi">{si.customer_name}</span></div>
-            <div>Created Form : <button type="button" className="link-btn" onClick={() => navigate(`/sales-orders/${si.sales_order_id}`)}>{si.sales_order_no}</button></div>
+            {/* An invoice raised from an Estimate has no Sales Order, so this read blank and
+                linked to /sales-orders/null. It shows whichever source the invoice actually has. */}
+            <div>
+              Created Form :{' '}
+              {si.sales_order_id ? (
+                <button type="button" className="link-btn" onClick={() => navigate(`/sales-orders/${si.sales_order_id}`)}>{si.sales_order_no}</button>
+              ) : si.estimate_id ? (
+                <button type="button" className="link-btn" onClick={() => navigate(`/estimates/${si.estimate_id}`)}>{si.estimate_no}</button>
+              ) : <span className="hi">—</span>}
+            </div>
             {si.delivery_ticket_id && (
               <div>Delivery Ticket : <button type="button" className="link-btn" onClick={() => navigate(`/delivery-tickets/${si.delivery_ticket_id}`)}>{si.dt_no}</button></div>
             )}
@@ -253,7 +272,12 @@ export default function SalesInvoiceView() {
 
       {tab === 'related' && (
         <div className="card">
-          <p>Sales Order: <button type="button" className="btn btn-sm" onClick={() => navigate(`/sales-orders/${si.sales_order_id}`)}>{si.sales_order_no}</button></p>
+          {si.sales_order_id && (
+            <p>Sales Order: <button type="button" className="btn btn-sm" onClick={() => navigate(`/sales-orders/${si.sales_order_id}`)}>{si.sales_order_no}</button></p>
+          )}
+          {si.estimate_id && (
+            <p>Estimate: <button type="button" className="btn btn-sm" onClick={() => navigate(`/estimates/${si.estimate_id}`)}>{si.estimate_no}</button></p>
+          )}
           {si.delivery_ticket_id && (
             <p>Delivery Ticket: <button type="button" className="btn btn-sm" onClick={() => navigate(`/delivery-tickets/${si.delivery_ticket_id}`)}>{si.dt_no}</button></p>
           )}

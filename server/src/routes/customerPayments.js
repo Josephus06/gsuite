@@ -53,12 +53,16 @@ async function reverseInvoiceApplication(conn, invoiceId, amount) {
 router.get('/for-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[si]] = await pool.query(
+      // An invoice raised from an Estimate has no Sales Order, so the customer comes from
+      // whichever source it has. An INNER JOIN here made the payment form fail to load at all
+      // for those invoices -- they could be raised but never collected.
       `SELECT si.id AS sales_invoice_id, si.invoice_no, si.office_location_id, si.department_id, si.memo,
-              si.amount_due, so.customer_id, c.name AS customer_name,
+              si.amount_due, COALESCE(so.customer_id, e.customer_id) AS customer_id, c.name AS customer_name,
               loc.location_name AS office_location_name, d.name AS department_name
        FROM sales_invoices si
-       JOIN sales_orders so ON so.id = si.sales_order_id
-       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+       LEFT JOIN estimates e ON e.id = si.estimate_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id)
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        LEFT JOIN departments d ON d.id = si.department_id
        WHERE si.id = ?`,
@@ -67,12 +71,15 @@ router.get('/for-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can
     if (!si) return res.status(404).json({ error: 'Not found' });
 
     const [applyLines] = await pool.query(
+      // Same reason: an estimate-sourced invoice belongs in this customer's open items too,
+      // otherwise a payment settling several invoices at once would silently skip it.
       `SELECT si2.id AS sales_invoice_id, si2.invoice_no, si2.date_created, si2.gross_amount, si2.amount_due,
               c.name AS customer_name
        FROM sales_invoices si2
-       JOIN sales_orders so2 ON so2.id = si2.sales_order_id
-       LEFT JOIN customers c ON c.id = so2.customer_id
-       WHERE so2.customer_id = ? AND si2.status != 'cancelled' AND si2.amount_due > 0
+       LEFT JOIN sales_orders so2 ON so2.id = si2.sales_order_id
+       LEFT JOIN estimates e2 ON e2.id = si2.estimate_id
+       LEFT JOIN customers c ON c.id = COALESCE(so2.customer_id, e2.customer_id)
+       WHERE COALESCE(so2.customer_id, e2.customer_id) = ? AND si2.status != 'cancelled' AND si2.amount_due > 0
        ORDER BY si2.id DESC`,
       [si.customer_id]
     );
@@ -129,12 +136,15 @@ router.get('/for-customer/:customerId', requireAuth, requirePermission(ROUTE, 'c
     if (!customer) return res.status(404).json({ error: 'Customer not found' });
 
     const [applyLines] = await pool.query(
+      // Reached from Customer Payments' own New button rather than from an invoice, and it has
+      // to show the same open items the invoice-sourced form does -- estimate-sourced included.
       `SELECT si.id AS sales_invoice_id, si.invoice_no, si.date_created, si.gross_amount, si.amount_due,
               c.name AS customer_name
          FROM sales_invoices si
-         JOIN sales_orders so ON so.id = si.sales_order_id
-         LEFT JOIN customers c ON c.id = so.customer_id
-        WHERE so.customer_id = ? AND si.status != 'cancelled' AND si.amount_due > 0
+         LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+         LEFT JOIN estimates e ON e.id = si.estimate_id
+         LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id)
+        WHERE COALESCE(so.customer_id, e.customer_id) = ? AND si.status != 'cancelled' AND si.amount_due > 0
         ORDER BY si.id DESC`,
       [req.params.customerId],
     );

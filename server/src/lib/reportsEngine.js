@@ -393,7 +393,7 @@ async function resolveGlLineNames(lines) {
   const idsByType = new Map();
   for (const l of lines) { if (!idsByType.has(l.source_type)) idsByType.set(l.source_type, new Set()); idsByType.get(l.source_type).add(l.source_id); }
   const NAME_SQL = {
-    sales_invoice: 'SELECT si.id, c.name FROM sales_invoices si JOIN sales_orders so ON so.id=si.sales_order_id JOIN customers c ON c.id=so.customer_id WHERE si.id IN (?)',
+    sales_invoice: 'SELECT si.id, c.name FROM sales_invoices si LEFT JOIN sales_orders so ON so.id=si.sales_order_id LEFT JOIN estimates e ON e.id=si.estimate_id JOIN customers c ON c.id=COALESCE(so.customer_id, e.customer_id) WHERE si.id IN (?)',
     assembly_build: 'SELECT ab.id, c.name FROM assembly_builds ab JOIN job_orders jo ON jo.id=ab.job_order_id JOIN sales_orders so ON so.id=jo.sales_order_id JOIN customers c ON c.id=so.customer_id WHERE ab.id IN (?)',
     item_delivery: 'SELECT del.id, c.name FROM item_deliveries del JOIN sales_orders so ON so.id=del.sales_order_id JOIN customers c ON c.id=so.customer_id WHERE del.id IN (?)',
     customer_payment: 'SELECT cp.id, c.name FROM customer_payments cp JOIN customers c ON c.id=cp.customer_id WHERE cp.id IN (?)',

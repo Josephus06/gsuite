@@ -62,11 +62,13 @@ router.get('/for-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can
   try {
     const [[si]] = await pool.query(
       `SELECT si.id AS sales_invoice_id, si.invoice_no, si.office_location_id, si.memo, si.amount_due,
-              si.gross_amount, si.status, so.customer_id, c.name AS customer_name,
+              si.gross_amount, si.status, COALESCE(so.customer_id, e.customer_id) AS customer_id,
+              c.name AS customer_name,
               loc.location_name AS office_location_name
        FROM sales_invoices si
-       JOIN sales_orders so ON so.id = si.sales_order_id
-       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+       LEFT JOIN estimates e ON e.id = si.estimate_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id)
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        WHERE si.id = ?`,
       [req.params.invoiceId]
@@ -231,8 +233,11 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     if (!salesInvoiceId) return res.status(400).json({ error: 'Invoice is required.' });
 
     const [[si]] = await conn.query(
-      `SELECT si.id, si.status, so.customer_id FROM sales_invoices si
-       JOIN sales_orders so ON so.id = si.sales_order_id WHERE si.id = ?`,
+      `SELECT si.id, si.status, COALESCE(so.customer_id, e.customer_id) AS customer_id
+         FROM sales_invoices si
+         LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+         LEFT JOIN estimates e ON e.id = si.estimate_id
+        WHERE si.id = ?`,
       [salesInvoiceId]
     );
     if (!si) return res.status(404).json({ error: 'Invoice not found.' });
