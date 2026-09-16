@@ -291,16 +291,23 @@ label {
 .topnav-brand {
   display: flex;
   align-items: center;
-  font-weight: 700;
-  font-size: 16px;
-  color: var(--text-h);
   padding-right: 16px;
   margin-right: 8px;
   border-right: 1px solid var(--border);
-  white-space: nowrap;
-  overflow: hidden;
+  flex-shrink: 0;
 }
-.topnav-brand-short { display: none; }
+/* Sized by height so the 2.52:1 wordmark keeps its proportions, and drawn at 3x (242x96) so it
+   stays sharp on a retina screen. 30px inside a 56px bar leaves it breathing room. */
+.topnav-logo {
+  height: 30px;
+  width: auto;
+  display: block;
+}
+/* Only one of the pair is ever shown. The dark copy exists because the navy in this wordmark
+   measures 1.05:1 against the night-mode navbar -- see Layout.jsx. */
+.topnav-logo-dark { display: none; }
+:root[data-theme='dark'] .topnav-logo-light { display: none; }
+:root[data-theme='dark'] .topnav-logo-dark { display: block; }
 .topnav-menu { display: flex; align-items: stretch; gap: 2px; }
 .topnav-menu > a {
   display: flex;
@@ -454,8 +461,9 @@ label {
 @media (max-width: 860px) {
   .topnav-hamburger { display: flex; }
   .topnav-menu { display: none; }
-  .topnav-brand-full { display: none; }
-  .topnav-brand-short { display: inline; }
+  /* The logo shrinks rather than disappearing: it is the only thing naming the system once the
+     menu collapses behind the hamburger. */
+  .topnav-logo { height: 24px; }
   .topnav-brand { padding-right: 8px; margin-right: 4px; }
   .topnav-user-name { display: none; }
   .topnav { padding: 0 10px; gap: 4px; }

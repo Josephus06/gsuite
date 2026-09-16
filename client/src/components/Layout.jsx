@@ -6,6 +6,8 @@ import ChatWidget from './ChatWidget';
 import RunningJobTimer from './RunningJobTimer';
 import NotificationBell from './NotificationBell';
 import ButtonMenu from './ButtonMenu';
+import t1sLogo from '../assets/t1s-logo.png';
+import t1sLogoDark from '../assets/t1s-logo-dark.png';
 import api from '../api/client';
 import { fileToScaledDataUrl } from '../utils/image';
 import { resolveTheme, setTheme, watchSystemTheme } from '../utils/theme';
@@ -451,9 +453,12 @@ export default function Layout() {
         >
           {mobileOpen ? '✕' : '☰'}
         </button>
+        {/* Two files rather than one with a CSS filter: the wordmark is navy on orange, and navy
+            measures 1.05:1 against the night-mode navbar -- most of the logo would simply not be
+            there. The dark copy lifts the navy to 13.25:1 and leaves the orange alone. */}
         <div className="topnav-brand">
-          <span className="topnav-brand-full">Cebu Graphicstar Imaging Corp.</span>
-          <span className="topnav-brand-short">GSuite</span>
+          <img className="topnav-logo topnav-logo-light" src={t1sLogo} alt="T1S — The One System" />
+          <img className="topnav-logo topnav-logo-dark" src={t1sLogoDark} alt="" aria-hidden="true" />
         </div>
         <nav className="topnav-menu">
           {visibleStructure.map((item) => (item.children || item.sections ? (
