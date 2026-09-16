@@ -16,9 +16,10 @@ function money(v) {
 // departments -- a few hundred rows that arrive once -- and wrong for estimates, of which there
 // are 69,588: loading them to let someone pick one is the whole-table-to-show-ten problem again.
 //
-// `with_job_orders=1` narrows it further, to the 1,249 estimates that actually carry lines.
-// The other 68,000 are migrated headers with no line items at all, and picking one would open a
-// form with nothing to invoice and no explanation of why.
+// `invoiceable=1` narrows it to the estimates that may actually be billed: approved by a
+// supervisor, and carrying line items. That is 1,208 of the 70,125 -- the rest are migrated
+// headers with no lines, or have not cleared supervisor approval, or are cancelled or
+// disapproved. See server/src/lib/estimateBilling.js, which is also what refuses the save.
 export default function EstimatePicker({ value, selectedLabel, onSelect, disabled }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -32,7 +33,7 @@ export default function EstimatePicker({ value, selectedLabel, onSelect, disable
     let cancelled = false;
     const t = setTimeout(() => {
       setLoading(true);
-      api.get('/estimates', { params: { search: search.trim() || undefined, page, limit: PAGE_SIZE, with_job_orders: 1 } })
+      api.get('/estimates', { params: { search: search.trim() || undefined, page, limit: PAGE_SIZE, invoiceable: 1 } })
         .then(({ data }) => {
           if (cancelled) return;
           setRows(data.rows || []);
@@ -73,7 +74,7 @@ export default function EstimatePicker({ value, selectedLabel, onSelect, disable
             />
           </div>
           <div className="muted" style={{ marginBottom: 8 }}>
-            {loading ? 'Searching…' : `${total} estimate(s) with line items.`}
+            {loading ? 'Searching…' : `${total} estimate(s) approved by a supervisor and carrying line items.`}
           </div>
           <div className="table-wrap" style={{ maxHeight: 360, overflowY: 'auto' }}>
             <table>
@@ -86,7 +87,7 @@ export default function EstimatePicker({ value, selectedLabel, onSelect, disable
               <tbody>
                 {!loading && rows.length === 0 && (
                   <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>
-                    No estimate with line items matches.
+                    No supervisor-approved estimate with line items matches.
                   </td></tr>
                 )}
                 {loading && (

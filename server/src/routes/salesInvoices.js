@@ -6,6 +6,7 @@ const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
 const { computeSalesInvoiceGl } = require('../lib/glImpact');
 
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
+const { whyNotBillable } = require('../lib/estimateBilling');
 
 const router = express.Router();
 // Unlike Item Fulfillment/Receipt/Quality Inspection/Item Delivery (all reached only by
@@ -200,6 +201,12 @@ router.get('/for-estimate/:estimateId', requireAuth, requirePermission(ROUTE, 'c
     if (salesScope && !salesScope.includes(est.sales_rep_id)) {
       return res.status(404).json({ error: 'Not found' });
     }
+
+    // Only a supervisor-approved estimate may be billed. Refused here as well as on save, so an
+    // ineligible estimate reached by any route than the picker says why instead of quietly
+    // opening a form that cannot be saved.
+    const blocked = whyNotBillable(est);
+    if (blocked) return res.status(409).json({ error: blocked });
 
     const [lines] = await pool.query(
       `SELECT ejo.id AS estimate_job_order_id, ejo.job_type_id, jt.display_name AS item_name,
@@ -501,7 +508,8 @@ async function billEstimate(req, res, conn) {
     estimate_job_order_ids: submitted,
   } = req.body;
 
-  const [[est]] = await conn.query('SELECT id, estimate_no, sales_rep_id FROM estimates WHERE id = ?', [estimateId]);
+  const [[est]] = await conn.query(
+    'SELECT id, estimate_no, sales_rep_id, status FROM estimates WHERE id = ?', [estimateId]);
   if (!est) return res.status(404).json({ error: 'That Estimate no longer exists.' });
 
   // The same visibility rule as everywhere else: an Account Officer cannot bill an estimate they
@@ -511,6 +519,13 @@ async function billEstimate(req, res, conn) {
   if (salesScope && !salesScope.includes(est.sales_rep_id)) {
     return res.status(404).json({ error: 'That Estimate no longer exists.' });
   }
+
+  // THE decision point. A filtered picker and a refusing form are both conveniences; this is the
+  // one an estimate cannot be billed around, including by a request that never went near the UI.
+  // Re-read inside the request rather than trusted from when the form was opened -- an estimate
+  // can be cancelled between opening Create SI and pressing Save.
+  const blocked = whyNotBillable(est);
+  if (blocked) return res.status(409).json({ error: blocked });
 
   const submittedIds = (Array.isArray(submitted) ? submitted : []).map(Number).filter(Boolean);
   if (!submittedIds.length) return res.status(400).json({ error: 'Include at least one item.' });
