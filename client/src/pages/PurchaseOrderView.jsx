@@ -222,7 +222,10 @@ export default function PurchaseOrderView() {
                 <tr>
                   <th>Item</th>
                   {po.type === 'PO1' && <th>PR #</th>}
-                  {po.type !== 'PO2' && <><th>Location</th><th>Department</th></>}
+                  {/* Every PO type carries these now, Landed Cost included -- it used to be
+                      the one type that could not say which warehouse or cost centre a
+                      freight charge belonged to. */}
+                  <th>Location</th><th>Department</th>
                   {po.type === 'PO3' && <th>JO #</th>}
                   <th>Qty</th><th>Unit</th><th>Rate</th><th>Disc %</th>
                   <th>Net of Tax</th><th>Tax Code</th><th>Tax Amt</th><th>Ext. Price</th><th>Received</th>
@@ -238,12 +241,8 @@ export default function PurchaseOrderView() {
                       </button>
                     </td>
                     {po.type === 'PO1' && <td>{l.pr_no || '—'}</td>}
-                    {po.type !== 'PO2' && (
-                      <>
-                        <td>{l.location_name || '—'}</td>
-                        <td>{l.department_name || '—'}</td>
-                      </>
-                    )}
+                    <td>{l.location_name || '—'}</td>
+                    <td>{l.department_name || '—'}</td>
                     {po.type === 'PO3' && <td>{l.job_order_no || '—'}</td>}
                     <td>{qty(l.qty)}</td>
                     {/* The unit of the Qty beside it, which is the PURCHASE unit -- receiving

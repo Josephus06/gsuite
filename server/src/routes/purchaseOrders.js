@@ -478,11 +478,16 @@ router.post('/:id/landed-costs', requireAuth, requirePermission(ROUTE, 'can_add'
 
     for (const l of computed) {
       await conn.query(
+        // location_id / department_id carried the same way every other PO path carries them: a
+        // freight or customs charge belongs to a warehouse and a cost centre as much as the goods
+        // it lands, and without them a Landed Cost PO was the one type that could not say where.
         `INSERT INTO purchase_order_lines
-           (purchase_order_id, item_id, purchase_description, qty, purchase_unit, unit_title,
+           (purchase_order_id, item_id, purchase_description, location_id, department_id,
+            qty, purchase_unit, unit_title,
             rate, disc_percent, disc_amount, net_of_tax, tax_code_id, tax_amount, ext_price)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [poId, l.item_id, l.purchase_description || null, l.qty, l.purchase_unit || null, l.unit_title || null,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [poId, l.item_id, l.purchase_description || null, l.location_id || null, l.department_id || null,
+          l.qty, l.purchase_unit || null, l.unit_title || null,
           l.rate || 0, l.disc_percent || 0, l.lineDiscAmount, l.lineNetOfTax, l.tax_code_id || null, l.lineTaxAmount, l.extPrice]
       );
     }

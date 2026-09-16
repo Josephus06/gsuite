@@ -20,6 +20,8 @@ export default function LandedCostEdit() {
   const [terms, setTerms] = useState([]);
   const [taxes, setTaxes] = useState([]);
   const [landedCosts, setLandedCosts] = useState([]);
+  const [locations, setLocations] = useState([]);
+  const [departments, setDepartments] = useState([]);
   const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
   const [supplierId, setSupplierId] = useState('');
   const [termId, setTermId] = useState('');
@@ -39,12 +41,16 @@ export default function LandedCostEdit() {
       // for freight, customs and cutting; offering thousands of stock items here was an invitation
       // to put one of them on a freight charge.
       api.get('/purchase-orders/meta/landed-cost-items'),
-    ]).then(([poRes, supRes, termRes, taxRes, lcRes]) => {
+      api.get('/lookups/locations'),
+      api.get('/lookups/departments'),
+    ]).then(([poRes, supRes, termRes, taxRes, lcRes, locRes, deptRes]) => {
       setParent(poRes.data);
       setSuppliers(supRes.data);
       setTerms(termRes.data);
       setTaxes(taxRes.data);
       setLandedCosts(lcRes.data);
+      setLocations(locRes.data);
+      setDepartments(deptRes.data);
       setLoading(false);
     });
   }, [id]);
@@ -69,6 +75,7 @@ export default function LandedCostEdit() {
       purchase_unit: item.purchase_unit_title || item.base_unit_title || '',
       unit_title: item.base_unit_title || '',
       rate: 0, disc_percent: 0, tax_code_id: '', tax_code: '',
+      location_id: '', department_id: '',
     }]);
   }
 
@@ -106,6 +113,7 @@ export default function LandedCostEdit() {
         memo,
         lines: lines.map((l) => ({
           item_id: l.item_id, purchase_description: l.purchase_description, qty: l.qty,
+          location_id: l.location_id || null, department_id: l.department_id || null,
           purchase_unit: l.purchase_unit, unit_title: l.unit_title, rate: l.rate,
           disc_percent: l.disc_percent, tax_code_id: l.tax_code_id || null,
         })),
@@ -167,13 +175,14 @@ export default function LandedCostEdit() {
           <table>
             <thead>
               <tr>
-                <th>Item Code</th><th>Purchase Desc.</th><th>Qty</th><th>Rate</th>
+                <th>Item Code</th><th>Purchase Desc.</th><th>Location</th><th>Department</th>
+                <th>Qty</th><th>Rate</th>
                 <th>Discount %</th><th>Tax Code</th><th>Ext. Price</th><th></th>
               </tr>
             </thead>
             <tbody>
               {lines.length === 0 && (
-                <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>No items yet.</td></tr>
+                <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>No items yet.</td></tr>
               )}
               {lines.map((l) => {
                 const calc = lineCalc(l);
@@ -181,6 +190,22 @@ export default function LandedCostEdit() {
                   <tr key={l._key}>
                     <td>{l.item_code} — {l.item_name}</td>
                     <td><input style={{ width: 160 }} value={l.purchase_description} onChange={(e) => updateLine(l._key, { purchase_description: e.target.value })} /></td>
+                    {/* Same two pickers, from the same lookups, as a PO1 line -- a freight or
+                        customs charge belongs to a warehouse and a cost centre like anything else. */}
+                    <td>
+                      <EntityPicker
+                        label="Location" items={locations} value={l.location_id} getLabel={(loc) => loc?.location_name}
+                        columns={[{ key: 'location_name', label: 'Name' }]} searchKeys={['location_name']}
+                        onSelect={(loc) => updateLine(l._key, { location_id: loc.id })}
+                      />
+                    </td>
+                    <td>
+                      <EntityPicker
+                        label="Department" items={departments} value={l.department_id} getLabel={(d) => d?.name}
+                        columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']}
+                        onSelect={(d) => updateLine(l._key, { department_id: d.id })}
+                      />
+                    </td>
                     <td><input type="number" step="0.0001" style={{ width: 80 }} value={l.qty} onChange={(e) => updateLine(l._key, { qty: e.target.value })} /></td>
                     <td><input type="number" step="0.01" style={{ width: 90 }} value={l.rate} onChange={(e) => updateLine(l._key, { rate: e.target.value })} /></td>
                     <td><input type="number" step="0.01" style={{ width: 70 }} value={l.disc_percent} onChange={(e) => updateLine(l._key, { disc_percent: e.target.value })} /></td>
