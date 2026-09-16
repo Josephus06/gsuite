@@ -24,7 +24,7 @@ const HEADER_FIELDS = [
 ];
 
 const JOB_ORDER_FIELDS = [
-  'nstdjo_no', 'job_type_id', 'job_location_id', 'description', 'quantity', 'units', 'price_per_unit', 'subtotal',
+  'nstdjo_no', 'nstdjo_id', 'job_type_id', 'job_location_id', 'description', 'quantity', 'units', 'price_per_unit', 'subtotal',
   'disc_percent', 'disc_per_unit', 'disc_amount', 'disc_price_per_unit', 'net_of_tax', 'tax_code_id', 'tax_amount',
   'gross_amount', 'length', 'width', 'height', 'uom', 'shipping', 'remarks', 'memo', 'delivery_date', 'delivery_time',
   'gp_rate', 'gp_amount',
@@ -49,9 +49,23 @@ const PROCESS_FIELDS = [
 // already inside it -- so the order snapshot carries the money without carrying the working. The
 // percentage only means anything against the estimate's own process lines, which the order does
 // not hold.
+// nstdjo_id joins nstdjo_no on this exclusion list for the same reason: sales_order_lines has
+// neither column, and the NSTDJO tag belongs to the Estimate rather than to the order it becomes.
 const SALES_ORDER_LINE_FIELDS = JOB_ORDER_FIELDS.filter(
-  (f) => !['nstdjo_no', 'disc_per_unit', 'contingency_percent', 'contingency_amount'].includes(f),
+  (f) => !['nstdjo_no', 'nstdjo_id', 'disc_per_unit', 'contingency_percent', 'contingency_amount'].includes(f),
 );
+
+// The NSTDJO tag is a reference, so the NUMBER is written from the record rather than taken from
+// the browser. The two can then never disagree, a mistyped or stale number cannot be stored, and
+// clearing the tag clears both halves. Returns null when the id names nothing.
+async function resolveNstdjoTag(body, conn) {
+  if (!('nstdjo_id' in body) && !('nstdjo_no' in body)) return body;
+  const id = body.nstdjo_id ? Number(body.nstdjo_id) : null;
+  if (!id) return { ...body, nstdjo_id: null, nstdjo_no: null };
+  const [[n]] = await conn.query('SELECT nstdjo_no FROM non_standard_job_orders WHERE id = ?', [id]);
+  if (!n) return null;
+  return { ...body, nstdjo_id: id, nstdjo_no: n.nstdjo_no };
+}
 const SALES_ORDER_HEADER_FIELDS = [
   'estimate_id', 'date_created', 'customer_id', 'contact_person_id', 'contact_email', 'contact_title', 'contact_phone',
   'blanket_po_id', 'blanket_po_memo', 'sales_rep_id', 'sales_division_id', 'office_location_id',
@@ -644,7 +658,12 @@ router.post('/:id/job-orders', requireAuth, requirePermission(ROUTE, 'can_edit')
       'SELECT COALESCE(MAX(line_no), 0) + 1 AS nextLine FROM estimate_job_orders WHERE estimate_id = ?',
       [req.params.id]
     );
-    const values = pick(req.body, JOB_ORDER_FIELDS);
+    const body = await resolveNstdjoTag(req.body, conn);
+    if (!body) {
+      await conn.rollback();
+      return res.status(400).json({ error: 'That Non-Standard Job Order no longer exists.' });
+    }
+    const values = pick(body, JOB_ORDER_FIELDS);
     const [result] = await conn.query(
       `INSERT INTO estimate_job_orders (estimate_id, line_no, ${JOB_ORDER_FIELDS.join(', ')})
        VALUES (?, ?, ${JOB_ORDER_FIELDS.map(() => '?').join(', ')})`,
@@ -671,7 +690,12 @@ router.put('/:id/job-orders/:joId', requireAuth, requirePermission(ROUTE, 'can_e
       await conn.rollback();
       return res.status(404).json({ error: 'Not found' });
     }
-    const values = pick(req.body, JOB_ORDER_FIELDS);
+    const body = await resolveNstdjoTag(req.body, conn);
+    if (!body) {
+      await conn.rollback();
+      return res.status(400).json({ error: 'That Non-Standard Job Order no longer exists.' });
+    }
+    const values = pick(body, JOB_ORDER_FIELDS);
     await conn.query(
       `UPDATE estimate_job_orders SET ${JOB_ORDER_FIELDS.map((f) => `${f} = ?`).join(', ')}, updated_at = NOW() WHERE id = ?`,
       [...values, req.params.joId]

@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import EntityPicker from '../components/EntityPicker';
+import NstdjoPicker from '../components/NstdjoPicker';
 import { computeAutoPricing } from '../utils/costing';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
@@ -51,7 +52,7 @@ const ATTACHMENT_TYPES = /^(application\/pdf|image\/(png|jpe?g|gif|webp|bmp|tiff
 const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
 
 const EMPTY_JO = {
-  nstdjo_no: '', job_type_id: '', job_location_id: '', description: '', quantity: '', units: '',
+  nstdjo_no: '', nstdjo_id: '', job_type_id: '', job_location_id: '', description: '', quantity: '', units: '',
   price_per_unit: '', subtotal: '', disc_percent: '', disc_per_unit: '', disc_amount: '', disc_price_per_unit: '',
   net_of_tax: '', tax_code_id: '', tax_amount: '', gross_amount: '', length: '', width: '', height: '', uom: '',
   shipping: '', remarks: '', memo: '', delivery_date: '', delivery_time: '', gp_rate: '', gp_amount: '',
@@ -81,7 +82,9 @@ const JOB_ORDER_FIELDS = Object.keys(EMPTY_JO);
 const PROCESS_FIELDS = Object.keys(EMPTY_PROC);
 
 const JOB_ORDER_COLUMNS = [
-  { key: 'nstdjo_no', label: 'NSTDJO #', type: 'text' },
+  // Tagged from the Non-Standard Job Order module, not typed. The column still keys on
+  // nstdjo_no because that is what it displays and prints; the tag itself is nstdjo_id.
+  { key: 'nstdjo_no', label: 'NSTDJO #', type: 'picker-nstdjo' },
   { key: 'job_type_id', label: 'Job Type', type: 'picker-jobtype' },
   { key: 'job_location_id', label: 'Job Location', type: 'picker-location' },
   { key: 'description', label: 'Description', type: 'text' },
@@ -755,6 +758,18 @@ export default function EstimateWizard() {
 
   function jobOrderCell(col, row, idx) {
     const val = row[col.key] ?? '';
+    if (col.type === 'picker-nstdjo') {
+      return (
+        <NstdjoPicker
+          value={row.nstdjo_id || ''}
+          selectedLabel={row.nstdjo_no || ''}
+          // Both halves move together. The server rewrites the number from the record anyway,
+          // so this only decides what the grid shows before the round trip.
+          onSelect={(n) => commitJobOrderRow(idx, { nstdjo_id: n.id, nstdjo_no: n.nstdjo_no })}
+          onClear={() => commitJobOrderRow(idx, { nstdjo_id: null, nstdjo_no: null })}
+        />
+      );
+    }
     if (col.type === 'picker-jobtype') {
       return (
         <EntityPicker
