@@ -5,10 +5,13 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
+import Modal from '../components/Modal';
 import { parseUtc } from '../utils/datetime';
 
-const STATUS_LABELS = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Closed' };
-const STATUS_BADGE = { open: 'badge-info', in_progress: 'badge-muted', resolved: 'badge-success', closed: 'badge-success' };
+// Doubles as the status filter tabs, so 'declined' being here is what gives the queue a way to
+// look at what was refused rather than only at what is still moving.
+const STATUS_LABELS = { open: 'Open', in_progress: 'In Progress', resolved: 'Resolved', closed: 'Closed', declined: 'Declined' };
+const STATUS_BADGE = { open: 'badge-info', in_progress: 'badge-muted', resolved: 'badge-success', closed: 'badge-success', declined: 'badge-danger' };
 
 function formatDate(v) {
   // UTC in the database, no marker on the wire -- see utils/datetime.js.
@@ -32,6 +35,11 @@ export default function Tickets() {
   const [sbuGroups, setSbuGroups] = useState([]);
   const [sbuTab, setSbuTab] = useState('');
   const [loading, setLoading] = useState(true);
+  // The ticket being declined, and the reason being typed for it. Null when no modal is open.
+  const [declining, setDeclining] = useState(null);
+  const [declineReason, setDeclineReason] = useState('');
+  const [declineError, setDeclineError] = useState('');
+  const [declineBusy, setDeclineBusy] = useState(false);
 
   const headDepartmentIds = useMemo(
     () => new Set(departments.filter((d) => d.head_user_id === user?.id).map((d) => d.id)),
@@ -125,16 +133,43 @@ export default function Tickets() {
     }
   }
 
+  // Declining asks a question first, which is why this queue only ever offered Approve: the
+  // server refuses an empty reason, and there was nowhere on a table row to type one. The
+  // reason matters -- it is what the requester is told, and it decides whether they rework the
+  // request or drop it -- so it gets a modal here rather than being skipped.
+  async function submitDecline() {
+    const reason = declineReason.trim();
+    if (!reason) { setDeclineError('Say why -- the requester is told this, and it decides whether they rework it or drop it.'); return; }
+    setDeclineBusy(true);
+    try {
+      await api.put(`/tickets/${declining.id}/decline`, { reason });
+      setDeclining(null);
+      setDeclineReason('');
+      setDeclineError('');
+      await load();
+    } catch (err) {
+      setDeclineError(err.response?.data?.error || 'Decline failed');
+    } finally {
+      setDeclineBusy(false);
+    }
+  }
+
   function isPending(row) {
-    return !!row.approver_names && !row.approved_at;
+    // A declined ticket is not waiting on anybody. Without the last clause it stays "Pending
+    // Approval" for ever, because it never got approved -- which is how a refused ticket ended
+    // up showing Declined and Pending Approval side by side.
+    return !!row.approver_names && !row.approved_at && !row.declined_at;
   }
 
   function isGmPending(row) {
-    return !!row.forwarded_to_gm_at && !row.gm_approved_at;
+    // Same as above: a declined ticket is not waiting on the General Manager either.
+    return !!row.forwarded_to_gm_at && !row.gm_approved_at && !row.declined_at;
   }
 
   function isBlocked(row) {
-    return isPending(row) || isGmPending(row);
+    // A declined ticket is finished, so it offers no actions either -- the server refuses assign,
+    // forward and status changes on it.
+    return isPending(row) || isGmPending(row) || !!row.declined_at;
   }
 
   const columns = [
@@ -223,11 +258,29 @@ export default function Tickets() {
             actions={(row) => (
               <>
                 <button className="btn btn-sm" onClick={() => navigate(`/tickets/${row.id}`)}>View</button>
-                {row.is_my_approval && !row.approved_at && (
-                  <button className="btn btn-sm btn-primary" onClick={() => handleApprove(row)}>Approve</button>
+                {/* Approve and Decline are the same decision, so they belong together. Both are
+                    gated exactly as the server gates them, and as the ticket's own page does. */}
+                {row.is_my_approval && !row.approved_at && !row.declined_at && (
+                  <>
+                    <button className="btn btn-sm btn-primary" onClick={() => handleApprove(row)}>Approve</button>
+                    <button
+                      className="btn btn-sm btn-danger"
+                      onClick={() => { setDeclineError(''); setDeclineReason(''); setDeclining(row); }}
+                    >
+                      Decline
+                    </button>
+                  </>
                 )}
-                {row.is_gm && isGmPending(row) && (
-                  <button className="btn btn-sm btn-primary" onClick={() => handleGmApprove(row)}>GM Approve</button>
+                {row.is_gm && isGmPending(row) && !row.declined_at && (
+                  <>
+                    <button className="btn btn-sm btn-primary" onClick={() => handleGmApprove(row)}>GM Approve</button>
+                    <button
+                      className="btn btn-sm btn-danger"
+                      onClick={() => { setDeclineError(''); setDeclineReason(''); setDeclining(row); }}
+                    >
+                      GM Decline
+                    </button>
+                  </>
                 )}
                 {canManage(row) && !isBlocked(row) && (
                   <EntityPicker
@@ -240,7 +293,7 @@ export default function Tickets() {
                     triggerClassName="btn btn-sm"
                   />
                 )}
-                {canManage(row) && !row.assigned_to_user_id && !row.forwarded_to_gm_at && (
+                {canManage(row) && !row.assigned_to_user_id && !row.forwarded_to_gm_at && !row.declined_at && (
                   <button className="btn btn-sm" onClick={() => handleForward(row)}>Forward to GM</button>
                 )}
                 {!isBlocked(row) && (canManage(row) || row.assigned_to_user_id === user?.id) && row.status !== 'resolved' && row.status !== 'closed' && (
@@ -251,6 +304,28 @@ export default function Tickets() {
           />
         )}
       </div>
+
+      {/* Word for word the ticket's own Decline prompt -- the same decision reached from the
+          queue instead of from the ticket should not read differently. */}
+      {declining && (
+        <Modal title={`Decline ${declining.ticket_no}`} onClose={() => setDeclining(null)}>
+          <div className="muted" style={{ marginBottom: 10 }}>{declining.subject}</div>
+          <div className="field">
+            <label>Reason</label>
+            <textarea
+              rows={4} maxLength={500} autoFocus value={declineReason}
+              placeholder="Why is this being refused? The requester is shown exactly this."
+              onChange={(e) => { setDeclineReason(e.target.value); setDeclineError(''); }}
+            />
+            <small className="muted">{500 - declineReason.length} characters left. Declining is final -- the ticket cannot be approved, assigned or reopened afterwards.</small>
+          </div>
+          {declineError && <div className="warning-banner" style={{ marginBottom: 12 }}>{declineError}</div>}
+          <div className="modal-actions">
+            <button className="btn btn-sm" disabled={declineBusy} onClick={() => setDeclining(null)}>Cancel</button>
+            <button className="btn btn-sm btn-danger" disabled={declineBusy} onClick={submitDecline}>Decline Ticket</button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
