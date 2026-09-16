@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } = require('../lib/designSupervisorVisibility');
+const { mayAssignArtist } = require('../lib/artistAssignment');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { getArtistEmployeeScope } = require('../lib/artistVisibility');
 const { notifyDesignSupervisors, notifyAssignedArtist } = require('../lib/designNotifications');
@@ -908,9 +909,10 @@ router.put('/:id/request-revision', requireAuth, async (req, res, next) => {
 });
 
 // The Design Supervisor gate: the role flag, with generic can_edit as the fallback for
-// admins/managers who are not personally flagged -- the same shape as
-// /job-orders/:id/assign-design. Shared by the two things a supervisor does with an order
-// sitting in their queue: hand it to an artist, or send it back to Sales.
+// admins/managers who are not personally flagged. Sending an order back to Sales is the one
+// thing left on it -- that is a supervisor's call about their own queue, not a right handed
+// out on its own. Handing the order to an artist moved to the "JO Assign Artist" permission
+// (lib/artistAssignment.js), because that IS a right worth granting by itself.
 async function isDesignSupervisor(userId) {
   const [[user]] = await pool.query('SELECT is_design_supervisor FROM users WHERE id = ?', [userId]);
   if (user?.is_design_supervisor) return true;
@@ -997,8 +999,11 @@ router.put('/:id/design-request-revision', requireAuth, async (req, res, next) =
 // it on to that artist (Sub Status -> "For Artist"). Reassignment stays open while the
 // order is still in the design queue.
 router.put('/:id/assign-artist', requireAuth, async (req, res, next) => {
-  if (!await isDesignSupervisor(req.user.id)) {
-    return res.status(403).json({ error: 'Only a Design Supervisor can assign an artist.' });
+  // The same "JO Assign Artist" right the standard Job Order uses -- one grant covers picking
+  // the artist wherever that choice is made, rather than a second, separate switch for
+  // non-standard orders that an admin would have to know to find.
+  if (!await mayAssignArtist(req.user.id)) {
+    return res.status(403).json({ error: 'You do not have permission to assign an artist.' });
   }
 
   const { artist_employee_id: artistId, layout_job_type_id: layoutJobTypeId, planned_start_at: plannedStartAt } = req.body || {};

@@ -274,12 +274,12 @@ export default function NonStandardJobOrderView() {
   // Whether this particular save will bounce the order back to SBU Approval, which is what
   // the edit modal tells the user it is about to do.
   const reviseResubmits = (awaitingApproval || inRevision) && !isCancelled;
-  // Picking the artist belongs to the Design Supervisor alone -- edit rights on this page
-  // (which Sales has) deliberately do not offer it. The server keeps a can_edit fallback
-  // so an admin who isn't personally flagged can still unstick an order, but nobody else
-  // is shown the control.
+  // Picking the artist is its own permission ("JO Assign Artist"), so it can be given to a
+  // planner or a manager without flagging them a design supervisor -- which would also have
+  // scoped their job order list down to the design queue. Edit rights on this page (which Sales
+  // has) still deliberately do not offer it. Same check the server makes.
   const canAssignArtist = !isCancelled
-    && !!user?.is_design_supervisor
+    && can('/job-orders/assign-artist', 'can_edit')
     && [SUB_FOR_DESIGN, SUB_FOR_ARTIST, SUB_FOR_ARTIST_REVISION].includes(order.sub_status);
   // Sending it back to Sales instead, and only while it is still waiting for an artist:
   // once one is assigned there is layout time and incentive accruing against the order, and

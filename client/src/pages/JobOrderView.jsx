@@ -276,7 +276,9 @@ export default function JobOrderView() {
   // "Edit" button above). can_edit still works as a fallback override for admins/
   // managers, matching the backend's own dual-check on these two routes.
   const isOwningSalesRep = !!user?.employee_id && jo.sales_rep_id === user.employee_id;
-  const isDesignSupervisor = !!user?.is_design_supervisor;
+  // "May I pick who draws this?" -- its own permission row, not the design-supervisor flag and
+  // not generic can_edit on Job Orders. Same check the server makes (lib/artistAssignment.js).
+  const canAssignArtist = can('/job-orders/assign-artist', 'can_edit');
   // The Design/Layout/Artist workflow is pre-release ONLY and applies to standard JOs alone.
   // Once a JO has a production_stage it's been released into production (design/layout is done --
   // it already has its artist + PMS job type), and NSJO/RWIP job orders skip the design chain
@@ -349,7 +351,7 @@ export default function JobOrderView() {
           {inDesignPhase && (isOwningSalesRep || canEdit) && jo.sub_status === 'Pending' && (
             <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleForwardToDesign}>Forward to Design Supervisor</button>
           )}
-          {inDesignPhase && (isDesignSupervisor || canEdit) && (
+          {inDesignPhase && canAssignArtist && (
             <button className="btn btn-sm btn-primary" onClick={openAssign}>
               {jo.artist_id ? 'Reassign Artist' : 'Assign Layout Job Type / Artist'}
             </button>

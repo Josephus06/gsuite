@@ -43,7 +43,7 @@ const STATUS_TABS = [
 // waiting at once.
 export default function JobOrders() {
   const navigate = useNavigate();
-  const { user, can, permissions } = useAuth();
+  const { can, permissions } = useAuth();
 
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
@@ -74,7 +74,8 @@ export default function JobOrders() {
   const [bulkError, setBulkError] = useState('');
   const [bulkBusy, setBulkBusy] = useState(false);
 
-  const isDesignSupervisor = !!user?.is_design_supervisor;
+  // The bulk "Assign Artist" action, on the same grant the single-order button uses.
+  const canAssignArtist = can('/job-orders/assign-artist', 'can_edit');
 
   async function load() {
     setLoading(true);
@@ -202,7 +203,7 @@ export default function JobOrders() {
       <div className="page-header">
         <h1>Saved Job Orders</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          {isDesignSupervisor && selectedIds.size > 0 && (
+          {canAssignArtist && selectedIds.size > 0 && (
             <button className="btn btn-primary" onClick={openBulkAssign}>Assign Artist ({selectedIds.size})</button>
           )}
           <button className="btn btn-sm" onClick={() => setShowFilters((s) => !s)}>Toggle Filter</button>
@@ -268,7 +269,7 @@ export default function JobOrders() {
               <table className="responsive-cards">
                 <thead>
                   <tr>
-                    {isDesignSupervisor && <th></th>}
+                    {canAssignArtist && <th></th>}
                     <th>JO #</th>
                     <th>SO #</th>
                     <th>Date Created</th>
@@ -294,7 +295,7 @@ export default function JobOrders() {
                   )}
                   {rows.map((row) => (
                     <tr key={row.id}>
-                      {isDesignSupervisor && (
+                      {canAssignArtist && (
                         <td data-label="">
                           {isAssignable(row) && (
                             <input type="checkbox" checked={selectedIds.has(row.id)} onChange={() => toggleSelect(row)} />

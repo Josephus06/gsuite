@@ -52,8 +52,8 @@ export default function JobOrderEdit() {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { user } = useAuth();
-  const canAssignArtist = !!user?.is_design_supervisor;
+  const { can } = useAuth();
+  const canAssignArtist = can('/job-orders/assign-artist', 'can_edit');
   // Edit is reachable from both Sales > Job Orders and Production > Production --
   // Cancel/Save should return wherever the user actually came from instead of always
   // landing on the Sales-side view, which used to strand Production users on a
@@ -293,7 +293,7 @@ export default function JobOrderEdit() {
               onSelect={(e) => setForm({ ...form, artist_id: e.id })}
               disabled={!canAssignArtist}
             />
-            {!canAssignArtist && <small className="muted">Only a Design Supervisor can assign an artist.</small>}
+            {!canAssignArtist && <small className="muted">You do not have permission to assign an artist.</small>}
           </div>
           <div className="field"><label>Sales Division</label><input readOnly value={jo.sales_division_name || ''} /></div>
 

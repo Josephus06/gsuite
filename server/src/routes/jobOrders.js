@@ -5,6 +5,7 @@ const { isPlannerUser } = require('../lib/plannerRoles');
 const { isAdvanceCopy } = require('../lib/advanceCopy');
 const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } = require('../lib/designSupervisorVisibility');
 const { getArtistEmployeeScope } = require('../lib/artistVisibility');
+const { mayAssignArtist } = require('../lib/artistAssignment');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 const {
@@ -458,16 +459,16 @@ router.put('/:id', requireAuth, requireJobOrderEdit, async (req, res, next) => {
       return res.status(400).json({ error: 'Planned End cannot be before Planned Start.' });
     }
     // This generic edit form resubmits artist_id on every save whether or not it
-    // actually changed (it's just part of the form state) -- only enforce the Design
-    // Supervisor restriction when the value is genuinely different from what's stored,
-    // same restriction already enforced on the dedicated assign-design endpoint.
+    // actually changed (it's just part of the form state) -- only enforce the assignment
+    // right when the value is genuinely different from what's stored. Same check as the
+    // dedicated assign-design endpoint: can_edit on Job Orders opens this form, but
+    // choosing who draws the job is a separate grant.
     const requestedArtistId = req.body.artist_id === undefined || req.body.artist_id === '' ? null : Number(req.body.artist_id);
     const currentArtistId = oldRow.artist_id === null || oldRow.artist_id === undefined ? null : Number(oldRow.artist_id);
     if (requestedArtistId !== currentArtistId) {
-      const [[user]] = await conn.query('SELECT is_design_supervisor FROM users WHERE id = ?', [req.user.id]);
-      if (!user?.is_design_supervisor) {
+      if (!await mayAssignArtist(req.user.id)) {
         await conn.rollback();
-        return res.status(403).json({ error: 'Only a Design Supervisor can assign an artist to a Job Order.' });
+        return res.status(403).json({ error: 'You do not have permission to assign an artist to a Job Order.' });
       }
       // Same cutoff as the dedicated assign-design endpoint -- once Released, the
       // design/artist stage is over, so this generic edit form can't be used as a
@@ -628,24 +629,19 @@ router.put('/:id/forward-to-design', requireAuth, async (req, res, next) => {
   }
 });
 
-// Design supervisors assign (or later reassign) a Layout - Job Type (PMS Job Type) +
-// Artist to a JO; doing so hands it off to the artist (Sub Status -> "For Artist").
-// Gated on the is_design_supervisor role flag itself (same pattern as
-// can_approve_sales_estimate for Estimates), with generic can_edit on Job Orders as a
-// fallback override for admins/managers who aren't personally flagged as a design
-// supervisor -- previously this ALSO required can_edit unconditionally even for an
-// actual design supervisor, which is what made the button unusable for one whose
-// account only had can_view. Reassignment is allowed at any point up to Released --
+// Assign (or later reassign) a Layout - Job Type (PMS Job Type) + Artist to a JO; doing
+// so hands it off to the artist (Sub Status -> "For Artist").
+// Gated on the "JO Assign Artist" permission (lib/artistAssignment.js) -- its own row in
+// the permission grid, so the right can be given to a planner or a manager without also
+// flagging them a design supervisor, which would have shrunk their Job Orders list to the
+// design queue. It replaces the old is_design_supervisor-or-can_edit-on-Job-Orders pair;
+// db/add-assign-artist-page.js grants it to everyone who held either.
+// Reassignment is allowed at any point up to Released --
 // once a JO's overall status is "Released" (Sales gave final approval, production has
 // it), the design/artist stage is over and this closes; Cancelled is likewise final.
 router.put('/:id/assign-design', requireAuth, async (req, res, next) => {
-  const [[user]] = await pool.query('SELECT is_design_supervisor, employee_id FROM users WHERE id = ?', [req.user.id]);
-  if (!user?.is_design_supervisor) {
-    const [[page]] = await pool.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
-    const [[perm]] = await pool.query('SELECT can_edit AS allowed FROM user_page_permissions WHERE user_id = ? AND page_id = ?', [req.user.id, page?.id]);
-    if (!perm?.allowed) {
-      return res.status(403).json({ error: 'Only a Design Supervisor can assign layout job type and artist.' });
-    }
+  if (!await mayAssignArtist(req.user.id)) {
+    return res.status(403).json({ error: 'You do not have permission to assign layout job type and artist.' });
   }
 
   const { layout_job_type_id, artist_id, planned_start_at, layout_qty: layoutQtyRaw } = req.body;
