@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
+import letterhead from '../assets/graphicstar-letterhead.png';
 
 // Printable Job Order -- the production sheet. Two pages, mirroring the live Report Viewer:
 //   1. Letterhead, order header, the JOBS block, the SPECIFICATIONS table.
@@ -87,9 +88,9 @@ export default function JobOrderPrint() {
         }
         .jo-toolbar { max-width: 210mm; margin: 0 auto 12px; display: flex; justify-content: flex-end; gap: 8px; }
         .jo-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }
-        .jo-brand { font-size: 20pt; font-weight: 800; color: #1e3a8a; letter-spacing: -0.5px; }
-        .jo-brand span { color: #ea580c; }
-        .jo-brand-sub { font-size: 7.5pt; font-weight: 700; color: #1e3a8a; letter-spacing: 2px; }
+        /* Replaces the typed GRAPHICSTAR / IMAGING CORP. wordmark; width-sized so the
+           6:1 artwork keeps its proportions. */
+        .jo-logo { width: 50mm; height: auto; display: block; }
         .jo-addr { text-align: right; font-size: 7.5pt; color: #64748b; line-height: 1.45; }
         .jo-title { text-align: center; font-size: 15pt; color: #1e3a8a; font-weight: 600; margin: 6px 0 18px; }
         .jo-cols { display: flex; justify-content: space-between; gap: 20px; }
@@ -127,8 +128,7 @@ export default function JobOrderPrint() {
       <div className="jo-sheet">
         <div className="jo-head">
           <div>
-            <div className="jo-brand">GRAPHIC<span>STAR</span></div>
-            <div className="jo-brand-sub">IMAGING CORP.</div>
+            <img className="jo-logo" src={letterhead} alt="GraphicStar Imaging Corp." />
           </div>
           <div className="jo-addr">
             <strong>GraphicStar Building</strong><br />

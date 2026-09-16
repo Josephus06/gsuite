@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { PURPOSE_LABELS } from '../utils/requestForms';
+import letterhead from '../assets/graphicstar-letterhead.png';
 
 // The printed forms. One sheet each, four layouts, sharing the letterhead and the signature block.
 //
@@ -131,9 +132,10 @@ export default function FormPrint() {
         .rf-sheet { width: 210mm; min-height: 297mm; margin: 0 auto; padding: 14mm; box-sizing: border-box;
                     background: #fff; font-family: Arial, Helvetica, sans-serif; font-size: 12px; }
         .rf-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
-        .rf-brand { font-size: 24px; font-weight: 800; letter-spacing: .5px; color: #1e3a8a; }
-        .rf-brand span { color: #f07c00; }
-        .rf-brand-sub { font-size: 11px; letter-spacing: 3px; color: #1e3a8a; }
+        /* The logo replaces the typed GRAPHICSTAR / IMAGING CORP. wordmark. Sized by width so
+           the 6:1 artwork keeps its proportions; the file is 900px wide, well over what 52mm
+           needs at print resolution. */
+        .rf-logo { width: 52mm; height: auto; display: block; }
         .rf-addr { font-size: 10px; text-align: right; line-height: 1.4; }
         .rf-bars { margin: 6px 0 14px; }
         .rf-bar-orange { height: 4px; background: #f07c00; }
@@ -181,8 +183,7 @@ export default function FormPrint() {
       <div className="rf-sheet">
         <div className="rf-head">
           <div>
-            <div className="rf-brand">GRAPHIC<span>STAR</span></div>
-            <div className="rf-brand-sub">IMAGING CORP.</div>
+            <img className="rf-logo" src={letterhead} alt="GraphicStar Imaging Corp." />
           </div>
           <div className="rf-addr">
             <strong>GraphicStar Building</strong><br />

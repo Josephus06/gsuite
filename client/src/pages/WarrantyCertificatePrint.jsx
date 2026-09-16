@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
+import letterhead from '../assets/graphicstar-letterhead.png';
 
 function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : ''; }
 
@@ -40,7 +41,9 @@ export default function WarrantyCertificatePrint() {
         .wc-print { max-width: 820px; margin: 0 auto; padding: 32px; color: #1f2937; font-size: 13px; line-height: 1.55; }
         .wc-print h2 { color: #4338ca; margin: 0 0 4px; }
         .wc-brand { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; margin-bottom: 18px; }
-        .wc-brand .co { font-weight: 800; font-size: 22px; color: #ea580c; }
+        /* Replaces the typed GRAPHICSTAR wordmark. "IMAGING CORP." came off the address line
+           with it -- the artwork carries the name, and printing it twice read as a mistake. */
+        .wc-logo { width: 48mm; height: auto; display: block; margin-bottom: 4px; }
         .wc-title { background: linear-gradient(90deg,#4338ca,#a5b4fc); color: #fff; padding: 10px 16px; border-radius: 4px; font-size: 20px; font-weight: 700; }
         .wc-print h3 { margin: 20px 0 6px; color: #111827; }
         .wc-print .band { background: #eef2f7; font-weight: 700; padding: 6px 10px; margin-top: 14px; }
@@ -58,8 +61,8 @@ export default function WarrantyCertificatePrint() {
       {/* Page 1 -- terms */}
       <div className="wc-brand">
         <div>
-          <div className="co">GRAPHICSTAR</div>
-          <div style={{ fontSize: 11 }}>IMAGING CORP.<br />J.S. Alinsug St., Basak Mandaue City, Cebu 6014, Philippines<br />Tel. #238-1234 / www.graphicstar.com.ph</div>
+          <img className="wc-logo" src={letterhead} alt="GraphicStar Imaging Corp." />
+          <div style={{ fontSize: 11 }}>J.S. Alinsug St., Basak Mandaue City, Cebu 6014, Philippines<br />Tel. #238-1234 / www.graphicstar.com.ph</div>
         </div>
         <div className="wc-title">Warranty Certificate</div>
       </div>
@@ -79,8 +82,8 @@ export default function WarrantyCertificatePrint() {
       <div className="wc-page-break" />
       <div className="wc-brand">
         <div>
-          <div className="co">GRAPHICSTAR</div>
-          <div style={{ fontSize: 11 }}>IMAGING CORP.<br />J.S. Alinsug St., Basak Mandaue City, Cebu 6014, Philippines<br />Tel. #238-1234 / www.graphicstar.com.ph</div>
+          <img className="wc-logo" src={letterhead} alt="GraphicStar Imaging Corp." />
+          <div style={{ fontSize: 11 }}>J.S. Alinsug St., Basak Mandaue City, Cebu 6014, Philippines<br />Tel. #238-1234 / www.graphicstar.com.ph</div>
         </div>
         <div className="wc-title">Warranty Certificate</div>
       </div>

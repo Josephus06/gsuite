@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import QRCode from 'qrcode';
 import LoadingSpinner from '../components/LoadingSpinner';
+import letterhead from '../assets/graphicstar-letterhead.png';
 
 // The run sheet as it goes out on paper.
 //
@@ -77,9 +78,9 @@ export default function ItineraryPrint() {
           font-family: Arial, Helvetica, sans-serif; font-size: 9pt; box-sizing: border-box;
         }
         .itn-head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #111827; padding-bottom: 6px; }
-        .itn-brand { font-size: 17pt; font-weight: 800; letter-spacing: .5px; }
-        .itn-brand span { color: #dc2626; }
-        .itn-brand-sub { font-size: 8pt; letter-spacing: 2px; }
+        /* Replaces the typed GRAPHICSTAR / IMAGING CORP. wordmark; width-sized so the
+           6:1 artwork keeps its proportions. */
+        .itn-logo { width: 48mm; height: auto; display: block; }
         .itn-title { text-align: right; }
         .itn-title h1 { margin: 0; font-size: 15pt; letter-spacing: 2px; }
         .itn-no { font-size: 11pt; font-weight: 700; }
@@ -151,8 +152,7 @@ export default function ItineraryPrint() {
       <div className="itn-sheet">
         <div className="itn-head">
           <div>
-            <div className="itn-brand">GRAPHIC<span>STAR</span></div>
-            <div className="itn-brand-sub">IMAGING CORP.</div>
+            <img className="itn-logo" src={letterhead} alt="GraphicStar Imaging Corp." />
           </div>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6mm' }}>
             {/* 30mm, not smaller. The driver URL is 108 characters, which makes a 45x45-module
