@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
 const { computeSalesInvoiceGl } = require('../lib/glImpact');
@@ -595,7 +595,28 @@ async function billEstimate(req, res, conn) {
   return res.status(201).json(row);
 }
 
-router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+// Which permission a create needs depends on what is being created.
+//
+// Raising an invoice against an Estimate is an ADD -- Create New on the invoice list, a new
+// document off a document that is not itself changed by it. Billing a Sales Order or a Delivery
+// Ticket is not: those move job_orders.quantity_invoiced, recompute the order's status, or flip a
+// ticket to converted, which is amending work that already exists. So they keep requiring
+// can_edit, and only the Estimate path answers to can_add.
+//
+// Nobody loses anything by this: every account currently holding can_edit on this page also holds
+// can_add, so the button's audience only grows -- by the four Sales accounts that had can_add and
+// no way to use it.
+async function requireInvoiceCreatePermission(req, res, next) {
+  try {
+    const action = req.body?.estimate_id ? 'can_add' : 'can_edit';
+    if (await userCan(req.user.id, ROUTE, action)) return next();
+    return res.status(403).json({ error: 'You do not have permission to perform this action' });
+  } catch (err) {
+    return next(err);
+  }
+}
+
+router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const {

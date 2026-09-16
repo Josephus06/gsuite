@@ -23,10 +23,11 @@ function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
 export default function SalesInvoices() {
   const navigate = useNavigate();
   const { can } = useAuth();
-  // Raising an invoice from here goes through the same POST as the Sales Order flow, which the
-  // server gates on can_edit -- so gate the button on the same thing rather than on can_add,
-  // which would show a button that only fails on Save.
-  const mayCreate = can('/sales-invoices', 'can_edit');
+  // can_add, matching what the server asks of this path: raising an invoice against an Estimate
+  // is creating a new document, not amending one. Billing a Sales Order or a Delivery Ticket
+  // still needs can_edit, because those move quantities and statuses on records that already
+  // exist -- see requireInvoiceCreatePermission in routes/salesInvoices.js.
+  const mayCreate = can('/sales-invoices', 'can_add');
   const [showCreate, setShowCreate] = useState(false);
 
   const [rows, setRows] = useState([]);
