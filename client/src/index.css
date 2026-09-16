@@ -308,11 +308,14 @@ label {
 .topnav-logo-dark { display: none; }
 :root[data-theme='dark'] .topnav-logo-light { display: none; }
 :root[data-theme='dark'] .topnav-logo-dark { display: block; }
-.topnav-menu { display: flex; align-items: stretch; gap: 2px; }
+/* Eighteen modules and a 538px user block do not fit a 1920px screen at the old 14px
+   padding -- the bar overflowed and pushed the bell, Background, avatar and Log out off the
+   right edge. Tighter padding and no gap buy back ~178px without touching the type. */
+.topnav-menu { display: flex; align-items: stretch; gap: 0; }
 .topnav-menu > a {
   display: flex;
   align-items: center;
-  padding: 0 14px;
+  padding: 0 10px;
   color: var(--text);
   text-decoration: none;
   font-weight: 500;
@@ -327,7 +330,7 @@ label {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 0 14px;
+  padding: 0 10px;
   background: none;
   border: none;
   color: var(--text);
@@ -458,7 +461,32 @@ label {
 }
 .topnav-mobile-group-items a.active { color: var(--accent); background: var(--accent-bg); }
 
-@media (max-width: 860px) {
+/* The desktop strip carries 18 modules. Measured at the tightened padding it needs about
+   1,485px, and with the brand and the user block either side the bar wants ~2,050px. Past
+   that it does not shrink -- it overflows, and what falls off the right is the notification
+   bell, Background, the avatar and Log out. So the bar gives things up in order.
+
+   First the two labels whose controls survive without them: the user's own name, and the word
+   "Background" on a button that keeps its picture icon, its title and its aria-label -- so
+   nothing becomes unreachable, or unreadable to a screen reader. The theme toggle keeps its
+   DAY MODE / NIGHT MODE wording; it turned out not to be needed to make the bar fit. */
+@media (max-width: 2050px) {
+  .topnav-user-name { display: none; }
+  .topnav-bg-label { display: none; }
+  /* And the rest out of the spacing. A pixel off each module's padding is invisible and worth
+     36px across the eighteen of them, which leaves a 1920 screen roughly 30px of headroom
+     rather than the 6px it was short by -- enough that a longer name or one more module does
+     not put Log out back off the edge. */
+  .topnav { padding: 0 12px; }
+  .topnav-user { gap: 8px; }
+  .topnav-menu > a,
+  .topnav-dropdown > button { padding: 0 9px; }
+}
+
+/* Then the strip itself. Below this the 18 modules genuinely cannot fit, so the hamburger
+   takes over -- its panel is built from the same visibleStructure, so every module and every
+   child is still there, one tap away, rather than hanging off the edge of the screen. */
+@media (max-width: 1900px) {
   .topnav-hamburger { display: flex; }
   .topnav-menu { display: none; }
   /* The logo shrinks rather than disappearing: it is the only thing naming the system once the
