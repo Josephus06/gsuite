@@ -37,11 +37,108 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const [[supplier]] = await pool.query('SELECT * FROM suppliers WHERE id = ?', [req.params.id]);
+    const [[supplier]] = await pool.query(
+      `SELECT s.*, pt.term_name AS payment_term_name
+         FROM suppliers s LEFT JOIN payment_terms pt ON pt.id = s.payment_term_id
+        WHERE s.id = ?`, [req.params.id]
+    );
     if (!supplier) return res.status(404).json({ error: 'Not found' });
     const [contacts] = await pool.query('SELECT * FROM supplier_contacts WHERE supplier_id = ? ORDER BY id', [req.params.id]);
     const [addresses] = await pool.query('SELECT * FROM supplier_addresses WHERE supplier_id = ? ORDER BY id', [req.params.id]);
-    res.json({ ...supplier, contacts, addresses });
+
+    // What is still owed this supplier. Read straight off vendor_bills.amount_due, which the bill
+    // payment routes decrement as each payment applies (and put back on a void), rather than
+    // recomputing gross minus payments here -- two places deriving the same figure differently is
+    // how a statement and a payment screen come to disagree. Bills settled in full carry 0, so a
+    // plain SUM over every bill is the balance; verified against the clone, where all 18,760 paid
+    // bills hold exactly 0 and only the 402 open ones contribute.
+    const [[{ balance }]] = await pool.query(
+      `SELECT IFNULL(ROUND(SUM(vb.amount_due), 2), 0) AS balance
+         FROM vendor_bills vb
+         JOIN purchase_orders po ON po.id = vb.purchase_order_id
+        WHERE po.supplier_id = ?`, [req.params.id]
+    );
+
+    // Items this supplier has been bought from, with the last price paid. Empty until the
+    // inventory/supplier price list is imported; the tab says so rather than looking broken.
+    const [items] = await pool.query(
+      `SELECT isp.id, isp.price, isp.last_purchase_date, isp.ref_no,
+              i.item_code, i.display_name, i.item_type
+         FROM inventory_supplier_prices isp
+         JOIN inventories i ON i.id = isp.inventory_id
+        WHERE isp.supplier_id = ?
+        ORDER BY i.item_code`, [req.params.id]
+    );
+
+    res.json({ ...supplier, contacts, addresses, items, balance: Number(balance) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Every document this supplier appears on, in one list, newest first -- the supplier's own
+// statement. Four sources, which is why it is a UNION rather than a filter on one table:
+//
+//   PO    purchase_orders        supplier_id directly
+//   RR    purchase_order_receipts  through its purchase order
+//   VB    vendor_bills             through its purchase order (it has no supplier_id of its own)
+//   BPAY  bill_payments          supplier_id directly
+//
+// PAGINATED, not optional: the busiest supplier in the clone has 3,027 of these rows, and this is
+// exactly the "fetch the whole table to show ten of it" shape that has bitten this app elsewhere.
+// The count comes from the same subquery so the pager cannot disagree with the page.
+//
+// The filters mirror the column boxes on the live screen. `as_of` is inclusive and is the one
+// that changes the meaning of the list rather than just narrowing it: it answers "where did this
+// supplier stand on that date", so it belongs with the date column it sits under.
+const LEDGER_SQL = `
+  SELECT 'PO' AS doc_type, po.id AS doc_id, po.po_no AS doc_no, po.date_created AS doc_date,
+         po.status AS status, po.ref_no AS reference_no, po.memo AS memo, po.total_amount AS amount
+    FROM purchase_orders po
+   WHERE po.supplier_id = ?
+  UNION ALL
+  SELECT 'RR', r.id, r.receipt_no, r.date_created, NULL, r.ref_no, r.memo, r.total_amount
+    FROM purchase_order_receipts r
+    JOIN purchase_orders po ON po.id = r.purchase_order_id
+   WHERE po.supplier_id = ?
+  UNION ALL
+  SELECT 'VB', vb.id, vb.bill_no, vb.date_created, vb.status, vb.reference_no, vb.memo, vb.gross_amount
+    FROM vendor_bills vb
+    JOIN purchase_orders po ON po.id = vb.purchase_order_id
+   WHERE po.supplier_id = ?
+  UNION ALL
+  SELECT 'BPAY', bp.id, bp.bill_payment_no, bp.date_created, bp.status, bp.reference_no, bp.memo, bp.total_amount
+    FROM bill_payments bp
+   WHERE bp.supplier_id = ?
+`;
+
+router.get('/:id/transactions', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const { as_of: asOf, doc_no: docNo, status, reference_no: referenceNo, memo, doc_type: docType } = req.query;
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 20));
+
+    const id = req.params.id;
+    const where = [];
+    const params = [id, id, id, id];
+    if (asOf) { where.push('t.doc_date <= ?'); params.push(asOf); }
+    if (docType) { where.push('t.doc_type = ?'); params.push(docType); }
+    if (docNo) { where.push('t.doc_no LIKE ?'); params.push(`%${docNo}%`); }
+    if (status) { where.push('t.status LIKE ?'); params.push(`%${status}%`); }
+    if (referenceNo) { where.push('t.reference_no LIKE ?'); params.push(`%${referenceNo}%`); }
+    if (memo) { where.push('t.memo LIKE ?'); params.push(`%${memo}%`); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const [[{ total }]] = await pool.query(
+      `SELECT COUNT(*) AS total FROM (${LEDGER_SQL}) t ${whereSql}`, params
+    );
+    const [rows] = await pool.query(
+      `SELECT t.* FROM (${LEDGER_SQL}) t ${whereSql}
+        ORDER BY t.doc_date DESC, t.doc_no DESC
+        LIMIT ? OFFSET ?`,
+      [...params, limit, (page - 1) * limit]
+    );
+    res.json({ rows, total, page, limit });
   } catch (err) {
     next(err);
   }

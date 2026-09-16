@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -121,7 +122,7 @@ export default function Suppliers() {
 
   const columns = [
     { key: 'supplier_code', label: 'Code' },
-    { key: 'name', label: 'Name' },
+    { key: 'name', label: 'Name', render: (r) => <Link to={`/suppliers/${r.id}`}>{r.name}</Link> },
     { key: 'company_name', label: 'Company' },
     { key: 'contact_no', label: 'Contact' },
     // Imported suppliers carry live's free-text credit term and no payment_terms row to point at,

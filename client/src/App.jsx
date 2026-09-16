@@ -39,6 +39,7 @@ import Leads from './pages/Leads';
 import Pipeline from './pages/Pipeline';
 import CrmDashboard from './pages/CrmDashboard';
 import Suppliers from './pages/Suppliers';
+import SupplierView from './pages/SupplierView';
 import Inventory from './pages/Inventory';
 import InventoryView from './pages/InventoryView';
 import InventoryEdit from './pages/InventoryEdit';
@@ -234,6 +235,7 @@ function App() {
         <Route path="/leads" element={<Leads />} />
         <Route path="/pipeline" element={<Pipeline />} />
         <Route path="/suppliers" element={<Suppliers />} />
+        <Route path="/suppliers/:id" element={<SupplierView />} />
         <Route path="/inventory" element={<Inventory />} />
         <Route path="/inventory/new" element={<InventoryEdit />} />
         <Route path="/inventory/:id/edit" element={<InventoryEdit />} />
