@@ -188,6 +188,7 @@ import WarrantyCertificateView from './pages/WarrantyCertificateView';
 import WarrantyCertificatePrint from './pages/WarrantyCertificatePrint';
 import SalesInvoicePrint from './pages/SalesInvoicePrint';
 import JobOrderPrint from './pages/JobOrderPrint';
+import PurchaseOrderPrint from './pages/PurchaseOrderPrint';
 import Forms from './pages/Forms';
 import BankReconciliations from './pages/accounting/BankReconciliations';
 import BankReconciliationView from './pages/accounting/BankReconciliationView';
@@ -211,6 +212,7 @@ function App() {
       <Route path="/sales-invoices/:id/print" element={<ProtectedRoute><SalesInvoicePrint /></ProtectedRoute>} />
       {/* Printable production sheet. Standalone so the app chrome never lands on the page. */}
       <Route path="/job-orders/:id/print" element={<ProtectedRoute><JobOrderPrint /></ProtectedRoute>} />
+      <Route path="/purchase-orders/:id/print" element={<ProtectedRoute><PurchaseOrderPrint /></ProtectedRoute>} />
       {/* The four request forms, printed on their own sheet -- standalone for the same reason. */}
       <Route path="/forms/:id/print" element={<ProtectedRoute><FormPrint /></ProtectedRoute>} />
       <Route

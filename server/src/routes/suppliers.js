@@ -13,7 +13,11 @@ const ROUTE = '/suppliers';
 // are set by the importer alone, never typed in.
 const FIELDS = ['supplier_code', 'name', 'company_name', 'tin', 'payment_term_id', 'is_active',
   'address', 'contact_no', 'mobile_no', 'office_no', 'fax_no', 'email',
-  'credit_term', 'term_days', 'payee_name', 'bank_name', 'bank_account_name', 'bank_account_no'];
+  'credit_term', 'term_days', 'payee_name', 'bank_name', 'bank_account_name', 'bank_account_no',
+  // What this supplier is willing to let us owe. Typed in, never derived -- it is a term they
+  // grant us, not something this system can work out. Recorded only: nothing refuses a purchase
+  // order that would breach it (see db/add-supplier-credit-limit.js).
+  'credit_limit'];
 
 // An empty box or an unselected <select> posts '', and "not filled in" is NULL, not ''. It matters
 // most for payment_term_id and term_days, which are INT: '' there either becomes 0 or errors

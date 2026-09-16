@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { insertNumbered } = require('../lib/docNumber');
 const { isApproved } = require('../lib/poStatus');
@@ -173,6 +173,82 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
        LEFT JOIN departments d ON d.id = pol.department_id
        LEFT JOIN job_orders jo ON jo.id = pol.job_order_id
        WHERE pol.purchase_order_id = ?`,
+      [req.params.id]
+    );
+
+    res.json({ ...po, lines });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Printable Purchase Order -- the copy that goes to the supplier.
+//
+// Who may print:
+//   System Admin  -- any purchase order, at any status.
+//   Everyone else -- needs can_print on /purchase-orders AND a PO that has been APPROVED.
+//
+// The approval rule is the point of the gate. A printed PO is an order placed: hand one to a
+// supplier and they will deliver against it. Printing one still sitting at Pending Approval would
+// commit the company to a purchase nobody has signed off, and the paper would carry no trace that
+// it was never approved. Admins are exempt so historical orders can always be reprinted.
+//
+// isApproved(), not `status === 'approved'`: 19,066 of the purchase orders on the droplet carry
+// the live system's labels ('Fully Billed', 'Approved by General Manager') rather than this app's
+// codes, and every one of them was approved long ago. See lib/poStatus.js.
+router.get('/:id/print', requireAuth, async (req, res, next) => {
+  try {
+    const [[po]] = await pool.query(
+      `SELECT po.*, s.name AS supplier_name, s.supplier_code, s.address AS supplier_address,
+              s.tin AS supplier_tin, s.contact_no AS supplier_contact_no, s.email AS supplier_email,
+              s.credit_term AS supplier_credit_term,
+              u.display_name AS created_by_name, pt.term_name,
+              sup.display_name AS approved_by_supervisor_name,
+              gm.display_name AS approved_by_gm_name,
+              parent.po_no AS parent_po_no
+         FROM purchase_orders po
+         LEFT JOIN suppliers s ON s.id = po.supplier_id
+         LEFT JOIN users u ON u.id = po.created_by_user_id
+         LEFT JOIN users sup ON sup.id = po.approved_by_supervisor_user_id
+         LEFT JOIN users gm ON gm.id = po.approved_by_gm_user_id
+         LEFT JOIN payment_terms pt ON pt.id = po.term_id
+         LEFT JOIN purchase_orders parent ON parent.id = po.parent_purchase_order_id
+        WHERE po.id = ?`,
+      [req.params.id]
+    );
+    if (!po) return res.status(404).json({ error: 'Not found' });
+
+    if (!(await isSystemAdmin(req.user.id))) {
+      const [[page]] = await pool.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
+      if (!page) return res.status(500).json({ error: `Page not registered: ${ROUTE}` });
+      const [[perm]] = await pool.query(
+        'SELECT can_print FROM user_page_permissions WHERE user_id = ? AND page_id = ?',
+        [req.user.id, page.id]
+      );
+      if (!perm || !perm.can_print) {
+        return res.status(403).json({ error: 'You do not have permission to print a Purchase Order' });
+      }
+      // Reported separately from the permission failure: "ask your admin for access" and "get it
+      // approved first" are different problems with different fixes.
+      if (!isApproved(po.status)) {
+        return res.status(403).json({
+          error: `This Purchase Order is ${po.status} -- only an approved Purchase Order can be printed.`,
+          reason: 'not_approved',
+        });
+      }
+    }
+
+    const [lines] = await pool.query(
+      `SELECT pol.*, i.item_code, i.display_name AS item_name, t.code AS tax_code,
+              loc.location_name, d.name AS department_name, jo.job_order_no
+         FROM purchase_order_lines pol
+         LEFT JOIN inventories i ON i.id = pol.item_id
+         LEFT JOIN taxes t ON t.id = pol.tax_code_id
+         LEFT JOIN locations loc ON loc.id = pol.location_id
+         LEFT JOIN departments d ON d.id = pol.department_id
+         LEFT JOIN job_orders jo ON jo.id = pol.job_order_id
+        WHERE pol.purchase_order_id = ?
+        ORDER BY pol.id`,
       [req.params.id]
     );
 

@@ -88,6 +88,13 @@ export default function SupplierView() {
   if (notFound || !supplier) return <div className="empty-state">Supplier not found.</div>;
 
   const pages = Math.max(1, Math.ceil(ledger.total / PAGE_SIZE));
+  // A blank credit limit means none has been agreed, which is not the same as a limit of zero --
+  // so "remaining" is only shown once a figure has actually been set. It can go negative, and it
+  // is left negative on purpose: a supplier already past their limit is the case worth seeing.
+  const creditLimit = supplier.credit_limit === null || supplier.credit_limit === undefined || supplier.credit_limit === ''
+    ? null : Number(supplier.credit_limit);
+  const hasLimit = creditLimit !== null && Number.isFinite(creditLimit) && creditLimit > 0;
+  const remainingCredit = hasLimit ? creditLimit - Number(supplier.balance || 0) : null;
   const contacts = supplier.contacts || [];
   const addresses = supplier.addresses || [];
   const items = supplier.items || [];
@@ -122,6 +129,18 @@ export default function SupplierView() {
             {/* What is still owed, not what has ever been spent -- read off the bills' own
                 remaining Amount Due, the same figure the Bill Payment screen pays against. */}
             <div>Balance : <span className="hi">{money(supplier.balance)}</span></div>
+          </div>
+          <div>
+            <div>Credit Limit : <span className="hi">{hasLimit ? money(creditLimit) : 'Not set'}</span></div>
+            {hasLimit && (
+              <div>
+                Remaining :{' '}
+                <span className="hi" style={remainingCredit < 0 ? { color: 'var(--color-danger-text, #b91c1c)' } : undefined}>
+                  {money(remainingCredit)}
+                </span>
+                {remainingCredit < 0 && <span className="muted" style={{ fontSize: 12 }}> · over limit</span>}
+              </div>
+            )}
           </div>
         </div>
       </div>

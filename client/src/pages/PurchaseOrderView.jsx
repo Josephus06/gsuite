@@ -128,6 +128,10 @@ export default function PurchaseOrderView() {
 
   const canEdit = can('/purchase-orders', 'can_edit');
   const canApprovePO = can('/purchase-orders', 'can_approve');
+  // A printed PO is an order placed -- a supplier holding one will deliver against it -- so the
+  // button only appears once the order has actually been approved. The server enforces the same
+  // rule (GET /purchase-orders/:id/print); this just avoids offering a button that would refuse.
+  const showPrint = can('/purchase-orders', 'can_print') && isApprovedPo(po.status);
   // Normalised: an imported PO says 'Cancelled', 'Approved by General Manager', 'Fully Billed' --
   // comparing to the app's own codes was wrong about almost every purchase order in the database.
   const st = normalisePoStatus(po.status);
@@ -169,6 +173,7 @@ export default function PurchaseOrderView() {
           {hasBillableLine && <button className="btn btn-sm btn-primary" onClick={() => setShowBillModal(true)}>Bill</button>}
           {showVendorReturn && <button className="btn btn-sm" onClick={() => navigate(`/purchase-orders/${id}/return`)}>Vendor Return</button>}
           {showApprove && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>Approve</button>}
+          {showPrint && <button className="btn btn-sm" onClick={() => window.open(`/purchase-orders/${id}/print`, '_blank')}>Print</button>}
           {canEdit && canCancel && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
         </div>
       </div>

@@ -9,7 +9,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 const EMPTY = {
   supplier_code: '', name: '', company_name: '', tin: '', payment_term_id: '', is_active: true,
   address: '', contact_no: '', mobile_no: '', office_no: '', fax_no: '', email: '',
-  credit_term: '', term_days: '', payee_name: '', bank_name: '', bank_account_name: '',
+  credit_term: '', term_days: '', credit_limit: '', payee_name: '', bank_name: '', bank_account_name: '',
   bank_account_no: '',
 };
 const EMPTY_CONTACT = { contact_name: '', title: '', email: '', phone: '', is_primary: false };
@@ -254,6 +254,15 @@ export default function Suppliers() {
                 <div className="field">
                   <label>Term (days)</label>
                   <input type="number" min="0" value={form.term_days} onChange={(e) => setForm({ ...form, term_days: e.target.value })} />
+                </div>
+                <div className="field">
+                  <label>Credit Limit</label>
+                  {/* How much this supplier lets us owe. Blank means none agreed, which is not the
+                      same as zero -- blankToNull on the server keeps the two apart. */}
+                  <input
+                    type="number" min="0" step="0.01" value={form.credit_limit ?? ''}
+                    onChange={(e) => setForm({ ...form, credit_limit: e.target.value })}
+                  />
                 </div>
               </div>
             </div>
