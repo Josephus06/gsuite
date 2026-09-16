@@ -321,7 +321,9 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 //   PO1/PO2, total > APPROVAL_THRESHOLD: Purchasing Supervisor approves -> pending_approval_gm
 //     -> General Manager approves -> 'approved'.
 //   PO1/PO2, total <= APPROVAL_THRESHOLD: Purchasing Supervisor approves -> 'approved' directly.
-//   PO3/PO4: created straight into pending_approval_gm -- General Manager approves -> 'approved'.
+//   PO3/PO4: created straight into pending_approval_gm. A General Manager approves any amount; a
+//     Purchasing Supervisor may approve one up to APPROVAL_THRESHOLD, so the same ceiling applies
+//     to a supervisor whatever the type -- it is the amount the threshold exists to judge.
 // A System Admin can also perform the GM-tier approval (matches the "GM" ~ admin-level
 // authority precedent used elsewhere, e.g. approving PO3/PO4 costing without a dedicated
 // GM account existing yet).
@@ -345,13 +347,29 @@ router.put('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve'),
         [newStatus, req.user.id, req.params.id]
       );
     } else if (po.status === 'pending_approval_gm') {
-      if (actingUser.account_type !== 'System Admin' && actingUser.account_type !== 'General Manager') {
+      const isGm = actingUser.account_type === 'System Admin' || actingUser.account_type === 'General Manager';
+      // A Purchasing Supervisor may clear this tier too, but only under the threshold. PO3/PO4 are
+      // created straight into pending_approval_gm, so without this a 500-peso service PO waited on
+      // the General Manager while a 9,000-peso PO1 did not -- the amount, not the type, is what
+      // the threshold is there to judge. Above it, still the GM alone.
+      const isSupervisorUnderThreshold = !!actingUser.is_purchasing_supervisor
+        && Number(po.total_amount) <= APPROVAL_THRESHOLD;
+      if (!isGm && !isSupervisorUnderThreshold) {
         await conn.rollback();
-        return res.status(403).json({ error: 'Only a General Manager / System Admin can approve this Purchase Order.' });
+        return res.status(403).json({
+          error: actingUser.is_purchasing_supervisor
+            ? `A Purchasing Supervisor can approve up to ${APPROVAL_THRESHOLD.toLocaleString('en-US')}. This one is for ${Number(po.total_amount).toLocaleString('en-US', { minimumFractionDigits: 2 })} and needs a General Manager.`
+            : 'Only a General Manager / System Admin can approve this Purchase Order.',
+        });
       }
       newStatus = 'approved';
+      // Stamped as whoever actually signed it. Writing the GM columns for a supervisor's approval
+      // would make the PO claim a General Manager approved it -- which is exactly what the header
+      // reads back from these columns.
       await conn.query(
-        "UPDATE purchase_orders SET status = 'approved', approved_by_gm_user_id = ?, approved_by_gm_at = NOW() WHERE id = ?",
+        isGm
+          ? "UPDATE purchase_orders SET status = 'approved', approved_by_gm_user_id = ?, approved_by_gm_at = NOW() WHERE id = ?"
+          : "UPDATE purchase_orders SET status = 'approved', approved_by_supervisor_user_id = ?, approved_by_supervisor_at = NOW() WHERE id = ?",
         [req.user.id, req.params.id]
       );
     } else {

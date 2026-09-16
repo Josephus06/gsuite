@@ -137,9 +137,17 @@ export default function PurchaseOrderView() {
   // lines, and this build has no undo path for that, same reasoning as every other
   // transaction type here only supporting Cancel (never Edit) once posted.
   const showEdit = canEdit && (st === 'pending_approval' || st === 'pending_approval_gm');
+  // A Purchasing Supervisor signs any type of PO up to this, including the PO3/PO4 that are raised
+  // straight into the GM tier; above it the General Manager alone. Kept in step with
+  // APPROVAL_THRESHOLD in routes/purchaseOrders.js, which is what actually enforces it.
+  const SUPERVISOR_APPROVAL_LIMIT = 10000;
+  const withinSupervisorLimit = Number(po.total_amount || 0) <= SUPERVISOR_APPROVAL_LIMIT;
   const showApprove = canApprovePO && (
     (st === 'pending_approval' && !!user?.is_purchasing_supervisor)
-    || (st === 'pending_approval_gm' && (user?.account_type === 'System Admin' || user?.account_type === 'General Manager'))
+    || (st === 'pending_approval_gm' && (
+      user?.account_type === 'System Admin' || user?.account_type === 'General Manager'
+      || (!!user?.is_purchasing_supervisor && withinSupervisorLimit)
+    ))
   );
   // Receivable when approved by EITHER route and not already settled by the source. Requiring the
   // literal code 'approved' hid this button on every imported purchase order.
