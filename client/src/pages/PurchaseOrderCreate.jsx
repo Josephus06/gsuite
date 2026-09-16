@@ -21,6 +21,7 @@ export default function PurchaseOrderCreate() {
   const [departments, setDepartments] = useState([]);
   const [jobOrders, setJobOrders] = useState([]);
   const [serviceItems, setServiceItems] = useState([]);
+  const [nonInventoryItems, setNonInventoryItems] = useState([]);
 
   const [poCategory, setPoCategory] = useState('');
   const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
@@ -54,7 +55,22 @@ export default function PurchaseOrderCreate() {
     load('Departments', api.get('/lookups/departments'), setDepartments);
     load('Job Orders', api.get('/job-orders', { params: { limit: 1000 } }), (d) => setJobOrders(d.rows || []));
     load('Service items', api.get('/inventory', { params: { item_type: 'Service' } }), setServiceItems);
+    load('Non-inventory items', api.get('/inventory', { params: { item_type: 'Non-Inventory' } }), setNonInventoryItems);
   }, []);
+
+  // PO-3 lines are picked from the Service items master, PO-4 lines from Non-Inventory -- and
+  // only PO-3 lines carry a Job Order. So lines added under one category are the wrong shape under
+  // the other: the item would not be in the list the form now offers, and a JO would ride along
+  // invisibly on a PO-4. Cleared rather than silently carried over, and confirmed first because it
+  // is the user's own typing being thrown away.
+  function changeCategory(next) {
+    if (next === poCategory) return;
+    if (lines.length && !confirm(
+      'Changing the PO Category clears the lines already added -- the two categories are filled from different item lists. Continue?'
+    )) return;
+    setPoCategory(next);
+    setLines([]);
+  }
 
   function addLine(item) {
     setLines((prev) => [...prev, {
@@ -91,6 +107,15 @@ export default function PurchaseOrderCreate() {
   }
 
   const grandTotal = lines.reduce((s, l) => s + lineCalc(l).extPrice, 0);
+
+  // Which item master the Materials picker draws from. PO-3 ("Services with JO") buys work against
+  // a job order, so it lists Service items. PO-4 ("Services/Non-Inventory without JO") lists
+  // Non-Inventory -- the consumables and shop supplies that are stocked by name but carry no
+  // quantity. Both live in the one `inventories` table and are told apart by item_type, which is
+  // why this is a choice of list rather than a different endpoint.
+  const isNonInventoryCategory = poCategory === 'PO4';
+  const pickerItems = isNonInventoryCategory ? nonInventoryItems : serviceItems;
+  const itemKindLabel = isNonInventoryCategory ? 'Non-Inventory Item' : 'Service Item';
 
   async function handleSave() {
     setError('');
@@ -180,7 +205,7 @@ export default function PurchaseOrderCreate() {
           </div>
           <div className="field">
             <label>PO Category</label>
-            <select value={poCategory} onChange={(e) => setPoCategory(e.target.value)}>
+            <select value={poCategory} onChange={(e) => changeCategory(e.target.value)}>
               <option value="">--Select--</option>
               <option value="PO3">Services with JO</option>
               <option value="PO4">Services/Non-Inventory without JO</option>
@@ -259,11 +284,11 @@ export default function PurchaseOrderCreate() {
 
         <div style={{ marginTop: 10 }}>
           <EntityPicker
-            label="Service Item" items={serviceItems} value="" getLabel={(i) => i.display_name}
+            label={itemKindLabel} items={pickerItems} value="" getLabel={(i) => i.display_name}
             columns={[{ key: 'item_code', label: 'Code' }, { key: 'display_name', label: 'Name' }]}
             searchKeys={['item_code', 'display_name']}
             onSelect={addLine}
-            triggerLabel="Add Service Item"
+            triggerLabel={`Add ${itemKindLabel}`}
             triggerClassName="btn btn-primary"
             disabled={!poCategory}
           />
