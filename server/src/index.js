@@ -99,6 +99,7 @@ const archiverFileRoutes = require('./routes/archiverFiles');
 const archiverKnowledgeRoutes = require('./routes/archiverKnowledge');
 const { ensureAssignedAtColumn } = require('./db/ensureSchema');
 const { sendTicketReminders } = require('./scripts/ticket_reminder');
+const { sendParkedItemReminders } = require('./scripts/parked_items_reminder');
 const { startSampling } = require('./lib/systemHealth');
 
 const app = express();
@@ -330,6 +331,35 @@ if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
 } else {
   console.warn('Ticket reminder email job disabled because SMTP configuration is missing.');
 }
+
+// The unidentified-bank-items reminder. NOT gated on SMTP, unlike the ticket one above: this
+// writes an in-app notification rather than sending mail, so there is nothing for missing SMTP to
+// stop. It is the only thing that surfaces the Deposit / Disbursement balances at all -- those
+// accounts are excluded from every accounting report -- so disabling it by accident would put the
+// money back out of sight. See scripts/parked_items_reminder.js.
+function scheduleDailyParkedItemReminders(hour = 2, minute = 0) {
+  const scheduleNextRun = () => {
+    const now = new Date();
+    const nextRun = new Date(now);
+    nextRun.setHours(hour, minute, 0, 0);
+    if (nextRun <= now) nextRun.setDate(nextRun.getDate() + 1);
+    console.log(`Unidentified bank items reminder scheduled for ${nextRun.toLocaleString()}`);
+    setTimeout(async () => {
+      try {
+        const result = await sendParkedItemReminders();
+        if (result.notified) console.log(`Unidentified bank items: told ${result.notified} approver(s) about ${result.items} item(s).`);
+      } catch (err) {
+        console.error('Scheduled unidentified bank items reminder failed:', err);
+      }
+      scheduleNextRun();
+    }, nextRun - now);
+  };
+  scheduleNextRun();
+}
+scheduleDailyParkedItemReminders(
+  Number(process.env.PARKED_ITEMS_REMINDER_HOUR || 2),
+  Number(process.env.PARKED_ITEMS_REMINDER_MINUTE || 0),
+);
 
 // In production (Railway) the client is built into client/dist and this server
 // serves it directly -- single deployable service, same origin as /api so the

@@ -24,6 +24,7 @@ function notificationTypeLabel(type) {
     case 'ticket_approved': return 'Approved';
     case 'ticket_resolved': return 'Resolved';
     case 'gm_approval_needed': return 'GM Approval';
+    case 'parked_bank_items': return 'Bank Items';
     case 'feed_post': return 'New Post';
     case 'feed_reaction': return 'Reaction';
     case 'feed_comment': return 'Comment';
@@ -123,6 +124,10 @@ export default function NotificationBell() {
       }
     }
     if (n.related_type === 'Ticket' && n.related_id) navigate(`/tickets/${n.related_id}`);
+    // The unidentified-bank-items reminder is about a BALANCE, not a record, so there is no id to
+    // carry -- it opens the report that lists what is still parked. Without this the reminder
+    // would say something needs attention and then do nothing when clicked.
+    if (n.related_type === 'ParkedBankItems') navigate('/reports/parked-bank-items');
     // Design hand-off notifications. An artist told the work is theirs goes straight to the
     // run screen where they start the timer; everyone else (the supervisor who has to assign
     // it, Sales chasing an approval) goes to the order itself.

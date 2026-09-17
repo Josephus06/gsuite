@@ -2,6 +2,7 @@ const express = require('express');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { buildTrialBalance, buildBalanceSheet, buildIncomeStatement, buildGeneralLedger, buildGlTransactions } = require('../lib/reportsEngine');
 const { buildArAging, buildArAgingCustomerDetails, buildArAgingCustomerLedger } = require('../lib/arAging');
+const { parkedReport } = require('../lib/parkedBankItems');
 const { buildCommissionReport, buildCommissionJoDetail, getTeamEmployeeIds, getSbuDivisionIds } = require('../lib/commissionReport');
 const pool = require('../db');
 
@@ -84,6 +85,20 @@ router.get('/income-statement', requireAuth, requirePermission('/reports/income-
 router.get('/balance-sheet', requireAuth, requirePermission('/reports/balance-sheet', 'can_view'), async (req, res, next) => {
   try {
     res.json(await buildBalanceSheet(req.query.asOf || today()));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// What is still parked in the Deposit / Disbursement accounts waiting to be identified.
+//
+// Those two carry exclude_from_reports, so no other report totals them -- which is exactly why
+// this one has to exist. See lib/parkedBankItems.js. The nightly reminder reads the same
+// function, so the report and the notification can never disagree about whether there is
+// anything to chase.
+router.get('/parked-bank-items', requireAuth, requirePermission('/reports/parked-bank-items', 'can_view'), async (req, res, next) => {
+  try {
+    res.json(await parkedReport({ accountCode: req.query.account_code || null }));
   } catch (err) {
     next(err);
   }

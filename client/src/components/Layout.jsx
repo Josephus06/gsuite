@@ -246,6 +246,7 @@ const NAV_STRUCTURE = [
           { route: '/reports/general-ledger', label: 'General Ledger' },
           { route: '/reports/delivery-summary', label: 'Delivery Summary' },
           { route: '/reports/disbursement', label: 'Disbursement Report' },
+          { route: '/reports/parked-bank-items', label: 'Unidentified Bank Items' },
         ],
       },
     ],

@@ -63,6 +63,7 @@ import AssignedJobOrders from './pages/AssignedJobOrders';
 import ArtistIncentiveReport from './pages/reports/ArtistIncentiveReport';
 import DeliverySummary from './pages/reports/DeliverySummary';
 import DisbursementReport from './pages/reports/DisbursementReport';
+import ParkedBankItems from './pages/reports/ParkedBankItems';
 import Itineraries from './pages/Itineraries';
 import ItineraryView from './pages/ItineraryView';
 import ItineraryPrint from './pages/ItineraryPrint';
@@ -403,6 +404,7 @@ function App() {
         <Route path="/reports/ticket-summary" element={<TicketSummary />} />
         <Route path="/reports/delivery-summary" element={<DeliverySummary />} />
         <Route path="/reports/disbursement" element={<DisbursementReport />} />
+        <Route path="/reports/parked-bank-items" element={<ParkedBankItems />} />
         {/* Assets Monitoring. /new is declared before /:id so "new" is not read as a record id. */}
         <Route path="/asset-items" element={<AssetItems />} />
         <Route path="/assets" element={<Assets />} />
