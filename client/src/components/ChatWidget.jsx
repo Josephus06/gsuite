@@ -31,6 +31,8 @@ const POS_KEY = 'chatWidgetPos';
 // open for the whole session and streams what it hears to the transcriber, which is not something
 // to switch on for a person without asking (see utils/voiceInput.js).
 const WAKE_KEY = 'chatWidget.wakeWord';
+// Whether the "you can talk to this" nudge has already been shown and dealt with.
+const HINT_KEY = 'chatWidget.voiceHint';
 const DEFAULT_POS = { right: 20, bottom: 20 };
 const DRAG_THRESHOLD = 4; // px of movement before a press counts as a drag rather than a click
 
@@ -93,6 +95,10 @@ export default function ChatWidget() {
   // that lights up and shows nothing for three seconds reads as broken.
   const [partial, setPartial] = useState('');
   const [voiceNote, setVoiceNote] = useState('');
+  // The one-time nudge that the wake word exists at all.
+  const [hintSeen, setHintSeen] = useState(() => {
+    try { return localStorage.getItem(HINT_KEY) === 'seen'; } catch { return false; }
+  });
   const [wakeOn, setWakeOn] = useState(() => {
     try { return voiceSupported() && localStorage.getItem(WAKE_KEY) === 'on'; } catch { return false; }
   });
@@ -367,7 +373,13 @@ export default function ChatWidget() {
   // Leaving the page with the microphone live leaves the browser's recording dot on.
   useEffect(() => () => { cancelListenRef.current?.(); wakeRef.current?.stop(); }, []);
 
+  function dismissHint() {
+    setHintSeen(true);
+    try { localStorage.setItem(HINT_KEY, 'seen'); } catch { /* it will offer again next session */ }
+  }
+
   function toggleWake() {
+    dismissHint();
     if (!voiceOk) { setVoiceNote(voiceUnavailableReason()); return; }
     const next = !wakeOn;
     setWakeOn(next);
@@ -458,6 +470,20 @@ export default function ChatWidget() {
           </div>
           {/* What the microphone is doing, in words. A mic button that lights up and says nothing
               is indistinguishable from one that is broken. */}
+          {/* Nobody guesses that a small ear icon in a header arms a wake word. Said once, in the
+              panel, with the switch right there -- and never again after it has been turned on or
+              waved away. */}
+          {voiceOk && !wakeOn && !hintSeen && (
+            <div style={{
+              padding: '8px 12px', fontSize: 12, borderTop: '1px solid var(--border)',
+              background: 'var(--panel-2, #f3f4f6)', display: 'flex', alignItems: 'center', gap: 8,
+            }}
+            >
+              <span style={{ flex: 1 }}>Prefer to talk? Turn on listening and just say <strong>“Tetel”</strong>.</span>
+              <button type="button" className="btn btn-sm btn-primary" onClick={toggleWake}>Turn on</button>
+              <button type="button" className="link-btn" onClick={dismissHint} title="Don't show this again">✕</button>
+            </div>
+          )}
           {(listening || partial || voiceNote) && (
             <div style={{
               padding: '6px 12px', fontSize: 12, borderTop: '1px solid var(--border)',
