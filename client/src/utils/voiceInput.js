@@ -122,10 +122,17 @@ export function listenOnce({ onPartial, onResult, onError, onEnd, lang = 'en-US'
   return () => { if (active === rec) active = null; retire(rec); };
 }
 
-// Near-misses included on purpose: "jot" is a short word and the transcriber guesses. "Hey job"
-// and "hey jazz" are what it actually returns for a clear "hey Jot", and demanding the exact word
+// The wake word is "Tetel", said on its own -- no "hey" needed, though one is allowed.
+//
+// NEAR-MISSES ARE DELIBERATE. "Tetel" is not an English word, so the transcriber reaches for the
+// nearest one it knows and hands back "tattle", "petal", "tetta". Demanding the exact spelling
 // makes the feature look broken rather than making it precise.
-const WAKE = /\b(hey|hi|hey there|ok|okay)[,]?\s+(jot|jott|jots|jod|jodh|jog|job|jobs|jazz|chat|assistant|jot with us)\b/i;
+//
+// WHAT IS DELIBERATELY *NOT* HERE: "total", "title" and "detail". All three are close enough to be
+// tempting, and all three are said constantly in an accounting office -- "what's the total",
+// "the detail is wrong". Accepting them would have the assistant barging into conversations all
+// day, which is the fastest way for everyone to switch the microphone off for good.
+const WAKE = /\b(?:(?:hey|hi|ok|okay)[,]?\s+)?(tetel|tetell|tetl|tetle|tettel|tatel|tattel|tattle|tetal|tetta|teta|petal|pedal|tito|titol)\b/i;
 
 export function isWakePhrase(text) {
   return WAKE.test(String(text || ''));

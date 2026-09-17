@@ -14,6 +14,8 @@ import { afterWakePhrase, listenOnce, voiceSupported, voiceUnavailableReason, wa
 // the setInterval pattern already used in client/src/pages/AssignedJobOrderRun.jsx.
 const GREETING = "Hi! Ask me things like \"how many estimates today\" or \"my weighted sales this month\" — or type \"create ticket\" to reach a department.";
 const POLL_MS = 6000;
+// What the assistant says back when it is woken by name with no question attached.
+const ANSWERING = 'How can I assist you?';
 
 // Phrases that mean "stop talking to the department, talk to the assistant again". Matched
 // only as a whole message, deliberately: a genuine ticket reply that happens to contain
@@ -189,15 +191,31 @@ export default function ChatWidget() {
 
   // Reads a reply out and holds the wake listener while it does. Without the hold the assistant
   // transcribes its own answer and wakes itself up on any word that sounds like the wake phrase.
-  function sayAloud(text) {
+  function sayAloud(text, onDone) {
     wakeRef.current?.pause();
     speak(text);
-    const done = setInterval(() => {
+    let settled = false;
+    let ticks = 0;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearInterval(poll);
+      clearTimeout(cap);
+      // With something to do next -- start listening for the question -- the wake listener stays
+      // held, because that next thing needs the microphone itself.
+      if (onDone) onDone(); else wakeRef.current?.resume();
+    };
+    const poll = setInterval(() => {
+      // The first ticks are skipped on purpose: speak() only QUEUES an utterance, so for a moment
+      // afterwards the synthesiser reports neither speaking nor pending. Believing it that early
+      // means the greeting and the microphone start at the same time, and the assistant hears
+      // itself asking how it can help.
+      if ((ticks += 1) < 3) return;
       const s = window.speechSynthesis;
-      if (!s || (!s.speaking && !s.pending)) { clearInterval(done); wakeRef.current?.resume(); }
-    }, 400);
+      if (!s || (!s.speaking && !s.pending)) finish();
+    }, 250);
     // A stalled synthesiser must not leave the wake word deaf for the rest of the session.
-    setTimeout(() => { clearInterval(done); wakeRef.current?.resume(); }, 60000);
+    const cap = setTimeout(finish, 60000);
   }
 
   async function submit(text, { spoken = false } = {}) {
@@ -313,8 +331,11 @@ export default function ChatWidget() {
       submit(question, { spoken: true });
       return;
     }
-    // Nothing but the wake phrase: answer it the way a person would, by listening.
-    startListening();
+    // Nothing but the name: answer the way a person would -- say you are listening, and then
+    // actually listen. The microphone only opens once the greeting has finished playing, or it
+    // would record the greeting as the question.
+    pushLocal('bot', ANSWERING);
+    sayAloud(ANSWERING, startListening);
   }
 
   // Kept current on every render. The wake listener is started once and lives for the session,
@@ -351,7 +372,7 @@ export default function ChatWidget() {
     const next = !wakeOn;
     setWakeOn(next);
     try { localStorage.setItem(WAKE_KEY, next ? 'on' : 'off'); } catch { /* this session only */ }
-    setVoiceNote(next ? 'Listening for "Hey Jot". Say it any time, even with this closed.' : '');
+    setVoiceNote(next ? 'Listening for "Tetel". Say it any time, even with this closed.' : '');
   }
 
   const anchor = anchorFor(pos, open);
@@ -406,7 +427,7 @@ export default function ChatWidget() {
               <button
                 type="button"
                 onClick={toggleWake}
-                title={wakeOn ? 'Listening for "Hey Jot" — click to stop' : 'Listen for "Hey Jot"'}
+                title={wakeOn ? 'Listening for "Tetel" — click to stop' : 'Listen for "Tetel"'}
                 style={{
                   background: wakeOn ? 'rgba(255,255,255,0.32)' : 'rgba(255,255,255,0.18)',
                   border: 'none', color: '#fff', cursor: 'pointer', fontSize: 11,
@@ -514,7 +535,7 @@ export default function ChatWidget() {
           later and rightly object to. */}
       {wakeOn && !open && (
         <div
-          title='Listening for "Hey Jot"'
+          title='Listening for "Tetel"'
           style={{
             position: 'absolute', top: 4, right: 4, display: 'flex', alignItems: 'center', gap: 4,
             background: 'var(--danger)', color: '#fff', borderRadius: 10, padding: '1px 7px',

@@ -1,5 +1,6 @@
 const { runSqlFallback } = require('./sqlFallback');
 const { answerUnitConversion } = require('./unitConversion');
+const { answerCountQuestion } = require('./chatbotCounts');
 const pool = require('../db');
 
 // Job-order artist lookups are a common, exact question with a stable relationship
@@ -111,6 +112,12 @@ async function answerQuestion(user, message, history = []) {
     // can parse with certainty and returns null otherwise, so nothing else changes.
     const conversion = await answerUnitConversion(message);
     if (conversion) return conversion;
+
+    // "How many estimates today" and its relatives, answered exactly and in a sentence rather
+    // than as a result set -- see lib/chatbotCounts.js. It matters more now the answer may be
+    // read aloud: "COUNT(*): 14" is fine on screen and meaningless in the ear.
+    const counted = await answerCountQuestion(user, message);
+    if (counted) return counted;
 
     const jobOrderNo = extractJobOrderForArtistLookup(message);
     if (jobOrderNo) {
