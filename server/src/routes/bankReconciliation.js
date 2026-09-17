@@ -6,7 +6,7 @@ const { requireAuth, requirePermission, userCan } = require('../middleware/auth'
 const { insertNumbered } = require('../lib/docNumber');
 const { outstandingMovements, movement, bookBalance } = require('../lib/bankLedger');
 const { proposeMatches, reconciliationSummary } = require('../lib/bankMatching');
-const { assertPeriodOpen } = require('../lib/accountingPeriod');
+const { periodLock } = require('../lib/accountingPeriod');
 const { postBankOnlyJournal, voidBankOnlyJournals, postedJournalIdsFor } = require('../lib/bankOnlyPosting');
 
 const router = express.Router();
@@ -550,8 +550,30 @@ router.post('/:id/lines/:lineId/bank-only', requireAuth, requirePermission(ROUTE
     if (!await userCan(req.user.id, '/journals', 'can_add')) {
       return res.status(403).json({ error: 'Recording a bank-only item posts a journal entry, which you do not have permission to do.' });
     }
-    // And it must respect a closed period, exactly as raising the journal by hand would.
-    await assertPeriodOpen(line.txn_date, 'other_gl', conn);
+    // The date the entry is posted on. Defaults to the day the bank moved the money, which is what
+    // you want on a current statement. A statement worked months late has lines in periods that are
+    // closed, and the answer there is to post it in an open one -- so the caller may say which,
+    // and the refusal below names the problem rather than just saying no.
+    const postDate = trunc(req.body.post_date, 10) || String(line.txn_date).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(postDate)) return res.status(400).json({ error: 'Give the posting date as YYYY-MM-DD.' });
+    // It must fall on or before the statement date, or this reconciliation will never see it: the
+    // book balance and the outstanding list are both taken AS AT the statement date, so an entry
+    // dated after it counts for nothing here. Refusing is better than posting something that
+    // silently fails to close the difference.
+    const stmtDate = String(recon.statement_date).slice(0, 10);
+    if (postDate > stmtDate) {
+      return res.status(400).json({
+        error: `The posting date must be on or before the statement date (${stmtDate}). `
+          + 'An entry dated after it is not part of this reconciliation and would not close the difference.',
+      });
+    }
+    const locked = await periodLock(postDate, 'other_gl', conn);
+    if (locked) {
+      return res.status(409).json({
+        error: `The accounting period for ${postDate} is closed (${locked}), so nothing can be posted into it. `
+          + 'Change "Post on" to a date in an open period -- the entry still records the bank\'s own date in its memo.',
+      });
+    }
 
     await conn.beginTransaction();
     // Re-marking a line that was already posted: the earlier journal is withdrawn rather than left
@@ -560,7 +582,7 @@ router.post('/:id/lines/:lineId/bank-only', requireAuth, requirePermission(ROUTE
     await conn.query('DELETE FROM bank_reconciliation_matches WHERE statement_line_id = ?', [line.id]);
 
     const { journalId, journalNo, bankLineId } = await postBankOnlyJournal(conn, {
-      line, bankAccountId: recon.account_id, accountId, note: req.body.note, userId: req.user.id,
+      line, bankAccountId: recon.account_id, accountId, note: req.body.note, userId: req.user.id, postDate,
     });
 
     // Matched and confirmed in the same breath. Without the match the journal would ALSO show up

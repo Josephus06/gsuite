@@ -40,20 +40,32 @@ function buildEntry({ line, bankAccountId, accountId }) {
 // Writes the journal and returns the id of its BANK line -- which is the id the reconciliation
 // matches on, because lib/bankLedger.js keys journal movements on journal_lines.id (one journal can
 // touch the same bank account twice, and each touch is its own movement).
-async function postBankOnlyJournal(conn, { line, bankAccountId, accountId, note, userId }) {
+async function postBankOnlyJournal(conn, { line, bankAccountId, accountId, note, userId, postDate }) {
   const { magnitude, rows } = buildEntry({ line, bankAccountId, accountId });
+
+  const bankDate = String(line.txn_date).slice(0, 10);
+  const dated = postDate || bankDate;
 
   // The bank's own description first, because that is what the reader will be looking for when
   // they come back to ask what this was; the operator's note second.
-  const memo = [line.description, line.reference ? `Ref ${line.reference}` : null, note]
-    .filter(Boolean).join(' - ').slice(0, 500) || 'Bank-only item';
+  //
+  // When the entry is posted on a different day from the one the bank moved the money -- a closed
+  // period is the usual reason -- the bank's date is written into the memo. Otherwise the only
+  // record of when it actually happened would be the statement line, and the journal on its own
+  // would misdate the event.
+  const memo = [
+    line.description,
+    line.reference ? `Ref ${line.reference}` : null,
+    dated !== bankDate ? `Bank date ${bankDate}` : null,
+    note,
+  ].filter(Boolean).join(' - ').slice(0, 500) || 'Bank-only item';
 
   const journalNo = await nextDocNo('journals', 'journal_no', 'JRNL-', conn);
   const [res] = await conn.query(
     `INSERT INTO journals (journal_no, date_created, memo, status, total_debit, total_credit,
        created_by_user_id, created_at)
      VALUES (?, ?, ?, 'SAVED', ?, ?, ?, NOW())`,
-    [journalNo, line.txn_date, memo, magnitude, magnitude, userId],
+    [journalNo, dated, memo, magnitude, magnitude, userId],
   );
   const journalId = res.insertId;
 

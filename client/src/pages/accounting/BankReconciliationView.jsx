@@ -368,10 +368,19 @@ export default function BankReconciliationView() {
           bankAccountName={data.account_name}
           accounts={accounts}
           onClose={() => setBankOnlyFor(null)}
+          // Returns the refusal to the dialog instead of closing first. This posts to the general
+          // ledger and can be refused -- a closed period, a missing right -- and the page banner is
+          // at the top, which on a 194-line statement is nowhere near the row being worked. Closing
+          // on failure made a refused post look like nothing happening at all.
           onSave={async (body) => {
+            try {
+              await api.post(`/bank-reconciliation/${id}/lines/${bankOnlyFor.id}/bank-only`, body);
+            } catch (e) {
+              return e.response?.data?.error || 'That did not go through.';
+            }
             setBankOnlyFor(null);
-            await act(() => api.post(`/bank-reconciliation/${id}/lines/${bankOnlyFor.id}/bank-only`, body),
-              'Posted, and the line is accounted for.');
+            await act(() => Promise.resolve(), 'Posted, and the line is accounted for.');
+            return null;
           }}
         />
       )}
@@ -623,9 +632,23 @@ function FindDocument({ line, movements, onClose, onPick }) {
 function BankOnly({ line, accounts, bankAccountName, onClose, onSave }) {
   const [accountId, setAccountId] = useState('');
   const [note, setNote] = useState(line.description || '');
+  // The date the entry is posted on, which is an accounting decision rather than something to
+  // guess. It defaults to the day the bank moved the money, but a statement being worked months
+  // late will have lines in periods that are closed -- and the answer then is to post it in an
+  // open one, not to silently fail or to force the period open.
+  const [postDate, setPostDate] = useState(day(line.txn_date));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const moneyIn = Number(line.amount) > 0;
   const bankName = bankAccountName || 'the bank account';
   const chosen = accounts.find((a) => String(a.id) === String(accountId));
+
+  async function submit() {
+    setSaving(true);
+    setError('');
+    const message = await onSave({ account_id: accountId, note, post_date: postDate });
+    if (message) { setError(message); setSaving(false); }
+  }
   return (
     <Modal title="Record a bank-only item" onClose={onClose}>
       <div className="muted" style={{ marginBottom: 10 }}>
@@ -653,18 +676,30 @@ function BankOnly({ line, accounts, bankAccountName, onClose, onSave }) {
         </div>
       )}
       <div className="field">
+        <label>Post on</label>
+        <input type="date" value={postDate} onChange={(e) => { setPostDate(e.target.value); setError(''); }} />
+        {postDate !== day(line.txn_date) && (
+          <small className="muted">
+            The bank moved it on {day(line.txn_date)}; the entry will be dated {postDate}.
+          </small>
+        )}
+      </div>
+      <div className="field">
         <label>Note</label>
         <input value={note} onChange={(e) => setNote(e.target.value)} />
       </div>
+      {/* Shown here rather than at the top of the page: a refusal belongs next to the thing that
+          was refused, not 190 rows above it. */}
+      {error && <div className="error-banner" style={{ marginBottom: 12 }}>{error}</div>}
       <div className="modal-actions">
-        <button className="btn" onClick={onClose}>Cancel</button>
+        <button className="btn" disabled={saving} onClick={onClose}>Cancel</button>
         <button
           className="btn btn-primary"
-          disabled={!accountId}
+          disabled={!accountId || !postDate || saving}
           title={accountId ? undefined : 'Choose the account this belongs to'}
-          onClick={() => onSave({ account_id: accountId, note })}
+          onClick={submit}
         >
-          Post and mark
+          {saving ? 'Posting…' : 'Post and mark'}
         </button>
       </div>
     </Modal>
