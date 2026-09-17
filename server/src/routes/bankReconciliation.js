@@ -2,10 +2,12 @@ const express = require('express');
 const ExcelJS = require('exceljs');
 const XLSX = require('xlsx');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { insertNumbered } = require('../lib/docNumber');
 const { outstandingMovements, movement, bookBalance } = require('../lib/bankLedger');
 const { proposeMatches, reconciliationSummary } = require('../lib/bankMatching');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
+const { postBankOnlyJournal, voidBankOnlyJournals, postedJournalIdsFor } = require('../lib/bankOnlyPosting');
 
 const router = express.Router();
 const ROUTE = '/accounting/bank-reconciliation';
@@ -177,8 +179,14 @@ async function loadWorkspace(id) {
       WHERE r.id = ?`, [id]);
   if (!recon) return null;
 
+  // The posted journal's number and the account it was booked to come along, so a bank-only line
+  // can show what it actually wrote rather than only that it was tagged.
   const [lines] = await pool.query(
-    'SELECT * FROM bank_statement_lines WHERE reconciliation_id = ? ORDER BY line_no', [id]);
+    `SELECT l.*, j.journal_no AS posted_journal_no, a.account_name AS bank_only_account_name
+       FROM bank_statement_lines l
+       LEFT JOIN journals j ON j.id = l.posted_journal_id
+       LEFT JOIN chart_of_accounts a ON a.id = l.bank_only_account_id
+      WHERE l.reconciliation_id = ? ORDER BY l.line_no`, [id]);
   const [matches] = await pool.query(
     `SELECT m.*, u.display_name AS confirmed_by_name
        FROM bank_reconciliation_matches m
@@ -341,6 +349,9 @@ router.post('/:id/import', requireAuth, requirePermission(ROUTE, 'can_add'), asy
     // Re-importing replaces what was there. Its matches go with it (ON DELETE CASCADE), which is
     // what releases those documents to be claimed again -- a half-imported statement left behind
     // would hold documents hostage on a reconciliation nobody is working.
+    // Re-importing replaces every line, so anything they posted is withdrawn first. Without
+    // this the journals would be orphaned: still in the ledger, with nothing pointing at them.
+    await voidBankOnlyJournals(conn, await postedJournalIdsFor(conn, req.params.id), req.user.id);
     await conn.query('DELETE FROM bank_statement_lines WHERE reconciliation_id = ?', [req.params.id]);
     let n = 0;
     for (const l of lines) {
@@ -454,9 +465,14 @@ router.post('/:id/lines/:lineId/reject', requireAuth, requirePermission(ROUTE, '
     const [[line]] = await pool.query(
       'SELECT * FROM bank_statement_lines WHERE id = ? AND reconciliation_id = ?', [req.params.lineId, req.params.id]);
     if (!line) return res.status(404).json({ error: 'Not found' });
+    // Undoing a bank-only mark withdraws the journal it posted. Leaving it would keep the book
+    // moved for a line that is unexplained again -- the duplicate-entry path.
+    const voided = await voidBankOnlyJournals(pool, line.posted_journal_id, req.user.id);
     await pool.query('DELETE FROM bank_reconciliation_matches WHERE statement_line_id = ?', [line.id]);
-    await pool.query("UPDATE bank_statement_lines SET status = 'unmatched' WHERE id = ?", [line.id]);
-    return res.json({ ok: true });
+    await pool.query(
+      "UPDATE bank_statement_lines SET status = 'unmatched', bank_only_account_id = NULL, posted_journal_id = NULL WHERE id = ?",
+      [line.id]);
+    return res.json({ ok: true, voided_journals: voided });
   } catch (err) { return next(err); }
 });
 
@@ -477,6 +493,9 @@ router.post('/:id/lines/:lineId/match', requireAuth, requirePermission(ROUTE, 'c
     const doc = await movement(recon.account_id, kind, sourceId);
     if (!doc) return res.status(400).json({ error: 'That document is not on this bank account.' });
 
+    // Matching a real document to a line that was posted as bank-only withdraws that journal:
+    // the document is the explanation now, and both would move the book.
+    await voidBankOnlyJournals(pool, line.posted_journal_id, req.user.id);
     await pool.query('DELETE FROM bank_reconciliation_matches WHERE statement_line_id = ?', [line.id]);
     try {
       await pool.query(
@@ -491,24 +510,81 @@ router.post('/:id/lines/:lineId/match', requireAuth, requirePermission(ROUTE, 'c
       }
       throw err;
     }
-    await pool.query("UPDATE bank_statement_lines SET status = 'confirmed' WHERE id = ?", [line.id]);
+    await pool.query(
+      "UPDATE bank_statement_lines SET status = 'confirmed', bank_only_account_id = NULL, posted_journal_id = NULL WHERE id = ?",
+      [line.id]);
     return res.json({ ok: true, amount: doc.amount });
   } catch (err) { return next(err); }
 });
 
-// A line that is the bank's own doing -- a charge, interest, a debit memo. It has no document
-// because none was ever raised; it is accounted for by naming the account it belongs to.
+// A line that is the bank's own doing -- a charge, interest, a debit memo, an inward credit whose
+// advice has not arrived. It has no document because none was ever raised, so this WRITES one: a
+// journal on the bank account against the account named, matched to the line.
+//
+// It posts rather than merely labelling because the reconciliation cannot otherwise be finished.
+// See lib/bankOnlyPosting.js for the reasoning and the sign convention.
 router.post('/:id/lines/:lineId/bank-only', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
   try {
-    const [[line]] = await pool.query(
+    const [[recon]] = await conn.query('SELECT * FROM bank_reconciliations WHERE id = ?', [req.params.id]);
+    if (!recon) return res.status(404).json({ error: 'Not found' });
+    if (recon.status !== 'open') return res.status(409).json({ error: 'This reconciliation is already finished.' });
+
+    const [[line]] = await conn.query(
       'SELECT * FROM bank_statement_lines WHERE id = ? AND reconciliation_id = ?', [req.params.lineId, req.params.id]);
     if (!line) return res.status(404).json({ error: 'Not found' });
-    await pool.query('DELETE FROM bank_reconciliation_matches WHERE statement_line_id = ?', [line.id]);
-    await pool.query(
-      "UPDATE bank_statement_lines SET status = 'bank_only', bank_only_account_id = ?, note = ? WHERE id = ?",
-      [req.body.account_id || null, trunc(req.body.note, 255), line.id]);
-    return res.json({ ok: true });
-  } catch (err) { return next(err); }
+
+    const accountId = Number(req.body.account_id) || null;
+    if (!accountId) return res.status(400).json({ error: 'Name the account this belongs to.' });
+    const [[account]] = await conn.query(
+      'SELECT id, account_name, is_summary FROM chart_of_accounts WHERE id = ?', [accountId]);
+    if (!account) return res.status(400).json({ error: 'That account does not exist.' });
+    // A summary account is a heading in the chart, not somewhere a figure can land.
+    if (account.is_summary) return res.status(400).json({ error: `"${account.account_name}" is a heading, not a postable account.` });
+    if (account.id === recon.account_id) {
+      return res.status(400).json({ error: 'Choose the account on the OTHER side -- an entry cannot be the bank account twice.' });
+    }
+
+    // This writes to the general ledger, which is a larger act than tagging a line. Someone who
+    // may edit a reconciliation but not raise a journal should not get there through this door.
+    if (!await userCan(req.user.id, '/journals', 'can_add')) {
+      return res.status(403).json({ error: 'Recording a bank-only item posts a journal entry, which you do not have permission to do.' });
+    }
+    // And it must respect a closed period, exactly as raising the journal by hand would.
+    await assertPeriodOpen(line.txn_date, 'other_gl', conn);
+
+    await conn.beginTransaction();
+    // Re-marking a line that was already posted: the earlier journal is withdrawn rather than left
+    // behind. This is the path that would otherwise duplicate the entry in the ledger.
+    const voided = await voidBankOnlyJournals(conn, line.posted_journal_id, req.user.id);
+    await conn.query('DELETE FROM bank_reconciliation_matches WHERE statement_line_id = ?', [line.id]);
+
+    const { journalId, journalNo, bankLineId } = await postBankOnlyJournal(conn, {
+      line, bankAccountId: recon.account_id, accountId, note: req.body.note, userId: req.user.id,
+    });
+
+    // Matched and confirmed in the same breath. Without the match the journal would ALSO show up
+    // as an outstanding book movement and be counted twice -- once in the book balance, once as a
+    // deposit in transit.
+    await conn.query(
+      `INSERT INTO bank_reconciliation_matches
+         (reconciliation_id, statement_line_id, source_kind, source_id, amount, confidence, confirmed_at, confirmed_by_user_id)
+       VALUES (?, ?, 'journal', ?, ?, 'bank_only', NOW(), ?)`,
+      [req.params.id, line.id, bankLineId, line.amount, req.user.id],
+    );
+    await conn.query(
+      "UPDATE bank_statement_lines SET status = 'bank_only', bank_only_account_id = ?, note = ?, posted_journal_id = ? WHERE id = ?",
+      [accountId, trunc(req.body.note, 255), journalId, line.id]);
+    await conn.commit();
+
+    return res.json({ ok: true, journal_no: journalNo, journal_id: journalId, replaced_journals: voided });
+  } catch (err) {
+    await conn.rollback();
+    if (err.status === 409) return res.status(409).json({ error: err.message });
+    return next(err);
+  } finally {
+    conn.release();
+  }
 });
 
 /* -------------------------------------------------------------------------- */
@@ -566,8 +642,11 @@ router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async
     if (recon.status === 'reconciled') {
       return res.status(409).json({ error: 'A finished reconciliation cannot be deleted. Reopen it first.' });
     }
+    // The lines go with the reconciliation (ON DELETE CASCADE), so any journal they posted is
+    // withdrawn first -- otherwise it survives in the ledger with nothing left to explain it.
+    const voided = await voidBankOnlyJournals(pool, await postedJournalIdsFor(pool, req.params.id), req.user.id);
     await pool.query('DELETE FROM bank_reconciliations WHERE id = ?', [req.params.id]);
-    return res.json({ ok: true });
+    return res.json({ ok: true, voided_journals: voided });
   } catch (err) { return next(err); }
 });
 

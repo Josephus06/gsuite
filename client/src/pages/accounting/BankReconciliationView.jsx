@@ -255,7 +255,17 @@ export default function BankReconciliationView() {
                             )}
                           </>
                         ) : l.status === 'bank_only' ? (
-                          <span className="muted">{l.note || 'Bank charge / interest'}</span>
+                          <>
+                            <span className="muted">{l.note || 'Bank charge / interest'}</span>
+                            {/* What it actually wrote. A line that posts to the ledger should say
+                                so on the row, not only inside the dialog that posted it. */}
+                            {l.posted_journal_no && (
+                              <div className="muted" style={{ fontSize: 12 }}>
+                                Posted {l.posted_journal_no}
+                                {l.bank_only_account_name ? ` to ${l.bank_only_account_name}` : ''}
+                              </div>
+                            )}
+                          </>
                         ) : <span className="muted">—</span>}
                       </td>
                       <td><span className={`badge ${st.className}`}>{st.label}</span></td>
@@ -355,12 +365,13 @@ export default function BankReconciliationView() {
       {bankOnlyFor && (
         <BankOnly
           line={bankOnlyFor}
+          bankAccountName={data.account_name}
           accounts={accounts}
           onClose={() => setBankOnlyFor(null)}
           onSave={async (body) => {
             setBankOnlyFor(null);
             await act(() => api.post(`/bank-reconciliation/${id}/lines/${bankOnlyFor.id}/bank-only`, body),
-              'Marked as a bank-only item.');
+              'Posted, and the line is accounted for.');
           }}
         />
       )}
@@ -609,13 +620,21 @@ function FindDocument({ line, movements, onClose, onPick }) {
 
 // A line the bank raised itself -- a charge, interest, a debit memo. It has no document because
 // none was ever raised, so it is accounted for by naming where it belongs.
-function BankOnly({ line, accounts, onClose, onSave }) {
+function BankOnly({ line, accounts, bankAccountName, onClose, onSave }) {
   const [accountId, setAccountId] = useState('');
   const [note, setNote] = useState(line.description || '');
+  const moneyIn = Number(line.amount) > 0;
+  const bankName = bankAccountName || 'the bank account';
+  const chosen = accounts.find((a) => String(a.id) === String(accountId));
   return (
-    <Modal title="Bank charge or other bank-only item" onClose={onClose}>
+    <Modal title="Record a bank-only item" onClose={onClose}>
       <div className="muted" style={{ marginBottom: 10 }}>
         {day(line.txn_date)} · {money(line.amount)} · {line.description || '—'}
+      </div>
+      {/* Said plainly, because this writes to the general ledger. It used to only tag the line,
+          which cleared the review gate and then left the reconciliation unable to balance. */}
+      <div className="muted" style={{ marginBottom: 12 }}>
+        This posts a journal entry — it is what puts the item in the book, so the two balance.
       </div>
       <div className="field">
         <label>Post to</label>
@@ -624,14 +643,28 @@ function BankOnly({ line, accounts, onClose, onSave }) {
           {accounts.map((a) => <option key={a.id} value={a.id}>{a.account_code} {a.account_name}</option>)}
         </select>
       </div>
+      {/* The entry spelled out before it is written, so a wrong account is caught here rather than
+          in the ledger afterwards. */}
+      {chosen && (
+        <div className="muted" style={{ marginBottom: 12, fontSize: 13 }}>
+          {moneyIn
+            ? <>Debit <strong>{bankName}</strong> {money(Math.abs(line.amount))}, credit <strong>{chosen.account_name}</strong> {money(Math.abs(line.amount))}.</>
+            : <>Debit <strong>{chosen.account_name}</strong> {money(Math.abs(line.amount))}, credit <strong>{bankName}</strong> {money(Math.abs(line.amount))}.</>}
+        </div>
+      )}
       <div className="field">
         <label>Note</label>
         <input value={note} onChange={(e) => setNote(e.target.value)} />
       </div>
       <div className="modal-actions">
         <button className="btn" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" onClick={() => onSave({ account_id: accountId || null, note })}>
-          Mark as bank-only
+        <button
+          className="btn btn-primary"
+          disabled={!accountId}
+          title={accountId ? undefined : 'Choose the account this belongs to'}
+          onClick={() => onSave({ account_id: accountId, note })}
+        >
+          Post and mark
         </button>
       </div>
     </Modal>
