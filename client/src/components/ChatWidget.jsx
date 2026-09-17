@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
+import { chime, speak } from '../utils/notificationSound';
+import { afterWakePhrase, listenOnce, voiceSupported, voiceUnavailableReason, wakeWordListener } from '../utils/voiceInput';
 
 // Floating chat widget, mounted once in Layout.jsx so it persists across navigation.
 // Default mode is a small data-Q&A assistant (server/src/lib/chatbotIntents.js);
@@ -23,6 +25,10 @@ function formatTime(v) {
 }
 
 const POS_KEY = 'chatWidgetPos';
+// Whether the wake word is armed. OFF unless someone turns it on: arming it holds the microphone
+// open for the whole session and streams what it hears to the transcriber, which is not something
+// to switch on for a person without asking (see utils/voiceInput.js).
+const WAKE_KEY = 'chatWidget.wakeWord';
 const DEFAULT_POS = { right: 20, bottom: 20 };
 const DRAG_THRESHOLD = 4; // px of movement before a press counts as a drag rather than a click
 
@@ -77,6 +83,22 @@ export default function ChatWidget() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const bottomRef = useRef(null);
+
+  // ------------------------------------------------------------------ voice
+  const voiceOk = voiceSupported();
+  const [listening, setListening] = useState(false);
+  // What the transcriber has heard so far. Shown while it is still guessing, because a mic button
+  // that lights up and shows nothing for three seconds reads as broken.
+  const [partial, setPartial] = useState('');
+  const [voiceNote, setVoiceNote] = useState('');
+  const [wakeOn, setWakeOn] = useState(() => {
+    try { return voiceSupported() && localStorage.getItem(WAKE_KEY) === 'on'; } catch { return false; }
+  });
+  const wakeRef = useRef(null);
+  const cancelListenRef = useRef(null);
+  // Holds the current handler so the wake listener -- started once, kept alive for the session --
+  // always calls the latest one instead of the closure it was created with.
+  const onWakeRef = useRef(null);
 
   // Draggable launcher. Position is stored as a distance from the RIGHT/BOTTOM edges so the
   // widget keeps its corner-relative spot when the window is resized -- the same reason the
@@ -165,12 +187,25 @@ export default function ChatWidget() {
       || departments.find((d) => d.name.toLowerCase().includes(q) || q.includes(d.name.toLowerCase()));
   }
 
-  async function handleSend(e) {
-    e.preventDefault();
-    const text = input.trim();
+  // Reads a reply out and holds the wake listener while it does. Without the hold the assistant
+  // transcribes its own answer and wakes itself up on any word that sounds like the wake phrase.
+  function sayAloud(text) {
+    wakeRef.current?.pause();
+    speak(text);
+    const done = setInterval(() => {
+      const s = window.speechSynthesis;
+      if (!s || (!s.speaking && !s.pending)) { clearInterval(done); wakeRef.current?.resume(); }
+    }, 400);
+    // A stalled synthesiser must not leave the wake word deaf for the rest of the session.
+    setTimeout(() => { clearInterval(done); wakeRef.current?.resume(); }, 60000);
+  }
+
+  async function submit(text, { spoken = false } = {}) {
     if (!text || sending) return;
-    setInput('');
     setSending(true);
+    // Spoken in, spoken out. A typed question is answered in silence -- an office does not want
+    // every answer read aloud because one person prefers to type.
+    const reply = (t) => { pushLocal('bot', t); if (spoken) sayAloud(t); };
     try {
       // Typed way out of the thread, for anyone who types rather than hunting for the button
       // in the header. Someone who has just raised a ticket and wants to ask something else
@@ -179,7 +214,7 @@ export default function ChatWidget() {
       if (mode === 'ticket_thread' && LEAVE_THREAD.test(text)) {
         pushLocal('user', text);
         setMode('chat');
-        pushLocal('bot', `You're back with the assistant — messages are no longer going to ${ticket?.ticket_no}. Ask away, or press "Reply to ticket" to go back to it.`);
+        reply( `You're back with the assistant — messages are no longer going to ${ticket?.ticket_no}. Ask away, or press "Reply to ticket" to go back to it.`);
         return;
       }
 
@@ -198,7 +233,7 @@ export default function ChatWidget() {
         // hasn't applied yet -- so it's exactly the conversation before this message.)
         const history = localMessages.map((m) => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text }));
         const { data } = await api.post('/chatbot/ask', { message: text, history, pendingAction });
-        pushLocal('bot', data.reply);
+        reply( data.reply);
         // Cleared on every turn and only set again if this reply is itself an offer, so an
         // offer never survives past the answer to it.
         setPendingAction(data.pendingAction || null);
@@ -210,26 +245,113 @@ export default function ChatWidget() {
         const dept = findDepartment(text);
         if (!dept) {
           const names = departments.filter((d) => d.name !== 'System Admin').map((d) => d.name).join(', ');
-          pushLocal('bot', `I couldn't match that to a department. Try one of: ${names}`);
+          reply( `I couldn't match that to a department. Try one of: ${names}`);
           return;
         }
         setPendingDepartmentId(dept.id);
-        pushLocal('bot', `Got it — ${dept.name}. Please describe the issue.`);
+        reply( `Got it — ${dept.name}. Please describe the issue.`);
         setMode('awaiting_issue');
         return;
       }
 
       if (mode === 'awaiting_issue') {
         const { data: newTicket } = await api.post('/tickets', { department_id: pendingDepartmentId, description: text });
-        pushLocal('bot', `Ticket ${newTicket.ticket_no} created. Someone from that department will reply here.`);
+        reply( `Ticket ${newTicket.ticket_no} created. Someone from that department will reply here.`);
         setTicket(newTicket);
         setMode('ticket_thread');
       }
     } catch (err) {
-      pushLocal('bot', err.response?.data?.error || 'Something went wrong — please try again.');
+      reply(err.response?.data?.error || 'Something went wrong — please try again.');
     } finally {
       setSending(false);
     }
+  }
+
+  function handleSend(e) {
+    e.preventDefault();
+    const text = input.trim();
+    if (!text) return;
+    setInput('');
+    submit(text);
+  }
+
+  // ---------------------------------------------------------------- listening
+
+  // One question, then stop. The wake listener is held for the duration: Chrome allows a single
+  // live recogniser per page, so leaving it running would mean the two take turns killing each
+  // other and neither hears anything.
+  function startListening() {
+    if (!voiceOk) { setVoiceNote(voiceUnavailableReason()); return; }
+    if (listening) { cancelListenRef.current?.(); return; }
+    setVoiceNote('');
+    setPartial('');
+    setListening(true);
+    wakeRef.current?.pause();
+    cancelListenRef.current = listenOnce({
+      onPartial: setPartial,
+      onResult: (text) => { setPartial(''); submit(text, { spoken: true }); },
+      onError: (msg) => setVoiceNote(msg),
+      onEnd: (heard) => {
+        setListening(false);
+        setPartial('');
+        cancelListenRef.current = null;
+        if (!heard) setVoiceNote('I did not catch that.');
+        wakeRef.current?.resume();
+      },
+    });
+  }
+
+  // The wake phrase was heard. Whatever followed it in the same breath is the question --
+  // "hey Jot, how many estimates today" should not need a second prompt.
+  function handleWake(said) {
+    const question = afterWakePhrase(said);
+    setOpen(true);
+    chime();
+    // submit() posts the user's side itself -- pushing it here as well showed every spoken
+    // question twice.
+    if (question) {
+      submit(question, { spoken: true });
+      return;
+    }
+    // Nothing but the wake phrase: answer it the way a person would, by listening.
+    startListening();
+  }
+
+  // Kept current on every render. The wake listener is started once and lives for the session,
+  // so without this it would keep calling the handler from the render that created it -- and
+  // answer every question against the conversation as it stood then.
+  useEffect(() => { onWakeRef.current = handleWake; });
+
+  useEffect(() => {
+    if (!wakeOn) return undefined;
+    const listener = wakeWordListener({
+      onWake: (said, isFinal) => {
+        // Acted on only once the transcriber has settled: an interim result changes under you,
+        // and firing on it opens the chat two or three times for one "hey Jot".
+        if (isFinal) onWakeRef.current?.(said);
+      },
+      // A microphone that is missing or blocked will be missing or blocked on the next page
+      // load too, so the preference is written off as well -- otherwise it re-arms on every
+      // visit and greets the user with the same failure.
+      onError: (msg) => {
+        setVoiceNote(msg);
+        setWakeOn(false);
+        try { localStorage.setItem(WAKE_KEY, 'off'); } catch { /* this session only */ }
+      },
+    });
+    wakeRef.current = listener;
+    return () => { listener.stop(); wakeRef.current = null; };
+  }, [wakeOn]);
+
+  // Leaving the page with the microphone live leaves the browser's recording dot on.
+  useEffect(() => () => { cancelListenRef.current?.(); wakeRef.current?.stop(); }, []);
+
+  function toggleWake() {
+    if (!voiceOk) { setVoiceNote(voiceUnavailableReason()); return; }
+    const next = !wakeOn;
+    setWakeOn(next);
+    try { localStorage.setItem(WAKE_KEY, next ? 'on' : 'off'); } catch { /* this session only */ }
+    setVoiceNote(next ? 'Listening for "Hey Jot". Say it any time, even with this closed.' : '');
   }
 
   const anchor = anchorFor(pos, open);
@@ -278,6 +400,21 @@ export default function ChatWidget() {
               {ticket && (
                 <button type="button" onClick={() => navigate(`/tickets/${ticket.id}`)} title="Open full ticket" style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 13 }}>↗</button>
               )}
+              {/* Arming the wake word holds the microphone open for the session, so it is a
+                  visible switch rather than a setting buried somewhere -- anyone should be able
+                  to see at a glance whether this machine is listening. */}
+              <button
+                type="button"
+                onClick={toggleWake}
+                title={wakeOn ? 'Listening for "Hey Jot" — click to stop' : 'Listen for "Hey Jot"'}
+                style={{
+                  background: wakeOn ? 'rgba(255,255,255,0.32)' : 'rgba(255,255,255,0.18)',
+                  border: 'none', color: '#fff', cursor: 'pointer', fontSize: 11,
+                  borderRadius: 10, padding: '2px 8px', opacity: voiceOk ? 1 : 0.5,
+                }}
+              >
+                {wakeOn ? '👂 On' : '👂'}
+              </button>
               <button type="button" onClick={() => setOpen(false)} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 16 }}>✕</button>
             </div>
           </div>
@@ -298,14 +435,46 @@ export default function ChatWidget() {
             ))}
             <div ref={bottomRef} />
           </div>
+          {/* What the microphone is doing, in words. A mic button that lights up and says nothing
+              is indistinguishable from one that is broken. */}
+          {(listening || partial || voiceNote) && (
+            <div style={{
+              padding: '6px 12px', fontSize: 12, borderTop: '1px solid var(--border)',
+              background: listening ? 'rgba(220,38,38,0.08)' : 'var(--panel-2, #f3f4f6)',
+              color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6,
+            }}
+            >
+              {listening && <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--danger)', flex: '0 0 auto' }} />}
+              <span style={{ opacity: partial ? 1 : 0.75 }}>
+                {partial || (listening ? 'Listening…' : voiceNote)}
+              </span>
+            </div>
+          )}
           <form onSubmit={handleSend} style={{ display: 'flex', borderTop: '1px solid var(--border)' }}>
             <input
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Type a message..."
+              placeholder={listening ? 'Listening…' : 'Type a message...'}
               disabled={sending}
               style={{ flex: 1, border: 'none', padding: '10px 12px', fontSize: 13, outline: 'none' }}
             />
+            {/* Push to talk. Hidden entirely where the browser cannot listen rather than shown
+                dead: see utils/voiceInput.js for the two conditions. */}
+            {voiceOk && (
+              <button
+                type="button"
+                onClick={startListening}
+                disabled={sending}
+                title={listening ? 'Stop listening' : 'Ask by voice'}
+                style={{
+                  border: 'none', background: listening ? 'var(--danger)' : 'transparent',
+                  color: listening ? '#fff' : 'var(--text)', cursor: 'pointer',
+                  fontSize: 16, padding: '0 12px',
+                }}
+              >
+                {listening ? '■' : '🎤'}
+              </button>
+            )}
             <button type="submit" className="btn btn-primary" disabled={sending} style={{ borderRadius: 0 }}>Send</button>
           </form>
         </div>
@@ -340,6 +509,21 @@ export default function ChatWidget() {
               style={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.3))' }} />
         )}
       </button>
+      {/* The microphone is open even with the panel closed, so it says so on the launcher. A
+          listening machine that gives no sign of it is the kind of thing people find out about
+          later and rightly object to. */}
+      {wakeOn && !open && (
+        <div
+          title='Listening for "Hey Jot"'
+          style={{
+            position: 'absolute', top: 4, right: 4, display: 'flex', alignItems: 'center', gap: 4,
+            background: 'var(--danger)', color: '#fff', borderRadius: 10, padding: '1px 7px',
+            fontSize: 10, fontWeight: 700, pointerEvents: 'none', boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+          }}
+        >
+          🎤 ON
+        </div>
+      )}
     </div>
   );
 }
