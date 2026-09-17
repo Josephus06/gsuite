@@ -29,7 +29,7 @@ export const NODES = [
   { id: 'confirm', label: 'Confirm', kind: 'accounting', x: SPINE_X, y: 768 },
 
   // The right-hand branch: a line the system could not match, or matched wrongly.
-  { id: 'bank-only', label: 'Bank charge or interest?', kind: 'decision', x: SIDE_DIAMOND, y: 420 },
+  { id: 'bank-only', label: 'No document in the book?', kind: 'decision', x: SIDE_DIAMOND, y: 420 },
   { id: 'mark-bank-charge', label: 'Mark as Bank charge', kind: 'accounting', x: SIDE_X, y: 594 },
   { id: 'find-document', label: 'Find the document', kind: 'accounting', x: SIDE_X, y: 768 },
 
@@ -125,7 +125,7 @@ export const GUIDES = {
     notes: [
       'The Reference column is optional but worth mapping — it is what lets a cheque be matched by its number rather than by amount alone.',
       'Rows with no date or a zero amount are skipped, which is how subtotals and footers are left out.',
-      'Re-importing replaces the statement and releases everything it had matched. Confirmed work is lost, so re-import only to correct the file or the mapping.',
+      'Re-importing replaces the statement and releases everything it had matched. Confirmed work is lost, and any journal a Bank charge posted is voided with it, so re-import only to correct the file or the mapping.',
     ],
   },
 
@@ -193,27 +193,35 @@ export const GUIDES = {
   'bank-only': {
     where: 'The Statement tab',
     who: 'Needs can_edit on Bank Reconciliation.',
-    summary: 'Some lines have no document because none was ever raised — the bank did it on its own. Those are accounted for rather than matched.',
+    summary: 'Some lines have no document in the book — the bank did it on its own, or the paperwork has not reached accounting. Those are posted rather than matched.',
     steps: [
-      'Ask whether the line is something the bank charged or credited: a service charge, interest, a debit memo, a wire fee.',
-      'If it is, use Bank charge. If it is not, the document exists somewhere and should be found instead.',
+      'Ask whether a document for this exists anywhere in the system.',
+      'If it does, Find it — that is always the better answer, because it settles the line against the real thing.',
+      'If it does not, use Bank charge. That covers both what the bank did on its own (a service charge, interest, a debit memo, a wire fee) and what you simply have no papers for yet (an inward credit with no advice).',
     ],
     notes: [
-      'Marking a line as a bank charge when a document really does exist will let the reconciliation finish while leaving that cheque outstanding for ever. Use Find when in doubt.',
+      'Marking a line this way when a document really does exist will let the reconciliation finish while leaving that cheque outstanding for ever. Use Find when in doubt.',
+      'No document YET is not the same as no document EVER. Park it in Deposit or Disbursement rather than coding it to a real account you are guessing at — a deposit booked to Bank Charges makes that expense read wrong by the whole amount.',
+      'When the papers arrive later, open the line and use Find to match the real document. The parked journal is voided automatically, so the book counts it once.',
     ],
   },
 
   'mark-bank-charge': {
     where: 'The Statement tab → Bank charge',
-    who: 'Needs can_edit on Bank Reconciliation.',
-    summary: 'Records the line as a bank-only item, names the account it belongs to, and settles it so it no longer blocks the reconciliation.',
+    who: 'Needs can_edit on Bank Reconciliation, AND the right to add a journal — this writes to the general ledger.',
+    summary: 'Posts the journal entry for the line and settles it, so the book moves and the difference closes.',
     steps: [
       'Click Bank charge on the line.',
-      'Choose the account it should be posted to and add a note if the description is not clear enough.',
-      'Save. The line reads "Bank charge" and stops asking for a decision.',
+      'Check the account. It is preselected by direction: money in goes to Deposit, money out to Disbursement. Change it when the item is genuinely identified — a real bank fee belongs in Bank Charges, interest in Interest Income.',
+      'Check "Post on". It defaults to the day the bank moved the money, which is the right answer whenever that period is open.',
+      'Add a note if the bank description is not clear enough.',
+      'Press Post and mark. The dialog shows the entry it is about to write — "Debit … , credit …" — before you commit it.',
     ],
     notes: [
-      'This does NOT post a journal entry. The account is recorded against the line and appears in the Export under "Bank charges and other bank-only items"; the accounting entry is still raised the usual way.',
+      'IT POSTS A JOURNAL. Do not then raise the entry again by hand: the book would count it twice and every later reconciliation would be out by that amount. The line shows which journal it wrote — "Posted JRNL-#### to Deposit".',
+      'Undoing the mark withdraws the journal. Unmatch, matching a real document over it, re-marking to another account, and deleting the reconciliation all void it rather than leaving it behind.',
+      'A closed period is refused, and says so in the dialog. Change "Post on" to a date in an open period on or before the statement date; the bank\'s own date is kept in the journal memo.',
+      'The date must be on or before the statement date. The book balance and the outstanding list are both taken AS AT that date, so a later entry would post and still leave the difference open.',
       'Any proposed match on that line is dropped, releasing the document.',
     ],
   },
@@ -273,9 +281,11 @@ export const GUIDES = {
       'Look for a line flagged AMOUNT DIFFERS: the bank took a different figure from the one written.',
       'Look through Outstanding for something that should have cleared — a cheque presented but matched to the wrong line.',
       'Check whether a document is missing from the books entirely. Enter it, then Re-run Matching.',
+      'A line the bank shows and the book has never heard of cannot be matched to anything — it has to be POSTED. Use Bank charge; until something puts it in the book the difference cannot close.',
     ],
     notes: [
       'The difference is the size of the problem, which is often the clue: it may be exactly one line\'s amount, or twice it if something was matched the wrong way round.',
+      'A difference equal to a line you already marked as a Bank charge means its journal was refused or has been withdrawn — open that line and check.',
       'Deposits dated before 2015 and cheques released with future dates exist in this data and will sit outstanding.',
     ],
   },
