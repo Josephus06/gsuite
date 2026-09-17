@@ -629,8 +629,17 @@ function FindDocument({ line, movements, onClose, onPick }) {
 
 // A line the bank raised itself -- a charge, interest, a debit memo. It has no document because
 // none was ever raised, so it is accounted for by naming where it belongs.
+// The two accounts bank-only items are parked in, by direction: money the bank credited with no
+// document goes to Deposit, money it took goes to Disbursement. Preselected rather than left blank
+// because the direction is not a judgement -- the statement already says which it is -- and the
+// operator is still free to pick a real account when the item IS identified.
+const PARKING_CODE = { in: '23100', out: '23200' };
+
 function BankOnly({ line, accounts, bankAccountName, onClose, onSave }) {
-  const [accountId, setAccountId] = useState('');
+  const parking = accounts.find(
+    (a) => a.account_code === PARKING_CODE[Number(line.amount) > 0 ? 'in' : 'out'],
+  );
+  const [accountId, setAccountId] = useState(parking ? String(parking.id) : '');
   const [note, setNote] = useState(line.description || '');
   // The date the entry is posted on, which is an accounting decision rather than something to
   // guess. It defaults to the day the bank moved the money, but a statement being worked months

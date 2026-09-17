@@ -17,12 +17,24 @@ function yearStart(dateStr) {
 // Accounts Payable - Trade, VAT on Sales, Inventory In Transit all check in as
 // is_active=0) -- it doesn't reliably mean "unusable" here, and excluding those
 // accounts would silently drop real GL lines out of every report's totals.
+//
+// exclude_from_reports keeps an account out of EVERY report at once. Only the bank suspense
+// account carries it: statement items with no document are parked there, and they were not to
+// appear in the financial statements. Filtering here rather than in each report is deliberate --
+// this is the one door Trial Balance, Balance Sheet, Income Statement, General Ledger and the GL
+// drill-down all come through, so the next report anyone writes inherits the rule instead of
+// having to remember it.
+//
+// THE COST, so it is not a surprise later: the excluded account's other half is still posted to
+// the bank, so the Balance Sheet no longer foots and the Trial Balance no longer ties -- both are
+// out by whatever is parked in suspense. See src/db/add-account-exclude-from-reports.js.
 async function loadCoa() {
   const [rows] = await pool.query(
     `SELECT coa.id, coa.account_code, coa.account_name, coa.parent_account_id, coa.is_summary, coa.coa_type_id,
             t.account_type, t.account_sub_type, t.normal_balance
      FROM chart_of_accounts coa
      LEFT JOIN chart_of_account_types t ON t.id = coa.coa_type_id
+     WHERE coa.exclude_from_reports = 0
      ORDER BY coa.account_code`
   );
   return rows;
