@@ -15,6 +15,7 @@ const customerRoutes = require('./routes/customers');
 const supplierRoutes = require('./routes/suppliers');
 const inventoryRoutes = require('./routes/inventories');
 const estimateRoutes = require('./routes/estimates');
+const repeatWorkRoutes = require('./routes/repeatWork');
 const blanketPoRoutes = require('./routes/blanketPos');
 const processCostingRoutes = require('./routes/processCosting');
 const salesOrderRoutes = require('./routes/salesOrders');
@@ -207,6 +208,8 @@ app.use('/api/customers', customerRoutes);
 app.use('/api/suppliers', supplierRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/estimates', estimateRoutes);
+// Read-only pricing history for the estimate form -- gated on /estimates can_view.
+app.use('/api/repeat-work', repeatWorkRoutes);
 app.use('/api/blanket-pos', blanketPoRoutes);
 app.use('/api/processes', processCostingRoutes);
 app.use('/api/sales-orders', salesOrderRoutes);

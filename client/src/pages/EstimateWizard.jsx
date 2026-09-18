@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
+import RepeatWorkPanel from '../components/RepeatWorkPanel';
 import EntityPicker from '../components/EntityPicker';
 import NstdjoPicker from '../components/NstdjoPicker';
 import { computeAutoPricing } from '../utils/costing';
@@ -1318,7 +1319,17 @@ export default function EstimateWizard() {
                             </p>
                           ) : (
                             <div style={{ padding: 8 }}>
-                              <div className="spreadsheet-wrap">
+                              {/* What this job has gone for before, from 126k priced history
+                                  lines. Sits above the process grid because it informs what
+                                  the rep is about to build, not what they have just built. */}
+                              <RepeatWorkPanel
+                                lineNo={jo.line_no || idx + 1}
+                                description={jo.description}
+                                jobTypeId={jo.job_type_id}
+                                quantity={jo.quantity}
+                                units={jo.units}
+                              />
+                              <div className="spreadsheet-wrap" style={{ marginTop: 10 }}>
                                 <table className="spreadsheet-table">
                                   <thead>
                                     <tr>
