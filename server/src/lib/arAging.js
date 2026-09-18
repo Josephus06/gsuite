@@ -18,6 +18,23 @@ const pool = require('../db');
 //
 // Aging basis: an invoice ages by how far past its DUE date the as-of date is; credits and
 // overpayments have no due date, so they age by their document date. Current = not yet due.
+//
+// MARKED PAID, NOT EVIDENCED. 1,363 invoices (about 1.9% of the 72,314 marked paid_in_full,
+// 46.4M gross) carry status = 'paid_in_full' and amount_due = 0 while nothing in this database
+// records a payment or credit memo settling them. Because this report derives from documents
+// rather than trusting the header -- for the good reasons above -- it counts every one of them
+// as outstanding, and the invoice screen says "Paid In Full" on the same document. Two screens,
+// two answers, and no way for the reader to tell which is wrong.
+//
+// So the report now SAYS SO rather than silently picking a side. Such an item still counts in
+// the balance -- hiding 46.4M of receivable on the strength of a flag with nothing behind it is
+// the one thing that would be worse -- but it is flagged, counted separately, and the customer
+// row carries the total, so Accounting gets a worklist instead of a mystery.
+//
+// It is not one bad migration batch: the affected invoices run 108 in 2021, 134 in 2022, 588 in
+// 2023, 133 in 2024, 85 in 2025 and 315 in 2026. The mirror image is 2,143 payments holding
+// 10.4M of unapplied cash -- some of these invoices are settled by that money, with the link
+// between them never imported.
 
 // How much of a payment is still sitting on account as unapplied cash.
 //
@@ -40,6 +57,15 @@ const pool = require('../db');
 // payments settled are already discharged locally by the reconstructed CPAY-INV-#### payments,
 // which is precisely why those were generated. It does mean this report cannot say WHICH
 // invoice a real payment settled -- that needs the lines themselves, and they do not exist yet.
+// An invoice whose header says it is settled. Both signals are checked rather than status
+// alone: the migration set them together, and an invoice can be discharged to zero without the
+// status keeping up. Either one claiming 'settled' is enough to make silence about a payment
+// worth flagging.
+function isMarkedPaid(inv) {
+  return String(inv.status || '').toLowerCase() === 'paid_in_full'
+    || Math.abs(Number(inv.amount_due || 0)) < 0.005;
+}
+
 function unappliedCash(payment, cashAppliedFromLines) {
   if (cashAppliedFromLines !== null && cashAppliedFromLines !== undefined) {
     return Number(payment.payment_amount) - Number(cashAppliedFromLines);
@@ -92,7 +118,8 @@ async function buildArAging(asOf, filters = {}) {
 
   const invLoc = locationClause('si', filters);
   const [invoices] = await pool.query(
-    `SELECT si.id, so.customer_id, c.name AS customer_name, si.date_created, si.date_due, si.gross_amount
+    `SELECT si.id, so.customer_id, c.name AS customer_name, si.date_created, si.date_due, si.gross_amount,
+            si.status, si.amount_due
      FROM sales_invoices si
      LEFT JOIN sales_orders so ON so.id = si.sales_order_id
      LEFT JOIN estimates e ON e.id = si.estimate_id
@@ -176,17 +203,23 @@ async function buildArAging(asOf, filters = {}) {
   const byCustomer = new Map();
   function customerRow(id, name) {
     if (!byCustomer.has(id)) {
-      byCustomer.set(id, { customer_id: id, customer_name: name, ...emptyBuckets() });
+      byCustomer.set(id, { customer_id: id, customer_name: name, ...emptyBuckets(), unevidenced_count: 0, unevidenced_amount: 0 });
     }
     return byCustomer.get(id);
   }
 
   for (const inv of invoices) {
-    const remaining = Number(inv.gross_amount)
-      - (paidByInvoice.get(inv.id) || 0)
-      - (creditedByInvoice.get(inv.id) || 0);
+    const settled = (paidByInvoice.get(inv.id) || 0) + (creditedByInvoice.get(inv.id) || 0);
+    const remaining = Number(inv.gross_amount) - settled;
     if (Math.abs(remaining) < 0.005) continue;
-    addToBucket(customerRow(inv.customer_id, inv.customer_name), remaining, inv.date_due || inv.date_created, asOf);
+    const row = customerRow(inv.customer_id, inv.customer_name);
+    addToBucket(row, remaining, inv.date_due || inv.date_created, asOf);
+    // The invoice header insists it is settled and nothing in the data agrees. Counted here so
+    // the customer row can show how much of its balance rests on that disagreement.
+    if (isMarkedPaid(inv) && settled < 0.005) {
+      row.unevidenced_count += 1;
+      row.unevidenced_amount += remaining;
+    }
   }
   for (const cm of memos) {
     const remaining = Number(cm.gross_amount) - (appliedByMemo.get(cm.id) || 0) - (drawnByMemo.get(cm.id) || 0);
@@ -208,7 +241,11 @@ async function buildArAging(asOf, filters = {}) {
         d61_90: round2(r.d61_90), over_90: round2(r.over_90),
       };
       const total = round2(buckets.current + buckets.d1_30 + buckets.d31_60 + buckets.d61_90 + buckets.over_90);
-      return { customer_id: r.customer_id, customer_name: r.customer_name, ...buckets, total_balance: total };
+      return {
+        customer_id: r.customer_id, customer_name: r.customer_name, ...buckets, total_balance: total,
+        unevidenced_count: r.unevidenced_count,
+        unevidenced_amount: round2(r.unevidenced_amount),
+      };
     })
     // A customer with everything netted to zero isn't outstanding -- drop it, same as the
     // real report only listing customers with a balance.
@@ -219,7 +256,9 @@ async function buildArAging(asOf, filters = {}) {
   const totals = rows.reduce((t, r) => ({
     current: t.current + r.current, d1_30: t.d1_30 + r.d1_30, d31_60: t.d31_60 + r.d31_60,
     d61_90: t.d61_90 + r.d61_90, over_90: t.over_90 + r.over_90, total_balance: t.total_balance + r.total_balance,
-  }), { ...emptyBuckets(), total_balance: 0 });
+    unevidenced_count: t.unevidenced_count + r.unevidenced_count,
+    unevidenced_amount: t.unevidenced_amount + r.unevidenced_amount,
+  }), { ...emptyBuckets(), total_balance: 0, unevidenced_count: 0, unevidenced_amount: 0 });
   Object.keys(totals).forEach((k) => { totals[k] = round2(totals[k]); });
 
   return { as_of: asOf, rows, totals };
@@ -233,6 +272,7 @@ async function buildArAgingCustomerDetails(customerId, asOf) {
 
   const [invoices] = await pool.query(
     `SELECT si.id, si.invoice_no, si.date_created, si.date_due, si.gross_amount,
+            si.status, si.amount_due,
             COALESCE((SELECT SUM(cpl.applied_amount) FROM customer_payment_lines cpl
                       JOIN customer_payments cp ON cp.id = cpl.customer_payment_id
                       WHERE cpl.sales_invoice_id = si.id AND cp.status != 'voided' AND cp.date_created <= ?), 0)
@@ -255,6 +295,8 @@ async function buildArAgingCustomerDetails(customerId, asOf) {
       type: 'Invoice', reference: inv.invoice_no, id: inv.id, date: inv.date_created,
       due_date: inv.date_due, original_amount: round2(inv.gross_amount), balance: round2(remaining),
       days_overdue: Math.max(daysBetween(agingDate, asOf), 0),
+      // Why this line and the invoice screen disagree, said on the line itself.
+      marked_paid_unevidenced: isMarkedPaid(inv) && Number(inv.settled) < 0.005,
     });
   }
 

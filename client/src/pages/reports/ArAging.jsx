@@ -96,6 +96,20 @@ export default function ArAging() {
 
       {loading && <LoadingSpinner label="Generating..." expectedMs={REPORT_TIMING.arAging} />}
 
+      {/* Said before the numbers, not after: it changes how every figure below should be
+          read. The amount is still IN the totals -- dropping it would hide the receivable on
+          the strength of a flag with nothing behind it -- but the reader is told how much of
+          the report rests on that disagreement. */}
+      {!loading && report?.totals?.unevidenced_count > 0 && (
+        <div className="warning-banner" style={{ marginBottom: 16 }}>
+          <strong>{report.totals.unevidenced_count.toLocaleString()} invoices</strong> totalling{' '}
+          <strong>{money(report.totals.unevidenced_amount)}</strong> are counted below but are marked
+          “Paid In Full” on the invoice itself, with no payment or credit memo in the system settling them.
+          They are included because the payment record is missing, not because the money is known to be owed —
+          open a customer’s <em>Details</em> to see which.
+        </div>
+      )}
+
       {!loading && report && (
         <div className="card">
           <div style={{ marginBottom: 12 }}><strong>As of {report.as_of}</strong></div>
@@ -125,7 +139,18 @@ export default function ArAging() {
                     <td data-label="31-60 days" style={{ textAlign: 'right' }}>{money(row.d31_60)}</td>
                     <td data-label="61-90 days" style={{ textAlign: 'right' }}>{money(row.d61_90)}</td>
                     <td data-label="Over 90 days" style={{ textAlign: 'right' }}>{money(row.over_90)}</td>
-                    <td data-label="Total Balance" style={{ textAlign: 'right', fontWeight: 600 }}>{money(row.total_balance)}</td>
+                    <td data-label="Total Balance" style={{ textAlign: 'right', fontWeight: 600 }}>
+                      {money(row.total_balance)}
+                      {row.unevidenced_count > 0 && (
+                        <div
+                          className="muted"
+                          style={{ fontSize: 11, fontWeight: 400 }}
+                          title={`${row.unevidenced_count} invoice(s) marked Paid In Full with no payment recorded`}
+                        >
+                          {money(row.unevidenced_amount)} unevidenced
+                        </div>
+                      )}
+                    </td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       <button className="btn btn-sm btn-primary" style={{ marginRight: 4 }} onClick={() => openDrill('details', row)}>Details</button>
                       <button className="btn btn-sm btn-primary" onClick={() => openDrill('ledger', row)}>Ledger</button>
@@ -164,11 +189,11 @@ export default function ArAging() {
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Type</th><th>Reference</th><th>Date</th><th>Due Date</th><th style={{ textAlign: 'right' }}>Original</th><th style={{ textAlign: 'right' }}>Balance</th><th style={{ textAlign: 'right' }}>Days Overdue</th></tr>
+                  <tr><th>Type</th><th>Reference</th><th>Date</th><th>Due Date</th><th style={{ textAlign: 'right' }}>Original</th><th style={{ textAlign: 'right' }}>Balance</th><th style={{ textAlign: 'right' }}>Days Overdue</th><th>Note</th></tr>
                 </thead>
                 <tbody>
                   {drill.data.items.length === 0 && (
-                    <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>No open items.</td></tr>
+                    <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>No open items.</td></tr>
                   )}
                   {drill.data.items.map((it, idx) => (
                     <tr key={idx}>
@@ -179,6 +204,15 @@ export default function ArAging() {
                       <td style={{ textAlign: 'right' }}>{money(it.original_amount)}</td>
                       <td style={{ textAlign: 'right' }}>{money(it.balance)}</td>
                       <td style={{ textAlign: 'right' }}>{it.days_overdue}</td>
+                      {/* The answer to "why is this here when the invoice says Paid In Full",
+                          on the line that raises the question. */}
+                      <td>
+                        {it.marked_paid_unevidenced && (
+                          <span className="badge badge-warning" title="The invoice is marked Paid In Full and amount due is 0, but no payment or credit memo in this system settles it. Included here because the payment record is missing, not because the money is known to be owed.">
+                            marked paid, no payment recorded
+                          </span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -186,6 +220,7 @@ export default function ArAging() {
                   <tr style={{ fontWeight: 700 }}>
                     <td colSpan={5} style={{ textAlign: 'right' }}>Total Balance :</td>
                     <td style={{ textAlign: 'right' }}>{money(drill.data.total_balance)}</td>
+                    <td></td>
                     <td></td>
                   </tr>
                 </tfoot>
