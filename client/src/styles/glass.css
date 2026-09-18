@@ -634,3 +634,70 @@
    feed itself paints a page background of its own, same as the dashboard did. */
 :root[data-theme='glass'] .fbfeed { background: transparent; }
 :root[data-theme='glass'] .fb-rail-title { color: var(--glass-text-2); }
+
+/* =============================================================================
+   FEED
+   =============================================================================
+   The same shape of problem as the dashboard, and worse in effect. The feed is
+   scoped under .fbfeed with its own --fb-* tokens, and it defines them exactly
+   twice: a light set on .fbfeed, and a dark set on :root[data-theme='dark']
+   .fbfeed.
+
+   Glass matched NEITHER, so it fell back to the light set and the feed painted
+   --fb-text #050505 -- near-black -- onto a near-black page. The shared .fb-card
+   rule had already fixed the panels, so the cards looked right and the writing
+   inside them had simply gone: the shortcut rail, the timestamps, the reaction
+   counts. The composer kept its #f0f2f5 fill, the one light-grey slab left.
+
+   Almost every rule in feed.css reads these tokens rather than naming a colour,
+   so re-pointing them here is the whole fix -- .fb-rail-item, the least readable
+   thing on the page, is just `color: var(--fb-text)`. The two literal darks that
+   remain (.fb-preview-remove, .fb-lightbox-nav) are deliberately dark ink on a
+   white circular button floating over a photograph, and are correct in any theme.
+   ========================================================================== */
+:root[data-theme='glass'] .fbfeed {
+  --fb-bg: transparent;
+  --fb-card: var(--glass-l2-bg);
+  --fb-text: var(--glass-text);
+  --fb-text-2: var(--glass-text-2);
+  --fb-text-3: var(--glass-text-3);
+  --fb-divider: var(--glass-l1-border);
+  --fb-hover: rgba(255, 255, 255, 0.07);
+  --fb-input: var(--glass-l1-bg);
+  --fb-input-hover: rgba(255, 255, 255, 0.09);
+  /* The feed's "blue" is its link and action colour, not a brand accent, so it
+     maps to the navy tints -- which leaves the single orange for the active tab. */
+  --fb-blue: var(--glass-navy-light);
+  --fb-blue-hover: var(--glass-text);
+  --fb-blue-soft: rgba(91, 143, 214, 0.16);
+  --fb-red: var(--glass-danger);
+  --fb-shadow: var(--glass-l2-shadow);
+  --fb-shadow-lg: var(--glass-l3-shadow);
+
+  color: var(--glass-text);
+}
+
+/* The cards need the blur and the lit edge as well as the fill -- .fb-card reads
+   --fb-card for its background and carries no backdrop-filter of its own. */
+:root[data-theme='glass'] .fb-card {
+  border: 1px solid var(--glass-l2-border);
+  border-radius: var(--glass-radius-card);
+  -webkit-backdrop-filter: blur(var(--glass-l2-blur));
+  backdrop-filter: blur(var(--glass-l2-blur));
+  box-shadow: var(--glass-l2-shadow);
+}
+
+/* The composer is an input in everything but name, so it takes the input shape. */
+:root[data-theme='glass'] .fb-composer-trigger {
+  border: 1px solid var(--glass-l1-border);
+  border-radius: var(--glass-radius-pill);
+  color: var(--glass-text-3);
+}
+
+/* A comment bubble sits inside a card, and glass stops at one level. */
+:root[data-theme='glass'] .fb-comment-bubble { background: var(--glass-inner); }
+
+/* The online dot rings itself with the card colour to punch a hole in the avatar
+   edge. That colour is translucent now, so the ring has to be drawn explicitly or
+   the dot loses its outline against the photo underneath. */
+:root[data-theme='glass'] .fb-online-dot { border-color: rgba(11, 29, 61, 0.92); }
