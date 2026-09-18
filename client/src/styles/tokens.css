@@ -202,3 +202,150 @@
 :root[data-theme='dark'] {
   --card-glass: rgba(26, 26, 34, 0.45);
 }
+
+/* =============================================================================
+   GLASS — the frosted-glass theme, built on the T1S logo's navy and orange.
+   =============================================================================
+
+   SCOPED TO A THEME, NOT WRITTEN OVER :root. The brief's palette is dark-only:
+   --ground #071228 is a page background, and there is no light counterpart for
+   any of it. Writing it into :root would leave the topbar's DAY MODE toggle
+   switching between two dark themes -- a shipped feature quietly broken, which
+   is a behaviour change wearing a restyle's clothes, and the brief's own last
+   line rules that out. So it lives beside light and dark as a third theme and
+   the toggle keeps working.
+
+   WHAT FLOWS AUTOMATICALLY. The compatibility layer above feeds 565 selectors
+   from --text, --surface, --border, --accent and friends. Re-pointing those at
+   the glass palette at the bottom of this block means every existing screen
+   picks up the colours without a rule being touched. What does NOT come for
+   free is the glass STRUCTURE -- blur levels, the inset top highlight, pill and
+   radius geometry -- which is per-component work; that lives in glass.css.
+
+   MEASURED, NOT ASSUMED. Every text colour was checked against all three glass
+   levels composited over the ground. The floor is --text-muted on an L3 overlay
+   at 4.89:1; --navy-mid, the dimmest thing used for text, is 4.51:1 there. Both
+   clear AA for normal text, so the brief's palette is kept exactly as given --
+   unusually, nothing needed darkening.
+   ========================================================================== */
+:root[data-theme='glass'] {
+  /* --- Brand ------------------------------------------------------------- */
+  --glass-ground: #071228;
+  --glass-navy: #1B3B70;
+  --glass-navy-mid: #5B8FD6;
+  --glass-navy-light: #A6C2EA;
+
+  /* ONE accent. Orange means live, active, or needs your attention: the current
+     nav item, the primary button, the selected row, the revenue line. Two
+     oranges competing on a screen means one of them is decoration. */
+  --glass-accent: #F4791F;
+  --glass-accent-soft: #FFC79A;
+  /* Near-black, not white. White on this orange is 2.76:1 and unreadable; this
+     is 6.05:1. Any label, icon or spinner sitting ON an orange fill uses it. */
+  --glass-on-accent: #0B1D3D;
+
+  --glass-text: #EEF3FB;
+  --glass-text-2: #C6D2E8;
+  --glass-text-3: #A9B7D2;
+  --glass-text-muted: #8494B4;
+
+  --glass-ok: #4FD1A5;
+  --glass-ok-soft: #9BE8CB;
+  --glass-danger: #FF6B5A;
+  --glass-danger-soft: #FFB3A3;
+
+  /* --- The three surface levels ------------------------------------------ */
+  /* Three, and no more. A fourth would be indistinguishable from its
+     neighbours through 20px of blur. */
+  --glass-l1-bg: rgba(255, 255, 255, 0.045);
+  --glass-l1-border: rgba(255, 255, 255, 0.10);
+  --glass-l1-blur: 14px;
+
+  --glass-l2-bg: rgba(255, 255, 255, 0.06);
+  --glass-l2-border: rgba(255, 255, 255, 0.13);
+  --glass-l2-blur: 22px;
+  --glass-l2-shadow: 0 18px 40px rgba(3, 10, 24, 0.46), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+
+  --glass-l3-bg: rgba(255, 255, 255, 0.09);
+  --glass-l3-border: rgba(255, 255, 255, 0.18);
+  --glass-l3-blur: 30px;
+  --glass-l3-shadow: 0 26px 56px rgba(3, 10, 24, 0.60), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+
+  /* Glass inside glass stops at one level. An inner surface takes this flat navy
+     tint instead, because two blurs stacked read as smeared, not layered. */
+  --glass-inner: rgba(27, 59, 112, 0.42);
+
+  /* Where backdrop-filter is unsupported, every level collapses to this. Opaque
+     on purpose: a translucent panel with nothing blurring behind it is just
+     unreadable text over a gradient. */
+  --glass-fallback: rgba(11, 29, 61, 0.92);
+
+  /* --- Type --------------------------------------------------------------- */
+  /* Space Grotesk for anything numeric or titular, IBM Plex Sans for prose.
+     Loaded in index.html; both carry a real fallback stack so a blocked
+     Google Fonts leaves the app legible rather than in Times. */
+  --glass-font-display: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif;
+  --glass-font-body: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+
+  --glass-text-page-title: 25px;
+  --glass-text-card-title: 15.5px;
+  --glass-text-body: 13px;
+  --glass-text-label: 11.5px;
+  --glass-text-caption: 11px;
+
+  /* --- Shape and space ---------------------------------------------------- */
+  --glass-radius-panel: 22px;
+  --glass-radius-card: 20px;
+  --glass-radius-control: 13px;
+  --glass-radius-pill: 999px;
+  --glass-control-height: 44px;
+  --glass-accent-glow: 0 10px 24px rgba(244, 121, 31, 0.36);
+
+  /* --- The compatibility layer, re-pointed -------------------------------- */
+  /* This is the line that makes the palette reach 565 existing selectors. */
+  --text: var(--glass-text);
+  --text-h: var(--glass-text);
+  --bg: var(--glass-ground);
+  --surface: var(--glass-l2-bg);
+  --border: var(--glass-l2-border);
+
+  --accent: var(--glass-accent);
+  --accent-hover: var(--glass-accent-soft);
+  --accent-bg: rgba(244, 121, 31, 0.14);
+
+  --danger: var(--glass-danger);
+  --danger-bg: rgba(255, 107, 90, 0.14);
+  --success: var(--glass-ok);
+  --warning: var(--glass-accent);
+  --warning-bg: rgba(244, 121, 31, 0.14);
+
+  --sans: var(--glass-font-body);
+  --shadow: var(--glass-l2-shadow);
+  --card-glass: var(--glass-l2-bg);
+
+  --color-text-primary: var(--glass-text);
+  --color-text-secondary: var(--glass-text-2);
+  --color-text-muted: var(--glass-text-muted);
+  --color-surface: var(--glass-l2-bg);
+  --color-page-bg: var(--glass-ground);
+  --color-border: var(--glass-l2-border);
+  --color-border-strong: var(--glass-l3-border);
+  --color-primary: var(--glass-accent);
+  --color-primary-bg: rgba(244, 121, 31, 0.14);
+  --color-primary-text: var(--glass-accent-soft);
+  --color-on-primary: var(--glass-on-accent);
+  --color-success: var(--glass-ok);
+  --color-success-bg: rgba(79, 209, 165, 0.14);
+  --color-success-text: var(--glass-ok-soft);
+  --color-danger: var(--glass-danger);
+  --color-danger-bg: rgba(255, 107, 90, 0.14);
+  --color-danger-text: var(--glass-danger-soft);
+  --color-neutral: var(--glass-navy-mid);
+  --color-neutral-bg: rgba(91, 143, 214, 0.14);
+  --color-neutral-text: var(--glass-navy-light);
+
+  --focus-ring: 0 0 0 2px var(--glass-accent);
+  --radius-control: var(--glass-radius-control);
+  --radius-card: var(--glass-radius-card);
+  --control-height: var(--glass-control-height);
+}

@@ -3,6 +3,9 @@
    styles/tokens.css, which also carries the dark palette this file used to hold.
    Imported first so every rule below reads from it. */
 @import './styles/tokens.css';
+/* The frosted-glass theme's surfaces. Scoped to [data-theme='glass'] throughout, so it is
+   inert unless that theme is on. */
+@import './styles/glass.css';
 
 
 * {

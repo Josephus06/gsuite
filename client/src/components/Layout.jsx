@@ -11,7 +11,7 @@ import t1sLogo from '../assets/t1s-logo.png';
 import t1sLogoDark from '../assets/t1s-logo-dark.png';
 import api from '../api/client';
 import { fileToScaledDataUrl } from '../utils/image';
-import { resolveTheme, setTheme, watchSystemTheme } from '../utils/theme';
+import { nextTheme, resolveTheme, setTheme, watchSystemTheme } from '../utils/theme';
 import { clearBackground, currentBackground, setBackground, subscribeBackground } from '../utils/background';
 
 // Mirrors the real GraphicStar system's topbar arrangement: a row of category
@@ -340,9 +340,15 @@ export default function Layout() {
   // Only fires while the user hasn't picked a side -- see watchSystemTheme.
   useEffect(() => watchSystemTheme(setThemeState), []);
 
+  // Three states now, so this cycles rather than flips: day -> night -> glass -> day.
+  // aria-pressed is gone with it -- a toggle button's pressed state is a boolean, and
+  // announcing "pressed" for two of three themes says nothing useful. The label carries
+  // the current theme instead, which is what a screen reader should read out.
   function toggleTheme() {
-    setThemeState(setTheme(theme === 'dark' ? 'light' : 'dark'));
+    setThemeState(setTheme(nextTheme(theme)));
   }
+  const themeLabel = { light: 'DAY MODE', dark: 'NIGHT MODE', glass: 'GLASS MODE' }[theme] || 'DAY MODE';
+  const nextLabel = { light: 'night', dark: 'glass', glass: 'day' }[theme] || 'night';
 
   // ---- Personal site background -------------------------------------------------
   // Sits with the Day/Night toggle because it is the same kind of setting: how the app
@@ -503,15 +509,21 @@ export default function Layout() {
         <div className="topnav-user">
           <button
             type="button"
-            className={`theme-toggle ${theme === 'dark' ? 'is-night' : 'is-day'}`}
+            className={`theme-toggle is-${theme === 'light' ? 'day' : theme === 'dark' ? 'night' : 'glass'}`}
             onClick={toggleTheme}
-            title={theme === 'dark' ? 'Switch to day mode' : 'Switch to night mode'}
-            aria-label={theme === 'dark' ? 'Switch to day mode' : 'Switch to night mode'}
-            aria-pressed={theme === 'dark'}
+            title={`${themeLabel} — switch to ${nextLabel} mode`}
+            aria-label={`Theme: ${themeLabel.toLowerCase()}. Switch to ${nextLabel} mode.`}
           >
-            <span className="theme-toggle-label">{theme === 'dark' ? 'NIGHT MODE' : 'DAY MODE'}</span>
+            <span className="theme-toggle-label">{themeLabel}</span>
             <span className="theme-toggle-knob" aria-hidden="true">
-              {theme === 'dark' ? (
+              {theme === 'glass' ? (
+                // Three stacked panes, for the theme built out of layered glass.
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 3 21 7.5 12 12 3 7.5Z" />
+                  <path d="m3 12 9 4.5L21 12" />
+                  <path d="m3 16.5 9 4.5 9-4.5" />
+                </svg>
+              ) : theme === 'dark' ? (
                 <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a7 7 0 1 0 10.5 10.5Z" />
                   <path d="M16.5 4.2v2.2M15.4 5.3h2.2M19.4 7.6v1.5M18.6 8.4h1.5" />

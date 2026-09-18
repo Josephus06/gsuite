@@ -4,6 +4,18 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Space Grotesk for figures and headings, IBM Plex Sans for prose -- the glass theme's
+         two faces. preconnect because the CSS and the font files sit on different origins and
+         the second DNS round trip is otherwise paid after the stylesheet has already parsed.
+         display=swap so text paints in the fallback immediately rather than staying invisible
+         while the webfont downloads; both stacks below name a real local fallback, so a
+         blocked Google Fonts leaves the app legible rather than in Times. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+    />
     <title>GSuite</title>
     <script>
       // Runs before first paint so a dark-mode user never sees a flash of the light theme.
@@ -12,11 +24,13 @@
       (function () {
         try {
           var stored = localStorage.getItem('theme');
-          var theme = stored === 'light' || stored === 'dark'
+          var theme = stored === 'light' || stored === 'dark' || stored === 'glass'
             ? stored
             : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
           document.documentElement.dataset.theme = theme;
-          document.documentElement.style.colorScheme = theme;
+          // 'glass' is a dark theme as far as the browser's own widgets are concerned; passing
+          // the name through would leave a near-black page with light scrollbars.
+          document.documentElement.style.colorScheme = theme === 'glass' ? 'dark' : theme;
           // Same pre-paint reasoning for the user's uploaded background: applied from the
           // cached copy here so it is already on screen at first paint instead of dropping
           // in after React mounts. Mirrors applyBackground() in src/utils/background.js;
