@@ -67,13 +67,19 @@ export default function DashboardCarousel() {
     return () => { stale = true; };
   }, [current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-advance, but never while a video is playing -- cutting a clip off mid-sentence to
-  // show the next photo is worse than a carousel that waits.
+  // Auto-advance on a timer, but never while a video is showing -- cutting a clip off
+  // mid-sentence to show the next photo is worse than a carousel that waits. A video hands the
+  // stage on itself when it ends (onEnded below), which is the only thing that knows how long
+  // the clip actually is; a fixed six-second timer would truncate an eleven-second one.
   useEffect(() => {
     if (items.length < 2 || current?.media_type === 'video') return undefined;
     const id = setInterval(() => setIndex((i) => (i + 1) % items.length), ROTATE_MS);
     return () => clearInterval(id);
   }, [items.length, current?.media_type, index]);
+
+  const showNext = useCallback(() => {
+    setIndex((i) => (items.length ? (i + 1) % items.length : 0));
+  }, [items.length]);
 
   async function upload(file) {
     if (!file) return;
@@ -139,12 +145,27 @@ export default function DashboardCarousel() {
         <div className="fb-carousel-stage">
           {!mediaUrl && <div className="fb-carousel-loading muted">Loading…</div>}
           {mediaUrl && (current.media_type === 'video' ? (
-            // Controls, and no autoplay: an unexpected noise from a dashboard is startling,
-            // and muted autoplay everywhere is its own kind of annoying.
+            // Plays by itself, silently. MUTED IS NOT DECORATION HERE -- every browser blocks
+            // autoplay with sound, so without it autoPlay is simply ignored and the clip sits on
+            // a still frame. It is also the point: a dashboard that makes a noise at somebody is
+            // startling, and this rail is beside a feed people are reading.
+            //
+            // playsInline stops iOS Safari taking the clip fullscreen the moment it starts.
+            //
+            // Controls stay, so a clip can be paused, replayed or unmuted BY CHOICE -- the rule
+            // is that it never makes a sound unasked, not that the sound is unreachable.
+            //
+            // A lone clip loops; with anything else to show it hands on when it ends rather than
+            // holding the rail on a finished video, since the timer above stands down for video.
             <video
               key={current.id}
               className="fb-carousel-media"
               src={mediaUrl || undefined}
+              autoPlay
+              muted
+              playsInline
+              loop={items.length < 2}
+              onEnded={items.length > 1 ? showNext : undefined}
               controls
               preload="metadata"
             />
