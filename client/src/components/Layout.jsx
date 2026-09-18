@@ -5,6 +5,7 @@ import Avatar from './Avatar';
 import ChatWidget from './ChatWidget';
 import RunningJobTimer from './RunningJobTimer';
 import NotificationBell from './NotificationBell';
+import NavIcon from './NavIcon';
 import ButtonMenu from './ButtonMenu';
 import t1sLogo from '../assets/t1s-logo.png';
 import t1sLogoDark from '../assets/t1s-logo-dark.png';
@@ -559,15 +560,26 @@ export default function Layout() {
           {/* Click-to-expand accordion instead of the desktop menu's hover flyouts --
               hover has no equivalent on touch, so each group toggles open in place. */}
           <nav className="topnav-mobile-panel">
+            {/* The panel names the system itself rather than relying on the bar above it: once
+                it is open it covers most of the screen, and a floating panel with no mark on it
+                reads as a menu belonging to nothing. */}
+            <div className="topnav-mobile-brand">
+              <img className="topnav-mobile-brand-logo topnav-logo-light" src={t1sLogo} alt="T1S — The One System" />
+              <img className="topnav-mobile-brand-logo topnav-logo-dark" src={t1sLogoDark} alt="" aria-hidden="true" />
+            </div>
             {visibleStructure.map((item) => (item.children || item.sections ? (
               <div key={item.label} className="topnav-mobile-group">
                 <button
                   type="button"
                   className={`topnav-mobile-group-toggle ${childrenOf(item).some((c) => location.pathname.startsWith(c.route)) ? 'active' : ''}`}
                   onClick={() => setExpandedGroup((g) => (g === item.label ? null : item.label))}
+                  aria-expanded={expandedGroup === item.label}
                 >
-                  {item.label}
-                  <span className={`caret ${expandedGroup === item.label ? 'open' : ''}`}>▾</span>
+                  <NavIcon label={item.label} />
+                  <span className="topnav-mobile-label">{item.label}</span>
+                  <span className={`caret ${expandedGroup === item.label ? 'open' : ''}`} aria-hidden="true">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+                  </span>
                 </button>
                 {expandedGroup === item.label && (
                   <div className="topnav-mobile-group-items">
@@ -590,7 +602,8 @@ export default function Layout() {
               </div>
             ) : (
               <NavLink key={item.route} to={item.route} className={({ isActive }) => `topnav-mobile-link ${isActive ? 'active' : ''}`}>
-                {item.label}
+                <NavIcon label={item.label} />
+                <span className="topnav-mobile-label">{item.label}</span>
               </NavLink>
             )))}
           </nav>

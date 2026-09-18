@@ -417,49 +417,163 @@ label {
    categories plus the brand/user block has no room on a phone-width topnav). ---- */
 .topnav-mobile-backdrop {
   position: fixed; inset: 56px 0 0 0;
-  background: rgba(0, 0, 0, 0.35);
+  /* Darker than it was (0.35). The panel is now translucent, so whatever is behind it is
+     read THROUGH it -- a busy wallpaper or a dense table showing through the glass is what
+     makes a panel like this look dirty rather than layered. */
+  background: rgba(8, 10, 18, 0.5);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
   z-index: 18;
 }
+
+/* The panel floats rather than filling the width, which is the whole look: a rounded slab of
+   dark glass over the dimmed page.
+   DARK IN BOTH THEMES, on purpose. It sits over its own dimming backdrop, not over the page,
+   so it is reading against something dark whichever theme is on -- and a panel that flipped to
+   white in day mode would lose the raised, layered quality the design is built from. */
 .topnav-mobile-panel {
-  position: fixed; top: 56px; left: 0; right: 0;
-  max-height: calc(100vh - 56px);
+  position: fixed;
+  top: 64px;
+  left: 12px;
+  width: min(320px, calc(100vw - 24px));
+  max-height: calc(100vh - 80px);
   overflow-y: auto;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-  box-shadow: var(--shadow);
+  overscroll-behavior: contain;
+  background: rgba(24, 28, 40, 0.82);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  backdrop-filter: blur(20px) saturate(140%);
+  /* A hairline of light along the top edge is what sells glass -- without it the panel reads
+     as a flat dark rectangle sitting on the page rather than a pane above it. */
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.3);
   display: flex;
   flex-direction: column;
-  padding: 6px;
+  gap: 2px;
+  padding: 10px;
   z-index: 19;
+  /* Its own colours, so every row below can just say currentColor and inherit. */
+  color: rgba(255, 255, 255, 0.78);
+  animation: topnav-panel-in 0.18s ease-out;
 }
+@keyframes topnav-panel-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+/* Respecting the OS setting rather than animating regardless: this panel opens on every
+   navigation, so a movement someone finds unpleasant is one they would meet constantly. */
+@media (prefers-reduced-motion: reduce) {
+  .topnav-mobile-panel { animation: none; }
+}
+
+.topnav-mobile-brand {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px 14px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+.topnav-mobile-brand-logo { height: 26px; width: auto; display: block; }
+/* The panel is dark whatever the theme, so it always wants the light-on-dark wordmark --
+   overriding the theme-driven swap the topbar copies use. */
+.topnav-mobile-brand .topnav-logo-light { display: none; }
+.topnav-mobile-brand .topnav-logo-dark { display: block; }
+
 .topnav-mobile-link, .topnav-mobile-group-toggle {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
   width: 100%;
   text-align: left;
-  padding: 13px 12px;
-  border-radius: 8px;
+  padding: 11px 12px;
+  border-radius: 12px;
   background: none;
-  border: none;
-  color: var(--text);
+  /* Transparent rather than none: the active state adds a visible border, and going from no
+     border to 1px would shift every label by a pixel as it highlights. */
+  border: 1px solid transparent;
+  color: inherit;
   text-decoration: none;
   font-weight: 500;
   font-size: 15px;
   font-family: var(--sans);
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
 }
-.topnav-mobile-link.active, .topnav-mobile-group-toggle.active { color: var(--accent); background: var(--accent-bg); }
-.topnav-mobile-group-toggle .caret { transition: transform 0.15s ease; }
+.topnav-mobile-label { flex: 1; min-width: 0; }
+.navicon { flex-shrink: 0; opacity: 0.85; }
+
+.topnav-mobile-link:hover, .topnav-mobile-group-toggle:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #fff;
+}
+/* The raised, slightly lighter slab the reference gives the open group -- a highlight that
+   reads as a surface rather than as a coloured text run. */
+.topnav-mobile-link.active, .topnav-mobile-group-toggle.active {
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.topnav-mobile-link.active .navicon, .topnav-mobile-group-toggle.active .navicon { opacity: 1; }
+
+.topnav-mobile-group-toggle .caret {
+  display: flex;
+  flex-shrink: 0;
+  opacity: 0.5;
+  transition: transform 0.18s ease, opacity 0.14s ease;
+}
+.topnav-mobile-group-toggle:hover .caret, .topnav-mobile-group-toggle.active .caret { opacity: 0.85; }
 .topnav-mobile-group-toggle .caret.open { transform: rotate(180deg); }
-.topnav-mobile-group-items { display: flex; flex-direction: column; padding: 0 0 6px 14px; }
+
+.topnav-mobile-group-items {
+  display: flex;
+  flex-direction: column;
+  /* Indented to sit under the parent's LABEL, not its icon: 12px padding + 19px icon + 12px
+     gap puts the label's left edge at 43px, and the bullet reads as hanging off it. */
+  padding: 2px 0 6px 31px;
+}
 .topnav-mobile-group-items a {
-  padding: 11px 12px;
-  border-radius: 8px;
-  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  color: rgba(255, 255, 255, 0.62);
   text-decoration: none;
   font-size: 14px;
+  transition: background 0.14s ease, color 0.14s ease;
 }
-.topnav-mobile-group-items a.active { color: var(--accent); background: var(--accent-bg); }
+/* The small dot the reference hangs off each child. A pseudo-element rather than a bullet
+   character so its size and colour are controllable and it never picks up the font's own
+   spacing. */
+.topnav-mobile-group-items a::before {
+  content: '';
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.55;
+  flex-shrink: 0;
+}
+.topnav-mobile-group-items a:hover { color: rgba(255, 255, 255, 0.92); background: rgba(255, 255, 255, 0.06); }
+.topnav-mobile-group-items a.active { color: #fff; background: rgba(255, 255, 255, 0.1); }
+.topnav-mobile-group-items a.active::before { opacity: 1; }
+/* Section headings inside a group that has them (Master Lists, Accounting). The shared
+   .topnav-mega-title is styled for the light desktop mega-menu and is close to invisible
+   against the dark panel. */
+.topnav-mobile-panel .topnav-mega-title {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* A dark scrollbar; the default light one cuts a bright stripe down the glass. */
+.topnav-mobile-panel::-webkit-scrollbar { width: 8px; }
+.topnav-mobile-panel::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+}
+.topnav-mobile-panel::-webkit-scrollbar-track { background: transparent; }
 
 /* The desktop strip carries 18 modules. Measured at the tightened padding it needs about
    1,485px, and with the brand and the user block either side the bar wants ~2,050px. Past
