@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const pool = require('../db');
 const { PLANNER_COLUMNS, PLANNER_FLAGS, isPlanner } = require('../lib/plannerRoles');
 const { requireAuth, clearPresence, isSystemAdmin } = require('../middleware/auth');
+const { isHeadOfficeUser } = require('../lib/userLocation');
 
 const router = express.Router();
 
@@ -212,6 +213,13 @@ router.get('/me', requireAuth, async (req, res, next) => {
       [user.id]
     );
     user.default_branch = defaultBranch || null;
+
+    // Head Office and the branches are held to different rules in places (billing a Sales Order,
+    // for one -- see requireInvoiceCreatePermission in routes/salesInvoices.js). The client gates
+    // the buttons for those rules, so it has to reach the same answer the server will; resolving
+    // it here, from the one helper the server uses, is what stops the two drifting into a button
+    // that opens a form only for the save to be refused.
+    user.is_head_office = await isHeadOfficeUser(user.id);
 
     const [permissions] = await pool.query(
       `SELECT p.route, upp.can_view, upp.can_add, upp.can_edit, upp.can_view_all, upp.can_delete, upp.can_approve, upp.can_print

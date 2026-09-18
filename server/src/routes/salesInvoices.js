@@ -7,6 +7,7 @@ const { computeSalesInvoiceGl } = require('../lib/glImpact');
 
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { whyNotBillable } = require('../lib/estimateBilling');
+const { isHeadOfficeUser } = require('../lib/userLocation');
 
 const router = express.Router();
 // Unlike Item Fulfillment/Receipt/Quality Inspection/Item Delivery (all reached only by
@@ -617,8 +618,29 @@ async function billEstimate(req, res, conn) {
 // Nobody loses anything by this: every account currently holding can_edit on this page also holds
 // can_add, so the button's audience only grows -- by the four Sales accounts that had can_add and
 // no way to use it.
+// ...EXCEPT outside Head Office, where BILLING IS THE REP'S OWN JOB.
+//
+// Those two actions assume a separation of duties that only exists at Head Office: someone raises
+// the order, Accounting down the corridor turns it into an invoice. A branch has no Accounting
+// desk. The rep who took the order is the person who bills it, so the permission that models "may
+// this account hand work to Accounting" has nothing to say about them -- and it was refusing them
+// on a rule written for an office they do not work in.
+//
+// So for a user whose default location is not Head Office, holding the Sales Invoices page at all
+// (can_view) is enough to raise one. This is deliberately looser than can_add: the branch accounts
+// carry view-only rows -- Roselyn Tundag, who this was reported from, has can_view and neither of
+// the other two -- so asking for can_add would have changed the error message and nothing else.
+// Head Office is untouched and still answers to can_add / can_edit as before.
+//
+// An account with NO default location at all counts as Head Office, i.e. the stricter side; see
+// lib/userLocation.js. The location comes from the account, never from the request, so this cannot
+// be steered by what gets posted.
 async function requireInvoiceCreatePermission(req, res, next) {
   try {
+    if (!(await isHeadOfficeUser(req.user.id))) {
+      if (await userCan(req.user.id, ROUTE, 'can_view')) return next();
+      return res.status(403).json({ error: 'You do not have permission to perform this action' });
+    }
     const action = req.body?.estimate_id ? 'can_add' : 'can_edit';
     if (await userCan(req.user.id, ROUTE, action)) return next();
     return res.status(403).json({ error: 'You do not have permission to perform this action' });

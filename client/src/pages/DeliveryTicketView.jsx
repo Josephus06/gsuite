@@ -26,7 +26,7 @@ const STATUS_LABELS = { open: 'OPEN', converted: 'CONVERTED', void: 'VOID' };
 export default function DeliveryTicketView() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const [dt, setDt] = useState(null);
   const [tab, setTab] = useState('items');
   const [auditLogs, setAuditLogs] = useState([]);
@@ -73,6 +73,10 @@ export default function DeliveryTicketView() {
   if (loading || !dt) return <LoadingSpinner />;
 
   const canEdit = can('/delivery-tickets', 'can_edit');
+  // Billing the ticket raises a Sales Invoice, so it answers to the invoice page's permission,
+  // not this one -- same rule as the Sales Order's Bill menu, Head Office on can_edit and the
+  // branches on can_view. Gated on both because converting the ticket needs this page too.
+  const canBillSI = can('/sales-invoices', user?.is_head_office === false ? 'can_view' : 'can_edit');
   const isOpen = dt.status === 'open';
 
   return (
@@ -86,7 +90,7 @@ export default function DeliveryTicketView() {
           <button className="btn btn-sm" disabled title="Credit Memos aren't implemented in this build">Credit Memo</button>
           {/* Bill on a Delivery Ticket raises the official Sales Invoice from it and
               converts the ticket -- so it's offered only while the ticket is still open. */}
-          {canEdit && isOpen && (
+          {canEdit && canBillSI && isOpen && (
             <div style={{ position: 'relative' }}>
               <button className="btn btn-sm btn-primary" onClick={() => setShowBillMenu((s) => !s)}>Bill ▾</button>
               {showBillMenu && (

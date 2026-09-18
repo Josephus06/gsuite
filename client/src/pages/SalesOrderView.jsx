@@ -65,7 +65,7 @@ function money(v) {
 export default function SalesOrderView() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const [so, setSo] = useState(null);
   const [tab, setTab] = useState('items');
   const [loading, setLoading] = useState(true);
@@ -201,6 +201,14 @@ export default function SalesOrderView() {
   // Raising a delivery is Item Delivery's own permission now, not Sales Orders'. Without this
   // the button would show to anyone who can read the order and only fail on save.
   const canRaiseDelivery = can('/item-deliveries', 'can_add');
+  // Bill had never been given the same treatment: it showed to anyone who could read the order,
+  // so a rep could fill in the whole Create SI form -- SI #, PO #, withholding tax -- and only
+  // then be told no. These two mirror what the servers actually ask for, so the menu offers what
+  // it can deliver. Billing a Sales Order wants can_edit at Head Office and only can_view at a
+  // branch (requireInvoiceCreatePermission in routes/salesInvoices.js explains why);
+  // user.is_head_office is resolved server-side by the same helper that decides the real thing.
+  const canBillSI = can('/sales-invoices', user?.is_head_office === false ? 'can_view' : 'can_edit');
+  const canBillDT = can('/delivery-tickets', 'can_edit');
   const subtotal = lines.reduce((s, l) => s + num(l.subtotal), 0);
   const discountTotal = lines.reduce((s, l) => s + num(l.disc_amount), 0);
   const netOfTax = subtotal - discountTotal;
@@ -215,15 +223,15 @@ export default function SalesOrderView() {
           <button className="btn btn-sm" onClick={() => navigate('/sales-orders')}>Back</button>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a Sales Order isn't implemented in this build -- amend the originating Estimate instead">Edit</button>}
           {hasDeliverableLine && canRaiseDelivery && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/sales-orders/${id}/item-delivery/new`)}>Item Delivery</button>}
-          {hasInvoiceableLine && (
+          {hasInvoiceableLine && (canBillSI || canBillDT) && (
             <div style={{ position: 'relative' }}>
               <button className="btn btn-sm btn-primary" onClick={() => setShowBillMenu((s) => !s)}>Bill ▾</button>
               {showBillMenu && (
                 <div className="card" style={{ position: 'absolute', right: 0, top: '110%', zIndex: 20, padding: 6, minWidth: 80 }}>
                   <button type="button" className="btn btn-sm" disabled style={{ width: '100%', marginBottom: 4 }} title="Billing Statements aren't implemented in this build">BS</button>
-                  <button type="button" className="btn btn-sm" style={{ width: '100%', marginBottom: 4 }} onClick={() => { setShowBillMenu(false); setShowSIModal(true); }}>SI</button>
+                  {canBillSI && <button type="button" className="btn btn-sm" style={{ width: '100%', marginBottom: 4 }} onClick={() => { setShowBillMenu(false); setShowSIModal(true); }}>SI</button>}
                   <button type="button" className="btn btn-sm" disabled style={{ width: '100%', marginBottom: 4 }} title="Delivery Receipts aren't implemented in this build">DR</button>
-                  <button type="button" className="btn btn-sm" style={{ width: '100%' }} onClick={() => { setShowBillMenu(false); setShowDTModal(true); }}>DT</button>
+                  {canBillDT && <button type="button" className="btn btn-sm" style={{ width: '100%' }} onClick={() => { setShowBillMenu(false); setShowDTModal(true); }}>DT</button>}
                 </div>
               )}
             </div>
