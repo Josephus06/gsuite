@@ -576,6 +576,26 @@ async function computeCommissionVoucherGl(cv, lines, expenses) {
 // VAT is routed per line tax code via taxes.tax_account_id, same as computeSalesInvoiceGl
 // -- so a future second tax code lands on its own account rather than silently on VAT on
 // Sales.
+// Pay expenses out of a bank account: DR each expense account (+ VAT input 14300 on tax) /
+// CR Expanded Withholding Tax (21402) for any withheld / CR the bank account for the net.
+//
+// `c` must carry bank_code/bank_name (chart_of_accounts joined on cheques.account_id) and `lines`
+// the cheque's own lines with their account_code/account_name already resolved -- the shape the
+// Cheques block in getPostedGlLines builds. Lifted out of that block so the void path can post the
+// mirror of the very same entry rather than a second opinion about what a cheque posts.
+async function computeChequeGl(c, lines) {
+  const rows = (lines || []).filter((l) => Number(l.amount)).map((l) => ({
+    account_code: l.account_code, account_name: l.account_name, debit: Number(l.amount) || 0, credit: 0, department_id: l.department_id || null,
+  }));
+  const tax = Number(c.tax_amount) || 0;
+  const wtax = Number(c.withholding_tax_amount) || 0;
+  const total = Number(c.total_amount) || 0;
+  if (tax) { const v = await coaByCode('14300'); if (v) rows.push({ account_code: v.account_code, account_name: v.account_name, debit: tax, credit: 0 }); }
+  if (wtax) { const w = await coaByCode('21402'); if (w) rows.push({ account_code: w.account_code, account_name: w.account_name, debit: 0, credit: wtax }); }
+  if (total && c.bank_code) rows.push({ account_code: c.bank_code, account_name: c.bank_name, debit: 0, credit: total });
+  return rows;
+}
+
 async function computeDeliveryTicketGl(dt, lines) {
   const arUnbilled = await coaByCode('12101');
   const salesAcct = await coaByCode('30100');
@@ -859,10 +879,15 @@ async function getPostedGlLines({ toDate, fromDate }) {
   try {
 
   // Sales Invoices
+  //
+  // CANCELLED ONES POST TOO, and must. Dropping them here used to be how a void was modelled, but
+  // that erases the original entry from the period it was written in. Voiding now writes a REVERSAL
+  // journal instead (lib/reversalJournal.js) which cancels the entry in the period of the void, so
+  // excluding the invoice as well would reverse it twice and leave the ledger short by its value.
   {
     const { sql, params } = dateFilter('si.date_created');
     const [headers] = await pool.query(
-      `SELECT si.* FROM sales_invoices si WHERE si.status != 'cancelled' AND ${sql}`, params
+      `SELECT si.* FROM sales_invoices si WHERE ${sql}`, params
     );
     const linesBy = await linesByParent(
       'SELECT * FROM sales_invoice_lines WHERE sales_invoice_id IN (?)', 'sales_invoice_id',
@@ -1068,31 +1093,26 @@ async function getPostedGlLines({ toDate, fromDate }) {
     }
   }
 
-  // Cheques -- pay expenses out of a bank account: DR each expense account (+ VAT input 14300 on
-  // tax) / CR Expanded Withholding Tax (21402) for any withheld / CR the bank account for the net.
+  // Cheques -- computeChequeGl above has the entry.
+  //
+  // VOID ONES POST. This is the case that proved the rule: the imported cheque journals are all
+  // reversals, they were posting here, and the cheques they reverse were excluded by this very
+  // clause -- 676 reversals cancelling nothing, 52.5M of ledger. Either both sides are present or
+  // neither is, and both is what an auditable ledger means.
   {
     const [tbl] = await pool.query("SHOW TABLES LIKE 'cheques'");
     if (tbl.length) {
       const { sql, params } = dateFilter('c.date_created');
       const [headers] = await pool.query(
         `SELECT c.*, coa.account_code AS bank_code, coa.account_name AS bank_name FROM cheques c
-         LEFT JOIN chart_of_accounts coa ON coa.id = c.account_id WHERE c.status <> 'void' AND ${sql}`, params
+         LEFT JOIN chart_of_accounts coa ON coa.id = c.account_id WHERE ${sql}`, params
       );
       const linesBy = await linesByParent(
         `SELECT cl.cheque_id, cl.amount, cl.department_id, coa.account_code, coa.account_name
            FROM cheque_lines cl LEFT JOIN chart_of_accounts coa ON coa.id = cl.account_id
           WHERE cl.cheque_id IN (?) ORDER BY cl.line_no`, 'cheque_id', headers.map((h) => h.id));
       for (const c of headers) {
-        const lines = linesBy.get(c.id) || [];
-        const rows = lines.filter((l) => Number(l.amount)).map((l) => ({
-          account_code: l.account_code, account_name: l.account_name, debit: Number(l.amount) || 0, credit: 0, department_id: l.department_id || null,
-        }));
-        const tax = Number(c.tax_amount) || 0;
-        const wtax = Number(c.withholding_tax_amount) || 0;
-        const total = Number(c.total_amount) || 0;
-        if (tax) { const v = await coaByCode('14300'); if (v) rows.push({ account_code: v.account_code, account_name: v.account_name, debit: tax, credit: 0 }); }
-        if (wtax) { const w = await coaByCode('21402'); if (w) rows.push({ account_code: w.account_code, account_name: w.account_name, debit: 0, credit: wtax }); }
-        if (total && c.bank_code) rows.push({ account_code: c.bank_code, account_name: c.bank_name, debit: 0, credit: total });
+        const rows = await computeChequeGl(c, linesBy.get(c.id) || []);
         push(glFor('cheque', c.id, rows), { entry_date: c.date_created, source_type: 'cheque', source_no: c.cheque_no, source_id: c.id, memo: c.memo || null, location_id: c.office_location_id || null });
       }
     }
@@ -1209,16 +1229,20 @@ async function getPostedGlLines({ toDate, fromDate }) {
     }
   }
 
-  // Delivery Tickets. Only *open* ones post: a void ticket never happened, and a
-  // 'converted' one has been superseded by the Sales Invoice raised from it, which posts
-  // the same revenue against AR Trade (12100). Leaving converted tickets in would
-  // double-count both the sale and the VAT.
+  // Delivery Tickets. 'converted' ones stay out: such a ticket has been superseded by the Sales
+  // Invoice raised from it, which posts the same revenue against AR Trade (12100), so leaving them
+  // in would double-count both the sale and the VAT. That is a different thing from a void, which
+  // is why the two statuses are no longer treated alike.
+  //
+  // VOID ONES POST, and are cancelled by their REVERSAL journal in the period they were voided in
+  // -- see the Sales Invoices block above and lib/reversalJournal.js. Excluding them here as well
+  // would reverse them twice.
   {
     const { sql, params } = dateFilter('dt.date_created');
     const [headers] = await pool.query(
       `SELECT dt.*, so.office_location_id FROM delivery_tickets dt
        JOIN sales_orders so ON so.id = dt.sales_order_id
-       WHERE dt.status = 'open' AND ${sql}`, params
+       WHERE dt.status IN ('open', 'void') AND ${sql}`, params
     );
     const linesBy = await linesByParent(
       'SELECT * FROM delivery_ticket_lines WHERE delivery_ticket_id IN (?)', 'delivery_ticket_id',
@@ -1363,6 +1387,7 @@ module.exports = {
   computeItemDeliveryGl,
   computeTransitGl,
   computeDeliveryTicketGl,
+  computeChequeGl,
   computeCustomerPaymentGl,
   computeCreditMemoGl,
   computeCustomerRefundGl,

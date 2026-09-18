@@ -2,6 +2,8 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
+const { computeChequeGl } = require('../lib/glImpact');
+const { postReversalJournal } = require('../lib/reversalJournal');
 
 const router = express.Router();
 // Cheque (CHK-####): pays a payee for expense lines, drawn against a bank account. GL: DR each
@@ -95,9 +97,9 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // does not un-post it: live keeps the original entries and reverses them with a separate
     // journal, which appears under Related Records. Blanking the tab on void hid the entries
     // for all 690 imported voided cheques even though their reversal is right there.
-    // (Note: this app's own /void handler only flips the status -- it posts no reversal
-    // journal the way live does. Cheques voided in-app therefore show a posting with nothing
-    // reversing it, which is a gap in that handler rather than a reason to hide the truth.)
+    // (The /void handler below now posts that reversal itself, so a cheque voided in-app reads
+    // the same as an imported one -- it used to only flip the status, and the entry it left
+    // behind had nothing reversing it.)
     const gl = computeGl(c, lines);
     const tax = round2(c.tax_amount);
     const wtax = round2(c.withholding_tax_amount);
@@ -210,9 +212,31 @@ router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_edit'), async
     await assertPeriodOpen(c.date_created, 'other_gl', conn);
     await conn.beginTransaction();
     await conn.query("UPDATE cheques SET status = 'void', voided_at = NOW(), voided_by_user_id = ? WHERE id = ?", [req.user.id, req.params.id]);
+    // The reversal the imported cheques always had, now written by the app that voids them rather
+    // than only ever arriving from the live system. A void cheque keeps posting its own entry
+    // (lib/glImpact.js) and this cancels it.
+    const [[fullCheque]] = await conn.query(
+      `SELECT c.*, coa.account_code AS bank_code, coa.account_name AS bank_name FROM cheques c
+       LEFT JOIN chart_of_accounts coa ON coa.id = c.account_id WHERE c.id = ?`, [req.params.id]);
+    const [chequeLines] = await conn.query(
+      `SELECT cl.amount, cl.department_id, coa.account_code, coa.account_name
+         FROM cheque_lines cl LEFT JOIN chart_of_accounts coa ON coa.id = cl.account_id
+        WHERE cl.cheque_id = ? ORDER BY cl.line_no`, [req.params.id]);
+    const reversal = await postReversalJournal(conn, {
+      sourceType: 'cheque', sourceId: Number(req.params.id), sourceNo: fullCheque.cheque_no,
+      glRows: await computeChequeGl(fullCheque, chequeLines),
+      documentDate: fullCheque.date_created, voidedAt: new Date(),
+      reason: req.body?.reason || null, userId: req.user.id, locationId: fullCheque.office_location_id || null,
+    });
     await logAudit(conn, { chequeId: req.params.id, userId: req.user.id, eventType: 'Cancelled', fieldName: 'status', oldValue: c.status, newValue: 'void' });
+    if (reversal) {
+      await logAudit(conn, {
+        chequeId: req.params.id, userId: req.user.id, eventType: 'Created',
+        fieldName: 'reversal_journal_no', newValue: reversal.journalNo,
+      });
+    }
     await conn.commit();
-    res.json({ ok: true });
+    res.json({ ok: true, reversal_journal_no: reversal?.journalNo || null });
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 

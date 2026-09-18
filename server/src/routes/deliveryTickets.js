@@ -5,6 +5,7 @@ const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeDeliveryTicketGl } = require('../lib/glImpact');
 
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
+const { postReversalJournal } = require('../lib/reversalJournal');
 
 const router = express.Router();
 // Like Sales Invoices (and unlike Item Fulfillment/Receipt, which borrow their parent's
@@ -387,6 +388,20 @@ router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_edit'), async
       "UPDATE delivery_tickets SET status = 'void', voided_by_user_id = ?, voided_at = NOW() WHERE id = ?",
       [req.user.id, req.params.id]
     );
+    // A void ticket keeps posting its original entry (lib/glImpact.js takes 'open' and 'void'
+    // now); the reversal is what withdraws it, in today's period rather than the ticket's own.
+    // Note this is only reached from 'open' -- a 'converted' ticket is not posting in the first
+    // place, because the Sales Invoice raised from it posts the same revenue.
+    const [[fullDt]] = await conn.query(
+      `SELECT dt.*, so.office_location_id FROM delivery_tickets dt
+       JOIN sales_orders so ON so.id = dt.sales_order_id WHERE dt.id = ?`, [req.params.id]);
+    const [dtLines] = await conn.query('SELECT * FROM delivery_ticket_lines WHERE delivery_ticket_id = ?', [req.params.id]);
+    const reversal = await postReversalJournal(conn, {
+      sourceType: 'delivery_ticket', sourceId: Number(req.params.id), sourceNo: fullDt.dt_no,
+      glRows: await computeDeliveryTicketGl(fullDt, dtLines),
+      documentDate: fullDt.date_created, voidedAt: new Date(),
+      reason: req.body?.reason || null, userId: req.user.id, locationId: fullDt.office_location_id || null,
+    });
     // 'Cancelled', not 'Voided' -- audit_logs.event_type is a fixed enum and this is the
     // value Sales Invoice's own void already writes. The screen calls it Void; the audit
     // vocabulary is shared across every module and isn't worth widening for a synonym.
@@ -394,10 +409,16 @@ router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_edit'), async
       ticketId: req.params.id, userId: req.user.id, eventType: 'Cancelled',
       fieldName: 'status', oldValue: dt.status, newValue: 'void',
     });
+    if (reversal) {
+      await logAudit(conn, {
+        ticketId: req.params.id, userId: req.user.id, eventType: 'Created',
+        fieldName: 'reversal_journal_no', newValue: reversal.journalNo,
+      });
+    }
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM delivery_tickets WHERE id = ?', [req.params.id]);
-    res.json(row);
+    res.json({ ...row, reversal_journal_no: reversal?.journalNo || null });
   } catch (err) {
     await conn.rollback();
     next(err);

@@ -8,6 +8,7 @@ const { computeSalesInvoiceGl } = require('../lib/glImpact');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { whyNotBillable } = require('../lib/estimateBilling');
 const { isHeadOfficeUser } = require('../lib/userLocation');
+const { postReversalJournal } = require('../lib/reversalJournal');
 
 const router = express.Router();
 // Unlike Item Fulfillment/Receipt/Quality Inspection/Item Delivery (all reached only by
@@ -818,6 +819,18 @@ router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
       "UPDATE sales_invoices SET status = 'cancelled', cancelled_by_user_id = ?, cancelled_at = NOW() WHERE id = ?",
       [req.user.id, req.params.id]
     );
+    // The invoice keeps posting its original entry (lib/glImpact.js no longer excludes a cancelled
+    // one); this is what takes it back out, dated today rather than back in the invoice's own
+    // period. Read the header and lines fresh so the reversal mirrors exactly what the GL Impact
+    // tab shows for this invoice.
+    const [[fullSi]] = await conn.query('SELECT * FROM sales_invoices WHERE id = ?', [req.params.id]);
+    const [glLines] = await conn.query('SELECT * FROM sales_invoice_lines WHERE sales_invoice_id = ?', [req.params.id]);
+    const reversal = await postReversalJournal(conn, {
+      sourceType: 'sales_invoice', sourceId: Number(req.params.id), sourceNo: fullSi.invoice_no,
+      glRows: await computeSalesInvoiceGl(fullSi, glLines),
+      documentDate: fullSi.date_created, voidedAt: new Date(),
+      reason: req.body?.reason || null, userId: req.user.id, locationId: fullSi.office_location_id || null,
+    });
     const [[so]] = await conn.query('SELECT status FROM sales_orders WHERE id = ?', [si.sales_order_id]);
     if (so && so.status !== 'cancelled') {
       const [freshLines] = await conn.query(
@@ -832,10 +845,16 @@ router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
       }
     }
     await logAudit(conn, { invoiceId: req.params.id, userId: req.user.id, eventType: 'Cancelled', fieldName: 'status', oldValue: 'saved', newValue: 'cancelled' });
+    if (reversal) {
+      await logAudit(conn, {
+        invoiceId: req.params.id, userId: req.user.id, eventType: 'Created',
+        fieldName: 'reversal_journal_no', newValue: reversal.journalNo,
+      });
+    }
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM sales_invoices WHERE id = ?', [req.params.id]);
-    res.json(row);
+    res.json({ ...row, reversal_journal_no: reversal?.journalNo || null });
   } catch (err) {
     await conn.rollback();
     next(err);
