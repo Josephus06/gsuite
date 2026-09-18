@@ -475,3 +475,162 @@
   :root[data-theme='glass'] .error-banner,
   :root[data-theme='glass'] .warning-banner { background: transparent; color: #111827; border-color: #6b7280; }
 }
+
+/* =============================================================================
+   DASHBOARD
+   =============================================================================
+   The dashboard was built before the theme system and drives itself from its own
+   --dash-* / --holo-* variables, which is why the shared card rules never reached
+   it: its cards are .holo-card, not .card, and it paints its own page background
+   over the top of the shell's gradient.
+
+   So this re-points its variables the same way tokens.css re-points the app's
+   compatibility layer -- change the token, the whole dashboard follows.
+   ========================================================================== */
+:root[data-theme='glass'] .holo-dashboard {
+  /* Transparent, so the shell gradient shows through instead of a flat panel
+     being painted over it. */
+  background: transparent;
+  color: var(--glass-text);
+
+  --dash-bg: transparent;
+  --dash-card-bg: var(--glass-l2-bg);
+  --dash-text: var(--glass-text);
+  --dash-text-dim: var(--glass-text-3);
+  --dash-border: var(--glass-l2-border);
+  --dash-card-shadow: var(--glass-l2-shadow);
+
+  /* The dashboard's own ramp, re-pointed onto the brand. The four figures were
+     purple / blue / green / lime, none of which is in the palette. */
+  --dash-purple: var(--glass-navy-mid);
+  --dash-blue: var(--glass-navy-mid);
+  --dash-green: var(--glass-ok);
+  --dash-lime: var(--glass-navy-light);
+
+  --holo-text: var(--glass-text);
+  --holo-text-dim: var(--glass-text-3);
+  --holo-card-border: var(--glass-l2-border);
+  /* The neon widget hues become the brand's, so the orb and the donuts read as
+     instruments rather than as a second colour scheme arriving on the page. */
+  --holo-cyan: var(--glass-navy-mid);
+  --holo-violet: var(--glass-navy-light);
+  --holo-magenta: var(--glass-accent);
+  --holo-amber: var(--glass-accent);
+  --holo-green: var(--glass-ok);
+}
+
+:root[data-theme='glass'] .holo-header h1 { color: var(--glass-text); }
+:root[data-theme='glass'] .holo-header .holo-sub { color: var(--glass-text-3); }
+:root[data-theme='glass'] .holo-empty { color: var(--glass-text-muted); }
+
+/* --- Cards ---------------------------------------------------------------- */
+:root[data-theme='glass'] .holo-card {
+  background: var(--glass-l2-bg);
+  border: 1px solid var(--glass-l2-border);
+  border-radius: var(--glass-radius-card);
+  -webkit-backdrop-filter: blur(var(--glass-l2-blur));
+  backdrop-filter: blur(var(--glass-l2-blur));
+  box-shadow: var(--glass-l2-shadow);
+}
+:root[data-theme='glass'] .holo-card h3 { color: var(--glass-text-2); }
+:root[data-theme='glass'] .holo-card:hover { box-shadow: var(--glass-l2-shadow); }
+
+/* --- The four figures ------------------------------------------------------ */
+/* Navy and its tints, graded so the four are still told apart at a glance, and NO
+   orange among them. The one orange on this screen is the revenue line in the
+   chart -- the brief names it, and two oranges on a page means one of them has
+   stopped meaning anything.
+
+   They keep a fill rather than becoming plain glass: these are the figures the
+   page exists for, and four panes of the same glass as everything else would bury
+   them. A tint still lets the gradient through. */
+:root[data-theme='glass'] .holo-stat-card {
+  color: var(--glass-text);
+  border: 1px solid var(--glass-l2-border);
+  border-radius: var(--glass-radius-card);
+  -webkit-backdrop-filter: blur(var(--glass-l2-blur));
+  backdrop-filter: blur(var(--glass-l2-blur));
+  box-shadow: var(--glass-l2-shadow);
+}
+:root[data-theme='glass'] .holo-stat-card.tone-purple {
+  background: linear-gradient(135deg, rgba(27, 59, 112, 0.72), rgba(27, 59, 112, 0.44));
+}
+:root[data-theme='glass'] .holo-stat-card.tone-blue {
+  background: linear-gradient(135deg, rgba(46, 86, 162, 0.72), rgba(46, 86, 162, 0.42));
+}
+:root[data-theme='glass'] .holo-stat-card.tone-green {
+  background: linear-gradient(135deg, rgba(91, 143, 214, 0.60), rgba(91, 143, 214, 0.34));
+}
+:root[data-theme='glass'] .holo-stat-card.tone-lime {
+  /* #A6C2EA at a low alpha over this ground desaturates to grey and reads as a mistake
+     beside three blues. Held at a mid tint instead so the fourth step still says navy. */
+  background: linear-gradient(135deg, rgba(127, 168, 223, 0.52), rgba(127, 168, 223, 0.26));
+}
+:root[data-theme='glass'] .holo-stat-card:hover { box-shadow: var(--glass-l3-shadow); }
+:root[data-theme='glass'] .holo-stat-label { color: var(--glass-text-2); }
+:root[data-theme='glass'] .holo-stat-value { font-family: var(--glass-font-display); color: var(--glass-text); }
+:root[data-theme='glass'] .holo-stat-icon {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+/* --- The chart tile -------------------------------------------------------- */
+/* Glass stops at one level and this sits inside a .holo-card, so it is a flat navy
+   panel rather than a second pane. Its violet/cyan nebula is replaced by the
+   shell's own two hues so the tile reads as part of the page. */
+:root[data-theme='glass'] .holo-tile-dark {
+  --holo-text-dim: var(--glass-text-3);
+  background:
+    radial-gradient(ellipse 400px 240px at 20% -10%, rgba(46, 86, 162, 0.55), transparent 60%),
+    radial-gradient(ellipse 300px 220px at 100% 110%, rgba(244, 121, 31, 0.18), transparent 55%),
+    var(--glass-inner);
+  border: 1px solid var(--glass-l1-border);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+:root[data-theme='glass'] .holo-tile-dark .holo-donut-value { color: var(--glass-text); }
+:root[data-theme='glass'] .holo-tile-dark .holo-donut-sub { color: var(--glass-text-3); }
+
+/* --- Bars, rings and rows -------------------------------------------------- */
+:root[data-theme='glass'] .holo-barlist-track { background: rgba(255, 255, 255, 0.09); }
+:root[data-theme='glass'] .holo-barlist-label { color: var(--glass-text-3); }
+:root[data-theme='glass'] .holo-barlist-value { color: var(--glass-text); font-family: var(--glass-font-display); }
+:root[data-theme='glass'] .holo-activity-row { border-color: var(--glass-l1-border); }
+:root[data-theme='glass'] .holo-activity-row:hover { background: rgba(255, 255, 255, 0.05); }
+:root[data-theme='glass'] .holo-activity-main { color: var(--glass-text-2); }
+:root[data-theme='glass'] .holo-activity-sub { color: var(--glass-text-muted); }
+:root[data-theme='glass'] .holo-role-badge {
+  background: rgba(244, 121, 31, 0.16);
+  border: 1px solid rgba(244, 121, 31, 0.38);
+  color: var(--glass-accent-soft);
+}
+
+/* --- The Feed / My Dashboard switcher -------------------------------------- */
+/* A white pill sitting on the gradient -- the one thing on screen that had not
+   been told about the theme. An L1 strip now, with orange on the current tab:
+   that is "where you are", which is what the accent is for. */
+:root[data-theme='glass'] .fbfeed.plain { background: transparent; }
+:root[data-theme='glass'] .fb-tabs {
+  background: var(--glass-l1-bg);
+  border: 1px solid var(--glass-l1-border);
+  border-radius: var(--glass-radius-pill);
+  -webkit-backdrop-filter: blur(var(--glass-l1-blur));
+  backdrop-filter: blur(var(--glass-l1-blur));
+}
+:root[data-theme='glass'] .fb-tab {
+  color: var(--glass-text-3);
+  border-radius: var(--glass-radius-pill);
+  font-family: var(--glass-font-body);
+}
+:root[data-theme='glass'] .fb-tab:hover { background: rgba(255, 255, 255, 0.07); color: var(--glass-text); }
+:root[data-theme='glass'] .fb-tab.active {
+  background: rgba(244, 121, 31, 0.16);
+  color: var(--glass-accent-soft);
+  box-shadow: inset 0 0 0 1px rgba(244, 121, 31, 0.38);
+}
+
+/* --- The feed cards beside it ---------------------------------------------- */
+/* The profile card and the rails are .fb-card, already covered above -- but the
+   feed itself paints a page background of its own, same as the dashboard did. */
+:root[data-theme='glass'] .fbfeed { background: transparent; }
+:root[data-theme='glass'] .fb-rail-title { color: var(--glass-text-2); }
