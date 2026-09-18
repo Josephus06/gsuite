@@ -136,7 +136,7 @@ export default function ChequeForm() {
 
           <div className="field"><label>Memo</label><textarea rows={8} value={header.memo} onChange={(e) => setH({ memo: e.target.value })} style={{ height: '100%' }} /></div>
 
-          <div style={{ background: '#f8fafc', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 18px' }}>
+          <div style={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 18px' }}>
             <TotalsRow label="Sub Total" value={totals.net} />
             <TotalsRow label="Discount Amount" value={0} />
             <TotalsRow label="Net of Tax" value={totals.net} />

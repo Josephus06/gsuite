@@ -118,6 +118,15 @@
 
   /* Control geometry, so a button and an input line up without either guessing. */
   --control-height: 36px;
+
+  /* A SUNKEN surface: the panel that sits inside a card rather than beside it -- the totals
+     block on every billing modal, the chat bubble, the expanded row on Accounting Periods.
+     It has been referenced as --surface-2 and --panel-2 since long before this file existed
+     and was NEVER DEFINED, so all eight call sites fell through to their hardcoded light-grey
+     fallback -- in dark mode as well as glass, where the card around them is dark and the text
+     on them is light. Light grey panel, light text, nothing readable. Defining it here fixes
+     every one of them in all three themes at once. */
+  --color-surface-sunken: #F1EFE8;
 }
 
 /* =============================================================================
@@ -159,6 +168,8 @@
 
   --focus-ring: 0 0 0 3px rgba(143, 134, 232, 0.35);
 
+  --color-surface-sunken: #22222C;
+
   /* White on this lavender is 3.11:1 -- unreadable for button labels. Darkening the hue
      until white passes would undo the lift that keeps it from reading as navy on a black
      surface, so the ink inverts instead: near-black on lavender, 8.6:1. */
@@ -197,6 +208,21 @@
   /* Translucent card fill, used only over the user's wallpaper -- see the data-bg card
      rule in index.css. One of the two deliberate exemptions from "flat surfaces only". */
   --card-glass: rgba(255, 255, 255, 0.55);
+
+  /* ---- Names the app was already using without ever defining them ---------------------
+     Found by diffing every `var(--x, fallback)` in the codebase against every declaration:
+     eight names were referenced and none of them existed, so each one silently resolved to
+     a light-mode literal baked into its fallback. That is invisible in light mode -- the
+     fallback happens to be right -- and wrong in every other theme.
+     They are aliases onto tokens that already follow the theme, so the fallbacks are now
+     dead code rather than a second, stale palette. */
+  --surface-2: var(--color-surface-sunken);
+  --panel-2: var(--color-surface-sunken);
+  --card: var(--color-surface);
+  --primary: var(--color-primary);
+  --link: var(--color-primary);
+  --muted: var(--color-text-muted);
+  --brand: var(--color-text-secondary);
 }
 
 :root[data-theme='dark'] {
@@ -343,6 +369,18 @@
   --color-neutral: var(--glass-navy-mid);
   --color-neutral-bg: rgba(91, 143, 214, 0.14);
   --color-neutral-text: var(--glass-navy-light);
+
+  /* The sunken surface is the flat navy tint: a panel inside a card, and glass stops at
+     one level. --link stays navy rather than becoming the accent, so the single orange is
+     not spent on every hyperlink on the page. */
+  --color-surface-sunken: var(--glass-inner);
+  --surface-2: var(--glass-inner);
+  --panel-2: var(--glass-inner);
+  --card: var(--glass-l2-bg);
+  --primary: var(--glass-accent);
+  --link: var(--glass-navy-light);
+  --muted: var(--glass-text-muted);
+  --brand: var(--glass-text-2);
 
   --focus-ring: 0 0 0 2px var(--glass-accent);
   --radius-control: var(--glass-radius-control);

@@ -75,7 +75,7 @@ export default function ItemFulfillmentView() {
           </div>
         </div>
 
-        <div style={{ position: 'absolute', top: 24, right: 28, background: '#fff', borderRadius: 8, padding: '14px 20px', minWidth: 200 }}>
+        <div style={{ position: 'absolute', top: 24, right: 28, background: 'var(--surface-2)', borderRadius: 8, padding: '14px 20px', minWidth: 200 }}>
           <div className="muted" style={{ fontSize: 13 }}>Total Amount</div>
           <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--accent)' }}>{money(data.total_amount)}</div>
         </div>

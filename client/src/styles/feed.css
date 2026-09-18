@@ -16,6 +16,9 @@
   --fb-input: #f0f2f5;
   --fb-input-hover: #e4e6e9;
   --fb-blue: #1877f2;
+  /* Referenced by the carousel dots and never defined; an alias so it follows the theme
+     rather than resolving to a hardcoded blue in all of them. */
+  --fb-accent: var(--fb-blue);
   --fb-blue-hover: #166fe5;
   --fb-blue-soft: #e7f3ff;
   --fb-red: #f3425f;
