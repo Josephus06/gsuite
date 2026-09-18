@@ -24,6 +24,15 @@ function formatDateTime(v) {
   return v ? new Date(v).toLocaleString() : '—';
 }
 
+// Planned Start/End are stored exactly as the assigner typed them into a datetime-local
+// input, so they are already Manila wall-clock and take plain formatDateTime. Every stamp
+// the timer writes itself comes from MySQL NOW() on a UTC database, so it has to go through
+// parseUtc or it renders 8 hours behind the clock the artist is looking at.
+function formatUtcDateTime(v) {
+  const d = parseUtc(v);
+  return d ? d.toLocaleString() : '—';
+}
+
 export default function ScheduledJobOrderRun() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -70,9 +79,12 @@ export default function ScheduledJobOrderRun() {
   const liveSeconds = openSession ? (now - parseUtc(openSession.started_at).getTime()) / 1000 : 0;
   const actualSeconds = closedSeconds + liveSeconds;
   const allottedSeconds = Number(proc.allotted_minutes || 0) * 60;
+  // A process carrying no allotted minutes has no deadline to be over, so a zero allotment
+  // must not read as one already blown -- same guard as AssignedJobOrderRun.jsx.
+  const hasAllotment = allottedSeconds > 0;
   const remainingSeconds = allottedSeconds - actualSeconds;
-  const overdue = remainingSeconds < 0;
-  const performance = actualSeconds > 0 && allottedSeconds > 0 ? (allottedSeconds / actualSeconds) * 100 : null;
+  const overdue = hasAllotment && remainingSeconds < 0;
+  const performance = actualSeconds > 0 && hasAllotment ? (allottedSeconds / actualSeconds) * 100 : null;
 
   const isCompleted = !!proc.assignment_ended_at;
   const notStarted = !proc.assignment_started_at;
@@ -106,18 +118,25 @@ export default function ScheduledJobOrderRun() {
           </div>
           <div>
             <h4>Actual</h4>
-            <div>Actual Start : <span className="hi">{formatDateTime(proc.assignment_started_at)}</span></div>
-            <div>Actual End : <span className="hi">{formatDateTime(proc.assignment_ended_at)}</span></div>
+            <div>Actual Start : <span className="hi">{formatUtcDateTime(proc.assignment_started_at)}</span></div>
+            <div>Actual End : <span className="hi">{formatUtcDateTime(proc.assignment_ended_at)}</span></div>
             <div>Performance % : <span className="hi">{performance === null ? '—' : `${performance.toFixed(1)}%`}</span></div>
           </div>
         </div>
       </div>
 
       <div className="card" style={{ textAlign: 'center', marginTop: 20 }}>
-        <p className="muted" style={{ marginBottom: 4 }}>Time Remaining</p>
+        <p className="muted" style={{ marginBottom: 4 }}>{hasAllotment ? 'Time Remaining' : 'Time Spent'}</p>
         <div className="hi-lg" style={{ fontSize: 40, color: overdue ? 'var(--danger)' : undefined }}>
-          {overdue ? `Overdue by ${formatDuration(remainingSeconds)}` : formatDuration(remainingSeconds)}
+          {!hasAllotment && formatDuration(actualSeconds)}
+          {hasAllotment && overdue && `Overdue by ${formatDuration(Math.abs(remainingSeconds))}`}
+          {hasAllotment && !overdue && formatDuration(remainingSeconds)}
         </div>
+        {!hasAllotment && (
+          <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
+            This process carries no allotted minutes, so there is nothing to count down from.
+          </p>
+        )}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 16 }}>
           {!proc.is_owner && (
             <span className="muted">Read-only — this process is assigned to {proc.assigned_employee_name}, not you.</span>
@@ -155,8 +174,8 @@ export default function ScheduledJobOrderRun() {
                 return (
                   <tr key={s.id}>
                     <td>{idx + 1}</td>
-                    <td>{formatDateTime(s.started_at)}</td>
-                    <td>{s.ended_at ? formatDateTime(s.ended_at) : <span className="hi">Running…</span>}</td>
+                    <td>{formatUtcDateTime(s.started_at)}</td>
+                    <td>{s.ended_at ? formatUtcDateTime(s.ended_at) : <span className="hi">Running…</span>}</td>
                     <td>{formatDuration(duration)}</td>
                   </tr>
                 );

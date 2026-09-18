@@ -24,6 +24,15 @@ function formatDateTime(v) {
   return v ? new Date(v).toLocaleString() : '—';
 }
 
+// Planned Start/End are stored exactly as the assigner typed them into a datetime-local
+// input, so they are already Manila wall-clock and take plain formatDateTime. Every stamp
+// the timer writes itself comes from MySQL NOW() on a UTC database, so it has to go through
+// parseUtc or it renders 8 hours behind the clock the artist is looking at.
+function formatUtcDateTime(v) {
+  const d = parseUtc(v);
+  return d ? d.toLocaleString() : '—';
+}
+
 // `kind` comes from the route, not the payload -- the run screen has to know which set of
 // timer endpoints to drive before it has fetched anything. Non-Standard Job Orders are
 // layout work like any other, so they share this whole screen.
@@ -122,15 +131,22 @@ export default function AssignedJobOrderRun({ kind = 'JO' }) {
   // Qty entered when the artist was assigned (server-side, jobOrders.js's assign-design
   // route computes planned_end_at the same way, so this stays consistent with that).
   const allottedSeconds = Number(jo.minutes_consume || 0) * Number(jo.layout_qty || 1) * 60;
+  // Layout - Job Type is OPTIONAL when an artist is assigned (nonStandardJobOrders.js says
+  // why: CUTTING LIST has no PMS job types at all, so requiring one would make such an order
+  // impossible to assign). No job type means no minutes_consume, which means there is no
+  // allotment to count down from -- and the screen used to treat that zero as a deadline the
+  // artist had already blown, showing an alarming red "Overdue" one second after Play. There
+  // is no time limit here to be over, so show the time spent instead and stay quiet.
+  const hasAllotment = allottedSeconds > 0;
   const remainingSeconds = allottedSeconds - actualSeconds;
-  const overdue = remainingSeconds < 0;
-  const performance = actualSeconds > 0 && allottedSeconds > 0 ? (allottedSeconds / actualSeconds) * 100 : null;
+  const overdue = hasAllotment && remainingSeconds < 0;
+  const performance = actualSeconds > 0 && hasAllotment ? (allottedSeconds / actualSeconds) * 100 : null;
   // The countdown never actually stops at zero -- actualSeconds keeps accruing off the
   // live `now` tick above regardless of overdue, which is what naturally drags
   // `performance` down the longer this runs past its allotted time. These two flags just
   // decide when to surface that on screen: a heads-up with 30s or less left, then a
   // persistent reminder once it's actually run over, so it's never a surprise.
-  const nearingLimit = isRunning && !overdue && remainingSeconds <= 30;
+  const nearingLimit = isRunning && hasAllotment && !overdue && remainingSeconds <= 30;
   const pastLimit = isRunning && overdue;
 
   const isCompleted = !!jo.layout_ended_at;
@@ -178,18 +194,25 @@ export default function AssignedJobOrderRun({ kind = 'JO' }) {
           </div>
           <div>
             <h4>Actual</h4>
-            <div>Actual Start : <span className="hi">{formatDateTime(jo.layout_started_at)}</span></div>
-            <div>Actual End : <span className="hi">{formatDateTime(jo.layout_ended_at)}</span></div>
+            <div>Actual Start : <span className="hi">{formatUtcDateTime(jo.layout_started_at)}</span></div>
+            <div>Actual End : <span className="hi">{formatUtcDateTime(jo.layout_ended_at)}</span></div>
             <div>Performance % : <span className="hi">{performance === null ? '—' : `${performance.toFixed(1)}%`}</span></div>
           </div>
         </div>
       </div>
 
       <div className="card" style={{ textAlign: 'center', marginTop: 20 }}>
-        <p className="muted" style={{ marginBottom: 4 }}>Time Remaining</p>
+        <p className="muted" style={{ marginBottom: 4 }}>{hasAllotment ? 'Time Remaining' : 'Time Spent'}</p>
         <div className="hi-lg" style={{ fontSize: 40, color: overdue ? 'var(--danger)' : undefined }}>
-          {overdue ? `Overdue by ${formatDuration(remainingSeconds)}` : formatDuration(remainingSeconds)}
+          {!hasAllotment && formatDuration(actualSeconds)}
+          {hasAllotment && overdue && `Overdue by ${formatDuration(Math.abs(remainingSeconds))}`}
+          {hasAllotment && !overdue && formatDuration(remainingSeconds)}
         </div>
+        {!hasAllotment && (
+          <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
+            No Layout - Job Type was set on this assignment, so there is no allotted time to count down from.
+          </p>
+        )}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 16 }}>
           {!isCompleted && !isRunning && (
             <button type="button" className="btn btn-primary" disabled={busy} onClick={() => runAction('start-layout')}>
@@ -244,8 +267,8 @@ export default function AssignedJobOrderRun({ kind = 'JO' }) {
                 return (
                   <tr key={s.id}>
                     <td>{idx + 1}</td>
-                    <td>{formatDateTime(s.started_at)}</td>
-                    <td>{s.ended_at ? formatDateTime(s.ended_at) : <span className="hi">Running…</span>}</td>
+                    <td>{formatUtcDateTime(s.started_at)}</td>
+                    <td>{s.ended_at ? formatUtcDateTime(s.ended_at) : <span className="hi">Running…</span>}</td>
                     <td>{formatDuration(duration)}</td>
                   </tr>
                 );
