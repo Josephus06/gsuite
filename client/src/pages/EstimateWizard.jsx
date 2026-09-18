@@ -1313,23 +1313,28 @@ export default function EstimateWizard() {
                       </tr>
                       <tr>
                         <td colSpan={JOB_ORDER_COLUMNS.length + 1} style={{ background: 'var(--bg)' }}>
+                          {/* What this job has gone for before, from 126k priced history lines.
+                              OUTSIDE the saved/unsaved branch on purpose: a line is only saved
+                              once Job Type, Quantity and Units are filled, and by then the rep
+                              has already decided the price. This has to be readable while they
+                              are still typing the description, which is the only moment it can
+                              change what they do. */}
+                          <div style={{ padding: '0 8px' }}>
+                            <RepeatWorkPanel
+                              lineNo={jo.line_no || idx + 1}
+                              description={jo.description}
+                              jobTypeId={jo.job_type_id}
+                              quantity={jo.quantity}
+                              units={jo.units}
+                            />
+                          </div>
                           {!jo.id ? (
                             <p className="muted" style={{ margin: 8 }}>
                               {missing ? 'Fill Job Type, Quantity, and Units to save this line before adding processes.' : 'Saving…'}
                             </p>
                           ) : (
                             <div style={{ padding: 8 }}>
-                              {/* What this job has gone for before, from 126k priced history
-                                  lines. Sits above the process grid because it informs what
-                                  the rep is about to build, not what they have just built. */}
-                              <RepeatWorkPanel
-                                lineNo={jo.line_no || idx + 1}
-                                description={jo.description}
-                                jobTypeId={jo.job_type_id}
-                                quantity={jo.quantity}
-                                units={jo.units}
-                              />
-                              <div className="spreadsheet-wrap" style={{ marginTop: 10 }}>
+                              <div className="spreadsheet-wrap">
                                 <table className="spreadsheet-table">
                                   <thead>
                                     <tr>
