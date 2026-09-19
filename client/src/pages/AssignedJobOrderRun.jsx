@@ -203,7 +203,9 @@ export default function AssignedJobOrderRun({ kind = 'JO' }) {
 
       <div className="card" style={{ textAlign: 'center', marginTop: 20 }}>
         <p className="muted" style={{ marginBottom: 4 }}>{hasAllotment ? 'Time Remaining' : 'Time Spent'}</p>
-        <div className="hi-lg" style={{ fontSize: 40, color: overdue ? 'var(--danger)' : undefined }}>
+        {/* Same face as the floating timer (.running-timer-clock). A clock that changed
+            typeface between the two screens would read as two different clocks. */}
+        <div className="hi-lg assigned-jo-clock" style={{ fontSize: 40, color: overdue ? 'var(--danger)' : undefined }}>
           {!hasAllotment && formatDuration(actualSeconds)}
           {hasAllotment && overdue && `Overdue by ${formatDuration(Math.abs(remainingSeconds))}`}
           {hasAllotment && !overdue && formatDuration(remainingSeconds)}

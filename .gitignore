@@ -23,3 +23,13 @@ server/.env.railway
 server/sync-2026.log
 server/migrate-2026.log
 server/run-2026-sync.sh
+
+# Licensed typeface, deliberately NOT committed.
+# Knockout is licensed from Hoefler&Co and this repository is PUBLIC on GitHub --
+# committing the file would redistribute it to anyone who clones, and git history
+# keeps it even if it is deleted later. The font is copied onto each install by
+# hand instead; client/public/fonts/README.txt says where it goes.
+client/public/fonts/*.otf
+client/public/fonts/*.ttf
+client/public/fonts/*.woff
+client/public/fonts/*.woff2

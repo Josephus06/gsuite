@@ -6,6 +6,9 @@
 /* The frosted-glass theme's surfaces. Scoped to [data-theme='glass'] throughout, so it is
    inert unless that theme is on. */
 @import './styles/glass.css';
+/* The assigned Job Order clock's own face. Falls back silently until the licensed
+   Knockout files are present in public/fonts. */
+@import './styles/clock-font.css';
 
 
 * {
