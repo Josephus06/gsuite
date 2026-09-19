@@ -272,7 +272,7 @@ router.put('/:id/permissions', requireAuth, requirePermission(ROUTE, 'can_edit')
         if (!p.can_view && !p.can_add && !p.can_edit && !p.can_update && !p.can_view_all && !p.can_delete && !p.can_approve && !p.can_print) continue;
         await conn.query(
           `INSERT INTO user_page_permissions (user_id, page_id, can_view, can_add, can_edit, can_update, can_view_all, can_delete, can_approve, can_print)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [req.params.id, p.page_id, !!p.can_view, !!p.can_add, !!p.can_edit, !!p.can_update, !!p.can_view_all, !!p.can_delete, !!p.can_approve, !!p.can_print]
         );
       }
