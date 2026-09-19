@@ -244,6 +244,10 @@ export default function JobOrderView() {
   if (loading || !jo) return <LoadingSpinner />;
 
   const canEdit = can('/job-orders', 'can_edit');
+  // Moving a job order along its workflow, as opposed to rewriting it. Separate rights since
+  // add-can-update-permission.js: an artist can be given this and not can_edit, which is what
+  // 'send it for sign-off but do not touch the spec' actually means.
+  const canUpdate = can('/job-orders', 'can_update');
   const canApprove = can('/job-orders', 'can_approve');
   // An NSSO-spawned (RMA) job order has its own two-step flow -- no design/layout/artist chain:
   // Pending RMA Approval -> Approve RMA -> Planned - Pending for BOM -> Forward to Production ->
@@ -356,7 +360,11 @@ export default function JobOrderView() {
               {jo.artist_id ? 'Reassign Artist' : 'Assign Layout Job Type / Artist'}
             </button>
           )}
-          {inDesignPhase && (canEdit || isAssignedArtist) && (jo.sub_status === 'For Artist' || jo.sub_status === 'For Artist (Revision)') && (
+          {/* can_update, not can_edit: this hands the job order on, it does not change it.
+              The assigned artist keeps it regardless -- it is their own layout being sent.
+              The attachment rule below is untouched and is enforced on the server as well:
+              Sales approve against the artist's drawings, so there has to be one. */}
+          {inDesignPhase && (canUpdate || isAssignedArtist) && (jo.sub_status === 'For Artist' || jo.sub_status === 'For Artist (Revision)') && (
             <button
               className="btn btn-sm btn-primary"
               disabled={busy || attachmentCount === 0}

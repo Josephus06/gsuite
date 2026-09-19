@@ -19,7 +19,13 @@ const ACCOUNT_TYPE_OPTIONS = [
 const PERMISSION_ACTIONS = [
   { key: 'can_view', label: 'Can View' },
   { key: 'can_add', label: 'Can Add' },
-  { key: 'can_edit', label: 'Can Update' },
+  // These two were ONE checkbox until now, and it was labelled with the wrong one's name:
+  // can_edit has been shown as "Can Update" since the grid was built, so ticking it to let
+  // somebody advance a document actually handed them the Edit form.
+  { key: 'can_edit', label: 'Can Edit' },
+  // Move the transaction along without being able to rewrite it -- an artist sending a layout
+  // for Sales Approval needs exactly this and nothing more.
+  { key: 'can_update', label: 'Can Update' },
   // Whose records you see once you are on the screen, as opposed to whether you may open it
   // at all. Without it a page shows a person only their own rows; with it, everyone's.
   { key: 'can_view_all', label: 'Can View All' },
@@ -161,7 +167,7 @@ export default function UserWizard() {
 
   function togglePerm(pageId, key) {
     setPermMap((prev) => {
-      const current = prev[pageId] || { page_id: pageId, can_view: false, can_add: false, can_edit: false, can_view_all: false, can_delete: false, can_approve: false, can_print: false };
+      const current = prev[pageId] || { page_id: pageId, can_view: false, can_add: false, can_edit: false, can_update: false, can_view_all: false, can_delete: false, can_approve: false, can_print: false };
       return { ...prev, [pageId]: { ...current, [key]: !current[key] } };
     });
   }
@@ -180,6 +186,7 @@ export default function UserWizard() {
         can_edit: !!r.can_edit,
         can_view_all: !!r.can_view_all,
         can_delete: !!r.can_delete,
+        can_update: !!r.can_update,
         can_approve: !!r.can_approve,
         can_print: !!r.can_print,
       };

@@ -748,8 +748,12 @@ router.put('/:id/sales-approval', requireAuth, async (req, res, next) => {
     const [[me]] = await conn.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
     const isAssignedArtist = !!me?.employee_id && jo.artist_id === me.employee_id;
     if (!isAssignedArtist) {
+      // can_update, not can_edit. Sending a job order for Sales Approval advances it; it does
+      // not change a word of it, and requiring the right to rewrite the whole record in order
+      // to hand it on was how one checkbox came to mean two things. can_edit still opens the
+      // Edit form and is checked separately, on PUT /:id.
       const [[page]] = await conn.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
-      const [[perm]] = await conn.query('SELECT can_edit AS allowed FROM user_page_permissions WHERE user_id = ? AND page_id = ?', [req.user.id, page?.id]);
+      const [[perm]] = await conn.query('SELECT can_update AS allowed FROM user_page_permissions WHERE user_id = ? AND page_id = ?', [req.user.id, page?.id]);
       if (!perm?.allowed) {
         await conn.rollback();
         return res.status(403).json({ error: 'You do not have permission to perform this action' });
