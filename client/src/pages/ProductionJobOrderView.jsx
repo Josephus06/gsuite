@@ -554,9 +554,18 @@ export default function ProductionJobOrderView() {
   // Editable in place while the job is still live; Acknowledge is offered only out of
   // scheduling, since moving a building or invoiced job back to In-Process would lose the
   // progress its stage represents.
-  // A department planner schedules without holding production edit rights, so the fields open
-  // for them too -- matching what the server accepts.
-  const canSchedule = (canEdit || isPlanner(user)) && !isTerminal && !advanceCopy;
+  // Mirrors requireScheduler on the server exactly: a department planner, OR can_edit on
+  // /production, OR -- outside Head Office -- can_update on /production.
+  //
+  // It used to read can_edit on /JOB-ORDERS, which is a different page and not a permission the
+  // endpoint looks at. Anyone holding that saw the date boxes and the Save Dates button and was
+  // refused on save; anyone holding production rights WITHOUT it was denied a control the server
+  // would have accepted. Both halves of that are fixed by asking the same question the server
+  // asks. user.is_head_office is resolved server-side by the helper requireScheduler uses.
+  const canSchedule = (isPlanner(user)
+      || can('/production', 'can_edit')
+      || (user?.is_head_office === false && can('/production', 'can_update')))
+    && !isTerminal && !advanceCopy;
   // Mirrors canManageProductionAttachments on the server: a department planner, or anyone
   // with production edit rights. Drawn from the same facts the server checks, so the button
   // is not offered to someone the endpoint would then refuse.

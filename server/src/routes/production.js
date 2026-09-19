@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
+const { isHeadOfficeUser } = require('../lib/userLocation');
 const { isNonStockItem } = require('../lib/itemTypes');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
@@ -382,10 +383,22 @@ router.get('/:id', requireAuth, requireProductionView, async (req, res, next) =>
 // also carries RWIP and the rest of production's edits, which planning does not need. Anyone who
 // genuinely has production edit rights keeps the capability too. Which job orders a planner may
 // schedule is bounded by assertJobOrderInScope, i.e. by their department's warehouse.
+//
+// AND OUTSIDE HEAD OFFICE, can_update IS ENOUGH. Scheduling is the textbook case for that
+// permission -- it moves a job along its own workflow without altering a word of it, which is
+// exactly the split can_update was created to express (src/db/add-can-update-permission.js). The
+// branches have no planner of their own: three of the four planner flags (DPOD, CNC, LFP) have
+// nobody holding them at all, so a branch job simply had no one who could schedule it short of
+// granting can_edit and with it RWIP and every other production edit.
+//
+// Head Office is unchanged and still answers to a planner flag or can_edit. An account with no
+// default location counts as Head Office -- the stricter side, see lib/userLocation.js -- and the
+// location is read from the account, never from the request.
 async function requireScheduler(req, res, next) {
   try {
     const [[u]] = await pool.query(`SELECT ${PLANNER_COLUMNS} FROM users WHERE id = ?`, [req.user.id]);
     if (isPlanner(u)) return next();
+    if (!(await isHeadOfficeUser(req.user.id)) && await userCan(req.user.id, ROUTE, 'can_update')) return next();
     return requirePermission(ROUTE, 'can_edit')(req, res, next);
   } catch (err) { return next(err); }
 }
