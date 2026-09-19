@@ -3,7 +3,7 @@ const mailer = require('../lib/mailer');
 const { buildEstimateEmail } = require('../lib/estimateEmail');
 const { buildEstimatePdf, estimatePdfFilename } = require('../lib/estimatePdf');
 const pool = require('../db');
-const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { BILLABLE_ESTIMATE_SQL } = require('../lib/estimateBilling');
 
@@ -171,6 +171,25 @@ async function logAudit(conn, { estimateId, userId, eventType, fieldName = null,
      VALUES ('Estimate', ?, ?, ?, ?, ?, ?)`,
     [estimateId, eventType, fieldName, oldValue === null ? null : String(oldValue), newValue === null ? null : String(newValue), userId]
   );
+}
+
+// Who raised the estimate.
+//
+// There is no created_by column on estimates -- the record of it is the audit trail's own
+// 'Created' row, written by POST / and by replicate, which is the same fact and costs no schema
+// change (idx_auditable covers the lookup). The header row and its per-job-order children all
+// carry the same user, so the first one by id answers it.
+//
+// Migrated history carries no 'Created' row at all, so those resolve to null -- and null is
+// nobody, so no one picks up rights over an estimate whose author was never recorded.
+async function getCreatorUserId(db, estimateId) {
+  const [[row]] = await db.query(
+    `SELECT set_by_user_id FROM audit_logs
+      WHERE auditable_type = 'Estimate' AND auditable_id = ? AND event_type = 'Created'
+      ORDER BY id LIMIT 1`,
+    [estimateId]
+  );
+  return row?.set_by_user_id ?? null;
 }
 
 // MySQL returns BOOLEAN columns as 0/1, but callers often send back JS true/false for the
@@ -352,7 +371,11 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       jo.processes = processes;
     }
 
-    res.json({ ...estimate, shippingAddresses, jobOrders });
+    // Who raised it, so the view can offer the creator the one action that is theirs to take
+    // (recording the customer's answer) without also handing them the Edit form.
+    const createdByUserId = await getCreatorUserId(pool, req.params.id);
+
+    res.json({ ...estimate, created_by_user_id: createdByUserId, shippingAddresses, jobOrders });
   } catch (err) {
     next(err);
   }
@@ -544,11 +567,41 @@ router.get('/:id/approval-lines', requireAuth, requirePermission(ROUTE, 'can_vie
   } catch (err) { next(err); }
 });
 
+// Who may move an estimate along the workflow from the read-only view.
+//
+// can_edit is the general key, but it is the wrong one for the last step. Reaching
+// pending_customer_approval takes Edit away from everyone but a System Admin (see PUT /:id), and
+// the person waiting on the customer's answer is usually the rep who RAISED the estimate -- no
+// approval rights of their own, and by then no edit rights either. They were the only one who
+// could get the answer and the only one who could not record it.
+//
+// So: can_update ON YOUR OWN ESTIMATE, for that one transition. can_update is exactly this right
+// -- advance the transaction, do not rewrite it (src/db/add-can-update-permission.js) -- and
+// narrowing it to pending_customer_approval -> approved keeps it to the act being described.
+// Everything else on this endpoint, including cancelling and disapproving, still wants can_edit,
+// and the supervisor gate below is untouched: approving out of pending_supervisor_approval still
+// needs Can Approve Sales Estimate.
+async function requireStatusChange(req, res, next) {
+  try {
+    if (await userCan(req.user.id, ROUTE, 'can_edit')) return next();
+    if (req.body.status === 'approved' && await userCan(req.user.id, ROUTE, 'can_update')) {
+      const [[row]] = await pool.query('SELECT status FROM estimates WHERE id = ?', [req.params.id]);
+      const creatorId = await getCreatorUserId(pool, req.params.id);
+      if (row?.status === 'pending_customer_approval' && creatorId != null && Number(creatorId) === Number(req.user.id)) {
+        return next();
+      }
+    }
+    return res.status(403).json({ error: 'You do not have permission to perform this action' });
+  } catch (err) {
+    next(err);
+  }
+}
+
 // Dedicated status-only update for the Approve/Disapprove actions on the read-only
 // view -- a plain field update rather than routing through the full-header PUT, which
 // expects every HEADER_FIELDS value re-sent in the exact shape the DB column wants
 // (e.g. date_created as a bare date, not the ISO datetime GET returns it as).
-router.put('/:id/status', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/status', requireAuth, requireStatusChange, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();

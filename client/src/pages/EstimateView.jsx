@@ -232,6 +232,16 @@ export default function EstimateView() {
   const canShowApprove = estimate.status === 'pending_supervisor_approval'
     ? !!user?.can_approve_sales_estimate
     : true;
+  // The estimate's own author, recorded when it was raised (audit trail, exposed by GET /:id).
+  // Reaching the customer stage takes Edit away from everyone but a System Admin, yet the rep who
+  // RAISED the estimate is the one chasing the customer for an answer -- and recording that answer
+  // advances the estimate rather than rewriting it, which is what can_update is for. So they get
+  // the Approved by Customer button on their own estimate with can_update alone, no approval right
+  // and no edit right. Mirrors requireStatusChange on the server, which allows exactly this one
+  // transition; everything else here still asks for canEdit.
+  const isCreator = estimate.created_by_user_id != null && Number(estimate.created_by_user_id) === Number(user?.id);
+  const canRecordCustomerAnswer = estimate.status === 'pending_customer_approval'
+    && isCreator && can('/estimates', 'can_update');
   // The real system only shows Print once an estimate has cleared supervisor
   // approval -- printing a still-pending quotation isn't meaningful yet.
   const canShowPrint = estimate.status === 'pending_customer_approval' || estimate.status === 'approved';
@@ -249,7 +259,7 @@ export default function EstimateView() {
           <button className="btn btn-sm" onClick={() => navigate('/estimates')}>Back</button>
           {canEdit && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/estimates/${id}/edit`)}>Edit</button>}
           {canShowPrint && <button className="btn btn-sm btn-primary" onClick={() => window.open(`/estimates/${id}/print`, '_blank')}>Print</button>}
-          {canEdit && isPending && canShowApprove && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>{approveLabel}</button>}
+          {(canEdit || canRecordCustomerAnswer) && isPending && canShowApprove && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>{approveLabel}</button>}
           {canEdit && isPending && <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setStatus('disapproved')}>Disapprove</button>}
           {/* Only while the estimate is actually waiting on the customer -- sending one that is
               already approved or cancelled would confuse the person receiving it. */}
