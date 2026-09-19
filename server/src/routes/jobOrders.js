@@ -6,6 +6,7 @@ const { isAdvanceCopy } = require('../lib/advanceCopy');
 const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } = require('../lib/designSupervisorVisibility');
 const { getArtistEmployeeScope } = require('../lib/artistVisibility');
 const { mayAssignArtist } = require('../lib/artistAssignment');
+const { isHeadOfficeUser } = require('../lib/userLocation');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 const {
@@ -328,7 +329,15 @@ router.put('/:id/approve-rma', requireAuth, requirePermission('/non-standard-sal
 // chain a standard JO goes through -- this single step Releases it straight into production
 // (status "Released / Approved", production_stage in_process) so it's immediately buildable and
 // quality-inspectable like any other production JO. Gated by the same NSSO "Can Approve" right.
+// HEAD OFFICE ONLY. Releasing a job into production is a decision made centrally; a branch
+// raising its own work does not get to put it on the floor. Enforced here and not only by
+// hiding the button, because a hidden button is a suggestion and this is a rule -- the same
+// reasoning as requireInvoiceCreatePermission in routes/salesInvoices.js, which is where this
+// Head Office / branch split already lives.
 router.put('/:id/forward-to-production', requireAuth, requirePermission('/non-standard-sales-orders', 'can_approve'), async (req, res, next) => {
+  if (!await isHeadOfficeUser(req.user.id)) {
+    return res.status(403).json({ error: 'Only Head Office can forward a Job Order to Production.' });
+  }
   const conn = await pool.getConnection();
   try {
     const [[jo]] = await conn.query('SELECT id, nsso_id, rma_approved_at, status FROM job_orders WHERE id = ?', [req.params.id]);
@@ -363,7 +372,13 @@ router.put('/:id/forward-to-production', requireAuth, requirePermission('/non-st
 // Sales account with can_edit covering for them -- and it exists because almost no sales
 // account holds can_edit, so a permission check alone would lock the owning rep out of their
 // own job order.
+// Head Office only, for the same reason as /forward-to-production above: both buttons read
+// "Forward to Production" on the screen, so a branch that could use one and not the other
+// would be told the rule by trial and error.
 router.put('/:id/forward-advance-copy', requireAuth, async (req, res, next) => {
+  if (!await isHeadOfficeUser(req.user.id)) {
+    return res.status(403).json({ error: 'Only Head Office can forward a Job Order to Production.' });
+  }
   const conn = await pool.getConnection();
   try {
     const [[jo]] = await conn.query(

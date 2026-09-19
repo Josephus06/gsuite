@@ -248,6 +248,10 @@ export default function JobOrderView() {
   // add-can-update-permission.js: an artist can be given this and not can_edit, which is what
   // 'send it for sign-off but do not touch the spec' actually means.
   const canUpdate = can('/job-orders', 'can_update');
+  // Releasing a job into production is a Head Office decision -- a branch raising its own work
+  // does not put it on the floor. /auth/me resolves this from the user's default login location
+  // (lib/userLocation.js), and both endpoints refuse it too, so the button is not the rule.
+  const isHeadOffice = !!user?.is_head_office;
   const canApprove = can('/job-orders', 'can_approve');
   // An NSSO-spawned (RMA) job order has its own two-step flow -- no design/layout/artist chain:
   // Pending RMA Approval -> Approve RMA -> Planned - Pending for BOM -> Forward to Production ->
@@ -333,11 +337,11 @@ export default function JobOrderView() {
               onClick={() => navigate(`/job-orders/${id}/edit`)}>Edit</button>
           )}
           {isPendingRma && canApproveRma && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApproveRma}>{isRmaType ? 'Approve RMA' : 'Approve'}</button>}
-          {canForwardProduction && canApproveRma && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleForwardToProduction}>Forward to Production</button>}
+          {isHeadOffice && canForwardProduction && canApproveRma && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleForwardToProduction}>Forward to Production</button>}
           {/* Distinct from the RMA button above, which releases the job outright and only ever
               appears on an RMA job order -- hence the !isNsjo guard, so the two can never be
               drawn together and mean different things under the same words. */}
-          {!isNsjo && canForwardAdvance && (
+          {isHeadOffice && !isNsjo && canForwardAdvance && (
             <button
               className="btn btn-sm btn-primary" disabled={busy}
               title="Let Production see this Job Order now so they can raise Transfer Orders for materials. They cannot schedule or edit it until you approve it."

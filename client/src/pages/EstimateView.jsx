@@ -213,7 +213,17 @@ export default function EstimateView() {
     : num(estimate.est_gp_rate);
 
   const isPending = estimate.status === 'pending_supervisor_approval' || estimate.status === 'pending_customer_approval';
-  const canEdit = can('/estimates', 'can_edit');
+  // Once a SUPERVISOR has signed the estimate off, the figures on it have been agreed and
+  // anyone changing them afterwards is changing something somebody else approved. From that
+  // point Edit belongs to a System Admin alone.
+  //
+  // Both statuses past the supervisor count: approval moves the estimate from
+  // pending_supervisor_approval to pending_customer_approval and later to approved, so
+  // checking only for 'approved' would leave it editable through the whole customer stage --
+  // exactly the window where the quoted price is out with the customer.
+  const supervisorApproved = ['pending_customer_approval', 'approved'].includes(estimate.status);
+  const isSystemAdmin = user?.account_type === 'System Admin';
+  const canEdit = can('/estimates', 'can_edit') && (!supervisorApproved || isSystemAdmin);
   const canAdd = can('/estimates', 'can_add');
   // Approving out of "pending supervisor approval" specifically requires the Can
   // Approve Sales Estimate flag from the user's Account Type settings (Step 4 of the

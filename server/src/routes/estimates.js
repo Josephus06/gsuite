@@ -3,7 +3,7 @@ const mailer = require('../lib/mailer');
 const { buildEstimateEmail } = require('../lib/estimateEmail');
 const { buildEstimatePdf, estimatePdfFilename } = require('../lib/estimatePdf');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { BILLABLE_ESTIMATE_SQL } = require('../lib/estimateBilling');
 
@@ -201,6 +201,9 @@ async function logFieldDiffs(conn, { estimateId, userId, fields, oldRow, newValu
 // --- Estimate header ---------------------------------------------------
 
 const STATUS_VALUES = ['for_csa_assignment', 'pending_supervisor_approval', 'pending_customer_approval', 'approved', 'cancelled', 'disapproved'];
+// Everything past the supervisor's sign-off. Named rather than written inline because the
+// client applies the same rule to the Edit button and the two must not drift.
+const SUPERVISOR_APPROVED_STATUSES = ['pending_customer_approval', 'approved'];
 
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
@@ -406,6 +409,20 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (!oldRow) {
       await conn.rollback();
       return res.status(404).json({ error: 'Not found' });
+    }
+    // Once a SUPERVISOR has signed it off, the figures on this estimate have been agreed and
+    // changing them afterwards is changing something somebody else approved. From that point
+    // only a System Admin may. Both statuses past the supervisor count: approval moves the
+    // estimate to pending_customer_approval and later to approved, and the customer stage is
+    // precisely when the quoted price is out with the customer.
+    //
+    // Checked here as well as on the screen, because hiding the Edit button is a suggestion
+    // and this is a rule -- the edit form is one way in, the endpoint is the only one.
+    if (SUPERVISOR_APPROVED_STATUSES.includes(oldRow.status) && !(await isSystemAdmin(req.user.id))) {
+      await conn.rollback();
+      return res.status(403).json({
+        error: 'This estimate has been approved by a supervisor -- only a System Admin can edit it now.',
+      });
     }
     const values = pick(req.body, HEADER_FIELDS);
     await conn.query(
