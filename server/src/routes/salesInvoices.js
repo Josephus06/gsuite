@@ -35,6 +35,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   try {
     const {
       search, status, customer_id: customerId, sales_rep_id: salesRepId,
+      from, to, department_id: departmentId,
       page = '1', limit = '10',
     } = req.query;
     const where = [];
@@ -44,6 +45,21 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     // two sources it actually has. Same COALESCE everywhere the customer is read below.
     if (customerId) { where.push('COALESCE(so.customer_id, e.customer_id) = ?'); params.push(customerId); }
     if (salesRepId) { where.push('si.sales_rep_id = ?'); params.push(salesRepId); }
+    // Date Created, inclusive at both ends, and either end usable on its own -- "everything since
+    // March" is as ordinary a question as a closed month. Compared as plain dates because the
+    // column is a DATE: no time component to push a row past midnight and out of its own range.
+    // idx_sales_invoices_date_created already covers this.
+    if (from) { where.push('si.date_created >= ?'); params.push(from); }
+    if (to) { where.push('si.date_created <= ?'); params.push(to); }
+    // The invoice's OWN department (si.department_id), not the Sales Order's. They are usually the
+    // same, but the invoice carries its own because billing can be charged elsewhere -- and it is
+    // si.department_id the list column already displays, so filtering on anything else would
+    // return rows whose Department cell disagreed with the filter that found them.
+    //
+    // 19,089 of 74,280 invoices carry no department at all. Those match no department filter, which
+    // is correct -- they are unassigned, not assigned to everyone -- and they are all still there
+    // under --ALL--.
+    if (departmentId) { where.push('si.department_id = ?'); params.push(departmentId); }
     // An Account Officer sees only their own invoices; a Supervisor sees theirs plus their
     // reports'. Same rule Estimates and Sales Orders already apply -- see lib/salesVisibility.js,
     // which returns null (and so changes nothing) for every account that is neither.
@@ -307,10 +323,67 @@ router.get('/by-delivery-ticket/:deliveryTicketId', requireAuth, requirePermissi
   }
 });
 
+// The Sales Order's Related Records tab.
+//
+// A Sales-Order-path or Delivery-Ticket-path invoice lists as soon as it exists: it was raised
+// against this order's own delivered-minus-invoiced quantities, so the order is where it came from.
+//
+// AN ESTIMATE-SOURCED INVOICE WAITS FOR THE WORK. It can be raised long before anything is made --
+// an estimate is billable from pending_customer_approval, which is before the order and its job
+// orders even exist -- so listing it the moment it is linked would put an invoice on the order for
+// work the floor has not finished. It appears once every job order behind it is done.
+//
+// Done means production_stage IN ('completed','invoiced'), the same pair routes/production.js uses
+// to mean "no longer open", not status = 'Completed': production_stage is the ladder the floor
+// actually climbs, and 'invoiced' sits PAST 'completed' on it, so testing for completed alone would
+// drop a job order again the moment it moved on.
+//
+// The job order is resolved two ways because the invoice line records it only when it existed at
+// billing time: sil.job_order_id when the estimate was already converted, otherwise through the
+// order line that shares the estimate line (sol.estimate_job_order_id). A line that resolves to no
+// job order at all is not completed either, so it holds the invoice back -- deliberately, since
+// that is a line nothing on this order is building.
+//
+// Gating the LIST rather than the link: sales_invoices.sales_order_id stays written, because the
+// invoice does belong to the order -- AR, the invoice's own view and every report read it. What
+// waits is only what this tab shows. That also makes it self-correcting: completing the job order
+// is enough to surface the invoice, with nothing to re-run and nothing to backfill.
+// The filter bar's Department options.
+//
+// Served from here, under THIS page's own can_view, rather than from /lookups/departments the way
+// most pickers in this build are. 8 of the 40 users who can view invoices hold no permission on
+// /lookups at all: for them that call answers 403 and the dropdown would sit silently empty on a
+// page they are fully entitled to filter. Borrowing another page's scope to populate a control is
+// how that happens -- see src/db/add-can-update-permission.js's sibling problem.
+//
+// Every department is offered, not just the ones already on an invoice: a DISTINCT over 74,280
+// rows on an unindexed column costs more than the 29-row table, and a department with no invoices
+// yet is a legitimate thing to ask about and get an empty list for.
+router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [departments] = await pool.query('SELECT id, name FROM departments ORDER BY name');
+    res.json({ departments });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/by-sales-order/:salesOrderId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      'SELECT id, invoice_no, date_created, gross_amount, status FROM sales_invoices WHERE sales_order_id = ? ORDER BY id DESC',
+      `SELECT si.id, si.invoice_no, si.date_created, si.gross_amount, si.status
+         FROM sales_invoices si
+        WHERE si.sales_order_id = ?
+          AND (si.estimate_id IS NULL OR NOT EXISTS (
+                SELECT 1 FROM sales_invoice_lines sil
+                  LEFT JOIN sales_order_lines sol
+                         ON sol.estimate_job_order_id = sil.estimate_job_order_id
+                        AND sol.sales_order_id = si.sales_order_id
+                  LEFT JOIN job_orders jo ON jo.id = COALESCE(sil.job_order_id, sol.job_order_id)
+                 WHERE sil.sales_invoice_id = si.id
+                   AND (jo.production_stage IS NULL OR jo.production_stage NOT IN ('completed', 'invoiced'))
+              ))
+        ORDER BY si.id DESC`,
       [req.params.salesOrderId]
     );
     res.json(rows);
@@ -505,9 +578,22 @@ async function billDeliveryTicket(req, res, conn) {
 // What this deliberately does NOT do, against the Sales Order path:
 //   - no delivered-minus-invoiced arithmetic: there are no Job Orders to have delivered anything
 //   - no job_orders.quantity_invoiced update, for the same reason
-//   - no Sales Order status recompute: there is no Sales Order
+//   - no Sales Order status recompute
 // The Estimate's own line figures are written through as they stand, because they were priced and
 // approved there. The invoice is still an INV-#, as every invoice in this build is.
+//
+// BUT IT DOES RECORD THE SALES ORDER, when the estimate has one. "Invoiced before it is ever
+// converted" is the case this path was built for, not the only case it serves: an estimate is
+// billable from pending_customer_approval AND from approved, and reaching approved is exactly
+// what generates the Sales Order. So the common path here is an estimate that HAS an order, and
+// writing sales_order_id NULL left those invoices off that order's Related Records entirely --
+// invisible from the order they belong to. Two live invoices were in that state.
+//
+// Recording the link is all this does. The quantity accounting above stays untouched, so the
+// order's own billed/delivered figures do not move; the invoice becomes findable from the order
+// rather than counted by it. Findable, not yet listed: the order's Related Records tab holds an
+// estimate-sourced invoice back until the job orders behind it are finished -- see the
+// by-sales-order route above for that gate and why it lives there rather than here.
 async function billEstimate(req, res, conn) {
   const {
     estimate_id: estimateId, date_created: dateCreated, date_due: dateDue, term, bs_si_no: bsSiNo,
@@ -517,7 +603,7 @@ async function billEstimate(req, res, conn) {
   } = req.body;
 
   const [[est]] = await conn.query(
-    'SELECT id, estimate_no, sales_rep_id, status FROM estimates WHERE id = ?', [estimateId]);
+    'SELECT id, estimate_no, sales_rep_id, status, sales_order_id FROM estimates WHERE id = ?', [estimateId]);
   if (!est) return res.status(404).json({ error: 'That Estimate no longer exists.' });
 
   // The same visibility rule as everywhere else: an Account Officer cannot bill an estimate they
@@ -570,8 +656,9 @@ async function billEstimate(req, res, conn) {
        (invoice_no, sales_order_id, estimate_id, date_created, date_due, term, bs_si_no, po_no, sales_rep_id,
         office_location_id, department_id, bill_to_address, memo, withholding_tax_pct, subtotal,
         discount_amount, net_of_tax, ewt_amount, tax_amount, gross_amount, amount_due, created_by_user_id)
-     VALUES ('', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
+      est.sales_order_id || null,
       estimateId, dateCreated || new Date().toISOString().slice(0, 10), dateDue || null, term || null,
       bsSiNo || null, poNo || null, salesRepId || null, officeLocationId || null, departmentId || null,
       billToAddress || null, memo || null, withholdingTaxPct || 0, subtotal, discountAmount, netOfTax,

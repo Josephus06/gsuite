@@ -158,6 +158,21 @@ async function generateSalesOrderFromEstimate(conn, estimateId) {
   }
 
   await conn.query('UPDATE estimates SET sales_order_id = ? WHERE id = ?', [salesOrderId, estimateId]);
+
+  // The estimate may already have been invoiced. It is billable from pending_customer_approval,
+  // which is the stage BEFORE this one, so an invoice can exist before there is any order to hang
+  // it on -- it was written with sales_order_id NULL because at the time that was the truth.
+  // Now there is an order, and without this the invoice would stay off its Related Records for
+  // good: nothing else ever revisits that column.
+  //
+  // Only the ones still unlinked, so this can never move an invoice off an order it already
+  // names. The link is recorded, not counted -- see billEstimate in routes/salesInvoices.js for
+  // why the order's own quantity figures stay out of it.
+  await conn.query(
+    'UPDATE sales_invoices SET sales_order_id = ? WHERE estimate_id = ? AND sales_order_id IS NULL',
+    [salesOrderId, estimateId]
+  );
+
   return salesOrderId;
 }
 

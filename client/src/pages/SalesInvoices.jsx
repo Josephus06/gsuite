@@ -37,7 +37,23 @@ export default function SalesInvoices() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('');
   const [search, setSearch] = useState('');
+  // Date Created, both ends optional and both inclusive. Held as plain yyyy-mm-dd strings, which
+  // is what <input type="date"> gives and what the server compares against a DATE column -- no
+  // Date object in between to drag the value through a timezone on the way.
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [departmentId, setDepartmentId] = useState('');
+  const [departments, setDepartments] = useState([]);
   const [page, setPage] = useState(1);
+
+  // From the invoice module's own meta route, not /lookups/departments: a third of the people who
+  // can read this page cannot read /lookups, and they would have got an empty dropdown with no
+  // sign of why. See the /meta route in routes/salesInvoices.js.
+  useEffect(() => {
+    api.get('/sales-invoices/meta')
+      .then(({ data }) => setDepartments(data.departments || []))
+      .catch(() => setDepartments([]));
+  }, []);
 
   // Asks the server for ONE page. This used to fetch every row and slice it here, which meant
   // downloading the whole table to display ten of it -- and it made the search box a lie, since
@@ -47,6 +63,9 @@ export default function SalesInvoices() {
     const params = { page: toPage, limit: PAGE_SIZE };
     if (status) params.status = status;
     if (search) params.search = search;
+    if (from) params.from = from;
+    if (to) params.to = to;
+    if (departmentId) params.department_id = departmentId;
     try {
       const { data } = await api.get('/sales-invoices', { params });
       setRows(data.rows || []);
@@ -58,12 +77,28 @@ export default function SalesInvoices() {
 
   // Every one of these changes which rows the SERVER should return, so each has to refetch --
   // paging is no longer something the browser can answer out of what it already holds.
-  useEffect(() => { setPage(1); load(1); }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The two dropdowns apply themselves; the dates and the search box wait for Search. A <select>
+  // is one deliberate act, but a date input fires onChange on the way to a complete date, so
+  // refetching on it would run a query per keystroke against half-typed years.
+  useEffect(() => { setPage(1); load(1); }, [status, departmentId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(page); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function runSearch() {
     setPage(1);
     load(1);
+  }
+
+  // Cleared in one go rather than field by field: four filters can combine into an empty list
+  // whose cause is off-screen, and hunting for which one did it is the moment people give up on
+  // a filter bar. The fetch is issued with the cleared values directly -- setState has not landed
+  // yet when load() reads them.
+  function clearFilters() {
+    setStatus(''); setSearch(''); setFrom(''); setTo(''); setDepartmentId('');
+    setPage(1);
+    setLoading(true);
+    api.get('/sales-invoices', { params: { page: 1, limit: PAGE_SIZE } })
+      .then(({ data }) => { setRows(data.rows || []); setTotal(Number(data.total) || 0); })
+      .finally(() => setLoading(false));
   }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -103,8 +138,26 @@ export default function SalesInvoices() {
               <option value="cancelled">Void</option>
             </select>
           </div>
+          <div className="field">
+            <label>Department</label>
+            <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
+              <option value="">--ALL--</option>
+              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label>Date From</label>
+            <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Date To</label>
+            <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
+          </div>
         </div>
-        <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <button className="btn btn-primary" onClick={runSearch}>Search</button>
+          <button className="btn" onClick={clearFilters}>Clear</button>
+        </div>
       </div>
 
       <div className="card">
