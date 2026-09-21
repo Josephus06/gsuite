@@ -140,8 +140,12 @@ export default function ArchiverKnowledgeBase() {
                     {t.description && (
                       <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{t.description}</div>
                     )}
+                    {/* A card that holds cards reports THAT, not its own file count --
+                        a folder saying 'No files yet' while holding six cards reads as empty. */}
                     <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-                      {Number(t.file_count) === 0
+                      {Number(t.child_count) > 0
+                        ? `${t.child_count} card${Number(t.child_count) === 1 ? '' : 's'}`
+                        : Number(t.file_count) === 0
                         ? 'No files yet'
                         : `${t.file_count} file${Number(t.file_count) === 1 ? '' : 's'}`}
                       {t.last_upload_at ? ` · ${formatDateTime(t.last_upload_at).split(',')[0]}` : ''}

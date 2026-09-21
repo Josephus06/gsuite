@@ -66,11 +66,17 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const [sections] = await pool.query(
       'SELECT id, name, slug, description, sort_order, is_system FROM kb_sections WHERE is_active = TRUE ORDER BY sort_order, name',
     );
+    // ROOTS ONLY. Without the parent_topic_id IS NULL, every nested card would also appear on
+    // the section's front page, so "LFP > Printheads" would be drawn twice -- once inside LFP and
+    // once beside it -- and deleting the wrong copy would be the obvious next bug report.
     const [topics] = await pool.query(
       `SELECT t.id, t.section_id, t.name, t.description, t.sort_order,
               (SELECT COUNT(*) FROM kb_files f WHERE f.topic_id = t.id AND f.upload_status = 'complete') AS file_count,
+              (SELECT COUNT(*) FROM kb_topics c WHERE c.parent_topic_id = t.id AND c.is_active = TRUE) AS child_count,
               (SELECT MAX(f.created_at) FROM kb_files f WHERE f.topic_id = t.id AND f.upload_status = 'complete') AS last_upload_at
-         FROM kb_topics t WHERE t.is_active = TRUE ORDER BY t.sort_order, t.name`,
+         FROM kb_topics t
+        WHERE t.is_active = TRUE AND t.parent_topic_id IS NULL
+        ORDER BY t.sort_order, t.name`,
     );
     const bySection = new Map(sections.map((s) => [String(s.id), { ...s, topics: [] }]));
     for (const t of topics) bySection.get(String(t.section_id))?.topics.push(t);
@@ -89,33 +95,93 @@ router.get('/topics/:id', requireAuth, requirePermission(ROUTE, 'can_view'), asy
       [req.params.id],
     );
     if (!topic) return res.status(404).json({ error: 'Not found' });
+
+    // The cards inside this one, with the same counts the front page shows so a nested grid can
+    // be drawn with the same component.
+    const [children] = await pool.query(
+      `SELECT t.id, t.section_id, t.name, t.description, t.sort_order,
+              (SELECT COUNT(*) FROM kb_files f WHERE f.topic_id = t.id AND f.upload_status = 'complete') AS file_count,
+              (SELECT COUNT(*) FROM kb_topics c WHERE c.parent_topic_id = t.id AND c.is_active = TRUE) AS child_count
+         FROM kb_topics t
+        WHERE t.parent_topic_id = ? AND t.is_active = TRUE
+        ORDER BY t.sort_order, t.name`,
+      [req.params.id],
+    );
+
+    // The trail back to the section, walked one row at a time. Depth is unbounded by design, so
+    // this is capped -- a cycle cannot be created through the API, but a bad row inserted by hand
+    // must not turn a page load into an infinite loop.
+    const ancestors = [];
+    let cursor = topic.parent_topic_id;
+    for (let hops = 0; cursor && hops < 20; hops += 1) {
+      const [[row]] = await pool.query('SELECT id, name, parent_topic_id FROM kb_topics WHERE id = ?', [cursor]);
+      if (!row) break;
+      ancestors.unshift({ id: row.id, name: row.name });
+      cursor = row.parent_topic_id;
+    }
+
     const [files] = await pool.query(
       `SELECT ${FILE_COLUMNS}, u.display_name AS uploaded_by_name
          FROM kb_files f LEFT JOIN users u ON u.id = f.uploaded_by_user_id
         WHERE f.topic_id = ? ORDER BY f.created_at DESC`,
       [req.params.id],
     );
-    res.json({ ...topic, files, storage_configured: storage.isConfigured(), db_max_bytes: DB_MAX_BYTES, allowed_extensions: ALLOWED_EXTENSIONS });
+    res.json({
+      ...topic, files, children, ancestors,
+      storage_configured: storage.isConfigured(), db_max_bytes: DB_MAX_BYTES, allowed_extensions: ALLOWED_EXTENSIONS,
+    });
   } catch (err) { next(err); }
 });
 
 router.post('/topics', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
   try {
-    const { section_id: sectionId, name, description } = req.body || {};
-    if (!sectionId) return res.status(400).json({ error: 'Choose which section this belongs to.' });
+    const { section_id: sectionId, name, description, parent_topic_id: parentId } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'A name is required.' });
 
-    const [[section]] = await pool.query('SELECT id FROM kb_sections WHERE id = ? AND is_active = TRUE', [sectionId]);
+    // A nested card inherits its section from the card it sits in. Taking the section from the
+    // parent rather than the caller is what stops "LFP > Printheads" ending up filed under
+    // Technical Problem because a stale section_id rode along in the request.
+    let parent = null;
+    let resolvedSectionId = sectionId;
+    if (parentId) {
+      const [[row]] = await pool.query('SELECT id, section_id FROM kb_topics WHERE id = ? AND is_active = TRUE', [parentId]);
+      if (!row) return res.status(400).json({ error: 'The card this should go inside was not found.' });
+      parent = row;
+      resolvedSectionId = row.section_id;
+    }
+    if (!resolvedSectionId) return res.status(400).json({ error: 'Choose which section this belongs to.' });
+
+    const [[section]] = await pool.query('SELECT id FROM kb_sections WHERE id = ? AND is_active = TRUE', [resolvedSectionId]);
     if (!section) return res.status(400).json({ error: 'Section not found.' });
-    const [[dupe]] = await pool.query('SELECT id FROM kb_topics WHERE section_id = ? AND name = ?', [sectionId, String(name).trim()]);
-    if (dupe) return res.status(400).json({ error: `"${String(name).trim()}" already exists in that section.` });
+
+    // Uniqueness is per PARENT, not per section: two different machines may each hold a card
+    // called "Printheads", and only siblings actually collide in the same grid.
+    const [[dupe]] = await pool.query(
+      parent
+        ? 'SELECT id FROM kb_topics WHERE parent_topic_id = ? AND name = ?'
+        : 'SELECT id FROM kb_topics WHERE section_id = ? AND parent_topic_id IS NULL AND name = ?',
+      [parent ? parent.id : resolvedSectionId, String(name).trim()],
+    );
+    if (dupe) {
+      return res.status(400).json({
+        error: parent
+          ? `"${String(name).trim()}" already exists inside that card.`
+          : `"${String(name).trim()}" already exists in that section.`,
+      });
+    }
 
     // Appended to the end rather than inserted anywhere clever: the order people add things in is
     // usually the order they expect to see them.
-    const [[{ nextOrder }]] = await pool.query('SELECT COALESCE(MAX(sort_order), 0) + 1 AS nextOrder FROM kb_topics WHERE section_id = ?', [sectionId]);
+    // Ordered within its own grid -- siblings under a parent, or roots under a section.
+    const [[{ nextOrder }]] = await pool.query(
+      parent
+        ? 'SELECT COALESCE(MAX(sort_order), 0) + 1 AS nextOrder FROM kb_topics WHERE parent_topic_id = ?'
+        : 'SELECT COALESCE(MAX(sort_order), 0) + 1 AS nextOrder FROM kb_topics WHERE section_id = ? AND parent_topic_id IS NULL',
+      [parent ? parent.id : resolvedSectionId],
+    );
     const [r] = await pool.query(
-      'INSERT INTO kb_topics (section_id, name, description, sort_order, created_by_user_id) VALUES (?,?,?,?,?)',
-      [sectionId, trunc(name, 150), trunc(description, 1000), nextOrder, req.user.id],
+      'INSERT INTO kb_topics (section_id, parent_topic_id, name, description, sort_order, created_by_user_id) VALUES (?,?,?,?,?,?)',
+      [resolvedSectionId, parent ? parent.id : null, trunc(name, 150), trunc(description, 1000), nextOrder, req.user.id],
     );
     res.status(201).json({ id: r.insertId });
   } catch (err) { next(err); }
@@ -147,6 +213,13 @@ router.delete('/topics/:id', requireAuth, requirePermission(ROUTE, 'can_delete')
   try {
     const [[{ n }]] = await pool.query('SELECT COUNT(*) n FROM kb_files WHERE topic_id = ?', [req.params.id]);
     if (n > 0) return res.status(409).json({ error: `This card holds ${n} file(s). Remove them first.` });
+    // Same rule one level up. There is no foreign key here, so nothing in the database would stop
+    // this deletion orphaning every card inside it -- they would simply vanish from the tree while
+    // still holding their files, reachable by nobody.
+    const [[{ kids }]] = await pool.query(
+      'SELECT COUNT(*) kids FROM kb_topics WHERE parent_topic_id = ? AND is_active = TRUE', [req.params.id],
+    );
+    if (kids > 0) return res.status(409).json({ error: `This card holds ${kids} card(s) inside it. Remove them first.` });
     const [r] = await pool.query('DELETE FROM kb_topics WHERE id = ?', [req.params.id]);
     if (!r.affectedRows) return res.status(404).json({ error: 'Not found' });
     res.status(204).send();
