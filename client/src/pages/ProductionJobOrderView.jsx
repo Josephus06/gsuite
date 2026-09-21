@@ -549,6 +549,12 @@ export default function ProductionJobOrderView() {
   // being an advance copy on its own (see utils/advanceCopy.js) and this all comes back.
   const advanceCopy = isAdvanceCopy(jo);
   const canWorkFloor = canWorkFloorRole && !advanceCopy;
+  // Inspecting is its own right now (add-quality-inspection-page.js), asked for exactly as the
+  // server asks for it. This used to ride on canWorkFloor, which also admits a planner or a
+  // production supervisor by ROLE -- but the endpoint has never accepted a role, only the
+  // permission, so for those two the button was drawn and then refused. Asking the same question
+  // the server asks is what closes that.
+  const canInspect = can('/quality-inspections', 'can_add');
   const isTerminal = jo.status === 'Completed' || jo.status === 'Cancelled';
   const isOnHold = !!jo.is_on_hold;
   // Editable in place while the job is still live; Acknowledge is offered only out of
@@ -645,7 +651,9 @@ export default function ProductionJobOrderView() {
               title={openRwipCount > 0 ? 'Complete the RWIP job order(s) before building this Job Order.' : 'Assembly Build'}
               onClick={() => setShowAssemblyBuild(true)}>Assembly Build</button>
           )}
-          {canWorkFloor && hasUninspectedBuilds && <button className="btn btn-sm btn-primary" onClick={() => setShowQualityInspection(true)}>Quality Inspection</button>}
+          {/* !advanceCopy for the same reason every other control here carries it: nothing is
+              inspected on a job Sales has not approved yet. */}
+          {canInspect && !advanceCopy && hasUninspectedBuilds && <button className="btn btn-sm btn-primary" onClick={() => setShowQualityInspection(true)}>Quality Inspection</button>}
           {canEdit && !advanceCopy && !isOnHold && !isTerminal && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleHold}>Hold</button>}
           {canEdit && !advanceCopy && isOnHold && !isTerminal && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleResume}>Resume</button>}
         </div>

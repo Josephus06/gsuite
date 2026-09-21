@@ -188,11 +188,10 @@ const NAV_STRUCTURE = [
       { route: '/rfqc-job-orders', label: 'RFQC' },
       { route: '/scheduled-jo', label: 'Scheduled JO' },
       { route: '/assembly-builds', label: 'Assembly Build' },
-      // Quality Inspection has no `pages` row of its own -- its backend reuses Production's
-      // permission scope (see qualityInspections.js), so the nav visibility check below needs
-      // permRoute instead of the link's own route. Item Delivery used to be the same and now
-      // has its own row, so it needs no override.
-      { route: '/quality-inspections', permRoute: '/production', label: 'Quality Inspection' },
+      // Quality Inspection has its own `pages` row now (add-quality-inspection-page.js), so no
+      // permRoute override here: the nav checks the link's own route, like every other entry.
+      // It used to borrow Production's, which is why this list still carries the mechanism.
+      { route: '/quality-inspections', label: 'Quality Inspection' },
       { route: '/item-deliveries', label: 'Item Delivery' },
       { route: '/itineraries', label: 'Itinerary' },
     ],

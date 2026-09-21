@@ -7,10 +7,19 @@ const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 
 const router = express.Router();
-// Reached from a Job Order's Production view, not its own page in the nav -- reuses
-// Production's permission scope rather than registering a whole new page entry, same
-// treatment as Item Fulfillment/Item Receipt reusing Transfer Orders' scope.
-const ROUTE = '/production';
+// Quality Inspection has its own page row (src/db/add-quality-inspection-page.js). It used to
+// borrow Production's, which made "may I inspect a build" mean can_edit on Production -- so
+// letting a QC inspector record a pass also handed them scheduling, revisions and rework on the
+// whole floor. can_add now means what it says: perform an inspection.
+//
+// THE PAGE ROW MUST EXIST BEFORE THIS CODE SERVES TRAFFIC. requirePermission answers 500, not
+// 403, on a missing row, so the migration runs on each install before the deploy reaches it.
+const ROUTE = '/quality-inspections';
+// The modal opened from the Job Order's Production screen is filled by /for-job-order below,
+// and that endpoint stays on Production's own can_view: an endpoint is gated by the PAGE IT
+// SERVES, not by the entity it returns. Gating it here would blank a panel in the middle of a
+// screen the user is entitled to be on.
+const PRODUCTION_ROUTE = '/production';
 
 async function logAudit(conn, { qiId, userId, eventType, fieldName = null, oldValue = null, newValue = null }) {
   await conn.query(
@@ -75,7 +84,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 // Powers the Quality Inspection create modal's header + Assembly Build table -- only
 // batches with something still uninspected (quantity_built - passed_qty - rma_qty > 0)
 // show up, matching the real screen only ever listing what's actually left to inspect.
-router.get('/for-job-order/:jobOrderId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/for-job-order/:jobOrderId', requireAuth, requirePermission(PRODUCTION_ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[jo]] = await pool.query(
       `SELECT jo.id, jo.job_order_no, jo.description, jo.quantity, jo.quantity_built, jo.quantity_inspected, jo.units,
@@ -165,7 +174,9 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
 // Qty (cleared for delivery) and RMA Qty (kicked back for rework/return) -- both
 // accumulate onto that AB's own running totals, and the JO's quantity_inspected tracks
 // the sum across every AB. One QI can cover several ABs at once, one line each.
-router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+// can_add, not can_edit: this CREATES the inspection document. Performing an inspection is the
+// QC role's own job and is now grantable on its own, without Production edit rights.
+router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const { job_order_id: jobOrderId, date_created: dateCreated, memo, lines } = req.body;
@@ -293,6 +304,10 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
   }
 });
 
+// can_edit on Quality Inspection, not can_add: cancelling reverses a document that already
+// exists and takes the inspected quantity back off the Job Order, which is a different and more
+// consequential act than recording one. The migration carries both rights over together, so
+// nobody inspecting today loses the ability to correct a mistake.
 router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
