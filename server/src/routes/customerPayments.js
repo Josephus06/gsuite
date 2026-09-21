@@ -11,6 +11,16 @@ const router = express.Router();
 // tab).
 const ROUTE = '/customer-payments';
 
+// The page asks for ten. The cap exists so a hand-written page_size cannot ask for all 130,000
+// back and undo the reason this endpoint is paged at all.
+const DEFAULT_PAGE_SIZE = 10;
+const MAX_PAGE_SIZE = 200;
+
+// A date filter that is not a date is a typo or a stale bookmark, not a reason to fail the
+// request: MySQL rejects 'notadate' in a DATE comparison and the whole list 500s. Anything that
+// is not YYYY-MM-DD is dropped, so the page comes back unfiltered rather than broken.
+const asDate = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
+
 async function logAudit(conn, { paymentId, userId, eventType, fieldName = null, oldValue = null, newValue = null }) {
   await conn.query(
     `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
@@ -186,28 +196,69 @@ router.get('/by-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can_
   }
 });
 
+// PAGED AT THE DATABASE, not in the browser. This list used to select every row and let the page
+// slice ten out of it: 130,000 payments, 34.5 MB of JSON, several seconds of spinner, to draw a
+// table ten rows tall. The count grows with every receipt the company writes, so the page got
+// slower every day it was used.
+//
+// The response shape is { rows, total, page, page_size } -- the same shape the other paged lists
+// in this codebase return -- because the footer still has to say how many pages there are, and
+// that number no longer comes from rows.length.
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { search, status } = req.query;
+    const { search, status, department_id: departmentId, office_location_id: locationId } = req.query;
+    const dateFrom = asDate(req.query.date_from);
+    const dateTo = asDate(req.query.date_to);
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(req.query.page_size) || DEFAULT_PAGE_SIZE));
+
     const where = [];
     const params = [];
     if (status) { where.push('cp.status = ?'); params.push(status); }
+    if (departmentId) { where.push('cp.department_id = ?'); params.push(departmentId); }
+    // Location, not just department. Every one of the 130,000 imported payments carries an office
+    // location and all but two carry no department at all, so department alone would be a filter
+    // that returns nothing for the entire history. Payments raised through the form do set a
+    // department, so that filter earns its place going forward -- this one works on both.
+    if (locationId) { where.push('cp.office_location_id = ?'); params.push(locationId); }
+    // Both ends inclusive, and each usable without the other -- "everything from March" and
+    // "everything up to year end" are both things people ask for. date_created is a DATE, so
+    // there is no end-of-day boundary to get wrong here.
+    if (dateFrom) { where.push('cp.date_created >= ?'); params.push(dateFrom); }
+    if (dateTo) { where.push('cp.date_created <= ?'); params.push(dateTo); }
     if (search) {
       where.push('(cp.customer_payment_no LIKE ? OR cp.or_no LIKE ? OR c.name LIKE ?)');
       params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    // The COUNT only joins customers when the search needs it. That join is the whole cost of
+    // counting: matching 130,000 payments to 21,000 customers took 734ms on a warm clone, and
+    // every unfiltered page load paid it for a number that does not depend on the join at all.
+    // With the join dropped the count is read straight off the payments table.
+    const [[{ total }]] = await pool.query(
+      `SELECT COUNT(*) AS total
+       FROM customer_payments cp
+       ${search ? 'LEFT JOIN customers c ON c.id = cp.customer_id' : ''}
+       ${whereSql}`,
+      params
+    );
+
     const [rows] = await pool.query(
       `SELECT cp.id, cp.customer_payment_no, cp.date_created, cp.or_no, cp.payment_amount, cp.applied_amount,
-              cp.unapplied_amount, cp.status, c.name AS customer_name, pm.name AS payment_method_name
+              cp.unapplied_amount, cp.status, c.name AS customer_name, pm.name AS payment_method_name,
+              d.name AS department_name, loc.location_name AS office_location_name
        FROM customer_payments cp
        LEFT JOIN customers c ON c.id = cp.customer_id
        LEFT JOIN payment_methods pm ON pm.id = cp.payment_method_id
+       LEFT JOIN departments d ON d.id = cp.department_id
+       LEFT JOIN locations loc ON loc.id = cp.office_location_id
        ${whereSql}
-       ORDER BY cp.id DESC`,
-      params
+       ORDER BY cp.id DESC
+       LIMIT ? OFFSET ?`,
+      [...params, pageSize, (page - 1) * pageSize]
     );
-    res.json(rows);
+    res.json({ rows, total, page, page_size: pageSize });
   } catch (err) {
     next(err);
   }

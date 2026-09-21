@@ -229,6 +229,17 @@
   --card-glass: rgba(26, 26, 34, 0.45);
 }
 
+/* The parts of a form control the browser draws itself -- the calendar button inside a
+   date field, a select's arrow, the date picker popup, the scrollbars -- take no colour
+   from our rules. Without being told, the browser assumes a light page and paints them
+   near-black, which on the dark theme's #1A1A24 fields left the calendar button on a
+   date input effectively invisible.
+
+   Declared for both themes rather than dark alone, so the light theme keeps light
+   widgets even when the operating system is set to dark. */
+:root { color-scheme: light; }
+:root[data-theme='dark'] { color-scheme: dark; }
+
 /* =============================================================================
    GLASS — the frosted-glass theme, built on the T1S logo's navy and orange.
    =============================================================================

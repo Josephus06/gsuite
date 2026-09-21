@@ -152,6 +152,18 @@
 :root[data-theme='glass'] .btn-sm { min-height: 32px; border-radius: 10px; }
 
 /* --- Inputs --------------------------------------------------------------- */
+
+/* The parts of a form control the browser draws itself, which no colour property of
+   ours reaches: the calendar button inside a date field, a select's arrow, the date
+   picker that drops out of it, and the scrollbars. Left to itself the browser assumes
+   a light page and paints them near-black, so on this theme's near-transparent dark
+   fields the calendar button on Date From / Date To was all but invisible.
+
+   color-scheme is the one declaration that tells the browser the truth, and it fixes
+   the widget and its popup together -- inverting the icon with a filter would have
+   left the picker itself a white sheet on a dark page. */
+:root[data-theme='glass'] { color-scheme: dark; }
+
 :root[data-theme='glass'] input,
 :root[data-theme='glass'] select,
 :root[data-theme='glass'] textarea {

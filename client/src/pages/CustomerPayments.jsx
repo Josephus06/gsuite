@@ -8,6 +8,7 @@ import CustomerPaymentModal from '../components/CustomerPaymentModal';
 import { useAuth } from '../context/useAuth';
 
 const PAGE_SIZE = 10;
+const NO_FILTERS = { search: '', status: '', departmentId: '', locationId: '', dateFrom: '', dateTo: '' };
 // A saved payment sits NOT DEPOSITED until a bank deposit sweeps it into the bank.
 const STATUS_LABELS = { not_deposited: 'Not Deposited', deposited: 'Deposited', voided: 'Void' };
 
@@ -24,22 +25,68 @@ export default function CustomerPayments() {
   const [customers, setCustomers] = useState([]);
   const [newFor, setNewFor] = useState(null);
   const [rows, setRows] = useState([]);
+  // How many match the current filter, which is no longer the same as how many were downloaded.
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [status, setStatus] = useState('');
-  const [search, setSearch] = useState('');
+  // Two copies of the filters on purpose. `form` is what the controls show as they are typed;
+  // `applied` is what the last fetch actually used. Without the split, every keystroke in the
+  // search box or a half-typed year in a date field would be a query against 130,000 rows.
+  const [form, setForm] = useState(NO_FILTERS);
+  const [applied, setApplied] = useState(NO_FILTERS);
+  const [departments, setDepartments] = useState([]);
+  const [locations, setLocations] = useState([]);
   const [page, setPage] = useState(1);
 
-  async function load() {
-    setLoading(true);
-    const params = {};
-    if (status) params.status = status;
-    if (search) params.search = search;
-    const { data } = await api.get('/customer-payments', { params });
-    setRows(data);
-    setLoading(false);
+  // Applying a filter always returns to page 1: page 9,000 of "all" is not page 9,000 of
+  // "deposited", and landing past the end of the filtered list would show an empty table.
+  function apply(next) {
+    setForm(next);
+    setApplied(next);
+    setPage(1);
   }
+  const setField = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  // Bumped to re-run the fetch when nothing about the page or the filters changed but the data
+  // did -- saving a new payment. Re-applying the same filter object would not do it: React skips
+  // a state update that sets the identical value.
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  useEffect(() => { setPage(1); load(); }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+  // One effect is the only thing that fetches, keyed on the page and the applied filters. Every
+  // control changes one of those two and nothing else, so there is no path that sets state and
+  // forgets to reload, and none that reloads twice for one click.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const params = { page, page_size: PAGE_SIZE };
+      if (applied.status) params.status = applied.status;
+      if (applied.search) params.search = applied.search;
+      if (applied.departmentId) params.department_id = applied.departmentId;
+      if (applied.locationId) params.office_location_id = applied.locationId;
+      if (applied.dateFrom) params.date_from = applied.dateFrom;
+      if (applied.dateTo) params.date_to = applied.dateTo;
+      try {
+        const { data } = await api.get('/customer-payments', { params });
+        // A slow page 1 must not overwrite a fast page 2 that was asked for after it.
+        if (cancelled) return;
+        setRows(data.rows || []);
+        setTotal(Number(data.total) || 0);
+      } finally {
+        // In a finally so a failed request cannot leave the page spinning forever, which is what
+        // the old `setLoading(false)` after the await would have done on any error.
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [page, applied, refreshKey]);
+
+  // The two dropdowns' options. Lookups, not the admin lists -- a handful of rows each, needing
+  // no permission beyond seeing this page. Failures are swallowed: a filter that cannot offer its
+  // options is a missing dropdown, not a reason to take the list down with it.
+  useEffect(() => {
+    const pick = (data) => (Array.isArray(data) ? data : (data?.rows || []));
+    api.get('/lookups/departments').then(({ data }) => setDepartments(pick(data))).catch(() => {});
+    api.get('/lookups/locations').then(({ data }) => setLocations(pick(data))).catch(() => {});
+  }, []);
 
   // Only for the Add picker, and only when the button is there to use it.
   useEffect(() => {
@@ -47,13 +94,9 @@ export default function CustomerPayments() {
     api.get('/customers').then(({ data }) => setCustomers(Array.isArray(data) ? data : (data?.rows || []))).catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function runSearch() {
-    setPage(1);
-    load();
-  }
+  const hasFilters = Object.values(applied).some(Boolean) || Object.values(form).some(Boolean);
 
-  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const pageRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div>
@@ -76,22 +119,60 @@ export default function CustomerPayments() {
           <div className="field">
             <label>General Searching</label>
             <input
-              value={search} onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && runSearch()}
+              value={form.search} onChange={(e) => setField('search', e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && apply(form)}
               placeholder="CPAY #, OR # or Customer..."
             />
           </div>
           <div className="field">
             <label>Status</label>
-            <select value={status} onChange={(e) => setStatus(e.target.value)}>
+            {/* A dropdown applies on pick -- there is nothing half-chosen about it, unlike a
+                date being keyed in or a name being typed. */}
+            <select value={form.status} onChange={(e) => apply({ ...form, status: e.target.value })}>
               <option value="">--ALL--</option>
               <option value="not_deposited">Not Deposited</option>
               <option value="deposited">Deposited</option>
               <option value="voided">Void</option>
             </select>
           </div>
+          <div className="field">
+            <label>Location</label>
+            <select value={form.locationId} onChange={(e) => apply({ ...form, locationId: e.target.value })}>
+              <option value="">--ALL--</option>
+              {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name || l.name}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label>Department</label>
+            <select value={form.departmentId} onChange={(e) => apply({ ...form, departmentId: e.target.value })}>
+              <option value="">--ALL--</option>
+              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label>Date From</label>
+            <input
+              type="date" value={form.dateFrom} max={form.dateTo || undefined}
+              onChange={(e) => setField('dateFrom', e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && apply(form)}
+            />
+          </div>
+          <div className="field">
+            <label>Date To</label>
+            <input
+              type="date" value={form.dateTo} min={form.dateFrom || undefined}
+              onChange={(e) => setField('dateTo', e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && apply(form)}
+            />
+          </div>
         </div>
-        <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>
+        <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn btn-primary" onClick={() => apply(form)}>Search</button>
+          {hasFilters && <button className="btn" onClick={() => apply(NO_FILTERS)}>Clear</button>}
+          {/* The row count is the only way to tell "this department has no payments" apart from
+              "the filter did not apply", now that the table shows ten rows either way. */}
+          {!loading && <span className="muted">{total.toLocaleString()} payment{total === 1 ? '' : 's'} found</span>}
+        </div>
       </div>
 
       <div className="card">
@@ -103,6 +184,8 @@ export default function CustomerPayments() {
                   <th>Payment #</th>
                   <th>Date Created</th>
                   <th>Customer</th>
+                  <th>Location</th>
+                  <th>Department</th>
                   <th>OR #</th>
                   <th>Payment Method</th>
                   <th>Payment Amount</th>
@@ -114,13 +197,15 @@ export default function CustomerPayments() {
               </thead>
               <tbody>
                 {rows.length === 0 && (
-                  <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>No customer payments found.</td></tr>
+                  <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: 20 }}>No customer payments found.</td></tr>
                 )}
-                {pageRows.map((row) => (
+                {rows.map((row) => (
                   <tr key={row.id}>
                     <td data-label="Payment #">{row.customer_payment_no}</td>
                     <td data-label="Date Created">{formatDate(row.date_created)}</td>
                     <td data-label="Customer">{row.customer_name}</td>
+                    <td data-label="Location">{row.office_location_name}</td>
+                    <td data-label="Department">{row.department_name}</td>
                     <td data-label="OR #">{row.or_no}</td>
                     <td data-label="Payment Method">{row.payment_method_name}</td>
                     <td data-label="Payment Amount">{money(row.payment_amount)}</td>
@@ -142,7 +227,8 @@ export default function CustomerPayments() {
         <CustomerPaymentModal
           customerId={newFor.id}
           onClose={() => setNewFor(null)}
-          onSaved={() => { setNewFor(null); load(); }}
+          // The new payment has the highest id and the list is newest-first, so it is on page 1.
+          onSaved={() => { setNewFor(null); setPage(1); setRefreshKey((k) => k + 1); }}
         />
       )}
     </div>
