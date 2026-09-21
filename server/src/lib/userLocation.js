@@ -36,10 +36,22 @@ async function resolveDefaultLocation(userId) {
 // Prefix-matched and case-insensitive because the name is typed into the locations master by
 // hand: the importers already hedge the same way ("Head Office%", "%Head Office%"), so a
 // "Head Office - Main" must not read as a branch.
-async function isHeadOfficeUser(userId) {
-  const loc = await resolveDefaultLocation(userId);
-  if (!loc?.location_name) return true;
-  return String(loc.location_name).trim().toLowerCase().startsWith(HEAD_OFFICE);
+//
+// Split out from isHeadOfficeUser so callers that have already read a batch of location names
+// can ask the same question without a query each -- getSalesRepEmployeeScope classifies every
+// user in one pass. One definition of "is this Head Office", used by both.
+//
+// A missing name answers TRUE, as it does for a user with no location at all: Head Office is the
+// stricter side of every rule built on this, so a half-configured account cannot quietly pick up
+// the looser one.
+function isHeadOfficeName(locationName) {
+  if (!locationName) return true;
+  return String(locationName).trim().toLowerCase().startsWith(HEAD_OFFICE);
 }
 
-module.exports = { resolveDefaultLocation, isHeadOfficeUser };
+async function isHeadOfficeUser(userId) {
+  const loc = await resolveDefaultLocation(userId);
+  return isHeadOfficeName(loc?.location_name);
+}
+
+module.exports = { resolveDefaultLocation, isHeadOfficeUser, isHeadOfficeName };
