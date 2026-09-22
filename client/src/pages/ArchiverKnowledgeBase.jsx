@@ -65,6 +65,7 @@ export default function ArchiverKnowledgeBase() {
   const [showNew, setShowNew] = useState(null); // holds the section id to preselect
   const [editing, setEditing] = useState(null); // the card being renamed
   const [editingSection, setEditingSection] = useState(null); // the section heading being renamed
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
@@ -78,7 +79,20 @@ export default function ArchiverKnowledgeBase() {
 
   useEffect(() => { load(); }, [load]);
 
+  // The server refuses to delete a card that still holds files or cards, and says which and how
+  // many. That refusal is the useful half of this button, so its message is surfaced rather than
+  // flattened into "Delete failed" -- being told to empty the card first is what you needed to
+  // know. The grid is only reloaded on success, so the message stays up to be read.
+  async function removeCard(card) {
+    if (!confirm(`Delete the card "${card.name}"?`)) return;
+    setBusy(true); setError('');
+    try { await api.delete(`/archiver/knowledge-base/topics/${card.id}`); await load(); }
+    catch (e) { setError(e.response?.data?.error || 'Could not delete the card.'); }
+    finally { setBusy(false); }
+  }
+
   const canEdit = can('/archiver/knowledge-base', 'can_edit');
+  const canDelete = can('/archiver/knowledge-base', 'can_delete');
   const q = search.trim().toLowerCase();
   const matches = (t) => !q || t.name.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q);
 
@@ -140,9 +154,9 @@ export default function ArchiverKnowledgeBase() {
               // monitor and stack sensibly on a phone in the workshop.
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12, marginTop: 8 }}>
                 {shown.map((t) => (
-                  // Edit sits BESIDE the card button rather than inside it: a button within a
-                  // button is invalid markup, and the browsers that tolerate it fire both
-                  // handlers, so renaming a card would also navigate into it.
+                  // The controls sit BESIDE the card button rather than inside it: a button within
+                  // a button is invalid markup, and the browsers that tolerate it fire both
+                  // handlers -- so Delete would also navigate into the card it just removed.
                   <div key={t.id} style={{ position: 'relative' }}>
                     <button
                       type="button"
@@ -153,8 +167,10 @@ export default function ArchiverKnowledgeBase() {
                         width: '100%', height: '100%',
                       }}
                     >
-                      {/* Room kept clear at the top right so a long name does not run under Edit. */}
-                      <div style={{ fontWeight: 600, fontSize: 15, paddingRight: canEdit ? 40 : 0 }}>{t.name}</div>
+                      {/* Room kept clear at the top right so a long name does not run under the
+                          controls -- measured against the ones actually shown, since a viewer
+                          with neither permission should not get a ragged indent for nothing. */}
+                      <div style={{ fontWeight: 600, fontSize: 15, paddingRight: 8 + (canEdit ? 32 : 0) + (canDelete ? 46 : 0) }}>{t.name}</div>
                       {t.description && (
                         <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{t.description}</div>
                       )}
@@ -169,15 +185,22 @@ export default function ArchiverKnowledgeBase() {
                         {t.last_upload_at ? ` · ${formatDateTime(t.last_upload_at).split(',')[0]}` : ''}
                       </div>
                     </button>
-                    {canEdit && (
-                      <button
-                        type="button"
-                        className="link-btn"
-                        onClick={() => setEditing(t)}
-                        style={{ position: 'absolute', top: 12, right: 12, fontSize: 12 }}
-                      >
-                        Edit
-                      </button>
+                    {(canEdit || canDelete) && (
+                      <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 10 }}>
+                        {canEdit && (
+                          <button type="button" className="link-btn" style={{ fontSize: 12 }} onClick={() => setEditing(t)}>
+                            Edit
+                          </button>
+                        )}
+                        {/* Deliberately NOT styled as a danger button. A red block in the corner of
+                            every card turns the grid into a minefield; the guard against deleting
+                            the wrong thing is the confirm and the server's not-empty refusal. */}
+                        {canDelete && (
+                          <button type="button" className="link-btn" style={{ fontSize: 12 }} disabled={busy} onClick={() => removeCard(t)}>
+                            Delete
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 ))}
