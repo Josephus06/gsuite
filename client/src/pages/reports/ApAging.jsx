@@ -74,6 +74,7 @@ export default function ApAging() {
 
   const activeLocation = locations.find((l) => String(l.id) === String(locationId));
   const excluded = report?.excluded_unevidenced;
+  const unlinked = report?.excluded_unlinked_payments;
 
   return (
     <div>
@@ -140,6 +141,20 @@ export default function ApAging() {
           {excluded.included
             ? ' They ARE counted in the figures below, so this total is the derived-from-documents view, not what the business is carrying.'
             : ' They are NOT counted below. Tick “Include” above to see the derived-from-documents view.'}
+        </div>
+      )}
+
+      {/* The other half of the same missing link, and it has to be said alongside the first:
+          leaving these in while the bills they settled are left out would net a phantom credit
+          against nothing and report a negative payable. */}
+      {!loading && unlinked?.count > 0 && (
+        <div className="warning-banner" style={{ marginBottom: 16 }}>
+          <strong>{unlinked.count.toLocaleString()} bill payments</strong> totalling{' '}
+          <strong>{money(unlinked.amount)}</strong> carry no application lines at all — the same unfinished
+          migration, seen from the payment side. They are
+          {unlinked.included ? ' counted below as unapplied cash, which is what pushes the total negative.'
+            : ' left out, because money whose links were never imported is not money sitting unapplied.'}{' '}
+          Every payment that does carry lines is fully applied by them, so no genuine overpayment is being hidden.
         </div>
       )}
 

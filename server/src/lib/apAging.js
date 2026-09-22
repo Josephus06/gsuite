@@ -183,8 +183,17 @@ async function collectOpenApItems(asOf, filters = {}) {
   );
   const appliedByPayment = new Map(payApplied.map((r) => [r.payment_id, Number(r.amt)]));
 
+  // Which payments have ANY line, which the SUM above cannot tell us: it is absent both for a
+  // payment that applied nothing and for one whose lines were never imported, and those need
+  // opposite treatment. The AR side draws the same distinction for the same reason.
+  const [payLineCounts] = await pool.query(
+    `SELECT bill_payment_id AS payment_id, COUNT(*) AS n FROM bill_payment_lines GROUP BY bill_payment_id`,
+  );
+  const hasLines = new Set(payLineCounts.map((r) => r.payment_id));
+
   const items = [];
   const unevidenced = { count: 0, amount: 0 };
+  const unlinkedPayments = { count: 0, amount: 0 };
 
   for (const bill of bills) {
     // What was ever owed to the vendor on this bill: gross less the tax withheld from them.
@@ -225,6 +234,22 @@ async function collectOpenApItems(asOf, filters = {}) {
   }
 
   for (const bp of payments) {
+    // A PAYMENT WITH NO LINES AT ALL HAS LOST ITS LINKS, IT IS NOT MONEY SITTING UNAPPLIED.
+    // 3,564 of the 10,655 live bill payments on production -- PHP 69.6M -- arrived as headers
+    // with no applications, the same unfinished migration that leaves 65% of bills claiming to
+    // be paid with nothing recording it. Reading them as unapplied cash put PHP 66M of negative
+    // balance into this report and turned the company's payables into MINUS 52.6M.
+    //
+    // They are excluded on the same terms as those bills, and counted in the open the same way:
+    // both halves of one missing link, so the report cannot net a phantom credit against a
+    // phantom debt and call the result a balance. Every payment that DOES carry lines is fully
+    // applied by them (PHP 64,051,202.16 against PHP 64,051,202.16), so genuine unapplied cash
+    // in this database is currently zero -- this is not hiding a real overpayment.
+    if (!hasLines.has(bp.id)) {
+      unlinkedPayments.count += 1;
+      unlinkedPayments.amount += Number(bp.total_amount);
+      if (!includeUnevidenced) continue;
+    }
     const unapplied = Number(bp.total_amount) - (appliedByPayment.get(bp.id) || 0);
     if (unapplied < 0.005) continue;
     items.push({
@@ -241,11 +266,12 @@ async function collectOpenApItems(asOf, filters = {}) {
   return {
     items,
     unevidenced: { count: unevidenced.count, amount: round2(unevidenced.amount), included: includeUnevidenced },
+    unlinked_payments: { count: unlinkedPayments.count, amount: round2(unlinkedPayments.amount), included: includeUnevidenced },
   };
 }
 
 async function buildApAging(asOf, filters = {}) {
-  const { items, unevidenced } = await collectOpenApItems(asOf, filters);
+  const { items, unevidenced, unlinked_payments: unlinkedPayments } = await collectOpenApItems(asOf, filters);
 
   const bySupplier = new Map();
   function supplierRow(id, name) {
@@ -290,7 +316,7 @@ async function buildApAging(asOf, filters = {}) {
 
   // Reported whether or not they are in the numbers, so the page can say what is being left out
   // as readily as what is being counted.
-  return { as_of: asOf, rows, totals, excluded_unevidenced: unevidenced };
+  return { as_of: asOf, rows, totals, excluded_unevidenced: unevidenced, excluded_unlinked_payments: unlinkedPayments };
 }
 
 // The DETAILS drill-down: the individual open items behind one vendor's balance. Same open-item
