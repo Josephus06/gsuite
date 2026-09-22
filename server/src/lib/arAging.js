@@ -393,6 +393,13 @@ async function buildArAgingDetails(asOf, filters = {}) {
     customer_count: groups.length,
     item_count: groups.reduce((s, g) => s + g.items.length, 0),
     unevidenced_count: items.filter((i) => i.marked_paid_unevidenced).length,
+    // The one place this report's customer count can differ from AR Aging's, counted so the page
+    // can say why rather than leaving a silent difference for someone to find by subtraction.
+    // A customer whose open documents cancel out exactly -- an invoice and a credit of the same
+    // size -- has no AR Aging row, because every bucket is zero. It keeps its rows here: a
+    // balance of zero reached by holding two live documents is precisely what someone chasing
+    // receivables needs to see, and there were 6 such customers on production at 2026-09-22.
+    zero_net_customer_count: groups.filter((g) => Math.abs(g.total_balance) < 0.005).length,
   };
   const pageTotal = round2(pageGroups.reduce((s, g) => s + g.total_balance, 0));
 

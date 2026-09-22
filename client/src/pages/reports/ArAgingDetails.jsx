@@ -338,6 +338,14 @@ export default function ArAgingDetails() {
             <div>
               The rows for a customer add up to that customer&apos;s Total Balance on <Link to="/reports/ar-aging">AR Aging</Link> —
               both reports are built from the same open items, as of the same date.
+              {report.totals.zero_net_customer_count > 0 && (
+                <>
+                  {' '}The customer <em>counts</em> differ by {report.totals.zero_net_customer_count.toLocaleString()}:
+                  that many customers here hold open documents that cancel out exactly, so their balance is zero and
+                  AR Aging has no row for them. They are listed because two live documents worth chasing is not the
+                  same thing as nothing outstanding.
+                </>
+              )}
             </div>
           </div>
         </div>
