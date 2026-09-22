@@ -4,6 +4,11 @@ const { buildTrialBalance, buildBalanceSheet, buildIncomeStatement, buildGeneral
 const { buildArAging, buildArAgingCustomerDetails, buildArAgingCustomerLedger } = require('../lib/arAging');
 const { parkedReport } = require('../lib/parkedBankItems');
 const { buildCommissionReport, buildCommissionJoDetail, getTeamEmployeeIds, getSbuDivisionIds } = require('../lib/commissionReport');
+const {
+  buildProfitabilityReport, buildProfitabilityCsv, buildProfitabilityLineDetail,
+  getProfitabilityScope, searchProfitabilityCustomers,
+} = require('../lib/profitabilityReport');
+const { resolveDefaultLocation } = require('../lib/userLocation');
 const pool = require('../db');
 
 const router = express.Router();
@@ -262,6 +267,82 @@ router.post('/commission/jo-detail/add-to-commission', requireAuth, requirePermi
 
     await pool.query('UPDATE sales_order_lines SET is_approved_low_gp = ? WHERE id = ?', [include ? 1 : 0, lineId]);
     return res.json({ sales_order_line_id: lineId, job_order_no: line.job_order_no, is_approved_low_gp: include });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// ---- Accounting > Reports > Profitability Report ----
+//
+// Four endpoints behind one permission: the report itself (with ?format=csv for Download), the
+// pickers' contents, the Customer typeahead, and one child row's Details. All on can_view --
+// nothing here writes, and the numbers are already visible on the documents they come from.
+const PROFITABILITY_ROUTE = '/reports/profitability';
+
+// Parsed once, here, so the lib is handed clean values and the query string cannot reach the SQL
+// builder as, say, a page number of "1; DROP".
+function profitabilityFilters(query) {
+  const id = (v) => (v && Number(v) > 0 ? Number(v) : null);
+  return {
+    search: query.search ? String(query.search).slice(0, 100) : '',
+    salesRepId: id(query.sales_rep_id),
+    customerId: id(query.customer_id),
+    officeLocationId: id(query.office_location_id),
+    salesDivisionId: id(query.sales_division_id),
+    dateMode: query.date_mode ? String(query.date_mode) : 'as_of',
+    dateFrom: query.date_from ? String(query.date_from).slice(0, 10) : '',
+    dateTo: query.date_to ? String(query.date_to).slice(0, 10) : '',
+    includeCancelled: query.include_cancelled === 'true' || query.include_cancelled === '1',
+    page: query.page,
+    limit: query.limit,
+  };
+}
+
+router.get('/profitability', requireAuth, requirePermission(PROFITABILITY_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const filters = profitabilityFilters(req.query);
+    if (req.query.format === 'csv') {
+      const { csv, truncated, sales_orders: exported, total } = await buildProfitabilityCsv(req.user.id, filters);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="profitability-report-${today()}.csv"`);
+      // Read by the client to warn that the file is not the whole filtered set. A header rather
+      // than a row in the CSV, which would corrupt the data for whatever opens it.
+      if (truncated) res.setHeader('X-Report-Truncated', `${exported} of ${total}`);
+      return res.send(csv);
+    }
+    return res.json(await buildProfitabilityReport(req.user.id, filters));
+  } catch (err) {
+    return next(err);
+  }
+});
+
+router.get('/profitability/scope', requireAuth, requirePermission(PROFITABILITY_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const scope = await getProfitabilityScope(req.user.id);
+    // The user's own office, for the location chip in the header and the Office Location filter's
+    // opening value -- the real report opens on where you work, not on every branch at once.
+    const defaultLocation = await resolveDefaultLocation(req.user.id);
+    return res.json({ ...scope, default_location: defaultLocation });
+  } catch (err) {
+    return next(err);
+  }
+});
+
+router.get('/profitability/customers', requireAuth, requirePermission(PROFITABILITY_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    return res.json(await searchProfitabilityCustomers(req.query.q));
+  } catch (err) {
+    return next(err);
+  }
+});
+
+router.get('/profitability/line/:lineId', requireAuth, requirePermission(PROFITABILITY_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const detail = await buildProfitabilityLineDetail(req.user.id, Number(req.params.lineId));
+    // 404 covers both "no such line" and "not yours to see" on purpose: telling an out-of-scope
+    // caller that the line exists is itself the leak the sales scope exists to prevent.
+    if (!detail) return res.status(404).json({ error: 'That line is not available.' });
+    return res.json(detail);
   } catch (err) {
     return next(err);
   }

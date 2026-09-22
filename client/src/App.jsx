@@ -155,6 +155,7 @@ import IncomeStatement from './pages/reports/IncomeStatement';
 import BalanceSheet from './pages/reports/BalanceSheet';
 import GeneralLedger from './pages/reports/GeneralLedger';
 import ArAging from './pages/reports/ArAging';
+import Profitability from './pages/reports/Profitability';
 import CommissionSchemes from './pages/CommissionSchemes';
 import CommissionSchemeView from './pages/CommissionSchemeView';
 import EmployeeQuotas from './pages/EmployeeQuotas';
@@ -395,6 +396,7 @@ function App() {
         <Route path="/reports/balance-sheet" element={<BalanceSheet />} />
         <Route path="/reports/general-ledger" element={<GeneralLedger />} />
         <Route path="/reports/ar-aging" element={<ArAging />} />
+        <Route path="/reports/profitability" element={<Profitability />} />
         <Route path="/commission-schemes" element={<CommissionSchemes />} />
         <Route path="/commission-schemes/:id" element={<CommissionSchemeView />} />
         <Route path="/employee-quotas" element={<EmployeeQuotas />} />

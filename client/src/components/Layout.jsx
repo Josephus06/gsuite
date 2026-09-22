@@ -244,6 +244,10 @@ const NAV_STRUCTURE = [
           { route: '/reports/balance-sheet', label: 'Balance Sheet' },
           { route: '/reports/ar-aging', label: 'AR Aging' },
           { route: '/reports/general-ledger', label: 'General Ledger' },
+          // Reads Sales' own documents (orders, job orders, invoices, builds) but answers an
+          // Accounting question -- what each job earned against what it cost -- so it sits with
+          // the other reports rather than in the Sales menu beside the documents it reads.
+          { route: '/reports/profitability', label: 'Profitability Report' },
           { route: '/reports/delivery-summary', label: 'Delivery Summary' },
           { route: '/reports/disbursement', label: 'Disbursement Report' },
           { route: '/reports/parked-bank-items', label: 'Unidentified Bank Items' },
