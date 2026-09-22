@@ -5,6 +5,7 @@ const {
   buildArAging, buildArAgingCustomerDetails, buildArAgingCustomerLedger,
   buildArAgingDetails, buildArAgingDetailsCsv, searchArCustomers,
 } = require('../lib/arAging');
+const { buildApAging, buildApAgingSupplierDetails } = require('../lib/apAging');
 const { parkedReport } = require('../lib/parkedBankItems');
 const { buildCommissionReport, buildCommissionJoDetail, getTeamEmployeeIds, getSbuDivisionIds } = require('../lib/commissionReport');
 const {
@@ -169,6 +170,42 @@ router.get('/ar-aging/customer/:customerId/ledger', requireAuth, requirePermissi
     res.json(data);
   } catch (err) {
     next(err);
+  }
+});
+
+// ---- Accounting > Reports > AP Aging ----
+//
+// The payables mirror of AR Aging, on its own permission. `includeUnevidenced` is off unless
+// asked for -- see the note at the top of lib/apAging.js for why this report defaults the other
+// way to the AR one.
+const AP_AGING_ROUTE = '/reports/ap-aging';
+
+function apAgingFilters(query) {
+  return {
+    locationId: query.locationId && Number(query.locationId) > 0 ? Number(query.locationId) : null,
+    noLocation: query.noLocation === 'true' || query.noLocation === '1',
+    nameStarts: query.nameStarts ? String(query.nameStarts).slice(0, 100) : null,
+    includeUnevidenced: query.includeUnevidenced === 'true' || query.includeUnevidenced === '1',
+  };
+}
+
+router.get('/ap-aging', requireAuth, requirePermission(AP_AGING_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    res.json(await buildApAging(req.query.asOf || today(), apAgingFilters(req.query)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/ap-aging/supplier/:supplierId/details', requireAuth, requirePermission(AP_AGING_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const data = await buildApAgingSupplierDetails(
+      Number(req.params.supplierId), req.query.asOf || today(), apAgingFilters(req.query),
+    );
+    if (!data) return res.status(404).json({ error: 'Vendor not found' });
+    return res.json(data);
+  } catch (err) {
+    return next(err);
   }
 });
 
