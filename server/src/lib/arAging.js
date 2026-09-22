@@ -111,21 +111,37 @@ function locationClause(alias, { locationId, noLocation }) {
   return { sql: '', params: [] };
 }
 
-async function buildArAging(asOf, filters = {}) {
-  const { nameStarts } = filters;
+// EVERY OPEN ITEM AS OF A DATE, in one place.
+//
+// Both reports built on this file are the same set of facts shown at two grains: AR Aging sums
+// these items into buckets per customer, AR Aging Details lists them. They used to be separate
+// query sets, which is a standing invitation for a detail report that does not add up to the
+// summary it details -- the one thing that makes both useless. So the items are computed once
+// here and each report presents them.
+//
+// The signed convention is the same throughout: positive = the customer owes us.
+//
+// The display fields (BS #, memo, PO #, location) are along for the ride. They cost nothing on
+// queries that were already reading these rows, and the Details report needs them.
+async function collectOpenItems(asOf, filters = {}) {
+  const { nameStarts, customerId } = filters;
   const nameClause = nameStarts ? ' AND c.name LIKE ?' : '';
   const nameParam = nameStarts ? [`${nameStarts}%`] : [];
+  const custClause = customerId ? ' AND c.id = ?' : '';
+  const custParam = customerId ? [customerId] : [];
 
   const invLoc = locationClause('si', filters);
   const [invoices] = await pool.query(
-    `SELECT si.id, so.customer_id, c.name AS customer_name, si.date_created, si.date_due, si.gross_amount,
-            si.status, si.amount_due
+    `SELECT si.id, c.id AS customer_id, c.name AS customer_name, si.date_created, si.date_due, si.gross_amount,
+            si.status, si.amount_due, si.invoice_no, si.bs_si_no, si.po_no, si.memo,
+            loc.location_name
      FROM sales_invoices si
      LEFT JOIN sales_orders so ON so.id = si.sales_order_id
      LEFT JOIN estimates e ON e.id = si.estimate_id
      JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id)
-     WHERE si.status != 'cancelled' AND si.date_created <= ?${invLoc.sql}${nameClause}`,
-    [asOf, ...invLoc.params, ...nameParam]
+     LEFT JOIN locations loc ON loc.id = si.office_location_id
+     WHERE si.status != 'cancelled' AND si.date_created <= ?${invLoc.sql}${nameClause}${custClause}`,
+    [asOf, ...invLoc.params, ...nameParam, ...custParam]
   );
 
   // Settlements that had landed by the as-of date, summed per invoice. Payments and memos
@@ -151,11 +167,13 @@ async function buildArAging(asOf, filters = {}) {
 
   const memoLoc = locationClause('cm', filters);
   const [memos] = await pool.query(
-    `SELECT cm.id, cm.customer_id, c.name AS customer_name, cm.date_created, cm.gross_amount
+    `SELECT cm.id, cm.customer_id, c.name AS customer_name, cm.date_created, cm.gross_amount,
+            cm.credit_memo_no, cm.memo, loc.location_name
      FROM credit_memos cm
      JOIN customers c ON c.id = cm.customer_id
-     WHERE cm.status != 'voided' AND cm.date_created <= ?${memoLoc.sql}${nameClause}`,
-    [asOf, ...memoLoc.params, ...nameParam]
+     LEFT JOIN locations loc ON loc.id = cm.office_location_id
+     WHERE cm.status != 'voided' AND cm.date_created <= ?${memoLoc.sql}${nameClause}${custClause}`,
+    [asOf, ...memoLoc.params, ...nameParam, ...custParam]
   );
   // A memo's remaining credit = its gross, less what it has been applied to invoices and
   // less any payment that has drawn on it.
@@ -181,11 +199,12 @@ async function buildArAging(asOf, filters = {}) {
   const payLoc = locationClause('cp', filters);
   const [payments] = await pool.query(
     `SELECT cp.id, cp.customer_id, c.name AS customer_name, cp.date_created, cp.payment_amount,
-            cp.unapplied_amount
+            cp.unapplied_amount, cp.customer_payment_no, cp.memo, cp.or_no, loc.location_name
      FROM customer_payments cp
      JOIN customers c ON c.id = cp.customer_id
-     WHERE cp.status != 'voided' AND cp.date_created <= ?${payLoc.sql}${nameClause}`,
-    [asOf, ...payLoc.params, ...nameParam]
+     LEFT JOIN locations loc ON loc.id = cp.office_location_id
+     WHERE cp.status != 'voided' AND cp.date_created <= ?${payLoc.sql}${nameClause}${custClause}`,
+    [asOf, ...payLoc.params, ...nameParam, ...custParam]
   );
   // Only cash applied to invoices consumes a payment; a line drawing a credit moves no
   // cash. What's left over is an overpayment held on account.
@@ -199,6 +218,63 @@ async function buildArAging(asOf, filters = {}) {
   );
   const cashAppliedByPayment = new Map(payCashApplied.map((r) => [r.payment_id, Number(r.amt)]));
 
+  // One row per still-open document. `aging_date` is what the age is measured from and the
+  // bucket chosen by: an invoice ages from its DUE date, a credit or an overpayment has no due
+  // date and ages from its own.
+  const items = [];
+
+  for (const inv of invoices) {
+    const settled = (paidByInvoice.get(inv.id) || 0) + (creditedByInvoice.get(inv.id) || 0);
+    const remaining = Number(inv.gross_amount) - settled;
+    if (Math.abs(remaining) < 0.005) continue;
+    items.push({
+      customer_id: inv.customer_id, customer_name: inv.customer_name,
+      type: 'Invoice', reference: inv.invoice_no, id: inv.id,
+      date: inv.date_created, due_date: inv.date_due, aging_date: inv.date_due || inv.date_created,
+      original_amount: round2(inv.gross_amount), balance: round2(remaining),
+      bs_no: inv.bs_si_no || null, po_no: inv.po_no || null, memo: inv.memo || null,
+      location_name: inv.location_name || null,
+      // The invoice header insists it is settled and nothing in the data agrees. Carried on the
+      // item so the customer row can show how much of its balance rests on that disagreement.
+      marked_paid_unevidenced: isMarkedPaid(inv) && settled < 0.005,
+    });
+  }
+  for (const cm of memos) {
+    const remaining = Number(cm.gross_amount) - (appliedByMemo.get(cm.id) || 0) - (drawnByMemo.get(cm.id) || 0);
+    if (remaining < 0.005) continue;
+    items.push({
+      customer_id: cm.customer_id, customer_name: cm.customer_name,
+      type: 'Credit Memo', reference: cm.credit_memo_no, id: cm.id,
+      date: cm.date_created, due_date: null, aging_date: cm.date_created,
+      original_amount: round2(cm.gross_amount), balance: round2(-remaining),
+      bs_no: null, po_no: null, memo: cm.memo || null, location_name: cm.location_name || null,
+      marked_paid_unevidenced: false,
+    });
+  }
+  for (const cp of payments) {
+    // .has(), not `|| 0` -- only payments that actually have lines appear in this map, so this
+    // is what separates "applied nothing" from "its lines were never imported".
+    const unapplied = unappliedCash(cp, cashAppliedByPayment.has(cp.id) ? cashAppliedByPayment.get(cp.id) : null);
+    if (unapplied < 0.005) continue;
+    items.push({
+      customer_id: cp.customer_id, customer_name: cp.customer_name,
+      type: 'Unapplied Payment', reference: cp.customer_payment_no, id: cp.id,
+      date: cp.date_created, due_date: null, aging_date: cp.date_created,
+      original_amount: round2(cp.payment_amount), balance: round2(-unapplied),
+      // The OR number is the reference a collector actually quotes on the phone, and the memo
+      // column is where the real report shows it when the payment carries no memo of its own.
+      bs_no: null, po_no: null, memo: cp.memo || (cp.or_no ? `OR# ${cp.or_no}` : null),
+      location_name: cp.location_name || null,
+      marked_paid_unevidenced: false,
+    });
+  }
+
+  return items;
+}
+
+async function buildArAging(asOf, filters = {}) {
+  const items = await collectOpenItems(asOf, filters);
+
   // Accumulate every contribution into per-customer buckets.
   const byCustomer = new Map();
   function customerRow(id, name) {
@@ -208,30 +284,13 @@ async function buildArAging(asOf, filters = {}) {
     return byCustomer.get(id);
   }
 
-  for (const inv of invoices) {
-    const settled = (paidByInvoice.get(inv.id) || 0) + (creditedByInvoice.get(inv.id) || 0);
-    const remaining = Number(inv.gross_amount) - settled;
-    if (Math.abs(remaining) < 0.005) continue;
-    const row = customerRow(inv.customer_id, inv.customer_name);
-    addToBucket(row, remaining, inv.date_due || inv.date_created, asOf);
-    // The invoice header insists it is settled and nothing in the data agrees. Counted here so
-    // the customer row can show how much of its balance rests on that disagreement.
-    if (isMarkedPaid(inv) && settled < 0.005) {
+  for (const item of items) {
+    const row = customerRow(item.customer_id, item.customer_name);
+    addToBucket(row, item.balance, item.aging_date, asOf);
+    if (item.marked_paid_unevidenced) {
       row.unevidenced_count += 1;
-      row.unevidenced_amount += remaining;
+      row.unevidenced_amount += item.balance;
     }
-  }
-  for (const cm of memos) {
-    const remaining = Number(cm.gross_amount) - (appliedByMemo.get(cm.id) || 0) - (drawnByMemo.get(cm.id) || 0);
-    if (remaining < 0.005) continue;
-    addToBucket(customerRow(cm.customer_id, cm.customer_name), -remaining, cm.date_created, asOf);
-  }
-  for (const cp of payments) {
-    // .has(), not `|| 0` -- only payments that actually have lines appear in this map, so this
-    // is what separates "applied nothing" from "its lines were never imported".
-    const unapplied = unappliedCash(cp, cashAppliedByPayment.has(cp.id) ? cashAppliedByPayment.get(cp.id) : null);
-    if (unapplied < 0.005) continue;
-    addToBucket(customerRow(cp.customer_id, cp.customer_name), -unapplied, cp.date_created, asOf);
   }
 
   const rows = [...byCustomer.values()]
@@ -262,6 +321,142 @@ async function buildArAging(asOf, filters = {}) {
   Object.keys(totals).forEach((k) => { totals[k] = round2(totals[k]); });
 
   return { as_of: asOf, rows, totals };
+}
+
+// AR Aging Details (Accounting > Reports > AR Aging Details). The same open items AR Aging
+// buckets, listed instead of summed: one group per customer, one row per document, with the
+// age and the open balance it contributes. Because both reports read collectOpenItems, a
+// customer's rows here always add up to that customer's Total Balance on the summary -- the
+// two cannot drift apart.
+//
+// AGE is measured from the aging date, which is the DUE date for an invoice and the document
+// date for a credit memo or an unapplied payment. Not clamped at zero: an invoice not yet due
+// ages negative, and "-12" says something a floor of 0 would hide.
+//
+// PAGED BY CUSTOMER, not by row. A page that cut a customer in half would show a group whose
+// rows do not add up to its own heading, which is the one thing this report exists to avoid.
+const DETAILS_DEFAULT_PAGE_SIZE = 25;
+const DETAILS_MAX_PAGE_SIZE = 200;
+
+function groupItemsByCustomer(items, asOf) {
+  const byCustomer = new Map();
+  for (const item of items) {
+    if (!byCustomer.has(item.customer_id)) {
+      byCustomer.set(item.customer_id, {
+        customer_id: item.customer_id, customer_name: item.customer_name, items: [], total_balance: 0,
+      });
+    }
+    const group = byCustomer.get(item.customer_id);
+    group.items.push({
+      type: item.type,
+      trans_date: item.date,
+      trans_no: item.reference,
+      id: item.id,
+      bs_no: item.bs_no,
+      memo: item.memo,
+      po_no: item.po_no,
+      date_due: item.due_date,
+      age: daysBetween(item.aging_date, asOf),
+      open_balance: item.balance,
+      location_name: item.location_name,
+      marked_paid_unevidenced: item.marked_paid_unevidenced,
+    });
+    group.total_balance += item.balance;
+  }
+
+  return [...byCustomer.values()]
+    .map((g) => ({
+      ...g,
+      total_balance: round2(g.total_balance),
+      items: g.items.sort((a, b) => String(a.trans_date).localeCompare(String(b.trans_date))
+        || String(a.trans_no).localeCompare(String(b.trans_no))),
+    }))
+    // Same rule as the summary: a customer whose items net to nothing is not outstanding. Kept
+    // when the items themselves are non-zero, so a customer holding an invoice and an equal
+    // credit still shows both rows rather than vanishing.
+    .filter((g) => Math.abs(g.total_balance) >= 0.005 || g.items.length > 0)
+    .sort((a, b) => a.customer_name.localeCompare(b.customer_name));
+}
+
+async function buildArAgingDetails(asOf, filters = {}) {
+  const items = await collectOpenItems(asOf, filters);
+  const groups = groupItemsByCustomer(items, asOf);
+
+  const limit = Math.min(DETAILS_MAX_PAGE_SIZE, Math.max(1, Number(filters.limit) || DETAILS_DEFAULT_PAGE_SIZE));
+  const page = Math.max(1, Number(filters.page) || 1);
+  const pageGroups = groups.slice((page - 1) * limit, page * limit);
+
+  // Totals are over the WHOLE filtered set, not the page: the items were all computed anyway,
+  // and a receivable report whose total moves when you turn the page is not a total.
+  const totals = {
+    open_balance: round2(groups.reduce((s, g) => s + g.total_balance, 0)),
+    customer_count: groups.length,
+    item_count: groups.reduce((s, g) => s + g.items.length, 0),
+    unevidenced_count: items.filter((i) => i.marked_paid_unevidenced).length,
+  };
+  const pageTotal = round2(pageGroups.reduce((s, g) => s + g.total_balance, 0));
+
+  return {
+    as_of: asOf,
+    rows: pageGroups,
+    page,
+    limit,
+    total_pages: Math.max(1, Math.ceil(groups.length / limit)),
+    page_total: pageTotal,
+    totals,
+  };
+}
+
+// The whole filtered set, flat, one row per document with its customer repeated -- the shape a
+// spreadsheet can sort and pivot. No page limit: this report's cost is the scan that already
+// happened, so paging the export would only make someone run it five times.
+async function buildArAgingDetailsCsv(asOf, filters = {}) {
+  const items = await collectOpenItems(asOf, filters);
+  const groups = groupItemsByCustomer(items, asOf);
+
+  const header = ['Customer', 'Trans Date', 'Trans #', 'BS #', 'Memo', 'PO #', 'Date Due', 'Age', 'Open Balance', 'Location'];
+  const cell = (v) => {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    // Excel reads a leading = + - @ as a formula. Note this deliberately does NOT touch the
+    // money column, which is written by `money` below and may legitimately start with a minus.
+    const safe = /^[=+\-@]/.test(s) ? `'${s}` : s;
+    return /[",\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+  };
+  const money = (v) => Number(v).toFixed(2);
+  const day = (v) => (v ? String(v).slice(0, 10) : '');
+
+  const out = [header.join(',')];
+  for (const g of groups) {
+    for (const it of g.items) {
+      out.push([
+        cell(g.customer_name), day(it.trans_date), cell(it.trans_no), cell(it.bs_no), cell(it.memo),
+        cell(it.po_no), day(it.date_due), it.age, money(it.open_balance), cell(it.location_name),
+      ].join(','));
+    }
+    out.push([cell(`${g.customer_name} -- total`), '', '', '', '', '', '', '', money(g.total_balance), ''].join(','));
+  }
+  return { csv: out.join('\n'), customers: groups.length, items: items.length };
+}
+
+// Typeahead for the Details report's Customer filter. Capped, and limited to customers that
+// have AR history at all -- /customers returns all 21,562 rows and a receivables filter has no
+// use for a customer who has never been billed.
+async function searchArCustomers(term) {
+  const q = `%${String(term || '').trim()}%`;
+  const [rows] = await pool.query(
+    `SELECT c.id, c.name
+       FROM customers c
+      WHERE c.name LIKE ?
+        AND (EXISTS (SELECT 1 FROM sales_orders so JOIN sales_invoices si ON si.sales_order_id = so.id
+                      WHERE so.customer_id = c.id)
+          OR EXISTS (SELECT 1 FROM customer_payments cp WHERE cp.customer_id = c.id)
+          OR EXISTS (SELECT 1 FROM credit_memos cm WHERE cm.customer_id = c.id))
+      ORDER BY c.name
+      LIMIT 25`,
+    [q],
+  );
+  return rows;
 }
 
 // The DETAILS drill-down: the individual open items making up one customer's balance, each
@@ -396,4 +591,7 @@ async function buildArAgingCustomerLedger(customerId, asOf) {
   return { customer_id: customer.id, customer_name: customer.name, as_of: asOf, ledger, total_balance: running };
 }
 
-module.exports = { buildArAging, buildArAgingCustomerDetails, buildArAgingCustomerLedger };
+module.exports = {
+  buildArAging, buildArAgingCustomerDetails, buildArAgingCustomerLedger,
+  buildArAgingDetails, buildArAgingDetailsCsv, searchArCustomers,
+};

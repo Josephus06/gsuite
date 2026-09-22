@@ -1,7 +1,10 @@
 const express = require('express');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { buildTrialBalance, buildBalanceSheet, buildIncomeStatement, buildGeneralLedger, buildGlTransactions } = require('../lib/reportsEngine');
-const { buildArAging, buildArAgingCustomerDetails, buildArAgingCustomerLedger } = require('../lib/arAging');
+const {
+  buildArAging, buildArAgingCustomerDetails, buildArAgingCustomerLedger,
+  buildArAgingDetails, buildArAgingDetailsCsv, searchArCustomers,
+} = require('../lib/arAging');
 const { parkedReport } = require('../lib/parkedBankItems');
 const { buildCommissionReport, buildCommissionJoDetail, getTeamEmployeeIds, getSbuDivisionIds } = require('../lib/commissionReport');
 const {
@@ -166,6 +169,48 @@ router.get('/ar-aging/customer/:customerId/ledger', requireAuth, requirePermissi
     res.json(data);
   } catch (err) {
     next(err);
+  }
+});
+
+// ---- Accounting > Reports > AR Aging Details ----
+//
+// Its own pages row rather than borrowing AR Aging's: a borrowed scope is what produces a 500
+// instead of a 403 on an install where the row is missing, and it takes the ability to grant one
+// report without the other away from whoever maintains permissions.
+const AR_AGING_DETAILS_ROUTE = '/reports/ar-aging-details';
+
+function arAgingDetailsFilters(query) {
+  return {
+    customerId: query.customerId && Number(query.customerId) > 0 ? Number(query.customerId) : null,
+    locationId: query.locationId && Number(query.locationId) > 0 ? Number(query.locationId) : null,
+    noLocation: query.noLocation === 'true' || query.noLocation === '1',
+    nameStarts: query.nameStarts ? String(query.nameStarts).slice(0, 100) : null,
+    page: query.page,
+    limit: query.limit,
+  };
+}
+
+router.get('/ar-aging-details', requireAuth, requirePermission(AR_AGING_DETAILS_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const asOf = req.query.asOf || today();
+    const filters = arAgingDetailsFilters(req.query);
+    if (req.query.format === 'csv') {
+      const { csv } = await buildArAgingDetailsCsv(asOf, filters);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="ar-aging-details-${asOf}.csv"`);
+      return res.send(csv);
+    }
+    return res.json(await buildArAgingDetails(asOf, filters));
+  } catch (err) {
+    return next(err);
+  }
+});
+
+router.get('/ar-aging-details/customers', requireAuth, requirePermission(AR_AGING_DETAILS_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    return res.json(await searchArCustomers(req.query.q));
+  } catch (err) {
+    return next(err);
   }
 });
 
