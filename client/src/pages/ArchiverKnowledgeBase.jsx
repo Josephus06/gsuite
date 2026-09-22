@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
-import KnowledgeCardEditModal from '../components/KnowledgeCardEditModal';
+import KnowledgeEditModal from '../components/KnowledgeEditModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { formatDateTime } from '../utils/archiverLabels';
 
@@ -64,6 +64,7 @@ export default function ArchiverKnowledgeBase() {
   const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(null); // holds the section id to preselect
   const [editing, setEditing] = useState(null); // the card being renamed
+  const [editingSection, setEditingSection] = useState(null); // the section heading being renamed
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
@@ -110,7 +111,16 @@ export default function ArchiverKnowledgeBase() {
         return (
           <div className="card" key={section.id} style={{ marginBottom: 16 }}>
             <div className="page-header" style={{ marginBottom: 4 }}>
-              <h2 style={{ margin: 0, fontSize: 17 }}>{section.name}</h2>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+                <h2 style={{ margin: 0, fontSize: 17 }}>{section.name}</h2>
+                {/* Renames the heading and the line under it. The section keeps its slug, so the
+                    empty-state copy Technical Problem gets stays with it whatever it is called. */}
+                {canEdit && (
+                  <button type="button" className="link-btn" style={{ fontSize: 12 }} onClick={() => setEditingSection(section)}>
+                    Edit
+                  </button>
+                )}
+              </div>
               {can('/archiver/knowledge-base', 'can_add') && (
                 <button className="btn btn-sm" onClick={() => setShowNew(String(section.id))}>Add card here</button>
               )}
@@ -180,10 +190,19 @@ export default function ArchiverKnowledgeBase() {
       {/* Reloads the grid rather than patching the row in place: the card's counts and ordering
           come from the server, and a locally edited name would sit in a stale grid. */}
       {editing && (
-        <KnowledgeCardEditModal
-          card={editing}
+        <KnowledgeEditModal
+          item={editing}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); load(); }}
+        />
+      )}
+
+      {editingSection && (
+        <KnowledgeEditModal
+          item={editingSection}
+          kind="section"
+          onClose={() => setEditingSection(null)}
+          onSaved={() => { setEditingSection(null); load(); }}
         />
       )}
 

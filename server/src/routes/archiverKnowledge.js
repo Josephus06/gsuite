@@ -84,6 +84,37 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   } catch (err) { next(err); }
 });
 
+// Renaming a section, and rewording the line under it.
+//
+// THE SLUG IS NEVER TOUCHED, only the display name. The slug is not decoration: the front page
+// keys its empty-state copy on `technical-problem` to say "add one per problem", and object
+// storage keys are built from it. A rename is a label change, so it must not quietly re-file
+// anything or turn a section's own empty message into the generic one.
+//
+// is_system blocks DELETION, not renaming -- the three sections are the shape of the thing, and
+// nothing beneath them depends on what they are called.
+router.put('/sections/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const { name, description } = req.body || {};
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'A name is required.' });
+
+    const [[section]] = await pool.query('SELECT id FROM kb_sections WHERE id = ? AND is_active = TRUE', [req.params.id]);
+    if (!section) return res.status(404).json({ error: 'Not found' });
+
+    const [[dupe]] = await pool.query(
+      'SELECT id FROM kb_sections WHERE name = ? AND id <> ? AND is_active = TRUE',
+      [String(name).trim(), req.params.id],
+    );
+    if (dupe) return res.status(400).json({ error: `A section called "${String(name).trim()}" already exists.` });
+
+    await pool.query(
+      'UPDATE kb_sections SET name = ?, description = ?, updated_at = NOW() WHERE id = ?',
+      [trunc(name, 150), trunc(description, 500), req.params.id],
+    );
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 router.get('/topics/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[topic]] = await pool.query(

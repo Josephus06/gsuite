@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
-import KnowledgeCardEditModal from '../components/KnowledgeCardEditModal';
+import KnowledgeEditModal from '../components/KnowledgeEditModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { formatBytes, formatDateTime, fileKind } from '../utils/archiverLabels';
 import { readFileAsBase64 } from '../utils/archiverUpload';
@@ -382,11 +382,11 @@ export default function ArchiverKnowledgeTopic() {
 
       {showUpload && <UploadModal topic={topic} onClose={() => setShowUpload(false)} onSaved={() => { setShowUpload(false); load(); }} />}
       {showRename && (
-        <KnowledgeCardEditModal card={topic} onClose={() => setShowRename(false)} onSaved={() => { setShowRename(false); load(); }} />
+        <KnowledgeEditModal item={topic} onClose={() => setShowRename(false)} onSaved={() => { setShowRename(false); load(); }} />
       )}
       {editingChild && (
-        <KnowledgeCardEditModal
-          card={editingChild}
+        <KnowledgeEditModal
+          item={editingChild}
           onClose={() => setEditingChild(null)}
           onSaved={() => { setEditingChild(null); load(); }}
         />
