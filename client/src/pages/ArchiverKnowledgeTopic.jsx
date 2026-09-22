@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
+import KnowledgeCardEditModal from '../components/KnowledgeCardEditModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { formatBytes, formatDateTime, fileKind } from '../utils/archiverLabels';
 import { readFileAsBase64 } from '../utils/archiverUpload';
@@ -163,37 +164,6 @@ function UploadModal({ topic, onClose, onSaved }) {
   );
 }
 
-function RenameModal({ topic, onClose, onSaved }) {
-  const [form, setForm] = useState({ name: topic.name, description: topic.description || '' });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  async function save() {
-    if (!form.name.trim()) { setError('A name is required.'); return; }
-    setError(''); setSaving(true);
-    try { await api.put(`/archiver/knowledge-base/topics/${topic.id}`, form); onSaved(); }
-    catch (e) { setError(e.response?.data?.error || 'Could not save.'); setSaving(false); }
-  }
-
-  return (
-    <Modal title={`Edit ${topic.name}`} onClose={onClose}>
-      {error && <div className="error-banner">{error}</div>}
-      <div className="field">
-        <label>Name *</label>
-        <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-      </div>
-      <div className="field">
-        <label>Description</label>
-        <textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-      </div>
-      <div className="modal-actions">
-        <button type="button" className="btn" onClick={onClose}>Cancel</button>
-        <button type="button" className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
-      </div>
-    </Modal>
-  );
-}
-
 export default function ArchiverKnowledgeTopic() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -203,6 +173,7 @@ export default function ArchiverKnowledgeTopic() {
   const [showUpload, setShowUpload] = useState(false);
   const [showNewChild, setShowNewChild] = useState(false);
   const [showRename, setShowRename] = useState(false);
+  const [editingChild, setEditingChild] = useState(null); // a nested card being renamed
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -253,6 +224,7 @@ export default function ArchiverKnowledgeTopic() {
   const ancestors = topic.ancestors || [];
   // The card this one sits in, if any -- the last ancestor is the immediate parent.
   const parent = ancestors.length ? ancestors[ancestors.length - 1] : null;
+  const canEditCards = can('/archiver/knowledge-base', 'can_edit');
 
   return (
     <div>
@@ -325,25 +297,39 @@ export default function ArchiverKnowledgeTopic() {
           {/* Same auto-fill grid as the front page, so a nested card looks like a card. */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
             {children.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => navigate(`/archiver/knowledge-base/${c.id}`)}
-                style={{
-                  textAlign: 'left', cursor: 'pointer', padding: 14, borderRadius: 10,
-                  border: '1px solid var(--border, #e2e8f0)', background: 'transparent', color: 'inherit',
-                }}
-              >
-                <div style={{ fontWeight: 600, fontSize: 15 }}>{c.name}</div>
-                {c.description && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{c.description}</div>}
-                <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-                  {Number(c.child_count) > 0
-                    ? `${c.child_count} card${Number(c.child_count) === 1 ? '' : 's'}`
-                    : Number(c.file_count) === 0
-                      ? 'Empty'
-                      : `${c.file_count} file${Number(c.file_count) === 1 ? '' : 's'}`}
-                </div>
-              </button>
+              // Edit beside the card button, not inside it -- nesting buttons is invalid markup
+              // and fires both handlers, so a rename would also navigate into the card.
+              <div key={c.id} style={{ position: 'relative' }}>
+                <button
+                  type="button"
+                  onClick={() => navigate(`/archiver/knowledge-base/${c.id}`)}
+                  style={{
+                    textAlign: 'left', cursor: 'pointer', padding: 14, borderRadius: 10,
+                    border: '1px solid var(--border, #e2e8f0)', background: 'transparent', color: 'inherit',
+                    width: '100%', height: '100%',
+                  }}
+                >
+                  <div style={{ fontWeight: 600, fontSize: 15, paddingRight: canEditCards ? 40 : 0 }}>{c.name}</div>
+                  {c.description && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{c.description}</div>}
+                  <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+                    {Number(c.child_count) > 0
+                      ? `${c.child_count} card${Number(c.child_count) === 1 ? '' : 's'}`
+                      : Number(c.file_count) === 0
+                        ? 'Empty'
+                        : `${c.file_count} file${Number(c.file_count) === 1 ? '' : 's'}`}
+                  </div>
+                </button>
+                {canEditCards && (
+                  <button
+                    type="button"
+                    className="link-btn"
+                    onClick={() => setEditingChild(c)}
+                    style={{ position: 'absolute', top: 12, right: 12, fontSize: 12 }}
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         </div>
@@ -395,7 +381,16 @@ export default function ArchiverKnowledgeTopic() {
       </div>
 
       {showUpload && <UploadModal topic={topic} onClose={() => setShowUpload(false)} onSaved={() => { setShowUpload(false); load(); }} />}
-      {showRename && <RenameModal topic={topic} onClose={() => setShowRename(false)} onSaved={() => { setShowRename(false); load(); }} />}
+      {showRename && (
+        <KnowledgeCardEditModal card={topic} onClose={() => setShowRename(false)} onSaved={() => { setShowRename(false); load(); }} />
+      )}
+      {editingChild && (
+        <KnowledgeCardEditModal
+          card={editingChild}
+          onClose={() => setEditingChild(null)}
+          onSaved={() => { setEditingChild(null); load(); }}
+        />
+      )}
       {/* Reloads this card rather than navigating into the new one: you usually add several cards
           in a row, and being thrown a level deeper after each is the wrong end of that. */}
       {showNewChild && (

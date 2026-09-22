@@ -191,13 +191,25 @@ router.put('/topics/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
   try {
     const { name, description } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'A name is required.' });
-    const [[topic]] = await pool.query('SELECT id, section_id FROM kb_topics WHERE id = ?', [req.params.id]);
+    const [[topic]] = await pool.query('SELECT id, section_id, parent_topic_id FROM kb_topics WHERE id = ?', [req.params.id]);
     if (!topic) return res.status(404).json({ error: 'Not found' });
+
+    // Uniqueness is per PARENT, the same rule the insert uses. Checking section-wide here is what
+    // the route did before cards could nest, and it rejects renames that are perfectly legal --
+    // two machines may each hold a card called "Printheads", and only siblings share a grid.
     const [[dupe]] = await pool.query(
-      'SELECT id FROM kb_topics WHERE section_id = ? AND name = ? AND id <> ?',
-      [topic.section_id, String(name).trim(), req.params.id],
+      topic.parent_topic_id
+        ? 'SELECT id FROM kb_topics WHERE parent_topic_id = ? AND name = ? AND id <> ?'
+        : 'SELECT id FROM kb_topics WHERE section_id = ? AND parent_topic_id IS NULL AND name = ? AND id <> ?',
+      [topic.parent_topic_id || topic.section_id, String(name).trim(), req.params.id],
     );
-    if (dupe) return res.status(400).json({ error: `"${String(name).trim()}" already exists in that section.` });
+    if (dupe) {
+      return res.status(400).json({
+        error: topic.parent_topic_id
+          ? `"${String(name).trim()}" already exists inside that card.`
+          : `"${String(name).trim()}" already exists in that section.`,
+      });
+    }
 
     await pool.query(
       'UPDATE kb_topics SET name = ?, description = ?, updated_by_user_id = ?, updated_at = NOW() WHERE id = ?',

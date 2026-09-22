@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
+import KnowledgeCardEditModal from '../components/KnowledgeCardEditModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { formatDateTime } from '../utils/archiverLabels';
 
@@ -62,6 +63,7 @@ export default function ArchiverKnowledgeBase() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(null); // holds the section id to preselect
+  const [editing, setEditing] = useState(null); // the card being renamed
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
@@ -75,6 +77,7 @@ export default function ArchiverKnowledgeBase() {
 
   useEffect(() => { load(); }, [load]);
 
+  const canEdit = can('/archiver/knowledge-base', 'can_edit');
   const q = search.trim().toLowerCase();
   const matches = (t) => !q || t.name.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q);
 
@@ -127,36 +130,62 @@ export default function ArchiverKnowledgeBase() {
               // monitor and stack sensibly on a phone in the workshop.
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12, marginTop: 8 }}>
                 {shown.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => navigate(`/archiver/knowledge-base/${t.id}`)}
-                    style={{
-                      textAlign: 'left', cursor: 'pointer', padding: 14, borderRadius: 10,
-                      border: '1px solid var(--border, #e2e8f0)', background: 'transparent', color: 'inherit',
-                    }}
-                  >
-                    <div style={{ fontWeight: 600, fontSize: 15 }}>{t.name}</div>
-                    {t.description && (
-                      <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{t.description}</div>
+                  // Edit sits BESIDE the card button rather than inside it: a button within a
+                  // button is invalid markup, and the browsers that tolerate it fire both
+                  // handlers, so renaming a card would also navigate into it.
+                  <div key={t.id} style={{ position: 'relative' }}>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/archiver/knowledge-base/${t.id}`)}
+                      style={{
+                        textAlign: 'left', cursor: 'pointer', padding: 14, borderRadius: 10,
+                        border: '1px solid var(--border, #e2e8f0)', background: 'transparent', color: 'inherit',
+                        width: '100%', height: '100%',
+                      }}
+                    >
+                      {/* Room kept clear at the top right so a long name does not run under Edit. */}
+                      <div style={{ fontWeight: 600, fontSize: 15, paddingRight: canEdit ? 40 : 0 }}>{t.name}</div>
+                      {t.description && (
+                        <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{t.description}</div>
+                      )}
+                      {/* A card that holds cards reports THAT, not its own file count --
+                          a folder saying 'No files yet' while holding six cards reads as empty. */}
+                      <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+                        {Number(t.child_count) > 0
+                          ? `${t.child_count} card${Number(t.child_count) === 1 ? '' : 's'}`
+                          : Number(t.file_count) === 0
+                          ? 'No files yet'
+                          : `${t.file_count} file${Number(t.file_count) === 1 ? '' : 's'}`}
+                        {t.last_upload_at ? ` · ${formatDateTime(t.last_upload_at).split(',')[0]}` : ''}
+                      </div>
+                    </button>
+                    {canEdit && (
+                      <button
+                        type="button"
+                        className="link-btn"
+                        onClick={() => setEditing(t)}
+                        style={{ position: 'absolute', top: 12, right: 12, fontSize: 12 }}
+                      >
+                        Edit
+                      </button>
                     )}
-                    {/* A card that holds cards reports THAT, not its own file count --
-                        a folder saying 'No files yet' while holding six cards reads as empty. */}
-                    <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-                      {Number(t.child_count) > 0
-                        ? `${t.child_count} card${Number(t.child_count) === 1 ? '' : 's'}`
-                        : Number(t.file_count) === 0
-                        ? 'No files yet'
-                        : `${t.file_count} file${Number(t.file_count) === 1 ? '' : 's'}`}
-                      {t.last_upload_at ? ` · ${formatDateTime(t.last_upload_at).split(',')[0]}` : ''}
-                    </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}
           </div>
         );
       })}
+
+      {/* Reloads the grid rather than patching the row in place: the card's counts and ordering
+          come from the server, and a locally edited name would sit in a stale grid. */}
+      {editing && (
+        <KnowledgeCardEditModal
+          card={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); load(); }}
+        />
+      )}
 
       {showNew !== null && (
         <NewTopicModal
