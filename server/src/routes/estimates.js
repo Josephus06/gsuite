@@ -5,6 +5,7 @@ const { buildEstimatePdf, estimatePdfFilename } = require('../lib/estimatePdf');
 const pool = require('../db');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
+const { isHeadOfficeUser } = require('../lib/userLocation');
 const { BILLABLE_ESTIMATE_SQL } = require('../lib/estimateBilling');
 
 const router = express.Router();
@@ -582,6 +583,39 @@ router.get('/:id/approval-lines', requireAuth, requirePermission(ROUTE, 'can_vie
   } catch (err) { next(err); }
 });
 
+// May this user act on this estimate as if it were their own?
+//
+// TWO WAYS TO BE THE OWNER OF THE ACT. The obvious one is having raised it. The other is being
+// outside Head Office: the branches work one another's jobs, cover the same counter and answer
+// the same walk-in customer, so the rep who happens to be in when the customer rings back is the
+// one who has the answer to record -- and that is rarely the rep who typed the estimate. Roselyn
+// at Branch - Ayala could not record the customer's approval on an estimate Alessa raised at
+// Branch - SM, which is the whole job of a branch.
+//
+// "...and the transaction is not Head Office" is enforced by the visibility scope, not repeated
+// here: getSalesRepEmployeeScope already hands a branch account nothing but branch transactions
+// (lib/salesVisibility.js), and every caller below checks it. One definition of whose
+// transaction this is, rather than a second one drifting alongside it.
+//
+// Not the office_location_id stamped on the document -- that column reads Head Office on all but
+// a handful of rows, the 29,081 estimates belonging to the branch accounts included, so it would
+// refuse a branch user their own branch's work.
+async function mayActAsOwner(userId, estimateId) {
+  const creatorId = await getCreatorUserId(pool, estimateId);
+  if (creatorId != null && Number(creatorId) === Number(userId)) return true;
+  return !(await isHeadOfficeUser(userId));
+}
+
+// Refuses an estimate this user cannot see, so an action can never reach further than the list
+// does. The detail view and the email route already answer 404 the same way; this endpoint never
+// asked, which mattered little while it wanted can_edit and matters now that can_update opens it.
+async function isOutOfScope(userId, estimateId) {
+  const scope = await getSalesRepEmployeeScope(userId);
+  if (!scope) return false;
+  const [[row]] = await pool.query('SELECT sales_rep_id FROM estimates WHERE id = ?', [estimateId]);
+  return !scope.includes(row?.sales_rep_id);
+}
+
 // Who may move an estimate along the workflow from the read-only view.
 //
 // can_edit is the general key, but it is the wrong one for the last step. Reaching
@@ -590,19 +624,25 @@ router.get('/:id/approval-lines', requireAuth, requirePermission(ROUTE, 'can_vie
 // approval rights of their own, and by then no edit rights either. They were the only one who
 // could get the answer and the only one who could not record it.
 //
-// So: can_update ON YOUR OWN ESTIMATE, for that one transition. can_update is exactly this right
-// -- advance the transaction, do not rewrite it (src/db/add-can-update-permission.js) -- and
-// narrowing it to pending_customer_approval -> approved keeps it to the act being described.
-// Everything else on this endpoint, including cancelling and disapproving, still wants can_edit,
-// and the supervisor gate below is untouched: approving out of pending_supervisor_approval still
-// needs Can Approve Sales Estimate.
+// So: can_update, from whoever owns the ACT (mayActAsOwner above), for the customer step alone.
+// can_update is exactly this right -- advance the transaction, do not rewrite it
+// (src/db/add-can-update-permission.js).
+//
+// BOTH ANSWERS, not just yes. What is being recorded at pending_customer_approval is what the
+// CUSTOMER said, and a customer who says no is as much an answer as one who says yes -- letting
+// someone record only the approval would leave the refusal stuck with whoever holds can_edit,
+// which at this stage is a System Admin and nobody else. Cancelling still wants can_edit, and so
+// does every move out of the supervisor stage; the supervisor gate below is untouched, so
+// approving out of pending_supervisor_approval still needs Can Approve Sales Estimate.
+const CUSTOMER_ANSWERS = ['approved', 'disapproved'];
+
 async function requireStatusChange(req, res, next) {
   try {
+    if (await isOutOfScope(req.user.id, req.params.id)) return res.status(404).json({ error: 'Not found' });
     if (await userCan(req.user.id, ROUTE, 'can_edit')) return next();
-    if (req.body.status === 'approved' && await userCan(req.user.id, ROUTE, 'can_update')) {
+    if (CUSTOMER_ANSWERS.includes(req.body.status) && await userCan(req.user.id, ROUTE, 'can_update')) {
       const [[row]] = await pool.query('SELECT status FROM estimates WHERE id = ?', [req.params.id]);
-      const creatorId = await getCreatorUserId(pool, req.params.id);
-      if (row?.status === 'pending_customer_approval' && creatorId != null && Number(creatorId) === Number(req.user.id)) {
+      if (row?.status === 'pending_customer_approval' && await mayActAsOwner(req.user.id, req.params.id)) {
         return next();
       }
     }
@@ -1125,7 +1165,23 @@ router.get('/:id/email-recipient', requireAuth, requirePermission(ROUTE, 'can_vi
   } catch (err) { next(err); }
 });
 
-router.post('/:id/email', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+// Sending the quotation out is part of chasing the answer, so it opens to whoever owns that act
+// -- the same rule the Approve/Disapprove step uses. Without this the branch rep could record the
+// customer's decision but not send them the quotation to decide on, which is half a job. The
+// handler's own scope check below still refuses an estimate they cannot see.
+async function requireEmailSend(req, res, next) {
+  try {
+    if (await userCan(req.user.id, ROUTE, 'can_edit')) return next();
+    if (await userCan(req.user.id, ROUTE, 'can_update') && await mayActAsOwner(req.user.id, req.params.id)) {
+      return next();
+    }
+    return res.status(403).json({ error: 'You do not have permission to perform this action' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+router.post('/:id/email', requireAuth, requireEmailSend, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     // Checked before the work rather than after: building the message and then discovering there

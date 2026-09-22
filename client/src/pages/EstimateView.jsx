@@ -232,16 +232,27 @@ export default function EstimateView() {
   const canShowApprove = estimate.status === 'pending_supervisor_approval'
     ? !!user?.can_approve_sales_estimate
     : true;
-  // The estimate's own author, recorded when it was raised (audit trail, exposed by GET /:id).
-  // Reaching the customer stage takes Edit away from everyone but a System Admin, yet the rep who
-  // RAISED the estimate is the one chasing the customer for an answer -- and recording that answer
-  // advances the estimate rather than rewriting it, which is what can_update is for. So they get
-  // the Approved by Customer button on their own estimate with can_update alone, no approval right
-  // and no edit right. Mirrors requireStatusChange on the server, which allows exactly this one
-  // transition; everything else here still asks for canEdit.
+  // Reaching the customer stage takes Edit away from everyone but a System Admin, yet somebody
+  // still has to record what the customer said -- and recording an answer advances the estimate
+  // rather than rewriting it, which is what can_update is for.
+  //
+  // WHOSE ANSWER IT IS TO RECORD, two ways. The author, who raised it (created_by_user_id comes
+  // off the audit trail, via GET /:id). Or anyone outside Head Office: the branches cover the
+  // same counter, so the rep who is in when the customer rings back is rarely the rep who typed
+  // the estimate. is_head_office is resolved server-side from the user's default login location
+  // (lib/userLocation.js) and compared against false explicitly, so an account whose location has
+  // not loaded reads as Head Office -- the stricter side -- rather than as a branch.
+  //
+  // A branch account only ever SEES branch transactions (lib/salesVisibility.js), which is what
+  // keeps this off Head Office's own work without asking a second question here.
+  //
+  // Mirrors mayActAsOwner + requireStatusChange on the server, which accept exactly these two
+  // moves out of this one stage. Edit stays where it was: changing agreed figures is not a
+  // workflow step, and past supervisor approval it belongs to a System Admin alone.
   const isCreator = estimate.created_by_user_id != null && Number(estimate.created_by_user_id) === Number(user?.id);
+  const mayActAsOwner = isCreator || user?.is_head_office === false;
   const canRecordCustomerAnswer = estimate.status === 'pending_customer_approval'
-    && isCreator && can('/estimates', 'can_update');
+    && mayActAsOwner && can('/estimates', 'can_update');
   // The real system only shows Print once an estimate has cleared supervisor
   // approval -- printing a still-pending quotation isn't meaningful yet.
   const canShowPrint = estimate.status === 'pending_customer_approval' || estimate.status === 'approved';
@@ -260,10 +271,13 @@ export default function EstimateView() {
           {canEdit && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/estimates/${id}/edit`)}>Edit</button>}
           {canShowPrint && <button className="btn btn-sm btn-primary" onClick={() => window.open(`/estimates/${id}/print`, '_blank')}>Print</button>}
           {(canEdit || canRecordCustomerAnswer) && isPending && canShowApprove && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>{approveLabel}</button>}
-          {canEdit && isPending && <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setStatus('disapproved')}>Disapprove</button>}
+          {/* The customer saying no is as much their answer as saying yes, so it opens to the same
+              people -- at the customer stage only. canRecordCustomerAnswer is false at the
+              supervisor stage, where this still asks for canEdit exactly as before. */}
+          {(canEdit || canRecordCustomerAnswer) && isPending && <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setStatus('disapproved')}>Disapprove</button>}
           {/* Only while the estimate is actually waiting on the customer -- sending one that is
               already approved or cancelled would confuse the person receiving it. */}
-          {canEdit && estimate.status === 'pending_customer_approval' && (
+          {(canEdit || canRecordCustomerAnswer) && estimate.status === 'pending_customer_approval' && (
             <button className="btn btn-sm btn-primary" disabled={busy} onClick={openEmail}>
               {estimate.sent_to_customer_at ? 'Send Again' : 'Send to Email'}
             </button>
