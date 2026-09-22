@@ -1335,6 +1335,9 @@ CREATE TABLE transfer_order_lines (
     qty DECIMAL(14,4) NOT NULL,
     uom VARCHAR(30),
     unit VARCHAR(30),
+    -- 'stock' / 'base' -- which of the item's own units this line is asking for. NULL means
+    -- nobody has chosen; see db/add-transfer-order-unit-used.js for why that is not backfilled.
+    unit_used VARCHAR(20) NULL,
     adjusted_qty DECIMAL(14,4) NULL,
     new_qty DECIMAL(14,4) DEFAULT 0,
     committed DECIMAL(14,4) DEFAULT 0,

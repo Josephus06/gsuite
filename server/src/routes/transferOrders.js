@@ -25,15 +25,58 @@ const RECEIPT_ROUTE = '/item-receipts';
 // stale the moment stock moves afterward (e.g. an Inventory Adjustment approved after
 // the TO was raised). Aliasing il.qty_on_hand AS qty_on_hand after l.* overrides the
 // stale value with the live one.
+// Unit Used says which of the item's own two units this line is asking for -- the warehouse hands
+// over a whole ROLL rather than cutting 24 square feet off it -- and `unit` is rewritten to match
+// whenever somebody picks. Both units come back with every line so the screen can name the two
+// options, and `unit_used_resolved` is what the dropdown shows selected.
+//
+// A NULL unit_used means nobody has chosen, which is true of every line that predates the toggle.
+// It is resolved for DISPLAY only, never written: 'base' where the stored unit IS the item's base
+// unit, 'stock' otherwise -- the same reading stockLedger.js's toBase has always applied to these
+// lines, and the one that suits the 18,756 rows holding a legacy composite ('ROLL-SQFT-738').
+// Nothing on screen moves until a person picks, because the Unit column still prints `l.unit`.
+const UNIT_USED_RESOLVED = `
+  CASE WHEN LOWER(l.unit_used) IN ('base', 'baseunit') THEN 'base'
+       WHEN LOWER(l.unit_used) IN ('stock', 'stockunit') THEN 'stock'
+       WHEN bu.id IS NOT NULL AND UPPER(l.unit) IN (UPPER(bu.title), UPPER(bu.code)) THEN 'base'
+       ELSE 'stock' END`;
+
 const LINE_SELECT = `
   SELECT l.*, i.item_code, i.display_name AS item_name, i.item_type,
-         jo.job_order_no, il.qty_on_hand AS qty_on_hand
+         jo.job_order_no, il.qty_on_hand AS qty_on_hand,
+         bu.title AS base_unit_title, su.title AS stock_unit_title,
+         ${UNIT_USED_RESOLVED} AS unit_used_resolved
   FROM transfer_order_lines l
   JOIN transfer_orders t ON t.id = l.transfer_order_id
   LEFT JOIN inventories i ON i.id = l.item_id
+  LEFT JOIN units_of_measure bu ON bu.id = i.base_unit_id
+  LEFT JOIN units_of_measure su ON su.id = i.stock_unit_id
   LEFT JOIN job_orders jo ON jo.id = l.job_order_id
   LEFT JOIN inventory_locations il ON il.inventory_id = l.item_id AND il.location_id = t.withdraw_from_location_id
 `;
+
+// Spelling follows inventory_adjustment_lines.unit_used, whose migrated rows hold 'StockUnit' /
+// 'BaseUnit' beside this app's own 'stock' / 'base'. Nothing migrated into the transfer order
+// column, but folding both here means a bare `=== 'stock'` can never creep in and mis-read a row,
+// which is the defect that cost inventoryAdjustments.js two rounds of fixes.
+const unitUsedIsBase = (v) => ['base', 'baseunit'].includes(String(v || '').trim().toLowerCase());
+const normaliseUnitUsed = (v) => (unitUsedIsBase(v) ? 'base' : 'stock');
+
+// The Unit a line shows once Unit Used is chosen: that item's own Stock Unit or Base Unit, by
+// title ('Square Foot'), which is the spelling this app has always written. An item with no Stock
+// Unit of its own falls back to its Base Unit -- 958 lines are against such an item.
+async function unitTitleFor(db, itemId, unitUsed) {
+  const [[u]] = await db.query(
+    `SELECT bu.title AS base_title, su.title AS stock_title
+       FROM inventories i
+       LEFT JOIN units_of_measure bu ON bu.id = i.base_unit_id
+       LEFT JOIN units_of_measure su ON su.id = i.stock_unit_id
+      WHERE i.id = ?`,
+    [itemId]
+  );
+  if (!u) return null;
+  return unitUsedIsBase(unitUsed) ? u.base_title : (u.stock_title || u.base_title);
+}
 
 async function logAudit(conn, { toId, userId, eventType, fieldName = null, oldValue = null, newValue = null }) {
   await conn.query(
@@ -782,10 +825,15 @@ router.post('/:id/lines', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
     if (t.status !== 'pending_fulfillment') return res.status(409).json({ error: 'Only a transfer order with nothing fulfilled yet can be edited.' });
     await assertPeriodOpen(t.date_created, 'non_gl', conn);
 
-    const { item_id: itemId, qty, uom, unit, memo } = req.body;
+    const { item_id: itemId, qty, uom, unit, unit_used: unitUsedIn, memo } = req.body;
     if (!itemId || !qty) return res.status(400).json({ error: 'Item and Qty are required.' });
 
     await conn.beginTransaction();
+    // Only stored when the caller actually chose one. Left NULL the line keeps whatever unit it
+    // was added with (Add Material sends the base unit) and the screen resolves the dropdown from
+    // that -- see UNIT_USED_RESOLVED.
+    const unitUsed = unitUsedIn == null || unitUsedIn === '' ? null : normaliseUnitUsed(unitUsedIn);
+    const unitTitle = unitUsed ? await unitTitleFor(conn, itemId, unitUsed) : (unit || null);
     const [[stock]] = await conn.query(
       'SELECT qty_on_hand FROM inventory_locations WHERE inventory_id = ? AND location_id = ?',
       [itemId, t.withdraw_from_location_id]
@@ -795,9 +843,9 @@ router.post('/:id/lines', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
       [req.params.id]
     );
     const [result] = await conn.query(
-      `INSERT INTO transfer_order_lines (transfer_order_id, line_no, item_id, job_order_id, qty, uom, unit, qty_on_hand, memo)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [req.params.id, nextLine, itemId, t.job_order_id, qty, uom || null, unit || null, Number(stock?.qty_on_hand || 0), memo || null]
+      `INSERT INTO transfer_order_lines (transfer_order_id, line_no, item_id, job_order_id, qty, uom, unit, unit_used, qty_on_hand, memo)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [req.params.id, nextLine, itemId, t.job_order_id, qty, uom || null, unitTitle, unitUsed, Number(stock?.qty_on_hand || 0), memo || null]
     );
     await conn.commit();
 
@@ -818,10 +866,36 @@ router.put('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_edit
     if (t.status !== 'pending_fulfillment') return res.status(409).json({ error: 'Only a transfer order with nothing fulfilled yet can be edited.' });
     await assertPeriodOpen(t.date_created, 'non_gl');
 
-    const { qty, adjusted_qty: adjustedQty, memo } = req.body;
+    const [[line]] = await pool.query(
+      'SELECT item_id, qty, adjusted_qty, unit, unit_used, memo FROM transfer_order_lines WHERE id = ? AND transfer_order_id = ?',
+      [req.params.lineId, req.params.id]
+    );
+    if (!line) return res.status(404).json({ error: 'Line not found' });
+
+    // Only fields actually present in the request change; everything else keeps what is stored.
+    // The screens commit one field at a time -- Unit Used fires on change, Qty and Memo on blur --
+    // so treating an absent field as "reset it" let a Unit Used pick a moment earlier be wiped by
+    // the blur that followed it. Same reasoning as inventoryAdjustments.js's PUT.
+    const has = (k) => req.body[k] !== undefined;
+    const qty = has('qty') ? req.body.qty : line.qty;
+    const adjustedQty = has('adjusted_qty')
+      ? (req.body.adjusted_qty === '' || req.body.adjusted_qty === null ? null : req.body.adjusted_qty)
+      : line.adjusted_qty;
+    const memo = has('memo') ? (req.body.memo || null) : line.memo;
+
+    // Picking a unit is what rewrites `unit`; it is never recomputed from a stored unit_used,
+    // so the 65,933 lines that predate the toggle keep the unit they were migrated with even
+    // while some other field on them is edited.
+    let unitUsed = line.unit_used;
+    let unit = line.unit;
+    if (has('unit_used') && req.body.unit_used !== null && req.body.unit_used !== '') {
+      unitUsed = normaliseUnitUsed(req.body.unit_used);
+      unit = (await unitTitleFor(pool, line.item_id, unitUsed)) ?? line.unit;
+    }
+
     await pool.query(
-      'UPDATE transfer_order_lines SET qty = ?, adjusted_qty = ?, memo = ? WHERE id = ? AND transfer_order_id = ?',
-      [qty, adjustedQty === '' ? null : adjustedQty, memo || null, req.params.lineId, req.params.id]
+      'UPDATE transfer_order_lines SET qty = ?, adjusted_qty = ?, memo = ?, unit = ?, unit_used = ? WHERE id = ? AND transfer_order_id = ?',
+      [qty, adjustedQty, memo, unit, unitUsed, req.params.lineId, req.params.id]
     );
     const [[row]] = await pool.query(`${LINE_SELECT} WHERE l.id = ?`, [req.params.lineId]);
     if (!row) return res.status(404).json({ error: 'Line not found' });

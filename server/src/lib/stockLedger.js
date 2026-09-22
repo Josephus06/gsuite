@@ -34,9 +34,11 @@
 // Where each branch's unit comes from:
 //
 //   Receiving Report / Vendor Return  no uom -- already scaled in the SELECT, must not scale twice
-//   Item Fulfillment / Item Receipt   tol.uom  -- USUALLY the stock unit, but on JO-driven lines
-//                                     it is the dimension unit the length/width were keyed in
-//                                     (MM/IN) while the quantity is already in the base unit
+//   Item Fulfillment / Item Receipt   tol.unit_used where the requestor set the Transfer Order's
+//                                     Unit Used toggle, otherwise tol.uom -- USUALLY the stock
+//                                     unit, but on JO-driven lines it is the dimension unit the
+//                                     length/width were keyed in (MM/IN) while the quantity is
+//                                     already in the base unit. See lineUnit.
 //   Assembly Build                    abl.unit -- almost always the base unit already
 //   Inventory Adjustment              ial.unit -- base when written by inventoryAdjustments.js,
 //                                     the stock unit on migrated rows
@@ -102,6 +104,20 @@ function movementsSql(filterByItem = false) {
         OR UPPER(${uom}) IN ('MM', 'CM', 'IN', 'FT')
       THEN 1 ELSE COALESCE(NULLIF(${inv}.conversion_factor, 0), 1) END`;
 
+  // The unit an Item Fulfillment / Item Receipt quantity is actually in.
+  //
+  // tol.uom is a guess -- it is the stock unit on some lines and the dimension unit the length and
+  // width were keyed in on others -- and it is all this had until the Transfer Order grew a Unit
+  // Used toggle. Where a requestor has USED that toggle they have said outright which unit they
+  // are asking in, so that answer wins: a line switched to Stock Unit and re-keyed as "1" means
+  // one ROLL, and posting it as 1 SQFT would be the 984x understatement this file exists to stop.
+  // NULL unit_used -- every line that predates the toggle -- falls through to tol.uom unchanged,
+  // so no historical movement moves.
+  const lineUnit = (tol, base, stock) => `CASE
+      WHEN ${tol}.unit_used IS NULL OR ${tol}.unit_used = '' THEN ${tol}.uom
+      WHEN LOWER(${tol}.unit_used) IN ('base', 'baseunit') THEN ${base}.title
+      ELSE COALESCE(${stock}.title, ${base}.title) END`;
+
   return `
   SELECT r.date_created AS trans_date, r.receipt_no AS trans_no, 'Receiving Report' AS trans_type,
          po.po_no AS ref_no, rl.item_id, NULL AS from_location_id, NULL AS from_location_name,
@@ -132,20 +148,23 @@ function movementsSql(filterByItem = false) {
 
   SELECT f.date_created, f.fulfillment_no, 'Item Fulfillment',
          tord.to_no, fl.item_id, tord.withdraw_from_location_id, wloc.location_name, NULL, NULL,
-         0, ${toBase('fl.qty_fulfilled', 'tol.uom', 'i', 'bu')}, i.average_cost, f.id, f.created_at, tol.uom, tol.uom
+         0, ${toBase('fl.qty_fulfilled', lineUnit('tol', 'bu', 'su'), 'i', 'bu')}, i.average_cost, f.id, f.created_at,
+         ${lineUnit('tol', 'bu', 'su')}, ${lineUnit('tol', 'bu', 'su')}
   FROM item_fulfillment_lines fl
   JOIN item_fulfillments f ON f.id = fl.item_fulfillment_id
   JOIN transfer_orders tord ON tord.id = f.transfer_order_id
   LEFT JOIN transfer_order_lines tol ON tol.id = fl.transfer_order_line_id
   LEFT JOIN locations wloc ON wloc.id = tord.withdraw_from_location_id
   LEFT JOIN inventories i ON i.id = fl.item_id
-  LEFT JOIN units_of_measure bu ON bu.id = i.base_unit_id${where('fl')}
+  LEFT JOIN units_of_measure bu ON bu.id = i.base_unit_id
+  LEFT JOIN units_of_measure su ON su.id = i.stock_unit_id${where('fl')}
 
   UNION ALL
 
   SELECT r2.date_created, r2.receipt_no, 'Item Receipt',
          f2.fulfillment_no, rl3.item_id, NULL, NULL, tord2.transfer_to_location_id, tloc.location_name,
-         ${toBase('rl3.qty_received', 'tol3.uom', 'i2', 'bu2')}, 0, i2.average_cost, r2.id, r2.created_at, tol3.uom, tol3.uom
+         ${toBase('rl3.qty_received', lineUnit('tol3', 'bu2', 'su2'), 'i2', 'bu2')}, 0, i2.average_cost, r2.id, r2.created_at,
+         ${lineUnit('tol3', 'bu2', 'su2')}, ${lineUnit('tol3', 'bu2', 'su2')}
   FROM item_receipt_lines rl3
   JOIN item_receipts r2 ON r2.id = rl3.item_receipt_id
   JOIN item_fulfillments f2 ON f2.id = r2.item_fulfillment_id
@@ -153,7 +172,8 @@ function movementsSql(filterByItem = false) {
   LEFT JOIN transfer_order_lines tol3 ON tol3.id = rl3.transfer_order_line_id
   LEFT JOIN locations tloc ON tloc.id = tord2.transfer_to_location_id
   LEFT JOIN inventories i2 ON i2.id = rl3.item_id
-  LEFT JOIN units_of_measure bu2 ON bu2.id = i2.base_unit_id${where('rl3')}
+  LEFT JOIN units_of_measure bu2 ON bu2.id = i2.base_unit_id
+  LEFT JOIN units_of_measure su2 ON su2.id = i2.stock_unit_id${where('rl3')}
 
   UNION ALL
 

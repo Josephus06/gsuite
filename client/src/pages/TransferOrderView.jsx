@@ -64,10 +64,11 @@ export default function TransferOrderView() {
     }
   }, [tab, id]);
 
-  async function commitAdjustedQty(lineId, value) {
-    const row = lines.find((l) => l.id === lineId);
-    await api.put(`/transfer-orders/${id}/lines/${lineId}`, { qty: row.qty, adjusted_qty: value === '' ? null : value, memo: row.memo });
-    setLines((prev) => prev.map((l) => (l.id === lineId ? { ...l, adjusted_qty: value === '' ? null : value } : l)));
+  // One field per request -- the server leaves everything absent from the body alone, so the
+  // Unit Used dropdown and the Adjusted Qty input beside it cannot overwrite each other.
+  async function commitLine(lineId, patch) {
+    const { data } = await api.put(`/transfer-orders/${id}/lines/${lineId}`, patch);
+    setLines((prev) => prev.map((l) => (l.id === lineId ? { ...l, ...data } : l)));
   }
 
   async function handleCancel() {
@@ -158,14 +159,14 @@ export default function TransferOrderView() {
                   {/* No UOM column: on job-order-driven lines it holds the unit the length and
                       width were keyed in (MM/IN), not the unit of Qty beside it. Unit has the
                       real one. */}
-                  <th>Item</th><th>JO #</th><th>TO Count</th><th>Qty</th><th>Unit</th>
+                  <th>Item</th><th>JO #</th><th>TO Count</th><th>Qty</th><th>Unit Used</th><th>Unit</th>
                   <th>Adjusted Qty</th><th>New Qty</th><th>Committed</th><th>Fulfilled</th><th>Received</th>
                   <th>Back Ordered</th><th>Qty On Hand</th><th>Memo</th><th></th>
                 </tr>
               </thead>
               <tbody>
                 {lines.length === 0 && (
-                  <tr><td colSpan={14} className="muted" style={{ textAlign: 'center', padding: 20 }}>No materials.</td></tr>
+                  <tr><td colSpan={15} className="muted" style={{ textAlign: 'center', padding: 20 }}>No materials.</td></tr>
                 )}
                 {lines.map((l) => (
                   <tr key={l.id}>
@@ -179,13 +180,28 @@ export default function TransferOrderView() {
                     ) : (l.job_order_no || '—')}</td>
                     <td>{l.to_count}</td>
                     <td>{qty(l.qty)}</td>
+                    {/* Which of the item's own two units the warehouse is being asked for. Picking
+                        one rewrites Unit beside it; the quantity is deliberately NOT converted --
+                        asking in rolls is the point of the switch, and 24 SQFT becomes "1", typed
+                        by the person who knows one roll covers it. */}
+                    <td>
+                      {canStillFulfill && canEdit ? (
+                        <select
+                          value={l.unit_used_resolved || 'stock'}
+                          onChange={(e) => commitLine(l.id, { unit_used: e.target.value })}
+                        >
+                          <option value="stock">Stock Unit</option>
+                          <option value="base">Base Unit</option>
+                        </select>
+                      ) : (l.unit_used_resolved === 'base' ? 'Base Unit' : 'Stock Unit')}
+                    </td>
                     <td>{l.unit}</td>
                     <td>
                       {canStillFulfill && canEdit ? (
                         <input
                           type="number" step="0.0001" style={{ width: 110 }} className="highlight-input"
                           defaultValue={l.adjusted_qty ?? ''}
-                          onBlur={(e) => commitAdjustedQty(l.id, e.target.value)}
+                          onBlur={(e) => commitLine(l.id, { adjusted_qty: e.target.value })}
                         />
                       ) : (l.adjusted_qty != null ? qty(l.adjusted_qty) : '')}
                     </td>

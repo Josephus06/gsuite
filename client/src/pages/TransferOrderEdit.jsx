@@ -131,9 +131,11 @@ export default function TransferOrderEdit() {
     setLines((prev) => [...prev, data]);
   }
 
-  async function commitLine(lineId, overrides = {}) {
-    const row = { ...lines.find((l) => l.id === lineId), ...overrides };
-    const { data } = await api.put(`/transfer-orders/${id}/lines/${lineId}`, row);
+  // Only the field that changed is sent. This used to post the whole row back, which meant the
+  // Unit Used dropdown -- committed on change -- was undone by whatever input the user blurred
+  // next, since that request still carried the row as it had been read.
+  async function commitLine(lineId, patch) {
+    const { data } = await api.put(`/transfer-orders/${id}/lines/${lineId}`, patch);
     setLines((prev) => prev.map((l) => (l.id === lineId ? { ...l, ...data } : l)));
   }
 
@@ -223,6 +225,21 @@ export default function TransferOrderEdit() {
                 ) : qty(l.qty),
               },
               { key: 'uom', label: 'UOM' },
+              {
+                // Choosing here rewrites Unit to that item's own Stock Unit or Base Unit. Qty is
+                // left alone on purpose: switching to rolls is how a requestor says "send a whole
+                // roll", and they re-key the 24 SQFT as 1 themselves.
+                key: 'unit_used', label: 'Unit Used',
+                render: (l) => canEdit ? (
+                  <select
+                    value={l.unit_used_resolved || 'stock'}
+                    onChange={(e) => commitLine(l.id, { unit_used: e.target.value })}
+                  >
+                    <option value="stock">Stock Unit{l.stock_unit_title ? ` — ${l.stock_unit_title}` : ''}</option>
+                    <option value="base">Base Unit{l.base_unit_title ? ` — ${l.base_unit_title}` : ''}</option>
+                  </select>
+                ) : (l.unit_used_resolved === 'base' ? 'Base Unit' : 'Stock Unit'),
+              },
               { key: 'unit', label: 'Unit' },
               {
                 key: 'adjusted_qty', label: 'Adjusted Qty',
