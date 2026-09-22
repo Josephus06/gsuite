@@ -194,6 +194,7 @@ async function collectOpenApItems(asOf, filters = {}) {
   const items = [];
   const unevidenced = { count: 0, amount: 0 };
   const unlinkedPayments = { count: 0, amount: 0 };
+  const headerDisagreement = { count: 0, amount: 0 };
 
   for (const bill of bills) {
     // What was ever owed to the vendor on this bill: gross less the tax withheld from them.
@@ -207,6 +208,22 @@ async function collectOpenApItems(asOf, filters = {}) {
       unevidenced.count += 1;
       unevidenced.amount += remaining;
       if (!includeUnevidenced) continue;
+    }
+
+    // A THIRD FACE OF THE SAME UNFINISHED MIGRATION, and the one that does not announce itself.
+    // 1,231 of the 1,460 bills carrying a balance on production are still 'open' but hold a
+    // header Amount Due LOWER than their own documents support -- PHP 4.0M in total. Something
+    // drew those headers down without leaving a payment behind, so the migration's own partial
+    // settlements are invisible to a report built from documents.
+    //
+    // Not excluded: unlike a bill claiming to be fully paid, there is no clean line here between
+    // "already settled" and "still owed", and dropping the difference would mean silently
+    // trusting a header this report exists not to trust. Counted and reported instead, so the
+    // reader knows how much of the total rests on that disagreement.
+    const headerDue = Number(bill.amount_due || 0);
+    if (Math.abs(remaining - headerDue) >= 0.005) {
+      headerDisagreement.count += 1;
+      headerDisagreement.amount += remaining - headerDue;
     }
 
     items.push({
@@ -267,11 +284,14 @@ async function collectOpenApItems(asOf, filters = {}) {
     items,
     unevidenced: { count: unevidenced.count, amount: round2(unevidenced.amount), included: includeUnevidenced },
     unlinked_payments: { count: unlinkedPayments.count, amount: round2(unlinkedPayments.amount), included: includeUnevidenced },
+    header_disagreement: { count: headerDisagreement.count, amount: round2(headerDisagreement.amount) },
   };
 }
 
 async function buildApAging(asOf, filters = {}) {
-  const { items, unevidenced, unlinked_payments: unlinkedPayments } = await collectOpenApItems(asOf, filters);
+  const {
+    items, unevidenced, unlinked_payments: unlinkedPayments, header_disagreement: headerDisagreement,
+  } = await collectOpenApItems(asOf, filters);
 
   const bySupplier = new Map();
   function supplierRow(id, name) {
@@ -316,7 +336,12 @@ async function buildApAging(asOf, filters = {}) {
 
   // Reported whether or not they are in the numbers, so the page can say what is being left out
   // as readily as what is being counted.
-  return { as_of: asOf, rows, totals, excluded_unevidenced: unevidenced, excluded_unlinked_payments: unlinkedPayments };
+  return {
+    as_of: asOf, rows, totals,
+    excluded_unevidenced: unevidenced,
+    excluded_unlinked_payments: unlinkedPayments,
+    header_disagreement: headerDisagreement,
+  };
 }
 
 // The DETAILS drill-down: the individual open items behind one vendor's balance. Same open-item

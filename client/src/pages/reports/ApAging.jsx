@@ -234,6 +234,14 @@ export default function ApAging() {
             <div>
               A negative balance is the vendor owing us: an unused bill credit, or cash paid and not yet applied to a bill.
             </div>
+            {report.header_disagreement?.count > 0 && (
+              <div style={{ marginTop: 6 }}>
+                <strong>{report.header_disagreement.count.toLocaleString()} bills</strong> above carry a header Amount Due
+                lower than their own documents support, by <strong>{money(report.header_disagreement.amount)}</strong> in total —
+                something drew those headers down without leaving a payment behind. The figures here follow the documents, so
+                that much of the total rests on a disagreement with the bill screen.
+              </div>
+            )}
           </div>
         </div>
       )}
