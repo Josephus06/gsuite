@@ -264,11 +264,23 @@ const NAV_STRUCTURE = [
     // what the BIR filings are prepared from, and the people who prepare them are not
     // necessarily the people who get the rest of Accounting -- separate pages, separate module.
     label: 'BIR Reports',
-    // Last group on the bar, so its menu is right-anchored to stay on screen.
+    // Near the end of the bar, so its menu is right-anchored to stay on screen.
     alignRight: true,
     children: [
       { route: '/reports/bir-sales', label: 'Sales Report' },
       { route: '/reports/bir-purchase', label: 'Purchase Report' },
+    ],
+  },
+  {
+    // Treasury is who chases the money in, which is a different job from recording it --
+    // Accounting raises the invoice, Treasury decides when it is expected to be collected. Its
+    // own module so the page can be granted to the people doing that chasing without handing
+    // them the rest of Accounting.
+    label: 'Treasury',
+    // Last group on the bar, so its menu is right-anchored to stay on screen.
+    alignRight: true,
+    children: [
+      { route: '/treasury/collection-forecast', label: 'Collection Forecast' },
     ],
   },
 ];
