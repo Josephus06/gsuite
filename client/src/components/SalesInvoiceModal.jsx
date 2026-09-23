@@ -37,7 +37,11 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, from
   const [data, setData] = useState(null);
   const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
   const [dateDue, setDateDue] = useState('');
+  // `term` is still what gets saved -- sales_invoices.term is the text, and the printed invoice
+  // and every existing row read it. `paymentTerm` is only which master row is currently picked.
   const [term, setTerm] = useState('');
+  const [paymentTerm, setPaymentTerm] = useState(null);
+  const [paymentTerms, setPaymentTerms] = useState([]);
   const [bsSiNo, setBsSiNo] = useState('');
   const [poNo, setPoNo] = useState('');
   const [salesRep, setSalesRep] = useState(null);
@@ -72,23 +76,39 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, from
       api.get('/employees'),
       api.get('/lookups/locations'),
       api.get('/lookups/departments'),
-    ]).then(([srcRes, empRes, locRes, deptRes]) => {
+      api.get('/lookups/payment-terms'),
+    ]).then(([srcRes, empRes, locRes, deptRes, termRes]) => {
       setEmployees(empRes.data);
       setLocations(locRes.data);
       setDepartments(deptRes.data);
+      const terms = termRes.data || [];
+      setPaymentTerms(terms);
       if (!srcRes) { setData({ lines: [] }); setLoading(false); return; }
       const d = srcRes.data;
       setData(d);
       setBillToAddress(d.shipping_address || '');
       // A ticket already carries its own Term/PO #/Memo, chosen when it was raised --
       // carry them onto the invoice rather than falling back to the customer's default.
-      setTerm(d.term || d.credit_term || '');
+      const sourceTerm = d.term || d.credit_term || '';
+      setTerm(sourceTerm);
+      // Match what the source document carried back to a master row, so the picker opens showing
+      // the term already agreed rather than blank. Compared case- and space-insensitively
+      // because these strings were typed for years before the list existed. A term that matches
+      // nothing is still shown as the placeholder -- it is what the document says, and blanking
+      // it would quietly drop an agreed term.
+      const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+      setPaymentTerm(terms.find((t) => norm(t.term_name) === norm(sourceTerm)) || null);
       setPoNo(d.po_no || '');
       setMemo(d.memo || '');
       if (d.sales_rep_id) setSalesRep({ id: d.sales_rep_id, first_name: d.sales_rep_name?.split(' ')[0], last_name: d.sales_rep_name?.split(' ').slice(1).join(' ') });
       if (d.office_location_id) setOfficeLocation({ id: d.office_location_id, location_name: d.office_location_name });
       if (d.department_id) setDepartment({ id: d.department_id, name: d.department_name });
-      setDateDue(addDays(new Date().toISOString().slice(0, 10), 30));
+      // From the matched term's own No. of Days where there is one. The flat +30 remains the
+      // fallback for a document carrying no term, or one that matches nothing in the list --
+      // which is what every invoice got before, so nothing regresses.
+      const matched = terms.find((t) => norm(t.term_name) === norm(sourceTerm));
+      const today = new Date().toISOString().slice(0, 10);
+      setDateDue(addDays(today, matched ? (Number(matched.no_of_days) || 0) : 30));
       setLoading(false);
     }).catch((err) => {
       setError(err.response?.data?.error || 'Could not load this record.');
@@ -255,7 +275,30 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, from
               </div>
             </div>
             <div>
-              <div className="field"><label>Term</label><input value={term} onChange={(e) => setTerm(e.target.value)} /></div>
+              {/* Chosen from the Payment Terms master list rather than typed. Free text let a
+                  tax code ("VAT_PH:VATIN-12") reach the Term of 9 invoices, and a term nobody
+                  can look up is one nothing downstream can reason about. Picking one also sets
+                  Date Due from its No. of Days -- that number is the whole point of a term, and
+                  it was previously ignored in favour of a flat +30. Date Due stays editable. */}
+              <div className="field">
+                <label>Term</label>
+                <EntityPicker
+                  label="Term" items={paymentTerms} value={paymentTerm?.id || ''}
+                  getLabel={(t) => t.term_name}
+                  columns={[
+                    { key: 'term_name', label: 'Term' },
+                    { key: 'no_of_days', label: 'Days', render: (t) => Number(t.no_of_days || 0) },
+                  ]}
+                  searchKeys={['term_name']}
+                  placeholder={term || 'Select Term...'}
+                  onSelect={(t) => {
+                    setPaymentTerm(t);
+                    setTerm(t ? t.term_name : '');
+                    if (t) setDateDue(addDays(dateCreated, Number(t.no_of_days) || 0));
+                  }}
+                  onClear={() => { setPaymentTerm(null); setTerm(''); }}
+                />
+              </div>
               <div className="field"><label>BS/SI #</label><input value={bsSiNo} onChange={(e) => setBsSiNo(e.target.value)} /></div>
               <div className="field"><label>PO #</label><input value={poNo} onChange={(e) => setPoNo(e.target.value)} /></div>
               <div className="field"><label>Bill to Address</label><input value={billToAddress} onChange={(e) => setBillToAddress(e.target.value)} /></div>
