@@ -1892,6 +1892,14 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
   padding: 0 3px; border-radius: 3px; white-space: nowrap;
 }
 
+/* Actual collection, set against the forecast beside it on the collection calendar. Amber
+   rather than a green/red pass-fail: the day is a comparison, not a verdict -- money can still
+   arrive later, and collecting more than was forecast is not a failure. The leading rule
+   separates it from the forecast without needing a second row in the cell. */
+.cal-actual { color: #c2760c; }
+.cal-tally-item.cal-actual { border-left: 2px solid #e09a2b; padding-left: 5px; }
+:root[data-theme="dark"] .cal-actual { color: #f0b429; }
+
 .jo-c0 { --jo-fill: #fdf0d5; --jo-border: #d9a441; --jo-text: #6b4a10; }
 .jo-c1 { --jo-fill: #fbe0e6; --jo-border: #d9748f; --jo-text: #7a2740; }
 .jo-c2 { --jo-fill: #e2f0e6; --jo-border: #66a67e; --jo-text: #1f5133; }

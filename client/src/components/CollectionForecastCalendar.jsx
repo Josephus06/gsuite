@@ -80,7 +80,8 @@ export default function CollectionForecastCalendar({ customerId }) {
         <span className="muted artist-calendar-count">
           {loading
             ? 'Loading...'
-            : `${data.invoiceCount} invoice${data.invoiceCount === 1 ? '' : 's'} · ${money(data.total)} expected`}
+            : `${data.invoiceCount} invoice${data.invoiceCount === 1 ? '' : 's'} · ${money(data.total)} expected`
+              + (data.collected > 0 ? ` · ${money(data.collected)} collected` : '')}
         </span>
       </div>
 
@@ -106,9 +107,17 @@ export default function CollectionForecastCalendar({ customerId }) {
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenDay(key); } }}
             >
               <span className="artist-calendar-daynum">{Number(key.slice(8, 10))}</span>
-              {customers.length > 0 && (
+              {/* Forecast on the left, what actually came in beside it. The actual is only
+                  drawn when there is something to draw -- a 0.00 on every future day would
+                  read as "we collected nothing" rather than "this has not happened yet". */}
+              {(entry?.total > 0 || entry?.collected > 0) && (
                 <div className="cal-tally">
-                  <span className="cal-tally-item">{money(entry.total)}</span>
+                  {entry.total > 0 && <span className="cal-tally-item">{money(entry.total)}</span>}
+                  {entry.collected > 0 && (
+                    <span className="cal-tally-item cal-actual" title={`Actual collection: ${entry.paymentCount} payment(s), ${money(entry.collected)}`}>
+                      {money(entry.collected)}
+                    </span>
+                  )}
                 </div>
               )}
               {customers.slice(0, 3).map((c) => (
@@ -161,6 +170,7 @@ function DayBreakdown({ entry }) {
             <th>Customer</th>
             <th className="text-right">Invoices</th>
             <th className="text-right">Total Expected</th>
+            <th className="text-right">Actual Collection</th>
           </tr>
         </thead>
         <tbody>
@@ -172,15 +182,21 @@ function DayBreakdown({ entry }) {
                 className="is-clickable"
                 onClick={() => setOpenCustomer(open ? null : c.customerId)}
               >
-                <td>{open ? '▾' : '▸'}</td>
+                <td>{c.invoiceCount ? (open ? '▾' : '▸') : ''}</td>
                 <td>{c.customerName}</td>
-                <td className="text-right">{c.invoiceCount}</td>
-                <td className="text-right">{money(c.total)}</td>
+                <td className="text-right">{c.invoiceCount || '—'}</td>
+                <td className="text-right">{c.total > 0 ? money(c.total) : '—'}</td>
+                {/* A customer can appear here having paid on a day nothing of theirs was
+                    forecast -- money we did not plan for, which is worth seeing rather than
+                    hiding because it fits no row. */}
+                <td className="text-right cal-actual">
+                  {c.collected > 0 ? money(c.collected) : '—'}
+                </td>
               </tr>,
-              open && (
+              open && c.invoiceCount > 0 && (
                 <tr key={`${c.customerId}-detail`}>
                   <td />
-                  <td colSpan={3} style={{ padding: 0 }}>
+                  <td colSpan={4} style={{ padding: 0 }}>
                     <table style={{ width: '100%' }}>
                       <thead>
                         <tr>
@@ -211,6 +227,7 @@ function DayBreakdown({ entry }) {
             <td><strong>Total</strong></td>
             <td className="text-right"><strong>{entry.invoiceCount}</strong></td>
             <td className="text-right"><strong>{money(entry.total)}</strong></td>
+            <td className="text-right cal-actual"><strong>{money(entry.collected || 0)}</strong></td>
           </tr>
         </tbody>
       </table>

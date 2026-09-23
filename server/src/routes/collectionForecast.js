@@ -165,19 +165,48 @@ router.get('/calendar', requireAuth, requirePermission(ROUTE, 'can_view'), async
       params,
     );
 
+    // ACTUAL COLLECTION: the customer payments actually created on each day, which is what the
+    // forecast is a prediction of. Deliberately EVERY payment taken that day, not only those
+    // against invoices that were forecast for it -- the figure is meant to answer "did the money
+    // we expected arrive", and money that arrived unforecast is exactly what would be missing
+    // from a number restricted to the plan. Voided payments are excluded: a reversed receipt
+    // never was a collection.
+    const payWhere = ['cp.date_created BETWEEN ? AND ?', 'cp.voided_at IS NULL'];
+    const payParams = [start, end];
+    if (customerId) { payWhere.push('cp.customer_id = ?'); payParams.push(customerId); }
+    const [payments] = await pool.query(
+      `SELECT cp.date_created AS day, c.id AS customer_id, c.name AS customer_name,
+              COUNT(*) AS payment_count, COALESCE(SUM(cp.payment_amount), 0) AS collected
+         FROM customer_payments cp
+         JOIN customers c ON c.id = cp.customer_id
+        WHERE ${payWhere.join(' AND ')}
+        GROUP BY cp.date_created, c.id, c.name`,
+      payParams,
+    );
+
     // Shaped here rather than in the client so the calendar and its popup can never disagree
     // about a day's total -- they read the same numbers.
     const days = new Map();
-    for (const r of rows) {
-      const key = String(r.collection_forecast_date).slice(0, 10);
+    const groupFor = (key, customerId2, customerName) => {
       if (!days.has(key)) days.set(key, new Map());
       const byCustomer = days.get(key);
-      if (!byCustomer.has(r.customer_id)) {
-        byCustomer.set(r.customer_id, {
-          customerId: r.customer_id, customerName: r.customer_name, invoiceCount: 0, total: 0, invoices: [],
+      if (!byCustomer.has(customerId2)) {
+        byCustomer.set(customerId2, {
+          customerId: customerId2,
+          customerName,
+          invoiceCount: 0,
+          total: 0,
+          collected: 0,
+          paymentCount: 0,
+          invoices: [],
         });
       }
-      const group = byCustomer.get(r.customer_id);
+      return byCustomer.get(customerId2);
+    };
+
+    for (const r of rows) {
+      const key = String(r.collection_forecast_date).slice(0, 10);
+      const group = groupFor(key, r.customer_id, r.customer_name);
       group.invoiceCount += 1;
       group.total += Number(r.amount_due) || 0;
       group.invoices.push({
@@ -189,14 +218,29 @@ router.get('/calendar', requireAuth, requirePermission(ROUTE, 'can_view'), async
       });
     }
 
+    // A day can carry collections without a forecast -- money arrived that nobody planned for --
+    // and that day has to appear on the calendar, or the actual figure would be invisible
+    // precisely where it is most worth seeing.
+    for (const p of payments) {
+      const key = String(p.day).slice(0, 10);
+      const group = groupFor(key, p.customer_id, p.customer_name);
+      group.collected += Number(p.collected) || 0;
+      group.paymentCount += Number(p.payment_count) || 0;
+    }
+
     const calendar = [...days.entries()]
       .map(([day, byCustomer]) => {
-        const customers = [...byCustomer.values()].sort((a, b) => b.total - a.total);
+        // Ordered by whichever figure the customer is bigger on, so a large unforecast
+        // collection is not buried under small forecasts.
+        const customers = [...byCustomer.values()]
+          .sort((a, b) => Math.max(b.total, b.collected) - Math.max(a.total, a.collected));
         return {
           day,
           customers,
           invoiceCount: customers.reduce((s, x) => s + x.invoiceCount, 0),
           total: customers.reduce((s, x) => s + x.total, 0),
+          collected: customers.reduce((s, x) => s + x.collected, 0),
+          paymentCount: customers.reduce((s, x) => s + x.paymentCount, 0),
         };
       })
       .sort((a, b) => a.day.localeCompare(b.day));
@@ -206,6 +250,8 @@ router.get('/calendar', requireAuth, requirePermission(ROUTE, 'can_view'), async
       calendar,
       invoiceCount: rows.length,
       total: calendar.reduce((s, d) => s + d.total, 0),
+      collected: calendar.reduce((s, d) => s + d.collected, 0),
+      paymentCount: calendar.reduce((s, d) => s + d.paymentCount, 0),
     });
   } catch (err) {
     return next(err);
