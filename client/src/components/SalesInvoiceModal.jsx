@@ -122,9 +122,15 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, from
       // From the matched term's own No. of Days where there is one. The flat +30 remains the
       // fallback for a document carrying no term, or one that matches nothing in the list --
       // which is what every invoice got before, so nothing regresses.
+      // Date Due comes from the term's No. of Days and from nowhere else. With no term there is
+      // no basis for one, so it is left BLANK rather than invented: the old fallback put a flat
+      // +30 on every invoice, which is why 4 invoices carry a due date with no term behind it and
+      // why plenty more are dated 30 days out on terms that were never 30 days. The column is
+      // nullable, all three save paths already write `dateDue || null`, and AR Aging ages a
+      // due-date-less invoice by its document date.
       const matched = terms.find((t) => norm(t.term_name) === norm(sourceTerm));
       const today = new Date().toISOString().slice(0, 10);
-      setDateDue(addDays(today, matched ? (Number(matched.no_of_days) || 0) : 30));
+      setDateDue(matched ? addDays(today, Number(matched.no_of_days) || 0) : '');
       setLoading(false);
     }).catch((err) => {
       setError(err.response?.data?.error || 'Could not load this record.');
@@ -248,8 +254,32 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, from
                   />
                 </div>
               )}
-              <div className="field"><label>Date</label><input type="date" value={dateCreated} onChange={(e) => setDateCreated(e.target.value)} /></div>
-              <div className="field"><label>Date Due</label><input type="date" value={dateDue} onChange={(e) => setDateDue(e.target.value)} /></div>
+              {/* The term counts its days from the invoice date, so moving the date moves the due
+                  date with it. Without this, backdating an invoice left a due date computed from
+                  the day the form happened to be opened. */}
+              <div className="field">
+                <label>Date</label>
+                <input
+                  type="date" value={dateCreated}
+                  onChange={(e) => {
+                    setDateCreated(e.target.value);
+                    if (paymentTerm && e.target.value) {
+                      setDateDue(addDays(e.target.value, Number(paymentTerm.no_of_days) || 0));
+                    }
+                  }}
+                />
+              </div>
+              {/* Still editable: a term is the default arrangement, not always the one agreed on
+                  a particular invoice. Picking a term or changing the date recomputes it. */}
+              <div className="field">
+                <label>Date Due</label>
+                <input
+                  type="date" value={dateDue} onChange={(e) => setDateDue(e.target.value)}
+                  title={paymentTerm
+                    ? `${paymentTerm.term_name} — ${Number(paymentTerm.no_of_days) || 0} day(s) from the invoice date`
+                    : 'No term selected, so there is no basis for a due date'}
+                />
+              </div>
               <div>Customer : <span className="hi">{data.customer_name}</span></div>
               <div>Created Form : <span className="hi">{fromTicket ? `${data.dt_no} (${data.sales_order_no})` : fromEstimate ? (data.estimate_no || '—') : data.sales_order_no}</span></div>
               <div className="field">
