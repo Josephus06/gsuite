@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
+import CustomerPaymentModal from '../components/CustomerPaymentModal';
 
 function money(v) {
   const n = Number(v);
@@ -28,6 +29,7 @@ export default function CustomerPaymentView() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [error, setError] = useState('');
 
   function load() {
@@ -71,7 +73,15 @@ export default function CustomerPaymentView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(-1)}>Back</button>
-          {canEdit && isOpen && <button className="btn btn-sm" disabled title="Editing a posted Customer Payment isn't implemented in this build -- void and re-enter instead">Edit</button>}
+          {/* Editable until it is deposited. Past that the receipt sits inside a deposit that a
+              bank statement is reconciled against, and changing the amount underneath it would
+              put the two out of step -- so it is void and re-enter from there. */}
+          {canEdit && cp.status === 'not_deposited' && (
+            <button className="btn btn-sm" onClick={() => setEditing(true)}>Edit</button>
+          )}
+          {canEdit && cp.status === 'deposited' && (
+            <button className="btn btn-sm" disabled title="This payment has been deposited. Void it and re-enter if it is wrong.">Edit</button>
+          )}
           {can('/deposits', 'can_add') && cp.status === 'not_deposited' && (
             <button className="btn btn-sm btn-primary" onClick={() => navigate('/deposits/new', { state: { preselectPaymentId: cp.id } })}>Deposit</button>
           )}
@@ -216,6 +226,17 @@ export default function CustomerPaymentView() {
         </div>
       )}
 
+      {/* Same form as taking the payment, opened on what was saved. Reloaded afterwards rather
+          than patched locally: the edit moves balances on the invoices it settles, and the GL
+          impact shown below is derived on read. */}
+      {editing && (
+        <CustomerPaymentModal
+          paymentId={cp.id}
+          customerId={cp.customer_id}
+          onClose={() => setEditing(false)}
+          onSaved={() => { setEditing(false); load(); }}
+        />
+      )}
     </div>
   );
 }

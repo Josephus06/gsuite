@@ -46,6 +46,64 @@ async function applyToInvoice(conn, invoiceId, amount) {
   );
 }
 
+// Validates what is being applied and works out the three figures that must agree: what was
+// applied, what cash was received, and what is left sitting on account. Shared by create and
+// edit -- these are money, and two copies of the arithmetic would eventually disagree.
+//
+// An edit calls this AFTER reversing its own previous application, so every balance checked here
+// is the balance as it would be if this payment had never existed. That ordering is what lets an
+// unchanged payment be re-saved: check first and the invoice it settles no longer has the
+// balance it is settling, so its own application reads as an over-application.
+async function prepareApplication(conn, { applyLines, creditLines, paymentAmount }) {
+  const submittedApply = (Array.isArray(applyLines) ? applyLines : [])
+    .filter((l) => l.sales_invoice_id && Number(l.applied_amount) > 0);
+  const submittedCredits = (Array.isArray(creditLines) ? creditLines : [])
+    .filter((l) => l.credit_memo_id && Number(l.applied_amount) > 0);
+
+  if (!submittedApply.length && !submittedCredits.length) {
+    throw Object.assign(new Error('Apply at least one amount to an invoice or credit.'), { status: 400 });
+  }
+
+  for (const l of submittedCredits) {
+    const [[cm]] = await conn.query('SELECT gross_amount, applied_amount, status FROM credit_memos WHERE id = ?', [l.credit_memo_id]);
+    if (!cm || cm.status !== 'open') {
+      throw Object.assign(new Error('One of the selected credits is no longer valid.'), { status: 400 });
+    }
+    const remaining = Number(cm.gross_amount) - Number(cm.applied_amount);
+    if (Number(l.applied_amount) > remaining + 1e-9) {
+      throw Object.assign(
+        new Error(`Applied Amount (${l.applied_amount}) exceeds this credit's remaining balance (${remaining}).`),
+        { status: 409 },
+      );
+    }
+  }
+
+  const appliedTotal = Number(
+    [...submittedApply, ...submittedCredits].reduce((s, l) => s + Number(l.applied_amount), 0).toFixed(2)
+  );
+  // The cash actually received. Defaults to what was applied when the form doesn't say
+  // otherwise; anything beyond that is unapplied cash sitting on account.
+  const received = paymentAmount === undefined || paymentAmount === null || paymentAmount === ''
+    ? appliedTotal
+    : Number(paymentAmount);
+  const creditsTotal = Number(submittedCredits.reduce((s, l) => s + Number(l.applied_amount), 0).toFixed(2));
+  // Credits offset the bill without cash changing hands, so they don't count against what was
+  // received -- only the invoice-applied portion consumes the payment.
+  const cashApplied = Number((appliedTotal - creditsTotal).toFixed(2));
+  if (cashApplied > received + 1e-9) {
+    throw Object.assign(new Error(
+      `Applied Amount (${cashApplied}) exceeds the Payment Amount (${received}). Raise the payment or lower what you're applying.`,
+    ), { status: 409 });
+  }
+  return {
+    submittedApply,
+    submittedCredits,
+    appliedTotal,
+    received,
+    unapplied: Number((received - cashApplied).toFixed(2)),
+  };
+}
+
 async function reverseInvoiceApplication(conn, invoiceId, amount) {
   const [[si]] = await conn.query('SELECT amount_due, status FROM sales_invoices WHERE id = ?', [invoiceId]);
   if (!si) return;
@@ -148,24 +206,40 @@ router.get('/for-customer/:customerId', requireAuth, requirePermission(ROUTE, 'c
     const [applyLines] = await pool.query(
       // Reached from Customer Payments' own New button rather than from an invoice, and it has
       // to show the same open items the invoice-sourced form does -- estimate-sourced included.
+      // `payment_id` puts this into EDIT mode. An invoice a payment already settled in full has
+      // no Amount Due left, so the plain "open items" list would not offer it and the edit form
+      // could not show -- let alone reduce -- what the payment is currently applying to it. The
+      // invoices this payment settled are therefore included regardless of their balance, and
+      // each row carries what this payment already draws from it, so the form can work out how
+      // much is really available: amount_due plus its own existing application.
       `SELECT si.id AS sales_invoice_id, si.invoice_no, si.date_created, si.gross_amount, si.amount_due,
-              c.name AS customer_name
+              c.name AS customer_name,
+              COALESCE(mine.applied_amount, 0) AS applied_by_this_payment
          FROM sales_invoices si
          LEFT JOIN sales_orders so ON so.id = si.sales_order_id
          LEFT JOIN estimates e ON e.id = si.estimate_id
          LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id)
-        WHERE COALESCE(so.customer_id, e.customer_id) = ? AND si.status != 'cancelled' AND si.amount_due > 0
+         LEFT JOIN customer_payment_lines mine
+                ON mine.sales_invoice_id = si.id AND mine.customer_payment_id = ?
+        WHERE COALESCE(so.customer_id, e.customer_id) = ? AND si.status != 'cancelled'
+          AND (si.amount_due > 0 OR mine.id IS NOT NULL)
         ORDER BY si.id DESC`,
-      [req.params.customerId],
+      [req.query.payment_id || 0, req.params.customerId],
     );
 
     const [creditLines] = await pool.query(
-      `SELECT id AS credit_memo_id, credit_memo_no, date_created, gross_amount, applied_amount,
-              (gross_amount - applied_amount) AS remaining
-         FROM credit_memos
-        WHERE customer_id = ? AND status = 'open' AND applied_amount < gross_amount
-        ORDER BY id DESC`,
-      [req.params.customerId],
+      // Same reasoning as the invoices above: a credit this payment has already drawn to zero
+      // still has to be offered, or an edit could not reduce its own draw on it.
+      `SELECT cm.id AS credit_memo_id, cm.credit_memo_no, cm.date_created, cm.gross_amount, cm.applied_amount,
+              (cm.gross_amount - cm.applied_amount) AS remaining,
+              COALESCE(mine.applied_amount, 0) AS applied_by_this_payment
+         FROM credit_memos cm
+         LEFT JOIN customer_payment_lines mine
+                ON mine.credit_memo_id = cm.id AND mine.customer_payment_id = ?
+        WHERE cm.customer_id = ? AND cm.status = 'open'
+          AND (cm.applied_amount < cm.gross_amount OR mine.id IS NOT NULL)
+        ORDER BY cm.id DESC`,
+      [req.query.payment_id || 0, req.params.customerId],
     );
 
     res.json({
@@ -334,41 +408,12 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
     if (!customerId) return res.status(400).json({ error: 'Customer is required.' });
 
-    const submittedApply = (Array.isArray(applyLines) ? applyLines : []).filter((l) => l.sales_invoice_id && Number(l.applied_amount) > 0);
-    const submittedCredits = (Array.isArray(creditLines) ? creditLines : []).filter((l) => l.credit_memo_id && Number(l.applied_amount) > 0);
-    if (!submittedApply.length && !submittedCredits.length) {
-      return res.status(400).json({ error: 'Apply at least one amount to an invoice or credit.' });
-    }
     await assertPeriodOpen(dateCreated, 'ar', conn);
 
-    // Re-check every credit against its fresh remaining balance before writing anything.
-    for (const l of submittedCredits) {
-      const [[cm]] = await conn.query('SELECT gross_amount, applied_amount, status FROM credit_memos WHERE id = ?', [l.credit_memo_id]);
-      if (!cm || cm.status !== 'open') return res.status(400).json({ error: 'One of the selected credits is no longer valid.' });
-      const remaining = Number(cm.gross_amount) - Number(cm.applied_amount);
-      if (Number(l.applied_amount) > remaining + 1e-9) {
-        return res.status(409).json({ error: `Applied Amount (${l.applied_amount}) exceeds this credit's remaining balance (${remaining}).` });
-      }
-    }
-
-    const appliedTotal = Number(
-      [...submittedApply, ...submittedCredits].reduce((s, l) => s + Number(l.applied_amount), 0).toFixed(2)
-    );
-    // The cash actually received. Defaults to what was applied when the form doesn't say
-    // otherwise; anything beyond that is unapplied cash sitting on account.
-    const received = paymentAmount === undefined || paymentAmount === null || paymentAmount === ''
-      ? appliedTotal
-      : Number(paymentAmount);
-    const creditsTotal = Number(submittedCredits.reduce((s, l) => s + Number(l.applied_amount), 0).toFixed(2));
-    // Credits offset the bill without cash changing hands, so they don't count against
-    // what was received -- only the invoice-applied portion consumes the payment.
-    const cashApplied = Number((appliedTotal - creditsTotal).toFixed(2));
-    if (cashApplied > received + 1e-9) {
-      return res.status(409).json({
-        error: `Applied Amount (${cashApplied}) exceeds the Payment Amount (${received}). Raise the payment or lower what you're applying.`,
-      });
-    }
-    const unapplied = Number((received - cashApplied).toFixed(2));
+    // Shared with the edit path so the two can never disagree about what was applied, what was
+    // received, and what is left on account.
+    const { submittedApply, submittedCredits, appliedTotal, received, unapplied } =
+      await prepareApplication(conn, { applyLines, creditLines, paymentAmount });
 
     await conn.beginTransaction();
 
@@ -453,6 +498,121 @@ router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_edit'), async
     res.json(row);
   } catch (err) {
     await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// Editing a payment that has not been deposited yet.
+//
+// WHY ONLY UNTIL IT IS DEPOSITED. A deposit sweeps the receipt into the bank and becomes the
+// thing a bank statement is reconciled against; changing the amount underneath it would put the
+// deposit and the bank out of step with nothing recording that it happened. Up to that point the
+// receipt is still just a record of cash in the drawer, and correcting a mistyped amount or a
+// wrong invoice is ordinary work -- which previously meant voiding and re-keying the whole thing,
+// leaving a void in the ledger for what was really a typo.
+//
+// Applying a payment moves money on the invoices it settles, so an edit has to UNDO the old
+// application before laying down the new one. Both happen in one transaction: a failure halfway
+// would otherwise leave invoices credited for a payment that no longer claims them.
+//
+// No GL to unwind -- computeCustomerPaymentGl derives the entries on read rather than storing
+// them, so the new figures are reflected the moment they are saved.
+router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[cp]] = await conn.query(
+      'SELECT id, status, date_created FROM customer_payments WHERE id = ?', [req.params.id],
+    );
+    if (!cp) return res.status(404).json({ error: 'Not found' });
+    if (cp.status === 'voided') {
+      return res.status(409).json({ error: 'A voided Customer Payment cannot be edited.' });
+    }
+    if (cp.status !== 'not_deposited') {
+      return res.status(409).json({
+        error: 'This payment has been deposited and can no longer be edited. Void it and re-enter if it is wrong.',
+      });
+    }
+
+    const {
+      date_created: dateCreated, department_id: departmentId, office_location_id: officeLocationId,
+      ar_account_id: arAccountId, deposit_account_id: depositAccountId, receipt_type: receiptType,
+      or_no: orNo, payment_type: paymentType, issued_by_user_id: issuedByUserId,
+      payment_method_id: paymentMethodId, payment_amount: paymentAmount, memo,
+      reference_no: referenceNo, bank_name: bankName, cheque_no: chequeNo, cheque_date: chequeDate,
+      apply_lines: applyLines, credit_lines: creditLines,
+    } = req.body;
+
+    // Both periods: the one it sits in now and the one it is being moved to. Moving a receipt
+    // out of a closed month is as much a change to that month as posting into one.
+    await assertPeriodOpen(cp.date_created, 'ar', conn);
+    if (dateCreated) await assertPeriodOpen(dateCreated, 'ar', conn);
+
+    const [existing] = await conn.query(
+      'SELECT sales_invoice_id, credit_memo_id, applied_amount FROM customer_payment_lines WHERE customer_payment_id = ?',
+      [req.params.id],
+    );
+    await conn.beginTransaction();
+
+    // Undo first, so the new application is checked against invoices and credits in the state
+    // they would be in if this payment had never existed. Validating before the reversal would
+    // reject re-saving an unchanged payment, because the invoice it settles no longer has the
+    // balance it is settling.
+    for (const l of existing) {
+      if (l.sales_invoice_id) await reverseInvoiceApplication(conn, l.sales_invoice_id, Number(l.applied_amount));
+      if (l.credit_memo_id) {
+        await conn.query(
+          'UPDATE credit_memos SET applied_amount = GREATEST(applied_amount - ?, 0) WHERE id = ?',
+          [Number(l.applied_amount), l.credit_memo_id],
+        );
+      }
+    }
+    await conn.query('DELETE FROM customer_payment_lines WHERE customer_payment_id = ?', [req.params.id]);
+
+    const { submittedApply, submittedCredits, appliedTotal, received, unapplied } =
+      await prepareApplication(conn, { applyLines, creditLines, paymentAmount });
+
+    for (const l of submittedApply) {
+      await applyToInvoice(conn, l.sales_invoice_id, Number(l.applied_amount));
+      await conn.query(
+        'INSERT INTO customer_payment_lines (customer_payment_id, sales_invoice_id, applied_amount) VALUES (?, ?, ?)',
+        [req.params.id, l.sales_invoice_id, l.applied_amount],
+      );
+    }
+    for (const l of submittedCredits) {
+      await conn.query('UPDATE credit_memos SET applied_amount = applied_amount + ? WHERE id = ?', [Number(l.applied_amount), l.credit_memo_id]);
+      await conn.query(
+        'INSERT INTO customer_payment_lines (customer_payment_id, credit_memo_id, applied_amount) VALUES (?, ?, ?)',
+        [req.params.id, l.credit_memo_id, l.applied_amount],
+      );
+    }
+
+    await conn.query(
+      `UPDATE customer_payments SET
+         date_created = ?, department_id = ?, office_location_id = ?, ar_account_id = ?,
+         deposit_account_id = ?, receipt_type = ?, or_no = ?, payment_type = ?,
+         issued_by_user_id = ?, payment_method_id = ?, payment_amount = ?, applied_amount = ?,
+         unapplied_amount = ?, memo = ?, reference_no = ?, bank_name = ?, cheque_no = ?, cheque_date = ?
+       WHERE id = ?`,
+      [
+        dateCreated || cp.date_created, departmentId || null, officeLocationId || null,
+        arAccountId || null, depositAccountId || null, receiptType || null, orNo || null,
+        paymentType || null, issuedByUserId || req.user.id, paymentMethodId || null,
+        received, appliedTotal, unapplied, memo || null,
+        referenceNo || null, bankName || null, chequeNo || null, chequeDate || null,
+        req.params.id,
+      ],
+    );
+
+    await logAudit(conn, { paymentId: req.params.id, userId: req.user.id, eventType: 'Updated' });
+    await conn.commit();
+
+    const [[row]] = await pool.query('SELECT * FROM customer_payments WHERE id = ?', [req.params.id]);
+    res.json(row);
+  } catch (err) {
+    await conn.rollback();
+    if (err.status) return res.status(err.status).json({ error: err.message });
     next(err);
   } finally {
     conn.release();

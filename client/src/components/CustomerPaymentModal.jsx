@@ -29,7 +29,9 @@ const PAYMENT_TYPES = ['Full Payment', 'Partial Payment', 'Advance Payment'];
 // loosely enough to cover "CHECK" and "Cheque" being spelled either way.
 const isCheque = (method) => /^che(ck|que)$/.test(String(method?.name || '').trim().toLowerCase());
 
-export default function CustomerPaymentModal({ invoiceId, customerId, onClose, onSaved }) {
+// `paymentId` puts the form into EDIT mode: it opens on the payment as saved and PUTs back.
+// Only offered for a payment that has not been deposited -- see the route for why.
+export default function CustomerPaymentModal({ invoiceId, customerId, paymentId, onClose, onSaved }) {
   const [data, setData] = useState(null);
   const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
   const [department, setDepartment] = useState(null);
@@ -63,16 +65,23 @@ export default function CustomerPaymentModal({ invoiceId, customerId, onClose, o
 
   useEffect(() => {
     Promise.all([
-      api.get(invoiceId
-        ? `/customer-payments/for-invoice/${invoiceId}`
-        : `/customer-payments/for-customer/${customerId}`),
+      // In edit mode the open-items list is asked for on behalf of THIS payment, so the invoices
+      // and credits it already settled come back even though they have no balance left -- see
+      // for-customer's payment_id note. Without that the form could not show, or reduce, what
+      // the payment is currently applying.
+      api.get(paymentId
+        ? `/customer-payments/for-customer/${customerId}?payment_id=${paymentId}`
+        : invoiceId
+          ? `/customer-payments/for-invoice/${invoiceId}`
+          : `/customer-payments/for-customer/${customerId}`),
+      paymentId ? api.get(`/customer-payments/${paymentId}`) : Promise.resolve(null),
       api.get('/lookups/departments'),
       // Names for the Issued By picker, served by this page rather than by the users admin page --
       // taking a payment must not require the right to administer accounts.
       api.get('/customer-payments/meta/issuers'),
       api.get('/lookups/payment-methods'),
       api.get('/lookups/chart-of-accounts'),
-    ]).then(([srcRes, deptRes, userRes, methodRes, acctRes]) => {
+    ]).then(([srcRes, payRes, deptRes, userRes, methodRes, acctRes]) => {
       const d = srcRes.data;
       setData(d);
       setDepartments(deptRes.data);
@@ -89,13 +98,41 @@ export default function CustomerPaymentModal({ invoiceId, customerId, onClose, o
         setApplyAmounts({ [d.sales_invoice_id]: String(Number(d.amount_due).toFixed(2)) });
         setPaymentAmount(String(Number(d.amount_due).toFixed(2)));
       }
+
+      // Editing: fill the form from the payment as saved, so what opens is what is recorded and
+      // any field left alone is saved back unchanged.
+      if (payRes) {
+        const p = payRes.data;
+        setDateCreated(String(p.date_created).slice(0, 10));
+        setReceiptType(p.receipt_type || '');
+        setOrNo(p.or_no || '');
+        setPaymentType(p.payment_type || '');
+        setMemo(p.memo || '');
+        setPaymentAmount(String(Number(p.payment_amount).toFixed(2)));
+        setReferenceNo(p.reference_no || '');
+        setBankName(p.bank_name || '');
+        setChequeNo(p.cheque_no || '');
+        setChequeDate(p.cheque_date ? String(p.cheque_date).slice(0, 10) : '');
+        if (p.department_id) setDepartment({ id: p.department_id, name: p.department_name });
+        if (p.issued_by_user_id) setIssuedBy({ id: p.issued_by_user_id, display_name: p.issued_by_name });
+        if (p.payment_method_id) setPaymentMethod({ id: p.payment_method_id, name: p.payment_method_name, requires_reference: methodRes.data.find((m) => m.id === p.payment_method_id)?.requires_reference });
+        if (p.deposit_account_id) setDepositAccount({ id: p.deposit_account_id, account_code: p.deposit_account_code, account_name: p.deposit_account_name });
+        const applied = {};
+        const credited = {};
+        for (const l of p.lines || []) {
+          if (l.sales_invoice_id) applied[l.sales_invoice_id] = String(Number(l.applied_amount).toFixed(2));
+          if (l.credit_memo_id) credited[l.credit_memo_id] = String(Number(l.applied_amount).toFixed(2));
+        }
+        setApplyAmounts(applied);
+        setCreditAmounts(credited);
+      }
       setLoading(false);
     }).catch((err) => {
       setError(err.response?.data?.error
         || (invoiceId ? 'Could not load this Invoice.' : 'Could not load this Customer.'));
       setLoading(false);
     });
-  }, [invoiceId, customerId]);
+  }, [invoiceId, customerId, paymentId]);
 
   if (loading) {
     return <div className="modal-overlay"><div className="modal modal-xl"><LoadingSpinner /></div></div>;
@@ -138,7 +175,7 @@ export default function CustomerPaymentModal({ invoiceId, customerId, onClose, o
 
     setSaving(true);
     try {
-      const { data: cp } = await api.post('/customer-payments', {
+      const payload = {
         customer_id: data.customer_id,
         date_created: dateCreated,
         department_id: department?.id || null,
@@ -159,7 +196,12 @@ export default function CustomerPaymentModal({ invoiceId, customerId, onClose, o
         memo,
         apply_lines: apply,
         credit_lines: credits,
-      });
+      };
+      // One payload, two verbs. Editing replaces the whole application rather than patching it,
+      // which is why the same body serves both.
+      const { data: cp } = paymentId
+        ? await api.put(`/customer-payments/${paymentId}`, payload)
+        : await api.post('/customer-payments', payload);
       onSaved(cp);
     } catch (err) {
       setError(err.response?.data?.error || 'Save failed');
