@@ -660,7 +660,7 @@ router.put('/:id/status', requireAuth, requireStatusChange, async (req, res, nex
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [[oldRow]] = await conn.query('SELECT status, sales_order_id FROM estimates WHERE id = ?', [req.params.id]);
+    const [[oldRow]] = await conn.query('SELECT status, sales_order_id, credit_term FROM estimates WHERE id = ?', [req.params.id]);
     if (!oldRow) {
       await conn.rollback();
       return res.status(404).json({ error: 'Not found' });
@@ -668,6 +668,23 @@ router.put('/:id/status', requireAuth, requireStatusChange, async (req, res, nex
     if (!STATUS_VALUES.includes(req.body.status)) {
       await conn.rollback();
       return res.status(400).json({ error: 'Invalid status' });
+    }
+    // CREDIT TERM IS REQUIRED before an estimate can be approved. Everything downstream is built
+    // on it: the Sales Order inherits it, the Invoice fills its Term from it, and the invoice's
+    // Date Due is the term's No. of Days counted from the invoice date. Without one the chain
+    // has nothing to work from -- which is how invoices came to be dated a flat 30 days out
+    // regardless of what was actually agreed.
+    //
+    // The wizard asks for it on step 3 and refuses to move past without it, but the estimate row
+    // is created back on step 1, so it cannot be a NOT NULL column or required on POST. This is
+    // the point it can be insisted on without breaking the way the form is filled in.
+    //
+    // Forward moves only. Cancelling or disapproving an estimate that never got a term has to
+    // stay possible, or a half-finished one could never be closed.
+    const NEEDS_CREDIT_TERM = ['pending_customer_approval', 'approved'];
+    if (NEEDS_CREDIT_TERM.includes(req.body.status) && !String(oldRow.credit_term || '').trim()) {
+      await conn.rollback();
+      return res.status(400).json({ error: 'Credit Term is required before this estimate can be approved.' });
     }
     // Approving out of the initial "pending supervisor approval" stage requires the
     // Can Approve Sales Estimate flag from the user's Account Type settings -- checked

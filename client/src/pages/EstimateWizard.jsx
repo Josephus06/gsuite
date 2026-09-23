@@ -1414,9 +1414,9 @@ export default function EstimateWizard() {
             <div className="wizard-cols">
               <div className="wizard-col">
                 <div className="field">
-                  <label>Credit Term</label>
+                  <label>Credit Term *</label>
                   <EntityPicker
-                    label="Credit Term" items={paymentTerms}
+                    required label="Credit Term" items={paymentTerms}
                     value={paymentTerms.find((t) => t.term_name === header.credit_term)?.id ?? ''}
                     getLabel={(t) => t.term_name}
                     columns={[{ key: 'term_name', label: 'Term' }, { key: 'no_of_days', label: 'No. of Days' }]}
@@ -1431,7 +1431,23 @@ export default function EstimateWizard() {
             </div>
             <div className="wizard-actions">
               <button type="button" className="btn" onClick={() => setStep(2)}>PREVIOUS</button>
-              <button type="button" className="btn btn-primary" onClick={() => saveHeaderAndGoTo(4)}>NEXT</button>
+              {/* Credit Term is required, and this is where it is asked. The step is a set of
+                  buttons rather than a form, so the picker's own `required` never fires a
+                  browser validation -- the check has to be made here. The server refuses an
+                  estimate moving forward without one too, so this is the message rather than
+                  the enforcement. */}
+              <button
+                type="button" className="btn btn-primary"
+                onClick={() => {
+                  if (!header.credit_term) {
+                    setError('Credit Term is required. Pick the payment term agreed with the customer.');
+                    return;
+                  }
+                  saveHeaderAndGoTo(4);
+                }}
+              >
+                NEXT
+              </button>
             </div>
           </div>
         )}
