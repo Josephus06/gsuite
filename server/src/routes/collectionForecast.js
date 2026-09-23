@@ -188,7 +188,18 @@ router.get('/calendar', requireAuth, requirePermission(ROUTE, 'can_view'), async
     // arrived unforecast is exactly what a number restricted to the plan would hide. Voided
     // payments are excluded, because a reversed receipt never was a collection, and so are the
     // reconstructed CPAY-INV-#### rows -- see REAL_PAYMENT above.
-    const payWhere = ['cp.date_created BETWEEN ? AND ?', 'cp.voided_at IS NULL', REAL_PAYMENT];
+    //
+    // HEAD OFFICE ONLY. Treasury collects at Head Office; a receipt taken at a branch is that
+    // branch's, and counting it here would credit the forecast with money Treasury never
+    // handled. Matched on the location's NAME rather than a hardcoded id, because ids differ
+    // between the environments this runs in -- the office and cloud databases mint them from
+    // different auto_increment offsets.
+    const payWhere = [
+      'cp.date_created BETWEEN ? AND ?',
+      'cp.voided_at IS NULL',
+      REAL_PAYMENT,
+      "loc.location_name = 'Head Office'",
+    ];
     const payParams = [start, end];
     if (customerId) { payWhere.push('cp.customer_id = ?'); payParams.push(customerId); }
     const [payments] = await pool.query(
@@ -196,6 +207,7 @@ router.get('/calendar', requireAuth, requirePermission(ROUTE, 'can_view'), async
               COUNT(*) AS payment_count, COALESCE(SUM(cp.payment_amount), 0) AS collected
          FROM customer_payments cp
          JOIN customers c ON c.id = cp.customer_id
+         JOIN locations loc ON loc.id = cp.office_location_id
         WHERE ${payWhere.join(' AND ')}
         GROUP BY cp.date_created, c.id, c.name`,
       payParams,
