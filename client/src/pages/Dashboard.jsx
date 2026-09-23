@@ -8,6 +8,7 @@ import Modal from '../components/Modal';
 import SyncFromSourceButton from '../components/SyncFromSourceButton';
 import { parseUtc } from '../utils/datetime';
 import { isPlanner } from '../utils/plannerRoles';
+import CollectionForecastCalendar from '../components/CollectionForecastCalendar';
 import Feed from './Feed';
 import '../styles/feed.css';
 
@@ -282,6 +283,11 @@ function RoleDashboard() {
 }
 
 function AdminDashboard({ data, user, navigate }) {
+  // Whether this account may read the collection forecast at all. Asked here rather than
+  // assumed from the admin dashboard: the panel below shows who owes the company what, and the
+  // API refuses it without the page permission anyway.
+  const { can } = useAuth();
+  const canSeeCollections = can('/treasury/collection-forecast');
   const trendingTotal = data.trendingJobTypes.reduce((s, j) => s + j.uses, 0);
   const jobTypeSegments = data.trendingJobTypes.map((j, i) => ({ label: j.name, value: j.uses, color: JOB_TYPE_COLORS[i % JOB_TYPE_COLORS.length] }));
   const approvalRingValue = data.rings?.find((r) => r.label === 'Estimates Approved')?.value ?? 0;
@@ -304,9 +310,20 @@ function AdminDashboard({ data, user, navigate }) {
         <ProfileCard user={user} roleLabel={ROLE_LABELS.admin} rings={data.rings} activity={activity} />
         {isPlanner(user) ? (
           // A planner opens this screen to answer "what is on the floor this month", not to
-          // read a sales trend -- so the forecast calendar takes that panel for them.
+          // read a sales trend -- so the production forecast calendar takes that panel for them.
           <ForecastCalendarCard navigate={navigate} />
+        ) : canSeeCollections ? (
+          // And for everyone else with Treasury access, the question this screen should answer
+          // is when the money is coming in -- which the sales trend cannot say. Same calendar
+          // component as Treasury > Collection Forecast, so the dashboard and the page can
+          // never quote different totals for a day.
+          <div className="holo-card dash-chart-card">
+            <h3>Collection Forecast</h3>
+            <CollectionForecastCalendar />
+          </div>
         ) : (
+          // Without Treasury access the calendar would render an empty month rather than a
+          // refusal, which reads as a broken card -- so the trend stays for those accounts.
           <div className="holo-card dash-chart-card">
             <h3>Org-Wide Sales Trend</h3>
             <div className="holo-tile-dark">
