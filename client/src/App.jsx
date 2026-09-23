@@ -158,6 +158,8 @@ import ArAging from './pages/reports/ArAging';
 import Profitability from './pages/reports/Profitability';
 import ArAgingDetails from './pages/reports/ArAgingDetails';
 import ApAging from './pages/reports/ApAging';
+import BirSalesReport from './pages/reports/BirSalesReport';
+import BirPurchaseReport from './pages/reports/BirPurchaseReport';
 import CommissionSchemes from './pages/CommissionSchemes';
 import CommissionSchemeView from './pages/CommissionSchemeView';
 import EmployeeQuotas from './pages/EmployeeQuotas';
@@ -401,6 +403,9 @@ function App() {
         <Route path="/reports/profitability" element={<Profitability />} />
         <Route path="/reports/ar-aging-details" element={<ArAgingDetails />} />
         <Route path="/reports/ap-aging" element={<ApAging />} />
+        {/* BIR Reports -- its own module on the bar, mirroring the live system's menu. */}
+        <Route path="/reports/bir-sales" element={<BirSalesReport />} />
+        <Route path="/reports/bir-purchase" element={<BirPurchaseReport />} />
         <Route path="/commission-schemes" element={<CommissionSchemes />} />
         <Route path="/commission-schemes/:id" element={<CommissionSchemeView />} />
         <Route path="/employee-quotas" element={<EmployeeQuotas />} />

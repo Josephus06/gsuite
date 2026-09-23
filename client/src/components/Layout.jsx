@@ -198,7 +198,7 @@ const NAV_STRUCTURE = [
   },
   {
     label: 'Accounting',
-    // Last group on the bar, so its (wide) menu is right-anchored to stay on screen.
+    // Near the end of the bar and a wide menu, so it is right-anchored to stay on screen.
     alignRight: true,
     // Grouped mega-menu mirroring the live Accounting dropdown: Transactions / Setups / Reports
     // columns. Only the pages this build actually has are listed under each heading.
@@ -256,6 +256,19 @@ const NAV_STRUCTURE = [
           { route: '/reports/parked-bank-items', label: 'Unidentified Bank Items' },
         ],
       },
+    ],
+  },
+  {
+    // BIR Reports sits beside Accounting rather than inside it, exactly as it does on the live
+    // system (app.bir-reports = app.sales-report + app.purchase-report). These two listings are
+    // what the BIR filings are prepared from, and the people who prepare them are not
+    // necessarily the people who get the rest of Accounting -- separate pages, separate module.
+    label: 'BIR Reports',
+    // Last group on the bar, so its menu is right-anchored to stay on screen.
+    alignRight: true,
+    children: [
+      { route: '/reports/bir-sales', label: 'Sales Report' },
+      { route: '/reports/bir-purchase', label: 'Purchase Report' },
     ],
   },
 ];
