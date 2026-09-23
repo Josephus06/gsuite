@@ -89,7 +89,10 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, from
       setBillToAddress(d.shipping_address || '');
       // A ticket already carries its own Term/PO #/Memo, chosen when it was raised --
       // carry them onto the invoice rather than falling back to the customer's default.
-      const sourceTerm = d.term || d.credit_term || '';
+      // The order's own credit term first, then the customer's agreed one. An order frequently
+      // carries none -- it is not a required field on a Sales Order -- and falling back to the
+      // customer's default is what the person raising the invoice would otherwise look up by hand.
+      const sourceTerm = d.term || d.credit_term || d.customer_term || '';
       setTerm(sourceTerm);
       // Match what the source document carried back to a master row, so the picker opens showing
       // the term already agreed rather than blank. Compared case- and space-insensitively
@@ -102,7 +105,20 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, from
       setMemo(d.memo || '');
       if (d.sales_rep_id) setSalesRep({ id: d.sales_rep_id, first_name: d.sales_rep_name?.split(' ')[0], last_name: d.sales_rep_name?.split(' ').slice(1).join(' ') });
       if (d.office_location_id) setOfficeLocation({ id: d.office_location_id, location_name: d.office_location_name });
-      if (d.department_id) setDepartment({ id: d.department_id, name: d.department_name });
+      if (d.department_id) {
+        setDepartment({ id: d.department_id, name: d.department_name });
+      } else if (d.sales_division_name) {
+        // A Sales Order has no department -- it has a SALES DIVISION, a separate table. The
+        // invoice's Department is filled from it, matched by NAME rather than by id: the two
+        // id spaces agree for most rows but not all, and where they disagree the id silently
+        // files the invoice under the wrong department. Normalised because the same division is
+        // "Sales-1" on one table and "Sales - 1" on the other.
+        // Letters and digits only: the same unit is "Sales-1" as a division and "Sales - 1" as a
+        // department, so collapsing whitespace alone would miss three of the eleven.
+        const key = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const division = deptRes.data.find((x) => key(x.name) === key(d.sales_division_name));
+        if (division) setDepartment(division);
+      }
       // From the matched term's own No. of Days where there is one. The flat +30 remains the
       // fallback for a document carrying no term, or one that matches nothing in the list --
       // which is what every invoice got before, so nothing regresses.

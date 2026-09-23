@@ -141,11 +141,22 @@ router.get('/for-sales-order/:salesOrderId', requireAuth, requirePermission(ROUT
       `SELECT so.id, so.sales_order_no, so.credit_term, so.sales_rep_id, so.office_location_id, so.shipping_address,
               c.name AS customer_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
-              loc.location_name AS office_location_name
+              loc.location_name AS office_location_name,
+              -- The order's SALES DIVISION, which is what an invoice's Department is filled from.
+              -- Sent by name as well as by id: divisions and departments are separate tables with
+              -- separate id spaces that happen to agree for most rows, and where they disagree
+              -- the id is wrong -- sales division 1 "Support" is department 1 "Production -  CNC",
+              -- which is how 4 invoices came to be filed under CNC. The form matches on the name.
+              so.sales_division_id, sd.name AS sales_division_name,
+              -- The customer's agreed payment term, as the fallback for an order carrying no
+              -- credit term of its own -- which SO-163551 and plenty of others do not.
+              pt.term_name AS customer_term
        FROM sales_orders so
        LEFT JOIN customers c ON c.id = so.customer_id
        LEFT JOIN employees sr ON sr.id = so.sales_rep_id
        LEFT JOIN locations loc ON loc.id = so.office_location_id
+       LEFT JOIN sales_divisions sd ON sd.id = so.sales_division_id
+       LEFT JOIN payment_terms pt ON pt.id = c.payment_term_id
        WHERE so.id = ?`,
       [req.params.salesOrderId]
     );
