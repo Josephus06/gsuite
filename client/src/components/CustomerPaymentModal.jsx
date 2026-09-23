@@ -23,6 +23,12 @@ const PAYMENT_TYPES = ['Full Payment', 'Partial Payment', 'Advance Payment'];
 // that invoice for its full balance because settling exactly it is the overwhelmingly common case.
 // `customerId` is Add on the Customer Payments list: the customer handed over money and nothing
 // has singled out an invoice, so every open one is listed and none is ticked.
+// Cheques are the one method whose extra fields cannot be driven off the master list's
+// requires_reference flag -- a bank, a cheque number and a cheque date are cheque-specific by
+// nature. Matched on the name rather than an id, which differs between environments, and
+// loosely enough to cover "CHECK" and "Cheque" being spelled either way.
+const isCheque = (method) => /^che(ck|que)$/.test(String(method?.name || '').trim().toLowerCase());
+
 export default function CustomerPaymentModal({ invoiceId, customerId, onClose, onSaved }) {
   const [data, setData] = useState(null);
   const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
@@ -33,6 +39,11 @@ export default function CustomerPaymentModal({ invoiceId, customerId, onClose, o
   const [issuedBy, setIssuedBy] = useState(null);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState(null);
+  // How the money arrived. Only ever one set of these is on screen -- see the method picker.
+  const [referenceNo, setReferenceNo] = useState('');
+  const [bankName, setBankName] = useState('');
+  const [chequeNo, setChequeNo] = useState('');
+  const [chequeDate, setChequeDate] = useState('');
   const [depositAccount, setDepositAccount] = useState(null);
   const [memo, setMemo] = useState('');
   const [tab, setTab] = useState('apply');
@@ -139,6 +150,12 @@ export default function CustomerPaymentModal({ invoiceId, customerId, onClose, o
         issued_by_user_id: issuedBy?.id || null,
         payment_method_id: paymentMethod?.id || null,
         payment_amount: received,
+        // Only whatever the chosen method actually asks for; the rest were cleared when it was
+        // picked, so a cheque number cannot ride along on a GCASH receipt.
+        reference_no: referenceNo || null,
+        bank_name: bankName || null,
+        cheque_no: chequeNo || null,
+        cheque_date: chequeDate || null,
         memo,
         apply_lines: apply,
         credit_lines: credits,
@@ -205,9 +222,39 @@ export default function CustomerPaymentModal({ invoiceId, customerId, onClose, o
                 <label>Payment Method</label>
                 <EntityPicker
                   label="Payment Method" items={methods} value={paymentMethod?.id || ''} getLabel={(m) => m.name}
-                  columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']} onSelect={setPaymentMethod}
+                  columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']}
+                  onSelect={(m) => {
+                    setPaymentMethod(m);
+                    // Clear what no longer applies, so switching CHECK -> GCASH cannot save a
+                    // cheque number against a GCASH receipt.
+                    if (!isCheque(m)) { setBankName(''); setChequeNo(''); setChequeDate(''); }
+                    if (!m?.requires_reference || isCheque(m)) setReferenceNo('');
+                  }}
                 />
               </div>
+
+              {/* Nothing extra is asked until a method is chosen -- there is no sensible answer
+                  to "reference number" before then. Cash asks for neither, because cash has no
+                  reference. Which methods do is read from the payment_methods master list, so
+                  adding a sixth is a Master Lists edit and not a code change. */}
+              {paymentMethod && isCheque(paymentMethod) && (
+                <>
+                  <div className="field"><label>Bank</label><input value={bankName} onChange={(e) => setBankName(e.target.value)} /></div>
+                  {/* The date the CHEQUE is drawn for, which is not the date the payment was
+                      recorded -- a post-dated cheque is the whole reason this is separate. */}
+                  <div className="field"><label>Date</label><input type="date" value={chequeDate} onChange={(e) => setChequeDate(e.target.value)} /></div>
+                  <div className="field"><label>Cheque No</label><input value={chequeNo} onChange={(e) => setChequeNo(e.target.value)} /></div>
+                </>
+              )}
+              {paymentMethod && paymentMethod.requires_reference && !isCheque(paymentMethod) && (
+                <div className="field">
+                  <label>Reference No</label>
+                  <input
+                    value={referenceNo} onChange={(e) => setReferenceNo(e.target.value)}
+                    placeholder={`${paymentMethod.name} reference`}
+                  />
+                </div>
+              )}
               <div className="field">
                 <label>Deposit To</label>
                 <EntityPicker

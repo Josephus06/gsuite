@@ -324,6 +324,11 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       office_location_id: officeLocationId, ar_account_id: arAccountId, deposit_account_id: depositAccountId,
       receipt_type: receiptType, or_no: orNo, payment_type: paymentType, issued_by_user_id: issuedByUserId,
       payment_method_id: paymentMethodId, payment_amount: paymentAmount, memo,
+      // How the money actually arrived. Which of these the form collects depends on the method:
+      // a reference for GCASH/Maya/Card/Online Deposit, the cheque trio for CHECK, neither for
+      // cash. Stored as sent -- the form decides what to ask for off the payment_methods master
+      // list, and re-deciding it here would mean two places to keep in step with that list.
+      reference_no: referenceNo, bank_name: bankName, cheque_no: chequeNo, cheque_date: chequeDate,
       apply_lines: applyLines, credit_lines: creditLines,
     } = req.body;
 
@@ -378,13 +383,15 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       `INSERT INTO customer_payments
          (customer_payment_no, date_created, customer_id, department_id, office_location_id, ar_account_id,
           deposit_account_id, receipt_type, or_no, payment_type, issued_by_user_id, payment_method_id,
-          payment_amount, applied_amount, unapplied_amount, memo, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          payment_amount, applied_amount, unapplied_amount, memo, created_by_user_id,
+          reference_no, bank_name, cheque_no, cheque_date)
+       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         dateCreated || new Date().toISOString().slice(0, 10), customerId, departmentId || null,
         officeLocationId || null, arAccountId || null, depositAccountId || null, receiptType || null,
         orNo || null, paymentType || null, issuedByUserId || req.user.id, paymentMethodId || null,
         received, appliedTotal, unapplied, memo || null, req.user.id,
+        referenceNo || null, bankName || null, chequeNo || null, chequeDate || null,
       ]
     );
     const paymentId = result.insertId;
