@@ -15,6 +15,23 @@ const ROUTE = '/treasury/collection-forecast';
 // calls Paid In Full. See lib/arAging.js for why that report is right to differ.
 const OPEN_INVOICE = 'si.amount_due > 0 AND si.cancelled_at IS NULL';
 
+// A RECEIPT, as opposed to a bookkeeping reconstruction.
+//
+// customer_payments holds two different things. 59,206 PAY-#### rows are real payment headers
+// imported from the live system, 56,424 of them carrying an OR number. The other 72,456 are
+// CPAY-INV-#### rows that db/generate-invoice-payments.js wrote -- one per already-paid imported
+// invoice, so the Customer Payments module had data and a paid invoice showed a settlement in
+// Related Records. Its own header says the numbers and the grouping are synthetic. None has an
+// OR number, because no receipt was ever issued.
+//
+// They must not count as collections. On 2026-09-04 they were 1,727,800.23 of the 2,082,536.69
+// the calendar first reported -- including the whole of one customer's 1,550,572.50, which is
+// what exposed this: money shown as collected on a day nobody collected it.
+//
+// Matched on the number prefix, which is what the generator documents. Matching on "has no OR"
+// instead would throw away the 2,782 real payments that carry no OR number.
+const REAL_PAYMENT = "cp.customer_payment_no NOT LIKE 'CPAY-INV-%'";
+
 const clampPage = (v) => Math.max(1, Number(v) || 1);
 const clampLimit = (v) => Math.min(200, Math.max(1, Number(v) || 25));
 const isIsoDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
@@ -165,13 +182,13 @@ router.get('/calendar', requireAuth, requirePermission(ROUTE, 'can_view'), async
       params,
     );
 
-    // ACTUAL COLLECTION: the customer payments actually created on each day, which is what the
-    // forecast is a prediction of. Deliberately EVERY payment taken that day, not only those
-    // against invoices that were forecast for it -- the figure is meant to answer "did the money
-    // we expected arrive", and money that arrived unforecast is exactly what would be missing
-    // from a number restricted to the plan. Voided payments are excluded: a reversed receipt
-    // never was a collection.
-    const payWhere = ['cp.date_created BETWEEN ? AND ?', 'cp.voided_at IS NULL'];
+    // ACTUAL COLLECTION: the receipts actually taken on each day, which is what the forecast is
+    // a prediction of. Deliberately EVERY receipt taken that day, not only those against invoices
+    // forecast for it -- the figure answers "did the money we expected arrive", and money that
+    // arrived unforecast is exactly what a number restricted to the plan would hide. Voided
+    // payments are excluded, because a reversed receipt never was a collection, and so are the
+    // reconstructed CPAY-INV-#### rows -- see REAL_PAYMENT above.
+    const payWhere = ['cp.date_created BETWEEN ? AND ?', 'cp.voided_at IS NULL', REAL_PAYMENT];
     const payParams = [start, end];
     if (customerId) { payWhere.push('cp.customer_id = ?'); payParams.push(customerId); }
     const [payments] = await pool.query(
