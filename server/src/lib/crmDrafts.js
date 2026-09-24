@@ -21,7 +21,10 @@ const { getSalesRepEmployeeScope } = require('./salesVisibility');
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 const COMPANY = process.env.CRM_COMPANY_NAME || 'GraphicStar';
-const PUBLIC_URL = (process.env.CRM_PUBLIC_URL || process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/+$/, '');
+// The address customers' unsubscribe links point at. It must be the PUBLIC https name, not
+// whatever the rep happens to be browsing on -- office staff use the LAN address, which no
+// customer can reach. No fallback to localhost: with neither set, sending is refused (sendDraft).
+const PUBLIC_URL = (process.env.CRM_PUBLIC_URL || process.env.CLIENT_URL || '').replace(/\/+$/, '') || null;
 const MIN_DAYS_BETWEEN_EMAILS = 7;
 const BIRTHDAY_LOOKAHEAD_DAYS = 3;
 const CHECKIN_COOLDOWN_DAYS = 30; // nightly job: no new check-in draft for a customer inside this
@@ -301,6 +304,7 @@ async function sendDraft(draftId, user) {
   );
   if (recent) return fail(`We already emailed this address on ${String(recent.sent_at).slice(0, 10)}; wait a week between emails.`, 409);
   if (!mailer.isConfigured()) return fail(`Email is not set up on this server -- ${mailer.missingReason()}.`, 503);
+  if (!PUBLIC_URL) return fail('CRM_PUBLIC_URL is not set on this server, so the email would carry a broken unsubscribe link.', 503);
 
   const [[me]] = await pool.query('SELECT display_name, email FROM users WHERE id = ?', [user.id]);
   const { html, text } = renderEmail(draft.body, to);
