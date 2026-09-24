@@ -171,7 +171,8 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
     const credits = Object.entries(creditAmounts)
       .filter(([, v]) => Number(v) > 0)
       .map(([id, v]) => ({ credit_memo_id: Number(id), applied_amount: Number(v) }));
-    if (!apply.length && !credits.length) { setError('Apply at least one amount to an invoice or credit.'); return; }
+    // Nothing applied is allowed -- the whole amount then sits unapplied, on account.
+    if (!apply.length && !credits.length && !(received > 0)) { setError('Enter a Payment Amount, or apply an amount to an invoice or credit.'); return; }
 
     setSaving(true);
     try {

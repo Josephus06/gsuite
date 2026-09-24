@@ -353,8 +353,19 @@ async function computeTransitGl(lines, { qtyField, assetIsDebit }) {
 // Only the portion applied to *invoices* posts. A line applied against one of the
 // customer's own Credit Memos moves no cash -- it offsets the payment with a credit that
 // already posted its own entry when the memo was raised, so posting it here would
-// double-count. Unapplied cash likewise doesn't touch AR; it sits as an on-account
-// balance this build tracks on the payment itself rather than in the ledger.
+// double-count. Unapplied cash doesn't touch AR either.
+//
+// UNAPPLIED CASH on a payment entered in this app posts DR cash / CR 23000 Customer Deposits: it
+// is money received for invoices not yet raised (or not yet chosen), so it is owed back to the
+// customer until it is applied. Once a payment could be saved with nothing applied, leaving it
+// unposted meant real cash with no entry at all -- and a later Bank Deposit would credit
+// Undeposited Funds for money that never went into it. Editing the payment to apply it later
+// moves the amount from 23000 to AR on its own, since this entry is derived on every read.
+//
+// ONLY IN-APP PAYMENTS (created_by_user_id set). The ~58k PAY-* receipts imported from live apply
+// to nothing because live exposes no payment->invoice detail, not because they are advances, and
+// the same cash is already booked through the synthetic CPAY-* payments. Posting their unapplied
+// amount would add roughly PHP 500M to the ledger twice. See customer-payments-cpay-vs-pay.
 async function computeCustomerPaymentGl(cp, lines) {
   const arAcct = await coaByCode('12100');
   if (!arAcct || !cp.deposit_account_id) return [];
@@ -371,12 +382,17 @@ async function computeCustomerPaymentGl(cp, lines) {
     .filter((l) => l.sales_invoice_id)
     .reduce((s, l) => s + Number(l.applied_amount || 0), 0);
   const amount = Number(appliedToInvoices.toFixed(2));
-  if (!amount) return [];
+  const unapplied = cp.created_by_user_id ? Number((Number(cp.unapplied_amount) || 0).toFixed(2)) : 0;
+  const custDeposits = unapplied > 0 ? await coaByCode('23000') : null;
+  const onAccount = custDeposits ? unapplied : 0;
+  if (!amount && !onAccount) return [];
 
-  return [
-    { account_code: depositAcct.account_code, account_name: depositAcct.account_name, debit: amount, credit: 0 },
-    { account_code: arAcct.account_code, account_name: arAcct.account_name, debit: 0, credit: amount },
+  const rows = [
+    { account_code: depositAcct.account_code, account_name: depositAcct.account_name, debit: Number((amount + onAccount).toFixed(2)), credit: 0 },
   ];
+  if (amount) rows.push({ account_code: arAcct.account_code, account_name: arAcct.account_name, debit: 0, credit: amount });
+  if (onAccount) rows.push({ account_code: custDeposits.account_code, account_name: custDeposits.account_name, debit: 0, credit: onAccount });
+  return rows;
 }
 
 // GL Impact for a Credit Memo -- the exact reversal of the Sales Invoice entry it credits

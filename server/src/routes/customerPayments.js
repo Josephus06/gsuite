@@ -60,8 +60,11 @@ async function prepareApplication(conn, { applyLines, creditLines, paymentAmount
   const submittedCredits = (Array.isArray(creditLines) ? creditLines : [])
     .filter((l) => l.credit_memo_id && Number(l.applied_amount) > 0);
 
-  if (!submittedApply.length && !submittedCredits.length) {
-    throw Object.assign(new Error('Apply at least one amount to an invoice or credit.'), { status: 400 });
+  // Nothing applied is allowed: the whole payment then sits unapplied, on account (an advance, or
+  // cash for invoices not raised yet), and posts to 23000 Customer Deposits -- see
+  // computeCustomerPaymentGl. What it cannot be is nothing at all.
+  if (!submittedApply.length && !submittedCredits.length && !(Number(paymentAmount) > 0)) {
+    throw Object.assign(new Error('Enter a Payment Amount, or apply an amount to an invoice or credit.'), { status: 400 });
   }
 
   for (const l of submittedCredits) {
