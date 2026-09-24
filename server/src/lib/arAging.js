@@ -599,6 +599,6 @@ async function buildArAgingCustomerLedger(customerId, asOf) {
 }
 
 module.exports = {
-  buildArAging, buildArAgingCustomerDetails, buildArAgingCustomerLedger,
+  buildArAging, buildArAgingCustomerDetails, buildArAgingCustomerLedger, collectOpenItems,
   buildArAgingDetails, buildArAgingDetailsCsv, searchArCustomers,
 };

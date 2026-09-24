@@ -322,6 +322,8 @@ CREATE TABLE customers (
     sales_division_id BIGINT NULL REFERENCES sales_divisions(id),
     default_sales_rep_id BIGINT NULL REFERENCES users(id),
     is_active BOOLEAN DEFAULT TRUE,
+    crm_priority VARCHAR(10) NOT NULL DEFAULT 'normal',
+    visit_every_days INT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NULL
 );
@@ -335,6 +337,8 @@ CREATE TABLE customer_contacts (
     phone VARCHAR(50),
     description VARCHAR(255),
     is_primary BOOLEAN DEFAULT FALSE,
+    birthday DATE NULL,
+    personal_notes VARCHAR(1000) NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NULL
 );
@@ -2056,9 +2060,84 @@ CREATE TABLE crm_activities (
     completed_at DATETIME NULL,
     assigned_to_user_id BIGINT NULL REFERENCES users(id),
     created_by_user_id BIGINT NULL REFERENCES users(id),
+    starts_at DATETIME NULL,
+    ends_at DATETIME NULL,
+    location VARCHAR(300) NULL,
+    contact_id BIGINT NULL,
+    outcome VARCHAR(1000) NULL,
+    invite_sent_at DATETIME NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NULL,
-    INDEX idx_crm_activities_related (related_type, related_id)
+    INDEX idx_crm_activities_related (related_type, related_id),
+    INDEX idx_crm_activities_type_related (activity_type, related_type, related_id, is_done)
+);
+
+-- Free-form labels on customers. See src/db/create-crm-relationship.js.
+CREATE TABLE crm_tags (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(60) NOT NULL UNIQUE,
+    color VARCHAR(20) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE customer_tags (
+    customer_id BIGINT NOT NULL,
+    tag_id BIGINT NOT NULL,
+    PRIMARY KEY (customer_id, tag_id),
+    INDEX idx_customer_tags_tag (tag_id)
+);
+
+-- Nightly "needs attention" ranking and reps' snoozes on it. See src/lib/crmAttention.js.
+CREATE TABLE crm_attention (
+    customer_id BIGINT PRIMARY KEY,
+    owner_employee_id BIGINT NULL,
+    score DECIMAL(8,2) NOT NULL,
+    reasons JSON NOT NULL,
+    last_order_date DATE NULL,
+    last_visit_at DATETIME NULL,
+    next_scheduled_at DATETIME NULL,
+    revenue_12m DECIMAL(16,2) NOT NULL DEFAULT 0,
+    overdue_amount DECIMAL(16,2) NOT NULL DEFAULT 0,
+    computed_at DATETIME NOT NULL,
+    INDEX idx_crm_attention_owner_score (owner_employee_id, score),
+    INDEX idx_crm_attention_score (score)
+);
+
+CREATE TABLE crm_attention_snoozes (
+    customer_id BIGINT PRIMARY KEY,
+    snoozed_until DATE NOT NULL,
+    snoozed_by_user_id BIGINT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- AI-drafted, rep-approved customer emails, and unsubscribed addresses. See src/lib/crmDrafts.js.
+CREATE TABLE crm_email_drafts (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    customer_id BIGINT NOT NULL,
+    contact_id BIGINT NULL,
+    owner_employee_id BIGINT NULL,
+    to_email VARCHAR(150) NOT NULL,
+    kind VARCHAR(20) NOT NULL,
+    reason VARCHAR(500) NULL,
+    subject VARCHAR(255) NOT NULL,
+    body TEXT NOT NULL,
+    generated_by VARCHAR(20) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'draft',
+    error VARCHAR(500) NULL,
+    activity_id BIGINT NULL,
+    created_by_user_id BIGINT NULL,
+    sent_by_user_id BIGINT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NULL,
+    sent_at DATETIME NULL,
+    INDEX idx_crm_email_drafts_status_owner (status, owner_employee_id),
+    INDEX idx_crm_email_drafts_customer (customer_id, created_at)
+);
+
+CREATE TABLE crm_email_optouts (
+    email VARCHAR(150) PRIMARY KEY,
+    opted_out_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    source VARCHAR(30) NOT NULL DEFAULT 'unsubscribe_link'
 );
 
 -- =====================================================================

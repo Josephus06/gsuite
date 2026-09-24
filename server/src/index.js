@@ -63,6 +63,9 @@ const reportsRoutes = require('./routes/reports');
 const leadRoutes = require('./routes/leads');
 const crmPipelineRoutes = require('./routes/crmPipeline');
 const crmActivityRoutes = require('./routes/crmActivities');
+const crmRoutes = require('./routes/crm');
+const crmDraftRoutes = require('./routes/crmDrafts');
+const crmPublicRoutes = require('./routes/crmPublic');
 const chatbotRoutes = require('./routes/chatbot');
 const ticketRoutes = require('./routes/tickets');
 const hrdRoutes = require('./routes/hrd');
@@ -103,6 +106,8 @@ const archiverKnowledgeRoutes = require('./routes/archiverKnowledge');
 const { ensureAssignedAtColumn } = require('./db/ensureSchema');
 const { sendTicketReminders } = require('./scripts/ticket_reminder');
 const { sendParkedItemReminders } = require('./scripts/parked_items_reminder');
+const { refreshAttention, crmAttentionJobEnabled } = require('./lib/crmAttention');
+const { autoDraft } = require('./lib/crmDrafts');
 const { startSampling } = require('./lib/systemHealth');
 
 const app = express();
@@ -202,6 +207,8 @@ app.use('/api/lookups', lookupRoutes);
 app.use('/api/public', publicQuoteRoutes);
 // Unauthenticated: the driver's own run sheet, opened from a tokenised link. See routes/driverRuns.js.
 app.use('/api/driver', driverRunRoutes);
+// Unauthenticated: the signed unsubscribe link in CRM emails. See routes/crmPublic.js.
+app.use('/api/crm-public', crmPublicRoutes);
 app.use('/api/web-products', webProductRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/users', userRoutes);
@@ -259,6 +266,8 @@ app.use('/api/reports', reportsRoutes);
 app.use('/api/leads', leadRoutes);
 app.use('/api/crm-pipeline', crmPipelineRoutes);
 app.use('/api/crm-activities', crmActivityRoutes);
+app.use('/api/crm/drafts', crmDraftRoutes);
+app.use('/api/crm', crmRoutes);
 app.use('/api/chatbot', chatbotRoutes);
 app.use('/api/reports/artist-incentive', artistIncentiveReportRoutes);
 app.use('/api/reports/tickets', ticketReportRoutes);
@@ -370,6 +379,39 @@ scheduleDailyParkedItemReminders(
   Number(process.env.PARKED_ITEMS_REMINDER_HOUR || 2),
   Number(process.env.PARKED_ITEMS_REMINDER_MINUTE || 0),
 );
+
+// CRM Needs Attention snapshot (lib/crmAttention.js). OFF unless CRM_ATTENTION_JOB=1, on purpose:
+// the droplet and the office box are master-master replicas, and two servers each deleting and
+// re-inserting the whole crm_attention table would collide in replication. Turn it on for ONE box
+// of that pair (and on Railway); the other receives the rows by replication.
+function scheduleDailyCrmAttention(hour = 3, minute = 0) {
+  const scheduleNextRun = () => {
+    const now = new Date();
+    const nextRun = new Date(now);
+    nextRun.setHours(hour, minute, 0, 0);
+    if (nextRun <= now) nextRun.setDate(nextRun.getDate() + 1);
+    console.log(`CRM needs-attention rebuild scheduled for ${nextRun.toLocaleString()}`);
+    setTimeout(async () => {
+      try {
+        const result = await refreshAttention();
+        console.log(`CRM needs-attention: ${result.rows} customers ranked in ${result.ms} ms.`);
+        // Drafts only -- a rep still reviews and sends each one. See lib/crmDrafts.js.
+        const drafts = await autoDraft();
+        console.log(`CRM email drafts: ${drafts.created} written for review.`);
+      } catch (err) {
+        console.error('Scheduled CRM needs-attention rebuild failed:', err);
+      }
+      scheduleNextRun();
+    }, nextRun - now);
+  };
+  scheduleNextRun();
+}
+if (crmAttentionJobEnabled()) {
+  scheduleDailyCrmAttention(
+    Number(process.env.CRM_ATTENTION_HOUR || 3),
+    Number(process.env.CRM_ATTENTION_MINUTE || 0),
+  );
+}
 
 // In production (Railway) the client is built into client/dist and this server
 // serves it directly -- single deployable service, same origin as /api so the

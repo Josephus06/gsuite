@@ -122,14 +122,36 @@ router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async
 // --- Contacts ---
 router.post('/:id/contacts', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
-    const { contact_name, title, email, phone, description, is_primary } = req.body;
+    const { contact_name, title, email, phone, description, is_primary, birthday, personal_notes } = req.body;
     const [result] = await pool.query(
-      `INSERT INTO customer_contacts (customer_id, contact_name, title, email, phone, description, is_primary)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [req.params.id, contact_name, title || null, email || null, phone || null, description || null, !!is_primary]
+      `INSERT INTO customer_contacts
+         (customer_id, contact_name, title, email, phone, description, is_primary, birthday, personal_notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [req.params.id, contact_name, title || null, email || null, phone || null, description || null, !!is_primary,
+        birthday || null, personal_notes || null]
     );
     const [[row]] = await pool.query('SELECT * FROM customer_contacts WHERE id = ?', [result.insertId]);
     res.status(201).json(row);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Full replace of one contact, like PUT /customers/:id -- the caller sends every field.
+router.put('/:id/contacts/:contactId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const { contact_name, title, email, phone, description, is_primary, birthday, personal_notes } = req.body;
+    if (!contact_name) return res.status(400).json({ error: 'Contact name is required.' });
+    const [result] = await pool.query(
+      `UPDATE customer_contacts SET contact_name = ?, title = ?, email = ?, phone = ?, description = ?,
+              is_primary = ?, birthday = ?, personal_notes = ?, updated_at = NOW()
+        WHERE id = ? AND customer_id = ?`,
+      [contact_name, title || null, email || null, phone || null, description || null, !!is_primary,
+        birthday || null, personal_notes || null, req.params.contactId, req.params.id]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: 'Not found' });
+    const [[row]] = await pool.query('SELECT * FROM customer_contacts WHERE id = ?', [req.params.contactId]);
+    res.json(row);
   } catch (err) {
     next(err);
   }
