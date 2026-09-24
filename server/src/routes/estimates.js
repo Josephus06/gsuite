@@ -236,9 +236,32 @@ async function logFieldDiffs(conn, { estimateId, userId, fields, oldRow, newValu
 // --- Estimate header ---------------------------------------------------
 
 const STATUS_VALUES = ['for_csa_assignment', 'pending_supervisor_approval', 'pending_customer_approval', 'approved', 'cancelled', 'disapproved'];
-// Everything past the supervisor's sign-off. Named rather than written inline because the
-// client applies the same rule to the Edit button and the two must not drift.
-const SUPERVISOR_APPROVED_STATUSES = ['pending_customer_approval', 'approved'];
+// The one status in which an estimate's content is still open to its editors. Before the
+// supervisor signs it off the figures are a draft; after it (customer stage, approved) they have
+// been agreed, and disapproved/cancelled estimates are closed. Outside this status only a System
+// Admin may change it. The client applies the same rule to the Edit button.
+const EDITABLE_STATUS = 'pending_supervisor_approval';
+
+// Guards every route that changes an estimate's content -- the header PUT, its job orders, their
+// processes and the shipping addresses. Checked on each of them, not just the header, because
+// the lines are where the money is and each has its own endpoint.
+//
+// Attachments are deliberately left out: those are the order-confirmation documents (the
+// customer's PO, conforme, proof of payment), which by their nature arrive at the customer stage.
+async function requireEditableEstimate(req, res, next) {
+  try {
+    const [[row]] = await pool.query('SELECT status FROM estimates WHERE id = ?', [req.params.id]);
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    if (row.status !== EDITABLE_STATUS && !(await isSystemAdmin(req.user.id))) {
+      return res.status(403).json({
+        error: 'This estimate can only be edited while it is Pending Supervisor Approval -- only a System Admin can edit it now.',
+      });
+    }
+    return next();
+  } catch (err) {
+    return next(err);
+  }
+}
 
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
@@ -440,7 +463,10 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   }
 });
 
-router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+// requireEditableEstimate is checked here as well as on the screen, because hiding the Edit
+// button is a suggestion and this is a rule -- the edit form is one way in, the endpoint is the
+// only one.
+router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), requireEditableEstimate, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -448,20 +474,6 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (!oldRow) {
       await conn.rollback();
       return res.status(404).json({ error: 'Not found' });
-    }
-    // Once a SUPERVISOR has signed it off, the figures on this estimate have been agreed and
-    // changing them afterwards is changing something somebody else approved. From that point
-    // only a System Admin may. Both statuses past the supervisor count: approval moves the
-    // estimate to pending_customer_approval and later to approved, and the customer stage is
-    // precisely when the quoted price is out with the customer.
-    //
-    // Checked here as well as on the screen, because hiding the Edit button is a suggestion
-    // and this is a rule -- the edit form is one way in, the endpoint is the only one.
-    if (SUPERVISOR_APPROVED_STATUSES.includes(oldRow.status) && !(await isSystemAdmin(req.user.id))) {
-      await conn.rollback();
-      return res.status(403).json({
-        error: 'This estimate has been approved by a supervisor -- only a System Admin can edit it now.',
-      });
     }
     const values = pick(req.body, HEADER_FIELDS);
     await conn.query(
@@ -698,9 +710,10 @@ router.put('/:id/status', requireAuth, requireStatusChange, async (req, res, nex
       }
     }
     // Approved By is no longer a manually-picked field (nobody knows who'll approve an
-    // estimate at creation time) -- it's set here, to whoever actually performs the
-    // approval, once the estimate reaches its final "Approved" status.
-    if (req.body.status === 'approved') {
+    // estimate at creation time) -- it's set here, to the SUPERVISOR who signs it off out of
+    // pending_supervisor_approval. Not to whoever later records the customer's answer: that
+    // person is entering what the customer said, not approving the estimate themselves.
+    if (oldRow.status === 'pending_supervisor_approval' && req.body.status === 'pending_customer_approval') {
       const [[approvingUser]] = await conn.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
       if (approvingUser?.employee_id) {
         await conn.query('UPDATE estimates SET approved_by_id = ? WHERE id = ?', [approvingUser.employee_id, req.params.id]);
@@ -768,7 +781,7 @@ router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async
 
 // --- Shipping addresses --------------------------------------------------
 
-router.post('/:id/shipping-addresses', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.post('/:id/shipping-addresses', requireAuth, requirePermission(ROUTE, 'can_edit'), requireEditableEstimate, async (req, res, next) => {
   try {
     const [result] = await pool.query(
       'INSERT INTO estimate_shipping_addresses (estimate_id, address) VALUES (?, ?)',
@@ -781,7 +794,7 @@ router.post('/:id/shipping-addresses', requireAuth, requirePermission(ROUTE, 'ca
   }
 });
 
-router.delete('/:id/shipping-addresses/:addressId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.delete('/:id/shipping-addresses/:addressId', requireAuth, requirePermission(ROUTE, 'can_edit'), requireEditableEstimate, async (req, res, next) => {
   try {
     await pool.query('DELETE FROM estimate_shipping_addresses WHERE id = ? AND estimate_id = ?', [req.params.addressId, req.params.id]);
     res.status(204).send();
@@ -792,7 +805,7 @@ router.delete('/:id/shipping-addresses/:addressId', requireAuth, requirePermissi
 
 // --- Job orders ------------------------------------------------------------
 
-router.post('/:id/job-orders', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.post('/:id/job-orders', requireAuth, requirePermission(ROUTE, 'can_edit'), requireEditableEstimate, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -823,7 +836,7 @@ router.post('/:id/job-orders', requireAuth, requirePermission(ROUTE, 'can_edit')
   }
 });
 
-router.put('/:id/job-orders/:joId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/job-orders/:joId', requireAuth, requirePermission(ROUTE, 'can_edit'), requireEditableEstimate, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -859,7 +872,7 @@ router.put('/:id/job-orders/:joId', requireAuth, requirePermission(ROUTE, 'can_e
   }
 });
 
-router.delete('/:id/job-orders/:joId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.delete('/:id/job-orders/:joId', requireAuth, requirePermission(ROUTE, 'can_edit'), requireEditableEstimate, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -883,7 +896,7 @@ router.delete('/:id/job-orders/:joId', requireAuth, requirePermission(ROUTE, 'ca
 
 // --- Job order processes ----------------------------------------------------
 
-router.post('/:id/job-orders/:joId/processes', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.post('/:id/job-orders/:joId/processes', requireAuth, requirePermission(ROUTE, 'can_edit'), requireEditableEstimate, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -917,7 +930,7 @@ router.post('/:id/job-orders/:joId/processes', requireAuth, requirePermission(RO
   }
 });
 
-router.put('/:id/job-orders/:joId/processes/:procId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/job-orders/:joId/processes/:procId', requireAuth, requirePermission(ROUTE, 'can_edit'), requireEditableEstimate, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -952,7 +965,7 @@ router.put('/:id/job-orders/:joId/processes/:procId', requireAuth, requirePermis
   }
 });
 
-router.delete('/:id/job-orders/:joId/processes/:procId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.delete('/:id/job-orders/:joId/processes/:procId', requireAuth, requirePermission(ROUTE, 'can_edit'), requireEditableEstimate, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();

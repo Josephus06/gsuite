@@ -223,7 +223,14 @@ export default function EstimateView() {
   // exactly the window where the quoted price is out with the customer.
   const supervisorApproved = ['pending_customer_approval', 'approved'].includes(estimate.status);
   const isSystemAdmin = user?.account_type === 'System Admin';
+  // Gates the workflow buttons below. Unchanged: disapproving or cancelling is not rewriting.
   const canEdit = can('/estimates', 'can_edit') && (!supervisorApproved || isSystemAdmin);
+  // Gates the Edit button itself, which is stricter: the content is only open while the
+  // estimate is Pending Supervisor Approval. Disapproved and cancelled estimates are closed
+  // too, and every status but that one belongs to a System Admin. Mirrors
+  // requireEditableEstimate on the server.
+  const canEditContent = can('/estimates', 'can_edit')
+    && (estimate.status === 'pending_supervisor_approval' || isSystemAdmin);
   const canAdd = can('/estimates', 'can_add');
   // Approving out of "pending supervisor approval" specifically requires the Can
   // Approve Sales Estimate flag from the user's Account Type settings (Step 4 of the
@@ -268,7 +275,7 @@ export default function EstimateView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/estimates')}>Back</button>
-          {canEdit && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/estimates/${id}/edit`)}>Edit</button>}
+          {canEditContent && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/estimates/${id}/edit`)}>Edit</button>}
           {canShowPrint && <button className="btn btn-sm btn-primary" onClick={() => window.open(`/estimates/${id}/print`, '_blank')}>Print</button>}
           {(canEdit || canRecordCustomerAnswer) && isPending && canShowApprove && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>{approveLabel}</button>}
           {/* The customer saying no is as much their answer as saying yes, so it opens to the same
