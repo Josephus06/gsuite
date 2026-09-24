@@ -108,6 +108,7 @@ const { sendTicketReminders } = require('./scripts/ticket_reminder');
 const { sendParkedItemReminders } = require('./scripts/parked_items_reminder');
 const { refreshAttention, crmAttentionJobEnabled } = require('./lib/crmAttention');
 const { autoDraft } = require('./lib/crmDrafts');
+const { msUntilBusinessTime } = require('./lib/crmCadence');
 const { startSampling } = require('./lib/systemHealth');
 
 const app = express();
@@ -384,13 +385,12 @@ scheduleDailyParkedItemReminders(
 // the droplet and the office box are master-master replicas, and two servers each deleting and
 // re-inserting the whole crm_attention table would collide in replication. Turn it on for ONE box
 // of that pair (and on Railway); the other receives the rows by replication.
+// The hour is on the BUSINESS clock (lib/crmCadence.js), not the server's -- the droplet and
+// Railway run UTC, where a server-local 3 AM is 11 AM in Manila.
 function scheduleDailyCrmAttention(hour = 3, minute = 0) {
   const scheduleNextRun = () => {
-    const now = new Date();
-    const nextRun = new Date(now);
-    nextRun.setHours(hour, minute, 0, 0);
-    if (nextRun <= now) nextRun.setDate(nextRun.getDate() + 1);
-    console.log(`CRM needs-attention rebuild scheduled for ${nextRun.toLocaleString()}`);
+    const delayMs = msUntilBusinessTime(hour, minute);
+    console.log(`CRM needs-attention rebuild scheduled for ${new Date(Date.now() + delayMs).toISOString()} (${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} business time)`);
     setTimeout(async () => {
       try {
         const result = await refreshAttention();
@@ -402,7 +402,7 @@ function scheduleDailyCrmAttention(hour = 3, minute = 0) {
         console.error('Scheduled CRM needs-attention rebuild failed:', err);
       }
       scheduleNextRun();
-    }, nextRun - now);
+    }, delayMs);
   };
   scheduleNextRun();
 }

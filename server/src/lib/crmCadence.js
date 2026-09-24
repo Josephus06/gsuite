@@ -13,4 +13,24 @@ function visitEveryDays(priority, override) {
   return DEFAULT_VISIT_EVERY_DAYS[priority] || DEFAULT_VISIT_EVERY_DAYS.normal;
 }
 
-module.exports = { PRIORITIES, DEFAULT_VISIT_EVERY_DAYS, visitEveryDays };
+// The business's clock. The servers do not share a timezone (the droplet and Railway run UTC, the
+// office box Philippine time), so "today" for birthdays and the needs-attention run, and the hour
+// the nightly job fires, are taken from this offset rather than the process's. Philippine time
+// has no DST, so a fixed offset is exact.
+const UTC_OFFSET_MIN = Number(process.env.CRM_UTC_OFFSET_MINUTES || 480);
+
+// Today's date on the business clock, YYYY-MM-DD.
+function businessToday(now = new Date()) {
+  return new Date(now.getTime() + UTC_OFFSET_MIN * 60000).toISOString().slice(0, 10);
+}
+
+// Milliseconds until the business clock next reads hour:minute.
+function msUntilBusinessTime(hour, minute, now = new Date()) {
+  const shifted = new Date(now.getTime() + UTC_OFFSET_MIN * 60000);
+  const target = new Date(shifted);
+  target.setUTCHours(hour, minute, 0, 0);
+  if (target <= shifted) target.setUTCDate(target.getUTCDate() + 1);
+  return target - shifted;
+}
+
+module.exports = { PRIORITIES, DEFAULT_VISIT_EVERY_DAYS, visitEveryDays, UTC_OFFSET_MIN, businessToday, msUntilBusinessTime };

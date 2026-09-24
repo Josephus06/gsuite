@@ -27,7 +27,7 @@
 // the snapshot. The whole table is replaced in one transaction so a reader never sees half a run.
 const pool = require('../db');
 const { collectOpenItems } = require('./arAging');
-const { visitEveryDays } = require('./crmCadence');
+const { visitEveryDays, businessToday } = require('./crmCadence');
 
 const HISTORY_MONTHS = 24;
 const MIN_ORDER_DAYS_FOR_PATTERN = 4; // distinct order days needed before a "usual gap" means anything
@@ -240,13 +240,8 @@ function scoreCustomers(asOf, inputs) {
   return rows.sort((a, b) => b.score - a.score);
 }
 
-function todayLocal() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
 // Recompute and replace the snapshot. Returns { rows, ms }.
-async function refreshAttention(asOf = todayLocal()) {
+async function refreshAttention(asOf = businessToday()) {
   const started = Date.now();
   const inputs = await loadInputs(asOf);
   const rows = scoreCustomers(asOf, inputs);

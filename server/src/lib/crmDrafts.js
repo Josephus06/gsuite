@@ -18,6 +18,8 @@ const crypto = require('crypto');
 const pool = require('../db');
 const mailer = require('./mailer');
 const { getSalesRepEmployeeScope } = require('./salesVisibility');
+const { daysToBirthday } = require('./crmAttention');
+const { businessToday } = require('./crmCadence');
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o';
 const COMPANY = process.env.CRM_COMPANY_NAME || 'GraphicStar';
@@ -70,15 +72,11 @@ async function isOptedOut(email) {
 }
 
 // --- context -------------------------------------------------------------------------------------
-function daysUntilBirthday(birthday, today = new Date()) {
+// Days until the contact's next birthday on the business clock (0 = today), or null.
+function daysUntilBirthday(birthday) {
   if (!birthday) return null;
-  const [, m, d] = String(birthday).slice(0, 10).split('-').map(Number);
-  const base = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  for (const year of [base.getFullYear(), base.getFullYear() + 1]) {
-    const candidate = new Date(year, m - 1, Math.min(d, new Date(year, m, 0).getDate()));
-    if (candidate >= base) return Math.round((candidate - base) / 86400000);
-  }
-  return null;
+  const next = daysToBirthday(birthday, businessToday());
+  return next ? next.days : null;
 }
 
 // The contact to write to: the one asked for, else the primary, else anyone with an address --

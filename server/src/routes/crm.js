@@ -1,8 +1,8 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
-const { PRIORITIES, DEFAULT_VISIT_EVERY_DAYS, visitEveryDays } = require('../lib/crmCadence');
-const { refreshAttention, crmAttentionJobEnabled } = require('../lib/crmAttention');
+const { PRIORITIES, DEFAULT_VISIT_EVERY_DAYS, visitEveryDays, businessToday } = require('../lib/crmCadence');
+const { refreshAttention, crmAttentionJobEnabled, daysToBirthday } = require('../lib/crmAttention');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 
 const router = express.Router();
@@ -13,20 +13,12 @@ const router = express.Router();
 // addresses sub-resources in routes/customers.js.
 const ROUTE = '/customers';
 
-// The next occurrence of a birthday on or after today, as YYYY-MM-DD. Feb 29 falls on Feb 28
-// in a non-leap year rather than skipping to Mar 1, so the greeting isn't a day late.
-function nextBirthday(birthday, today = new Date()) {
+// The next occurrence of a birthday on or after today (business clock), as YYYY-MM-DD. Feb 29
+// falls on Feb 28 in a non-leap year rather than skipping to Mar 1, so the greeting isn't late.
+function nextBirthday(birthday, asOf = businessToday()) {
   if (!birthday) return null;
-  const [, m, d] = String(birthday).slice(0, 10).split('-').map(Number);
-  const base = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  for (const year of [base.getFullYear(), base.getFullYear() + 1]) {
-    const lastDay = new Date(year, m, 0).getDate();
-    const candidate = new Date(year, m - 1, Math.min(d, lastDay));
-    if (candidate >= base) {
-      return `${year}-${String(m).padStart(2, '0')}-${String(candidate.getDate()).padStart(2, '0')}`;
-    }
-  }
-  return null;
+  const next = daysToBirthday(birthday, asOf);
+  return next ? next.date : null;
 }
 
 function addDays(dateStr, days) {
