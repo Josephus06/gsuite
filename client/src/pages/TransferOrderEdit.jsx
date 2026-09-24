@@ -34,7 +34,10 @@ export default function TransferOrderEdit() {
   const location = useLocation();
   const isNew = !id;
   const navigate = useNavigate();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
+  // Materials picked on a brand-new TO, before it has an id to post lines against. They go up
+  // with the header in the one create request, so the TO and its materials land together.
+  const [draftLines, setDraftLines] = useState([]);
 
   const [form, setForm] = useState({
     date_created: new Date().toISOString().slice(0, 10), date_needed: '',
@@ -85,6 +88,9 @@ export default function TransferOrderEdit() {
         return;
       }
 
+      // The Requestor is whoever is raising it until they pick someone else.
+      if (isNew && user?.employee_id) setForm((f) => (f.requestor_id ? f : { ...f, requestor_id: user.employee_id }));
+
       if (toRes) {
         setTo(toRes.data);
         setLines(toRes.data.lines || []);
@@ -111,8 +117,14 @@ export default function TransferOrderEdit() {
           setError('Withdraw From and Transfer To are required.');
           return;
         }
-        const { data } = await api.post('/transfer-orders', form);
-        navigate(`/transfer-orders/${data.id}/edit`);
+        const bad = draftLines.find((l) => !(Number(l.qty) > 0));
+        if (bad) { setError(`Enter a Qty above zero for ${bad.item_name}.`); return; }
+        const { data } = await api.post('/transfer-orders', {
+          ...form,
+          lines: draftLines.map((l) => ({ item_id: l.item_id, qty: Number(l.qty), uom: l.uom, unit_used: l.unit_used, memo: l.memo || null })),
+        });
+        // With materials it is complete, so show it; without, open it for editing to add them.
+        navigate(draftLines.length ? `/transfer-orders/${data.id}` : `/transfer-orders/${data.id}/edit`);
       } else {
         await api.put(`/transfer-orders/${id}`, form);
         navigate(`/transfer-orders/${id}`);
@@ -209,6 +221,53 @@ export default function TransferOrderEdit() {
           </div>
         </div>
       </div>
+
+      {isNew && (
+        <div className="card" style={{ marginTop: 20 }}>
+          <h3 className="subsection" style={{ marginTop: 0 }}>Materials</h3>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Item</th><th>Qty</th><th>Unit Used</th><th>Unit</th><th>Memo</th><th></th></tr></thead>
+              <tbody>
+                {draftLines.length === 0 && <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>No materials yet.</td></tr>}
+                {draftLines.map((l, i) => {
+                  const set = (patch) => setDraftLines((ls) => ls.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
+                  return (
+                    <tr key={i}>
+                      <td>{`${l.item_code || ''} — ${l.item_name || ''}`}</td>
+                      <td><input type="number" step="0.0001" min="0" style={{ width: 90 }} value={l.qty} onChange={(e) => set({ qty: e.target.value })} /></td>
+                      <td>
+                        <select value={l.unit_used} onChange={(e) => set({ unit_used: e.target.value })}>
+                          <option value="stock">Stock Unit{l.stock_unit_title ? ` — ${l.stock_unit_title}` : ''}</option>
+                          <option value="base">Base Unit{l.base_unit_title ? ` — ${l.base_unit_title}` : ''}</option>
+                        </select>
+                      </td>
+                      <td>{l.unit_used === 'base' ? l.base_unit_title : l.stock_unit_title}</td>
+                      <td><input style={{ width: 160 }} value={l.memo} onChange={(e) => set({ memo: e.target.value })} /></td>
+                      <td><button type="button" className="btn btn-sm btn-danger" onClick={() => setDraftLines((ls) => ls.filter((_, idx) => idx !== i))}>Delete</button></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <EntityPicker
+              label="Item" items={inventoryItems} value="" getLabel={(i) => i.display_name}
+              columns={[{ key: 'item_code', label: 'Code' }, { key: 'display_name', label: 'Name' }]}
+              searchKeys={['item_code', 'display_name']}
+              // Base unit to start with, the same as Add Material on a saved TO sends.
+              onSelect={(item) => setDraftLines((ls) => [...ls, {
+                item_id: item.id, item_code: item.item_code, item_name: item.display_name, qty: 1,
+                uom: item.base_unit_title, unit_used: 'base', memo: '',
+                base_unit_title: item.base_unit_title, stock_unit_title: item.stock_unit_title,
+              }])}
+              triggerLabel="Add Material"
+              triggerClassName="btn btn-primary"
+            />
+          </div>
+        </div>
+      )}
 
       {!isNew && (
         <div className="card" style={{ marginTop: 20 }}>

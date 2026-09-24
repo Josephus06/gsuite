@@ -743,6 +743,14 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     }
     await assertPeriodOpen(dateCreated, 'non_gl', conn);
 
+    // The Requestor is the person raising it unless the form says otherwise -- the form defaults
+    // it the same way, this covers a caller that leaves it out.
+    let requestor = requestorId || null;
+    if (!requestor) {
+      const [[me]] = await conn.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
+      requestor = me?.employee_id || null;
+    }
+
     await conn.beginTransaction();
 
     const { id: toId, no: toNo } = await insertNumbered(conn, {
@@ -753,7 +761,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
         `INSERT INTO transfer_orders
            (to_no, date_created, date_needed, withdraw_from_location_id, transfer_to_location_id, requestor_id, job_order_id, memo, created_by_user_id)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [no, dateCreated || new Date().toISOString().slice(0, 10), dateNeeded || null, withdrawFromId, transferToId, requestorId || null, jobOrderId || null, memo || null, req.user.id]
+        [no, dateCreated || new Date().toISOString().slice(0, 10), dateNeeded || null, withdrawFromId, transferToId, requestor, jobOrderId || null, memo || null, req.user.id]
       ),
     });
     await logAudit(conn, { toId, userId: req.user.id, eventType: 'Created', fieldName: 'to_no', newValue: toNo });
@@ -769,13 +777,17 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
         'SELECT COUNT(*) + 1 AS toCount FROM transfer_order_lines WHERE job_order_process_id = ?',
         [line.job_order_process_id || 0]
       );
+      // Unit Used, when the Add form chose one, is resolved exactly as POST /:id/lines does it, so a
+      // material added before the first save ends up the same as one added after.
+      const unitUsed = line.unit_used == null || line.unit_used === '' ? null : normaliseUnitUsed(line.unit_used);
+      const unitTitle = unitUsed ? await unitTitleFor(conn, line.item_id, unitUsed) : (line.unit || null);
       await conn.query(
         `INSERT INTO transfer_order_lines
-           (transfer_order_id, line_no, item_id, job_order_id, job_order_process_id, to_count, qty, uom, unit, back_ordered, committed, qty_on_hand, memo)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (transfer_order_id, line_no, item_id, job_order_id, job_order_process_id, to_count, qty, uom, unit, unit_used, back_ordered, committed, qty_on_hand, memo)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           toId, lineNo++, line.item_id, jobOrderId || null, line.job_order_process_id || null,
-          line.job_order_process_id ? toCount : 1, line.qty, line.uom || null, line.unit || null,
+          line.job_order_process_id ? toCount : 1, line.qty, line.uom || null, unitTitle, unitUsed,
           line.back_ordered || 0, line.committed || 0, Number(stock?.qty_on_hand || 0), line.memo || null,
         ]
       );
