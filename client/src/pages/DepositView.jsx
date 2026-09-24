@@ -35,6 +35,11 @@ export default function DepositView() {
   if (loading || !d) return <LoadingSpinner />;
   const payments = d.payments || [];
   const gl = d.gl || [];
+  const others = (d.lines || []).filter((l) => l.line_type === 'other');
+  const cashBacks = (d.lines || []).filter((l) => l.line_type === 'cashback');
+  const otherTotal = others.reduce((s, l) => s + num(l.amount), 0);
+  const cashBackTotal = cashBacks.reduce((s, l) => s + num(l.amount), 0);
+  const acctLabel = (l) => `${l.account_code} — ${l.account_name}`;
   const totalDebit = gl.reduce((s, l) => s + num(l.debit), 0);
   const totalCredit = gl.reduce((s, l) => s + num(l.credit), 0);
 
@@ -73,6 +78,8 @@ export default function DepositView() {
 
       <div className="status-tabs" style={{ marginTop: 20 }}>
         <button className={`status-tab ${tab === 'payments' ? 'active' : ''}`} onClick={() => setTab('payments')}>Payments</button>
+        <button className={`status-tab ${tab === 'other' ? 'active' : ''}`} onClick={() => setTab('other')}>Other Deposit {money(otherTotal)}</button>
+        <button className={`status-tab ${tab === 'cashback' ? 'active' : ''}`} onClick={() => setTab('cashback')}>Cash Back {money(cashBackTotal)}</button>
         <button className={`status-tab ${tab === 'gl' ? 'active' : ''}`} onClick={() => setTab('gl')}>GL Impact</button>
         <button className={`status-tab ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}>System Info</button>
       </div>
@@ -90,6 +97,44 @@ export default function DepositView() {
                     <td>{p.customer_name}</td>
                     <td>{formatDate(p.date_created)}</td>
                     <td style={{ textAlign: 'right' }}>{money(p.payment_amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === 'other' && (
+        <div className="card">
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Name</th><th style={{ textAlign: 'right' }}>Amount</th><th>Account</th><th>Payment Method</th><th>Department</th><th>Location</th><th>Memo</th></tr></thead>
+              <tbody>
+                {others.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>No other deposits.</td></tr>}
+                {others.map((l) => (
+                  <tr key={l.id}>
+                    <td>{l.party_name}</td><td style={{ textAlign: 'right' }}>{money(l.amount)}</td><td>{acctLabel(l)}</td>
+                    <td>{l.payment_method_name}</td><td>{l.department_name}</td><td>{l.location_name}</td><td>{l.memo}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === 'cashback' && (
+        <div className="card">
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th style={{ textAlign: 'right' }}>Amount</th><th>Account</th><th>Department</th><th>Location</th><th>Memo</th></tr></thead>
+              <tbody>
+                {cashBacks.length === 0 && <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>No cash back.</td></tr>}
+                {cashBacks.map((l) => (
+                  <tr key={l.id}>
+                    <td style={{ textAlign: 'right' }}>{money(l.amount)}</td><td>{acctLabel(l)}</td>
+                    <td>{l.department_name}</td><td>{l.location_name}</td><td>{l.memo}</td>
                   </tr>
                 ))}
               </tbody>

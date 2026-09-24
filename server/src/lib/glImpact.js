@@ -1,4 +1,5 @@
 const pool = require('../db');
+const { depositGlRows } = require('./depositGl');
 
 // ---------------------------------------------------------------------------------------
 // Run-scoped reference-data cache.
@@ -1142,8 +1143,9 @@ async function getPostedGlLines({ toDate, fromDate }) {
     }
   }
 
-  // Bank Deposits -- move cash from Undeposited Funds into a bank account:
-  // DR <bank account> / CR 10006 Undeposited Funds for the deposit total. Void ones post nothing.
+  // Bank Deposits -- move cash from Undeposited Funds into a bank account, plus any Other Deposit /
+  // Cash Back lines. Built by lib/depositGl.js, which the deposit's own GL Impact tab also uses.
+  // Void ones post nothing.
   {
     const [tbl] = await pool.query("SHOW TABLES LIKE 'bank_deposits'");
     if (tbl.length) {
@@ -1154,13 +1156,27 @@ async function getPostedGlLines({ toDate, fromDate }) {
       );
       if (headers.length) {
         const uf = await coaByCode('10006');
+        // Guarded like the header table: an install that has not run add-deposit-other-lines.js
+        // yet still posts its deposits, just without lines.
+        const linesByDeposit = new Map();
+        const [lineTbl] = await pool.query("SHOW TABLES LIKE 'bank_deposit_lines'");
+        if (lineTbl.length) {
+          // Same filter as the headers, rather than an IN list of every deposit id in range.
+          const [lines] = await pool.query(
+            `SELECT l.*, coa.account_code, coa.account_name FROM bank_deposit_lines l
+             JOIN bank_deposits d ON d.id = l.deposit_id
+             JOIN chart_of_accounts coa ON coa.id = l.account_id
+             WHERE d.status <> 'void' AND ${sql} ORDER BY l.deposit_id, l.line_no`, params
+          );
+          for (const l of lines) {
+            if (!linesByDeposit.has(l.deposit_id)) linesByDeposit.set(l.deposit_id, []);
+            linesByDeposit.get(l.deposit_id).push(l);
+          }
+        }
         for (const d of headers) {
-          const amt = Number(d.total_amount) || 0;
-          if (!amt || !d.account_code) continue;
-          const rows = [
-            { account_code: d.account_code, account_name: d.account_name, debit: amt, credit: 0 },
-            { account_code: uf?.account_code || '10006', account_name: uf?.account_name || 'Undeposited Funds', debit: 0, credit: amt },
-          ];
+          const rows = depositGlRows(d, linesByDeposit.get(d.id) || [], uf);
+          if (!rows.length) continue;
+          // No location_id in meta, so each Other Deposit / Cash Back row keeps its own.
           push(rows, { entry_date: d.date_created, source_type: 'bank_deposit', source_no: d.bd_no, source_id: d.id, memo: d.memo || null });
         }
       }

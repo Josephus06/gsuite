@@ -9,8 +9,13 @@ function today() { return new Date().toISOString().slice(0, 10); }
 function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : ''; }
 function dayISO(v) { return v ? String(v).slice(0, 10) : ''; }
 
+const EMPTY_OTHER = { party_key: '', amount: '', account_id: '', payment_method_id: '', department_id: '', location_id: '', memo: '' };
+const EMPTY_CASHBACK = { amount: '', account_id: '', department_id: '', location_id: '', memo: '' };
+const PARTY_LABELS = { VENDOR: 'Vendor', CUSTOMER: 'Customer', EMPLOYEE: 'Employee' };
+
 // Create a Bank Deposit: pick a bank account + date, then tick the not-deposited customer payments to
-// sweep in. Total Deposit sums the checked rows. Save posts them to a new BD-####.
+// sweep in. Other Deposit lines (money in that no payment explains) are ADDED to the total; Cash Back
+// lines (cash kept back instead of banked) are DEDUCTED from it. Save posts them to a new BD-####.
 export default function DepositForm() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -20,6 +25,9 @@ export default function DepositForm() {
   const [accountId, setAccountId] = useState('');
   const [memo, setMemo] = useState('');
   const [checked, setChecked] = useState({});
+  const [tab, setTab] = useState('payments');
+  const [others, setOthers] = useState([{ ...EMPTY_OTHER }]);
+  const [cashBacks, setCashBacks] = useState([{ ...EMPTY_CASHBACK }]);
   const [filters, setFilters] = useState({ trans: '', customer: '', location: '', method: '', from: '', to: '' });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -49,16 +57,51 @@ export default function DepositForm() {
     });
   }, [meta, filters]);
 
-  const total = useMemo(() => (meta?.payments || []).filter((p) => checked[p.id]).reduce((s, p) => s + Number(p.payment_amount || 0), 0), [meta, checked]);
+  const paymentsTotal = useMemo(() => (meta?.payments || []).filter((p) => checked[p.id]).reduce((s, p) => s + Number(p.payment_amount || 0), 0), [meta, checked]);
+  const otherTotal = others.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+  const cashBackTotal = cashBacks.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+  const total = paymentsTotal + otherTotal - cashBackTotal;
   const selectedIds = Object.keys(checked).filter((k) => checked[k]).map(Number);
+
+  // One Name list across vendors, customers and employees, the way the live form offers it. Keyed
+  // TYPE:id because the three tables' ids overlap.
+  const parties = useMemo(() => {
+    if (!meta) return [];
+    return [['CUSTOMER', meta.customers], ['VENDOR', meta.vendors], ['EMPLOYEE', meta.employees]]
+      .flatMap(([type, list]) => (list || []).map((x) => ({ id: `${type}:${x.id}`, name: x.name, type_label: PARTY_LABELS[type] })));
+  }, [meta]);
+
+  const setOther = (i, patch) => setOthers((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  const setCashBack = (i, patch) => setCashBacks((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+
+  // Mirrors lib/depositGl.js on the server, which is what actually posts.
+  const gl = useMemo(() => {
+    if (!meta) return [];
+    const acct = (id) => meta.lineAccounts.find((a) => String(a.id) === String(id));
+    const bank = meta.accounts.find((a) => String(a.id) === String(accountId));
+    const rows = [];
+    if (bank && total > 0) rows.push({ code: bank.account_code, name: bank.account_name, debit: total, credit: 0 });
+    cashBacks.forEach((l) => { const a = acct(l.account_id); if (a && Number(l.amount) > 0) rows.push({ code: a.account_code, name: a.account_name, debit: Number(l.amount), credit: 0 }); });
+    if (paymentsTotal > 0) rows.push({ code: '10006', name: 'Undeposited Funds', debit: 0, credit: paymentsTotal });
+    others.forEach((l) => { const a = acct(l.account_id); if (a && Number(l.amount) > 0) rows.push({ code: a.account_code, name: a.account_name, debit: 0, credit: Number(l.amount) }); });
+    return rows;
+  }, [meta, accountId, total, paymentsTotal, others, cashBacks]);
 
   async function save() {
     setError('');
     if (!accountId) { setError('Select a bank account to deposit into.'); return; }
-    if (!selectedIds.length) { setError('Tick at least one payment to deposit.'); return; }
+    if (!selectedIds.length && !(otherTotal > 0)) { setError('Tick at least one payment or add an Other Deposit.'); return; }
+    if (!(total > 0)) { setError('Cash Back cannot be as much as the payments and Other Deposits together.'); return; }
     setSaving(true);
     try {
-      const { data } = await api.post('/deposits', { date_created: date, account_id: accountId, memo, payment_ids: selectedIds });
+      const { data } = await api.post('/deposits', {
+        date_created: date, account_id: accountId, memo, payment_ids: selectedIds,
+        other_deposits: others.map(({ party_key: key, ...l }) => {
+          const [type, pid] = key ? key.split(':') : [null, null];
+          return { ...l, party_type: type, party_id: pid };
+        }),
+        cash_backs: cashBacks,
+      });
       navigate(`/deposits/${data.id}`);
     } catch (e) { setError(e.response?.data?.error || 'Save failed.'); setSaving(false); }
   }
@@ -100,8 +143,101 @@ export default function DepositForm() {
 
       <div className="card">
         <div className="status-tabs" style={{ marginBottom: 8 }}>
-          <button className="status-tab active">Payments {money(total)}</button>
+          <button className={`status-tab ${tab === 'payments' ? 'active' : ''}`} onClick={() => setTab('payments')}>Payments {money(paymentsTotal)}</button>
+          <button className={`status-tab ${tab === 'other' ? 'active' : ''}`} onClick={() => setTab('other')}>Other Deposit {money(otherTotal)}</button>
+          <button className={`status-tab ${tab === 'cashback' ? 'active' : ''}`} onClick={() => setTab('cashback')}>Cash Back {money(cashBackTotal)}</button>
+          <button className={`status-tab ${tab === 'gl' ? 'active' : ''}`} onClick={() => setTab('gl')}>GL Impact</button>
         </div>
+
+        {tab === 'other' && (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Name</th><th>Amount</th><th>Account</th><th>Payment Method</th><th>Department</th><th>Location</th><th>Memo</th><th></th></tr></thead>
+              <tbody>
+                {others.map((l, i) => (
+                  <tr key={i}>
+                    <td style={{ minWidth: 180 }}>
+                      <EntityPicker label="Name" items={parties} value={l.party_key} getLabel={(x) => x.name}
+                        columns={[{ key: 'name', label: 'Name' }, { key: 'type_label', label: 'Type' }]} searchKeys={['name']}
+                        placeholder="Select Name" onSelect={(x) => setOther(i, { party_key: x?.id || '' })} onClear={() => setOther(i, { party_key: '' })} />
+                    </td>
+                    <td><input type="number" step="0.01" min="0" style={{ width: 130, textAlign: 'right' }} value={l.amount} onChange={(e) => setOther(i, { amount: e.target.value })} /></td>
+                    <td style={{ minWidth: 220 }}>
+                      <EntityPicker label="Account" items={meta.lineAccounts} value={l.account_id} getLabel={(a) => `${a.account_code} — ${a.account_name}`}
+                        columns={[{ key: 'account_code', label: 'Code' }, { key: 'account_name', label: 'Title' }, { key: 'account_type', label: 'Type' }]}
+                        searchKeys={['account_code', 'account_name']} placeholder="Select Account" onSelect={(a) => setOther(i, { account_id: a?.id || '' })} />
+                    </td>
+                    <td style={{ minWidth: 150 }}>
+                      <EntityPicker label="Payment Method" items={meta.paymentMethods} value={l.payment_method_id} getLabel={(m) => m.name}
+                        columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']} placeholder="Select Payment Method" onSelect={(m) => setOther(i, { payment_method_id: m?.id || '' })} />
+                    </td>
+                    <td style={{ minWidth: 150 }}>
+                      <EntityPicker label="Department" items={meta.departments} value={l.department_id} getLabel={(d) => d.name}
+                        columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']} placeholder="Select Department" onSelect={(d) => setOther(i, { department_id: d?.id || '' })} />
+                    </td>
+                    <td style={{ minWidth: 150 }}>
+                      <EntityPicker label="Location" items={meta.locations} value={l.location_id} getLabel={(x) => x.location_name}
+                        columns={[{ key: 'location_name', label: 'Name' }]} searchKeys={['location_name']} placeholder="Select Location" onSelect={(x) => setOther(i, { location_id: x?.id || '' })} />
+                    </td>
+                    <td><input style={{ width: 180 }} value={l.memo} onChange={(e) => setOther(i, { memo: e.target.value })} /></td>
+                    <td><button type="button" className="btn btn-sm btn-warning" onClick={() => setOthers((ls) => ls.filter((_, idx) => idx !== i))}>Delete</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <button type="button" className="btn btn-primary btn-sm" style={{ marginTop: 8 }} onClick={() => setOthers((ls) => [...ls, { ...EMPTY_OTHER }])}>Add Other Deposit</button>
+          </div>
+        )}
+
+        {tab === 'cashback' && (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Amount</th><th>Account</th><th>Department</th><th>Location</th><th>Memo</th><th></th></tr></thead>
+              <tbody>
+                {cashBacks.map((l, i) => (
+                  <tr key={i}>
+                    <td><input type="number" step="0.01" min="0" style={{ width: 130, textAlign: 'right' }} value={l.amount} onChange={(e) => setCashBack(i, { amount: e.target.value })} /></td>
+                    <td style={{ minWidth: 220 }}>
+                      <EntityPicker label="Account" items={meta.lineAccounts} value={l.account_id} getLabel={(a) => `${a.account_code} — ${a.account_name}`}
+                        columns={[{ key: 'account_code', label: 'Code' }, { key: 'account_name', label: 'Title' }, { key: 'account_type', label: 'Type' }]}
+                        searchKeys={['account_code', 'account_name']} placeholder="Select Account" onSelect={(a) => setCashBack(i, { account_id: a?.id || '' })} />
+                    </td>
+                    <td style={{ minWidth: 150 }}>
+                      <EntityPicker label="Department" items={meta.departments} value={l.department_id} getLabel={(d) => d.name}
+                        columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']} placeholder="Select Department" onSelect={(d) => setCashBack(i, { department_id: d?.id || '' })} />
+                    </td>
+                    <td style={{ minWidth: 150 }}>
+                      <EntityPicker label="Location" items={meta.locations} value={l.location_id} getLabel={(x) => x.location_name}
+                        columns={[{ key: 'location_name', label: 'Name' }]} searchKeys={['location_name']} placeholder="Select Location" onSelect={(x) => setCashBack(i, { location_id: x?.id || '' })} />
+                    </td>
+                    <td><input style={{ width: 220 }} value={l.memo} onChange={(e) => setCashBack(i, { memo: e.target.value })} /></td>
+                    <td><button type="button" className="btn btn-sm btn-warning" onClick={() => setCashBacks((ls) => ls.filter((_, idx) => idx !== i))}>Delete</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <button type="button" className="btn btn-primary btn-sm" style={{ marginTop: 8 }} onClick={() => setCashBacks((ls) => [...ls, { ...EMPTY_CASHBACK }])}>Add Cash Back</button>
+          </div>
+        )}
+
+        {tab === 'gl' && (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Account Code</th><th>Account Title</th><th style={{ textAlign: 'right' }}>Debit</th><th style={{ textAlign: 'right' }}>Credit</th></tr></thead>
+              <tbody>
+                {gl.length === 0 && <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>Pick a bank account and something to deposit.</td></tr>}
+                {gl.map((r, i) => (
+                  <tr key={i}><td>{r.code}</td><td>{r.name}</td><td style={{ textAlign: 'right' }}>{r.debit ? money(r.debit) : ''}</td><td style={{ textAlign: 'right' }}>{r.credit ? money(r.credit) : ''}</td></tr>
+                ))}
+              </tbody>
+              <tfoot><tr style={{ fontWeight: 700 }}><td colSpan={2} style={{ textAlign: 'right' }}>Total</td>
+                <td style={{ textAlign: 'right' }}>{money(gl.reduce((s, r) => s + r.debit, 0))}</td>
+                <td style={{ textAlign: 'right' }}>{money(gl.reduce((s, r) => s + r.credit, 0))}</td></tr></tfoot>
+            </table>
+          </div>
+        )}
+
+        {tab === 'payments' && (
         <div className="table-wrap">
           <table>
             <thead>
@@ -135,6 +271,7 @@ export default function DepositForm() {
             </tbody>
           </table>
         </div>
+        )}
       </div>
     </div>
   );
