@@ -82,9 +82,19 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
     const [paymentMethods] = await pool.query('SELECT id, name FROM payment_methods WHERE is_active = TRUE ORDER BY name');
     const [departments] = await pool.query('SELECT id, name FROM departments WHERE is_active = TRUE ORDER BY name');
     const [locations] = await pool.query('SELECT id, location_name FROM locations ORDER BY location_name');
-    const [vendors] = await pool.query('SELECT id, name FROM suppliers WHERE is_active = TRUE ORDER BY name');
-    const [customers] = await pool.query('SELECT id, name FROM customers ORDER BY name');
-    const [employees] = await pool.query("SELECT id, CONCAT(first_name, ' ', last_name) AS name FROM employees WHERE is_active = TRUE ORDER BY first_name, last_name");
+    // Enough of each party for the Name picker's tabs to tell two people of the same name apart,
+    // the way the live form's Employees / Vendor / Customer tabs do.
+    const [vendors] = await pool.query(
+      `SELECT id, supplier_code AS code, name, company_name, address,
+              COALESCE(NULLIF(mobile_no, ''), NULLIF(contact_no, ''), office_no) AS contact_no, tin
+       FROM suppliers WHERE is_active = TRUE ORDER BY name`
+    );
+    const [customers] = await pool.query('SELECT id, customer_code AS code, name, company_name, address, tin FROM customers ORDER BY name');
+    const [employees] = await pool.query(
+      `SELECT id, employee_code AS code, CONCAT(first_name, ' ', last_name) AS name, position_title, address,
+              birth_date, sex, phone AS contact_no
+       FROM employees WHERE is_active = TRUE ORDER BY first_name, last_name`
+    );
     const [payments] = await pool.query(
       `SELECT cp.id, cp.customer_payment_no, cp.date_created, cp.payment_amount,
               c.name AS customer_name, loc.location_name, pm.name AS payment_method_name

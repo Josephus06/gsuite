@@ -7,17 +7,29 @@ const PAGE_SIZE = 10;
 // onClear is optional and opt-in per caller: a picker offers "Clear selection" only where the
 // field is genuinely allowed to be empty. Wiring it into every picker would invite someone to
 // blank a required reference and only find out at save time.
+//
+// tabs is optional too: [{ key, label, items, columns, searchKeys }] for a picker choosing across
+// several kinds of record at once (Employees / Vendor / Customer). Each tab brings its own list and
+// columns; the top-level items/columns/searchKeys are then unused. Ids must be unique across the
+// tabs, since `value` has to find the selection whichever tab it came from.
 export default function EntityPicker({
-  label, items, value, getLabel, columns, searchKeys, onSelect, placeholder, required, disabled,
-  triggerLabel, triggerClassName, isSelectable, headerExtra, onClear, onVisibleItems,
+  label, items: plainItems, value, getLabel, columns: plainColumns, searchKeys: plainSearchKeys, onSelect,
+  placeholder, required, disabled, triggerLabel, triggerClassName, isSelectable, headerExtra, onClear,
+  onVisibleItems, tabs,
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
+  const [tabKey, setTabKey] = useState(tabs?.[0]?.key);
+  const tab = tabs ? (tabs.find((t) => t.key === tabKey) || tabs[0]) : null;
+  const items = tab ? tab.items : plainItems;
+  const columns = tab ? tab.columns : plainColumns;
+  const searchKeys = tab ? tab.searchKeys : plainSearchKeys;
+  const allItems = useMemo(() => (tabs ? tabs.flatMap((t) => t.items) : plainItems), [tabs, plainItems]);
 
   // Deliberately searches the FULL list, not the selectable one. A record that points at
   // something since retired must still show what it points at.
-  const selected = items.find((i) => String(i.id) === String(value));
+  const selected = allItems.find((i) => String(i.id) === String(value));
 
   // What may be chosen from here on. Callers pass isSelectable to keep retired master data --
   // an inactive process, a disabled location -- out of new work without hiding it on the
@@ -54,6 +66,8 @@ export default function EntityPicker({
     if (disabled) return;
     setSearch('');
     setPage(1);
+    // Reopen on the tab the current selection lives in, so it is in view.
+    if (tabs) setTabKey((tabs.find((t) => t.items.some((i) => String(i.id) === String(value))) || tabs[0]).key);
     setOpen(true);
   }
 
@@ -113,6 +127,14 @@ export default function EntityPicker({
               </button>
             )}
           </div>
+          {tabs && (
+            <div className="status-tabs" style={{ marginBottom: 12 }}>
+              {tabs.map((t) => (
+                <button key={t.key} type="button" className={`status-tab ${t.key === tab.key ? 'active' : ''}`}
+                  onClick={() => { setTabKey(t.key); setPage(1); }}>{t.label}</button>
+              ))}
+            </div>
+          )}
           <div className="table-wrap">
             <table>
               <thead>
