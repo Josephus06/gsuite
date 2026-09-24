@@ -131,7 +131,9 @@ export default function DepositForm() {
     } catch (e) { setError(e.response?.data?.error || 'Save failed.'); setSaving(false); }
   }
 
-  if (loading || !meta) return <LoadingSpinner />;
+  if (loading) return <LoadingSpinner />;
+  // A failed load used to leave the spinner up for ever, with the reason set but never shown.
+  if (!meta) return <div className="error-banner">{error || 'Failed to load.'}</div>;
 
   return (
     <div>

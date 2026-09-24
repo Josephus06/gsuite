@@ -90,9 +90,18 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
        FROM suppliers WHERE is_active = TRUE ORDER BY name`
     );
     const [customers] = await pool.query('SELECT id, customer_code AS code, name, company_name, address, tin FROM customers ORDER BY name');
+    // address / birth_date / sex arrive with the HR 201-file migration, which not every install has
+    // run -- asking for them unconditionally took this whole form down on all three. Each is read
+    // only where the column exists, and reads as blank elsewhere.
+    const [empCols] = await pool.query(
+      `SELECT COLUMN_NAME AS c FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = 'employees' AND COLUMN_NAME IN ('address', 'birth_date', 'sex')`
+    );
+    const hasEmp = new Set(empCols.map((r) => r.c));
+    const optional = ['address', 'birth_date', 'sex'].map((c) => (hasEmp.has(c) ? c : `NULL AS ${c}`)).join(', ');
     const [employees] = await pool.query(
-      `SELECT id, employee_code AS code, CONCAT(first_name, ' ', last_name) AS name, position_title, address,
-              birth_date, sex, phone AS contact_no
+      `SELECT id, employee_code AS code, CONCAT(first_name, ' ', last_name) AS name, position_title, ${optional},
+              phone AS contact_no
        FROM employees WHERE is_active = TRUE ORDER BY first_name, last_name`
     );
     const [payments] = await pool.query(
