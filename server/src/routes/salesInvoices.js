@@ -8,7 +8,7 @@ const { computeSalesInvoiceGl } = require('../lib/glImpact');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { whyNotBillable } = require('../lib/estimateBilling');
 const { isHeadOfficeUser } = require('../lib/userLocation');
-const { postReversalJournal } = require('../lib/reversalJournal');
+const { postReversalJournal, mirror } = require('../lib/reversalJournal');
 
 const router = express.Router();
 // Unlike Item Fulfillment/Receipt/Quality Inspection/Item Delivery (all reached only by
@@ -879,6 +879,31 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
   }
 });
 
+// What voiding this invoice will post: the Reversal Journal popup's GL IMPACT table, built by the
+// same mirror() the void itself uses so the preview and the posting cannot differ. Each line
+// starts on the invoice's own department (its GL rows carry none), and the popup may change it.
+router.get('/:id/reversal-preview', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [[si]] = await pool.query(
+      `SELECT si.*, loc.location_name AS office_location_name, d.name AS department_name
+         FROM sales_invoices si
+         LEFT JOIN locations loc ON loc.id = si.office_location_id
+         LEFT JOIN departments d ON d.id = si.department_id
+        WHERE si.id = ?`, [req.params.id]
+    );
+    if (!si) return res.status(404).json({ error: 'Not found' });
+    const [lines] = await pool.query('SELECT * FROM sales_invoice_lines WHERE sales_invoice_id = ?', [req.params.id]);
+    const rows = mirror(await computeSalesInvoiceGl(si, lines))
+      .map((r) => ({ ...r, department_id: r.department_id || si.department_id || null }));
+    res.json({
+      invoice_no: si.invoice_no,
+      invoice_date: si.date_created,
+      location: si.office_location_id ? { id: si.office_location_id, location_name: si.office_location_name } : null,
+      rows,
+    });
+  } catch (err) { next(err); }
+});
+
 router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
@@ -886,6 +911,18 @@ router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
     if (si) await assertPeriodOpen(si.date_created, 'ar', conn);
     if (!si) return res.status(404).json({ error: 'Not found' });
     if (si.status === 'cancelled') return res.status(409).json({ error: 'This Sales Invoice is already cancelled.' });
+
+    // The Reversal Journal popup's choices. All optional, so a caller that sends none still voids
+    // exactly as before (dated today, at the invoice's location, departments as the GL has them).
+    // A chosen date may not fall before the invoice it reverses, and its period must be open.
+    const body = req.body || {};
+    const reversalDateIn = /^\d{4}-\d{2}-\d{2}$/.test(String(body.reversal_date || '')) ? body.reversal_date : null;
+    if (reversalDateIn) {
+      if (reversalDateIn < String(si.date_created instanceof Date ? si.date_created.toISOString() : si.date_created).slice(0, 10)) {
+        return res.status(400).json({ error: 'The reversal date cannot be before the invoice date.' });
+      }
+      await assertPeriodOpen(reversalDateIn, 'ar', conn);
+    }
 
     const [lines] = await conn.query(
       'SELECT job_order_id, sales_order_line_id, estimate_job_order_id, quantity FROM sales_invoice_lines WHERE sales_invoice_id = ?',
@@ -927,7 +964,9 @@ router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
       sourceType: 'sales_invoice', sourceId: Number(req.params.id), sourceNo: fullSi.invoice_no,
       glRows: await computeSalesInvoiceGl(fullSi, glLines),
       documentDate: fullSi.date_created, voidedAt: new Date(),
-      reason: req.body?.reason || null, userId: req.user.id, locationId: fullSi.office_location_id || null,
+      reason: String(body.memo || body.reason || '').trim() || null, userId: req.user.id,
+      locationId: body.location_id ? Number(body.location_id) : (fullSi.office_location_id || null),
+      date: reversalDateIn, lineDepartments: Array.isArray(body.line_departments) ? body.line_departments : null,
     });
     const [[so]] = await conn.query('SELECT status FROM sales_orders WHERE id = ?', [si.sales_order_id]);
     if (so && so.status !== 'cancelled') {

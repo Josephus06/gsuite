@@ -39,6 +39,7 @@ function mirror(glRows) {
   return glRows
     .map((r) => ({
       account_code: r.account_code,
+      account_name: r.account_name || null,
       debit: Number(r.credit) || 0,
       credit: Number(r.debit) || 0,
       department_id: r.department_id || null,
@@ -69,13 +70,22 @@ async function existingReversalId(conn, sourceType, sourceId) {
 // zero-value ticket, or one whose accounts are missing from the chart -- has nothing to cancel,
 // and refusing the void over it would block the user from withdrawing a document for a reason
 // they cannot see or fix from that screen.
+//
+// `date` and `lineDepartments` come from the Reversal Journal popup, where the user picks the
+// reversal date and a department per line before saving (as live's does). `lineDepartments` is
+// indexed like mirror()'s output -- the popup is built from the same function, so the two line up.
+// Left out, the date falls back to reversalDate() and each line keeps the department its GL row had.
 async function postReversalJournal(conn, {
   sourceType, sourceId, sourceNo, glRows, documentDate, voidedAt = null,
-  reason = null, userId = null, locationId = null,
+  reason = null, userId = null, locationId = null, date = null, lineDepartments = null,
 }) {
   if (await existingReversalId(conn, sourceType, sourceId)) return null;
 
-  const rows = mirror(glRows || []);
+  const rows = mirror(glRows || []).map((r, i) => (
+    Array.isArray(lineDepartments) && lineDepartments[i] !== undefined
+      ? { ...r, department_id: lineDepartments[i] ? Number(lineDepartments[i]) : null }
+      : r
+  ));
   if (!rows.length) return null;
 
   const byCode = await accountIdsByCode(conn, [...new Set(rows.map((r) => String(r.account_code)))]);
@@ -92,7 +102,7 @@ async function postReversalJournal(conn, {
     `INSERT INTO journals (journal_no, date_created, location_id, memo, status,
        total_debit, total_credit, source_type, source_id, created_by_user_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-    [journalNo, reversalDate({ voidedAt, documentDate }), locationId, memo, REVERSAL_STATUS,
+    [journalNo, date ? String(date).slice(0, 10) : reversalDate({ voidedAt, documentDate }), locationId, memo, REVERSAL_STATUS,
       totalDebit, totalCredit, sourceType, sourceId, userId],
   );
 

@@ -7,6 +7,7 @@ import CustomerPaymentModal from '../components/CustomerPaymentModal';
 import CreditMemoModal from '../components/CreditMemoModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ButtonMenu from '../components/ButtonMenu';
+import ReversalJournalModal from '../components/ReversalJournalModal';
 
 function qty(v) {
   const n = Number(v);
@@ -79,19 +80,10 @@ export default function SalesInvoiceView() {
     }
   }, [tab, id]);
 
-  async function handleCancel() {
-    if (!confirm('Void this Invoice? Its billed qty will be reversed.')) return;
-    setBusy(true);
-    setError('');
-    try {
-      await api.put(`/sales-invoices/${id}/cancel`);
-      await load();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Cancel failed');
-    } finally {
-      setBusy(false);
-    }
-  }
+  // Void opens the Reversal Journal popup (date, location, memo, GL Impact) rather than voiding on
+  // the spot; the popup's Save is what voids it.
+  const [showReversal, setShowReversal] = useState(false);
+  function handleCancel() { setError(''); setShowReversal(true); }
 
   if (loading) return <LoadingSpinner />;
   // A failed load leaves si null. Without this the "loading || !si" guard spun forever on
@@ -342,6 +334,14 @@ export default function SalesInvoiceView() {
           invoiceId={Number(id)}
           onClose={() => setShowCreditMemoModal(false)}
           onSaved={async (cm) => { setShowCreditMemoModal(false); await load(); navigate(`/credit-memos/${cm.id}`); }}
+        />
+      )}
+
+      {showReversal && (
+        <ReversalJournalModal
+          invoiceId={Number(id)}
+          onClose={() => setShowReversal(false)}
+          onSaved={async () => { setShowReversal(false); await load(); }}
         />
       )}
     </div>
