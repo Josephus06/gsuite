@@ -15,7 +15,8 @@ export default function OfficeSupplyRequisitionForm() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [meta, setMeta] = useState(null);
-  const [header, setHeader] = useState({ date_created: today(), date_needed: '', location_id: '', transfer_to_location_id: '', requestor_id: '', memo: '' });
+  // A new requisition is needed the day it is raised unless someone says otherwise.
+  const [header, setHeader] = useState({ date_created: today(), date_needed: today(), location_id: '', transfer_to_location_id: '', requestor_id: '', memo: '' });
   const [osrNo, setOsrNo] = useState('New');
   const [status, setStatus] = useState('open');
   const [tab, setTab] = useState('materials');
@@ -28,8 +29,15 @@ export default function OfficeSupplyRequisitionForm() {
     (async () => {
       const { data: m } = await api.get('/office-supply-requisitions/meta');
       setMeta(m);
-      // New requisition: autofill Requestor with the logged-in user's employee.
-      if (!id && m.defaults?.requestor_id) setHeader((h) => ({ ...h, requestor_id: m.defaults.requestor_id }));
+      // New requisition: autofill Requestor with the logged-in user's employee, and withdraw from
+      // Warehouse - Central, where office supplies are issued from.
+      if (!id) {
+        setHeader((h) => ({
+          ...h,
+          requestor_id: h.requestor_id || m.defaults?.requestor_id || '',
+          location_id: h.location_id || m.defaults?.withdraw_from_location_id || '',
+        }));
+      }
       if (id) {
         const { data: o } = await api.get(`/office-supply-requisitions/${id}`);
         setOsrNo(o.osr_no); setStatus(o.status);
@@ -98,7 +106,12 @@ export default function OfficeSupplyRequisitionForm() {
         <div className="muted" style={{ marginBottom: 16 }}>{STATUS_LABELS[status] || status}</div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, alignItems: 'start' }}>
-          <div className="field"><label>Date Created</label><input type="date" value={header.date_created} onChange={(e) => setH({ date_created: e.target.value })} /></div>
+          <div className="field"><label>Date Created</label><input type="date" value={header.date_created} onChange={(e) => {
+            // Date Needed follows Date Created while it still matches it; once someone has set a
+            // different Date Needed, changing Date Created leaves it alone.
+            const v = e.target.value;
+            setHeader((h) => ({ ...h, date_created: v, date_needed: !h.date_needed || h.date_needed === h.date_created ? v : h.date_needed }));
+          }} /></div>
           <div className="field"><label>Date Needed</label><input type="date" value={header.date_needed} onChange={(e) => setH({ date_needed: e.target.value })} /></div>
           <div className="field">
             <label>Requestor</label>
@@ -144,7 +157,12 @@ export default function OfficeSupplyRequisitionForm() {
                       <td>{i + 1}</td>
                       <td style={{ minWidth: 280 }}>
                         <EntityPicker label="Item" items={meta.items} value={l.item_id} getLabel={(x) => `${x.item_code} — ${x.display_name}`}
-                          columns={[{ key: 'item_code', label: 'Code' }, { key: 'display_name', label: 'Name' }, { key: 'base_unit', label: 'UOM' }]}
+                          columns={[
+                            { key: 'item_code', label: 'Code' }, { key: 'display_name', label: 'Name' }, { key: 'base_unit', label: 'UOM' },
+                            // Warehouse - Central's stock, from the stock ledger (see /meta).
+                            { key: 'central_on_hand', label: 'On Hand (Warehouse - Central)',
+                              render: (x) => (x.central_on_hand == null ? '' : Number(x.central_on_hand).toLocaleString('en-US', { maximumFractionDigits: 4 })) },
+                          ]}
                           searchKeys={['item_code', 'display_name']} placeholder={l.item_label || '--Select office-supply item--'} onSelect={(x) => onItem(i, x)} />
                       </td>
                       <td><input type="number" step="0.01" style={{ width: 90, textAlign: 'right' }} value={l.qty} onChange={(e) => setLine(i, { qty: e.target.value })} /></td>

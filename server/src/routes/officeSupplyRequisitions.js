@@ -3,6 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { isNonStockItem } = require('../lib/itemTypes');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
+const { deriveOnHand } = require('../lib/stockLedger');
 
 const router = express.Router();
 // Office Supply Requisition (OSR-####): a transfer-order-like withdrawal restricted to items flagged
@@ -45,7 +46,20 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
     const [departments] = await pool.query('SELECT id, name FROM departments WHERE is_active = TRUE ORDER BY name');
     // Requestor defaults to the logged-in user's own employee.
     const [[me]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
-    res.json({ items, locations, employees, departments, defaults: { requestor_id: me?.employee_id || null } });
+    // Office supplies are issued from Warehouse - Central, so a new requisition withdraws from it
+    // unless changed, and the item picker shows what Warehouse - Central holds of each item.
+    // Matched by name (ids differ between installs); prefix-matched as the importers do.
+    const [[central]] = await pool.query("SELECT id FROM locations WHERE location_name LIKE 'Warehouse - Central%' ORDER BY id LIMIT 1");
+    if (central && items.length) {
+      // From the stock ledger, not inventory_locations: that snapshot holds nothing for office
+      // supplies at Warehouse - Central on production, where the ledger shows 287 items in stock.
+      const onHand = await deriveOnHand(pool, items.map((i) => i.id));
+      for (const i of items) i.central_on_hand = Number((onHand.get(`${i.id}|${central.id}`) || 0).toFixed(4));
+    }
+    res.json({
+      items, locations, employees, departments,
+      defaults: { requestor_id: me?.employee_id || null, withdraw_from_location_id: central?.id || null },
+    });
   } catch (err) { next(err); }
 });
 
@@ -54,8 +68,10 @@ router.get('/on-hand', requireAuth, requirePermission(ROUTE, 'can_view'), async 
   try {
     const { item_id: itemId, location_id: locationId } = req.query;
     if (!itemId || !locationId) return res.json({ qty_on_hand: 0 });
-    const [[row]] = await pool.query('SELECT qty_on_hand FROM inventory_locations WHERE inventory_id = ? AND location_id = ?', [itemId, locationId]);
-    res.json({ qty_on_hand: Number(row?.qty_on_hand || 0) });
+    // The stock ledger's balance -- the same figure the item picker, the Bin Card and the Inventory
+    // Item page show -- rather than the inventory_locations snapshot, which is empty for these.
+    const onHand = await deriveOnHand(pool, [Number(itemId)]);
+    res.json({ qty_on_hand: Number((onHand.get(`${itemId}|${locationId}`) || 0).toFixed(4)) });
   } catch (err) { next(err); }
 });
 
