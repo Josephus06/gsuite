@@ -171,8 +171,18 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
     const credits = Object.entries(creditAmounts)
       .filter(([, v]) => Number(v) > 0)
       .map(([id, v]) => ({ credit_memo_id: Number(id), applied_amount: Number(v) }));
-    // Nothing applied is allowed -- the whole amount then sits unapplied, on account.
-    if (!apply.length && !credits.length && !(received > 0)) { setError('Enter a Payment Amount, or apply an amount to an invoice or credit.'); return; }
+    // Everything but Deposit To is required -- the same list, in the same order, the server checks
+    // (missingRequired in routes/customerPayments.js). Nothing applied is allowed: the whole
+    // amount then sits unapplied, on account. Amount may be zero only for a credits-only payment.
+    const cheque = isCheque(paymentMethod);
+    const missing = [
+      [!dateCreated, 'Date'], [!department, 'Department'], [!memo.trim(), 'Memo'],
+      [!receiptType, 'Receipt'], [!orNo.trim(), 'OR #'], [!paymentType, 'Payment Type'], [!issuedBy, 'Issued By'],
+      [!(received > 0) && !(credits.length && !apply.length), 'Payment Amount'], [!paymentMethod, 'Payment Method'],
+      [cheque && !bankName.trim(), 'Bank'], [cheque && !chequeDate, 'Cheque Date'], [cheque && !chequeNo.trim(), 'Cheque No'],
+      [!cheque && paymentMethod?.requires_reference && !referenceNo.trim(), 'Reference No'],
+    ].filter(([bad]) => bad).map(([, label]) => label);
+    if (missing.length) { setError(`Required: ${missing.join(', ')}.`); return; }
 
     setSaving(true);
     try {
@@ -224,45 +234,45 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
 
           <div className="review-grid" style={{ gridTemplateColumns: '1fr 1fr 260px' }}>
             <div>
-              <div className="field"><label>Date</label><input type="date" value={dateCreated} onChange={(e) => setDateCreated(e.target.value)} /></div>
+              <div className="field"><label>Date <span className="req">*</span></label><input type="date" value={dateCreated} onChange={(e) => setDateCreated(e.target.value)} /></div>
               <div>Customer : <span className="hi">{data.customer_name}</span></div>
               <div className="field">
-                <label>Department</label>
+                <label>Department <span className="req">*</span></label>
                 <EntityPicker
                   label="Department" items={departments} value={department?.id || ''} getLabel={(d) => d.name}
                   columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']} onSelect={setDepartment}
                 />
               </div>
               <div>Office Location : <span className="hi">{data.office_location_name || '—'}</span></div>
-              <div className="field"><label>Memo</label><textarea rows={5} value={memo} onChange={(e) => setMemo(e.target.value)} /></div>
+              <div className="field"><label>Memo <span className="req">*</span></label><textarea rows={5} value={memo} onChange={(e) => setMemo(e.target.value)} /></div>
             </div>
             <div>
               <div className="field">
-                <label>Receipt</label>
+                <label>Receipt <span className="req">*</span></label>
                 <select value={receiptType} onChange={(e) => setReceiptType(e.target.value)}>
                   <option value="">--Select--</option>
                   {RECEIPT_TYPES.map((r) => <option key={r} value={r}>{r}</option>)}
                 </select>
               </div>
-              <div className="field"><label>OR #</label><input value={orNo} onChange={(e) => setOrNo(e.target.value)} /></div>
+              <div className="field"><label>OR # <span className="req">*</span></label><input value={orNo} onChange={(e) => setOrNo(e.target.value)} /></div>
               <div className="field">
-                <label>Payment Type</label>
+                <label>Payment Type <span className="req">*</span></label>
                 <select value={paymentType} onChange={(e) => setPaymentType(e.target.value)}>
                   <option value="">--Select--</option>
                   {PAYMENT_TYPES.map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
               <div className="field">
-                <label>Issued By</label>
+                <label>Issued By <span className="req">*</span></label>
                 <EntityPicker
                   label="Issued By" items={users} value={issuedBy?.id || ''} getLabel={(u) => u.display_name}
                   columns={[{ key: 'display_name', label: 'Name' }, { key: 'email', label: 'Email' }]}
                   searchKeys={['display_name', 'email']} onSelect={setIssuedBy}
                 />
               </div>
-              <div className="field"><label>Payment Amount</label><input type="number" step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} /></div>
+              <div className="field"><label>Payment Amount <span className="req">*</span></label><input type="number" step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} /></div>
               <div className="field">
-                <label>Payment Method</label>
+                <label>Payment Method <span className="req">*</span></label>
                 <EntityPicker
                   label="Payment Method" items={methods} value={paymentMethod?.id || ''} getLabel={(m) => m.name}
                   columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']}
@@ -282,16 +292,16 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
                   adding a sixth is a Master Lists edit and not a code change. */}
               {paymentMethod && isCheque(paymentMethod) && (
                 <>
-                  <div className="field"><label>Bank</label><input value={bankName} onChange={(e) => setBankName(e.target.value)} /></div>
+                  <div className="field"><label>Bank <span className="req">*</span></label><input value={bankName} onChange={(e) => setBankName(e.target.value)} /></div>
                   {/* The date the CHEQUE is drawn for, which is not the date the payment was
                       recorded -- a post-dated cheque is the whole reason this is separate. */}
-                  <div className="field"><label>Date</label><input type="date" value={chequeDate} onChange={(e) => setChequeDate(e.target.value)} /></div>
-                  <div className="field"><label>Cheque No</label><input value={chequeNo} onChange={(e) => setChequeNo(e.target.value)} /></div>
+                  <div className="field"><label>Date <span className="req">*</span></label><input type="date" value={chequeDate} onChange={(e) => setChequeDate(e.target.value)} /></div>
+                  <div className="field"><label>Cheque No <span className="req">*</span></label><input value={chequeNo} onChange={(e) => setChequeNo(e.target.value)} /></div>
                 </>
               )}
               {paymentMethod && paymentMethod.requires_reference && !isCheque(paymentMethod) && (
                 <div className="field">
-                  <label>Reference No</label>
+                  <label>Reference No <span className="req">*</span></label>
                   <input
                     value={referenceNo} onChange={(e) => setReferenceNo(e.target.value)}
                     placeholder={`${paymentMethod.name} reference`}

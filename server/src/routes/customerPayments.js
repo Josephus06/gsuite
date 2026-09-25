@@ -107,6 +107,41 @@ async function prepareApplication(conn, { applyLines, creditLines, paymentAmount
   };
 }
 
+// Every field on the Customer Payment form is required except Deposit To, which may be left for
+// the Bank Deposit (an undeposited receipt sits in 10006 Undeposited Funds meanwhile -- see
+// computeCustomerPaymentGl). The method decides the rest: a cheque needs its bank, date and
+// number, a method flagged requires_reference needs its reference. Checked here as well as on the
+// form, since the form is one way in and this is the only one. Returns the first thing missing,
+// or null.
+//
+// Payment Amount may be zero only when the payment is nothing but credit memos offsetting
+// invoices -- that moves no cash, so there is no amount to have received.
+const isChequeMethod = (name) => /^che(ck|que)$/.test(String(name || '').trim().toLowerCase());
+async function missingRequired(conn, b) {
+  const blank = (v) => v == null || String(v).trim() === '';
+  if (blank(b.date_created)) return 'Date';
+  if (!b.department_id) return 'Department';
+  if (blank(b.memo)) return 'Memo';
+  if (blank(b.receipt_type)) return 'Receipt';
+  if (blank(b.or_no)) return 'OR #';
+  if (blank(b.payment_type)) return 'Payment Type';
+  if (!b.issued_by_user_id) return 'Issued By';
+  const creditsOnly = (Array.isArray(b.credit_lines) && b.credit_lines.some((l) => Number(l.applied_amount) > 0))
+    && !(Array.isArray(b.apply_lines) && b.apply_lines.some((l) => Number(l.applied_amount) > 0));
+  if (!(Number(b.payment_amount) > 0) && !creditsOnly) return 'Payment Amount';
+  if (!b.payment_method_id) return 'Payment Method';
+  const [[m]] = await conn.query('SELECT name, requires_reference FROM payment_methods WHERE id = ?', [b.payment_method_id]);
+  if (!m) return 'Payment Method';
+  if (isChequeMethod(m.name)) {
+    if (blank(b.bank_name)) return 'Bank';
+    if (blank(b.cheque_date)) return 'Cheque Date';
+    if (blank(b.cheque_no)) return 'Cheque No';
+  } else if (m.requires_reference && blank(b.reference_no)) {
+    return 'Reference No';
+  }
+  return null;
+}
+
 async function reverseInvoiceApplication(conn, invoiceId, amount) {
   const [[si]] = await conn.query('SELECT amount_due, status FROM sales_invoices WHERE id = ?', [invoiceId]);
   if (!si) return;
@@ -410,6 +445,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     } = req.body;
 
     if (!customerId) return res.status(400).json({ error: 'Customer is required.' });
+    const missing = await missingRequired(conn, req.body);
+    if (missing) return res.status(400).json({ error: `${missing} is required.` });
 
     await assertPeriodOpen(dateCreated, 'ar', conn);
 
@@ -546,6 +583,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       reference_no: referenceNo, bank_name: bankName, cheque_no: chequeNo, cheque_date: chequeDate,
       apply_lines: applyLines, credit_lines: creditLines,
     } = req.body;
+    const missing = await missingRequired(conn, req.body);
+    if (missing) return res.status(400).json({ error: `${missing} is required.` });
 
     // Both periods: the one it sits in now and the one it is being moved to. Moving a receipt
     // out of a closed month is as much a change to that month as posting into one.

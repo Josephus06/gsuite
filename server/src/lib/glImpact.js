@@ -368,12 +368,19 @@ async function computeTransitGl(lines, { qtyField, assetIsDebit }) {
 // amount would add roughly PHP 500M to the ledger twice. See customer-payments-cpay-vs-pay.
 async function computeCustomerPaymentGl(cp, lines) {
   const arAcct = await coaByCode('12100');
-  if (!arAcct || !cp.deposit_account_id) return [];
+  // An in-app payment saved without a Deposit To account is cash waiting to be banked, which is
+  // exactly what Undeposited Funds holds -- the Bank Deposit then moves it DR bank / CR 10006.
+  // Returning nothing here instead meant 10 of 11 in-app payments on production (PHP 308k) posted
+  // no entry at all, and depositing one would credit 10006 for money never put in. Imported
+  // payments with no deposit account are the PAY-* receipts whose cash is booked elsewhere (see
+  // below), so they still post nothing.
+  const heldUndeposited = !cp.deposit_account_id && !!cp.created_by_user_id;
+  if (!arAcct || (!cp.deposit_account_id && !heldUndeposited)) return [];
   // Once a payment is rolled into a Bank Deposit, its cash sits in Undeposited Funds (10006) until
   // the deposit moves it to the bank -- so its own entry debits 10006, and the Deposit does the
   // DR bank / CR 10006. A payment with no deposit keeps debiting its deposit account directly (this
   // preserves historical payments, which have no deposit document).
-  const depositAcct = cp.deposit_id
+  const depositAcct = (cp.deposit_id || heldUndeposited)
     ? await coaByCode('10006')
     : await coaById(cp.deposit_account_id);
   if (!depositAcct) return [];
