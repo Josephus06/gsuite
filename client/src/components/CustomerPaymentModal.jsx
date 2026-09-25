@@ -48,6 +48,9 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
   const [chequeDate, setChequeDate] = useState('');
   const [depositAccount, setDepositAccount] = useState(null);
   const [memo, setMemo] = useState('');
+  // Where the payment is taken: the creating user's default location, falling back to the
+  // invoice's when the user has none. An edit keeps the location saved on the payment.
+  const [officeLocation, setOfficeLocation] = useState(null);
   const [tab, setTab] = useState('apply');
   const [applyAmounts, setApplyAmounts] = useState({});   // sales_invoice_id -> string
   // Entered from the customer end the list is every open invoice they have -- hundreds, for a
@@ -89,6 +92,8 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
       setMethods(methodRes.data);
       setAccounts(Array.isArray(acctRes.data) ? acctRes.data : (acctRes.data?.rows || []));
       setMemo(d.memo || '');
+      setOfficeLocation(d.creator_location
+        || (d.office_location_id ? { id: d.office_location_id, location_name: d.office_location_name } : null));
       if (d.department_id) setDepartment({ id: d.department_id, name: d.department_name });
       // The invoice the button was pressed from starts ticked for its full remaining
       // balance -- the overwhelmingly common case is settling exactly that. Started from the
@@ -114,6 +119,7 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
         setChequeNo(p.cheque_no || '');
         setChequeDate(p.cheque_date ? String(p.cheque_date).slice(0, 10) : '');
         if (p.department_id) setDepartment({ id: p.department_id, name: p.department_name });
+        if (p.office_location_id) setOfficeLocation({ id: p.office_location_id, location_name: p.office_location_name });
         if (p.issued_by_user_id) setIssuedBy({ id: p.issued_by_user_id, display_name: p.issued_by_name });
         if (p.payment_method_id) setPaymentMethod({ id: p.payment_method_id, name: p.payment_method_name, requires_reference: methodRes.data.find((m) => m.id === p.payment_method_id)?.requires_reference });
         if (p.deposit_account_id) setDepositAccount({ id: p.deposit_account_id, account_code: p.deposit_account_code, account_name: p.deposit_account_name });
@@ -190,7 +196,7 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
         customer_id: data.customer_id,
         date_created: dateCreated,
         department_id: department?.id || null,
-        office_location_id: data.office_location_id || null,
+        office_location_id: officeLocation?.id || null,
         deposit_account_id: depositAccount?.id || null,
         receipt_type: receiptType,
         or_no: orNo,
@@ -243,7 +249,7 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
                   columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']} onSelect={setDepartment}
                 />
               </div>
-              <div>Office Location : <span className="hi">{data.office_location_name || '—'}</span></div>
+              <div>Office Location : <span className="hi">{officeLocation?.location_name || '—'}</span></div>
               <div className="field"><label>Memo <span className="req">*</span></label><textarea rows={5} value={memo} onChange={(e) => setMemo(e.target.value)} /></div>
             </div>
             <div>

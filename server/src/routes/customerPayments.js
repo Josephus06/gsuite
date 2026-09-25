@@ -3,6 +3,8 @@ const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeCustomerPaymentGl } = require('../lib/glImpact');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
+const { resolveDefaultLocation } = require('../lib/userLocation');
+const ExcelJS = require('exceljs');
 
 const router = express.Router();
 // Reached from an Open Invoice's "Accept Payment" button -- the AR mirror of Bill
@@ -199,7 +201,7 @@ router.get('/for-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can
       [si.customer_id]
     );
 
-    res.json({ ...si, apply_lines: applyLines, credit_lines: creditLines });
+    res.json({ ...si, creator_location: await resolveDefaultLocation(req.user.id), apply_lines: applyLines, credit_lines: creditLines });
   } catch (err) {
     next(err);
   }
@@ -285,6 +287,7 @@ router.get('/for-customer/:customerId', requireAuth, requirePermission(ROUTE, 'c
       office_location_id: null,
       department_id: null,
       memo: null,
+      creator_location: await resolveDefaultLocation(req.user.id),
       apply_lines: applyLines,
       credit_lines: creditLines,
     });
@@ -318,30 +321,9 @@ router.get('/by-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can_
 // that number no longer comes from rows.length.
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { search, status, department_id: departmentId, office_location_id: locationId } = req.query;
-    const dateFrom = asDate(req.query.date_from);
-    const dateTo = asDate(req.query.date_to);
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(req.query.page_size) || DEFAULT_PAGE_SIZE));
-
-    const where = [];
-    const params = [];
-    if (status) { where.push('cp.status = ?'); params.push(status); }
-    if (departmentId) { where.push('cp.department_id = ?'); params.push(departmentId); }
-    // Location, not just department. Every one of the 130,000 imported payments carries an office
-    // location and all but two carry no department at all, so department alone would be a filter
-    // that returns nothing for the entire history. Payments raised through the form do set a
-    // department, so that filter earns its place going forward -- this one works on both.
-    if (locationId) { where.push('cp.office_location_id = ?'); params.push(locationId); }
-    // Both ends inclusive, and each usable without the other -- "everything from March" and
-    // "everything up to year end" are both things people ask for. date_created is a DATE, so
-    // there is no end-of-day boundary to get wrong here.
-    if (dateFrom) { where.push('cp.date_created >= ?'); params.push(dateFrom); }
-    if (dateTo) { where.push('cp.date_created <= ?'); params.push(dateTo); }
-    if (search) {
-      where.push('(cp.customer_payment_no LIKE ? OR cp.or_no LIKE ? OR c.name LIKE ?)');
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
-    }
+    const { search, where, params } = listFilter(req.query);
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     // The COUNT only joins customers when the search needs it. That join is the whole cost of
@@ -371,6 +353,101 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       [...params, pageSize, (page - 1) * pageSize]
     );
     res.json({ rows, total, page, page_size: pageSize });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The list's filters as SQL, shared by the list and the Unapplied export so a download is always
+// exactly what the screen was filtered to.
+function listFilter(query) {
+  const { search, status, department_id: departmentId, office_location_id: locationId } = query;
+  const dateFrom = asDate(query.date_from);
+  const dateTo = asDate(query.date_to);
+  const where = [];
+  const params = [];
+  {
+    if (status) { where.push('cp.status = ?'); params.push(status); }
+    if (departmentId) { where.push('cp.department_id = ?'); params.push(departmentId); }
+    // Location, not just department. Every one of the 130,000 imported payments carries an office
+    // location and all but two carry no department at all, so department alone would be a filter
+    // that returns nothing for the entire history. Payments raised through the form do set a
+    // department, so that filter earns its place going forward -- this one works on both.
+    if (locationId) { where.push('cp.office_location_id = ?'); params.push(locationId); }
+    // Both ends inclusive, and each usable without the other -- "everything from March" and
+    // "everything up to year end" are both things people ask for. date_created is a DATE, so
+    // there is no end-of-day boundary to get wrong here.
+    if (dateFrom) { where.push('cp.date_created >= ?'); params.push(dateFrom); }
+    if (dateTo) { where.push('cp.date_created <= ?'); params.push(dateTo); }
+    if (search) {
+      where.push('(cp.customer_payment_no LIKE ? OR cp.or_no LIKE ? OR c.name LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+  }
+  return { search, where, params };
+}
+
+// Every payment with money still sitting unapplied, as a workbook -- the list's current filters
+// (Location included) plus "unapplied above zero". Voided payments are left out even when the
+// Status filter is ALL: a void holds no money on account whatever its unapplied column says.
+// Registered before /:id, which would otherwise take "export-unapplied" as a payment id.
+router.get('/export-unapplied', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const { where, params } = listFilter(req.query);
+    where.push('cp.unapplied_amount > 0.005', "cp.status <> 'voided'");
+    const [rows] = await pool.query(
+      `SELECT cp.customer_payment_no, cp.date_created, c.name AS customer_name, loc.location_name,
+              d.name AS department_name, cp.or_no, pm.name AS payment_method_name, cp.payment_amount,
+              cp.applied_amount, cp.unapplied_amount, cp.status, cp.memo
+       FROM customer_payments cp
+       LEFT JOIN customers c ON c.id = cp.customer_id
+       LEFT JOIN payment_methods pm ON pm.id = cp.payment_method_id
+       LEFT JOIN departments d ON d.id = cp.department_id
+       LEFT JOIN locations loc ON loc.id = cp.office_location_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY loc.location_name, cp.date_created, cp.id`,
+      params
+    );
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Unapplied Payments');
+    ws.columns = [
+      { header: 'Payment #', key: 'no', width: 16 },
+      { header: 'Date Created', key: 'date', width: 13 },
+      { header: 'Customer', key: 'customer', width: 38 },
+      { header: 'Location', key: 'location', width: 22 },
+      { header: 'Department', key: 'department', width: 20 },
+      { header: 'OR #', key: 'or_no', width: 14 },
+      { header: 'Payment Method', key: 'method', width: 18 },
+      { header: 'Payment Amount', key: 'payment', width: 16 },
+      { header: 'Applied Amount', key: 'applied', width: 16 },
+      { header: 'Unapplied Amount', key: 'unapplied', width: 17 },
+      { header: 'Status', key: 'status', width: 14 },
+      { header: 'Memo', key: 'memo', width: 40 },
+    ];
+    ws.getRow(1).font = { bold: true };
+    const STATUS = { not_deposited: 'Not Deposited', deposited: 'Deposited' };
+    for (const r of rows) {
+      ws.addRow({
+        no: r.customer_payment_no, date: r.date_created ? String(r.date_created instanceof Date ? r.date_created.toISOString() : r.date_created).slice(0, 10) : '',
+        customer: r.customer_name || '', location: r.location_name || '', department: r.department_name || '',
+        or_no: r.or_no || '', method: r.payment_method_name || '',
+        // Numbers with a display format, not preformatted strings, so the columns can be totalled.
+        payment: Number(r.payment_amount || 0), applied: Number(r.applied_amount || 0), unapplied: Number(r.unapplied_amount || 0),
+        status: STATUS[r.status] || r.status, memo: r.memo || '',
+      });
+    }
+    ['payment', 'applied', 'unapplied'].forEach((k) => { ws.getColumn(k).numFmt = '#,##0.00'; });
+    const totalRow = ws.addRow({ customer: `TOTAL (${rows.length} payment${rows.length === 1 ? '' : 's'})`,
+      unapplied: rows.reduce((s, r) => s + Number(r.unapplied_amount || 0), 0) });
+    totalRow.font = { bold: true };
+    ws.autoFilter = { from: 'A1', to: `L${rows.length + 1}` };
+    ws.views = [{ state: 'frozen', ySplit: 1 }];
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="unapplied-customer-payments.xlsx"');
+    await wb.xlsx.write(res);
+    res.end();
   } catch (err) {
     next(err);
   }
@@ -447,6 +524,10 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     if (!customerId) return res.status(400).json({ error: 'Customer is required.' });
     const missing = await missingRequired(conn, req.body);
     if (missing) return res.status(400).json({ error: `${missing} is required.` });
+    // Office Location is where the payment was TAKEN: the creating user's default location (the
+    // same rule an Estimate's Office Location opens with). The form sends it; this covers a caller
+    // that does not.
+    const locationId = officeLocationId || (await resolveDefaultLocation(req.user.id))?.id || null;
 
     await assertPeriodOpen(dateCreated, 'ar', conn);
 
@@ -473,7 +554,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
        VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         dateCreated || new Date().toISOString().slice(0, 10), customerId, departmentId || null,
-        officeLocationId || null, arAccountId || null, depositAccountId || null, receiptType || null,
+        locationId, arAccountId || null, depositAccountId || null, receiptType || null,
         orNo || null, paymentType || null, issuedByUserId || req.user.id, paymentMethodId || null,
         received, appliedTotal, unapplied, memo || null, req.user.id,
         referenceNo || null, bankName || null, chequeNo || null, chequeDate || null,
@@ -632,7 +713,10 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 
     await conn.query(
       `UPDATE customer_payments SET
-         date_created = ?, department_id = ?, office_location_id = ?, ar_account_id = ?,
+         date_created = ?, department_id = ?,
+         -- Kept when the form sends none: it is where the payment was taken, fixed at creation.
+         -- Writing the null through wiped it on every edit opened from the customer list.
+         office_location_id = COALESCE(?, office_location_id), ar_account_id = ?,
          deposit_account_id = ?, receipt_type = ?, or_no = ?, payment_type = ?,
          issued_by_user_id = ?, payment_method_id = ?, payment_amount = ?, applied_amount = ?,
          unapplied_amount = ?, memo = ?, reference_no = ?, bank_name = ?, cheque_no = ?, cheque_date = ?
