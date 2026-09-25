@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { resolveCustody, wouldCreateCycle, descendantIds, recordMovement } = require('../lib/assetCustody');
 const { capitalizedCost, accumulatedDepreciation, money } = require('../lib/fixedAssets');
 const { getAssetScope, visibilityClause, canActOnAsset, requireAssetView, requireAssetAction, OWNING_DEPARTMENT_SQL } = require('../lib/assetDepartmentScope');
@@ -516,6 +516,12 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), requireAss
     let locationId = existing.location_id;
     let custodianId = existing.custodian_employee_id;
     let assignedLocationId = existing.assigned_location_id;
+    // A standalone asset staying standalone: its place and holder change through a Transfer, except
+    // that a System Admin may correct them straight from Edit. That used to be dropped silently for
+    // everyone -- the form accepted the change, the save ignored it, and the old values came back --
+    // so now an admin's change is applied (and recorded as a correction below), and anyone else's is
+    // refused out loud.
+    let adminCorrection = false;
     if (nowAttached) {
       locationId = null; custodianId = null; assignedLocationId = null;
     } else if (wasAttached) {
@@ -523,6 +529,21 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), requireAss
       custodianId = idOrNull(b.custodian_employee_id);
       assignedLocationId = idOrNull(b.assigned_location_id);
       if (!locationId) return res.status(400).json({ error: 'Detaching this asset needs a location for it to stand on its own.' });
+    } else {
+      const same = (x, y) => String(x ?? '') === String(y ?? '');
+      const changed = !same(idOrNull(b.location_id), existing.location_id)
+        || !same(idOrNull(b.custodian_employee_id), existing.custodian_employee_id)
+        || !same(idOrNull(b.assigned_location_id), existing.assigned_location_id);
+      if (changed) {
+        if (!(await isSystemAdmin(req.user.id))) {
+          return res.status(403).json({ error: 'Only a System Admin can change Location, Custodian or Assigned Location here. Raise an Asset Transfer to move it.' });
+        }
+        locationId = idOrNull(b.location_id);
+        custodianId = idOrNull(b.custodian_employee_id);
+        assignedLocationId = idOrNull(b.assigned_location_id);
+        if (!locationId) return res.status(400).json({ error: 'A location is required unless the asset is attached to another asset.' });
+        adminCorrection = true;
+      }
     }
 
     await conn.beginTransaction();
@@ -562,6 +583,34 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), requireAss
         userId: req.user.id,
       });
       await logAudit(conn, { assetId, userId: req.user.id, eventType: 'Updated', fieldName: 'parent_asset_id', oldValue: existing.parent_asset_id, newValue: parentId });
+    }
+
+    // Recorded exactly as Correct Location records one, units attached to it included, so the
+    // movement history shows who changed it and that it was a correction rather than a transfer.
+    if (adminCorrection) {
+      await recordMovement(conn, {
+        assetId, movementType: 'correction',
+        fromLocationId: before.location_id, fromCustodianEmployeeId: before.custodian_employee_id,
+        toLocationId: locationId, toCustodianEmployeeId: custodianId,
+        remarks: 'Correction: changed on Edit by a System Admin', userId: req.user.id,
+      });
+      for (const childId of await descendantIds(assetId, conn)) {
+        await recordMovement(conn, {
+          assetId: childId, movementType: 'carried',
+          fromLocationId: before.location_id, fromCustodianEmployeeId: before.custodian_employee_id,
+          toLocationId: locationId, toCustodianEmployeeId: custodianId,
+          remarks: 'Moved with its host asset (correction)', userId: req.user.id,
+        });
+      }
+      for (const [field, oldV, newV] of [
+        ['location_id', existing.location_id, locationId],
+        ['custodian_employee_id', existing.custodian_employee_id, custodianId],
+        ['assigned_location_id', existing.assigned_location_id, assignedLocationId],
+      ]) {
+        if (String(oldV ?? '') !== String(newV ?? '')) {
+          await logAudit(conn, { assetId, userId: req.user.id, eventType: 'Updated', fieldName: field, oldValue: oldV, newValue: newV });
+        }
+      }
     }
 
     await conn.commit();

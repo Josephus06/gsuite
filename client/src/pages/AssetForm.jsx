@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { useAuth } from '../context/useAuth';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { CONDITION_LABELS, STATUS_LABELS } from '../utils/assetLabels';
@@ -71,6 +72,12 @@ export default function AssetForm() {
   // Detaching an asset that WAS attached has to say where it now stands on its own -- the server
   // refuses it otherwise, so the form asks for it rather than letting the save fail.
   const detaching = !!original?.parent_asset_id && !isAttached;
+  // Where it is and who holds it change through an Asset Transfer. On an edit only a System Admin
+  // may change them here (saved as a correction); for anyone else they are shown locked, rather
+  // than editable and then quietly ignored by the save as they used to be. Mirrors PUT /assets/:id.
+  const { user } = useAuth();
+  const isAdmin = user?.account_type === 'System Admin';
+  const custodyLocked = !!id && !detaching && !isAdmin;
 
   async function save() {
     setError('');
@@ -241,15 +248,10 @@ export default function AssetForm() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginTop: 12 }}>
               <div className="field">
                 <label>Location *</label>
-                <select value={form.location_id} onChange={(e) => set({ location_id: e.target.value })}>
+                <select value={form.location_id} disabled={custodyLocked} onChange={(e) => set({ location_id: e.target.value })}>
                   <option value="">--Select--</option>
                   {meta.locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
                 </select>
-                {id && !detaching && (
-                  <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-                    Changing this here does not move the asset — raise a transfer for that.
-                  </div>
-                )}
               </div>
               <div className="field">
                 <label>Custodian</label>
@@ -259,13 +261,14 @@ export default function AssetForm() {
                   columns={[{ key: 'name', label: 'Name' }, { key: 'employee_code', label: 'Code' }, { key: 'department_name', label: 'Department' }]}
                   searchKeys={['name', 'employee_code', 'department_name']}
                   placeholder="--Select--"
+                  disabled={custodyLocked}
                   onSelect={(x) => set({ custodian_employee_id: x?.id || '' })}
-                  onClear={() => set({ custodian_employee_id: '' })}
+                  onClear={custodyLocked ? undefined : () => set({ custodian_employee_id: '' })}
                 />
               </div>
               <div className="field">
                 <label>Assigned Location</label>
-                <select value={form.assigned_location_id} onChange={(e) => set({ assigned_location_id: e.target.value })}>
+                <select value={form.assigned_location_id} disabled={custodyLocked} onChange={(e) => set({ assigned_location_id: e.target.value })}>
                   <option value="">--Select--</option>
                   {(meta.assigned_locations || []).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </select>
@@ -274,6 +277,13 @@ export default function AssetForm() {
                 </div>
               </div>
             </div>
+            {id && !detaching && (
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                {custodyLocked
+                  ? 'Location, Custodian and Assigned Location change through an Asset Transfer. Only a System Admin can change them here.'
+                  : 'As a System Admin you can change these here. The change is recorded in the movement history as a correction, not a transfer.'}
+              </div>
+            )}
           </>
         )}
 
