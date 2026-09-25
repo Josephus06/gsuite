@@ -13,16 +13,15 @@ function longDate(v) { return v ? new Date(`${v}T00:00:00`).toLocaleDateString('
 // Mirrors live's "Reversal Journal" popup, shown when a Sales Invoice is voided. Nothing is voided
 // until Save: the table is the reversing entry the void will post (the invoice's own GL Impact,
 // debits and credits swapped), read from GET /sales-invoices/:id/reversal-preview, which is built by
-// the same code the void posts with. The user picks the reversal date, location, memo and a
-// department per line; PUT /sales-invoices/:id/cancel does the rest.
+// the same code the void posts with. The user picks the reversal date, location and memo; each
+// line's Department is the invoice's own and is shown, not chosen. PUT /sales-invoices/:id/cancel
+// does the rest.
 export default function ReversalJournalModal({ invoiceId, onClose, onSaved }) {
   const [preview, setPreview] = useState(null);
   const [date, setDate] = useState(today());
   const [location, setLocation] = useState(null);
   const [memo, setMemo] = useState('');
-  const [depts, setDepts] = useState([]); // department id per GL line, same order as preview.rows
   const [locations, setLocations] = useState([]);
-  const [departments, setDepartments] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -31,13 +30,10 @@ export default function ReversalJournalModal({ invoiceId, onClose, onSaved }) {
     Promise.all([
       api.get(`/sales-invoices/${invoiceId}/reversal-preview`),
       api.get('/lookups/locations'),
-      api.get('/lookups/departments'),
-    ]).then(([p, l, d]) => {
+    ]).then(([p, l]) => {
       setPreview(p.data);
       setLocation(p.data.location);
-      setDepts(p.data.rows.map((r) => r.department_id || ''));
       setLocations(pick(l.data));
-      setDepartments(pick(d.data));
     }).catch((e) => setError(e.response?.data?.error || 'Could not load the reversal.'));
   }, [invoiceId]);
 
@@ -48,7 +44,7 @@ export default function ReversalJournalModal({ invoiceId, onClose, onSaved }) {
     setSaving(true);
     try {
       const { data } = await api.put(`/sales-invoices/${invoiceId}/cancel`, {
-        reversal_date: date, location_id: location.id, memo, line_departments: depts.map((x) => x || null),
+        reversal_date: date, location_id: location.id, memo,
       });
       onSaved(data);
     } catch (e) {
@@ -107,12 +103,8 @@ export default function ReversalJournalModal({ invoiceId, onClose, onSaved }) {
                       <tr key={i}>
                         <td>{r.account_code}</td>
                         <td>{r.account_name}</td>
-                        <td>
-                          <select value={depts[i] || ''} onChange={(e) => setDepts((ds) => ds.map((x, j) => (j === i ? e.target.value : x)))}>
-                            <option value="">--None--</option>
-                            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                          </select>
-                        </td>
+                        {/* The invoice's own department, on every line. "—" when the invoice has none. */}
+                        <td>{preview.department?.name || '—'}</td>
                         <td>Voided from {preview.invoice_no}</td>
                         <td style={{ textAlign: 'right' }}>{money(r.debit)}</td>
                         <td style={{ textAlign: 'right' }}>{money(r.credit)}</td>

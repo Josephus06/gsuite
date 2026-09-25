@@ -880,8 +880,8 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
 });
 
 // What voiding this invoice will post: the Reversal Journal popup's GL IMPACT table, built by the
-// same mirror() the void itself uses so the preview and the posting cannot differ. Each line
-// starts on the invoice's own department (its GL rows carry none), and the popup may change it.
+// same mirror() the void itself uses so the preview and the posting cannot differ. Every line takes
+// the invoice's own department (its GL rows carry none) -- fixed, not chosen; see PUT /:id/cancel.
 router.get('/:id/reversal-preview', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[si]] = await pool.query(
@@ -893,12 +893,13 @@ router.get('/:id/reversal-preview', requireAuth, requirePermission(ROUTE, 'can_v
     );
     if (!si) return res.status(404).json({ error: 'Not found' });
     const [lines] = await pool.query('SELECT * FROM sales_invoice_lines WHERE sales_invoice_id = ?', [req.params.id]);
-    const rows = mirror(await computeSalesInvoiceGl(si, lines))
-      .map((r) => ({ ...r, department_id: r.department_id || si.department_id || null }));
+    const rows = mirror((await computeSalesInvoiceGl(si, lines))
+      .map((r) => ({ ...r, department_id: si.department_id || null })));
     res.json({
       invoice_no: si.invoice_no,
       invoice_date: si.date_created,
       location: si.office_location_id ? { id: si.office_location_id, location_name: si.office_location_name } : null,
+      department: si.department_id ? { id: si.department_id, name: si.department_name } : null,
       rows,
     });
   } catch (err) { next(err); }
@@ -960,13 +961,16 @@ router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
     // tab shows for this invoice.
     const [[fullSi]] = await conn.query('SELECT * FROM sales_invoices WHERE id = ?', [req.params.id]);
     const [glLines] = await conn.query('SELECT * FROM sales_invoice_lines WHERE sales_invoice_id = ?', [req.params.id]);
+    // Every line on the invoice's own department -- the reversal belongs to the same department as
+    // the sale it cancels, so it is taken from the invoice, never chosen.
+    const glRows = (await computeSalesInvoiceGl(fullSi, glLines))
+      .map((r) => ({ ...r, department_id: fullSi.department_id || null }));
     const reversal = await postReversalJournal(conn, {
       sourceType: 'sales_invoice', sourceId: Number(req.params.id), sourceNo: fullSi.invoice_no,
-      glRows: await computeSalesInvoiceGl(fullSi, glLines),
-      documentDate: fullSi.date_created, voidedAt: new Date(),
+      glRows, documentDate: fullSi.date_created, voidedAt: new Date(),
       reason: String(body.memo || body.reason || '').trim() || null, userId: req.user.id,
       locationId: body.location_id ? Number(body.location_id) : (fullSi.office_location_id || null),
-      date: reversalDateIn, lineDepartments: Array.isArray(body.line_departments) ? body.line_departments : null,
+      date: reversalDateIn,
     });
     const [[so]] = await conn.query('SELECT status FROM sales_orders WHERE id = ?', [si.sales_order_id]);
     if (so && so.status !== 'cancelled') {
