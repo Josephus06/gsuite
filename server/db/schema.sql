@@ -145,7 +145,7 @@ CREATE TABLE warranties (
 
 CREATE TABLE reasons (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    reason_type ENUM('Cancellation','Disapproval','Return','Adjustment','Other') NOT NULL,
+    reason_type ENUM('Cancellation','Disapproval','Return','Adjustment','Other','RFQC','RMA') NOT NULL,
     name VARCHAR(150) NOT NULL,
     is_active BOOLEAN DEFAULT TRUE,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
