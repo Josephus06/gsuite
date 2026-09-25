@@ -40,6 +40,16 @@ function Row({ label, children }) {
   );
 }
 
+function Signature({ image, name, role }) {
+  return (
+    <div className="po-sig">
+      <div className="po-sig-ink">{image ? <img src={image} alt="" /> : null}</div>
+      <div className="po-sig-name">{name || ''}</div>
+      <div className="po-line">{role}</div>
+    </div>
+  );
+}
+
 export default function PurchaseOrderPrint() {
   const { id } = useParams();
   const [po, setPo] = useState(null);
@@ -88,28 +98,48 @@ export default function PurchaseOrderPrint() {
         .po-lbl { min-width: 32mm; color: #334155; }
         .po-val { font-weight: 500; }
         .po-band { text-align: center; color: #1e3a8a; margin: 20px 0 10px; letter-spacing: .5px; }
-        .po-table { width: 100%; border-collapse: collapse; margin-top: 6px; }
-        .po-table th { text-align: left; font-weight: 600; color: #334155; border-bottom: 1px solid #cbd5e1; padding: 6px; font-size: 8.5pt; }
-        .po-table td { padding: 6px; vertical-align: top; border: none; }
+        /* FIXED layout, so the table can never grow wider than the sheet. It used to size itself to
+           its content: one long item code that will not break (LFP-STKR-VINYL-...-1.37MX50M) pushed
+           it past 210mm, and Chrome then shrank the WHOLE page to fit -- the order printed at about
+           three-quarters size with the Amount column still hanging off the edge. Every column now
+           has a width, and text breaks inside its own column instead. */
+        /* The app's own table rules (index.css) keep every cell on one line and set a 13px font;
+           both are overridden here, or text spills across the neighbouring columns. */
+        .po-table { width: 100%; border-collapse: collapse; margin-top: 6px; table-layout: fixed; font-size: 8.5pt; }
+        .po-table th { text-align: left; font-weight: 600; color: #334155; border-bottom: 1px solid #cbd5e1; padding: 6px 4px; font-size: 8.5pt; white-space: normal; background: none; }
+        .po-table td { padding: 6px 4px; vertical-align: top; border: none; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+        .po-table th.po-num, .po-table td.po-num, .po-table th.po-qty, .po-table td.po-qty { white-space: nowrap; }
+        .po-table tbody tr:hover { background: none; }
+        .po-code { width: 36mm; font-size: 8pt; }
+        .po-jo { width: 20mm; }
         .po-table tbody tr { border-bottom: 1px solid #e2e8f0; }
         .po-idx { color: #ea580c; width: 8mm; }
         /* Fixed widths on the numeric tail so Description keeps the slack and the figures never
            wrap -- the same reason JobOrderPrint pins its trailing columns. */
-        .po-num { text-align: right; white-space: nowrap; width: 22mm; }
-        .po-qty { text-align: right; white-space: nowrap; width: 16mm; }
-        .po-unit { width: 18mm; }
+        .po-num { text-align: right; white-space: nowrap; width: 20mm; }
+        .po-disc { width: 12mm; }
+        .po-qty { text-align: right; white-space: nowrap; width: 13mm; }
+        .po-unit { width: 13mm; }
         .po-totals { margin-top: 14px; margin-left: auto; width: 70mm; }
         .po-totals .po-row { justify-content: space-between; }
         .po-totals .po-lbl { min-width: 0; }
         .po-grand { border-top: 1px solid #cbd5e1; margin-top: 6px; padding-top: 6px; font-weight: 600; }
-        .po-sign { display: flex; justify-content: space-between; gap: 20px; margin-top: 22mm; }
-        .po-sign div { flex: 1; }
-        .po-sign .po-line { border-top: 1px solid #94a3b8; padding-top: 4px; font-size: 8pt; color: #64748b; }
+        .po-sign { display: flex; justify-content: space-between; gap: 20px; margin-top: 16mm; break-inside: avoid; }
+        .po-sig { flex: 1; min-width: 0; }
+        /* Room for a drawn signature, kept even when there is none so the three lines stay level. */
+        .po-sig-ink { height: 16mm; display: flex; align-items: flex-end; justify-content: center; }
+        .po-sig-ink img { max-height: 16mm; max-width: 100%; object-fit: contain; }
+        .po-sig-name { text-align: center; font-weight: 600; min-height: 1.5em; }
+        .po-sign .po-line { border-top: 1px solid #94a3b8; padding-top: 4px; font-size: 8pt; color: #64748b; text-align: center; }
         @media print {
-          .po-print { background: none; padding: 0; }
+          /* White paper, not the app's page colour, behind and below the sheet. */
+          html, body, #root, .po-print { background: #fff !important; }
+          .po-print { padding: 0; }
           .po-no-print { display: none !important; }
           @page { size: A4 portrait; margin: 0; }
-          .po-sheet { box-shadow: none; margin: 0; }
+          /* No forced full-page height when printing: 297mm plus rounding is what spills an empty
+             second page. The sheet ends where its content does. */
+          .po-sheet { box-shadow: none; margin: 0; min-height: 0; }
         }
       `}</style>
 
@@ -155,13 +185,13 @@ export default function PurchaseOrderPrint() {
           <thead>
             <tr>
               <th className="po-idx">#</th>
-              <th>Item Code</th>
+              <th className="po-code">Item Code</th>
               <th>Description</th>
-              <th>Job Order</th>
+              <th className="po-jo">Job Order</th>
               <th className="po-qty">Qty</th>
               <th className="po-unit">Unit</th>
               <th className="po-num">Rate</th>
-              <th className="po-num">Disc %</th>
+              <th className="po-num po-disc">Disc %</th>
               <th className="po-num">Amount</th>
             </tr>
           </thead>
@@ -172,13 +202,13 @@ export default function PurchaseOrderPrint() {
             {lines.map((l, i) => (
               <tr key={l.id}>
                 <td className="po-idx">{i + 1}</td>
-                <td>{l.item_code}</td>
+                <td className="po-code">{l.item_code}</td>
                 <td>{l.purchase_description || l.item_name}</td>
-                <td>{l.job_order_no || ''}</td>
+                <td className="po-jo">{l.job_order_no || ''}</td>
                 <td className="po-qty">{money(l.qty)}</td>
                 <td className="po-unit">{l.purchase_unit || l.unit_title || ''}</td>
                 <td className="po-num">{money(l.rate)}</td>
-                <td className="po-num">{Number(l.disc_percent) ? money(l.disc_percent) : ''}</td>
+                <td className="po-num po-disc">{Number(l.disc_percent) ? money(l.disc_percent) : ''}</td>
                 <td className="po-num">{money(l.ext_price)}</td>
               </tr>
             ))}
@@ -193,24 +223,16 @@ export default function PurchaseOrderPrint() {
           <div className="po-row po-grand"><span className="po-lbl">Total Amount</span><span className="po-val">{money(po.total_amount)}</span></div>
         </div>
 
+        {/* Signature above the name, then the rule and the role -- the way a hand-signed order
+            reads, and the same layout as the Form printouts. The approver is always named: the
+            order reached this page because it was approved, and who approved it is the value of
+            the paper to the supplier. A signer with no signature on file leaves the ink space
+            blank to be signed by hand. */}
         <div className="po-sign">
-          <div>
-            <div style={{ minHeight: '12mm' }} />
-            <div className="po-line">Prepared by{po.created_by_name ? ` — ${po.created_by_name}` : ''}</div>
-          </div>
-          <div>
-            {/* The approver is printed, not left as a blank to be signed: the order reached this
-                page because it was approved, and naming who did it is the whole value of the
-                paper to the supplier. */}
-            <div style={{ minHeight: '12mm', paddingTop: '6mm', fontWeight: 500 }}>{approver}</div>
-            <div className="po-line">
-              Approved by{approvedAt ? ` — ${fmtDate(approvedAt)}` : ''}
-            </div>
-          </div>
-          <div>
-            <div style={{ minHeight: '12mm' }} />
-            <div className="po-line">Received by (Supplier)</div>
-          </div>
+          <Signature image={po.prepared_signature} name={po.created_by_name} role="Prepared by" />
+          <Signature image={po.approved_signature} name={approver}
+            role={`Approved by${approvedAt ? ` — ${fmtDate(approvedAt)}` : ''}`} />
+          <Signature name="" role="Received by (Supplier)" />
         </div>
       </div>
     </div>

@@ -252,7 +252,24 @@ router.get('/:id/print', requireAuth, async (req, res, next) => {
       [req.params.id]
     );
 
-    res.json({ ...po, lines });
+    // The signatures for the sign-off block, fetched here and nowhere else (a few KB of PNG each,
+    // and only the printed sheet has anywhere to put them) -- the same arrangement as Forms.
+    // Taken from the people the workflow RECORDED, never from whoever is printing: the preparer,
+    // and the approver the page names (the GM where the GM signed it off, else the supervisor).
+    // Someone with no signature on file leaves the line blank to be signed by hand.
+    const approverId = po.approved_by_gm_user_id || po.approved_by_supervisor_user_id || null;
+    const signers = [po.created_by_user_id, approverId].filter(Boolean);
+    let preparedSignature = null;
+    let approvedSignature = null;
+    if (signers.length) {
+      const [sigs] = await pool.query(
+        'SELECT id, signature_data FROM users WHERE id IN (?) AND signature_data IS NOT NULL', [signers]);
+      const byId = new Map(sigs.map((s) => [String(s.id), s.signature_data]));
+      preparedSignature = byId.get(String(po.created_by_user_id)) || null;
+      approvedSignature = approverId ? byId.get(String(approverId)) || null : null;
+    }
+
+    res.json({ ...po, lines, prepared_signature: preparedSignature, approved_signature: approvedSignature });
   } catch (err) {
     next(err);
   }
