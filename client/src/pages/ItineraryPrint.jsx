@@ -4,6 +4,7 @@ import api from '../api/client';
 import QRCode from 'qrcode';
 import LoadingSpinner from '../components/LoadingSpinner';
 import letterhead from '../assets/graphicstar-letterhead.png';
+import { displayDate } from '../utils/dates';
 
 // The run sheet as it goes out on paper.
 //
@@ -15,7 +16,7 @@ import letterhead from '../assets/graphicstar-letterhead.png';
 //
 // Same shape as JobOrderPrint: a `-no-print` toolbar, one `.itn-sheet`, and an @media print block
 // carrying the @page rule.
-function fmtDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function fmtDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 function fmtTime(v) {
   if (!v) return '';
   const d = new Date(v);

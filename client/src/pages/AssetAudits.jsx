@@ -6,12 +6,13 @@ import Modal from '../components/Modal';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { AUDIT_STATUS_LABELS } from '../utils/assetLabels';
+import { displayMonth } from '../utils/dates';
 
 const PAGE_SIZE = 15;
 
 function thisMonth() { return new Date().toISOString().slice(0, 7); }
 function formatMonth(v) {
-  return v ? new Date(`${String(v).slice(0, 7)}-01T00:00:00`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : '';
+  return v ? displayMonth(`${String(v).slice(0, 7)}-01T00:00:00`) : '';
 }
 
 // Generating a sheet freezes what the register currently claims onto every line. The preview count

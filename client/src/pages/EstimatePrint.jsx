@@ -4,6 +4,7 @@ import brandMark from '../assets/graphicstar-mark.png';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { displayDate } from '../utils/dates';
 
 // Mirrors the real system's "Print" report for an estimate (Report Viewer ->
 // "Price Quotation | No Items" template) -- one line per Job Order (not per process),
@@ -15,7 +16,7 @@ function money(v) {
 }
 function formatDate(d) {
   if (!d) return '';
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+  return displayDate(d);
 }
 
 // Branch payment QR codes, served from client/public/qr. Kept in step with PAYMENT_QR in

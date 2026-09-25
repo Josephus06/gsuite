@@ -1,3 +1,4 @@
+import { displayMonth } from './dates';
 // Display labels for the Assets Monitoring module, kept out of the page components so a list and
 // the detail view it links to can never drift into calling the same state two different things.
 
@@ -73,5 +74,5 @@ export function formatMonth(v) {
   if (!v) return '—';
   const [y, m] = String(v).slice(0, 7).split('-').map(Number);
   if (!y || !m) return '—';
-  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  return displayMonth(new Date(y, m - 1, 1));
 }

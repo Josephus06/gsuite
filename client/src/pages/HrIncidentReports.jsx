@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../context/useAuth';
+import { displayDate } from '../utils/dates';
 
 const SEVERITY_BADGE = { minor: 'badge-muted', major: 'badge-warning', grave: 'badge-danger' };
 const STATUS_BADGE = {
@@ -22,7 +23,7 @@ const FILTERS = [
   { key: 'all', label: 'All' },
 ];
 
-function fmtDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function fmtDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 const pretty = (s) => (s ? String(s).replace(/_/g, ' ') : '');
 
 export default function HrIncidentReports() {

@@ -1,3 +1,4 @@
+import { displayDate, displayDateTime } from './dates';
 // Display labels and small formatters for the Archiver, kept out of the pages so a list and the
 // detail view it links to cannot drift into naming the same thing differently.
 
@@ -53,11 +54,11 @@ export function formatDate(v) {
   if (!v) return '—';
   const [y, m, d] = String(v).slice(0, 10).split('-').map(Number);
   if (!y || !m || !d) return '—';
-  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+  return displayDate(new Date(y, m - 1, d));
 }
 
 export function formatDateTime(v) {
-  return v ? new Date(v).toLocaleString() : '—';
+  return v ? displayDateTime(v) : '—';
 }
 
 // ---- Files ------------------------------------------------------------------------------------

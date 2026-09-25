@@ -7,6 +7,8 @@ import EstimateApprovalModal from '../components/EstimateApprovalModal';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
 
+import { displayDateTime } from '../utils/dates';
+
 // Read-only counterpart to EstimateWizard (which stays the create/edit form): mirrors
 // the real system's estimate detail screen -- a summary banner with status-driven
 // actions, then the full Job Order / Process breakdown and totals, all display-only.
@@ -425,13 +427,13 @@ export default function EstimateView() {
       {tab === 'system' && (
         <div className="card">
           <div className="field-row">
-            <div className="field"><label>Created At</label><input readOnly value={estimate.created_at ? new Date(estimate.created_at).toLocaleString() : ''} /></div>
-            <div className="field"><label>Last Updated</label><input readOnly value={estimate.updated_at ? new Date(estimate.updated_at).toLocaleString() : ''} /></div>
+            <div className="field"><label>Created At</label><input readOnly value={estimate.created_at ? displayDateTime(estimate.created_at) : ''} /></div>
+            <div className="field"><label>Last Updated</label><input readOnly value={estimate.updated_at ? displayDateTime(estimate.updated_at) : ''} /></div>
           </div>
           <h3 className="subsection">Audit Trail</h3>
           <DataTable
             columns={[
-              { key: 'set_at', label: 'When', render: (r) => new Date(r.set_at).toLocaleString() },
+              { key: 'set_at', label: 'When', render: (r) => displayDateTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },
@@ -494,7 +496,7 @@ export default function EstimateView() {
               {emailInfo?.sentAt && (
                 <div className="muted" style={{ marginBottom: 12 }}>
                   Already sent to <strong>{emailInfo.sentTo}</strong> on{' '}
-                  {new Date(emailInfo.sentAt).toLocaleString()}
+                  {displayDateTime(emailInfo.sentAt)}
                   {emailInfo.sentByName ? ` by ${emailInfo.sentByName}` : ''}. Sending again will
                   deliver another copy.
                 </div>

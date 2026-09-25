@@ -4,11 +4,14 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { displayDate } from '../utils/dates';
 
 const PAGE_SIZE = 15;
 const STATUS_LABELS = { open: 'Open', void: 'Void' };
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'; }
-function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : ''; }
+function formatDate(v) { return v ? displayDate(v) : ''; }
+// Cheque dates keep the bank's format (e.g. Sep 18, 2026), not the app-wide 18 Sept 2026 -- as asked.
+function formatChequeDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : ''; }
 
 export default function Cheques() {
   const { can } = useAuth();
@@ -72,7 +75,7 @@ export default function Cheques() {
                   <tr key={row.id}>
                     <td data-label="Cheque No">{row.cheque_no}</td>
                     <td data-label="Date">{formatDate(row.date_created)}</td>
-                    <td data-label="Cheque Date">{formatDate(row.cheque_date)}</td>
+                    <td data-label="Cheque Date">{formatChequeDate(row.cheque_date)}</td>
                     <td data-label="Cheque #">{row.cheque_number}</td>
                     <td data-label="Payee">{row.payee_name}</td>
                     <td data-label="Account">{row.account_name}</td>

@@ -5,6 +5,7 @@ import EntityPicker from '../components/EntityPicker';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import SyncFromSourceButton from '../components/SyncFromSourceButton';
+import { displayDate } from '../utils/dates';
 
 // Mirrors the real "Saved Purchase Orders" list -- status tabs are a read-only bucket
 // derived from status + receipt_status + bill_status together (see purchaseOrders.js's
@@ -28,7 +29,7 @@ function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
-function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 export default function PurchaseOrders() {
   const navigate = useNavigate();

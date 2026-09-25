@@ -7,6 +7,8 @@ import VendorBillModal from '../components/VendorBillModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { isApprovedPo, isSettledPo, normalisePoStatus } from '../utils/poStatus';
 
+import { displayDate, displayDateTime } from '../utils/dates';
+
 // Keyed on the NORMALISED status, so the source's own settled states have a label here rather than
 // being printed raw -- and so this screen names a purchase order exactly as the list does.
 const STATUS_LABELS = {
@@ -54,7 +56,7 @@ function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
-function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : '—'; }
+function formatDate(v) { return v ? displayDate(v) : '—'; }
 
 export default function PurchaseOrderView() {
   const { id } = useParams();
@@ -365,7 +367,7 @@ export default function PurchaseOrderView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'Date Time', render: (r) => new Date(r.set_at).toLocaleString() },
+              { key: 'set_at', label: 'Date Time', render: (r) => displayDateTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

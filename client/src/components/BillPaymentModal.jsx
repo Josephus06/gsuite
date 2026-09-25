@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import EntityPicker from './EntityPicker';
 import LoadingSpinner from './LoadingSpinner';
+import { displayDate } from '../utils/dates';
 
 function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
-function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 function accountLabel(a) { return a ? `${a.account_code} — ${a.account_name}` : ''; }
 function pmLabel(p) { return p ? p.name : ''; }
 

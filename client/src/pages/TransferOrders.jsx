@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { displayDate } from '../utils/dates';
 
 const PAGE_SIZE = 10;
 
@@ -18,7 +19,7 @@ const STATUS_TABS = [
 
 const STATUS_LABELS = Object.fromEntries(STATUS_TABS.map((t) => [t.key, t.label]));
 
-function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 // Mirrors the real system's "Transfer Order" list -- how stock gets withdrawn from one
 // warehouse (almost always Warehouse - Central) into whichever warehouse a Job Order's

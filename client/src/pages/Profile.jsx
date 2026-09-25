@@ -9,9 +9,11 @@ import { fileToScaledDataUrl } from '../utils/image';
 import { parseUtc } from '../utils/datetime';
 import '../styles/feed.css';
 
+import { displayDate } from '../utils/dates';
+
 function longDate(v) {
   const d = parseUtc(v);
-  return d ? d.toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' }) : '';
+  return d ? displayDate(d) : '';
 }
 // employees.date_hired is a DATE, so it has no time component to shift -- format it directly
 // rather than through parseUtc, which would append a UTC time and can roll the day back.

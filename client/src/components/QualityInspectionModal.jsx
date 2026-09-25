@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import LoadingSpinner from './LoadingSpinner';
+import { displayDate } from '../utils/dates';
 
 function qty(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
-function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : '—'; }
+function formatDate(v) { return v ? displayDate(v) : '—'; }
 
 // Mirrors the real "Quality Inspection" popup, reached from a Job Order's Production
 // view once it has Assembly Build batches with something still uninspected. One QI can

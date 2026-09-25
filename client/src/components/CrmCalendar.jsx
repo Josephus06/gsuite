@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from './LoadingSpinner';
+import { displayMonth } from '../utils/dates';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const ICON = { visit: '🚗', meeting: '👥' };
@@ -53,7 +54,7 @@ export default function CrmCalendar() {
     <div className="card">
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         <button type="button" className="btn btn-sm" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>‹</button>
-        <h3 style={{ margin: 0, minWidth: 170, textAlign: 'center' }}>{month.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h3>
+        <h3 style={{ margin: 0, minWidth: 170, textAlign: 'center' }}>{displayMonth(month)}</h3>
         <button type="button" className="btn btn-sm" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>›</button>
         <button type="button" className="btn btn-sm" onClick={() => { const d = new Date(); setMonth(new Date(d.getFullYear(), d.getMonth(), 1)); }}>Today</button>
         <label style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>

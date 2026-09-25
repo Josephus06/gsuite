@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import LoadingSpinner from './LoadingSpinner';
+import { displayDate, displayDateTime } from '../utils/dates';
 
 const TYPE_LABELS = { visit: 'Visit', meeting: 'Meeting', call: 'Call', email: 'Email', note: 'Note', task: 'Task' };
 const TYPE_ICONS = { visit: '🚗', meeting: '👥', call: '📞', email: '✉️', note: '📝', task: '☑️' };
@@ -11,8 +12,8 @@ const EMPTY = {
   starts_at: '', ends_at: '', location: '', contact_id: '', outcome: '',
 };
 
-function formatDateTime(v) { return v ? new Date(String(v).replace(' ', 'T')).toLocaleString('en-US', { month: 'short', day: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''; }
-function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : ''; }
+function formatDateTime(v) { return v ? displayDateTime(String(v).replace(' ', 'T')) : ''; }
+function formatDate(v) { return v ? displayDate(v) : ''; }
 function nowLocalInput() {
   const d = new Date();
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset());

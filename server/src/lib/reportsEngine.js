@@ -1,5 +1,6 @@
 const pool = require('../db');
 const { getPostedGlLines } = require('./glImpact');
+const { displayMonth } = require('./dates');
 
 function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
@@ -259,7 +260,7 @@ function partitionGlLines(glLines, breakdown, fromDate, asOfDate) {
     let cur = new Date(start.getFullYear(), start.getMonth(), 1);
     while (cur <= end) {
       const key = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}`;
-      const label = cur.toLocaleString('en-US', { month: 'short', year: 'numeric' });
+      const label = displayMonth(cur); // "Sept 2026", the app-wide format (lib/dates.js)
       months.push({ key, label, lines: [] });
       cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
     }

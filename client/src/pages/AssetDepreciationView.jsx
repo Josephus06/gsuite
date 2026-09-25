@@ -6,6 +6,7 @@ import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { DEPRECIATION_STATUS_LABELS, formatMoney, formatMonth } from '../utils/assetLabels';
+import { displayDateTime } from '../utils/dates';
 
 function VoidModal({ run, onClose, onDone }) {
   const [reason, setReason] = useState('');
@@ -112,7 +113,7 @@ export default function AssetDepreciationView() {
           <div>
             <div>Created By : <span className="hi">{run.created_by_name || '—'}</span></div>
             <div>Posted By : <span className="hi">{run.posted_by_name || '—'}</span></div>
-            {run.posted_at && <div>Posted : <span className="hi">{new Date(run.posted_at).toLocaleString()}</span></div>}
+            {run.posted_at && <div>Posted : <span className="hi">{displayDateTime(run.posted_at)}</span></div>}
           </div>
           <div>
             <div>Memo : <span className="hi">{run.memo || '—'}</span></div>
@@ -215,7 +216,7 @@ export default function AssetDepreciationView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'When', render: (r) => new Date(r.set_at).toLocaleString() },
+              { key: 'set_at', label: 'When', render: (r) => displayDateTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' }, { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' }, { key: 'old_value', label: 'Old Value' }, { key: 'new_value', label: 'New Value' },
             ]}

@@ -4,6 +4,8 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
 
+import { displayDateTime } from '../utils/dates';
+
 const ROUTE = '/hrd';
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
@@ -15,7 +17,7 @@ function formatBytes(n) {
 }
 
 function formatDateTime(v) {
-  return v ? new Date(v).toLocaleString() : '—';
+  return v ? displayDateTime(v) : '—';
 }
 
 // What a browser will render in a tab rather than offering as a download. Deliberately a

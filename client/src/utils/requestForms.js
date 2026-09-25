@@ -1,3 +1,4 @@
+import { displayDate } from './dates';
 // Shared vocabulary for the Forms module -- the four request forms ported from the Booking system.
 //
 // Kept out of the page files because five screens read it (list, approval queue, view, edit,
@@ -39,6 +40,6 @@ export function money(v) {
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
 
-export function fmtDate(v) { return v ? String(v).slice(0, 10) : ''; }
+export function fmtDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 export const pretty = (s) => (s ? String(s).replace(/_/g, ' ') : '');

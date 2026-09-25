@@ -3,11 +3,13 @@ import api from '../api/client';
 import LoadingSpinner from './LoadingSpinner';
 import { isNonStockItem } from '../utils/itemTypes';
 
+import { displayDate } from '../utils/dates';
+
 function qty(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 }) : '';
 }
-function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : '—'; }
+function formatDate(v) { return v ? displayDate(v) : '—'; }
 
 // Mirrors the real "Item Fulfillment" popup reached from a Transfer Order's Fulfill
 // button -- a transaction of its own, distinct from the TO. Saving it only pulls stock

@@ -4,6 +4,7 @@ import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Modal from '../../components/Modal';
 import { money } from './CoaTreeRows';
+import { displayDate } from '../../utils/dates';
 
 // Accounting > Reports > AP Aging -- the payables mirror of AR Aging, vendor by vendor, in the
 // same five buckets and the same layout so the two read as a pair. DETAILS opens the bills,
@@ -12,7 +13,7 @@ function today() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
-function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 const DOC_LINK = {
   'Vendor Bill': (it) => `/vendor-bills/${it.id}`,

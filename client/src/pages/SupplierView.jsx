@@ -3,6 +3,8 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 
+import { displayDate } from '../utils/dates';
+
 function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
@@ -11,7 +13,7 @@ function money(v) {
 function formatDate(v) {
   if (!v) return '—';
   const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+  return Number.isNaN(d.getTime()) ? '—' : displayDate(d);
 }
 
 // Where each kind of document on the ledger opens. Kept beside the ledger rather than derived from

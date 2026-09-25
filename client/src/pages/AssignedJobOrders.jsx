@@ -4,6 +4,8 @@ import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 
+import { displayDateTime } from '../utils/dates';
+
 const PAGE_SIZE = 10;
 
 // Artist's personal worklist, covering the whole of their involvement rather than only the
@@ -12,7 +14,7 @@ const PAGE_SIZE = 10;
 // tabs separate those four. This is an index only; Play/Hold/Stop and the live countdown
 // happen on the per-JO run screen (AssignedJobOrderRun.jsx), not here.
 function formatDateTime(v) {
-  return v ? new Date(v).toLocaleString() : '—';
+  return v ? displayDateTime(v) : '—';
 }
 
 // A Non-Standard Job Order with no priced materials lines yet legitimately earns nothing,

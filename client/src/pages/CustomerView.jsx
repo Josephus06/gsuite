@@ -7,6 +7,7 @@ import DraftEditorModal from '../components/DraftEditorModal';
 import CrmProfileModal from '../components/CrmProfileModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../context/useAuth';
+import { displayDate } from '../utils/dates';
 
 const PRIORITY_BADGE = { high: 'badge-danger', normal: 'badge-muted', low: 'badge-info' };
 
@@ -14,7 +15,7 @@ function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
-function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : '—'; }
+function formatDate(v) { return v ? displayDate(v) : '—'; }
 
 // The "Customer 360" view -- didn't exist at all before this (Customers.jsx was
 // list-+-edit-modal only). Ties together the existing sub-resources (contacts/

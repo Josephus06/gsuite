@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { displayDateTime } from '../utils/dates';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
@@ -10,7 +11,7 @@ function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
-function formatDateTime(v) { return v ? new Date(v).toLocaleString() : '—'; }
+function formatDateTime(v) { return v ? displayDateTime(v) : '—'; }
 function currentYear() { return new Date().getFullYear(); }
 
 // Mirrors the real Employee Quota detail: the employee's name in a banner, an Employee

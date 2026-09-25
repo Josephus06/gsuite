@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { displayDate } from '../utils/dates';
 
 const RANGES = [
   { key: 'today', label: 'Today' },
@@ -21,7 +22,7 @@ const STATUS_BADGE = {
   cancelled: 'badge-muted',
 };
 
-function fmtDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function fmtDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 function NewRunModal({ drivers, onClose, onSaved }) {
   const [form, setForm] = useState({

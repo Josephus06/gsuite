@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { isBaseUnit } from '../utils/unitUsed';
+import { displayDateTime, displayDate } from '../utils/dates';
 
 // Mirrors the real system's Inventory Adjustment detail screen: banner + Details +
 // Items/GL Impact/System Info tabs. GL Impact is derived on the fly from
@@ -28,7 +29,7 @@ function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
-function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 export default function InventoryAdjustmentView() {
   const { id } = useParams();
@@ -211,7 +212,7 @@ export default function InventoryAdjustmentView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'Date Time', render: (r) => new Date(r.set_at).toLocaleString() },
+              { key: 'set_at', label: 'Date Time', render: (r) => displayDateTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

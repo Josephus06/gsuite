@@ -5,6 +5,7 @@ import DataTable from '../components/DataTable';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { isBaseUnit } from '../utils/unitUsed';
+import { displayMonth } from '../utils/dates';
 
 // Mirrors the real system's "Inventory Adjustments" Add/Edit form: the Adjustments
 // section (Add Material / Upload Material) appears as soon as an Adjustment Account is
@@ -66,7 +67,7 @@ export default function InventoryAdjustmentEdit() {
   }, [id, isNew]);
 
   const postingPeriod = form.date_created
-    ? new Date(form.date_created).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+    ? displayMonth(form.date_created)
     : '';
 
   async function handleSave() {

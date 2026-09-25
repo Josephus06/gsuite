@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import EntityPicker from './EntityPicker';
 import LoadingSpinner from './LoadingSpinner';
+import { displayDate } from '../utils/dates';
 
 function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00';
 }
 function today() { return new Date().toISOString().slice(0, 10); }
-function longDate(v) { return v ? new Date(`${v}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ''; }
+function longDate(v) { return v ? displayDate(`${v}T00:00:00`) : ''; }
 
 // Mirrors live's "Reversal Journal" popup, shown when a Sales Invoice is voided. Nothing is voided
 // until Save: the table is the reversing entry the void will post (the invoice's own GL Impact,

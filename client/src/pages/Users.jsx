@@ -6,6 +6,8 @@ import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import PermissionTemplateModal from '../components/PermissionTemplateModal';
 
+import { displayDateTime } from '../utils/dates';
+
 // Kept in step with ACCOUNT_TYPE_OPTIONS in UserWizard.jsx -- both feed the same
 // account_type column and the same set of permission templates.
 const ACCOUNT_TYPE_OPTIONS = [
@@ -73,7 +75,7 @@ export default function Users() {
     { key: 'display_name', label: 'Name' },
     { key: 'email', label: 'Email' },
     { key: 'default_branch_name', label: 'Default Branch' },
-    { key: 'last_login_at', label: 'Last Login', render: (r) => (r.last_login_at ? new Date(r.last_login_at).toLocaleString() : '—') },
+    { key: 'last_login_at', label: 'Last Login', render: (r) => (r.last_login_at ? displayDateTime(r.last_login_at) : '—') },
     { key: 'is_active', label: 'Status', render: (r) => (r.is_active ? <span className="badge badge-success">Active</span> : <span className="badge badge-muted">Inactive</span>) },
   ];
 

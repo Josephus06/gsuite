@@ -5,6 +5,8 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
 import { parseUtc } from '../utils/datetime';
 
+import { displayDateTime } from '../utils/dates';
+
 // Where the artist actually runs the layout timer for one assigned JO (Play/Hold/Done
 // live here, not on the Assigned JO list) -- shows a countdown from the PMS Job Type's
 // allotted minutes_consume, and a Session Log of every Play/Hold/Resume/Done so it's
@@ -21,7 +23,7 @@ function formatDuration(totalSeconds) {
 }
 
 function formatDateTime(v) {
-  return v ? new Date(v).toLocaleString() : '—';
+  return v ? displayDateTime(v) : '—';
 }
 
 // Planned Start/End are stored exactly as the assigner typed them into a datetime-local

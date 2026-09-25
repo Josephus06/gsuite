@@ -4,8 +4,9 @@ import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Pagination from '../components/Pagination';
+import { displayDate } from '../utils/dates';
 
-function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 function locationLabel(l) { return l ? l.location_name : ''; }
 function employeeLabel(e) { return e ? `${e.first_name} ${e.last_name}` : ''; }
 

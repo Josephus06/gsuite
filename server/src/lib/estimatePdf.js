@@ -19,6 +19,7 @@
 // our costing and carries our margin. The print report omits it and so does this.
 const path = require('path');
 const PDFDocument = require('pdfkit');
+const { displayDate } = require('./dates');
 
 // Everything in points, the unit PDF itself uses. A4 is 595.28 x 841.89.
 const MARGIN = 40;
@@ -71,13 +72,11 @@ const money = (v) => {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 };
-// 'Aug 24, 2026', matching the print view. MySQL hands back a Date for a DATE column, but a
-// migrated string turns up now and then, so both are accepted.
+// '24 Aug 2026', the app-wide format (lib/dates.js), matching the print view. Accepts a Date or a
+// string; anything unreadable prints as its first ten characters rather than vanishing.
 const formatDate = (d) => {
   if (!d) return '';
-  const dt = d instanceof Date ? d : new Date(d);
-  return Number.isNaN(dt.getTime()) ? String(d).slice(0, 10)
-    : dt.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+  return displayDate(d) || String(d).slice(0, 10);
 };
 const str = (v) => (v === null || v === undefined ? '' : String(v));
 

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { displayDate } from '../utils/dates';
 
 const SEVERITY_BADGE = { minor: 'badge-muted', major: 'badge-warning', grave: 'badge-danger' };
 const STATUS_BADGE = {
@@ -22,7 +23,7 @@ const OUTCOMES = [
   { key: 'dismissed', label: 'Dismissed', hint: 'Closed without a finding.' },
 ];
 
-function fmtDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function fmtDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 function fmtDateTime(v) {
   if (!v) return '';
   const d = new Date(v);

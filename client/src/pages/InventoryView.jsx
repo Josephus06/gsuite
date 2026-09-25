@@ -6,6 +6,7 @@ import DataTable from '../components/DataTable';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ItemTransactions from '../components/ItemTransactions';
+import { displayDateTime } from '../utils/dates';
 
 // Full-page read-only Inventory item view, mirroring the real system's Inventory View
 // screen -- banner + info grid + tabs. "Related Records" (Item Receipts/Invoices/
@@ -243,7 +244,7 @@ export default function InventoryView() {
       {tab === 'pricing' && (
         <div className="card">
           {item.is_costing_approved ? (
-            <p className="muted" style={{ marginTop: 0 }}>Costing approved by <strong>{item.costing_approved_by_name}</strong> on {item.costing_approved_at ? new Date(item.costing_approved_at).toLocaleString() : ''}.</p>
+            <p className="muted" style={{ marginTop: 0 }}>Costing approved by <strong>{item.costing_approved_by_name}</strong> on {item.costing_approved_at ? displayDateTime(item.costing_approved_at) : ''}.</p>
           ) : (
             <p className="muted" style={{ marginTop: 0 }}>Costing pending approval{!costingReady ? ' — Selling Price must be filled in before it can be approved.' : '.'}</p>
           )}
@@ -274,7 +275,7 @@ export default function InventoryView() {
       {tab === 'accounting' && (
         <div className="card">
           {item.is_accounting_approved ? (
-            <p className="muted" style={{ marginTop: 0 }}>Accounting approved by <strong>{item.accounting_approved_by_name}</strong> on {item.accounting_approved_at ? new Date(item.accounting_approved_at).toLocaleString() : ''}.</p>
+            <p className="muted" style={{ marginTop: 0 }}>Accounting approved by <strong>{item.accounting_approved_by_name}</strong> on {item.accounting_approved_at ? displayDateTime(item.accounting_approved_at) : ''}.</p>
           ) : (
             <p className="muted" style={{ marginTop: 0 }}>Accounting pending approval{!accountingReady ? ' — Asset, COGS, and Income accounts must all be set before it can be approved.' : '.'}</p>
           )}
@@ -443,7 +444,7 @@ export default function InventoryView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'When', render: (r) => new Date(r.set_at).toLocaleString() },
+              { key: 'set_at', label: 'When', render: (r) => displayDateTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

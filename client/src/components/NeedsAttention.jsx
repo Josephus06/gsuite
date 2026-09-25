@@ -4,6 +4,7 @@ import api from '../api/client';
 import DraftEditorModal from './DraftEditorModal';
 import LoadingSpinner from './LoadingSpinner';
 import { useAuth } from '../context/useAuth';
+import { displayDate } from '../utils/dates';
 
 const REASON_LABELS = { reorder: 'Late to reorder', trend: 'Sales dropping', visit: 'Visit due', overdue: 'Overdue balance', birthday: 'Birthday', scheduled: 'Booked' };
 const REASON_BADGE = { reorder: 'badge-warning', trend: 'badge-warning', visit: 'badge-info', overdue: 'badge-danger', birthday: 'badge-success', scheduled: 'badge-muted' };
@@ -14,7 +15,7 @@ function money(v) {
   const n = Number(v);
   return Number.isFinite(n) && n ? n.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—';
 }
-function formatDate(v) { return v ? new Date(String(v).slice(0, 10)).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : '—'; }
+function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : '—'; }
 
 // The ranked "who to reach out to" list -- reads the nightly snapshot from
 // server/src/lib/crmAttention.js via GET /crm/attention. Every row says why it is there, so a

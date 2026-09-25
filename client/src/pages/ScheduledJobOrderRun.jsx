@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { parseUtc } from '../utils/datetime';
+import { displayDateTime } from '../utils/dates';
 
 // Where the production employee actually runs the clock for one assigned process
 // (Play/Hold/Stop live here, not on the Scheduled JO list) -- shows a countdown from
@@ -21,7 +22,7 @@ function formatDuration(totalSeconds) {
 }
 
 function formatDateTime(v) {
-  return v ? new Date(v).toLocaleString() : '—';
+  return v ? displayDateTime(v) : '—';
 }
 
 // Planned Start/End are stored exactly as the assigner typed them into a datetime-local

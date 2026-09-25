@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import SalesInvoiceModal from '../components/SalesInvoiceModal';
 import DeliveryTicketModal from '../components/DeliveryTicketModal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { displayDateTime } from '../utils/dates';
 
 // Read-only Sales Order detail -- mirrors EstimateView.jsx's layout (banner + 4-column
 // details + tabs + totals footer), since the real system's Sales Order screen is
@@ -387,7 +388,7 @@ export default function SalesOrderView() {
                     <td>{a.mime_type === 'application/pdf' ? 'PDF' : (String(a.mime_type || '').startsWith('image/') ? 'Image' : a.mime_type)}</td>
                     <td>{fileSize(a.size_bytes)}</td>
                     <td>{a.uploaded_by_name || ''}</td>
-                    <td>{a.created_at ? new Date(a.created_at).toLocaleString() : ''}</td>
+                    <td>{a.created_at ? displayDateTime(a.created_at) : ''}</td>
                     <td>
                       {/* Only the order's own files can be removed here -- an estimate's
                           paperwork is managed on the estimate. */}
@@ -425,8 +426,8 @@ export default function SalesOrderView() {
       {tab === 'system' && (
         <div className="card">
           <div className="field-row">
-            <div className="field"><label>Created At</label><input readOnly value={so.created_at ? new Date(so.created_at).toLocaleString() : ''} /></div>
-            <div className="field"><label>Last Updated</label><input readOnly value={so.updated_at ? new Date(so.updated_at).toLocaleString() : ''} /></div>
+            <div className="field"><label>Created At</label><input readOnly value={so.created_at ? displayDateTime(so.created_at) : ''} /></div>
+            <div className="field"><label>Last Updated</label><input readOnly value={so.updated_at ? displayDateTime(so.updated_at) : ''} /></div>
           </div>
         </div>
       )}

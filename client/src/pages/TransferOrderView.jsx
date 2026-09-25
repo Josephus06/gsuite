@@ -9,6 +9,8 @@ import ItemReceiptModal from '../components/ItemReceiptModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { isNonStockItem } from '../utils/itemTypes';
 
+import { displayDate, displayDateTime } from '../utils/dates';
+
 // Mirrors the real "Transfer Order" view screen: banner + Items/Related Records/System
 // Info tabs. Adjusted Qty is the one field that stays live-editable right here (not
 // gated behind Edit) -- it's the real-world "tweak the amount right before you fulfill
@@ -31,7 +33,7 @@ function qty(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 }) : '';
 }
-function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : '—'; }
+function formatDate(v) { return v ? displayDate(v) : '—'; }
 
 export default function TransferOrderView() {
   const { id } = useParams();
@@ -264,7 +266,7 @@ export default function TransferOrderView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'Date Time', render: (r) => new Date(r.set_at).toLocaleString() },
+              { key: 'set_at', label: 'Date Time', render: (r) => displayDateTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

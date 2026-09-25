@@ -1,3 +1,4 @@
+import { displayDate } from './dates';
 // Shared by both invoice print formats (Type 1 pre-printed overlay, Type 2 full form).
 
 export const money = (v) => {
@@ -17,7 +18,7 @@ export const formatDate = (v, twoDigitYear = false) => {
   if (!v) return '';
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return '';
-  return d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: twoDigitYear ? '2-digit' : 'numeric' });
+  return displayDate(d);
 };
 
 // Tax codes in this data are 'VAT_PH:VATIN-12' | 'VAT_PH:ZRATE' | 'VAT_PH:0-VAT' |

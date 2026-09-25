@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
+import { displayDateTime } from '../utils/dates';
 
 // Files attached to a Job Order. Two different sets live against the same JO and the same
 // endpoint, told apart by `kind`:
@@ -157,7 +158,7 @@ export default function JobOrderAttachments({
                 <button type="button" className="att-name" onClick={() => handleOpen(r.id)}>{r.file_name}</button>
                 <div className="att-meta">
                   {fileSize(r.size_bytes)} · {r.uploaded_by_name || 'Unknown'}
-                  {r.created_at ? ` · ${new Date(r.created_at).toLocaleString()}` : ''}
+                  {r.created_at ? ` · ${displayDateTime(r.created_at)}` : ''}
                 </div>
               </div>
               <span className="att-kind">{r.kind}</span>

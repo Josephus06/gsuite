@@ -4,6 +4,7 @@ import EntityPicker from '../components/EntityPicker';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useItemBalances, balanceColumns } from '../utils/itemBalances';
+import { displayDate } from '../utils/dates';
 
 const PAGE_SIZE = 20;
 
@@ -17,7 +18,7 @@ function moneyFmt(v) {
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
 
-function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 // Mirrors the real "Bin Card" report -- a chronological, per-Item (+ optional
 // per-Location) transaction ledger with a running Balance, distinct from Stock Ledger's

@@ -8,6 +8,8 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
 import NonStandardJobOrderFormModal from '../components/NonStandardJobOrderFormModal';
 
+import { displayDateTime } from '../utils/dates';
+
 const ROUTE = '/non-standard-job-orders';
 const CANCELLED = 'Cancelled';
 // Sub Status is what advances through the design stage -- Status stays "Planned -
@@ -294,7 +296,7 @@ export default function NonStandardJobOrderView() {
     const minutes = layoutJobTypes.find((j) => String(j.id) === String(assignForm.layout_job_type_id))?.minutes_consume;
     const qty = Number(assignForm.layout_qty);
     if (!assignForm.planned_start_at || !minutes || !qty) return '';
-    return new Date(new Date(assignForm.planned_start_at).getTime() + Number(minutes) * qty * 60 * 1000).toLocaleString();
+    return displayDateTime(new Date(assignForm.planned_start_at).getTime() + Number(minutes) * qty * 60 * 1000);
   })();
 
   return (
@@ -399,8 +401,8 @@ export default function NonStandardJobOrderView() {
             {order.artist_employee_id && <>
               <div>Layout - Job Type : <span className="hi">{order.layout_job_type_name || ''}</span></div>
               <div>Layout Qty : <span className="hi">{order.layout_qty ?? 1}</span></div>
-              <div>Planned : <span className="hi">{order.planned_start_at ? new Date(order.planned_start_at).toLocaleString() : ''}</span>
-                {order.planned_end_at && <> → <span className="hi">{new Date(order.planned_end_at).toLocaleString()}</span></>}</div>
+              <div>Planned : <span className="hi">{order.planned_start_at ? displayDateTime(order.planned_start_at) : ''}</span>
+                {order.planned_end_at && <> → <span className="hi">{displayDateTime(order.planned_end_at)}</span></>}</div>
             </>}
             <div>Quantity : <span className="hi">{order.quantity}</span></div>
             <div>{order.job_type === 'SITE INSPECTION' ? 'Site Address' : 'Optional Address'} : <span className="hi">{order.shipping_address || ''}</span></div>
@@ -438,7 +440,7 @@ export default function NonStandardJobOrderView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'Date Time', render: (r) => new Date(r.set_at).toLocaleString() },
+              { key: 'set_at', label: 'Date Time', render: (r) => displayDateTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { displayDate } from '../utils/dates';
 
 const PAGE_SIZE = 10;
 
@@ -31,7 +32,7 @@ function qty(v) {
   // padded out to "83.0000".
   return n.toLocaleString('en-US', { maximumFractionDigits: 4 });
 }
-function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 export default function Rmis() {
   const [rows, setRows] = useState([]);

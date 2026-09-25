@@ -1,5 +1,7 @@
 import { parseUtc } from '../../utils/datetime';
 
+import { displayDate } from '../../utils/dates';
+
 // Facebook's relative timestamps: seconds -> "Just now", then m / h, then "Yesterday at
 // 4:05 PM", then a date. parseUtc (not `new Date`) because the pool runs dateStrings:true
 // and hands back marker-less UTC strings -- see utils/datetime.js.
@@ -16,9 +18,7 @@ export function fbTime(iso) {
   if (secs < 172800) return `Yesterday at ${time}`;
 
   const sameYear = d.getFullYear() === new Date().getFullYear();
-  const date = d.toLocaleDateString([], sameYear
-    ? { month: 'long', day: 'numeric' }
-    : { month: 'long', day: 'numeric', year: 'numeric' });
+  const date = displayDate(d);
   return `${date} at ${time}`;
 }
 

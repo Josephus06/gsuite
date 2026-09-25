@@ -5,10 +5,11 @@ import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { TRANSFER_STATUS_LABELS } from '../utils/assetLabels';
+import { displayDate } from '../utils/dates';
 
 const PAGE_SIZE = 15;
 
-function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : ''; }
+function formatDate(v) { return v ? displayDate(v) : ''; }
 
 // Asset transfers (ATR-####). The "Waiting on me" filter is the reason this page is worth opening
 // daily: it shows the transfers stopped on THIS user's signature, so an approval is something you

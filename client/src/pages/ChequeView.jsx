@@ -4,10 +4,13 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { displayDate, displayDateTime } from '../utils/dates';
 
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'; }
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
-function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : ''; }
+function formatDate(v) { return v ? displayDate(v) : ''; }
+// Cheque dates keep the bank's format (e.g. Sep 18, 2026), not the app-wide 18 Sept 2026 -- as asked.
+function formatChequeDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : ''; }
 
 export default function ChequeView() {
   const { id } = useParams();
@@ -75,7 +78,7 @@ export default function ChequeView() {
           </div>
           <div>
             <div>Date : <span className="hi">{formatDate(c.date_created)}</span></div>
-            <div>Cheque Date : <span className="hi">{formatDate(c.cheque_date)}</span></div>
+            <div>Cheque Date : <span className="hi">{formatChequeDate(c.cheque_date)}</span></div>
             <div>Cheque No : <span className="hi">{c.cheque_number || ''}</span></div>
             <div>Date Released : <span className="hi">{formatDate(c.date_released)}</span></div>
             <div>Currency : <span className="hi">{c.currency || ''}</span></div>
@@ -198,7 +201,7 @@ export default function ChequeView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'When', render: (r) => new Date(r.set_at).toLocaleString() },
+              { key: 'set_at', label: 'When', render: (r) => displayDateTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' }, { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' }, { key: 'old_value', label: 'Old Value' }, { key: 'new_value', label: 'New Value' },
             ]}

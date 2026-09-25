@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { displayMonth, displayDate } from '../utils/dates';
 
 const PAGE_SIZE = 10;
 const STATUS_LABELS = { unpaid: 'Unpaid', partial: 'Partially Paid', paid: 'Paid', void: 'Void' };
@@ -12,8 +13,8 @@ function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
-function formatMonth(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : ''; }
-function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function formatMonth(v) { return v ? displayMonth(v) : ''; }
+function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 export default function CommissionPayables() {
   const { can } = useAuth();

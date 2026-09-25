@@ -4,6 +4,7 @@ import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { PURPOSE_LABELS } from '../utils/requestForms';
 import letterhead from '../assets/graphicstar-letterhead.png';
+import { displayDate } from '../utils/dates';
 
 // The printed forms. One sheet each, four layouts, sharing the letterhead and the signature block.
 //
@@ -21,7 +22,7 @@ function fmtDate(v) {
   if (!v) return '';
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? String(v).slice(0, 10)
-    : d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+    : displayDate(d);
 }
 
 function Field({ label, value, width }) {

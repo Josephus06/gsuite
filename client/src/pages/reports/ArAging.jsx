@@ -5,8 +5,10 @@ import { REPORT_TIMING } from '../../utils/reportTiming';
 import Modal from '../../components/Modal';
 import { money } from './CoaTreeRows';
 
+import { displayDate } from '../../utils/dates';
+
 function today() { return new Date().toISOString().slice(0, 10); }
-function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 // Mirrors the real system's Accounting > Reports > AR Aging: a Location / Name Starts /
 // No Location / Date-as-of filter bar + Generate, then a customer-per-row table split into

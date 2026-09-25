@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 
+import { displayMonth } from '../utils/dates';
+
 // "We have made this before."
 //
 // A third of what this company prints, it has printed before -- 6,981 descriptions repeat
@@ -23,7 +25,7 @@ function money(v) {
 function shortDate(v) {
   if (!v) return '';
   const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  return Number.isNaN(d.getTime()) ? '' : displayMonth(d);
 }
 
 export default function RepeatWorkPanel({ lineNo, description, jobTypeId, quantity, units }) {

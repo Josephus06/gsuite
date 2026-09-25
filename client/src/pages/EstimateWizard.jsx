@@ -10,6 +10,8 @@ import { computeAutoPricing } from '../utils/costing';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
 
+import { displayDateTime } from '../utils/dates';
+
 const STEPS = ['Customer and Estimate', 'Job Orders', 'Billing', 'Completed'];
 
 // Matches the real system's Job Order Units dropdown -- a fixed list, not a
@@ -1483,7 +1485,7 @@ export default function EstimateWizard() {
             <h3 className="subsection">Audit Trail</h3>
             <DataTable
               columns={[
-                { key: 'set_at', label: 'When', render: (r) => new Date(r.set_at).toLocaleString() },
+                { key: 'set_at', label: 'When', render: (r) => displayDateTime(r.set_at) },
                 { key: 'set_by_name', label: 'Set By' },
                 { key: 'event_type', label: 'Type' },
                 { key: 'field_name', label: 'Field' },

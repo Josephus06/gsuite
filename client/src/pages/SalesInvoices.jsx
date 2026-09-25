@@ -7,6 +7,8 @@ import SyncFromSourceButton from '../components/SyncFromSourceButton';
 import SalesInvoiceModal from '../components/SalesInvoiceModal';
 import { useAuth } from '../context/useAuth';
 
+import { displayDate } from '../utils/dates';
+
 const PAGE_SIZE = 10;
 const STATUS_LABELS = { saved: 'Open', cancelled: 'Void' };
 
@@ -14,7 +16,7 @@ function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
-function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 // Mirrors the real system's "Saved Invoices" list -- reached from Accounting > Invoice
 // on the real site. Only Sales Invoices exist in this build (no BS/DR/DT transaction

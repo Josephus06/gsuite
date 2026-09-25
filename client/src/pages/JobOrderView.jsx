@@ -11,6 +11,8 @@ import RevisionNotice from '../components/RevisionNotice';
 import { maySalesRevise, mayReworkJobOrder, awaitingDateDecision } from '../utils/salesRevision';
 import { isAdvanceCopy, canForwardAdvanceCopy } from '../utils/advanceCopy';
 
+import { displayDateTime } from '../utils/dates';
+
 // Deliberately minimal Job Order detail -- mirrors the real system's layout (banner +
 // grouped info fields + Processes/RWIP JO/Sub Con/Related Records/System Info tabs +
 // Estimated GP footer). RWIP JO (rework-in-progress) and Sub Con (subcontracted
@@ -589,7 +591,7 @@ export default function JobOrderView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'When', render: (r) => new Date(r.set_at).toLocaleString() },
+              { key: 'set_at', label: 'When', render: (r) => displayDateTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

@@ -4,6 +4,7 @@ import api from '../api/client';
 import DataTable from '../components/DataTable';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { displayDateTime } from '../utils/dates';
 
 // Mirrors the real system's "Add/Update Chart of Account" form. The real system's own
 // Chart of Account Type picker doubles as both the Type and Sub-Type selection (picking
@@ -135,7 +136,7 @@ export default function ChartOfAccountEdit() {
           <h3 className="subsection" style={{ marginTop: 0 }}>System Information</h3>
           <DataTable
             columns={[
-              { key: 'set_at', label: 'Date Time', render: (r) => new Date(r.set_at).toLocaleString() },
+              { key: 'set_at', label: 'Date Time', render: (r) => displayDateTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

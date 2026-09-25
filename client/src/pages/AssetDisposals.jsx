@@ -5,9 +5,10 @@ import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { DISPOSAL_STATUS_LABELS, DISPOSAL_TYPE_LABELS, formatMoney } from '../utils/assetLabels';
+import { displayDate } from '../utils/dates';
 
 const PAGE_SIZE = 15;
-function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : '—'; }
+function formatDate(v) { return v ? displayDate(v) : '—'; }
 
 export default function AssetDisposals() {
   const { can } = useAuth();

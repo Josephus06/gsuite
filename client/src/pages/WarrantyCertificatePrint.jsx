@@ -3,8 +3,9 @@ import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import letterhead from '../assets/graphicstar-letterhead.png';
+import { displayDate } from '../utils/dates';
 
-function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : ''; }
+function formatDate(v) { return v ? displayDate(v) : ''; }
 
 const COVERAGE_TERMS = [
   ['Structural', 'Poles, Foundation and Frames'],

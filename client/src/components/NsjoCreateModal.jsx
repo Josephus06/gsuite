@@ -3,8 +3,9 @@ import api from '../api/client';
 import Modal from './Modal';
 import EntityPicker from './EntityPicker';
 import LoadingSpinner from './LoadingSpinner';
+import { displayDate } from '../utils/dates';
 
-function fmtDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function fmtDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 // The "Create JO" modal for a Non-Standard Sales Order item: shows the job-order header, lets the
 // user enter Reason Code / Reason / Action to be taken, and edit the process/material rows (qty,

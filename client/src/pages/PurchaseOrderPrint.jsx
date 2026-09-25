@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import letterhead from '../assets/graphicstar-letterhead.png';
+import { displayDate } from '../utils/dates';
 
 // Printable Purchase Order -- the copy that goes to the supplier.
 //
@@ -17,7 +18,7 @@ import letterhead from '../assets/graphicstar-letterhead.png';
 function fmtDate(v) {
   if (!v) return '';
   const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+  return Number.isNaN(d.getTime()) ? '' : displayDate(d);
 }
 
 function money(v) {

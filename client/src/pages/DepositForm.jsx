@@ -4,9 +4,11 @@ import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 
+import { displayDate } from '../utils/dates';
+
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'; }
 function today() { return new Date().toISOString().slice(0, 10); }
-function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : ''; }
+function formatDate(v) { return v ? displayDate(v) : ''; }
 function dayISO(v) { return v ? String(v).slice(0, 10) : ''; }
 
 const EMPTY_OTHER = { party_key: '', amount: '', account_id: '', payment_method_id: '', department_id: '', location_id: '', memo: '' };

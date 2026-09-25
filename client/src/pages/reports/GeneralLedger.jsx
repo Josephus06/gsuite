@@ -4,8 +4,10 @@ import LoadingSpinner from '../../components/LoadingSpinner';
 import { REPORT_TIMING } from '../../utils/reportTiming';
 import { money } from './CoaTreeRows';
 
+import { displayDate } from '../../utils/dates';
+
 function today() { return new Date().toISOString().slice(0, 10); }
-function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 const SOURCE_LABELS = {
   sales_invoice: 'Invoice', assembly_build: 'Assembly Build', item_delivery: 'Item Delivery',

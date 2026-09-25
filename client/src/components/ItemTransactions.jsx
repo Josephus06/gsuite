@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from './LoadingSpinner';
 import Pagination from './Pagination';
+import { displayDate } from '../utils/dates';
 
 const PAGE_SIZE = 25;
 // Short codes as the documents are known on the floor, in the order they happen to stock.
@@ -27,7 +28,7 @@ function qty(v) {
   const n = Number(v);
   return Number.isFinite(n) && n !== 0 ? n.toLocaleString('en-US', { maximumFractionDigits: 4 }) : '';
 }
-function day(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : ''; }
+function day(v) { return v ? displayDate(v) : ''; }
 function label(s) { return s ? String(s).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : ''; }
 
 // The Inventory Item's Transactions tab: every document this item appears on, newest first, from

@@ -6,6 +6,8 @@ import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../context/useAuth';
 
+import { displayDateTime } from '../utils/dates';
+
 // Mirrors the real system's full-page Job Order Edit form (not a modal): a 3-column
 // header form + a Materials tab with an inline-editable process/material table + a
 // Logs tab. Customer/Job Type/Sales Division/Office Location stay locked to the
@@ -339,7 +341,7 @@ export default function JobOrderEdit() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'When', render: (r) => new Date(r.set_at).toLocaleString() },
+              { key: 'set_at', label: 'When', render: (r) => displayDateTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

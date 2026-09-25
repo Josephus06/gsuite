@@ -7,6 +7,8 @@ import EntityPicker from '../components/EntityPicker';
 import CustomerPaymentModal from '../components/CustomerPaymentModal';
 import { useAuth } from '../context/useAuth';
 
+import { displayDate } from '../utils/dates';
+
 const PAGE_SIZE = 10;
 const NO_FILTERS = { search: '', status: '', departmentId: '', locationId: '', dateFrom: '', dateTo: '' };
 // A saved payment sits NOT DEPOSITED until a bank deposit sweeps it into the bank.
@@ -16,7 +18,7 @@ function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
-function formatDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 export default function CustomerPayments() {
   const { can } = useAuth();

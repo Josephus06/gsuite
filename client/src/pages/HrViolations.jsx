@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { displayDate } from '../utils/dates';
 
 const SEVERITY_BADGE = { minor: 'badge-muted', major: 'badge-warning', grave: 'badge-danger' };
 const STATUS_BADGE = {
@@ -13,7 +14,7 @@ const STATUS_BADGE = {
   dismissed: 'badge-muted',
 };
 
-function fmtDate(v) { return v ? String(v).slice(0, 10) : ''; }
+function fmtDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 const pretty = (s) => (s ? String(s).replace(/_/g, ' ') : '');
 
 // Charging an employee: find the person, pick the offence, say what happened.

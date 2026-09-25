@@ -5,6 +5,7 @@ import CrmCalendar from '../components/CrmCalendar';
 import CrmDrafts from '../components/CrmDrafts';
 import LoadingSpinner from '../components/LoadingSpinner';
 import NeedsAttention from '../components/NeedsAttention';
+import { displayDate } from '../utils/dates';
 
 const TABS = [['attention', 'Needs Attention'], ['drafts', 'Email Drafts'], ['calendar', 'Calendar'], ['overview', 'Overview']];
 
@@ -34,7 +35,7 @@ function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
-function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : ''; }
+function formatDate(v) { return v ? displayDate(v) : ''; }
 function isOverdue(v) { return v && new Date(v) < new Date(new Date().toDateString()); }
 
 // The "does this actually work as a CRM" payoff page -- aggregates the pipeline

@@ -4,12 +4,15 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { displayDate, displayDateTime } from '../utils/dates';
 
 function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
-function formatDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : '—'; }
+function formatDate(v) { return v ? displayDate(v) : '—'; }
+// Cheque dates keep the bank's format (e.g. Sep 18, 2026), not the app-wide 18 Sept 2026 -- as asked.
+function formatChequeDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : '—'; }
 
 const STATUS_LABELS = { open: 'Open', voided: 'Voided' };
 
@@ -144,7 +147,7 @@ export default function BillPaymentView() {
                 </>
               )}
             </div>
-            {bp.check_date && <div>Check Date : <span className="hi">{formatDate(bp.check_date)}</span></div>}
+            {bp.check_date && <div>Check Date : <span className="hi">{formatChequeDate(bp.check_date)}</span></div>}
             {bp.check_no && <div>Check No : <span className="hi">{bp.check_no}</span></div>}
             <div>Payment Type : <span className="hi">{bp.payment_type}</span></div>
           </div>
@@ -210,7 +213,7 @@ export default function BillPaymentView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'Date Time', render: (r) => new Date(r.set_at).toLocaleString() },
+              { key: 'set_at', label: 'Date Time', render: (r) => displayDateTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },
