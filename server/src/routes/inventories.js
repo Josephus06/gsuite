@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
-const { deriveOnHand } = require('../lib/stockLedger');
+const { deriveOnHand, movementsSql } = require('../lib/stockLedger');
 
 const router = express.Router();
 const ROUTE = '/inventory';
@@ -246,6 +246,35 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
        WHERE il.inventory_id = ? ORDER BY l.location_name`,
       [req.params.id]
     );
+    // Warehouse Stocks: every location this item has ever moved through, with its on-hand as the
+    // stock ledger's running total -- the Bin Card's closing balance and Production's On Hand,
+    // because it is the same deriveOnHand. Not inventory_locations, which the migration never filled
+    // and transfers write unscaled (lib/stockLedger.js). A location that used the item and is now
+    // empty still shows, at zero. Committed / In Transit are read from the snapshot where it has a
+    // row, since the ledger records movements, not reservations. `stock` is left as it was: the
+    // edit screen reads it.
+    const onHand = await deriveOnHand(pool, [Number(req.params.id)]);
+    const locIds = [...onHand.keys()].map((k) => Number(k.split('|')[1]));
+    const snapByLoc = new Map(stock.map((s) => [Number(s.location_id), s]));
+    const [locRows] = locIds.length
+      ? await pool.query('SELECT id, location_name FROM locations WHERE id IN (?)', [locIds])
+      : [[]];
+    const locName = new Map(locRows.map((l) => [Number(l.id), l.location_name]));
+    const conv = Number(item.conversion_factor) || 1;
+    const stockByLocation = locIds.map((locId) => {
+      const base = Number(onHand.get(`${req.params.id}|${locId}`) || 0);
+      const snap = snapByLoc.get(locId);
+      return {
+        location_id: locId,
+        location_name: locName.get(locId) || `Location #${locId}`,
+        qty_on_hand: Number(base.toFixed(4)),
+        // The same balance in the Stock Unit (rolls, sheets), where the item has one.
+        qty_on_hand_stock_unit: conv > 1 ? Number((base / conv).toFixed(4)) : null,
+        qty_committed: Number(snap?.qty_committed || 0),
+        qty_in_transit: Number(snap?.qty_in_transit || 0),
+      };
+    }).sort((a, b) => a.location_name.localeCompare(b.location_name));
+
     const [supplierPrices] = await pool.query(
       `SELECT isp.*, s.name AS supplier_name
        FROM inventory_supplier_prices isp
@@ -272,7 +301,69 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
 
-    res.json({ ...item, priceTiers, stock, supplierPrices, subItems, subItemOf: subItemOf || null, unitOfMeasures });
+    res.json({ ...item, priceTiers, stock, stock_by_location: stockByLocation, supplierPrices, subItems, subItemOf: subItemOf || null, unitOfMeasures });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Every transaction this item appears on, newest first: the stock ledger's movements (Receiving
+// Report, Vendor Return, Item Fulfillment, Item Receipt, Assembly Build, approved Inventory
+// Adjustment -- lib/stockLedger.js, so In/Out match the Bin Card exactly, in Base Unit), plus the
+// two documents that ask for stock without moving it: Purchase Orders and Transfer Orders, shown
+// with their own quantity and unit and no In/Out. `type` narrows to one kind; paged because a
+// common material has thousands of rows.
+const TXN_TYPES = ['Receiving Report', 'Vendor Return', 'Item Fulfillment', 'Item Receipt', 'Assembly Build',
+  'Inventory Adjustment', 'Purchase Order', 'Transfer Order'];
+router.get('/:id/transactions', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(200, Math.max(1, Number(req.query.page_size) || 25));
+    const type = TXN_TYPES.includes(req.query.type) ? req.query.type : null;
+    const ids = [id];
+    const union = `
+      SELECT m.trans_date, m.trans_no, m.trans_type, m.ref_no, m.sort_id AS doc_id,
+             m.from_location_name, m.to_location_name, m.qty_in, m.qty_out,
+             NULL AS doc_qty, m.doc_uom, NULL AS status, m.sort_ts
+        FROM (${movementsSql(true)}) m
+      UNION ALL
+      SELECT po.date_created, po.po_no, 'Purchase Order', NULL, po.id,
+             NULL, loc.location_name, NULL, NULL,
+             pol.qty, COALESCE(pol.unit_title, pol.purchase_unit), po.status, po.created_at
+        FROM purchase_order_lines pol
+        JOIN purchase_orders po ON po.id = pol.purchase_order_id
+        LEFT JOIN locations loc ON loc.id = pol.location_id
+       WHERE pol.item_id = ?
+      UNION ALL
+      SELECT t.date_created, t.to_no, 'Transfer Order', NULL, t.id,
+             wl.location_name, tl.location_name, NULL, NULL,
+             tol.qty, COALESCE(NULLIF(tol.unit, ''), tol.uom), t.status, t.created_at
+        FROM transfer_order_lines tol
+        JOIN transfer_orders t ON t.id = tol.transfer_order_id
+        LEFT JOIN locations wl ON wl.id = t.withdraw_from_location_id
+        LEFT JOIN locations tl ON tl.id = t.transfer_to_location_id
+       WHERE tol.item_id = ?`;
+    const params = [ids, ids, ids, ids, ids, ids, id, id];
+    const filter = type ? 'WHERE x.trans_type = ?' : '';
+    const fParams = type ? [type] : [];
+
+    // The counts and the page are independent, so they run side by side: on the heaviest item in
+    // the catalogue (a service line on ~190k Assembly Build lines) that halves the wait.
+    const [[counts], [rows]] = await Promise.all([
+      pool.query(`SELECT x.trans_type, COUNT(*) AS n FROM (${union}) x GROUP BY x.trans_type`, params),
+      pool.query(
+        `SELECT * FROM (${union}) x ${filter}
+          ORDER BY x.trans_date DESC, x.sort_ts DESC, x.trans_no DESC
+          LIMIT ? OFFSET ?`,
+        [...params, ...fParams, pageSize, (page - 1) * pageSize],
+      ),
+    ]);
+    const total = counts.filter((c) => !type || c.trans_type === type).reduce((s, c) => s + Number(c.n), 0);
+    res.json({
+      rows, total, page, page_size: pageSize,
+      counts: Object.fromEntries(counts.map((c) => [c.trans_type, Number(c.n)])),
+    });
   } catch (err) {
     next(err);
   }
