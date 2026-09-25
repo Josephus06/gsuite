@@ -15,6 +15,9 @@ const router = express.Router();
 // THE PAGE ROW MUST EXIST BEFORE THIS CODE SERVES TRAFFIC. requirePermission answers 500, not
 // 403, on a missing row, so the migration runs on each install before the deploy reaches it.
 const ROUTE = '/quality-inspections';
+// The Master Lists > Reasons types an RMA'd line may be filed under. The RMA qty becomes an RFQC
+// rework job order, so both apply. src/db/add-reason-types-rfqc-rma.js added them.
+const RMA_REASON_TYPES = ['RFQC', 'RMA'];
 // The modal opened from the Job Order's Production screen is filled by /for-job-order below,
 // and that endpoint stays on Production's own can_view: an endpoint is gated by the PAGE IT
 // SERVES, not by the entity it returns. Gating it here would blank a panel in the middle of a
@@ -113,7 +116,14 @@ router.get('/for-job-order/:jobOrderId', requireAuth, requirePermission(PRODUCTI
       [req.params.jobOrderId]
     );
 
-    res.json({ ...jo, assembly_builds: builds });
+    // The Reason picker's options: active reasons of the types an RMA is filed under.
+    const [reasons] = await pool.query(
+      `SELECT id, name, reason_type FROM reasons
+        WHERE is_active = TRUE AND reason_type IN (${RMA_REASON_TYPES.map(() => '?').join(', ')})
+        ORDER BY reason_type, name`,
+      RMA_REASON_TYPES
+    );
+    res.json({ ...jo, assembly_builds: builds, reasons });
   } catch (err) {
     next(err);
   }
@@ -143,8 +153,9 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     }
 
     const [lines] = await pool.query(
-      `SELECT qil.*, ab.ab_no FROM quality_inspection_lines qil
+      `SELECT qil.*, ab.ab_no, r.name AS reason_name FROM quality_inspection_lines qil
        LEFT JOIN assembly_builds ab ON ab.id = qil.assembly_build_id
+       LEFT JOIN reasons r ON r.id = qil.reason_id
        WHERE qil.quality_inspection_id = ?`,
       [req.params.id]
     );
@@ -198,6 +209,21 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     for (const s of submitted) {
       const ab = byId.get(Number(s.assembly_build_id));
       if (!ab) return res.status(400).json({ error: 'Unknown Assembly Build.' });
+      // Anything failed has to say why and what happens next: Reason, RMA Memo and Action/s to be
+      // taken are all required once RMA Qty is above zero. They become the RFQC's own reason and
+      // action, and a rework job order nobody can explain is one nobody can act on.
+      if (Number(s.rma_qty || 0) > 0) {
+        const missing = [];
+        if (!s.reason_id) missing.push('Reason');
+        if (!String(s.rma_memo || '').trim()) missing.push('RMA Memo');
+        if (!String(s.action_to_be_taken || '').trim()) missing.push('Action/s to be taken');
+        if (missing.length) return res.status(400).json({ error: `${ab.ab_no}: ${missing.join(', ')} required when RMA Qty is above zero.` });
+        const [[r]] = await conn.query(
+          `SELECT id FROM reasons WHERE id = ? AND is_active = TRUE AND reason_type IN (${RMA_REASON_TYPES.map(() => '?').join(', ')})`,
+          [s.reason_id, ...RMA_REASON_TYPES]
+        );
+        if (!r) return res.status(400).json({ error: `${ab.ab_no}: that Reason is no longer available.` });
+      }
       const remaining = Number(ab.quantity_built) - Number(ab.passed_qty || 0) - Number(ab.rma_qty || 0);
       const submittedQty = Number(s.pass_qty || 0) + Number(s.rma_qty || 0);
       if (submittedQty > remaining) {
@@ -218,6 +244,9 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     let rmaTotal = 0;
     const rmaMemos = [];
     const rmaActions = [];
+    // The RFQC is one job order however many lines failed, and it has one Reason Code: the first
+    // failed line's. Every line keeps its own on the inspection itself.
+    let rfqcReasonId = null;
     for (const s of submitted) {
       const ab = byId.get(Number(s.assembly_build_id));
       const passQty = Number(s.pass_qty || 0);
@@ -227,13 +256,14 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       if (rmaQty > 0) {
         if (s.rma_memo) rmaMemos.push(String(s.rma_memo));
         if (s.action_to_be_taken) rmaActions.push(String(s.action_to_be_taken));
+        if (!rfqcReasonId) rfqcReasonId = Number(s.reason_id);
       }
 
       await conn.query('UPDATE assembly_builds SET passed_qty = passed_qty + ?, rma_qty = rma_qty + ? WHERE id = ?', [passQty, rmaQty, ab.id]);
       await conn.query(
-        `INSERT INTO quality_inspection_lines (quality_inspection_id, assembly_build_id, ab_qty, pass_qty, rma_qty, rma_memo, action_to_be_taken)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [qiId, ab.id, ab.quantity_built, passQty, rmaQty, s.rma_memo || null, s.action_to_be_taken || null]
+        `INSERT INTO quality_inspection_lines (quality_inspection_id, assembly_build_id, ab_qty, pass_qty, rma_qty, reason_id, rma_memo, action_to_be_taken)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [qiId, ab.id, ab.quantity_built, passQty, rmaQty, rmaQty > 0 ? Number(s.reason_id) : null, s.rma_memo || null, s.action_to_be_taken || null]
       );
     }
 
@@ -245,7 +275,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     if (rmaTotal > 0) {
       rfqc = await createReworkJobOrder(conn, {
         mother: jo, prefix: 'RFQC', quantity: rmaTotal,
-        reason: rmaMemos.join(' | ') || null, action: rmaActions.join(' | ') || null, userId: req.user.id,
+        reason: rmaMemos.join(' | ') || null, action: rmaActions.join(' | ') || null, reasonCodeId: rfqcReasonId, userId: req.user.id,
       });
     }
 

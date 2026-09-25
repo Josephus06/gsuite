@@ -113,6 +113,15 @@ export default function QualityInspectionView() {
           </div>
           <div>
             <div>Memo : <span className="hi">{qi.memo || ''}</span></div>
+            {/* What failed and why, per batch -- the Reason, RMA Memo and Action/s the
+                inspection required before it would save any RMA qty. */}
+            {qi.lines.filter((l) => Number(l.rma_qty) > 0).map((l) => (
+              <div key={`rma-${l.id}`} style={{ marginTop: 6 }}>
+                RMA {l.ab_no} ({qty(l.rma_qty)}) : <span className="hi">{l.reason_name || '—'}</span>
+                {l.rma_memo ? <> · {l.rma_memo}</> : null}
+                {l.action_to_be_taken ? <> · Action: {l.action_to_be_taken}</> : null}
+              </div>
+            ))}
           </div>
         </div>
       </div>

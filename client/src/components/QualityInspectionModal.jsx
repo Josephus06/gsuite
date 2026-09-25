@@ -18,6 +18,7 @@ export default function QualityInspectionModal({ jobOrderId, onClose, onSaved })
   const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
   const [passQty, setPassQty] = useState({});
   const [rmaQty, setRmaQty] = useState({});
+  const [reasonId, setReasonId] = useState({});
   const [rmaMemo, setRmaMemo] = useState({});
   const [action, setAction] = useState({});
   const [loading, setLoading] = useState(true);
@@ -43,11 +44,25 @@ export default function QualityInspectionModal({ jobOrderId, onClose, onSaved })
         assembly_build_id: ab.id,
         pass_qty: passQty[ab.id] || 0,
         rma_qty: rmaQty[ab.id] || 0,
+        reason_id: reasonId[ab.id] || null,
         rma_memo: rmaMemo[ab.id] || '',
         action_to_be_taken: action[ab.id] || '',
       }))
       .filter((l) => Number(l.pass_qty) > 0 || Number(l.rma_qty) > 0);
     if (!payload.length) { setError('Enter a Pass Qty or RMA Qty for at least one item.'); return; }
+    // Once anything is RMA'd it has to say why and what happens next -- the same rule the server
+    // enforces. These become the RFQC rework job order's own reason and action.
+    for (const l of payload.filter((x) => Number(x.rma_qty) > 0)) {
+      const missing = [
+        !l.reason_id && 'Reason', !String(l.rma_memo).trim() && 'RMA Memo',
+        !String(l.action_to_be_taken).trim() && 'Action/s to be taken',
+      ].filter(Boolean);
+      if (missing.length) {
+        const ab = data.assembly_builds.find((b) => b.id === l.assembly_build_id);
+        setError(`${ab?.ab_no}: ${missing.join(', ')} required when RMA Qty is above zero.`);
+        return;
+      }
+    }
 
     setSaving(true);
     try {
@@ -95,12 +110,12 @@ export default function QualityInspectionModal({ jobOrderId, onClose, onSaved })
               <thead>
                 <tr>
                   <th>AB #</th><th>AB Date</th><th>AB Qty</th><th>Passed</th><th>RMA</th>
-                  <th>Pass Qty</th><th>RMA Qty</th><th>RMA Memo</th><th>Action/s to be taken</th>
+                  <th>Pass Qty</th><th>RMA Qty</th><th>Reason</th><th>RMA Memo</th><th>Action/s to be taken</th>
                 </tr>
               </thead>
               <tbody>
                 {data.assembly_builds.length === 0 && (
-                  <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 20 }}>Nothing left to inspect.</td></tr>
+                  <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>Nothing left to inspect.</td></tr>
                 )}
                 {data.assembly_builds.map((ab) => (
                   <tr key={ab.id}>
@@ -124,8 +139,21 @@ export default function QualityInspectionModal({ jobOrderId, onClose, onSaved })
                       />
                     </td>
                     <td>
+                      {/* Reason, Memo and Action/s are required once RMA Qty is above zero; the
+                          "Required" prompts appear then, so a line that only passes asks for none. */}
+                      <select
+                        style={{ width: 170 }}
+                        value={reasonId[ab.id] ?? ''}
+                        onChange={(e) => setReasonId((prev) => ({ ...prev, [ab.id]: e.target.value }))}
+                      >
+                        <option value="">{Number(rmaQty[ab.id]) > 0 ? '--Select-- (Required)' : '--Select--'}</option>
+                        {(data.reasons || []).map((r) => <option key={r.id} value={r.id}>{r.name} ({r.reason_type})</option>)}
+                      </select>
+                    </td>
+                    <td>
                       <input
                         style={{ width: 140 }}
+                        placeholder={Number(rmaQty[ab.id]) > 0 ? 'Required' : ''}
                         value={rmaMemo[ab.id] ?? ''}
                         onChange={(e) => setRmaMemo((prev) => ({ ...prev, [ab.id]: e.target.value }))}
                       />
@@ -133,6 +161,7 @@ export default function QualityInspectionModal({ jobOrderId, onClose, onSaved })
                     <td>
                       <input
                         style={{ width: 160 }}
+                        placeholder={Number(rmaQty[ab.id]) > 0 ? 'Required' : ''}
                         value={action[ab.id] ?? ''}
                         onChange={(e) => setAction((prev) => ({ ...prev, [ab.id]: e.target.value }))}
                       />
