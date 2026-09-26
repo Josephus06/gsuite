@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import Modal from '../components/Modal';
 import NonStandardJobOrderFormModal from '../components/NonStandardJobOrderFormModal';
+import useAutoSearch from '../utils/useAutoSearch';
 
 const ROUTE = '/non-standard-job-orders';
 const SUB_SBU_APPROVAL = 'SBU Approval';
@@ -105,6 +106,7 @@ export default function NonStandardJobOrders() {
     if (page === 1) load();
     else setPage(1);
   }
+  useAutoSearch(search, runSearch);
 
   function pickTab(key) {
     setPage(1);

@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import SyncFromSourceButton from '../components/SyncFromSourceButton';
+import useAutoSearch from '../utils/useAutoSearch';
 
 // Mirrors Estimates.jsx / the real system's "Saved Sales Orders" list -- Sales Orders
 // are only ever generated automatically (when an estimate reaches Approved), so there
@@ -69,6 +70,7 @@ export default function SalesOrders() {
     setPage(1);
     load();
   }
+  useAutoSearch(search, runSearch);
 
   const totalPages = Math.max(1, Math.ceil(total / limit));
 

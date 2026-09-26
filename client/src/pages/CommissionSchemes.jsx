@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
+import useAutoSearch from '../utils/useAutoSearch';
 
 const PAGE_SIZE = 10;
 function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
@@ -32,6 +33,7 @@ export default function CommissionSchemes() {
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function runSearch() { setPage(1); load(search); }
+  useAutoSearch(search, runSearch);
 
   async function createScheme() {
     setError('');

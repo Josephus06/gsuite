@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import useAutoSearch from '../utils/useAutoSearch';
 
 // Mirrors the real system's "Production > Assembly Build" ("Saved Assembly Build")
 // list -- a flat filterable table (no status tabs), same pattern as Saved Job Orders.
@@ -51,6 +52,7 @@ export default function AssemblyBuilds() {
     setPage(1);
     load();
   }
+  useAutoSearch(search, runSearch);
 
   const totalPages = Math.max(1, Math.ceil(total / limit));
 

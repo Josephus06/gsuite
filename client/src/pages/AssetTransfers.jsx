@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { TRANSFER_STATUS_LABELS } from '../utils/assetLabels';
 import { displayDate } from '../utils/dates';
+import useAutoSearch from '../utils/useAutoSearch';
 
 const PAGE_SIZE = 15;
 
@@ -48,6 +49,7 @@ export default function AssetTransfers() {
     const next = { ...filters, ...overrides };
     setFilters(next); setPage(1); setApplied(next);
   }
+  useAutoSearch(filters.search, runSearch);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 

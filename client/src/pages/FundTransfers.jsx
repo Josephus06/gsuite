@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
+import useAutoSearch from '../utils/useAutoSearch';
 
 const PAGE_SIZE = 15;
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'; }
@@ -30,6 +31,7 @@ export default function FundTransfers() {
 
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   function runSearch() { setPage(1); load(); }
+  useAutoSearch(search, runSearch);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const pageRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);

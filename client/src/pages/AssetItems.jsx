@@ -4,6 +4,7 @@ import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import useAutoSearch from '../utils/useAutoSearch';
 
 const PAGE_SIZE = 15;
 const EMPTY = { item_code: '', display_name: '', category: '', owning_department_id: '', brand: '', model: '', specification: '', description: '', is_active: true };
@@ -118,6 +119,7 @@ export default function AssetItems() {
   useEffect(() => { api.get('/asset-items/meta').then(({ data }) => setDepartments(data.departments)).catch(() => {}); }, []);
 
   function runSearch() { setPage(1); setApplied({ search, category, active }); }
+  useAutoSearch(search, runSearch);
 
   async function remove(row) {
     if (!confirm(`Delete asset type "${row.display_name}"?`)) return;

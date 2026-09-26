@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import SyncFromSourceButton from '../components/SyncFromSourceButton';
 import { displayDate } from '../utils/dates';
+import useAutoSearch from '../utils/useAutoSearch';
 
 // Mirrors the real "Saved Purchase Orders" list -- status tabs are a read-only bucket
 // derived from status + receipt_status + bill_status together (see purchaseOrders.js's
@@ -68,6 +69,7 @@ export default function PurchaseOrders() {
     setPage(1);
     load();
   }
+  useAutoSearch(search, runSearch);
 
   const totalPages = Math.max(1, Math.ceil(total / limit));
 

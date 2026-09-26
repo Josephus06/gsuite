@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
+import useAutoSearch from '../utils/useAutoSearch';
 
 const PAGE_SIZE = 15;
 function formatDate(v) { return v ? displayDate(v) : ''; }
@@ -31,6 +32,7 @@ export default function Journals() {
 
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   function runSearch() { setPage(1); load(); }
+  useAutoSearch(search, runSearch);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const pageRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);

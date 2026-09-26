@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { STATUS_LABELS } from '../utils/assetLabels';
+import useAutoSearch from '../utils/useAutoSearch';
 
 const TYPES_PER_PAGE = 10;
 const ROWS_PER_PAGE = 15;
@@ -57,6 +58,7 @@ export default function Assets() {
 
   const setF = (patch) => setFilters((f) => ({ ...f, ...patch }));
   function runSearch() { setPage(1); setApplied(filters); }
+  useAutoSearch(filters.search, runSearch);
   function switchView(next) { setView(next); setPage(1); }
 
   const totalPages = Math.max(1, Math.ceil(total / (view === 'grouped' ? TYPES_PER_PAGE : ROWS_PER_PAGE)));

@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import useAutoSearch from '../utils/useAutoSearch';
 
 const PAGE_SIZE = 15;
 const YES_NO = (v) => (v ? 'YES' : 'NO');
@@ -36,6 +37,7 @@ export default function ServiceItems() {
     setPage(1);
     load();
   }
+  useAutoSearch(search, runSearch);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const pageRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);

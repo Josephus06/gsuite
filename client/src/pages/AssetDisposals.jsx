@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { DISPOSAL_STATUS_LABELS, DISPOSAL_TYPE_LABELS, formatMoney } from '../utils/assetLabels';
 import { displayDate } from '../utils/dates';
+import useAutoSearch from '../utils/useAutoSearch';
 
 const PAGE_SIZE = 15;
 function formatDate(v) { return v ? displayDate(v) : '—'; }
@@ -33,6 +34,7 @@ export default function AssetDisposals() {
   const setF = (patch) => setFilters((f) => ({ ...f, ...patch }));
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
+  useAutoSearch(filters.search, () => { setPage(1); setApplied(filters); });
   return (
     <div>
       <div className="page-header">

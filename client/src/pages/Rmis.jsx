@@ -4,6 +4,7 @@ import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
+import useAutoSearch from '../utils/useAutoSearch';
 
 const PAGE_SIZE = 10;
 
@@ -63,6 +64,7 @@ export default function Rmis() {
     setPage(1);
     load();
   }
+  useAutoSearch(search, runSearch);
 
   return (
     <div>

@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import SyncFromSourceButton from '../components/SyncFromSourceButton';
+import useAutoSearch from '../utils/useAutoSearch';
 
 // Mirrors the real system's Estimates list: status tabs with counts (instead of a
 // plain flat table), a collapsible filter panel, and a "View" action per row that
@@ -79,6 +80,7 @@ export default function Estimates() {
     setPage(1);
     load();
   }
+  useAutoSearch(search, runSearch);
 
   // Assigning a rep to a website quote. It is the transition as well as the assignment -- the
   // server moves the estimate to Pending Customer Approval in the same step -- so the row leaves

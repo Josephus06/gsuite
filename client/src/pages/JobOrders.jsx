@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import useAutoSearch from '../utils/useAutoSearch';
 
 // Mirrors server/src/lib/designSupervisorVisibility.js's own DESIGN_QUEUE_STATUS/
 // DESIGN_QUEUE_SUB_STATUSES -- a JO is eligible for (re)assignment here only while
@@ -120,6 +121,7 @@ export default function JobOrders() {
     setPage(1);
     load();
   }
+  useAutoSearch(search, runSearch);
 
   function isAssignable(row) {
     return row.status === ASSIGNABLE_STATUS && row.sub_status === ASSIGNABLE_SUB_STATUS;

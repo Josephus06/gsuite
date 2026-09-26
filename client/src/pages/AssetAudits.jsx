@@ -7,6 +7,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { AUDIT_STATUS_LABELS } from '../utils/assetLabels';
 import { displayMonth } from '../utils/dates';
+import useAutoSearch from '../utils/useAutoSearch';
 
 const PAGE_SIZE = 15;
 
@@ -114,6 +115,7 @@ export default function AssetAudits() {
 
   const setF = (patch) => setFilters((f) => ({ ...f, ...patch }));
   function runSearch() { setPage(1); setApplied(filters); }
+  useAutoSearch(filters.search, runSearch);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 

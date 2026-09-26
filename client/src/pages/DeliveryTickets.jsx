@@ -6,6 +6,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import SyncFromSourceButton from '../components/SyncFromSourceButton';
 
 import { displayDate } from '../utils/dates';
+import useAutoSearch from '../utils/useAutoSearch';
 
 const PAGE_SIZE = 10;
 const STATUS_LABELS = { open: 'Open', converted: 'Converted', void: 'Void' };
@@ -55,6 +56,7 @@ export default function DeliveryTickets() {
     setPage(1);
     load(1);
   }
+  useAutoSearch(search, runSearch);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pageRows = rows;

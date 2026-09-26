@@ -4,6 +4,7 @@ import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
+import useAutoSearch from '../utils/useAutoSearch';
 
 const PAGE_SIZE = 10;
 const STATUS_LABELS = { open: 'Open', paid_in_full: 'Paid in Full', cancelled: 'Cancelled' };
@@ -40,6 +41,7 @@ export default function VendorBills() {
     setPage(1);
     load();
   }
+  useAutoSearch(search, runSearch);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const pageRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);

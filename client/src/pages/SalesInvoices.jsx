@@ -8,6 +8,7 @@ import SalesInvoiceModal from '../components/SalesInvoiceModal';
 import { useAuth } from '../context/useAuth';
 
 import { displayDate } from '../utils/dates';
+import useAutoSearch from '../utils/useAutoSearch';
 
 const PAGE_SIZE = 10;
 const STATUS_LABELS = { saved: 'Open', cancelled: 'Void' };
@@ -89,6 +90,7 @@ export default function SalesInvoices() {
     setPage(1);
     load(1);
   }
+  useAutoSearch(search, runSearch);
 
   // Cleared in one go rather than field by field: four filters can combine into an empty list
   // whose cause is off-screen, and hunting for which one did it is the moment people give up on

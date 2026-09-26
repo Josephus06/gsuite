@@ -5,6 +5,7 @@ import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Pagination from '../components/Pagination';
 import { displayDate } from '../utils/dates';
+import useAutoSearch from '../utils/useAutoSearch';
 
 function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 function locationLabel(l) { return l ? l.location_name : ''; }
@@ -51,6 +52,7 @@ export default function ItemReceipts() {
   function runSearch() {
     if (page === 1) load(); else setPage(1);
   }
+  useAutoSearch(search, runSearch);
 
   async function load() {
     setLoading(true);

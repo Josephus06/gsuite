@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import useAutoSearch from '../utils/useAutoSearch';
 
 // Mirrors the real system's "Accounting > Chart of Accounts" screen -- fully migrated
 // from the live site (276 accounts, real parent/child hierarchy). The real screen also
@@ -37,6 +38,7 @@ export default function ChartOfAccounts() {
     setPage(1);
     load();
   }
+  useAutoSearch(search, runSearch);
 
   const totalPages = Math.max(1, Math.ceil(total / limit));
 

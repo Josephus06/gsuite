@@ -8,6 +8,7 @@ import CustomerPaymentModal from '../components/CustomerPaymentModal';
 import { useAuth } from '../context/useAuth';
 
 import { displayDate } from '../utils/dates';
+import useAutoSearch from '../utils/useAutoSearch';
 
 const PAGE_SIZE = 10;
 const NO_FILTERS = { search: '', status: '', departmentId: '', locationId: '', dateFrom: '', dateTo: '' };
@@ -130,6 +131,7 @@ export default function CustomerPayments() {
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
+  useAutoSearch(form.search, () => apply(form));
   return (
     <div>
       <div className="page-header">

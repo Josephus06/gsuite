@@ -5,6 +5,7 @@ import EntityPicker from '../components/EntityPicker';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
+import useAutoSearch from '../utils/useAutoSearch';
 
 // Purchasing > Receiving Report -- every RR raised against every Purchase Order.
 //
@@ -68,6 +69,7 @@ export default function ReceivingReports() {
     // Reset to page 1 and load once: setPage(1) alone would not re-fire when already on 1.
     if (page === 1) load(); else setPage(1);
   }
+  useAutoSearch(search, runSearch);
 
   function clearFilters() {
     setSearch(''); setSupplier(null); setFrom(''); setTo('');

@@ -5,6 +5,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import Pagination from '../components/Pagination';
 import { useAuth } from '../context/useAuth';
 import { STATUS_BADGE, TYPE_LABELS, fmtDate, money, pretty } from '../utils/requestForms';
+import useAutoSearch from '../utils/useAutoSearch';
 
 // Forms -- the request forms ported from the Booking system. Four company forms, one approval
 // chain. This is the filer's own list: your forms, or everyone's if you hold Can View All.
@@ -41,6 +42,7 @@ export default function Forms() {
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const pageRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
+  useAutoSearch(search, load);
   return (
     <div>
       <div className="page-header">

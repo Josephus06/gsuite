@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import useAutoSearch from '../utils/useAutoSearch';
 
 // Mirrors the real system's "Production > Item Delivery" ("Saved Item Delivery") list --
 // a flat filterable table (no status tabs), same pattern as Assembly Build's list.
@@ -43,6 +44,7 @@ export default function ItemDeliveries() {
     setPage(1);
     load();
   }
+  useAutoSearch(search, runSearch);
 
   const totalPages = Math.max(1, Math.ceil(total / limit));
 
