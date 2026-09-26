@@ -123,8 +123,11 @@ export default function AssetView() {
   if (loading || !a) return <LoadingSpinner />;
 
   // Scoping: within the owning department only the head may change anything. Decided server-side
-  // and reported through meta, so the buttons cannot drift from what the API will accept.
-  const canAct = meta ? (meta.scope?.can_act !== false) : true;
+  // so the buttons cannot drift from what the API will accept -- per ASSET where the detail
+  // endpoint says so, falling back to the per-user answer from meta for an older server. The two
+  // differ for a can_view_all holder, who sees every department's assets and may act on none but
+  // their own.
+  const canAct = a.can_act !== undefined ? !!a.can_act : (meta ? meta.scope?.can_act !== false : true);
   const movements = a.movements || [];
   const attached = a.attached_assets || [];
   const openTransfers = a.open_transfers || [];
@@ -145,10 +148,13 @@ export default function AssetView() {
 
       {error && <div className="error-banner">{error}</div>}
 
+      {/* The server's own reason where it sent one -- it names the asset's department and its
+          head, which the old fixed sentence could not, and which is now routinely a department
+          other than the reader's. */}
       {!canAct && (
         <div className="error-banner">
-          You can see this asset because it belongs to your department, but only the department head can
-          transfer, edit or dispose of it.
+          {a.cannot_act_reason
+            || 'You can see this asset because it belongs to your department, but only the department head can transfer, edit or dispose of it.'}
         </div>
       )}
 

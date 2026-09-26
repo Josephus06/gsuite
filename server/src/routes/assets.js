@@ -98,6 +98,9 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
       assigned_locations: assignedLocations,
       scope: {
         unrestricted: scope.unrestricted,
+        // Whether this user's register covers every department, so the page can say which it is
+        // showing. can_act stays a per-USER hint here; the detail endpoint answers it per ASSET.
+        view_all: !!(scope.unrestricted || scope.viewAll),
         department_id: scope.departmentId,
         is_department_head: scope.isHead,
         can_act: scope.unrestricted || scope.isHead,
@@ -342,7 +345,24 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), requireAss
       [a.id],
     );
 
-    res.json({ ...a, custody_chain: custody.chain, is_attached: custody.is_attached, attached_assets: attached, movements, open_transfers: openTransfers });
+    // Whether THIS asset may be acted on, decided per asset rather than per user.
+    //
+    // The page used to take that from /meta, which answers "are you a department head at all".
+    // That was the same answer while you could only see your own department's equipment. Now
+    // can_view_all lets a head open another department's asset, where the honest answer is no --
+    // and a page drawing Edit, Transfer and Dispose buttons the API will refuse is worse than one
+    // that draws none.
+    const act = await canActOnAsset(req.user.id, a.id);
+    res.json({
+      ...a,
+      can_act: act.allowed,
+      cannot_act_reason: act.allowed ? null : act.reason,
+      custody_chain: custody.chain,
+      is_attached: custody.is_attached,
+      attached_assets: attached,
+      movements,
+      open_transfers: openTransfers,
+    });
   } catch (err) { next(err); }
 });
 
