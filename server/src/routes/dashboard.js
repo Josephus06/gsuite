@@ -3,6 +3,7 @@ const pool = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { DESIGN_QUEUE_STATUS } = require('../lib/designSupervisorVisibility');
 const { isPlannerUser } = require('../lib/plannerRoles');
+const { businessToday } = require('../lib/crmCadence');
 // Shared with the Artist Incentive report and the Assigned JO list, so the calendar cannot
 // quote a different figure for the same job than the other two do.
 const {
@@ -748,13 +749,82 @@ async function salesCalendar(monthStart, monthEnd) {
   }));
 }
 
+// The General Manager's four headline cards, in place of the admin row (the rest of the admin
+// dashboard is unchanged for them). A General Manager is whoever is in general_managers -- the
+// same list the ticket "forward to GM" step uses.
+//
+// Each figure is chosen around a known data defect, so read the notes before "simplifying":
+//
+//   Pending Billing   net amount of job orders with no live invoice line, counted ONLY on sales
+//                     orders not yet billed or cancelled. Without that condition it is ~PHP 347M:
+//                     migrated invoices mostly do not link back to their job orders
+//                     (invoice-line -> JO link is missing on ~36% of invoiced money), so tens of
+//                     thousands of long-billed JOs look unbilled.
+//   Weighted Sales    net of tax of this month's sales orders, cancelled excluded.
+//   Pending Ticket    tickets forwarded to the GM and neither approved nor declined -- the same
+//   Approval          test Tickets.jsx uses for "pending GM".
+//   Actual Collection this month's Head Office customer payments, voided excluded, and EXCLUDING
+//   Head Office       the synthetic CPAY-INV-* payments. Those were rebuilt from invoices during
+//                     the migration and book the same cash as the real PAY-* receipts, so
+//                     counting both roughly doubles the figure. In-app payments (CPAY-<id>) count.
+//
+// "This month" is the Philippine month (lib/crmCadence.js): the droplet runs UTC, where the first
+// eight hours of the 1st still belong to the previous month.
+async function isGeneralManager(userId) {
+  const [[row]] = await pool.query('SELECT 1 AS x FROM general_managers WHERE user_id = ?', [userId]);
+  return !!row;
+}
+
+async function generalManagerCards() {
+  const today = businessToday();
+  const monthStart = `${today.slice(0, 7)}-01`;
+  const [[[billing]], [[sales]], [[tickets]], [[collection]]] = await Promise.all([
+    pool.query(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(sol.net_of_tax), 0) AS amount
+         FROM job_orders jo
+         JOIN sales_orders so ON so.id = jo.sales_order_id
+         LEFT JOIN sales_order_lines sol ON sol.id = jo.sales_order_line_id
+        WHERE so.status NOT IN ('billed', 'cancelled')
+          AND LOWER(COALESCE(jo.status, '')) NOT LIKE '%cancel%'
+          AND NOT EXISTS (
+            SELECT 1 FROM sales_invoice_lines il
+              JOIN sales_invoices si ON si.id = il.sales_invoice_id AND si.cancelled_at IS NULL
+             WHERE il.job_order_id = jo.id)`,
+    ),
+    pool.query(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(net_of_tax), 0) AS amount
+         FROM sales_orders WHERE date_created >= ? AND status <> 'cancelled'`, [monthStart],
+    ),
+    pool.query(
+      `SELECT COUNT(*) AS count FROM tickets
+        WHERE forwarded_to_gm_at IS NOT NULL AND gm_approved_at IS NULL AND declined_at IS NULL`,
+    ),
+    // No location counts as Head Office, as lib/userLocation.js isHeadOfficeName decides.
+    pool.query(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(cp.payment_amount), 0) AS amount
+         FROM customer_payments cp
+         LEFT JOIN locations l ON l.id = cp.office_location_id
+        WHERE cp.date_created >= ? AND cp.voided_at IS NULL
+          AND cp.customer_payment_no NOT LIKE 'CPAY-INV-%'
+          AND (l.id IS NULL OR LOWER(TRIM(l.location_name)) LIKE 'head office%')`, [monthStart],
+    ),
+  ]);
+  return {
+    pendingBilling: { count: Number(billing.count), amount: Number(billing.amount) },
+    weightedSales: { count: Number(sales.count), amount: Number(sales.amount) },
+    pendingTicketApproval: Number(tickets.count),
+    headOfficeCollection: { count: Number(collection.count), amount: Number(collection.amount) },
+  };
+}
+
 router.get('/', requireAuth, async (req, res, next) => {
   try {
     const scope = await resolveScope(req.user.id);
 
     if (scope.role === 'admin') {
-      const metrics = await adminMetrics();
-      return res.json({ role: 'admin', ...metrics });
+      const [metrics, gm] = await Promise.all([adminMetrics(), isGeneralManager(req.user.id)]);
+      const gmCards = gm ? await generalManagerCards() : null;
+      return res.json({ role: 'admin', ...metrics, gmCards });
     }
 
     if (scope.role === 'design_supervisor') {

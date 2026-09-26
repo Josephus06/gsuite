@@ -299,12 +299,32 @@ function AdminDashboard({ data, user, navigate }) {
 
   return (
     <>
-      <StatRow cards={[
-        { label: 'Total Active Users', value: data.activeUsers, icon: '👥' },
-        { label: 'Sales This Month', value: `₱${money(data.salesThisMonth.amount)}`, icon: '📈', trend: data.trend },
-        { label: 'Pending Approvals', value: data.pendingApprovals, icon: '⏳' },
-        { label: 'Orders This Month', value: data.salesThisMonth.count, icon: '🧾' },
-      ]} />
+      {data.gmCards ? (
+        // The General Manager's own four (server/src/routes/dashboard.js generalManagerCards --
+        // the notes there say why each figure is filtered the way it is).
+        <StatRow cards={[
+          {
+            label: 'Pending Billing', value: `₱${money(data.gmCards.pendingBilling.amount)}`, icon: '🧾',
+            detail: `${data.gmCards.pendingBilling.count.toLocaleString('en-US')} job orders not yet invoiced`,
+          },
+          {
+            label: 'Weighted Sales', value: `₱${money(data.gmCards.weightedSales.amount)}`, icon: '📈', trend: data.trend,
+            detail: `${data.gmCards.weightedSales.count.toLocaleString('en-US')} sales orders this month, net of tax`,
+          },
+          { label: 'Pending Ticket Approval', value: data.gmCards.pendingTicketApproval, icon: '⏳', detail: 'waiting on your sign-off' },
+          {
+            label: 'Actual Collection Head Office', value: `₱${money(data.gmCards.headOfficeCollection.amount)}`, icon: '💰',
+            detail: `${data.gmCards.headOfficeCollection.count.toLocaleString('en-US')} payments this month`,
+          },
+        ]} />
+      ) : (
+        <StatRow cards={[
+          { label: 'Total Active Users', value: data.activeUsers, icon: '👥' },
+          { label: 'Sales This Month', value: `₱${money(data.salesThisMonth.amount)}`, icon: '📈', trend: data.trend },
+          { label: 'Pending Approvals', value: data.pendingApprovals, icon: '⏳' },
+          { label: 'Orders This Month', value: data.salesThisMonth.count, icon: '🧾' },
+        ]} />
+      )}
 
       <div className="dash-main-grid">
         <ProfileCard user={user} roleLabel={ROLE_LABELS.admin} rings={data.rings} activity={activity} />
