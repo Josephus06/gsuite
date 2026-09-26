@@ -2134,6 +2134,21 @@ CREATE TABLE crm_email_drafts (
     INDEX idx_crm_email_drafts_customer (customer_id, created_at)
 );
 
+-- Highlight-to-translate translations saved onto a page. Display only: the record keeps its
+-- original words. See src/db/create-saved-translations.js.
+CREATE TABLE saved_translations (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    page_path VARCHAR(255) NOT NULL,
+    original_text TEXT NOT NULL,
+    original_hash CHAR(64) NOT NULL,
+    translation TEXT NOT NULL,
+    language VARCHAR(60) NULL,
+    created_by_user_id BIGINT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NULL,
+    UNIQUE KEY uq_saved_translations_page_text (page_path, original_hash)
+);
+
 CREATE TABLE crm_email_optouts (
     email VARCHAR(150) PRIMARY KEY,
     opted_out_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

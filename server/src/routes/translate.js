@@ -1,5 +1,7 @@
+const crypto = require('crypto');
 const express = require('express');
-const { requireAuth } = require('../middleware/auth');
+const pool = require('../db');
+const { requireAuth, isSystemAdmin } = require('../middleware/auth');
 
 // Highlight-to-translate: any text a user selects in the app (a memo, a customer's note, a job
 // description typed in Cebuano or Tagalog) comes here and goes back in English. The client side is
@@ -92,6 +94,77 @@ router.post('/', requireAuth, async (req, res, next) => {
     res.json(result);
   } catch (err) {
     if (err.name === 'TimeoutError') return res.status(504).json({ error: 'The translation took too long; try again.' });
+    next(err);
+  }
+});
+
+// --- Saved translations ------------------------------------------------------------------------
+// "Save" in the translate popover: the page shows the English in place of the original from then
+// on, for everyone, and the original stays one click away. Stored beside the record, never in it
+// -- see src/db/create-saved-translations.js for why.
+//
+// Anyone logged in may save (it changes only how text they can already see is displayed, and the
+// original is always recoverable); only the person who saved it, or a System Admin, may remove it.
+function cleanPath(p) {
+  const path = String(p || '').split('?')[0].split('#')[0].trim();
+  return /^\/[\w\-./]{0,254}$/.test(path) ? path : null;
+}
+function hashText(text) {
+  return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+router.get('/saved', requireAuth, async (req, res, next) => {
+  try {
+    const path = cleanPath(req.query.path);
+    if (!path) return res.json([]);
+    const [rows] = await pool.query(
+      `SELECT st.id, st.original_text, st.translation, st.language, st.created_by_user_id, st.created_at,
+              u.display_name AS created_by_name
+         FROM saved_translations st LEFT JOIN users u ON u.id = st.created_by_user_id
+        WHERE st.page_path = ?
+        ORDER BY CHAR_LENGTH(st.original_text) DESC`, [path],
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/saved', requireAuth, async (req, res, next) => {
+  try {
+    const path = cleanPath(req.body.path);
+    const original = String(req.body.original || '').trim();
+    const translation = String(req.body.translation || '').trim();
+    if (!path) return res.status(400).json({ error: 'Unknown page.' });
+    if (!original || !translation) return res.status(400).json({ error: 'Nothing to save.' });
+    if (original.length > MAX_CHARS || translation.length > MAX_CHARS * 2) return res.status(400).json({ error: 'That text is too long to save.' });
+    if (original === translation) return res.status(400).json({ error: 'It is already English; nothing to save.' });
+    await pool.query(
+      `INSERT INTO saved_translations (page_path, original_text, original_hash, translation, language, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE translation = VALUES(translation), language = VALUES(language),
+                               created_by_user_id = VALUES(created_by_user_id), updated_at = NOW()`,
+      [path, original, hashText(original), translation, String(req.body.language || '').slice(0, 60) || null, req.user.id],
+    );
+    const [[row]] = await pool.query(
+      'SELECT * FROM saved_translations WHERE page_path = ? AND original_hash = ?', [path, hashText(original)],
+    );
+    res.status(201).json(row);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/saved/:id', requireAuth, async (req, res, next) => {
+  try {
+    const [[row]] = await pool.query('SELECT created_by_user_id FROM saved_translations WHERE id = ?', [req.params.id]);
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    if (row.created_by_user_id !== req.user.id && !(await isSystemAdmin(req.user.id))) {
+      return res.status(403).json({ error: 'Only the person who saved this translation can remove it.' });
+    }
+    await pool.query('DELETE FROM saved_translations WHERE id = ?', [req.params.id]);
+    res.status(204).send();
+  } catch (err) {
     next(err);
   }
 });

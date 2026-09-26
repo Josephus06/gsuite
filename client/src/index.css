@@ -2447,3 +2447,11 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
   padding-top: 8px;
   text-align: right;
 }
+
+/* Text shown in English by a saved translation (components/SelectionTranslator.jsx). The dotted
+   line says "this is not what was typed"; the tooltip carries the original. */
+[data-translated] {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: help;
+}
