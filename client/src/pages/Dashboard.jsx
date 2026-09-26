@@ -305,7 +305,7 @@ function AdminDashboard({ data, user, navigate }) {
         <StatRow cards={[
           {
             label: 'Pending Billing', value: `₱${money(data.gmCards.pendingBilling.amount)}`, icon: '🧾',
-            detail: `${data.gmCards.pendingBilling.count.toLocaleString('en-US')} job orders not yet invoiced`,
+            detail: `${data.gmCards.pendingBilling.count.toLocaleString('en-US')} completed job orders not yet invoiced`,
           },
           {
             label: 'Weighted Sales', value: `₱${money(data.gmCards.weightedSales.amount)}`, icon: '📈', trend: data.trend,

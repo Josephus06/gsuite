@@ -755,11 +755,12 @@ async function salesCalendar(monthStart, monthEnd) {
 //
 // Each figure is chosen around a known data defect, so read the notes before "simplifying":
 //
-//   Pending Billing   net amount of job orders with no live invoice line, counted ONLY on sales
-//                     orders not yet billed or cancelled. Without that condition it is ~PHP 347M:
-//                     migrated invoices mostly do not link back to their job orders
-//                     (invoice-line -> JO link is missing on ~36% of invoiced money), so tens of
-//                     thousands of long-billed JOs look unbilled.
+//   Pending Billing   net amount of COMPLETED job orders (production_stage 'completed' -- the
+//                     stage between in_process and invoiced) with no live invoice line, on sales
+//                     orders not yet billed or cancelled. Work still in production is not billable
+//                     yet, so it does not count. The sales-order condition matters too: migrated
+//                     invoices mostly do not link back to their job orders, and without it tens of
+//                     thousands of long-billed JOs look unbilled (~PHP 347M).
 //   Weighted Sales    net of tax of this month's sales orders, cancelled excluded.
 //   Pending Ticket    tickets forwarded to the GM and neither approved nor declined -- the same
 //   Approval          test Tickets.jsx uses for "pending GM".
@@ -784,7 +785,8 @@ async function generalManagerCards() {
          FROM job_orders jo
          JOIN sales_orders so ON so.id = jo.sales_order_id
          LEFT JOIN sales_order_lines sol ON sol.id = jo.sales_order_line_id
-        WHERE so.status NOT IN ('billed', 'cancelled')
+        WHERE jo.production_stage = 'completed'
+          AND so.status NOT IN ('billed', 'cancelled')
           AND LOWER(COALESCE(jo.status, '')) NOT LIKE '%cancel%'
           AND NOT EXISTS (
             SELECT 1 FROM sales_invoice_lines il
