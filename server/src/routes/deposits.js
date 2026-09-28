@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { depositGlRows } = require('../lib/depositGl');
@@ -222,8 +223,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       [dateCreated || new Date().toISOString().slice(0, 10), accountId, trunc(memo, 1000), total, req.user.id]
     );
     const depositId = r.insertId;
-    const bdNo = `BD-${depositId}`;
-    await conn.query('UPDATE bank_deposits SET bd_no = ? WHERE id = ?', [bdNo, depositId]);
+    const bdNo = await assignDocNo(conn, { table: 'bank_deposits', column: 'bd_no', prefix: 'BD-', id: depositId });
     if (ids.length) {
       await conn.query("UPDATE customer_payments SET deposit_id = ?, status = 'deposited' WHERE id IN (?)", [depositId, ids]);
     }

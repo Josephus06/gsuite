@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeDeliveryTicketGl } = require('../lib/glImpact');
@@ -341,7 +342,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
     const ticketId = result.insertId;
     // Its own DT-# sequence -- a Delivery Ticket is not an Invoice and never borrows the
     // INV-# series (confirmed against the real system's DT-1316).
-    await conn.query('UPDATE delivery_tickets SET dt_no = ? WHERE id = ?', [`DT-${ticketId}`, ticketId]);
+    const dtNo = await assignDocNo(conn, { table: 'delivery_tickets', column: 'dt_no', prefix: 'DT-', id: ticketId });
 
     for (const l of prepared) {
       await conn.query(
@@ -359,7 +360,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
       );
     }
 
-    await logAudit(conn, { ticketId, userId: req.user.id, eventType: 'Created', fieldName: 'dt_no', newValue: `DT-${ticketId}` });
+    await logAudit(conn, { ticketId, userId: req.user.id, eventType: 'Created', fieldName: 'dt_no', newValue: dtNo });
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM delivery_tickets WHERE id = ?', [ticketId]);

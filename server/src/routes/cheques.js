@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeChequeGl } = require('../lib/glImpact');
@@ -186,8 +187,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
        t.subtotal, t.net_of_tax, t.tax_amount, t.withholding_tax_amount, t.gross_amount, t.total_amount, req.user.id]
     );
     const chequeId = r.insertId;
-    const chequeNo = `CHK-${chequeId}`;
-    await conn.query('UPDATE cheques SET cheque_no = ? WHERE id = ?', [chequeNo, chequeId]);
+    const chequeNo = await assignDocNo(conn, { table: 'cheques', column: 'cheque_no', prefix: 'CHK-', id: chequeId });
     let lineNo = 0;
     for (const l of rows) {
       lineNo += 1;

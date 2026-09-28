@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 
@@ -114,8 +115,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       [dateCreated || new Date().toISOString().slice(0, 10), locationId || null, trunc(currency, 10), num(conversion) || 1, trunc(memo, 1000), totalDebit, totalCredit, req.user.id]
     );
     const journalId = r.insertId;
-    const journalNo = `JRNL-${journalId}`;
-    await conn.query('UPDATE journals SET journal_no = ? WHERE id = ?', [journalNo, journalId]);
+    const journalNo = await assignDocNo(conn, { table: 'journals', column: 'journal_no', prefix: 'JRNL-', id: journalId });
 
     let lineNo = 0;
     for (const l of rows) {

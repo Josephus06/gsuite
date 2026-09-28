@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeCreditMemoGl } = require('../lib/glImpact');
@@ -307,7 +308,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       ]
     );
     const memoId = result.insertId;
-    await conn.query('UPDATE credit_memos SET credit_memo_no = ? WHERE id = ?', [`CM-${memoId}`, memoId]);
+    const memoNo = await assignDocNo(conn, { table: 'credit_memos', column: 'credit_memo_no', prefix: 'CM-', id: memoId });
 
     for (const l of prepared) {
       await conn.query(
@@ -332,7 +333,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       );
     }
 
-    await logAudit(conn, { memoId, userId: req.user.id, eventType: 'Created', fieldName: 'credit_memo_no', newValue: `CM-${memoId}` });
+    await logAudit(conn, { memoId, userId: req.user.id, eventType: 'Created', fieldName: 'credit_memo_no', newValue: memoNo });
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM credit_memos WHERE id = ?', [memoId]);

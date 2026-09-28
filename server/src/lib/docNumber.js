@@ -69,4 +69,22 @@ async function insertNumbered(conn, { table, column, prefix, run }) {
   }
 }
 
-module.exports = { nextDocNo, insertNumbered };
+// Number a row that was ALREADY inserted (with a blank or placeholder number) -- the
+// insert-then-number pattern most create routes use. They used to write `PREFIX-${insertId}`,
+// which is exactly the id-vs-imported-number collision described at the top of this file: on the
+// droplet on 2026-09-28 the next cheque id produced CHK-15613, a number an imported cheque
+// already held, so every new cheque failed. This takes the next free number instead, and on a
+// clash (two creates racing) simply takes the one after.
+async function assignDocNo(conn, { table, column, prefix, id }) {
+  for (let attempt = 0; ; attempt += 1) {
+    const no = await nextDocNo(table, column, prefix, conn);
+    try {
+      await conn.query('UPDATE ?? SET ?? = ? WHERE id = ?', [table, column, no, id]);
+      return no;
+    } catch (err) {
+      if (err.code !== 'ER_DUP_ENTRY' || attempt >= 4) throw err;
+    }
+  }
+}
+
+module.exports = { nextDocNo, insertNumbered, assignDocNo };

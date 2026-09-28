@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeBillCreditGl } = require('../lib/glImpact');
@@ -241,7 +242,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       ]
     );
     const creditId = result.insertId;
-    await conn.query('UPDATE bill_credits SET bill_credit_no = ? WHERE id = ?', [`BC-${creditId}`, creditId]);
+    const creditNo = await assignDocNo(conn, { table: 'bill_credits', column: 'bill_credit_no', prefix: 'BC-', id: creditId });
 
     for (const l of computedLines) {
       await conn.query(
@@ -258,7 +259,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       );
     }
 
-    await logAudit(conn, { creditId, userId: req.user.id, eventType: 'Created', fieldName: 'bill_credit_no', newValue: `BC-${creditId}` });
+    await logAudit(conn, { creditId, userId: req.user.id, eventType: 'Created', fieldName: 'bill_credit_no', newValue: creditNo });
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM bill_credits WHERE id = ?', [creditId]);

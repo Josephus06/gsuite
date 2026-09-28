@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
@@ -533,7 +534,7 @@ async function billDeliveryTicket(req, res, conn) {
     ]
   );
   const invoiceId = result.insertId;
-  await conn.query('UPDATE sales_invoices SET invoice_no = ? WHERE id = ?', [`INV-${invoiceId}`, invoiceId]);
+  const invoiceNo = await assignDocNo(conn, { table: 'sales_invoices', column: 'invoice_no', prefix: 'INV-', id: invoiceId });
 
   for (const l of lines) {
     await conn.query(
@@ -573,7 +574,7 @@ async function billDeliveryTicket(req, res, conn) {
   );
   const newSoStatus = computeSalesOrderStatus(freshLines);
   await conn.query('UPDATE sales_orders SET status = ?, updated_at = NOW() WHERE id = ?', [newSoStatus, dt.sales_order_id]);
-  await logAudit(conn, { invoiceId, userId: req.user.id, eventType: 'Created', fieldName: 'invoice_no', newValue: `INV-${invoiceId}` });
+  await logAudit(conn, { invoiceId, userId: req.user.id, eventType: 'Created', fieldName: 'invoice_no', newValue: invoiceNo });
   await conn.commit();
 
   const [[row]] = await pool.query('SELECT * FROM sales_invoices WHERE id = ?', [invoiceId]);
@@ -677,7 +678,7 @@ async function billEstimate(req, res, conn) {
     ]
   );
   const invoiceId = result.insertId;
-  await conn.query('UPDATE sales_invoices SET invoice_no = ? WHERE id = ?', [`INV-${invoiceId}`, invoiceId]);
+  const invoiceNo = await assignDocNo(conn, { table: 'sales_invoices', column: 'invoice_no', prefix: 'INV-', id: invoiceId });
 
   for (const l of lines) {
     await conn.query(
@@ -695,7 +696,7 @@ async function billEstimate(req, res, conn) {
   }
 
   await logAudit(conn, {
-    invoiceId, userId: req.user.id, eventType: 'Created', fieldName: 'invoice_no', newValue: `INV-${invoiceId}`,
+    invoiceId, userId: req.user.id, eventType: 'Created', fieldName: 'invoice_no', newValue: invoiceNo,
   });
   await logAudit(conn, {
     invoiceId, userId: req.user.id, eventType: 'Created', fieldName: 'estimate_id', newValue: est.estimate_no,
@@ -834,7 +835,7 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
     const invoiceId = result.insertId;
     // The record itself is always an "Invoice" (INV-#), regardless of which Bill
     // dropdown option created it -- SI/BS/DR/DT is only ever its Type, not its number.
-    await conn.query('UPDATE sales_invoices SET invoice_no = ? WHERE id = ?', [`INV-${invoiceId}`, invoiceId]);
+    const invoiceNo = await assignDocNo(conn, { table: 'sales_invoices', column: 'invoice_no', prefix: 'INV-', id: invoiceId });
 
     for (const l of lines) {
       await conn.query(
@@ -866,7 +867,7 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
     );
     const newSoStatus = computeSalesOrderStatus(freshLines);
     await conn.query('UPDATE sales_orders SET status = ?, updated_at = NOW() WHERE id = ?', [newSoStatus, salesOrderId]);
-    await logAudit(conn, { invoiceId, userId: req.user.id, eventType: 'Created', fieldName: 'invoice_no', newValue: `INV-${invoiceId}` });
+    await logAudit(conn, { invoiceId, userId: req.user.id, eventType: 'Created', fieldName: 'invoice_no', newValue: invoiceNo });
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM sales_invoices WHERE id = ?', [invoiceId]);

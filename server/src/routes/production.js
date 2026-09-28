@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { isHeadOfficeUser } = require('../lib/userLocation');
 const { isNonStockItem } = require('../lib/itemTypes');
@@ -952,7 +953,7 @@ router.put('/:id/assembly-build', requireAuth, requireProductionFloor, async (re
       [req.params.id, quantityToBuild, totalAmount, req.user.id]
     );
     const abId = abResult.insertId;
-    await conn.query('UPDATE assembly_builds SET ab_no = ? WHERE id = ?', [`AB-${abId}`, abId]);
+    const abNo = await assignDocNo(conn, { table: 'assembly_builds', column: 'ab_no', prefix: 'AB-', id: abId });
     for (const l of lines) {
       await conn.query(
         `INSERT INTO assembly_build_lines

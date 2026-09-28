@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeInventoryAdjustmentGl } = require('../lib/glImpact');
@@ -133,8 +134,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
        VALUES ('', ?, ?, ?, ?)`,
       [dateCreated || new Date().toISOString().slice(0, 10), adjustmentAccountId || null, memo || null, req.user.id]
     );
-    await conn.query('UPDATE inventory_adjustments SET adjustment_no = ? WHERE id = ?', [`IA-${result.insertId}`, result.insertId]);
-    await logAudit(conn, { adjustmentId: result.insertId, userId: req.user.id, eventType: 'Created', fieldName: 'adjustment_no', newValue: `IA-${result.insertId}` });
+    const adjNo = await assignDocNo(conn, { table: 'inventory_adjustments', column: 'adjustment_no', prefix: 'IA-', id: result.insertId });
+    await logAudit(conn, { adjustmentId: result.insertId, userId: req.user.id, eventType: 'Created', fieldName: 'adjustment_no', newValue: adjNo });
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM inventory_adjustments WHERE id = ?', [result.insertId]);

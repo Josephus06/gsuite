@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeCommissionVoucherGl } = require('../lib/glImpact');
@@ -301,7 +302,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
        paymentMethodId || null, cashBankAccountId || null, paymentType || 'full', dateReleased || null, totalPayments, req.user.id]
     );
     const cvId = result.insertId;
-    await conn.query('UPDATE commission_vouchers SET voucher_no = ? WHERE id = ?', [`COMVCH-${cvId}`, cvId]);
+    const cvNo = await assignDocNo(conn, { table: 'commission_vouchers', column: 'voucher_no', prefix: 'COMVCH-', id: cvId });
 
     for (const { cp, released } of prepared) {
       await conn.query('INSERT INTO commission_voucher_lines (commission_voucher_id, commission_payable_id, released_amount) VALUES (?, ?, ?)', [cvId, cp.id, released]);
@@ -316,7 +317,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
         [cvId, e.account_id, e.description, e.amount, e.applies_to_payable_id],
       );
     }
-    await logAudit(conn, { cvId, userId: req.user.id, eventType: 'Created', fieldName: 'voucher_no', newValue: `COMVCH-${cvId}` });
+    await logAudit(conn, { cvId, userId: req.user.id, eventType: 'Created', fieldName: 'voucher_no', newValue: cvNo });
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM commission_vouchers WHERE id = ?', [cvId]);

@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { isNonStockItem } = require('../lib/itemTypes');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
@@ -182,8 +183,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       [dateCreated || new Date().toISOString().slice(0, 10), dateNeeded || null, locationId || null, transferToId || null, requestorId || null, departmentId || null, trunc(memo, 1000), req.user.id]
     );
     const osrId = r.insertId;
-    const osrNo = `OSR-${osrId}`;
-    await conn.query('UPDATE office_supply_requisitions SET osr_no = ? WHERE id = ?', [osrNo, osrId]);
+    const osrNo = await assignDocNo(conn, { table: 'office_supply_requisitions', column: 'osr_no', prefix: 'OSR-', id: osrId });
     await writeLines(conn, osrId, lines);
     await logAudit(conn, { osrId, userId: req.user.id, eventType: 'Created', fieldName: 'osr_no', newValue: osrNo });
     await conn.commit();
@@ -255,8 +255,7 @@ router.post('/:id/fulfill', requireAuth, requirePermission(ROUTE, 'can_approve')
       [o.id, req.body.date_created || new Date().toISOString().slice(0, 10), o.location_id, o.transfer_to_location_id, o.requestor_id, trunc(req.body.memo || o.memo, 1000), req.user.id]
     );
     const osrfId = fr.insertId;
-    const osrfNo = `OSRF-${osrfId}`;
-    await conn.query('UPDATE osr_fulfillments SET osrf_no = ? WHERE id = ?', [osrfNo, osrfId]);
+    const osrfNo = await assignDocNo(conn, { table: 'osr_fulfillments', column: 'osrf_no', prefix: 'OSRF-', id: osrfId });
 
     let totalAmount = 0;
     for (const s of submitted) {

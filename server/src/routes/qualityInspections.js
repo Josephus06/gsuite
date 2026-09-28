@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
 const { createReworkJobOrder, countOpenRework } = require('../lib/reworkJobOrder');
@@ -238,7 +239,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       [jobOrderId, dateCreated || new Date().toISOString().slice(0, 10), memo || null, req.user.id]
     );
     const qiId = result.insertId;
-    await conn.query('UPDATE quality_inspections SET qi_no = ? WHERE id = ?', [`QI-${qiId}`, qiId]);
+    const qiNo = await assignDocNo(conn, { table: 'quality_inspections', column: 'qi_no', prefix: 'QI-', id: qiId });
 
     let passTotal = 0;
     let rmaTotal = 0;
@@ -321,7 +322,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
         }
       }
     }
-    await logAudit(conn, { qiId, userId: req.user.id, eventType: 'Created', fieldName: 'qi_no', newValue: `QI-${qiId}` });
+    await logAudit(conn, { qiId, userId: req.user.id, eventType: 'Created', fieldName: 'qi_no', newValue: qiNo });
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM quality_inspections WHERE id = ?', [qiId]);

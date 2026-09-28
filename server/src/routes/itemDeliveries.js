@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
 const { computeItemDeliveryGl } = require('../lib/glImpact');
@@ -272,7 +273,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
         dm.methodId, dm.cost, dm.ref]
     );
     const deliveryId = result.insertId;
-    await conn.query('UPDATE item_deliveries SET delivery_no = ? WHERE id = ?', [`ID-${deliveryId}`, deliveryId]);
+    const deliveryNo = await assignDocNo(conn, { table: 'item_deliveries', column: 'delivery_no', prefix: 'ID-', id: deliveryId });
 
     for (const s of submitted) {
       const qtyToDeliver = Number(s.qty_to_deliver);
@@ -296,7 +297,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     );
     const newStatus = computeSalesOrderStatus(freshLines);
     await conn.query('UPDATE sales_orders SET status = ?, updated_at = NOW() WHERE id = ?', [newStatus, salesOrderId]);
-    await logAudit(conn, { deliveryId, userId: req.user.id, eventType: 'Created', fieldName: 'delivery_no', newValue: `ID-${deliveryId}` });
+    await logAudit(conn, { deliveryId, userId: req.user.id, eventType: 'Created', fieldName: 'delivery_no', newValue: deliveryNo });
     if (dm.method) {
       await logAudit(conn, {
         deliveryId, userId: req.user.id, eventType: 'Created', fieldName: 'delivery_method', newValue: dm.method.name,

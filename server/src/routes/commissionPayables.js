@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeCommissionPayableGl } = require('../lib/glImpact');
@@ -307,7 +308,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       ]
     );
     const cpId = result.insertId;
-    await conn.query('UPDATE commission_payables SET commission_payable_no = ? WHERE id = ?', [`CP-${cpId}`, cpId]);
+    const cpNo = await assignDocNo(conn, { table: 'commission_payables', column: 'commission_payable_no', prefix: 'CP-', id: cpId });
 
     for (const l of computed.lines) {
       await conn.query(
@@ -316,7 +317,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
         [cpId, l.line_month, l.quota, l.weighted, l.passing_jos, l.expected, l.confirmed, l.released, l.commission]
       );
     }
-    await logAudit(conn, { cpId, userId: req.user.id, eventType: 'Created', fieldName: 'commission_payable_no', newValue: `CP-${cpId}` });
+    await logAudit(conn, { cpId, userId: req.user.id, eventType: 'Created', fieldName: 'commission_payable_no', newValue: cpNo });
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM commission_payables WHERE id = ?', [cpId]);

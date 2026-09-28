@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeCustomerPaymentGl } = require('../lib/glImpact');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
@@ -561,7 +562,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       ]
     );
     const paymentId = result.insertId;
-    await conn.query('UPDATE customer_payments SET customer_payment_no = ? WHERE id = ?', [`CPAY-${paymentId}`, paymentId]);
+    const paymentNo = await assignDocNo(conn, { table: 'customer_payments', column: 'customer_payment_no', prefix: 'CPAY-', id: paymentId });
 
     for (const l of submittedApply) {
       await conn.query(
@@ -576,7 +577,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       );
     }
 
-    await logAudit(conn, { paymentId, userId: req.user.id, eventType: 'Created', fieldName: 'customer_payment_no', newValue: `CPAY-${paymentId}` });
+    await logAudit(conn, { paymentId, userId: req.user.id, eventType: 'Created', fieldName: 'customer_payment_no', newValue: paymentNo });
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM customer_payments WHERE id = ?', [paymentId]);

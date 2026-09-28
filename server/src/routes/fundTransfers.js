@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 
@@ -102,8 +103,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       [dateCreated || new Date().toISOString().slice(0, 10), fromId, toId, round2(amount), trunc(memo, 1000), req.user.id]
     );
     const ftId = r.insertId;
-    const ftNo = `FT-${ftId}`;
-    await conn.query('UPDATE fund_transfers SET ft_no = ? WHERE id = ?', [ftNo, ftId]);
+    const ftNo = await assignDocNo(conn, { table: 'fund_transfers', column: 'ft_no', prefix: 'FT-', id: ftId });
     await logAudit(conn, { ftId, userId: req.user.id, eventType: 'Created', fieldName: 'ft_no', newValue: ftNo });
     await conn.commit();
     res.status(201).json({ id: ftId, ft_no: ftNo });
