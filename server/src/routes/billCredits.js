@@ -273,7 +273,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   }
 });
 
-router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[bc]] = await conn.query('SELECT status, date_created FROM bill_credits WHERE id = ?', [req.params.id]);

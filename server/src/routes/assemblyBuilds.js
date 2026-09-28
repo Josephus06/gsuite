@@ -144,7 +144,7 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
 // Reverses the build: adds the deducted material back to on-hand and subtracts what
 // this transaction contributed from each process line's Total Built and the JO's
 // overall Qty Built. Can't be reversed twice.
-router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[ab]] = await conn.query('SELECT status, job_order_id, quantity_built, date_created FROM assembly_builds WHERE id = ?', [req.params.id]);

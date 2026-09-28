@@ -355,7 +355,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   }
 });
 
-router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[vb]] = await conn.query('SELECT status, purchase_order_id, date_created FROM vendor_bills WHERE id = ?', [req.params.id]);

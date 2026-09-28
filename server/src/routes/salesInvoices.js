@@ -906,7 +906,7 @@ router.get('/:id/reversal-preview', requireAuth, requirePermission(ROUTE, 'can_v
   } catch (err) { next(err); }
 });
 
-router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[si]] = await conn.query('SELECT status, sales_order_id, delivery_ticket_id, date_created FROM sales_invoices WHERE id = ?', [req.params.id]);

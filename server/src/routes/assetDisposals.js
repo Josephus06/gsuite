@@ -340,7 +340,7 @@ router.post('/:id/post', requireAuth, requirePermission(ROUTE, 'can_approve'), a
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
-router.post('/:id/void', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
+router.post('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const reason = req.body?.reason;

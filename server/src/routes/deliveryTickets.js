@@ -376,7 +376,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
 // Void, not delete -- the real screen's own terminal action. Nothing to reverse on the
 // Sales Order because saving never advanced quantity_invoiced in the first place; voiding
 // simply stops the ticket posting to the GL (see getPostedGlLines' status filter).
-router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[dt]] = await conn.query('SELECT status, date_created FROM delivery_tickets WHERE id = ?', [req.params.id]);

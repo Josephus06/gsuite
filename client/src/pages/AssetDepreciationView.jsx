@@ -80,7 +80,7 @@ export default function AssetDepreciationView() {
             <button className="btn btn-sm btn-primary" disabled={busy}
               onClick={() => act(() => api.post(`/asset-depreciation/${id}/post`), `Post ${run.run_no} to the general ledger?`)}>Post to Ledger</button>
           )}
-          {run.status === 'posted' && can('/asset-depreciation', 'can_approve') && (
+          {run.status === 'posted' && can('/asset-depreciation', 'can_void') && (
             <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setShowVoid(true)}>Void</button>
           )}
           {isDraft && can('/asset-depreciation', 'can_delete') && (

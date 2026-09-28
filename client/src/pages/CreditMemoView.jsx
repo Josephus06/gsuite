@@ -62,6 +62,7 @@ export default function CreditMemoView() {
   if (loading || !cm) return <LoadingSpinner />;
 
   const canEdit = can('/credit-memos', 'can_edit');
+  const canVoid = can('/credit-memos', 'can_void');
   const isOpen = cm.status === 'open';
 
   return (
@@ -72,7 +73,7 @@ export default function CreditMemoView() {
           <button className="btn btn-sm" onClick={() => navigate(`/sales-invoices/${cm.sales_invoice_id}`)}>Back</button>
           {canEdit && isOpen && <button className="btn btn-sm" disabled title="Editing a posted Credit Memo isn't implemented in this build -- void and re-enter instead">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
-          {canEdit && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
+          {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
 

@@ -34,6 +34,9 @@ const PERMISSION_ACTIONS = [
   // Printing a Job Order is granted separately from viewing one -- the printed sheet is what
   // goes to the production floor, so it is handed out deliberately.
   { key: 'can_print', label: 'Can Print' },
+  // Voiding a POSTED document -- an invoice, cheque, payment, journal -- reverses it in the books,
+  // so it is granted on its own rather than coming with the right to edit.
+  { key: 'can_void', label: 'Can Void' },
 ];
 
 const EMPTY_ACCOUNT = {
@@ -167,7 +170,7 @@ export default function UserWizard() {
 
   function togglePerm(pageId, key) {
     setPermMap((prev) => {
-      const current = prev[pageId] || { page_id: pageId, can_view: false, can_add: false, can_edit: false, can_update: false, can_view_all: false, can_delete: false, can_approve: false, can_print: false };
+      const current = prev[pageId] || { page_id: pageId, can_view: false, can_add: false, can_edit: false, can_update: false, can_view_all: false, can_delete: false, can_approve: false, can_print: false, can_void: false };
       return { ...prev, [pageId]: { ...current, [key]: !current[key] } };
     });
   }
@@ -189,6 +192,7 @@ export default function UserWizard() {
         can_update: !!r.can_update,
         can_approve: !!r.can_approve,
         can_print: !!r.can_print,
+        can_void: !!r.can_void,
       };
     });
     setPermMap(map);

@@ -385,7 +385,7 @@ router.put('/:id/delivery-method', requireAuth, requirePermission(ROUTE, 'can_ed
   }
 });
 
-router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_delete'), async (req, res, next) => {
+router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[d]] = await conn.query('SELECT status, sales_order_id, date_created FROM item_deliveries WHERE id = ?', [req.params.id]);

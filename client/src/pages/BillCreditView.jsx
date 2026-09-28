@@ -56,6 +56,7 @@ export default function BillCreditView() {
   if (loading || !bc) return <LoadingSpinner />;
 
   const canEdit = can('/bill-credits', 'can_edit');
+  const canVoid = can('/bill-credits', 'can_void');
   const isOpen = bc.status === 'open';
   const unapplied = Number(bc.total_amount) - Number(bc.applied_amount);
 
@@ -67,7 +68,7 @@ export default function BillCreditView() {
           <button className="btn btn-sm" onClick={() => navigate(`/vendor-bills/${bc.vendor_bill_id}`)}>Back</button>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Bill Credit isn't implemented in this build">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
-          {canEdit && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
+          {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
 

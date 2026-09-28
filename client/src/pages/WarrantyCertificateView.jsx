@@ -49,7 +49,7 @@ export default function WarrantyCertificateView() {
           {can('/warranty-certificates', 'can_approve') && wc.status === 'pending_approval' && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>Approve</button>}
           {/* Print is only available once the certificate has been approved. */}
           {isApproved && <button className="btn btn-sm btn-primary" onClick={() => window.open(`/warranty-certificates/${id}/print`, '_blank')}>Print</button>}
-          {can('/warranty-certificates', 'can_edit') && !isVoided && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
+          {can('/warranty-certificates', 'can_void') && !isVoided && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
 

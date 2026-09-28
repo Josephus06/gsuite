@@ -442,7 +442,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
   } finally { conn.release(); }
 });
 
-router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[cv]] = await conn.query('SELECT status, date_created FROM commission_vouchers WHERE id = ?', [req.params.id]);

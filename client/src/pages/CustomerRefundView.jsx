@@ -55,6 +55,7 @@ export default function CustomerRefundView() {
   if (loading || !cr) return <LoadingSpinner />;
 
   const canEdit = can('/customer-refunds', 'can_edit');
+  const canVoid = can('/customer-refunds', 'can_void');
   const isOpen = cr.status !== 'voided';
 
   return (
@@ -65,7 +66,7 @@ export default function CustomerRefundView() {
           <button className="btn btn-sm" onClick={() => navigate(-1)}>Back to Lists</button>
           {canEdit && isOpen && <button className="btn btn-sm" disabled title="Editing a posted Customer Refund isn't implemented in this build -- void and re-enter instead">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
-          {canEdit && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
+          {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
 

@@ -43,6 +43,7 @@ export default function CommissionVoucherView() {
   if (loading || !cv) return <LoadingSpinner />;
 
   const canEdit = can('/commission-vouchers', 'can_edit');
+  const canVoid = can('/commission-vouchers', 'can_void');
   const isOpen = cv.status !== 'void';
   const glDebit = (cv.gl_impact || []).reduce((s, r) => s + Number(r.debit || 0), 0);
   const glCredit = (cv.gl_impact || []).reduce((s, r) => s + Number(r.credit || 0), 0);
@@ -54,7 +55,7 @@ export default function CommissionVoucherView() {
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(-1)}>Back to Lists</button>
           {canEdit && isOpen && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/commission-vouchers/${id}/edit`)}>Edit</button>}
-          {canEdit && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
+          {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
 

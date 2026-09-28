@@ -56,6 +56,7 @@ export default function CommissionPayableView() {
   if (loading || !cp) return <LoadingSpinner />;
 
   const canEdit = can('/commission-payables', 'can_edit');
+  const canVoid = can('/commission-payables', 'can_void');
   const isOpen = cp.status !== 'void';
 
   // Mirrors the server's PUT guards: a payable that has been paid, or that a live Commission
@@ -113,7 +114,7 @@ export default function CommissionPayableView() {
             >Mark Paid</button>
           )}
           {canEdit && isOpen && cp.status === 'paid' && <button className="btn btn-sm" disabled={busy} onClick={() => handlePay(false)}>Mark Unpaid</button>}
-          {canEdit && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
+          {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
 

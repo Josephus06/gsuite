@@ -370,7 +370,7 @@ router.put('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve'),
   }
 });
 
-router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[adj]] = await conn.query('SELECT status, date_created FROM inventory_adjustments WHERE id = ?', [req.params.id]);

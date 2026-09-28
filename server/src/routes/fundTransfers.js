@@ -110,7 +110,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
-router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[ft]] = await conn.query('SELECT status, date_created FROM fund_transfers WHERE id = ?', [req.params.id]);

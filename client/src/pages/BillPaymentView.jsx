@@ -75,6 +75,7 @@ export default function BillPaymentView() {
   if (loading || !bp) return <LoadingSpinner />;
 
   const canEdit = can('/bill-payments', 'can_edit');
+  const canVoid = can('/bill-payments', 'can_void');
   const isOpen = bp.status === 'open';
   const applyLines = bp.lines.filter((l) => l.vendor_bill_id);
   const debitLines = bp.lines.filter((l) => l.bill_credit_id);
@@ -87,7 +88,7 @@ export default function BillPaymentView() {
           <button className="btn btn-sm" onClick={() => navigate('/bill-payments')}>Back</button>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Bill Payment isn't implemented in this build">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
-          {canEdit && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
+          {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
 

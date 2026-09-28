@@ -63,6 +63,7 @@ export default function CustomerPaymentView() {
   if (loading || !cp) return <LoadingSpinner />;
 
   const canEdit = can('/customer-payments', 'can_edit');
+  const canVoid = can('/customer-payments', 'can_void');
   // Anything not already voided can be voided -- a deposited payment included, since
   // 'void' is the terminal state rather than an alternative to being deposited.
   const isOpen = cp.status !== 'voided';
@@ -89,7 +90,7 @@ export default function CustomerPaymentView() {
           )}
           {cp.deposit_id && <button className="btn btn-sm" onClick={() => navigate(`/deposits/${cp.deposit_id}`)}>View Deposit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
-          {canEdit && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
+          {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
 

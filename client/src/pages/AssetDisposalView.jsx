@@ -91,7 +91,7 @@ export default function AssetDisposalView() {
             <button className="btn btn-sm btn-primary" disabled={busy}
               onClick={() => act(() => api.post(`/asset-disposals/${id}/post`), 'Post this disposal? The asset leaves the balance sheet and is retired.')}>Post to Ledger</button>
           )}
-          {d.status === 'posted' && can('/asset-disposals', 'can_approve') && (
+          {d.status === 'posted' && can('/asset-disposals', 'can_void') && (
             <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setShowVoid(true)}>Void</button>
           )}
           {isDraft && can('/asset-disposals', 'can_delete') && (

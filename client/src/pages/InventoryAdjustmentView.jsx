@@ -85,6 +85,7 @@ export default function InventoryAdjustmentView() {
   if (loading || !adj) return <LoadingSpinner />;
 
   const canEdit = can('/inventory-adjustments', 'can_edit');
+  const canVoid = can('/inventory-adjustments', 'can_void');
   const canApprove = can('/inventory-adjustments', 'can_approve');
   const isPending = adj.status === 'pending_approval';
   const lines = adj.lines || [];
@@ -97,7 +98,7 @@ export default function InventoryAdjustmentView() {
           <button className="btn btn-sm" onClick={() => navigate('/inventory-adjustments')}>Back to Lists</button>
           {canApprove && isPending && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>Approve</button>}
           {canEdit && isPending && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/inventory-adjustments/${id}/edit`)}>Edit</button>}
-          {canEdit && isPending && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
+          {canVoid && isPending && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
         </div>
       </div>
 

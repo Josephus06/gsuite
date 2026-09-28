@@ -70,6 +70,7 @@ export default function VendorBillView() {
   if (loading || !vb) return <LoadingSpinner />;
 
   const canEdit = can('/vendor-bills', 'can_edit');
+  const canVoid = can('/vendor-bills', 'can_void');
   const isOpen = vb.status === 'open';
 
   return (
@@ -82,7 +83,7 @@ export default function VendorBillView() {
           {isOpen && <button className="btn btn-sm btn-primary" onClick={() => setShowBillPaymentModal(true)}>Bill Payment</button>}
           {isOpen && <button className="btn btn-sm btn-primary" onClick={() => setShowBillCreditModal(true)}>Bill Credit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
-          {canEdit && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
+          {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
         </div>
       </div>
 

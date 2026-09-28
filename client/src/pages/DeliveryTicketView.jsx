@@ -74,6 +74,7 @@ export default function DeliveryTicketView() {
   if (loading || !dt) return <LoadingSpinner />;
 
   const canEdit = can('/delivery-tickets', 'can_edit');
+  const canVoid = can('/delivery-tickets', 'can_void');
   // Billing the ticket raises a Sales Invoice, so it answers to the invoice page's permission,
   // not this one -- same rule as the Sales Order's Bill menu, Head Office on can_edit and the
   // branches on can_view. Gated on both because converting the ticket needs this page too.
@@ -101,7 +102,7 @@ export default function DeliveryTicketView() {
               )}
             </div>
           )}
-          {canEdit && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
+          {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
 

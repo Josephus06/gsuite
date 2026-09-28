@@ -61,6 +61,7 @@ export default function AssemblyBuildView() {
   if (loading || !ab) return <LoadingSpinner />;
 
   const canEdit = can('/assembly-builds', 'can_edit');
+  const canVoid = can('/assembly-builds', 'can_void');
   const isCancelled = ab.status === 'cancelled';
   const processes = ab.processes || [];
 
@@ -72,7 +73,7 @@ export default function AssemblyBuildView() {
           <button className="btn btn-sm" onClick={() => navigate('/assembly-builds')}>Back to Lists</button>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Assembly Build isn't implemented in this build">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
-          {canEdit && !isCancelled && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
+          {canVoid && !isCancelled && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
         </div>
       </div>
 

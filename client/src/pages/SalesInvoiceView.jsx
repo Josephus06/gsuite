@@ -103,6 +103,7 @@ export default function SalesInvoiceView() {
   }
 
   const canEdit = can('/sales-invoices', 'can_edit');
+  const canVoid = can('/sales-invoices', 'can_void');
   const isSaved = si.status === 'saved';
   // Both actions settle or reduce what's owed, so they only make sense while something is
   // still owed and the invoice hasn't been voided.
@@ -134,7 +135,7 @@ export default function SalesInvoiceView() {
           />
           {canTakePayment && isSettleable && <button className="btn btn-sm btn-primary" onClick={() => setShowPaymentModal(true)}>Accept Payment</button>}
           {canRaiseCreditMemo && isSettleable && <button className="btn btn-sm btn-primary" onClick={() => setShowCreditMemoModal(true)}>Credit Memo</button>}
-          {canEdit && isSaved && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Void</button>}
+          {canVoid && isSaved && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Void</button>}
         </div>
       </div>
 

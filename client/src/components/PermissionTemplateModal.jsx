@@ -12,6 +12,7 @@ const PERMISSION_ACTIONS = [
   { key: 'can_edit', label: 'Can Update' },
   { key: 'can_delete', label: 'Can Delete' },
   { key: 'can_approve', label: 'Can Approve' },
+  { key: 'can_void', label: 'Can Void' },
 ];
 
 export default function PermissionTemplateModal({ accountTypes, canEdit, onClose }) {

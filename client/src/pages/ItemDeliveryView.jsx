@@ -145,7 +145,7 @@ export default function ItemDeliveryView() {
   // Three separate rights now, not one: recording what a delivery cost is not the same
   // permission as cancelling it and putting the stock back on the Job Order.
   const canEdit = can('/item-deliveries', 'can_edit');
-  const canCancel = can('/item-deliveries', 'can_delete');
+  const canVoid = can('/item-deliveries', 'can_void');
   const isCancelled = d.status === 'cancelled';
   const lines = d.lines || [];
 
@@ -157,7 +157,7 @@ export default function ItemDeliveryView() {
           <button className="btn btn-sm" onClick={() => navigate(`/sales-orders/${d.sales_order_id}`)}>Back to Lists</button>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Item Delivery isn't implemented in this build">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
-          {canCancel && !isCancelled && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
+          {canVoid && !isCancelled && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
         </div>
       </div>
 

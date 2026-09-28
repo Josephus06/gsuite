@@ -5,7 +5,7 @@ const pool = require('../db');
 // "Can Update" for years. can_edit opens the Edit form -- structural change to the record.
 // can_update moves the transaction along its own workflow without touching its content, which
 // is what an artist sending a layout for Sales Approval needs and all they should have.
-const PERMISSION_ACTIONS = new Set(['can_view', 'can_add', 'can_edit', 'can_update', 'can_view_all', 'can_delete', 'can_approve', 'can_print']);
+const PERMISSION_ACTIONS = new Set(['can_view', 'can_add', 'can_edit', 'can_update', 'can_view_all', 'can_delete', 'can_approve', 'can_print', 'can_void']);
 
 // System Admin is the one role defined by the account itself rather than by a permission
 // row -- create-account-type-permissions.js seeds it full access on every page. The JWT
