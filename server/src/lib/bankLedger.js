@@ -1,4 +1,5 @@
 const pool = require('../db');
+const { booksStart } = require('./openingBalances');
 
 // Every movement that should have hit a bank account, from the documents that caused it.
 //
@@ -94,8 +95,13 @@ async function outstandingMovements(accountId, { asOf, includeReconciliationId =
 
   // Dates are compared as dates. A cheque released ON the statement date belongs to that
   // statement, so the bound is inclusive.
-  const dateClause = asOf ? 'AND m.txn_date <= ?' : '';
+  let dateClause = asOf ? 'AND m.txn_date <= ?' : '';
   const dateParams = asOf ? [asOf] : [];
+  // With an opening loaded, everything before the books start is already inside the account's
+  // opening balance (lib/openingBalances.js); listing it again as outstanding would ask October's
+  // reconciliation to clear years of migrated history.
+  const books = await booksStart();
+  if (books) { dateClause += ' AND m.txn_date >= ?'; dateParams.push(books.start); }
 
   const claimed = includeReconciliationId
     ? `AND NOT EXISTS (SELECT 1 FROM bank_reconciliation_matches x
@@ -132,12 +138,24 @@ async function movement(accountId, sourceKind, sourceId, q = pool) {
 async function bookBalance(accountId, asOf, q = pool) {
   const parts = Object.values(SOURCE_SQL);
   const params = parts.map(() => accountId);
+  // With an opening loaded and a date on or after the books start: the account's opening balance
+  // (the source's own 2025-12-31 figure) plus movements from the start. Before it, history as ever.
+  const books = await booksStart();
+  const fromOpening = books && String(asOf).slice(0, 10) >= books.start;
+  let opening = 0;
+  if (fromOpening) {
+    const [[ob]] = await q.query(
+      'SELECT COALESCE(SUM(debit - credit), 0) AS amt FROM opening_gl_balances WHERE account_id = ? AND as_of = ?',
+      [accountId, books.asOf],
+    );
+    opening = Number(ob.amt || 0);
+  }
   const [[row]] = await q.query(
     `SELECT COALESCE(SUM(m.amount), 0) AS balance FROM (${parts.join(' UNION ALL ')}) m
-      WHERE m.txn_date <= ?`,
-    [...params, asOf],
+      WHERE m.txn_date <= ?${fromOpening ? ' AND m.txn_date >= ?' : ''}`,
+    fromOpening ? [...params, asOf, books.start] : [...params, asOf],
   );
-  return Number(row.balance || 0);
+  return Math.round((opening + Number(row.balance || 0)) * 100) / 100;
 }
 
 module.exports = { SOURCE_SQL, outstandingMovements, movement, bookBalance };
