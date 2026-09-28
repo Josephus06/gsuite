@@ -1,4 +1,5 @@
 const pool = require('../db');
+const { booksStart, openingGlLines } = require('./openingBalances');
 const { depositGlRows } = require('./depositGl');
 
 // ---------------------------------------------------------------------------------------
@@ -859,7 +860,7 @@ async function computeAssetDisposalGl(d) {
   return rows;
 }
 
-async function getPostedGlLines({ toDate, fromDate }) {
+async function computePostedGlLines({ toDate, fromDate }) {
   const dateFilter = (col) => {
     const clauses = [`${col} <= ?`];
     const params = [toDate];
@@ -1418,6 +1419,23 @@ async function getPostedGlLines({ toDate, fromDate }) {
   } finally {
     endRefRun();
   }
+}
+
+// The ledger every financial report reads. When T1S's books have an opening loaded
+// (lib/openingBalances.js), they start from the source system's closing position: only documents
+// dated from the books start (2026-01-01) are read, and each account's 2025-12-31 balance comes in
+// as one opening line dated that day. Records before the start stay in T1S as history but no
+// longer feed any balance -- they were migrated with known gaps, and the source's own closing is
+// the figure to continue from. A report that ends before the books start still reads history
+// as it always did; with no opening loaded nothing changes at all.
+async function getPostedGlLines({ toDate, fromDate }) {
+  const books = await booksStart();
+  if (!books || String(toDate).slice(0, 10) < books.start) return computePostedGlLines({ toDate, fromDate });
+  const from = fromDate && String(fromDate).slice(0, 10) > books.start ? fromDate : books.start;
+  const lines = await computePostedGlLines({ toDate, fromDate: from });
+  // A window that opens after the books start has the opening before it, like any earlier line.
+  if (fromDate && String(fromDate).slice(0, 10) > books.start) return lines;
+  return [...(await openingGlLines(books.asOf)), ...lines];
 }
 
 module.exports = {

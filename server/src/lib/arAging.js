@@ -1,4 +1,5 @@
 const pool = require('../db');
+const { agingAnchor, openingItems } = require('./openingBalances');
 
 // AR Aging (Accounting > Reports > AR Aging). Every customer's outstanding receivable as
 // of a date, split into age buckets. Reconstructed point-in-time -- like the four GL
@@ -123,7 +124,7 @@ function locationClause(alias, { locationId, noLocation }) {
 //
 // The display fields (BS #, memo, PO #, location) are along for the ride. They cost nothing on
 // queries that were already reading these rows, and the Details report needs them.
-async function collectOpenItems(asOf, filters = {}) {
+async function collectOpenItemsFromDocs(asOf, filters = {}) {
   const { nameStarts, customerId } = filters;
   const nameClause = nameStarts ? ' AND c.name LIKE ?' : '';
   const nameParam = nameStarts ? [`${nameStarts}%`] : [];
@@ -468,7 +469,7 @@ async function searchArCustomers(term) {
 
 // The DETAILS drill-down: the individual open items making up one customer's balance, each
 // with its own remaining and bucket -- what the aging row is the sum of.
-async function buildArAgingCustomerDetails(customerId, asOf) {
+async function buildArAgingCustomerDetailsFromDocs(customerId, asOf) {
   const [[customer]] = await pool.query('SELECT id, name FROM customers WHERE id = ?', [customerId]);
   if (!customer) return null;
 
@@ -596,6 +597,46 @@ async function buildArAgingCustomerLedger(customerId, asOf) {
   });
 
   return { customer_id: customer.id, customer_name: customer.name, as_of: asOf, ledger, total_balance: running };
+}
+
+// When T1S's books start from an opening balance (lib/openingBalances.js), the aging is the
+// customer documents open at the books start -- each less what 2026 has settled against it -- plus
+// every document dated from the start. Pre-start documents are history: the source system's own
+// 2025-12-31 aging is what they amounted to. An as-of date before the start reads history as before.
+async function collectOpenItems(asOf, filters = {}) {
+  const items = await collectOpenItemsFromDocs(asOf, filters);
+  const books = await agingAnchor('ar', asOf);
+  if (!books) return items;
+  const opening = await openingItems('ar', asOf, books, {
+    partyId: filters.customerId, nameStarts: filters.nameStarts, locationId: filters.locationId,
+  });
+  return [
+    ...opening.map((o) => ({
+      customer_id: o.party_id, customer_name: o.party_name, type: o.type, reference: o.reference, id: o.id,
+      date: o.date, due_date: o.due_date, aging_date: o.due_date || o.date,
+      original_amount: o.original_amount, balance: o.balance,
+      bs_no: null, po_no: null, memo: 'Opening balance from the source system', location_name: null,
+      marked_paid_unevidenced: false, opening: true,
+    })),
+    ...items.filter((i) => String(i.date).slice(0, 10) >= books.start),
+  ];
+}
+
+async function buildArAgingCustomerDetails(customerId, asOf) {
+  const result = await buildArAgingCustomerDetailsFromDocs(customerId, asOf);
+  if (!result) return result;
+  const books = await agingAnchor('ar', asOf);
+  if (!books) return result;
+  const opening = await openingItems('ar', asOf, books, { partyId: customerId });
+  const items = [
+    ...opening.map((o) => ({
+      type: o.type, reference: o.reference, id: o.id, date: o.date, due_date: o.due_date,
+      original_amount: o.original_amount, balance: o.balance,
+      days_overdue: Math.max(daysBetween(o.due_date || o.date, asOf), 0), opening: true,
+    })),
+    ...result.items.filter((i) => String(i.date).slice(0, 10) >= books.start),
+  ].sort((a, b) => new Date(a.date) - new Date(b.date));
+  return { ...result, items, total_balance: round2(items.reduce((sum, i) => sum + i.balance, 0)) };
 }
 
 module.exports = {

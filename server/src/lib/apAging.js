@@ -1,4 +1,5 @@
 const pool = require('../db');
+const { agingAnchor, openingItems } = require('./openingBalances');
 
 // AP Aging (Accounting > Reports > AP Aging). The payables mirror of lib/arAging.js: every
 // vendor's outstanding balance as of a date, split into the same five age buckets. Built the
@@ -80,7 +81,7 @@ function locationClause(alias, { locationId, noLocation }) {
 // Every open payables item as of a date. One function feeding both the buckets and the
 // drill-down, for the same reason the AR side has one: a detail that does not add up to its
 // summary is worse than no detail.
-async function collectOpenApItems(asOf, filters = {}) {
+async function collectOpenApItemsFromDocs(asOf, filters = {}) {
   const { nameStarts, supplierId } = filters;
   const includeUnevidenced = filters.includeUnevidenced === undefined
     ? UNEVIDENCED_DEFAULT : !!filters.includeUnevidenced;
@@ -286,6 +287,31 @@ async function collectOpenApItems(asOf, filters = {}) {
     unlinked_payments: { count: unlinkedPayments.count, amount: round2(unlinkedPayments.amount), included: includeUnevidenced },
     header_disagreement: { count: headerDisagreement.count, amount: round2(headerDisagreement.amount) },
   };
+}
+
+// With an opening balance loaded (lib/openingBalances.js) the aging is the supplier documents open
+// at the books start -- each less what 2026 has paid or credited against it -- plus everything
+// dated from the start. Pre-start documents are history; the source system's own 2025-12-31 AP
+// aging is what they amounted to. An as-of date before the start reads history as before.
+async function collectOpenApItems(asOf, filters = {}) {
+  const res = await collectOpenApItemsFromDocs(asOf, filters);
+  const books = await agingAnchor('ap', asOf);
+  if (!books) return res;
+  const opening = await openingItems('ap', asOf, books, {
+    partyId: filters.supplierId, nameStarts: filters.nameStarts, locationId: filters.locationId,
+  });
+  const items = [
+    ...opening.map((o) => ({
+      supplier_id: o.party_id, supplier_name: o.party_name,
+      type: o.type === 'Bill' ? 'Vendor Bill' : o.type, reference: o.reference, id: o.id,
+      date: o.date, due_date: o.due_date, aging_date: o.due_date || o.date,
+      original_amount: o.original_amount, balance: o.balance,
+      po_no: null, ref_no: null, memo: 'Opening balance from the source system', location_name: null,
+      marked_paid_unevidenced: false, opening: true,
+    })),
+    ...res.items.filter((i) => String(i.date).slice(0, 10) >= books.start),
+  ];
+  return { ...res, items };
 }
 
 async function buildApAging(asOf, filters = {}) {
