@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { useItemBalances } from '../utils/itemBalances';
 
 const STATUS_LABELS = {
   pending_fulfillment: 'Pending Fulfillment',
@@ -53,6 +54,22 @@ export default function TransferOrderEdit() {
   const [employees, setEmployees] = useState([]);
   const [inventoryItems, setInventoryItems] = useState([]);
   const autoCreated = useRef(false);
+
+  // Qty on Hand for materials picked before the first save: the Bin Card balance at the chosen
+  // Withdraw From location, the same figure a saved line shows. Nothing until a location is
+  // chosen -- a company-wide total would read as stock this warehouse may not have.
+  const { balances: draftBalances, load: loadDraftBalances } = useItemBalances(form.withdraw_from_location_id || null);
+  const draftItemKey = draftLines.map((l) => l.item_id).join(',');
+  useEffect(() => {
+    if (isNew && form.withdraw_from_location_id && draftItemKey) {
+      loadDraftBalances(draftItemKey.split(',').map((itemId) => ({ id: Number(itemId) })));
+    }
+  }, [isNew, form.withdraw_from_location_id, draftItemKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  function draftOnHand(l) {
+    const b = form.withdraw_from_location_id ? draftBalances[l.item_id] : null;
+    if (!b) return <span className="muted">—</span>;
+    return qty(l.unit_used === 'stock' && b.stock_unit_title ? b.balance_stock : b.balance_base);
+  }
 
   useEffect(() => {
     Promise.all([
@@ -227,9 +244,9 @@ export default function TransferOrderEdit() {
           <h3 className="subsection" style={{ marginTop: 0 }}>Materials</h3>
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Item</th><th>Qty</th><th>Unit Used</th><th>Unit</th><th>Memo</th><th></th></tr></thead>
+              <thead><tr><th>Item</th><th>Qty</th><th>Unit Used</th><th>Unit</th><th>Qty on Hand</th><th>Memo</th><th></th></tr></thead>
               <tbody>
-                {draftLines.length === 0 && <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>No materials yet.</td></tr>}
+                {draftLines.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>No materials yet.</td></tr>}
                 {draftLines.map((l, i) => {
                   const set = (patch) => setDraftLines((ls) => ls.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
                   return (
@@ -243,6 +260,7 @@ export default function TransferOrderEdit() {
                         </select>
                       </td>
                       <td>{l.unit_used === 'base' ? l.base_unit_title : l.stock_unit_title}</td>
+                      <td>{draftOnHand(l)}</td>
                       <td><input style={{ width: 160 }} value={l.memo} onChange={(e) => set({ memo: e.target.value })} /></td>
                       <td><button type="button" className="btn btn-sm btn-danger" onClick={() => setDraftLines((ls) => ls.filter((_, idx) => idx !== i))}>Delete</button></td>
                     </tr>

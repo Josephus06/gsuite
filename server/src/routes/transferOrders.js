@@ -20,11 +20,9 @@ const ROUTE = '/transfer-orders';
 const FULFILLMENT_ROUTE = '/item-fulfillments';
 const RECEIPT_ROUTE = '/item-receipts';
 
-// qty_on_hand is joined live from the withdraw-from location rather than read off the
-// line's own stored column -- that column is only a creation-time snapshot, so it goes
-// stale the moment stock moves afterward (e.g. an Inventory Adjustment approved after
-// the TO was raised). Aliasing il.qty_on_hand AS qty_on_hand after l.* overrides the
-// stale value with the live one.
+// qty_on_hand is NOT read from the line's own column (a creation-time snapshot) nor from
+// inventory_locations (21 rows for 8,346 item/location pairs, none agreeing with the Bin Card).
+// withLiveOnHand overwrites it with the Bin Card's closing balance at the Withdraw From location.
 // Unit Used says which of the item's own two units this line is asking for -- the warehouse hands
 // over a whole ROLL rather than cutting 24 square feet off it -- and `unit` is rewritten to match
 // whenever somebody picks. Both units come back with every line so the screen can name the two
@@ -43,7 +41,7 @@ const UNIT_USED_RESOLVED = `
 
 const LINE_SELECT = `
   SELECT l.*, i.item_code, i.display_name AS item_name, i.item_type,
-         jo.job_order_no, il.qty_on_hand AS qty_on_hand,
+         jo.job_order_no, t.withdraw_from_location_id, i.conversion_factor,
          bu.title AS base_unit_title, su.title AS stock_unit_title,
          ${UNIT_USED_RESOLVED} AS unit_used_resolved
   FROM transfer_order_lines l
@@ -52,8 +50,23 @@ const LINE_SELECT = `
   LEFT JOIN units_of_measure bu ON bu.id = i.base_unit_id
   LEFT JOIN units_of_measure su ON su.id = i.stock_unit_id
   LEFT JOIN job_orders jo ON jo.id = l.job_order_id
-  LEFT JOIN inventory_locations il ON il.inventory_id = l.item_id AND il.location_id = t.withdraw_from_location_id
 `;
+
+// Qty on Hand for each line: what the Withdraw From location holds, by the same deriveOnHand the
+// Bin Card, Reallocate and Production use, so this column cannot disagree with them. deriveOnHand
+// answers in Base Unit; a line asking in its Stock Unit ("1 ROLL") is shown on hand in rolls too,
+// or 1 would sit beside a figure hundreds of times larger in a different unit.
+async function withLiveOnHand(db, lines) {
+  const itemIds = lines.map((l) => l.item_id).filter((id) => id != null);
+  if (!itemIds.length) return lines;
+  const byPair = await deriveOnHand(db, itemIds);
+  for (const l of lines) {
+    const base = Number(byPair.get(`${l.item_id}|${l.withdraw_from_location_id}`) || 0);
+    const factor = Number(l.conversion_factor) > 0 ? Number(l.conversion_factor) : 1;
+    l.qty_on_hand = l.unit_used_resolved === 'stock' && l.stock_unit_title ? base / factor : base;
+  }
+  return lines;
+}
 
 // Spelling follows inventory_adjustment_lines.unit_used, whose migrated rows hold 'StockUnit' /
 // 'BaseUnit' beside this app's own 'stock' / 'base'. Nothing migrated into the transfer order
@@ -296,7 +309,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     if (!row) return res.status(404).json({ error: 'Not found' });
 
     const [lines] = await pool.query(`${LINE_SELECT} WHERE l.transfer_order_id = ? ORDER BY l.line_no`, [req.params.id]);
-    res.json({ ...row, lines });
+    res.json({ ...row, lines: await withLiveOnHand(pool, lines) });
   } catch (err) {
     next(err);
   }
@@ -766,13 +779,14 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     });
     await logAudit(conn, { toId, userId: req.user.id, eventType: 'Created', fieldName: 'to_no', newValue: toNo });
 
+    // The stored qty_on_hand is a creation-time record in Base Unit, taken from the Bin Card
+    // figure rather than the inventory_locations table it used to copy.
+    const lineList = Array.isArray(lines) ? lines : [];
+    const onHandAtCreate = await deriveOnHand(conn, lineList.map((l) => l.item_id).filter(Boolean));
     let lineNo = 1;
-    for (const line of (Array.isArray(lines) ? lines : [])) {
+    for (const line of lineList) {
       if (!line.item_id || !line.qty) continue;
-      const [[stock]] = await conn.query(
-        'SELECT qty_on_hand FROM inventory_locations WHERE inventory_id = ? AND location_id = ?',
-        [line.item_id, withdrawFromId]
-      );
+      const stock = { qty_on_hand: onHandAtCreate.get(`${line.item_id}|${withdrawFromId}`) };
       const [[{ toCount }]] = await conn.query(
         'SELECT COUNT(*) + 1 AS toCount FROM transfer_order_lines WHERE job_order_process_id = ?',
         [line.job_order_process_id || 0]
@@ -846,10 +860,8 @@ router.post('/:id/lines', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
     // that -- see UNIT_USED_RESOLVED.
     const unitUsed = unitUsedIn == null || unitUsedIn === '' ? null : normaliseUnitUsed(unitUsedIn);
     const unitTitle = unitUsed ? await unitTitleFor(conn, itemId, unitUsed) : (unit || null);
-    const [[stock]] = await conn.query(
-      'SELECT qty_on_hand FROM inventory_locations WHERE inventory_id = ? AND location_id = ?',
-      [itemId, t.withdraw_from_location_id]
-    );
+    const onHandAtAdd = await deriveOnHand(conn, [itemId]);
+    const stock = { qty_on_hand: onHandAtAdd.get(`${itemId}|${t.withdraw_from_location_id}`) };
     const [[{ nextLine }]] = await conn.query(
       'SELECT COALESCE(MAX(line_no), 0) + 1 AS nextLine FROM transfer_order_lines WHERE transfer_order_id = ?',
       [req.params.id]
@@ -862,6 +874,7 @@ router.post('/:id/lines', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
     await conn.commit();
 
     const [[row]] = await pool.query(`${LINE_SELECT} WHERE l.id = ?`, [result.insertId]);
+    await withLiveOnHand(pool, [row]);
     res.status(201).json(row);
   } catch (err) {
     await conn.rollback();
@@ -911,6 +924,7 @@ router.put('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_edit
     );
     const [[row]] = await pool.query(`${LINE_SELECT} WHERE l.id = ?`, [req.params.lineId]);
     if (!row) return res.status(404).json({ error: 'Line not found' });
+    await withLiveOnHand(pool, [row]);
     res.json(row);
   } catch (err) {
     next(err);
