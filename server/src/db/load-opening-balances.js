@@ -31,6 +31,11 @@ const AS_OF = (process.argv.find((a) => a.startsWith('--as-of=')) || '').split('
 const ITEMS_ONLY = process.argv.includes('--items-only');
 const RETAINED_EARNINGS = '29000';
 const OPENING_DIFFERENCE = '1';
+// The control accounts the agings tie to. In the source they do NOT agree with the agings at
+// 2025-12-31 (AR 15,279,091.16 vs 2,461,208.06; AP 14,506,892.00 vs 6,264,695.33): printed for the
+// accountant, carried over as the source has them.
+const AR_CONTROL = '12100';
+const AP_CONTROL = '20100';
 const arg = (n) => (process.argv.find((a) => a.startsWith(`--${n}=`)) || '').split('=').slice(1).join('=') || null;
 const DIR = arg('dir');
 const DRY = process.argv.includes('--dry-run');
@@ -151,7 +156,6 @@ async function main() {
   if (gl.missing.length) throw new Error('Some source accounts are not in the T1S chart of accounts; add them before loading.');
   } else console.log(`GENERAL LEDGER  -- skipped (--items-only); the GL opening stays as loaded`);
 
-  const glCode = (predicate) => [...gl.balances].filter(([code]) => predicate(coaByCode.get(code))).reduce((s, [, v]) => s + v, 0);
 
   // ---- AP
   const apSnap = readJson('ap.json');
@@ -164,10 +168,10 @@ async function main() {
     const [bills] = await pool.query('SELECT id, bill_no FROM vendor_bills WHERE bill_no IN (?)', [apItems.map((i) => i.docNo).concat('')]);
     const billByNo = new Map(bills.map((b) => [b.bill_no, b.id]));
     for (const i of apItems) { i.partyId = supByPk.get(i.partyPk) || null; i.linkId = i.docType === 'Bill' ? (billByNo.get(i.docNo) || null) : null; }
-    const apGl = -glCode((c) => /payable/i.test(c.account_name) && /trade|account/i.test(c.account_name));
+    const apGl = -(gl.balances.get(AP_CONTROL) || 0);
     console.log('\nACCOUNTS PAYABLE');
     console.log(`  open items ${apItems.length}   total ${peso(apItems.reduce((s, i) => s + i.balance, 0))}   (source aging total ${peso(apSnap.sum)})`);
-    console.log(`  GL accounts payable (trade) balance: ${peso(apGl)}`);
+    console.log(`  GL ${AP_CONTROL} Accounts Payable - Trade: ${peso(apGl)}`);
     console.log(`  suppliers unmatched: ${apItems.filter((i) => !i.partyId).length}   bills with no T1S bill: ${apItems.filter((i) => i.docType === 'Bill' && !i.linkId).length}`);
     const byType = {}; apItems.forEach((i) => { byType[i.docType] = (byType[i.docType] || 0) + i.balance; });
     console.log(`  by type: ${Object.entries(byType).map(([k, v]) => `${k} ${peso(v)}`).join(' | ')}`);
@@ -187,10 +191,10 @@ async function main() {
     const [invs] = await pool.query('SELECT id, invoice_no FROM sales_invoices WHERE invoice_no IN (?)', [arItems.map((i) => i.docNo).concat('')]);
     const invByNo = new Map(invs.map((v) => [v.invoice_no, v.id]));
     for (const i of arItems) { i.partyId = custByName.get(i.partyName.toUpperCase()) || null; i.linkId = i.docType === 'Invoice' ? (invByNo.get(i.docNo) || null) : null; }
-    const arGl = glCode((c) => /receivable/i.test(c.account_name) && /trade|account/i.test(c.account_name));
+    const arGl = gl.balances.get(AR_CONTROL) || 0;
     console.log('\nACCOUNTS RECEIVABLE');
     console.log(`  open items ${arItems.length}   total ${peso(arItems.reduce((s, i) => s + i.balance, 0))}   (source aging total ${peso(arSnap.sum)})`);
-    console.log(`  GL accounts receivable (trade) balance: ${peso(arGl)}`);
+    console.log(`  GL ${AR_CONTROL} Accounts Receivable Trade: ${peso(arGl)}`);
     console.log(`  customers unmatched: ${arItems.filter((i) => !i.partyId).length}   invoices with no T1S invoice: ${arItems.filter((i) => i.docType === 'Invoice' && !i.linkId).length}`);
     const byType = {}; arItems.forEach((i) => { byType[i.docType] = (byType[i.docType] || 0) + i.balance; });
     console.log(`  by type: ${Object.entries(byType).map(([k, v]) => `${k} ${peso(v)}`).join(' | ')}`);
