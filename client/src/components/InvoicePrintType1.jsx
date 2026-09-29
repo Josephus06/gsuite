@@ -43,7 +43,16 @@ export const FORM = {
   items: {
     top: 43,
     rowHeight: 5,
-    rowsPerPage: 6,
+    // How far down the form the item band may run, counted in the pad's own 5mm rules: 7 x 5mm
+    // = 35mm, so items occupy 43mm to 78mm and the Order ID line lands at 83mm, still clear of
+    // the totals at 95mm.
+    //
+    // It was 6. At 7.5pt a text line is 3.04mm, so a 30mm band held nine lines and a ten-item
+    // invoice went onto a second pre-printed form -- INV-82896 needs eleven lines, because its
+    // first description wraps. Eleven fit in 35mm. Raising this does NOT spread a sparse sheet
+    // out: the pitch is still clamped at rowHeight, so anything up to seven items lands on the
+    // printed rules exactly as before.
+    rowsPerPage: 7,
     columns: {
       qty: { x: 24, w: 16, right: true },
       unit: { x: 28, w: 18 },
