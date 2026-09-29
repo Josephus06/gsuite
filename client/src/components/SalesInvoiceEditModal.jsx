@@ -4,16 +4,16 @@ import Modal from './Modal';
 import EntityPicker from './EntityPicker';
 import LoadingSpinner from './LoadingSpinner';
 
-// Editing an OPEN invoice's header.
+// Editing an OPEN invoice: the header, and the items.
 //
-// The items are deliberately absent. They came from delivered-but-unbilled quantities, and
-// billing them moved running totals on the job orders and the Sales Order's status -- see the
-// note on PUT /sales-invoices/:id. What this corrects is the header: a mistyped PO number, the
-// wrong term or due date, a missing BS/SI number, the wrong EWT rate. Quantities and prices are
-// shown on the invoice behind this and stay exactly as billed.
+// The items were left out at first because billing them moved running totals on the job orders
+// and the Sales Order's status. They are in now, and the server moves those totals with them --
+// a quantity change applies its delta to job_orders.quantity_invoiced, is refused if it exceeds
+// what the job order actually delivered, and re-derives the order's status. See PUT
+// /sales-invoices/:id.
 //
-// The one field here that moves money is Withholding Tax %, so the figures it drives are
-// recomputed live beside it rather than appearing only after saving.
+// Every figure the edit can move is recomputed live here, with the same arithmetic the server
+// uses, so nothing about the totals is a surprise after saving.
 function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00';
@@ -48,6 +48,17 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
   const [billToAddress, setBillToAddress] = useState(invoice.bill_to_address || '');
   const [memo, setMemo] = useState(invoice.memo || '');
   const [withholdingPct, setWithholdingPct] = useState(Number(invoice.withholding_tax_pct || 0));
+  // `original` rides along so the line's tax rate can be recovered and the audit shows what moved.
+  const [items, setItems] = useState(() => (invoice.lines || []).map((l) => ({
+    id: l.id,
+    description: l.description || '',
+    quantity: Number(l.quantity || 0),
+    units: l.units || '',
+    price_per_unit: Number(l.price_per_unit || 0),
+    disc_percent: Number(l.disc_percent || 0),
+    job_order_no: l.job_order_no || '',
+    original: l,
+  })));
   const [employees, setEmployees] = useState([]);
   const [locations, setLocations] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -77,15 +88,42 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
     }).catch(() => { setError('Could not load the pickers.'); setLoading(false); });
   }, [invoice.term]);
 
-  // The same arithmetic the server does, so the preview cannot say one thing and the save another:
-  // the lines are fixed, so only EWT and Amount Due move.
+  // The same arithmetic the server does, line by line, so the preview cannot say one thing and
+  // the save another. A line's tax RATE is not sent to the client, so it is recovered from what
+  // the line was billed at (tax / net) -- exact for every rate in this data, and 0 for the
+  // zero-rated and exempt lines where there is nothing to recover.
+  const priced = items.map((it) => {
+    const qty = Number(it.quantity) || 0;
+    const price = Number(it.price_per_unit) || 0;
+    const disc = Number(it.disc_percent) || 0;
+    const subtotal = Number((price * qty).toFixed(2));
+    const discAmount = Number((subtotal * (disc / 100)).toFixed(2));
+    const net = Number((subtotal - discAmount).toFixed(2));
+    const rate = Number(it.original.net_of_tax) > 0
+      ? (Number(it.original.tax_amount) / Number(it.original.net_of_tax)) * 100 : 0;
+    const tax = Number((net * (rate / 100)).toFixed(2));
+    return { ...it, subtotal, discAmount, net, tax, gross: Number((net + tax).toFixed(2)) };
+  });
+
   const pct = Number(withholdingPct) || 0;
-  const ewt = Number(((Number(invoice.net_of_tax) || 0) * (pct / 100)).toFixed(2));
-  const amountDue = Number(((Number(invoice.gross_amount) || 0) - ewt).toFixed(2));
+  const netOfTax = Number(priced.reduce((s, l) => s + l.net, 0).toFixed(2));
+  const taxAmount = Number(priced.reduce((s, l) => s + l.tax, 0).toFixed(2));
+  const grossAmount = Number(priced.reduce((s, l) => s + l.gross, 0).toFixed(2));
+  const ewt = Number((netOfTax * (pct / 100)).toFixed(2));
+  const amountDue = Number((grossAmount - ewt).toFixed(2));
   const pctValid = Number.isFinite(pct) && pct >= 0 && pct <= 100;
+  // A quantity of zero or less has no meaning on an invoice line, and the server refuses it.
+  const itemsValid = priced.every((l) => Number(l.quantity) > 0
+    && Number(l.price_per_unit) >= 0
+    && Number(l.disc_percent) >= 0 && Number(l.disc_percent) <= 100);
+
+  function setItem(id, patch) {
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+  }
 
   async function save() {
     if (!pctValid) { setError('Withholding Tax % must be between 0 and 100.'); return; }
+    if (!itemsValid) { setError('Check the item quantities, prices and discounts.'); return; }
     setSaving(true);
     setError('');
     try {
@@ -101,6 +139,19 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
         bill_to_address: billToAddress,
         memo,
         withholding_tax_pct: pct,
+        // Only the items that actually moved, so an untouched invoice sends no line work at all.
+        lines: items
+          .filter((it) => it.description !== (it.original.description || '')
+            || Number(it.quantity) !== Number(it.original.quantity || 0)
+            || Number(it.price_per_unit) !== Number(it.original.price_per_unit || 0)
+            || Number(it.disc_percent) !== Number(it.original.disc_percent || 0))
+          .map((it) => ({
+            id: it.id,
+            description: it.description,
+            quantity: Number(it.quantity),
+            price_per_unit: Number(it.price_per_unit),
+            disc_percent: Number(it.disc_percent),
+          })),
       });
       onSaved(data);
     } catch (e) {
@@ -208,12 +259,90 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
             </div>
           </div>
 
-          {/* What the edit will do to the money, before it is saved. Everything but EWT and
-              Amount Due is the billed lines' own totals and cannot move here. */}
+          {/* The items. Qty is the one that reaches outside this invoice -- the server moves the
+              job order's invoiced total with it and refuses more than was delivered -- so the
+              job order is named on each row. */}
+          <h3 className="subsection" style={{ marginTop: 16 }}>Items</h3>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>JO #</th>
+                  <th>Description</th>
+                  <th style={{ textAlign: 'right' }}>Qty</th>
+                  <th>Unit</th>
+                  <th style={{ textAlign: 'right' }}>Unit Price</th>
+                  <th style={{ textAlign: 'right' }}>Disc %</th>
+                  <th style={{ textAlign: 'right' }}>Net</th>
+                  <th style={{ textAlign: 'right' }}>Tax</th>
+                  <th style={{ textAlign: 'right' }}>Gross</th>
+                </tr>
+              </thead>
+              <tbody>
+                {priced.length === 0 && (
+                  <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 16 }}>This invoice has no items.</td></tr>
+                )}
+                {priced.map((l) => (
+                  <tr key={l.id}>
+                    <td style={{ whiteSpace: 'nowrap' }}>{l.job_order_no || '--'}</td>
+                    <td><input value={l.description} onChange={(e) => setItem(l.id, { description: e.target.value })} style={{ minWidth: 220 }} /></td>
+                    <td>
+                      <input
+                        type="number" min="0" step="0.0001" value={l.quantity}
+                        onChange={(e) => setItem(l.id, { quantity: e.target.value })}
+                        style={{ width: 90, textAlign: 'right' }}
+                      />
+                    </td>
+                    <td>{l.units}</td>
+                    <td>
+                      <input
+                        type="number" min="0" step="0.0001" value={l.price_per_unit}
+                        onChange={(e) => setItem(l.id, { price_per_unit: e.target.value })}
+                        style={{ width: 110, textAlign: 'right' }}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number" min="0" max="100" step="0.01" value={l.disc_percent}
+                        onChange={(e) => setItem(l.id, { disc_percent: e.target.value })}
+                        style={{ width: 80, textAlign: 'right' }}
+                      />
+                    </td>
+                    <td style={{ textAlign: 'right' }}>{money(l.net)}</td>
+                    <td style={{ textAlign: 'right' }}>{money(l.tax)}</td>
+                    <td style={{ textAlign: 'right' }}>{money(l.gross)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!itemsValid && (
+            <div style={{ color: '#b91c1c', fontSize: 12, marginTop: 4 }}>
+              Qty must be greater than 0, price cannot be negative, and discount must be between 0 and 100.
+            </div>
+          )}
+
+          {/* What the edit will do to the money, before it is saved. */}
           <div className="card" style={{ background: 'var(--surface-2, #f3f4f6)', marginTop: 12 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="muted">Net of Tax</span><span className="hi">{money(invoice.net_of_tax)}</span></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="muted">Tax</span><span className="hi">{money(invoice.tax_amount)}</span></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="muted">Gross</span><span className="hi">{money(invoice.gross_amount)}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span className="muted">Net of Tax</span>
+              <span className="hi">
+                {money(netOfTax)}
+                {Number(netOfTax) !== Number(invoice.net_of_tax) && (
+                  <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>was {money(invoice.net_of_tax)}</span>
+                )}
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="muted">Tax</span><span className="hi">{money(taxAmount)}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span className="muted">Gross</span>
+              <span className="hi">
+                {money(grossAmount)}
+                {Number(grossAmount) !== Number(invoice.gross_amount) && (
+                  <span className="muted" style={{ marginLeft: 6, fontSize: 12 }}>was {money(invoice.gross_amount)}</span>
+                )}
+              </span>
+            </div>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span className="muted">EWT</span>
               <span className="hi">
@@ -236,7 +365,7 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
 
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
             <button className="btn" onClick={onClose} disabled={saving}>Cancel</button>
-            <button className="btn btn-primary" onClick={save} disabled={saving || !pctValid}>
+            <button className="btn btn-primary" onClick={save} disabled={saving || !pctValid || !itemsValid}>
               {saving ? 'Saving...' : 'Save'}
             </button>
           </div>

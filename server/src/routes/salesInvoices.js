@@ -1049,10 +1049,105 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       return res.status(400).json({ error: 'Withholding Tax % must be between 0 and 100.' });
     }
 
-    // Re-derived from the stored line totals, never re-summed from the lines: the lines cannot
-    // change here, so the only figures that move are the two the EWT rate drives.
-    const ewtAmount = Number((Number(si.net_of_tax || 0) * (pct / 100)).toFixed(2));
-    const amountDue = Number((Number(si.gross_amount || 0) - ewtAmount).toFixed(2));
+    // ---- per-item edits ----
+    //
+    // Quantity is the dangerous one and the reason lines were left alone at first: billing a line
+    // ADDED its qty to job_orders.quantity_invoiced, which is what decides how much of a delivery
+    // is still billable and, through computeSalesOrderStatus, what the Sales Order's status says.
+    // Editing the number on the invoice without moving that running total lets the same delivery
+    // be billed twice. So a quantity change applies its DELTA to the job order, is capped at what
+    // the job order has actually delivered, and re-derives the order's status afterwards -- the
+    // same three steps the create path takes.
+    //
+    // Description, price and discount carry no such tie; they only re-price the line.
+    const submittedLines = Array.isArray(req.body.lines) ? req.body.lines : [];
+    const lineChanges = [];
+    if (submittedLines.length) {
+      const [existing] = await conn.query(
+        `SELECT sil.*, jo.quantity_delivered, jo.quantity_invoiced,
+                COALESCE(t1.rate, t2.rate, 0) AS tax_rate
+           FROM sales_invoice_lines sil
+           LEFT JOIN job_orders jo ON jo.id = sil.job_order_id
+           LEFT JOIN sales_order_lines sol ON sol.id = sil.sales_order_line_id
+           LEFT JOIN taxes t1 ON t1.id = sol.tax_code_id
+           LEFT JOIN taxes t2 ON t2.code = sil.tax_code
+          WHERE sil.sales_invoice_id = ?`,
+        [req.params.id],
+      );
+      const byId = new Map(existing.map((l) => [Number(l.id), l]));
+
+      for (const sub of submittedLines) {
+        const cur = byId.get(Number(sub.id));
+        if (!cur) return res.status(400).json({ error: 'One of the items is not on this Invoice.' });
+
+        const oldQty = Number(cur.quantity || 0);
+        const qty = sub.quantity === undefined || sub.quantity === null || sub.quantity === ''
+          ? oldQty : Number(sub.quantity);
+        if (!Number.isFinite(qty) || qty <= 0) {
+          return res.status(400).json({ error: `Qty on ${cur.description || 'an item'} must be greater than 0.` });
+        }
+        // Headroom = what the job order delivered, less everything invoiced against it OTHER than
+        // this line. Subtracting this line's own qty first is what lets an unchanged line re-save.
+        if (cur.job_order_id) {
+          const othersInvoiced = Number(cur.quantity_invoiced || 0) - oldQty;
+          const available = Number(cur.quantity_delivered || 0) - othersInvoiced;
+          if (qty > available + 1e-9) {
+            return res.status(409).json({
+              error: `Qty ${qty} on ${cur.description || 'an item'} exceeds what its job order has delivered and not yet billed (${available}).`,
+            });
+          }
+        }
+
+        const price = sub.price_per_unit === undefined || sub.price_per_unit === '' ? Number(cur.price_per_unit || 0) : Number(sub.price_per_unit);
+        const disc = sub.disc_percent === undefined || sub.disc_percent === '' ? Number(cur.disc_percent || 0) : Number(sub.disc_percent);
+        if (!Number.isFinite(price) || price < 0) return res.status(400).json({ error: 'Unit Price cannot be negative.' });
+        if (!Number.isFinite(disc) || disc < 0 || disc > 100) return res.status(400).json({ error: 'Discount % must be between 0 and 100.' });
+
+        // THE RATE COMES FROM WHAT THE LINE WAS BILLED AT, not from the taxes table.
+        //
+        // sales_invoice_lines.tax_code holds the live system's code ('VAT_PH:VATIN-12'), while
+        // the taxes table here has one row, coded 'VAT12'. So neither the code match nor the
+        // sales_order_line's tax_code_id resolves for migrated lines -- sales_order_line_id is
+        // itself unmapped on 121,008 of 121,012 lines -- and trusting that join zeroed the VAT
+        // on every line it touched: a 1,568.00 invoice re-saved as 1,432.00 with its 12% gone.
+        //
+        // tax / net is the rate this line actually carries, exact for every rate in this data and
+        // 0 for the zero-rated and exempt lines where there is nothing to recover. The table is
+        // the fallback for a line with no net to divide by.
+        const billedNet = Number(cur.net_of_tax || 0);
+        const taxRate = billedNet > 0
+          ? (Number(cur.tax_amount || 0) / billedNet) * 100
+          : Number(cur.tax_rate || 0);
+        const amounts = computeBillableLineAmounts({
+          pricePerUnit: price, discPercent: disc, taxRate, billableQty: qty,
+        });
+        const description = sub.description === undefined ? cur.description : (sub.description || null);
+        lineChanges.push({ cur, qty, price, disc, description, amounts, qtyDelta: qty - oldQty });
+      }
+    }
+
+    // Header money, after the lines are known. With no line edits these stay the stored totals and
+    // only EWT and Amount Due move; with line edits the five line-derived totals are re-summed
+    // across every line -- the edited ones at their new amounts, the untouched ones as they stand.
+    const money = { ...si };
+    if (lineChanges.length) {
+      const edited = new Map(lineChanges.map((c) => [Number(c.cur.id), c.amounts]));
+      const [allLines] = await conn.query(
+        'SELECT id, subtotal, disc_amount, net_of_tax, tax_amount, gross_amount FROM sales_invoice_lines WHERE sales_invoice_id = ?',
+        [req.params.id],
+      );
+      const sum = (key) => allLines.reduce((s, l) => {
+        const src = edited.get(Number(l.id)) || l;
+        return s + Number(src[key] || 0);
+      }, 0);
+      money.subtotal = Number(sum('subtotal').toFixed(2));
+      money.discount_amount = Number(sum('disc_amount').toFixed(2));
+      money.net_of_tax = Number(sum('net_of_tax').toFixed(2));
+      money.tax_amount = Number(sum('tax_amount').toFixed(2));
+      money.gross_amount = Number(sum('gross_amount').toFixed(2));
+    }
+    const ewtAmount = Number((Number(money.net_of_tax || 0) * (pct / 100)).toFixed(2));
+    const amountDue = Number((Number(money.gross_amount || 0) - ewtAmount).toFixed(2));
 
     const next = {};
     for (const [field, key] of INVOICE_EDIT_FIELDS) {
@@ -1063,6 +1158,13 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     next.withholding_tax_pct = pct;
     next.ewt_amount = ewtAmount;
     next.amount_due = amountDue;
+    if (lineChanges.length) {
+      next.subtotal = money.subtotal;
+      next.discount_amount = money.discount_amount;
+      next.net_of_tax = money.net_of_tax;
+      next.tax_amount = money.tax_amount;
+      next.gross_amount = money.gross_amount;
+    }
 
     await conn.beginTransaction();
     const cols = Object.keys(next);
@@ -1085,6 +1187,65 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         fieldName: c, oldValue: before, newValue: after,
       });
     }
+
+    // The lines themselves, and the job-order totals they move.
+    const touchedJobOrders = new Set();
+    for (const ch of lineChanges) {
+      await conn.query(
+        `UPDATE sales_invoice_lines
+            SET description = ?, quantity = ?, price_per_unit = ?, subtotal = ?, disc_percent = ?,
+                disc_amount = ?, disc_price_per_unit = ?, net_of_tax = ?, tax_amount = ?, gross_amount = ?
+          WHERE id = ?`,
+        [
+          ch.description, ch.qty, ch.price, ch.amounts.subtotal, ch.disc,
+          ch.amounts.disc_amount,
+          // The discounted per-unit price the printed invoice shows, kept in step with the rest.
+          Number((ch.price * (1 - ch.disc / 100)).toFixed(4)),
+          ch.amounts.net_of_tax, ch.amounts.tax_amount, ch.amounts.gross_amount,
+          ch.cur.id,
+        ],
+      );
+      if (ch.qtyDelta && ch.cur.job_order_id) {
+        // GREATEST, because the migrated data does not always agree with itself: plenty of job
+        // orders carry quantity_invoiced 0 while an invoice line against them claims a billed
+        // qty. Reducing such a line by the honest delta drove the running total NEGATIVE, which
+        // is not a quantity and would read as headroom that does not exist. Clamped at zero, the
+        // same way a voided customer payment unwinds an invoice's applied amount.
+        await conn.query(
+          'UPDATE job_orders SET quantity_invoiced = GREATEST(quantity_invoiced + ?, 0), updated_at = NOW() WHERE id = ?',
+          [ch.qtyDelta, ch.cur.job_order_id],
+        );
+        touchedJobOrders.add(ch.cur.job_order_id);
+      }
+      for (const [field, before, after] of [
+        ['description', ch.cur.description, ch.description],
+        ['quantity', Number(ch.cur.quantity || 0), ch.qty],
+        ['price_per_unit', Number(ch.cur.price_per_unit || 0), ch.price],
+        ['disc_percent', Number(ch.cur.disc_percent || 0), ch.disc],
+      ]) {
+        if (String(before ?? '') === String(after ?? '')) continue;
+        await logAudit(conn, {
+          invoiceId: req.params.id, userId: req.user.id, eventType: 'Updated',
+          fieldName: `line ${ch.cur.id} ${field}`, oldValue: before, newValue: after,
+        });
+      }
+    }
+
+    // A billed quantity changed, so what the Sales Order has left to bill changed with it. Derived
+    // exactly as the create path does, from the job orders' own running totals.
+    if (touchedJobOrders.size && si.sales_order_id) {
+      const [freshLines] = await conn.query(
+        `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected,
+                jo.quantity_delivered, jo.quantity_invoiced
+           FROM sales_order_lines sol
+           LEFT JOIN job_orders jo ON jo.id = sol.job_order_id
+          WHERE sol.sales_order_id = ?`,
+        [si.sales_order_id],
+      );
+      const soStatus = computeSalesOrderStatus(freshLines);
+      await conn.query('UPDATE sales_orders SET status = ?, updated_at = NOW() WHERE id = ?', [soStatus, si.sales_order_id]);
+    }
+
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM sales_invoices WHERE id = ?', [req.params.id]);
