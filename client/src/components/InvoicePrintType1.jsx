@@ -23,7 +23,7 @@ export const FORM = {
   // it if the pad is fed lower down.
   sheet: { width: 210, height: 297, formTop: 0 },
 
-  baseFontPt: 6,
+  baseFontPt: 7.5,
   fontFamily: "'Courier New', Courier, monospace", // monospace keeps columns aligned in the blanks
 
   // Header blanks. The form prints its own "Sold to :", "TIN:" and "Address:" labels at the
@@ -60,7 +60,7 @@ export const FORM = {
   // Less: Withholding Tax / TOTAL AMOUNT DUE.
   totals: {
     vatableSales: { x: 142, w: 22, y: 95, right: true },
-    vatExempt: { x: 158, w: 22, y: 115, right: true },
+    vatExempt: { x: 158, w: 22, y: 100, right: true },
     zeroRated: { x: 142, w: 22, y: 102, right: true },
     vat: { x: 140, w: 26, y: 106, right: true },
     totalSales: { x: 201, w: 28, y: 95, right: true },
@@ -231,10 +231,18 @@ export default function InvoicePrintType1({ si, totals, calibrate }) {
               {/* Totals print once, on the final sheet. */}
               {isLast && totals && (
                 <>
-                  <Field spec={FORM.totals.vatableSales} calibrate={calibrate} name="vatableSales">{money(totals.vatable)}</Field>
+                  {/* ONLY THE BOXES THIS INVOICE ACTUALLY USES CARRY A FIGURE. A zero-rated sale
+                      was printing 0.00 into VATable Sales and into VAT (12%) beside the one real
+                      number, which reads as four competing answers on a form whose whole left
+                      block is a choice between them. Exempt and Zero Rated already blanked
+                      themselves; these two now do the same, so a VATable invoice shows VATable
+                      and VAT, a zero-rated one shows Zero Rated alone, and an empty box means
+                      the category does not apply rather than "nil". Total Sales and Amount Due
+                      are the document's own totals and always print. */}
+                  <Field spec={FORM.totals.vatableSales} calibrate={calibrate} name="vatableSales">{totals.vatable ? money(totals.vatable) : ''}</Field>
                   <Field spec={FORM.totals.vatExempt} calibrate={calibrate} name="vatExempt">{totals.exempt ? money(totals.exempt) : ''}</Field>
                   <Field spec={FORM.totals.zeroRated} calibrate={calibrate} name="zeroRated">{totals.zeroRated ? money(totals.zeroRated) : ''}</Field>
-                  <Field spec={FORM.totals.vat} calibrate={calibrate} name="vat">{money(totals.vat)}</Field>
+                  <Field spec={FORM.totals.vat} calibrate={calibrate} name="vat">{totals.vat ? money(totals.vat) : ''}</Field>
                   <Field spec={FORM.totals.totalSales} calibrate={calibrate} name="totalSales">{money(totals.totalSales)}</Field>
                   <Field spec={FORM.totals.lessWithholding} calibrate={calibrate} name="lessWithholding">
                     {totals.withholding ? money(totals.withholding) : ''}
