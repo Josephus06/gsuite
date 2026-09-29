@@ -22,6 +22,10 @@ const METHODS = [
   // cost is a real payable, our own van does not.
   { code: 'IN_HOUSE', name: 'In-house', is_third_party: 0, sort_order: 1 },
   { code: 'LALAMOVE', name: 'Lalamove', is_third_party: 1, sort_order: 2 },
+  // Customer collects from a branch: no courier, no fare. Added 2026-09-29.
+  { code: 'PICKUP_SM', name: 'Pickup - SM', is_third_party: 0, sort_order: 3 },
+  { code: 'PICKUP_AYALA', name: 'Pickup - Ayala', is_third_party: 0, sort_order: 4 },
+  { code: 'PICKUP_HEAD_OFFICE', name: 'Pickup - Head Office', is_third_party: 0, sort_order: 5 },
 ];
 
 async function tableExists(name) {
