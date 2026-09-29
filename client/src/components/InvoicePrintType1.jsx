@@ -34,21 +34,21 @@ export const FORM = {
     customerName: { x: 30, y: 19, w: 105 },
     customerTin: { x: 30, y: 22, w: 105 },
     customerAddress: { x: 30, y: 46, w: 105, lines: 2 },
-    date: { x: 170, y: 21, w: 26 },
-    terms: { x: 170, y: 28, w: 26, lines: 2 },
+    date: { x: 175, y: 21, w: 26 },
+    terms: { x: 175, y: 28, w: 26, lines: 2 },
   },
 
   // Line-item band: QUANTITY | UNIT | DESCRIPTION | UNIT PRICE | AMOUNT.
   // `right: true` means x is the RIGHT edge -- how the money columns align on the form.
   items: {
-    top: 58,
+    top: 52,
     rowHeight: 5,
     rowsPerPage: 6,
     columns: {
       qty: { x: 24, w: 16, right: true },
       unit: { x: 28, w: 18 },
       description: { x: 48, w: 95 },
-      unitPrice: { x: 163, w: 26, right: true },
+      unitPrice: { x: 166, w: 26, right: true },
       amount: { x: 201, w: 28, right: true },
     },
     // "Order ID : SO-##### PO/Ref. Doc: #####" sits under the last item in the description area.
