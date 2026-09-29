@@ -52,13 +52,29 @@ function diskUsage() {
   }
 }
 
-function sample() {
+// Memory the way Linux means it. os.freemem() is MemFree, which leaves out page cache the kernel
+// hands back the moment a process asks -- so a healthy box read as 85-95% "used" and the graph
+// cried wolf. MemAvailable is the kernel's own estimate of what a new process could get. Swap is
+// read alongside: on the droplet (4 GB, swap added 2026-09-29 after MySQL was OOM-killed three
+// times) swap in use is the early warning. Falls back to os.* where /proc does not exist.
+function memoryInfo() {
   const totalMem = os.totalmem();
-  const freeMem = os.freemem();
+  try {
+    const info = Object.fromEntries(fs.readFileSync('/proc/meminfo', 'utf8').split('\n')
+      .map((l) => l.match(/^(\w+):\s+(\d+)/)).filter(Boolean).map((m) => [m[1], Number(m[2]) * 1024]));
+    const available = info.MemAvailable ?? os.freemem();
+    return { total: totalMem, available, swapTotal: info.SwapTotal || 0, swapUsed: (info.SwapTotal || 0) - (info.SwapFree || 0) };
+  } catch {
+    return { total: totalMem, available: os.freemem(), swapTotal: null, swapUsed: null };
+  }
+}
+
+function sample() {
+  const m = memoryInfo();
   return {
     at: Date.now(),
     cpu: cpuPercent(),
-    memPct: Number((((totalMem - freeMem) / totalMem) * 100).toFixed(1)),
+    memPct: Number((((m.total - m.available) / m.total) * 100).toFixed(1)),
     rssMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
   };
 }
@@ -178,6 +194,7 @@ async function collect() {
   const disk = diskUsage();
   const [database, replication] = await Promise.all([databaseHealth(), replicationHealth()]);
   const current = sample();
+  const mem = memoryInfo();
 
   return {
     at: new Date().toISOString(),
@@ -186,8 +203,10 @@ async function collect() {
     cpu: { percent: current.cpu, cores: os.cpus().length, model: (os.cpus()[0] || {}).model || null },
     memory: {
       totalMb: Math.round(totalMem / 1024 / 1024),
-      freeMb: Math.round(os.freemem() / 1024 / 1024),
+      freeMb: Math.round(mem.available / 1024 / 1024),
       percent: current.memPct,
+      swapTotalMb: mem.swapTotal == null ? null : Math.round(mem.swapTotal / 1024 / 1024),
+      swapUsedMb: mem.swapUsed == null ? null : Math.round(mem.swapUsed / 1024 / 1024),
     },
     disk: disk && {
       totalGb: Number((disk.total / 1024 / 1024 / 1024).toFixed(1)),

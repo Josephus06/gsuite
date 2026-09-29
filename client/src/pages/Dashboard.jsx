@@ -9,6 +9,7 @@ import SyncFromSourceButton from '../components/SyncFromSourceButton';
 import { parseUtc } from '../utils/datetime';
 import { isPlanner } from '../utils/plannerRoles';
 import CollectionForecastCalendar from '../components/CollectionForecastCalendar';
+import SystemHealthCard from '../components/SystemHealthCard';
 import Feed from './Feed';
 import '../styles/feed.css';
 
@@ -332,6 +333,12 @@ function AdminDashboard({ data, user, navigate }) {
           // A planner opens this screen to answer "what is on the floor this month", not to
           // read a sales trend -- so the production forecast calendar takes that panel for them.
           <ForecastCalendarCard navigate={navigate} />
+        ) : user?.account_type === 'System Admin' ? (
+          // The people who run the system open this screen to see whether the server is healthy --
+          // after MySQL was OOM-killed three times in two days, that is the question. System Admins
+          // hold every permission, so without this they would get the Treasury calendar below,
+          // which is Treasury's panel, not theirs.
+          <SystemHealthCard navigate={navigate} />
         ) : canSeeCollections ? (
           // And for everyone else with Treasury access, the question this screen should answer
           // is when the money is coming in -- which the sales trend cannot say. Same calendar
