@@ -51,9 +51,10 @@ router.get('/open', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
     if (forecast === 'unset') where.push('si.collection_forecast_date IS NULL');
     if (forecast === 'set') where.push('si.collection_forecast_date IS NOT NULL');
     if (search) {
-      where.push('(si.invoice_no LIKE ? OR c.name LIKE ? OR si.po_no LIKE ?)');
+      // BS/SI # is the pre-printed form's serial -- the number on the paper the customer holds.
+      where.push('(si.invoice_no LIKE ? OR c.name LIKE ? OR si.po_no LIKE ? OR si.bs_si_no LIKE ?)');
       const like = `%${search}%`;
-      params.push(like, like, like);
+      params.push(like, like, like, like);
     }
 
     const baseFrom = `FROM sales_invoices si
@@ -69,7 +70,7 @@ router.get('/open', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
     const page = clampPage(req.query.page);
     const limit = clampLimit(req.query.limit);
     const [rows] = await pool.query(
-      `SELECT si.id, si.invoice_no, si.date_created, si.date_due, si.po_no,
+      `SELECT si.id, si.invoice_no, si.bs_si_no, si.date_created, si.date_due, si.po_no,
               si.gross_amount, si.amount_due, si.status,
               si.collection_forecast_date, si.collection_forecast_set_at,
               fu.display_name AS collection_forecast_set_by,

@@ -150,7 +150,7 @@ function Worklist({ canEdit }) {
           <div className="field">
             <label>Search</label>
             <input
-              placeholder="Invoice no, customer, PO" value={form.search}
+              placeholder="Invoice no, BS/SI #, customer, PO" value={form.search}
               onChange={(e) => setField('search', e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') search(); }}
             />
@@ -213,6 +213,7 @@ function Worklist({ canEdit }) {
                       </th>
                     )}
                     <th>Invoice No</th>
+                    <th>BS/SI #</th>
                     <th>Customer</th>
                     <th>Date Created</th>
                     <th>Due Date</th>
@@ -224,7 +225,7 @@ function Worklist({ canEdit }) {
                 <tbody>
                   {rows.length === 0 && (
                     <tr>
-                      <td colSpan={canEdit ? 8 : 7} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                      <td colSpan={canEdit ? 9 : 8} className="muted" style={{ textAlign: 'center', padding: 20 }}>
                         No open invoices match this filter.
                       </td>
                     </tr>
@@ -240,6 +241,7 @@ function Worklist({ canEdit }) {
                         </td>
                       )}
                       <td>{r.invoice_no}</td>
+                      <td>{r.bs_si_no || <span className="muted">—</span>}</td>
                       <td>{r.customer_name}</td>
                       <td>{day(r.date_created)}</td>
                       <td>{day(r.date_due)}</td>
