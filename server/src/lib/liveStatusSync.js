@@ -124,6 +124,9 @@ const MODULES = {
     endpoint: 'get_invoices', payload: {}, liveKey: 'invc_pk',
     status: (r) => invoiceStatus(r.Status_TransH),
     totals: (r) => ({ subtotal: money(r.SubTotalVatEx_TransH), net_of_tax: money(r.SubTotalVatEx_TransH), tax_amount: money(r.TaxAmount_TransH), gross_amount: money(r.TotalAmount_TransH), amount_due: money(r.AmountDue_TransH) }),
+    // Text columns kept in step with the source, compared as strings rather than money. 'bs' is an
+    // SI here -- see db/add-invoice-type.js.
+    fields: (r) => ({ invoice_type: String(r.Type_TransH || '').toLowerCase() === 'dr' ? 'DR' : 'SI' }),
   },
   delivery_tickets: {
     label: 'Delivery Tickets', table: 'delivery_tickets', keyCol: 'dt_no', statusCol: 'status',
@@ -256,9 +259,12 @@ async function syncModule(token, key) {
   // cope with that, or the query ends in a trailing comma and the sync dies on a syntax error.
   const totals = cfg.totals || (() => ({}));
   const totalCols = Object.keys(totals({}));
+  const fields = cfg.fields || (() => ({}));
+  const fieldCols = Object.keys(fields({}));
+  const extraCols = [...totalCols, ...fieldCols];
   const [[{ minDate }]] = await pool.query(`SELECT MIN(date_created) AS minDate FROM \`${cfg.table}\``);
   const [locals] = await pool.query(
-    `SELECT id, \`${cfg.keyCol}\` AS k, \`${cfg.statusCol}\` AS status${totalCols.length ? `, ${totalCols.map((c) => `\`${c}\``).join(', ')}` : ''} FROM \`${cfg.table}\``
+    `SELECT id, \`${cfg.keyCol}\` AS k, \`${cfg.statusCol}\` AS status${extraCols.length ? `, ${extraCols.map((c) => `\`${c}\``).join(', ')}` : ''} FROM \`${cfg.table}\``
   );
   if (!locals.length) return { module: key, label: cfg.label, checked: 0, updated: 0, statusChanged: 0, unchanged: 0, notInLive: 0, changes: [] };
 
@@ -278,6 +284,8 @@ async function syncModule(token, key) {
       const statusWillChange = newStatus != null && String(newStatus) !== String(row.status);
       if (statusWillChange) { sets.push(`\`${cfg.statusCol}\` = ?`); vals.push(newStatus); }
       for (const c of totalCols) { if (money(row[c]) !== newTotals[c]) { sets.push(`\`${c}\` = ?`); vals.push(newTotals[c]); } }
+      const newFields = fields(live);
+      for (const c of fieldCols) { if (String(row[c] ?? '') !== String(newFields[c] ?? '')) { sets.push(`\`${c}\` = ?`); vals.push(newFields[c]); } }
 
       if (!sets.length) { unchanged += 1; continue; }
       await conn.query(`UPDATE \`${cfg.table}\` SET ${sets.join(', ')} WHERE id = ?`, [...vals, row.id]);

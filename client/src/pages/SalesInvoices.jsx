@@ -46,6 +46,7 @@ export default function SalesInvoices() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [departmentId, setDepartmentId] = useState('');
+  const [invoiceType, setInvoiceType] = useState(''); // '' = all, 'SI' or 'DR'
   const [departments, setDepartments] = useState([]);
   const [page, setPage] = useState(1);
 
@@ -69,6 +70,7 @@ export default function SalesInvoices() {
     if (from) params.from = from;
     if (to) params.to = to;
     if (departmentId) params.department_id = departmentId;
+    if (invoiceType) params.type = invoiceType;
     try {
       const { data } = await api.get('/sales-invoices', { params });
       setRows(data.rows || []);
@@ -83,7 +85,7 @@ export default function SalesInvoices() {
   // The two dropdowns apply themselves; the dates and the search box wait for Search. A <select>
   // is one deliberate act, but a date input fires onChange on the way to a complete date, so
   // refetching on it would run a query per keystroke against half-typed years.
-  useEffect(() => { setPage(1); load(1); }, [status, departmentId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); load(1); }, [status, departmentId, invoiceType]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(page); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function runSearch() {
@@ -97,7 +99,7 @@ export default function SalesInvoices() {
   // a filter bar. The fetch is issued with the cleared values directly -- setState has not landed
   // yet when load() reads them.
   function clearFilters() {
-    setStatus(''); setSearch(''); setFrom(''); setTo(''); setDepartmentId('');
+    setStatus(''); setSearch(''); setFrom(''); setTo(''); setDepartmentId(''); setInvoiceType('');
     setPage(1);
     setLoading(true);
     api.get('/sales-invoices', { params: { page: 1, limit: PAGE_SIZE } })
@@ -118,6 +120,7 @@ export default function SalesInvoices() {
     if (from) params.from = from;
     if (to) params.to = to;
     if (departmentId) params.department_id = departmentId;
+    if (invoiceType) params.type = invoiceType;
     try {
       const { data } = await api.get('/sales-invoices/export', { params, responseType: 'blob' });
       const url = URL.createObjectURL(data);
@@ -160,6 +163,14 @@ export default function SalesInvoices() {
           <div className="field">
             <label>General Searching</label>
             <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Invoice # or SO No..." />
+          </div>
+          <div className="field">
+            <label>Type</label>
+            <select value={invoiceType} onChange={(e) => setInvoiceType(e.target.value)}>
+              <option value="">--ALL--</option>
+              <option value="SI">SI</option>
+              <option value="DR">DR</option>
+            </select>
           </div>
           <div className="field">
             <label>Status</label>
@@ -240,7 +251,7 @@ export default function SalesInvoices() {
                     <td data-label="Tax Amount">{money(row.tax_amount)}</td>
                     <td data-label="Gross Amount">{money(row.gross_amount)}</td>
                     <td data-label="Amount Due">{money(row.amount_due)}</td>
-                    <td data-label="Type">SI</td>
+                    <td data-label="Type">{row.invoice_type || 'SI'}</td>
                     <td data-label="BS/SI #">{row.bs_si_no}</td>
                     <td data-label="Term">{row.term}</td>
                     <td data-label="Status">{STATUS_LABELS[row.status] || row.status}</td>

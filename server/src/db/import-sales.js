@@ -269,6 +269,11 @@ async function resolveContact(customerId, name, title, email, phone) {
   return r.insertId;
 }
 
+// Live Type_TransH -> sales_invoices.invoice_type. 'dr' is a Delivery Receipt; si and the old 'bs'
+// Billing Statement are both SI (see db/add-invoice-type.js). The list row carries the type even
+// where the detail header does not.
+const invoiceType = (h, listRow) => (String(h?.Type_TransH || listRow?.Type_TransH || '').toLowerCase() === 'dr' ? 'DR' : 'SI');
+
 // Live invoice status -> local sales_invoices.status.
 function invoiceStatus(live) {
   const s = (live || '').toUpperCase();
@@ -388,13 +393,13 @@ async function main() {
           const [invRes] = await conn.query(
             `INSERT INTO sales_invoices (invoice_no, sales_order_id, date_created, date_due, term,
                bs_si_no, po_no, memo, department_id, subtotal,
-               net_of_tax, tax_amount, gross_amount, amount_due, status, sales_rep_id, office_location_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               net_of_tax, tax_amount, gross_amount, amount_due, status, sales_rep_id, office_location_id, invoice_type)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [ivHead.invc_pk, local.id, h.DateCreated_TransH || so.DateCreated_TransH, h.DateDue_TransH || null,
               clean(h.Term_TransH), trunc(h.ReferrenceNO_TransH, 60), trunc(h.PONo_TransH, 60), trunc(h.Memo_TransH, 500),
               local.department_id, num(h.SubTotalVatEx_TransH), num(h.SubTotalVatEx_TransH), num(h.TaxAmount_TransH),
               num(h.TotalAmount_TransH), num(h.AmountDue_TransH), invoiceStatus(h.Status_TransH),
-              local.sales_rep_id, local.office_location_id]);
+              local.sales_rep_id, local.office_location_id, invoiceType(h, ivHead)]);
           for (const il of (inv.data?.[1] || [])) {
             await conn.query(
               `INSERT INTO sales_invoice_lines (sales_invoice_id, job_order_id, description, quantity, units,
@@ -561,12 +566,13 @@ async function main() {
           const [invRes] = await conn.query(
             `INSERT INTO sales_invoices (invoice_no, sales_order_id, date_created, date_due, term,
                bs_si_no, po_no, memo, department_id, subtotal,
-               net_of_tax, tax_amount, gross_amount, amount_due, status, sales_rep_id, office_location_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               net_of_tax, tax_amount, gross_amount, amount_due, status, sales_rep_id, office_location_id, invoice_type)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [ivHead.invc_pk, salesOrderId, h.DateCreated_TransH || soDate, h.DateDue_TransH || null, clean(h.Term_TransH),
               trunc(h.ReferrenceNO_TransH, 60), trunc(h.PONo_TransH, 60), trunc(h.Memo_TransH, 500), departmentId, num(h.SubTotalVatEx_TransH),
               num(h.SubTotalVatEx_TransH), num(h.TaxAmount_TransH), num(h.TotalAmount_TransH),
-              num(h.AmountDue_TransH), invoiceStatus(h.Status_TransH), repId, headOffice ? headOffice.id : null]
+              num(h.AmountDue_TransH), invoiceStatus(h.Status_TransH), repId, headOffice ? headOffice.id : null,
+              invoiceType(h, ivHead)]
           );
           const invoiceId = invRes.insertId;
           for (const il of invLines) {

@@ -75,7 +75,7 @@ export default function InvoicePrintType2({ si, totals }) {
               </colgroup>
               <tbody>
                 <tr>
-                  <td className="t2-title" colSpan={5} rowSpan={2}>INVOICE</td>
+                  <td className="t2-title" colSpan={5} rowSpan={2}>{si.invoice_type === 'DR' ? 'DELIVERY RECEIPT' : 'INVOICE'}</td>
                   <td className="t2-lbl">DATE:</td>
                   <td colSpan={2}>{formatDate(si.date_created)}</td>
                 </tr>

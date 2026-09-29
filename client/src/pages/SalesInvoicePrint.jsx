@@ -16,7 +16,10 @@ export default function SalesInvoicePrint() {
   const [params, setParams] = useSearchParams();
   const [si, setSi] = useState(null);
 
-  const type = params.get('type') === '2' ? 2 : 1;
+  // A Delivery Receipt only ever prints on plain paper -- it is not a Service Invoice, so the
+  // pre-printed pad (Type 1) is not offered, whatever the URL asks for.
+  const isDr = si?.invoice_type === 'DR';
+  const type = isDr || params.get('type') === '2' ? 2 : 1;
   const calibrate = params.get('calibrate') === '1';
 
   useEffect(() => {
@@ -46,9 +49,11 @@ export default function SalesInvoicePrint() {
         <span style={{ marginRight: 'auto', font: '13px system-ui, sans-serif', color: '#334155' }}>
           {si.invoice_no} — {si.customer_name}
         </span>
-        <button className={`btn btn-sm ${type === 1 ? 'btn-primary' : ''}`} onClick={() => setType(1)}>
-          Type 1 · Pre-printed
-        </button>
+        {!isDr && (
+          <button className={`btn btn-sm ${type === 1 ? 'btn-primary' : ''}`} onClick={() => setType(1)}>
+            Type 1 · Pre-printed
+          </button>
+        )}
         <button className={`btn btn-sm ${type === 2 ? 'btn-primary' : ''}`} onClick={() => setType(2)}>
           Type 2 · Plain paper
         </button>

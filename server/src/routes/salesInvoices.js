@@ -34,14 +34,22 @@ async function logAudit(conn, { invoiceId, userId, eventType, fieldName = null, 
 // The list's filters as SQL, shared by the list and the Excel extract so a download always holds
 // exactly the invoices the screen is filtered to -- including the Account Officer / Supervisor
 // scope, so an extract can never reach invoices the list would not show that person.
+// An invoice is a Sales/Service Invoice (SI) or a Delivery Receipt (DR). A DR is not a
+// BIR-registered sales invoice: the BIR Sales Report leaves it out and it prints on plain paper
+// only. Anything else that arrives -- the source system's old 'bs' Billing Statement included --
+// is an SI, since the Service Invoice replaced the billing statement. See db/add-invoice-type.js.
+const normaliseInvoiceType = (v) => (String(v || '').trim().toUpperCase() === 'DR' ? 'DR' : 'SI');
+
 async function listFilter(query, userId) {
   const {
     search, status, customer_id: customerId, sales_rep_id: salesRepId,
-    from, to, department_id: departmentId,
+    from, to, department_id: departmentId, type,
   } = query;
   const where = [];
   const params = [];
   if (status) { where.push('si.status = ?'); params.push(status); }
+  // SI or DR -- see normaliseInvoiceType.
+  if (type) { where.push('si.invoice_type = ?'); params.push(normaliseInvoiceType(type)); }
   // An invoice raised from an Estimate has no Sales Order, so the customer is whichever of the
   // two sources it actually has. Same COALESCE everywhere the customer is read below.
   if (customerId) { where.push('COALESCE(so.customer_id, e.customer_id) = ?'); params.push(customerId); }
@@ -106,7 +114,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     const [rows] = await pool.query(
       `SELECT si.id, si.invoice_no, si.date_created, si.date_due, si.net_of_tax, si.tax_amount,
-              si.gross_amount, si.amount_due, si.bs_si_no, si.term, si.status, si.memo,
+              si.gross_amount, si.amount_due, si.bs_si_no, si.term, si.status, si.memo, si.invoice_type,
               so.sales_order_no, e.estimate_no, c.name AS customer_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               loc.location_name AS office_location_name, d.name AS department_name
@@ -137,7 +145,7 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(
       `SELECT si.invoice_no, si.date_created, si.date_due, si.net_of_tax, si.tax_amount,
-              si.gross_amount, si.amount_due, si.bs_si_no, si.term, si.status, si.memo,
+              si.gross_amount, si.amount_due, si.bs_si_no, si.term, si.status, si.memo, si.invoice_type,
               so.sales_order_no, e.estimate_no, c.name AS customer_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               loc.location_name AS office_location_name, d.name AS department_name
@@ -194,7 +202,7 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
         // Numbers, not preformatted strings, so the columns can be totalled.
         net: Number(r.net_of_tax || 0), tax: Number(r.tax_amount || 0),
         gross: Number(r.gross_amount || 0), due: Number(r.amount_due || 0),
-        type: 'SI', bs_si: r.bs_si_no || '', term: r.term || '',
+        type: r.invoice_type || 'SI', bs_si: r.bs_si_no || '', term: r.term || '',
         status: STATUS[r.status] || r.status, memo: r.memo || '',
       }).commit();
     }
@@ -917,12 +925,12 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
     await conn.beginTransaction();
     const [result] = await conn.query(
       `INSERT INTO sales_invoices
-         (invoice_no, sales_order_id, date_created, date_due, term, bs_si_no, po_no, sales_rep_id, office_location_id,
+         (invoice_no, invoice_type, sales_order_id, date_created, date_due, term, bs_si_no, po_no, sales_rep_id, office_location_id,
           department_id, bill_to_address, memo, withholding_tax_pct, subtotal, discount_amount, net_of_tax,
           ewt_amount, tax_amount, gross_amount, amount_due, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        salesOrderId, dateCreated || new Date().toISOString().slice(0, 10), dateDue || null, term || null,
+        normaliseInvoiceType(req.body.invoice_type), salesOrderId, dateCreated || new Date().toISOString().slice(0, 10), dateDue || null, term || null,
         bsSiNo || null, poNo || null, salesRepId || null, officeLocationId || null, departmentId || null,
         billToAddress || null, memo || null, withholdingTaxPct || 0, subtotal, discountAmount, netOfTax,
         ewtAmount, taxAmount, grossAmount, amountDue, req.user.id,

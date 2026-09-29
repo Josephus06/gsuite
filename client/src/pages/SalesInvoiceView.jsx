@@ -138,9 +138,10 @@ export default function SalesInvoiceView() {
           )}
           <ButtonMenu
             label="Print"
+            // A Delivery Receipt is not a Service Invoice, so it never goes on the pre-printed pad.
             options={[
-              { label: 'Type 1', hint: 'Pre-printed Service Invoice form', onClick: () => window.open(`/sales-invoices/${id}/print`, '_blank') },
-              { label: 'Type 2', hint: 'Plain paper, full invoice', onClick: () => window.open(`/sales-invoices/${id}/print?type=2`, '_blank') },
+              ...(si.invoice_type === 'DR' ? [] : [{ label: 'Type 1', hint: 'Pre-printed Service Invoice form', onClick: () => window.open(`/sales-invoices/${id}/print`, '_blank') }]),
+              { label: 'Type 2', hint: si.invoice_type === 'DR' ? 'Plain paper Delivery Receipt' : 'Plain paper, full invoice', onClick: () => window.open(`/sales-invoices/${id}/print?type=2`, '_blank') },
             ]}
           />
           {canTakePayment && isSettleable && <button className="btn btn-sm btn-primary" onClick={() => setShowPaymentModal(true)}>Accept Payment</button>}
@@ -182,7 +183,7 @@ export default function SalesInvoiceView() {
           <div>
             <div>Term : <span className="hi">{si.term}</span></div>
             <div>Date Due : <span className="hi">{formatDate(si.date_due)}</span></div>
-            <div>Type : <span className="hi">SI</span></div>
+            <div>Type : <span className="hi">{si.invoice_type || 'SI'}</span></div>
           </div>
           <div>
             <div>Sales Rep : <span className="hi">{si.sales_rep_name || '—'}</span></div>

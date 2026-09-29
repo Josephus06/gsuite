@@ -68,7 +68,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 router.get('/sales', requireAuth, requirePermission(SALES_ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const { search, customer_id: customerId, location_id: locationId, status } = req.query;
-    const where = ['1 = 1'];
+    const where = ['(drp.dr_amount IS NULL OR cp.payment_amount - drp.dr_amount > 0.005)'];
     const params = [];
 
     if (customerId) { where.push('cp.customer_id = ?'); params.push(customerId); }
@@ -84,15 +84,23 @@ router.get('/sales', requireAuth, requirePermission(SALES_ROUTE, 'can_view'), as
     const whereSql = `WHERE ${where.join(' AND ')}${st.sql}${dt.sql}`;
     const whereParams = [...params, ...st.params, ...dt.params];
 
+    // Delivery Receipts are not BIR sales invoices. This report lists payments, so the part of a
+    // payment applied to DR invoices comes off its amount, and a payment applied wholly to DRs
+    // is not listed. An unapplied balance stays -- nothing yet says it is for a DR.
     const baseFrom = `FROM customer_payments cp
        JOIN customers c ON c.id = cp.customer_id
+       LEFT JOIN (SELECT cpl.customer_payment_id, SUM(cpl.applied_amount) AS dr_amount
+                    FROM customer_payment_lines cpl
+                    JOIN sales_invoices si ON si.id = cpl.sales_invoice_id
+                   WHERE si.invoice_type = 'DR'
+                   GROUP BY cpl.customer_payment_id) drp ON drp.customer_payment_id = cp.id
        LEFT JOIN locations loc ON loc.id = cp.office_location_id
        LEFT JOIN taxes t ON t.id = c.tax_id
        LEFT JOIN customer_addresses ca
               ON ca.customer_id = c.id AND ca.address_type = 'Billing'`;
 
     const select = `SELECT cp.id, cp.customer_payment_no, cp.date_created, cp.or_no,
-              cp.payment_amount AS total_amount, cp.status, cp.voided_at,
+              cp.payment_amount - COALESCE(drp.dr_amount, 0) AS total_amount, cp.status, cp.voided_at,
               c.name AS customer_name, c.tin AS customer_tin,
               t.code AS customer_tax_code,
               COALESCE(NULLIF(c.address, ''), ca.address_line) AS customer_address,

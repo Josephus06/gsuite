@@ -73,6 +73,8 @@ export default function SalesOrderView() {
   const [creatingLineId, setCreatingLineId] = useState(null);
   const [showBillMenu, setShowBillMenu] = useState(false);
   const [showSIModal, setShowSIModal] = useState(false);
+  // SI or DR: both are raised through the same Create form and differ only in type.
+  const [billType, setBillType] = useState('SI');
   const [showDTModal, setShowDTModal] = useState(false);
   const [invoices, setInvoices] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
@@ -230,8 +232,8 @@ export default function SalesOrderView() {
               {showBillMenu && (
                 <div className="card" style={{ position: 'absolute', right: 0, top: '110%', zIndex: 20, padding: 6, minWidth: 80 }}>
                   <button type="button" className="btn btn-sm" disabled style={{ width: '100%', marginBottom: 4 }} title="Billing Statements aren't implemented in this build">BS</button>
-                  {canBillSI && <button type="button" className="btn btn-sm" style={{ width: '100%', marginBottom: 4 }} onClick={() => { setShowBillMenu(false); setShowSIModal(true); }}>SI</button>}
-                  <button type="button" className="btn btn-sm" disabled style={{ width: '100%', marginBottom: 4 }} title="Delivery Receipts aren't implemented in this build">DR</button>
+                  {canBillSI && <button type="button" className="btn btn-sm" style={{ width: '100%', marginBottom: 4 }} onClick={() => { setShowBillMenu(false); setBillType('SI'); setShowSIModal(true); }}>SI</button>}
+                  {canBillSI && <button type="button" className="btn btn-sm" style={{ width: '100%', marginBottom: 4 }} onClick={() => { setShowBillMenu(false); setBillType('DR'); setShowSIModal(true); }}>DR</button>}
                   {canBillDT && <button type="button" className="btn btn-sm" style={{ width: '100%' }} onClick={() => { setShowBillMenu(false); setShowDTModal(true); }}>DT</button>}
                 </div>
               )}
@@ -442,6 +444,7 @@ export default function SalesOrderView() {
       {showSIModal && (
         <SalesInvoiceModal
           salesOrderId={Number(id)}
+          invoiceType={billType}
           onClose={() => setShowSIModal(false)}
           onSaved={async (si) => { setShowSIModal(false); await load(); navigate(`/sales-invoices/${si.id}`); }}
         />
