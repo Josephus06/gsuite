@@ -33,6 +33,11 @@ function addDays(dateStr, days) {
 // no source document until one is picked, which is the difference between this and the other
 // two. The Estimate's own lines are billed as they stand, and their JO # column is blank
 // because no Job Order exists yet: those are raised when the Estimate becomes a Sales Order.
+// Hidden on request (2026-09-29): staff are not to tag or bill an Estimate from Create New. Kept
+// behind a flag rather than deleted, since the Estimate flow below still depends on it -- with it
+// hidden, Create New cannot pick an Estimate, so it cannot produce an invoice either.
+const SHOW_ESTIMATE_FIELD = false;
+
 export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, fromEstimate, onClose, onSaved }) {
   const [data, setData] = useState(null);
   const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
@@ -241,7 +246,7 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, from
 
           <div className="review-grid" style={{ gridTemplateColumns: '1fr 1fr 260px' }}>
             <div>
-              {fromEstimate && (
+              {fromEstimate && SHOW_ESTIMATE_FIELD && (
                 <div className="field">
                   <label>Estimate</label>
                   <EstimatePicker
