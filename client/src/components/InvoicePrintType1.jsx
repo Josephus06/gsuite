@@ -23,7 +23,7 @@ export const FORM = {
   // it if the pad is fed lower down.
   sheet: { width: 210, height: 297, formTop: 0 },
 
-  baseFontPt: 8,
+  baseFontPt: 9,
   fontFamily: "'Courier New', Courier, monospace", // monospace keeps columns aligned in the blanks
 
   // Header blanks. The form prints its own "Sold to :", "TIN:" and "Address:" labels at the
@@ -31,17 +31,17 @@ export const FORM = {
   // is pre-printed and is the document's legal identity -- we must never print over it, which
   // is why there is no invoice-number field here.
   header: {
-    customerName: { x: 30, y: 32, w: 105 },
-    customerTin: { x: 30, y: 39, w: 105 },
+    customerName: { x: 30, y: 19, w: 105 },
+    customerTin: { x: 30, y: 22, w: 105 },
     customerAddress: { x: 30, y: 46, w: 105, lines: 2 },
-    date: { x: 181, y: 25, w: 26 },
-    terms: { x: 181, y: 33, w: 26, lines: 2 },
+    date: { x: 170, y: 21, w: 26 },
+    terms: { x: 170, y: 28, w: 26, lines: 2 },
   },
 
   // Line-item band: QUANTITY | UNIT | DESCRIPTION | UNIT PRICE | AMOUNT.
   // `right: true` means x is the RIGHT edge -- how the money columns align on the form.
   items: {
-    top: 68,
+    top: 58,
     rowHeight: 5,
     rowsPerPage: 6,
     columns: {
@@ -59,13 +59,13 @@ export const FORM = {
   // VAT-Exempt (E) / Zero Rated (Z) / VAT (12%); right block is Total Sales /
   // Less: Withholding Tax / TOTAL AMOUNT DUE.
   totals: {
-    vatableSales: { x: 158, w: 26, y: 110, right: true },
-    vatExempt: { x: 158, w: 26, y: 115, right: true },
-    zeroRated: { x: 158, w: 26, y: 120, right: true },
-    vat: { x: 158, w: 26, y: 125, right: true },
-    totalSales: { x: 201, w: 28, y: 110, right: true },
-    lessWithholding: { x: 201, w: 28, y: 117, right: true },
-    amountDue: { x: 201, w: 28, y: 125, right: true },
+    vatableSales: { x: 142, w: 22, y: 95, right: true },
+    vatExempt: { x: 158, w: 22, y: 115, right: true },
+    zeroRated: { x: 158, w: 22, y: 120, right: true },
+    vat: { x: 140, w: 26, y: 106, right: true },
+    totalSales: { x: 201, w: 28, y: 95, right: true },
+    lessWithholding: { x: 201, w: 28, y: 110, right: true },
+    amountDue: { x: 201, w: 28, y: 105, right: true },
   },
 };
 
