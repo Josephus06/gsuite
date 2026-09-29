@@ -8,6 +8,7 @@ import CreditMemoModal from '../components/CreditMemoModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ButtonMenu from '../components/ButtonMenu';
 import ReversalJournalModal from '../components/ReversalJournalModal';
+import SalesInvoiceEditModal from '../components/SalesInvoiceEditModal';
 
 import { displayDate, displayDateTime } from '../utils/dates';
 
@@ -44,6 +45,7 @@ export default function SalesInvoiceView() {
   const [creditMemos, setCreditMemos] = useState([]);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showCreditMemoModal, setShowCreditMemoModal] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -125,7 +127,15 @@ export default function SalesInvoiceView() {
           {/* Back to wherever this invoice came from -- an estimate-sourced one has no Sales
               Order to go back to, so it returns to the invoice list. */}
           <button className="btn btn-sm" onClick={() => navigate(si.sales_order_id ? `/sales-orders/${si.sales_order_id}` : '/sales-invoices')}>Back</button>
-          {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Invoice isn't implemented in this build">Edit</button>}
+          {/* Editable while the invoice is OPEN and nothing has settled it. Both conditions are
+              decided server-side (see whyNotEditable) and arrive on the invoice, so the button and
+              the refusal cannot disagree -- and the disabled tooltip is the server's own words. */}
+          {canEdit && si.editable && (
+            <button className="btn btn-sm" onClick={() => setEditing(true)}>Edit</button>
+          )}
+          {canEdit && si.editable === false && (
+            <button className="btn btn-sm" disabled title={si.not_editable_reason || 'This Invoice cannot be edited.'}>Edit</button>
+          )}
           <ButtonMenu
             label="Print"
             options={[
@@ -345,6 +355,16 @@ export default function SalesInvoiceView() {
           invoiceId={Number(id)}
           onClose={() => setShowReversal(false)}
           onSaved={async () => { setShowReversal(false); await load(); }}
+        />
+      )}
+
+      {/* Reloaded rather than patched from the response: the save recomputes EWT and Amount Due,
+          and GL Impact and the audit trail are derived from them. */}
+      {editing && (
+        <SalesInvoiceEditModal
+          invoice={si}
+          onClose={() => setEditing(false)}
+          onSaved={async () => { setEditing(false); await load(); }}
         />
       )}
     </div>

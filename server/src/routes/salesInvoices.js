@@ -551,7 +551,13 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     );
 
     const glImpact = await computeGlImpact(si, lines);
-    res.json({ ...si, lines, gl_impact: glImpact });
+    // Whether the header may be edited, answered here rather than guessed on the page -- see
+    // whyNotEditable. `not_editable_reason` is what the disabled button says, so the reason a
+    // user is given is the reason the server would give.
+    const notEditable = await whyNotEditable(pool, si);
+    res.json({
+      ...si, lines, gl_impact: glImpact, editable: !notEditable, not_editable_reason: notEditable,
+    });
   } catch (err) {
     next(err);
   }
@@ -965,6 +971,127 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
   } catch (err) {
     await conn.rollback();
     next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// Editing an OPEN invoice -- the header only.
+//
+// WHY ONLY WHILE IT IS OPEN, AND ONLY WHILE NOTHING HAS SETTLED IT. A payment or a credit memo
+// draws this invoice's Amount Due down and records itself against the id; moving the figure
+// underneath one would leave the settlement claiming an amount the invoice no longer shows, with
+// nothing recording that it happened. Same line the Customer Payment edit draws at its deposit.
+// Past that point the correction is a void and a re-issue, which is what the Void button is for.
+//
+// WHY NOT THE LINES. The items come from delivered-but-unbilled quantities and billing them bumps
+// job_orders.quantity_invoiced and re-derives the Sales Order's status. Re-opening that here would
+// mean unwinding those running totals per line, and getting it wrong silently lets the same
+// delivery be billed twice. The header is where the mistakes this is for actually live -- a
+// mistyped PO number, the wrong term or due date, a missing BS/SI number, the wrong EWT rate --
+// so lines, quantities and prices stay fixed and the totals below are recomputed, never re-summed.
+//
+// No GL to unwind: computeSalesInvoiceGl derives the entries on read, so a corrected figure shows
+// in GL Impact the moment it is saved.
+// Why this invoice cannot be edited, or null when it can. Shared by the detail read and the save
+// so the button and the refusal cannot disagree: the page asks the same question the server will
+// answer, rather than inferring it from the related-records lists -- which sit behind
+// /customer-payments and /credit-memos permissions and come back empty for anyone without them,
+// making an un-editable invoice look editable to exactly the people least able to tell.
+async function whyNotEditable(conn, si) {
+  if (si.status === 'cancelled') return 'A voided Invoice cannot be edited.';
+  if (si.status !== 'saved') {
+    return 'This Invoice is no longer open, so it can no longer be edited. Void it and re-issue if it is wrong.';
+  }
+  // Read off the settlement documents, not the status: the two disagree on plenty of migrated
+  // rows -- see lib/arAging.js on invoices marked paid with nothing recording it.
+  const [[settled]] = await conn.query(
+    `SELECT
+       COALESCE((SELECT SUM(l.applied_amount) FROM customer_payment_lines l
+                   JOIN customer_payments cp ON cp.id = l.customer_payment_id
+                  WHERE l.sales_invoice_id = ? AND cp.status <> 'voided'), 0) AS paid,
+       COALESCE((SELECT SUM(ca.applied_amount) FROM credit_memo_applications ca
+                   JOIN credit_memos cm ON cm.id = ca.credit_memo_id
+                  WHERE ca.sales_invoice_id = ? AND cm.status <> 'voided'), 0) AS credited`,
+    [si.id, si.id],
+  );
+  if (Number(settled.paid) + Number(settled.credited) > 0.005) {
+    return 'A payment or credit memo has been applied to this Invoice, so it can no longer be edited. Void that first, or void this Invoice and re-issue it.';
+  }
+  return null;
+}
+
+const INVOICE_EDIT_FIELDS = [
+  ['date_created', 'date_created'], ['date_due', 'date_due'], ['term', 'term'],
+  ['bs_si_no', 'bs_si_no'], ['po_no', 'po_no'], ['sales_rep_id', 'sales_rep_id'],
+  ['office_location_id', 'office_location_id'], ['department_id', 'department_id'],
+  ['bill_to_address', 'bill_to_address'], ['memo', 'memo'],
+  ['withholding_tax_pct', 'withholding_tax_pct'],
+];
+
+router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[si]] = await conn.query('SELECT * FROM sales_invoices WHERE id = ?', [req.params.id]);
+    if (!si) return res.status(404).json({ error: 'Not found' });
+    const refusal = await whyNotEditable(conn, si);
+    if (refusal) return res.status(409).json({ error: refusal });
+
+    // Both periods: the one it sits in now and the one it is being moved to. Moving an invoice out
+    // of a closed month is as much a change to that month as posting into one.
+    const newDate = req.body.date_created ? String(req.body.date_created).slice(0, 10) : si.date_created;
+    await assertPeriodOpen(si.date_created, 'ar', conn);
+    if (String(newDate) !== String(si.date_created).slice(0, 10)) await assertPeriodOpen(newDate, 'ar', conn);
+
+    const pct = req.body.withholding_tax_pct === undefined || req.body.withholding_tax_pct === null || req.body.withholding_tax_pct === ''
+      ? Number(si.withholding_tax_pct || 0) : Number(req.body.withholding_tax_pct);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+      return res.status(400).json({ error: 'Withholding Tax % must be between 0 and 100.' });
+    }
+
+    // Re-derived from the stored line totals, never re-summed from the lines: the lines cannot
+    // change here, so the only figures that move are the two the EWT rate drives.
+    const ewtAmount = Number((Number(si.net_of_tax || 0) * (pct / 100)).toFixed(2));
+    const amountDue = Number((Number(si.gross_amount || 0) - ewtAmount).toFixed(2));
+
+    const next = {};
+    for (const [field, key] of INVOICE_EDIT_FIELDS) {
+      if (req.body[key] === undefined) continue;
+      const v = req.body[key];
+      next[field] = v === '' ? null : v;
+    }
+    next.withholding_tax_pct = pct;
+    next.ewt_amount = ewtAmount;
+    next.amount_due = amountDue;
+
+    await conn.beginTransaction();
+    const cols = Object.keys(next);
+    await conn.query(
+      `UPDATE sales_invoices SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`,
+      [...cols.map((c) => next[c]), req.params.id],
+    );
+
+    // One audit row per field that actually moved -- an edit that changed the PO number should not
+    // read as though it touched the whole invoice.
+    const same = (a, b) => String(a ?? '') === String(b ?? '');
+    for (const c of cols) {
+      const before = c === 'date_created' || c === 'date_due'
+        ? (si[c] ? String(si[c]).slice(0, 10) : null) : si[c];
+      const after = c === 'date_created' || c === 'date_due'
+        ? (next[c] ? String(next[c]).slice(0, 10) : null) : next[c];
+      if (same(before, after)) continue;
+      await logAudit(conn, {
+        invoiceId: req.params.id, userId: req.user.id, eventType: 'Updated',
+        fieldName: c, oldValue: before, newValue: after,
+      });
+    }
+    await conn.commit();
+
+    const [[row]] = await pool.query('SELECT * FROM sales_invoices WHERE id = ?', [req.params.id]);
+    return res.json(row);
+  } catch (err) {
+    await conn.rollback();
+    return next(err);
   } finally {
     conn.release();
   }
