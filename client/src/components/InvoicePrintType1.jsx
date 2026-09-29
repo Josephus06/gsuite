@@ -1,4 +1,4 @@
-import { money, qtyText, formatDate, paginate } from '../utils/invoicePrint';
+import { money, qtyText, formatDate, layoutPages } from '../utils/invoicePrint';
 
 // TYPE 1 -- overlay for the PRE-PRINTED "SERVICE INVOICE" pad.
 //
@@ -127,7 +127,7 @@ function Grid({ page }) {
 }
 
 export default function InvoicePrintType1({ si, totals, calibrate }) {
-  const pages = paginate(si.lines || [], FORM.items.rowsPerPage);
+  const pages = layoutPages(si.lines || [], FORM);
 
   return (
     <>
@@ -197,14 +197,20 @@ export default function InvoicePrintType1({ si, totals, calibrate }) {
               <Field spec={FORM.header.date} calibrate={calibrate} name="date">{formatDate(si.date_created, true)}</Field>
               <Field spec={FORM.header.terms} calibrate={calibrate} name="terms">{si.term}</Field>
 
-              {pageLines.map((l, rowIdx) => {
-                const y = FORM.items.top + rowIdx * FORM.items.rowHeight;
+              {pageLines.map(({ line: l, wrapped, rowOffset }, rowIdx) => {
+                const y = FORM.items.top + rowOffset * FORM.items.rowHeight;
                 const c = FORM.items.columns;
                 return (
                   <div key={l.id}>
                     <Field spec={{ ...c.qty, y }} calibrate={calibrate && rowIdx === 0} name="qty">{qtyText(l.quantity)}</Field>
                     <Field spec={{ ...c.unit, y }} calibrate={calibrate && rowIdx === 0} name="unit">{l.units}</Field>
-                    <Field spec={{ ...c.description, y }} calibrate={calibrate && rowIdx === 0} name="description">{l.description}</Field>
+                    {/* Pre-wrapped: each line is its own nowrap row, so the break points are the
+                        ones measured above rather than whatever the browser decides. */}
+                    <Field spec={{ ...c.description, y }} calibrate={calibrate && rowIdx === 0} name="description">
+                      {wrapped.length
+                        ? wrapped.map((t, i) => <div key={i} style={{ whiteSpace: 'nowrap' }}>{t}</div>)
+                        : ''}
+                    </Field>
                     <Field spec={{ ...c.unitPrice, y }} calibrate={calibrate && rowIdx === 0} name="unitPrice">{money(l.price_per_unit)}</Field>
                     <Field spec={{ ...c.amount, y }} calibrate={calibrate && rowIdx === 0} name="amount">{money(l.gross_amount)}</Field>
                   </div>
@@ -213,7 +219,7 @@ export default function InvoicePrintType1({ si, totals, calibrate }) {
 
               {isLast && (
                 <Field
-                  spec={{ ...FORM.items.orderId, y: FORM.items.top + pageLines.length * FORM.items.rowHeight + FORM.items.orderId.gap }}
+                  spec={{ ...FORM.items.orderId, y: FORM.items.top + (pages.usedOnLastPage || pageLines.length) * FORM.items.rowHeight + FORM.items.orderId.gap }}
                   calibrate={calibrate}
                   name="orderId"
                 >
