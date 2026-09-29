@@ -80,6 +80,7 @@ export default function JobOrderView() {
   const [jo, setJo] = useState(null);
   const [tab, setTab] = useState('processes');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState(false);
   const [auditLogs, setAuditLogs] = useState([]);
 
@@ -95,7 +96,15 @@ export default function JobOrderView() {
   const [assignError, setAssignError] = useState('');
 
   function load() {
-    return api.get(`/job-orders/${id}`).then(({ data }) => { setJo(data); setLoading(false); });
+    // A refused or missing JO used to leave the spinner up forever -- the rejection went nowhere.
+    return api.get(`/job-orders/${id}`)
+      .then(({ data }) => { setJo(data); setLoadError(''); setLoading(false); })
+      .catch((err) => {
+        setLoadError(err.response?.status === 404
+          ? 'This job order does not exist, or it is outside what your account can see.'
+          : (err.response?.data?.error || 'Could not load this job order.'));
+        setLoading(false);
+      });
   }
 
   function loadAttachmentCount() {
@@ -243,6 +252,7 @@ export default function JobOrderView() {
     try { await api.put(`/job-orders/${id}/approve-rwip`); await load(); } finally { setBusy(false); }
   }
 
+  if (!loading && !jo && loadError) return <div className="error-banner" style={{ margin: 20 }}>{loadError}</div>;
   if (loading || !jo) return <LoadingSpinner />;
 
   const canEdit = can('/job-orders', 'can_edit');

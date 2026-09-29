@@ -531,7 +531,7 @@ router.get('/:id/lines/:lineId/jo-draft', requireAuth, requirePermission(ROUTE, 
 router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[nsso]] = await conn.query('SELECT id, nsso_no, type, status FROM non_standard_sales_orders WHERE id = ?', [req.params.id]);
+    const [[nsso]] = await conn.query('SELECT id, nsso_no, type, status, sales_rep_id FROM non_standard_sales_orders WHERE id = ?', [req.params.id]);
     if (!nsso) return res.status(404).json({ error: 'Not found' });
     if (nsso.status === 'pending_approval') return res.status(409).json({ error: 'Approve the NSSO before creating job orders.' });
     if (nsso.status === 'cancelled') return res.status(409).json({ error: 'This NSSO is cancelled.' });
@@ -541,7 +541,7 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
     // RMA/RMA-Installation redo an existing (source) job order; INTERNAL is raised from scratch and
     // has none -- so src (and the reused SO ids) are only present for the nested types.
     const [[src]] = line.source_job_order_id
-      ? await conn.query('SELECT id, sales_order_id, sales_order_line_id FROM job_orders WHERE id = ?', [line.source_job_order_id])
+      ? await conn.query('SELECT id, sales_order_id, sales_order_line_id, sales_rep_id FROM job_orders WHERE id = ?', [line.source_job_order_id])
       : [[null]];
     if (line.source_job_order_id && !src) return res.status(409).json({ error: 'This item has no source job order to base the JO on.' });
 
@@ -556,14 +556,18 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
     const [, abbr, nssoNum] = (nsso.nsso_no || '').split('-'); // NSSO-RMA-177 -> ['NSSO','RMA','177']
     const [[cnt]] = await conn.query('SELECT COUNT(*) AS n FROM non_standard_sales_order_lines WHERE nsso_id = ?', [nsso.id]);
     const jobOrderNo = `NSJO-${abbr}-${nssoNum}-${line.line_no}-${cnt.n}`;
+    // The JO carries the NSSO's Sales Rep (else the source JO's). Sales users only see job orders
+    // whose sales_rep_id is in their team, so a JO created without one was invisible -- a 404 --
+    // to the very rep who raised it (NSJO-INT-51-1-1).
+    const salesRepId = nsso.sales_rep_id || src?.sales_rep_id || null;
     const [r] = await conn.query(
       // Starts pending approval (production_stage NULL so the banner shows the status verbatim) --
       // only an NSSO-approver can release it into the normal production flow.
-      `INSERT INTO job_orders (job_order_no, sales_order_line_id, sales_order_id, nsso_id, nsso_line_id,
+      `INSERT INTO job_orders (job_order_no, sales_order_line_id, sales_order_id, nsso_id, nsso_line_id, sales_rep_id,
          job_type_id, job_location_id, description, quantity, units, length, width, height,
          reason_code_id, reason, action_to_be_taken, production_stage, sub_status, status)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?)`,
-      [jobOrderNo, src?.sales_order_line_id || null, src?.sales_order_id || null, nsso.id, line.id,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?)`,
+      [jobOrderNo, src?.sales_order_line_id || null, src?.sales_order_id || null, nsso.id, line.id, salesRepId,
        line.job_type_id, line.job_location_id, line.description, num(line.quantity), line.units, line.length, line.width, line.height,
        reasonCodeId || null, trunc(reason, 500), trunc(actionTaken, 500), initialStatus]
     );
