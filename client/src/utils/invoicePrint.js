@@ -1,4 +1,3 @@
-import { displayDate } from './dates';
 // Shared by both invoice print formats (Type 1 pre-printed overlay, Type 2 full form).
 
 export const money = (v) => {
@@ -14,11 +13,26 @@ export const qtyText = (v) => {
   return Number.isInteger(n) ? String(n) : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 };
 
-export const formatDate = (v, twoDigitYear = false) => {
+// yyyy-mm-dd on a printed invoice -- deliberately NOT the app's "18 Sept 2026".
+//
+// A documented exception to utils/dates.js, alongside the cheque dates: the screen format is for
+// reading, and this one goes on a document that is filed, keyed into a customer's own system and
+// sorted. An unambiguous numeric date is what that needs, and it is the same on both print
+// formats so an invoice does not date itself two ways.
+//
+// DATE columns reach the client as 'YYYY-MM-DD' strings already (server/src/db.js sets
+// dateStrings for exactly this reason), so the plain slice is both exact and timezone-proof.
+// Anything else is read as a local date and rebuilt from its local parts -- never through
+// toISOString(), which turns a local midnight into the previous day anywhere east of UTC, which
+// is where this runs.
+export const formatDate = (v) => {
   if (!v) return '';
+  const s = String(v);
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return '';
-  return displayDate(d);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
 // Tax codes in this data are 'VAT_PH:VATIN-12' | 'VAT_PH:ZRATE' | 'VAT_PH:0-VAT' |

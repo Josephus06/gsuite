@@ -57,7 +57,7 @@ export const FORM = {
       qty: { x: 24, w: 16, right: true },
       unit: { x: 28, w: 18 },
       description: { x: 48, w: 95 },
-      unitPrice: { x: 169, w: 26, right: true },
+      unitPrice: { x: 171, w: 26, right: true },
       amount: { x: 201, w: 28, right: true },
     },
     // "Order ID : SO-##### PO/Ref. Doc: #####" sits under the last item in the description area.
@@ -203,7 +203,7 @@ export default function InvoicePrintType1({ si, totals, calibrate }) {
               <Field spec={FORM.header.customerAddress} calibrate={calibrate} name="customerAddress">
                 {si.customer_address || si.bill_to_address}
               </Field>
-              <Field spec={FORM.header.date} calibrate={calibrate} name="date">{formatDate(si.date_created, true)}</Field>
+              <Field spec={FORM.header.date} calibrate={calibrate} name="date">{formatDate(si.date_created)}</Field>
               <Field spec={FORM.header.terms} calibrate={calibrate} name="terms">{si.term}</Field>
 
               {/* `y` is decided by the layout, not by the row index: the pitch between items
