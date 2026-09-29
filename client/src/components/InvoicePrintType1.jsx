@@ -41,7 +41,7 @@ export const FORM = {
   // Line-item band: QUANTITY | UNIT | DESCRIPTION | UNIT PRICE | AMOUNT.
   // `right: true` means x is the RIGHT edge -- how the money columns align on the form.
   items: {
-    top: 52,
+    top: 46,
     rowHeight: 5,
     rowsPerPage: 6,
     columns: {
@@ -64,7 +64,7 @@ export const FORM = {
     zeroRated: { x: 158, w: 22, y: 120, right: true },
     vat: { x: 140, w: 26, y: 106, right: true },
     totalSales: { x: 201, w: 28, y: 95, right: true },
-    lessWithholding: { x: 201, w: 28, y: 110, right: true },
+    lessWithholding: { x: 201, w: 28, y: 98, right: true },
     amountDue: { x: 201, w: 28, y: 105, right: true },
   },
 };
