@@ -105,6 +105,33 @@ export default function SalesInvoices() {
       .finally(() => setLoading(false));
   }
 
+  // Extract: the invoices under the filters on screen, as an Excel file. Open to everyone who can
+  // view this page -- the server gates it on the same can_view and the same Sales Rep scope as
+  // the list, so nobody can download an invoice the list would not show them.
+  const [extracting, setExtracting] = useState(false);
+  const [extractError, setExtractError] = useState('');
+  async function extract() {
+    setExtracting(true); setExtractError('');
+    const params = {};
+    if (status) params.status = status;
+    if (search) params.search = search;
+    if (from) params.from = from;
+    if (to) params.to = to;
+    if (departmentId) params.department_id = departmentId;
+    try {
+      const { data } = await api.get('/sales-invoices/export', { params, responseType: 'blob' });
+      const url = URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = url; a.download = `sales-invoices${from || to ? `-${from || 'start'}-to-${to || 'today'}` : ''}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setExtractError('Could not extract the invoices.');
+    } finally {
+      setExtracting(false);
+    }
+  }
+
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const pageRows = rows;
 
@@ -161,6 +188,11 @@ export default function SalesInvoices() {
         <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
           <button className="btn btn-primary" onClick={runSearch}>Search</button>
           <button className="btn" onClick={clearFilters}>Clear</button>
+          <button className="btn" disabled={extracting} onClick={extract}
+            title="Download every invoice under the filters above as an Excel file">
+            {extracting ? 'Extracting...' : 'Extract'}
+          </button>
+          {extractError && <span style={{ color: 'var(--danger)' }}>{extractError}</span>}
         </div>
       </div>
 

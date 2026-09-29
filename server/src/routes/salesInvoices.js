@@ -1,4 +1,5 @@
 const express = require('express');
+const ExcelJS = require('exceljs');
 const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
@@ -30,46 +31,55 @@ async function logAudit(conn, { invoiceId, userId, eventType, fieldName = null, 
   );
 }
 
+// The list's filters as SQL, shared by the list and the Excel extract so a download always holds
+// exactly the invoices the screen is filtered to -- including the Account Officer / Supervisor
+// scope, so an extract can never reach invoices the list would not show that person.
+async function listFilter(query, userId) {
+  const {
+    search, status, customer_id: customerId, sales_rep_id: salesRepId,
+    from, to, department_id: departmentId,
+  } = query;
+  const where = [];
+  const params = [];
+  if (status) { where.push('si.status = ?'); params.push(status); }
+  // An invoice raised from an Estimate has no Sales Order, so the customer is whichever of the
+  // two sources it actually has. Same COALESCE everywhere the customer is read below.
+  if (customerId) { where.push('COALESCE(so.customer_id, e.customer_id) = ?'); params.push(customerId); }
+  if (salesRepId) { where.push('si.sales_rep_id = ?'); params.push(salesRepId); }
+  // Date Created, inclusive at both ends, and either end usable on its own -- "everything since
+  // March" is as ordinary a question as a closed month. Compared as plain dates because the
+  // column is a DATE: no time component to push a row past midnight and out of its own range.
+  // idx_sales_invoices_date_created already covers this.
+  if (from) { where.push('si.date_created >= ?'); params.push(from); }
+  if (to) { where.push('si.date_created <= ?'); params.push(to); }
+  // The invoice's OWN department (si.department_id), not the Sales Order's. They are usually the
+  // same, but the invoice carries its own because billing can be charged elsewhere -- and it is
+  // si.department_id the list column already displays, so filtering on anything else would
+  // return rows whose Department cell disagreed with the filter that found them.
+  //
+  // 19,089 of 74,280 invoices carry no department at all. Those match no department filter, which
+  // is correct -- they are unassigned, not assigned to everyone -- and they are all still there
+  // under --ALL--.
+  if (departmentId) { where.push('si.department_id = ?'); params.push(departmentId); }
+  // An Account Officer sees only their own invoices; a Supervisor sees theirs plus their
+  // reports'. Same rule Estimates and Sales Orders already apply -- see lib/salesVisibility.js,
+  // which returns null (and so changes nothing) for every account that is neither.
+  const salesScope = await getSalesRepEmployeeScope(userId);
+  if (salesScope) { where.push('si.sales_rep_id IN (?)'); params.push(salesScope); }
+  if (search) {
+    where.push('(si.invoice_no LIKE ? OR so.sales_order_no LIKE ? OR e.estimate_no LIKE ? OR c.name LIKE ?)');
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+  }
+  return { where, params };
+}
+
 // Mirrors the real system's "Saved Invoices" list -- flat (no status tabs, just a
 // Status filter), same pattern as Assembly Builds' list.
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const {
-      search, status, customer_id: customerId, sales_rep_id: salesRepId,
-      from, to, department_id: departmentId,
-      page = '1', limit = '10',
-    } = req.query;
-    const where = [];
-    const params = [];
-    if (status) { where.push('si.status = ?'); params.push(status); }
-    // An invoice raised from an Estimate has no Sales Order, so the customer is whichever of the
-    // two sources it actually has. Same COALESCE everywhere the customer is read below.
-    if (customerId) { where.push('COALESCE(so.customer_id, e.customer_id) = ?'); params.push(customerId); }
-    if (salesRepId) { where.push('si.sales_rep_id = ?'); params.push(salesRepId); }
-    // Date Created, inclusive at both ends, and either end usable on its own -- "everything since
-    // March" is as ordinary a question as a closed month. Compared as plain dates because the
-    // column is a DATE: no time component to push a row past midnight and out of its own range.
-    // idx_sales_invoices_date_created already covers this.
-    if (from) { where.push('si.date_created >= ?'); params.push(from); }
-    if (to) { where.push('si.date_created <= ?'); params.push(to); }
-    // The invoice's OWN department (si.department_id), not the Sales Order's. They are usually the
-    // same, but the invoice carries its own because billing can be charged elsewhere -- and it is
-    // si.department_id the list column already displays, so filtering on anything else would
-    // return rows whose Department cell disagreed with the filter that found them.
-    //
-    // 19,089 of 74,280 invoices carry no department at all. Those match no department filter, which
-    // is correct -- they are unassigned, not assigned to everyone -- and they are all still there
-    // under --ALL--.
-    if (departmentId) { where.push('si.department_id = ?'); params.push(departmentId); }
-    // An Account Officer sees only their own invoices; a Supervisor sees theirs plus their
-    // reports'. Same rule Estimates and Sales Orders already apply -- see lib/salesVisibility.js,
-    // which returns null (and so changes nothing) for every account that is neither.
-    const salesScope = await getSalesRepEmployeeScope(req.user.id);
-    if (salesScope) { where.push('si.sales_rep_id IN (?)'); params.push(salesScope); }
-    if (search) {
-      where.push('(si.invoice_no LIKE ? OR so.sales_order_no LIKE ? OR e.estimate_no LIKE ? OR c.name LIKE ?)');
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
-    }
+    const { page = '1', limit = '10' } = req.query;
+    const { where, params } = await listFilter(req.query, req.user.id);
+    const { search, customer_id: customerId } = req.query;
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     // PAGINATED SERVER-SIDE. This used to return every invoice with no LIMIT -- 73,202 rows and
@@ -114,6 +124,86 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     );
     res.json({ rows, total, page: pageNum, limit: limitNum });
   } catch (err) {
+    next(err);
+  }
+});
+
+// Extract: every invoice under the list's current filters, as a workbook. Gated on can_view like
+// the list itself -- whoever can see the invoices can take them away in Excel. Written as a stream
+// rather than built in memory: with no filter it is the whole table, ~74,000 rows.
+router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const { where, params } = await listFilter(req.query, req.user.id);
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const [rows] = await pool.query(
+      `SELECT si.invoice_no, si.date_created, si.date_due, si.net_of_tax, si.tax_amount,
+              si.gross_amount, si.amount_due, si.bs_si_no, si.term, si.status, si.memo,
+              so.sales_order_no, e.estimate_no, c.name AS customer_name,
+              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
+              loc.location_name AS office_location_name, d.name AS department_name
+       FROM sales_invoices si
+       LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+       LEFT JOIN estimates e ON e.id = si.estimate_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id)
+       LEFT JOIN employees sr ON sr.id = si.sales_rep_id
+       LEFT JOIN locations loc ON loc.id = si.office_location_id
+       LEFT JOIN departments d ON d.id = si.department_id
+       ${whereSql}
+       ORDER BY si.id DESC`,
+      params
+    );
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="sales-invoices.xlsx"');
+    const wb = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: res, useStyles: true });
+    const ws = wb.addWorksheet('Sales Invoices', { views: [{ state: 'frozen', ySplit: 1 }] });
+    // Same columns, in the same order, as the Saved Invoices table.
+    const money = { numFmt: '#,##0.00' };
+    ws.columns = [
+      { header: 'Invoice #', key: 'invoice_no', width: 16 },
+      { header: 'SO #', key: 'so', width: 14 },
+      { header: 'Date Created', key: 'date_created', width: 13 },
+      { header: 'Date Due', key: 'date_due', width: 13 },
+      { header: 'Office Location', key: 'location', width: 22 },
+      { header: 'Customer', key: 'customer', width: 38 },
+      { header: 'Sales Rep', key: 'rep', width: 24 },
+      { header: 'Department', key: 'department', width: 20 },
+      { header: 'Net of Tax', key: 'net', width: 15, style: money },
+      { header: 'Tax Amount', key: 'tax', width: 14, style: money },
+      { header: 'Gross Amount', key: 'gross', width: 15, style: money },
+      { header: 'Amount Due', key: 'due', width: 15, style: money },
+      { header: 'Type', key: 'type', width: 6 },
+      { header: 'BS/SI #', key: 'bs_si', width: 14 },
+      { header: 'Term', key: 'term', width: 14 },
+      { header: 'Status', key: 'status', width: 10 },
+      { header: 'Memo', key: 'memo', width: 40 },
+    ];
+    ws.autoFilter = 'A1:Q1';
+    ws.getRow(1).font = { bold: true };
+    ws.getRow(1).commit();
+
+    // Dates as the plain YYYY-MM-DD the columns hold, so Excel can sort and filter them.
+    const day = (v) => (v ? String(v instanceof Date ? v.toISOString() : v).slice(0, 10) : '');
+    const STATUS = { saved: 'Open', cancelled: 'Void' };
+    for (const r of rows) {
+      ws.addRow({
+        invoice_no: r.invoice_no, so: r.sales_order_no || r.estimate_no || '',
+        date_created: day(r.date_created), date_due: day(r.date_due),
+        location: r.office_location_name || '', customer: r.customer_name || '',
+        rep: r.sales_rep_name || '', department: r.department_name || '',
+        // Numbers, not preformatted strings, so the columns can be totalled.
+        net: Number(r.net_of_tax || 0), tax: Number(r.tax_amount || 0),
+        gross: Number(r.gross_amount || 0), due: Number(r.amount_due || 0),
+        type: 'SI', bs_si: r.bs_si_no || '', term: r.term || '',
+        status: STATUS[r.status] || r.status, memo: r.memo || '',
+      }).commit();
+    }
+    ws.commit();
+    await wb.commit();
+  } catch (err) {
+    // Once the workbook has started streaming the status line is gone; all that is left is to
+    // cut the download short so it cannot be mistaken for a complete file.
+    if (res.headersSent) { res.destroy(err); return; }
     next(err);
   }
 });
