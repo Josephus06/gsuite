@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 
 const router = express.Router();
@@ -10,6 +10,24 @@ const router = express.Router();
 //   sample -> an approved Estimate; internal -> nothing.
 // This build focuses on the RMA type end to end; the others share the same tables/flow.
 const ROUTE = '/non-standard-sales-orders';
+
+// Filling in an NSSO's header and job lines is part of CREATING it, the way adding job items is
+// part of creating an Estimate. Gating it on can_edit alone meant Sales, who hold can_add but not
+// can_edit, could raise an NSSO and then have every save after step 1 refused -- NSSO-INT-41 and
+// -51 were left with no job lines that way. So: can_edit changes any NSSO, and whoever raised one
+// may keep working on it until it is approved. Approval is the line after which changes need Edit.
+function requireEditOrOwnDraft(req, res, next) {
+  (async () => {
+    if (await userCan(req.user.id, ROUTE, 'can_edit')) return next();
+    const [[n]] = await pool.query(
+      'SELECT created_by_user_id, status FROM non_standard_sales_orders WHERE id = ?',
+      [req.params.id]
+    );
+    if (n && Number(n.created_by_user_id) === Number(req.user.id) && n.status === 'pending_approval'
+        && await userCan(req.user.id, ROUTE, 'can_add')) return next();
+    res.status(403).json({ error: 'You do not have permission to perform this action' });
+  })().catch(next);
+}
 
 const TYPE_ABBR = { rma: 'RMA', rma_installation: 'INST', sample: 'SAM', internal: 'INT' };
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
@@ -160,7 +178,7 @@ router.get('/source-estimate-jobs/:estimateId', requireAuth, requirePermission(R
 // Replace the NSSO's lines from selected Estimate job orders (Sample). Copies pricing + sizes; the
 // sample amount / allowance default to the estimate line's net (a full-value sample) -- editable
 // later. Each line links back to its source estimate job order.
-router.post('/:id/lines/from-estimate', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.post('/:id/lines/from-estimate', requireAuth, requireEditOrOwnDraft, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const ids = Array.isArray(req.body?.estimate_job_order_ids) ? req.body.estimate_job_order_ids : [];
@@ -350,7 +368,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
-router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id', requireAuth, requireEditOrOwnDraft, async (req, res, next) => {
   try {
     const sets = []; const vals = [];
     for (const f of HEADER_FIELDS) {
@@ -365,7 +383,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 
 // Replace the NSSO's job-order lines from a set of source job orders (RMA: the Completed JOs the
 // user chose to redo). Copies job type / description / quantity / units from each JO.
-router.post('/:id/lines/from-source', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.post('/:id/lines/from-source', requireAuth, requireEditOrOwnDraft, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const ids = Array.isArray(req.body?.source_job_order_ids) ? req.body.source_job_order_ids : [];
@@ -401,7 +419,7 @@ router.post('/:id/lines/from-source', requireAuth, requirePermission(ROUTE, 'can
 // picks a Job Type per line up front; processes/items are added later, after approval, via the
 // Create-JO modal). source_job_order_id stays NULL and all pricing is 0 -- an internal work order
 // carries no revenue.
-router.put('/:id/lines', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/lines', requireAuth, requireEditOrOwnDraft, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const rows = Array.isArray(req.body?.lines) ? req.body.lines : [];

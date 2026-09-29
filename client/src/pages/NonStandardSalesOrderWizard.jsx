@@ -158,17 +158,55 @@ export default function NonStandardSalesOrderWizard() {
   // Internal type: job-type lines are entered by hand (no source JO). These edit the working `lines`
   // array in place; saveInternalLines persists the whole set via PUT /:id/lines.
   const EMPTY_LINE = { job_type_id: '', job_location_id: '', description: '', quantity: 1, units: 'PC/S', uom: 'INCH', length: '', width: '', height: '', delivery_date: '', memo: '', remarks: '' };
-  const addInternalLine = () => setLines((ls) => [...ls, { ...EMPTY_LINE }]);
-  const setInternalLine = (i, patch) => setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
-  const delInternalLine = (i) => setLines((ls) => ls.filter((_, idx) => idx !== i));
-  async function saveInternalLines() {
-    const payload = lines.filter((l) => l.job_type_id).map((l) => ({
+  // Every edit marks the lines dirty; the effect below saves them a moment later, the way an
+  // Estimate's job items save as they are filled in. Before this nothing reached the server until
+  // Save Lines or Next Step, and the header Save button only navigated -- so lines typed and then
+  // "saved" from the top of the page were simply lost (NSSO-INT-61).
+  const linesDirty = useRef(false);
+  const saveChain = useRef(Promise.resolve());
+  const [linesStatus, setLinesStatus] = useState('');
+  const editLines = (fn) => { linesDirty.current = true; setLines(fn); };
+  const addInternalLine = () => editLines((ls) => [...ls, { ...EMPTY_LINE }]);
+  const setInternalLine = (i, patch) => editLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  const delInternalLine = (i) => editLines((ls) => ls.filter((_, idx) => idx !== i));
+
+  // PUT /lines replaces the whole set, so two saves must never overlap: each waits for the last.
+  // `replace` swaps in the server's rows (explicit saves); an autosave leaves the screen alone,
+  // or a half-filled row with no Job Type yet -- which the server skips -- would vanish mid-typing.
+  function saveInternalLines(replace = true, current = lines) {
+    const payload = current.filter((l) => l.job_type_id).map((l) => ({
       job_type_id: l.job_type_id, job_location_id: l.job_location_id || null, description: l.description, quantity: l.quantity,
       units: l.units, uom: l.uom, length: l.length, width: l.width, height: l.height, delivery_date: l.delivery_date || null, memo: l.memo, remarks: l.remarks,
     }));
-    const { data } = await api.put(`/non-standard-sales-orders/${nssoId}/lines`, { lines: payload });
-    setLines(data);
-    return data;
+    linesDirty.current = false;
+    const run = async () => {
+      const { data } = await api.put(`/non-standard-sales-orders/${nssoId}/lines`, { lines: payload });
+      if (replace) setLines(data);
+      return data;
+    };
+    saveChain.current = saveChain.current.catch(() => {}).then(run);
+    return saveChain.current;
+  }
+
+  useEffect(() => {
+    if (header.type !== 'internal' || step !== 2 || !nssoId || !linesDirty.current) return undefined;
+    const timer = setTimeout(() => {
+      setLinesStatus('Saving...');
+      saveInternalLines(false, lines)
+        .then(() => setLinesStatus('All changes saved'))
+        .catch((e) => { linesDirty.current = true; setLinesStatus(''); setError(e.response?.data?.error || 'Could not save the job lines.'); });
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [lines]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function saveAndView() {
+    setBusy(true); setError('');
+    try {
+      await saveHeader();
+      if (header.type === 'internal' && step === 2) await saveInternalLines();
+      navigate(`/non-standard-sales-orders/${nssoId}`);
+    } catch (e) { setError(e.response?.data?.error || 'Save failed.'); }
+    finally { setBusy(false); }
   }
 
   async function addSelectedEjos() {
@@ -209,7 +247,7 @@ export default function NonStandardSalesOrderWizard() {
         <h1>Non Standard Sales Order</h1>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/non-standard-sales-orders')}>Back</button>
-          {nssoId && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/non-standard-sales-orders/${nssoId}`)}>Save</button>}
+          {nssoId && <button className="btn btn-sm btn-primary" disabled={busy} onClick={saveAndView}>Save</button>}
         </div>
       </div>
 
@@ -458,6 +496,7 @@ export default function NonStandardSalesOrderWizard() {
                 <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                   <button className="btn btn-sm btn-primary" onClick={addInternalLine}>Add Line</button>
                   <button className="btn btn-sm" disabled={busy} onClick={async () => { setBusy(true); setError(''); try { await saveInternalLines(); } catch (e) { setError(e.response?.data?.error || 'Save failed.'); } finally { setBusy(false); } }}>Save Lines</button>
+                  {linesStatus && <span className="muted" style={{ alignSelf: 'center', fontSize: 12 }}>{linesStatus}</span>}
                 </div>
               </>
             ) : (
