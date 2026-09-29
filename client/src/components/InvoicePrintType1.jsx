@@ -23,7 +23,7 @@ export const FORM = {
   // it if the pad is fed lower down.
   sheet: { width: 210, height: 297, formTop: 0 },
 
-  baseFontPt: 8,
+  baseFontPt: 6,
   fontFamily: "'Courier New', Courier, monospace", // monospace keeps columns aligned in the blanks
 
   // Header blanks. The form prints its own "Sold to :", "TIN:" and "Address:" labels at the
@@ -33,7 +33,7 @@ export const FORM = {
   header: {
     customerName: { x: 30, y: 19, w: 105 },
     customerTin: { x: 30, y: 22, w: 105 },
-    customerAddress: { x: 30, y: 46, w: 105, lines: 2 },
+    customerAddress: { x: 30, y: 25, w: 105, lines: 2 },
     date: { x: 175, y: 21, w: 26 },
     terms: { x: 175, y: 28, w: 26, lines: 2 },
   },
@@ -41,7 +41,7 @@ export const FORM = {
   // Line-item band: QUANTITY | UNIT | DESCRIPTION | UNIT PRICE | AMOUNT.
   // `right: true` means x is the RIGHT edge -- how the money columns align on the form.
   items: {
-    top: 46,
+    top: 43,
     rowHeight: 5,
     rowsPerPage: 6,
     columns: {
