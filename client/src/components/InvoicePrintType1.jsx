@@ -23,7 +23,7 @@ export const FORM = {
   // it if the pad is fed lower down.
   sheet: { width: 210, height: 297, formTop: 0 },
 
-  baseFontPt: 9,
+  baseFontPt: 8,
   fontFamily: "'Courier New', Courier, monospace", // monospace keeps columns aligned in the blanks
 
   // Header blanks. The form prints its own "Sold to :", "TIN:" and "Address:" labels at the
@@ -48,7 +48,7 @@ export const FORM = {
       qty: { x: 24, w: 16, right: true },
       unit: { x: 28, w: 18 },
       description: { x: 48, w: 95 },
-      unitPrice: { x: 166, w: 26, right: true },
+      unitPrice: { x: 169, w: 26, right: true },
       amount: { x: 201, w: 28, right: true },
     },
     // "Order ID : SO-##### PO/Ref. Doc: #####" sits under the last item in the description area.
