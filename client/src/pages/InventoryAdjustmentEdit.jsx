@@ -74,14 +74,17 @@ export default function InventoryAdjustmentEdit() {
     setSaving(true);
     setError('');
     try {
+      // Save lands on the adjustment's own view, the way Transfer Order, Journal, Deposit and
+      // Purchase Requisition all do. This form used to stay in the editor -- a new adjustment
+      // went to its own /edit and an existing one just reloaded in place -- so the only sign a
+      // save had worked was the spinner stopping, and approving it meant navigating there by
+      // hand. Lines are posted as they are added, so there is nothing unsaved to lose.
       if (isNew) {
         const { data } = await api.post('/inventory-adjustments', form);
-        navigate(`/inventory-adjustments/${data.id}/edit`);
+        navigate(`/inventory-adjustments/${data.id}`);
       } else {
         await api.put(`/inventory-adjustments/${id}`, form);
-        const { data } = await api.get(`/inventory-adjustments/${id}`);
-        setAdjustment(data);
-        setLines(data.lines || []);
+        navigate(`/inventory-adjustments/${id}`);
       }
     } catch (err) {
       setError(err.response?.data?.error || 'Save failed');
