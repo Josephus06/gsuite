@@ -388,6 +388,76 @@ function listFilter(query) {
   return { search, where, params };
 }
 
+// Extract: EVERY payment under the list's current filters, as a workbook -- the whole list, where
+// Extract Unapplied is only the part with money still on account. Same listFilter as the list, so
+// the file holds exactly what the screen is filtered to, voids included when Status is ALL.
+// Written as a stream: with no filter it is the whole table, ~130,000 rows.
+// Registered before /:id, which would otherwise take "export" as a payment id.
+router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const { where, params } = listFilter(req.query);
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const [rows] = await pool.query(
+      `SELECT cp.customer_payment_no, cp.date_created, c.name AS customer_name, loc.location_name,
+              d.name AS department_name, cp.or_no, pm.name AS payment_method_name, cp.payment_amount,
+              cp.applied_amount, cp.unapplied_amount, cp.status, cp.memo
+       FROM customer_payments cp
+       LEFT JOIN customers c ON c.id = cp.customer_id
+       LEFT JOIN payment_methods pm ON pm.id = cp.payment_method_id
+       LEFT JOIN departments d ON d.id = cp.department_id
+       LEFT JOIN locations loc ON loc.id = cp.office_location_id
+       ${whereSql}
+       ORDER BY cp.id DESC`,
+      params
+    );
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="customer-payments.xlsx"');
+    const wb = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: res, useStyles: true });
+    const ws = wb.addWorksheet('Customer Payments', { views: [{ state: 'frozen', ySplit: 1 }] });
+    const money = { numFmt: '#,##0.00' };
+    // The list's columns, in its order, plus Memo.
+    ws.columns = [
+      { header: 'Payment #', key: 'no', width: 18 },
+      { header: 'Date Created', key: 'date', width: 13 },
+      { header: 'Customer', key: 'customer', width: 38 },
+      { header: 'Location', key: 'location', width: 22 },
+      { header: 'Department', key: 'department', width: 20 },
+      { header: 'OR #', key: 'or_no', width: 14 },
+      { header: 'Payment Method', key: 'method', width: 18 },
+      { header: 'Payment Amount', key: 'payment', width: 16, style: money },
+      { header: 'Applied Amount', key: 'applied', width: 16, style: money },
+      { header: 'Unapplied Amount', key: 'unapplied', width: 17, style: money },
+      { header: 'Status', key: 'status', width: 14 },
+      { header: 'Memo', key: 'memo', width: 40 },
+    ];
+    ws.autoFilter = 'A1:L1';
+    ws.getRow(1).font = { bold: true };
+    ws.getRow(1).commit();
+
+    const STATUS = { not_deposited: 'Not Deposited', deposited: 'Deposited', voided: 'Void' };
+    const day = (v) => (v ? String(v instanceof Date ? v.toISOString() : v).slice(0, 10) : '');
+    for (const r of rows) {
+      ws.addRow({
+        no: r.customer_payment_no, date: day(r.date_created),
+        customer: r.customer_name || '', location: r.location_name || '', department: r.department_name || '',
+        or_no: r.or_no || '', method: r.payment_method_name || '',
+        // Numbers, not preformatted strings, so the columns can be totalled.
+        payment: Number(r.payment_amount || 0), applied: Number(r.applied_amount || 0),
+        unapplied: Number(r.unapplied_amount || 0),
+        status: STATUS[r.status] || r.status, memo: r.memo || '',
+      }).commit();
+    }
+    ws.commit();
+    await wb.commit();
+  } catch (err) {
+    // Once streaming has begun the status line is gone; cut the download short so a partial
+    // file cannot pass for a complete one.
+    if (res.headersSent) { res.destroy(err); return; }
+    next(err);
+  }
+});
+
 // Every payment with money still sitting unapplied, as a workbook -- the list's current filters
 // (Location included) plus "unapplied above zero". Voided payments are left out even when the
 // Status filter is ALL: a void holds no money on account whatever its unapplied column says.

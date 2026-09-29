@@ -104,8 +104,11 @@ export default function CustomerPayments() {
   // the table on screen rather than a half-typed filter.
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState('');
-  async function exportUnapplied() {
-    setExporting(true); setExportError('');
+  // Extract / Extract Unapplied: the same filters, two downloads -- every payment the list holds,
+  // or just those with money still on account.
+  async function exportUnapplied() { return runExport('unapplied'); }
+  async function runExport(kind) {
+    setExporting(kind); setExportError('');
     const params = {};
     if (applied.status) params.status = applied.status;
     if (applied.search) params.search = applied.search;
@@ -114,16 +117,16 @@ export default function CustomerPayments() {
     if (applied.dateFrom) params.date_from = applied.dateFrom;
     if (applied.dateTo) params.date_to = applied.dateTo;
     try {
-      const { data } = await api.get('/customer-payments/export-unapplied', { params, responseType: 'blob' });
+      const { data } = await api.get(kind === 'all' ? '/customer-payments/export' : '/customer-payments/export-unapplied', { params, responseType: 'blob' });
       const loc = locations.find((l) => String(l.id) === String(applied.locationId));
       const slug = loc ? `-${String(loc.location_name || loc.name).replace(/[^A-Za-z0-9]+/g, '-')}` : '';
       const url = URL.createObjectURL(data);
       const a = document.createElement('a');
-      a.href = url; a.download = `unapplied-customer-payments${slug}.xlsx`;
+      a.href = url; a.download = `${kind === 'all' ? 'customer-payments' : 'unapplied-customer-payments'}${slug}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
     } catch {
-      setExportError('Could not extract the unapplied payments.');
+      setExportError(kind === 'all' ? 'Could not extract the payments.' : 'Could not extract the unapplied payments.');
     } finally {
       setExporting(false);
     }
@@ -203,9 +206,13 @@ export default function CustomerPayments() {
         <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="btn btn-primary" onClick={() => apply(form)}>Search</button>
           {hasFilters && <button className="btn" onClick={() => apply(NO_FILTERS)}>Clear</button>}
-          <button className="btn" disabled={exporting} onClick={exportUnapplied}
+          <button className="btn" disabled={!!exporting} onClick={() => runExport('all')}
+            title="Download every payment under the filters above">
+            {exporting === 'all' ? 'Extracting...' : 'Extract'}
+          </button>
+          <button className="btn" disabled={!!exporting} onClick={exportUnapplied}
             title="Download every payment with an unapplied amount, under the filters above">
-            {exporting ? 'Extracting...' : 'Extract Unapplied'}
+            {exporting === 'unapplied' ? 'Extracting...' : 'Extract Unapplied'}
           </button>
           {exportError && <span style={{ color: 'var(--danger)' }}>{exportError}</span>}
           {/* The row count is the only way to tell "this department has no payments" apart from
