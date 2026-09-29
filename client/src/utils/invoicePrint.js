@@ -103,15 +103,33 @@ export function wrapMono(text, widthMm, pt) {
   return out;
 }
 
-// One page's worth of items, each with its wrapped description and the row it starts on.
-// Replaces a fixed six-items-per-page split: pages are now filled by ROWS, because an item is no
-// longer always one row tall.
+// How the items are packed into the band, and where each one sits.
+//
+// THE BAND IS A FIXED HEIGHT AND THE SPACING INSIDE IT ADJUSTS. The pre-printed form gives the
+// items a fixed area -- rowsPerPage rules, rowHeight apart, so 6 x 5mm = 30mm below items.top.
+// Packing one item per rule capped a sheet at six items and sent a seventh onto a second
+// pre-printed form, which costs a BIR serial for what is really a spacing decision.
+//
+// So the unit of packing is the TEXT LINE, not the rule, and the vertical pitch between lines is
+// whatever divides the band evenly for the content on it -- never tighter than the text itself
+// (line height at the base font) and never looser than the form's own rule spacing:
+//
+//   pitch = clamp(bandHeight / linesOnThisPage, lineHeight, rowHeight)
+//
+// A sparse sheet therefore looks exactly as it did -- one or two items land on the printed rules,
+// because the clamp holds pitch at rowHeight. A full one closes up until the band is used. At 6pt
+// the text line is 2.44mm, so a 30mm band holds 12 lines: ten single-line items sit at a 3mm
+// pitch with room to spare, and only a genuinely longer invoice starts a second form.
+//
+// A description that wraps still draws its own lines at the text's natural line height; it is the
+// gap between ITEMS that stretches, so a compressed sheet never overlaps and a sparse one never
+// looks squashed.
 export function layoutPages(lines, form) {
-  const { rowHeight, rowsPerPage, columns } = form.items;
+  const { top, rowHeight, rowsPerPage, columns } = form.items;
   const lh = lineHeightMm(form.baseFontPt);
-  const rowsForLines = (n) => Math.max(1, Math.ceil((n * lh) / rowHeight));
-  // The most one item can take is the whole band; past that there is nowhere left to put it.
-  const maxLines = Math.floor((rowsPerPage * rowHeight) / lh);
+  const bandHeight = rowsPerPage * rowHeight;
+  // What the band can hold once the pitch is squeezed to the text itself.
+  const maxLines = Math.max(1, Math.floor(bandHeight / lh));
 
   const items = (lines || []).map((l) => {
     let wrapped = wrapMono(l.description, columns.description.w, form.baseFontPt);
@@ -121,20 +139,34 @@ export function layoutPages(lines, form) {
       wrapped = wrapped.slice(0, maxLines);
       wrapped[maxLines - 1] = `${wrapped[maxLines - 1].slice(0, Math.max(0, wrapped[maxLines - 1].length - 1))}…`;
     }
-    return { line: l, wrapped, rows: rowsForLines(wrapped.length) };
+    return { line: l, wrapped, lines: Math.max(1, wrapped.length) };
   });
 
-  const pages = [[]];
+  // Pack by text line, keeping an item's own lines together.
+  const pages = [];
+  let page = [];
   let used = 0;
   for (const item of items) {
-    if (used + item.rows > rowsPerPage && pages[pages.length - 1].length) {
-      pages.push([]);
+    if (used + item.lines > maxLines && page.length) {
+      pages.push({ items: page, usedLines: used });
+      page = [];
       used = 0;
     }
-    pages[pages.length - 1].push({ ...item, rowOffset: used });
-    used += item.rows;
+    page.push({ ...item, lineOffset: used });
+    used += item.lines;
   }
-  // Rows consumed on the final page, so the Order ID line below the items knows where to sit.
-  pages.usedOnLastPage = used;
-  return pages;
+  pages.push({ items: page, usedLines: used });
+
+  return pages.map((pg) => {
+    const pitch = pg.usedLines
+      ? Math.min(rowHeight, Math.max(lh, bandHeight / pg.usedLines))
+      : rowHeight;
+    return {
+      ...pg,
+      pitch,
+      // Where the Order ID line goes: under the last item, not under a count of rules.
+      itemsBottom: top + pg.usedLines * pitch,
+      items: pg.items.map((it) => ({ ...it, y: top + it.lineOffset * pitch })),
+    };
+  });
 }

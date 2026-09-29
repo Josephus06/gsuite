@@ -180,7 +180,7 @@ export default function InvoicePrintType1({ si, totals, calibrate }) {
         }
       `}</style>
 
-      {pages.map((pageLines, pageIdx) => {
+      {pages.map((page, pageIdx) => {
         const isLast = pageIdx === pages.length - 1;
         return (
           <div className="si-sheet" key={pageIdx}>
@@ -197,8 +197,9 @@ export default function InvoicePrintType1({ si, totals, calibrate }) {
               <Field spec={FORM.header.date} calibrate={calibrate} name="date">{formatDate(si.date_created, true)}</Field>
               <Field spec={FORM.header.terms} calibrate={calibrate} name="terms">{si.term}</Field>
 
-              {pageLines.map(({ line: l, wrapped, rowOffset }, rowIdx) => {
-                const y = FORM.items.top + rowOffset * FORM.items.rowHeight;
+              {/* `y` is decided by the layout, not by the row index: the pitch between items
+                  closes up as a sheet fills, so a position cannot be derived from a count here. */}
+              {page.items.map(({ line: l, wrapped, y }, rowIdx) => {
                 const c = FORM.items.columns;
                 return (
                   <div key={l.id}>
@@ -219,7 +220,7 @@ export default function InvoicePrintType1({ si, totals, calibrate }) {
 
               {isLast && (
                 <Field
-                  spec={{ ...FORM.items.orderId, y: FORM.items.top + (pages.usedOnLastPage || pageLines.length) * FORM.items.rowHeight + FORM.items.orderId.gap }}
+                  spec={{ ...FORM.items.orderId, y: page.itemsBottom + FORM.items.orderId.gap }}
                   calibrate={calibrate}
                   name="orderId"
                 >
