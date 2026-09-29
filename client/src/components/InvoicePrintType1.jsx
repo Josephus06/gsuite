@@ -30,12 +30,15 @@ export const FORM = {
   // left, so these x values sit just past them. NOTE: the form's serial (the red "No. 03041")
   // is pre-printed and is the document's legal identity -- we must never print over it, which
   // is why there is no invoice-number field here.
+  // `bold: true` prints that blank in bold -- who the invoice is for, when it is dated and on
+  // what terms, and the two figures anyone reading it looks for first. Everything else stays
+  // regular weight so the emphasis means something.
   header: {
-    customerName: { x: 30, y: 19, w: 105 },
-    customerTin: { x: 30, y: 22, w: 105 },
-    customerAddress: { x: 30, y: 25, w: 105, lines: 2 },
-    date: { x: 175, y: 21, w: 26 },
-    terms: { x: 175, y: 28, w: 26, lines: 2 },
+    customerName: { x: 30, y: 19, w: 105, bold: true },
+    customerTin: { x: 30, y: 22, w: 105, bold: true },
+    customerAddress: { x: 30, y: 25, w: 105, lines: 2, bold: true },
+    date: { x: 175, y: 21, w: 26, bold: true },
+    terms: { x: 175, y: 28, w: 26, lines: 2, bold: true },
   },
 
   // Line-item band: QUANTITY | UNIT | DESCRIPTION | UNIT PRICE | AMOUNT.
@@ -72,9 +75,9 @@ export const FORM = {
     vatExempt: { x: 158, w: 22, y: 100, right: true },
     zeroRated: { x: 142, w: 22, y: 102, right: true },
     vat: { x: 140, w: 26, y: 106, right: true },
-    totalSales: { x: 201, w: 28, y: 96, right: true },
+    totalSales: { x: 201, w: 28, y: 96, right: true, bold: true },
     lessWithholding: { x: 201, w: 28, y: 101, right: true },
-    amountDue: { x: 201, w: 28, y: 105, right: true },
+    amountDue: { x: 201, w: 28, y: 105, right: true, bold: true },
   },
 };
 
@@ -95,6 +98,7 @@ function Field({ spec, children, calibrate, name }) {
           textAlign: spec.right ? 'right' : 'left',
           whiteSpace: spec.lines ? 'normal' : 'nowrap',
           overflow: 'hidden',
+          fontWeight: spec.bold ? 700 : 400,
         }}
       >
         {children}
