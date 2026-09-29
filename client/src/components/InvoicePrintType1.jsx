@@ -61,7 +61,7 @@ export const FORM = {
   totals: {
     vatableSales: { x: 142, w: 22, y: 95, right: true },
     vatExempt: { x: 158, w: 22, y: 115, right: true },
-    zeroRated: { x: 158, w: 22, y: 120, right: true },
+    zeroRated: { x: 142, w: 22, y: 102, right: true },
     vat: { x: 140, w: 26, y: 106, right: true },
     totalSales: { x: 201, w: 28, y: 95, right: true },
     lessWithholding: { x: 201, w: 28, y: 98, right: true },
