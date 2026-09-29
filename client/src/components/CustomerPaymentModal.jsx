@@ -161,20 +161,41 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
   const visibleApplyLines = !applyQuery ? (data?.apply_lines || []) : (data?.apply_lines || []).filter(
     (l) => applyAmounts[l.sales_invoice_id] !== undefined || String(l.invoice_no || '').toLowerCase().includes(applyQuery)
   );
-  const appliedToInvoices = Object.values(applyAmounts).reduce((s, v) => s + (Number(v) || 0), 0);
+  const received = Number(paymentAmount) || 0;
+  const tickedToInvoices = Object.values(applyAmounts).reduce((s, v) => s + (Number(v) || 0), 0);
+  // What will actually be applied: never more than the payment, since saving fits the ticked
+  // invoices to it (fitToPayment below). Shown that way so the panel never reads negative.
+  const appliedToInvoices = received > 0 ? Math.min(tickedToInvoices, received) : tickedToInvoices;
   const appliedToCredits = Object.values(creditAmounts).reduce((s, v) => s + (Number(v) || 0), 0);
   const appliedAmount = appliedToInvoices + appliedToCredits;
-  const received = Number(paymentAmount) || 0;
   // Credits offset the bill without cash changing hands, so only the invoice-applied
   // portion consumes the payment -- the same split the server enforces. Whatever cash is
   // left over sits unapplied, on account.
   const unappliedAmount = received - appliedToInvoices;
 
+  // A payment smaller than what is ticked is a PARTIAL payment, not a mistake: apply what was
+  // received and leave the rest owing. Trimmed from the last-ticked invoice backwards, so the
+  // invoices ticked first are paid first. The invoice keeps its balance and stays Open; the
+  // payment ends fully applied. Only when there is a payment amount to fit to -- a credits-only
+  // payment carries none.
+  function fitToPayment(lines) {
+    if (!(received > 0)) return lines;
+    let over = Number((lines.reduce((sum, l) => sum + l.applied_amount, 0) - received).toFixed(2));
+    if (over <= 0) return lines;
+    const fitted = lines.map((l) => ({ ...l }));
+    for (let i = fitted.length - 1; i >= 0 && over > 0; i -= 1) {
+      const cut = Math.min(fitted[i].applied_amount, over);
+      fitted[i].applied_amount = Number((fitted[i].applied_amount - cut).toFixed(2));
+      over = Number((over - cut).toFixed(2));
+    }
+    return fitted.filter((l) => l.applied_amount > 0);
+  }
+
   async function handleSave() {
     setError('');
-    const apply = Object.entries(applyAmounts)
+    const apply = fitToPayment(Object.entries(applyAmounts)
       .filter(([, v]) => Number(v) > 0)
-      .map(([id, v]) => ({ sales_invoice_id: Number(id), applied_amount: Number(v) }));
+      .map(([id, v]) => ({ sales_invoice_id: Number(id), applied_amount: Number(v) })));
     const credits = Object.entries(creditAmounts)
       .filter(([, v]) => Number(v) > 0)
       .map(([id, v]) => ({ credit_memo_id: Number(id), applied_amount: Number(v) }));
@@ -369,7 +390,13 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
                             onChange={() => setApplyAmounts((prev) => {
                               const next = { ...prev };
                               if (checked) delete next[l.sales_invoice_id];
-                              else next[l.sales_invoice_id] = String(Number(l.amount_due).toFixed(2));
+                              else {
+                                // What is left of the payment, if a payment amount is keyed in --
+                                // ticking an invoice then takes only what the money covers.
+                                const already = Object.values(prev).reduce((sum, v) => sum + (Number(v) || 0), 0);
+                                const left = received > 0 ? Math.max(0, received - already) : Infinity;
+                                next[l.sales_invoice_id] = String(Math.min(Number(l.amount_due), left).toFixed(2));
+                              }
                               return next;
                             })}
                           />
