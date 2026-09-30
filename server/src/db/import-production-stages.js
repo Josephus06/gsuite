@@ -22,6 +22,9 @@ const DRY_RUN = process.argv.includes('--dry-run');
 const REFRESH = process.argv.includes('--refresh');
 const DELIVERIES_ONLY = process.argv.includes('--deliveries-only'); // re-do only item deliveries
 function argVal(name, def) { const a = process.argv.find((x) => x.startsWith(`--${name}=`)); return a ? a.split('=')[1] : def; }
+// Optional: only these SO numbers (comma-separated), for re-doing a known set of orders without a
+// full-window run. The --from/--to window must still cover their dates.
+const ONLY = new Set(argVal('only', '').split(',').map((s) => s.trim()).filter(Boolean));
 const FROM = argVal('from', '2026-01-01');
 const TO = argVal('to', '2026-07-31');
 // Four workers is the right default for a bulk run -- it is what makes a full year finish in
@@ -112,6 +115,7 @@ async function main() {
     if (isVoidOrCancelled(so.Status_TransH)) continue;
     if (!ALL_REPS && !REP_NORM_SET.has(repNorm(so.Name_Empl))) continue;
     if (seenSo.has(so.so_upk)) continue;
+    if (ONLY.size && !ONLY.has(so.so_upk)) continue;
     seenSo.add(so.so_upk);
     targetSos.push({ soNo: so.so_upk, soPk: so.so_pk });
   }
