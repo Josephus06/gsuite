@@ -16,11 +16,17 @@ const { booksStart } = require('./openingBalances');
 
 // The workbook's rows, in its order, by SOURCE department name.
 const TEMPLATE = {
-  admin: ['Accounting', 'Building & Maintenance', 'Execom', 'Human Resource', 'Logistics', 'Quality Assurance', 'Supply Chain', 'Support', 'Treasury'],
+  admin: ['Accounting', 'Building & Maintenance', 'Execom', 'Human Resource', 'Logistics', 'Supply Chain', 'Support', 'Treasury'],
   selling: ['Marketing', 'Design', 'E-Commerce', 'Branch - Ayala', 'Branch-SM_Cebu', 'Sales-1', 'Sales-2', 'Sales-3', 'Sales-4', 'Sales-5'],
 };
 const GROUP_LABEL = { admin: 'Admin Expenses', selling: 'Selling Expenses', cogs: 'COGS (Production)' };
 const isProduction = (name) => /^production/i.test(String(name || '').trim());
+// SUPPORT is a family, not one department (the user, 2026-09-30): IT, System, Quality, Costing and
+// Technical/Engineering. Its row counts every department named Support... (Support-IT,
+// Support-System, Support-Costing, Support-Technical) plus Quality Assurance, which is why the
+// workbook's separate Quality Assurance row is folded into it.
+const isSupportFamily = (name) => /^support/i.test(String(name || '').trim()) || /^quality/i.test(String(name || '').trim());
+const SUPPORT_NOTE = 'IT, System, Quality, Costing, Technical/Engineering';
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -86,7 +92,7 @@ async function rowActuals(year, rows) {
         if (r.grp === 'cogs') {
           if ((s.section === 'cogs' && s.source_department === 'Total')
             || (s.section === 'opex' && isProduction(s.source_department))) cur[i] += Number(s.amount);
-        } else if (s.section === 'opex' && s.source_department === r.source_department) {
+        } else if (s.section === 'opex' && (r.label === 'Support' ? isSupportFamily(s.source_department) : s.source_department === r.source_department)) {
           cur[i] += Number(s.amount);
         }
       }
@@ -106,6 +112,7 @@ async function rowActuals(year, rows) {
     const sub = new Map(coa.map((c) => [c.account_code, c.account_sub_type]));
     const [deps] = await pool.query('SELECT id, name FROM departments');
     const production = new Set(deps.filter((d) => isProduction(d.name)).map((d) => Number(d.id)));
+    const support = new Set(deps.filter((d) => isSupportFamily(d.name)).map((d) => Number(d.id)));
     const lines = await getPostedGlLines({
       fromDate: `${year}-${pad2(t1sMonths[0])}-01`, toDate: monthEnd(year, t1sMonths[t1sMonths.length - 1]),
     });
@@ -120,7 +127,7 @@ async function rowActuals(year, rows) {
         const cur = out.get(r.id);
         if (r.grp === 'cogs') {
           if (cogs || (opex && production.has(Number(l.department_id)))) cur[m - 1] += amt;
-        } else if (opex && r.department_id && Number(l.department_id) === Number(r.department_id)) {
+        } else if (opex && (r.label === 'Support' ? support.has(Number(l.department_id)) : r.department_id && Number(l.department_id) === Number(r.department_id))) {
           cur[m - 1] += amt;
         }
       }
@@ -145,7 +152,8 @@ async function buildReport(budget) {
         remarks: r.remarks, pct: r.pct, budget: r.amounts.map(round2), actual: act,
         variance: r.amounts.map((b, i) => (act[i] == null ? null : round2(b - act[i]))),
         annual_budget: annualBudget, annual_actual: annualActual, annual_variance: round2(annualBudget - annualActual),
-        no_t1s_department: grp !== 'cogs' && !r.department_id,
+        no_t1s_department: grp !== 'cogs' && !r.department_id && r.label !== 'Support',
+        includes: r.label === 'Support' ? SUPPORT_NOTE : null,
       };
     });
     const sumAt = (key, i) => round2(gr.reduce((s, r) => s + (r[key][i] || 0), 0));
@@ -165,4 +173,4 @@ async function buildReport(budget) {
   };
 }
 
-module.exports = { TEMPLATE, GROUP_LABEL, seedRows, loadRows, rowActuals, buildReport };
+module.exports = { TEMPLATE, GROUP_LABEL, isSupportFamily, SUPPORT_NOTE, seedRows, loadRows, rowActuals, buildReport };

@@ -123,7 +123,8 @@ export default function DeptBudgetEdit({ budget: b, onReload }) {
                     <tr key={r.id}>
                       <td>
                         {r.label}
-                        {grp !== 'cogs' && !r.department_id && <span className="muted" style={{ fontSize: 11 }} title="No T1S department of this name: actuals come from the old system up to the cut-over only"> (no T1S dept)</span>}
+                        {r.label === 'Support' && <div className="muted" style={{ fontSize: 11 }}>IT, System, Quality, Costing, Technical/Engineering</div>}
+                        {grp !== 'cogs' && !r.department_id && r.label !== 'Support' && <span className="muted" style={{ fontSize: 11 }} title="No T1S department of this name: actuals come from the old system up to the cut-over only"> (no T1S dept)</span>}
                       </td>
                       <td className="text-right">
                         {editable ? <input type="number" step="0.01" style={{ width: 70, textAlign: 'right' }} value={r.pct ?? ''} onChange={(e) => setPct(r, e.target.value)} /> : (r.pct != null ? `${r.pct}%` : '')}

@@ -112,7 +112,7 @@ function DeptSheets() {
                 <tbody>
                   {g.rows.map((r) => (
                     <tr key={r.id}>
-                      <td>{r.label}</td>
+                      <td>{r.label}{r.includes && <div className="muted" style={{ fontSize: 10 }}>{r.includes}</div>}</td>
                       <td className="text-right" style={{ color: '#0070c0', fontWeight: 700 }}>{money(r.budget[0])}</td>
                       {SHORT.map((m, i) => [
                         <td key={m + 'a'} className="text-right" style={band(i)}>{cell(r.actual[i])}</td>,

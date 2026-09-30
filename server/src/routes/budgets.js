@@ -583,7 +583,7 @@ router.post('/:id/import-workbook', requireAuth, requirePermission(ROUTE, 'can_e
     const rows = await deptBudget.loadRows(b.id);
     const byNorm = new Map(rows.filter((r) => r.grp !== 'cogs').map((r) => [norm(r.label), r]));
     const cogs = rows.find((r) => r.grp === 'cogs');
-    const updates = new Map(); const unmatched = []; let target = null;
+    const updates = new Map(); const unmatched = []; let target = null; let qaMonthly = 0;
     for (const ws of wb.worksheets) {
       let head = 0; let remarksCol = 0; let cogsHead = 0;
       ws.eachRow((row, n) => {
@@ -600,9 +600,11 @@ router.post('/:id/import-workbook', requireAuth, requirePermission(ROUTE, 'can_e
           if (n <= head) return;
           const label = txt(row.getCell(1).value).trim();
           if (!label || /^total$/i.test(label)) return;
+          const monthly = num(row.getCell(2).value);
+          // Quality Assurance is part of Support now: its budget is added to Support's.
+          if (/^quality/i.test(label)) { qaMonthly += monthly; return; }
           const r = byNorm.get(norm(label));
           if (!r) { unmatched.push(label); return; }
-          const monthly = num(row.getCell(2).value);
           updates.set(r.id, { amounts: new Array(12).fill(round2(monthly)), remarks: remarksCol ? txt(row.getCell(remarksCol).value).trim() || null : r.remarks });
         });
       }
@@ -619,6 +621,13 @@ router.post('/:id/import-workbook', requireAuth, requirePermission(ROUTE, 'can_e
       }
     }
     if (!updates.size) return res.status(400).json({ error: 'No "Department | Monthly Budget" or "Month | Budget" table found in this workbook.' });
+    const supportRow = rows.find((x) => x.label === 'Support');
+    if (qaMonthly && supportRow) {
+      const u = updates.get(supportRow.id) || { amounts: new Array(12).fill(0), remarks: supportRow.remarks };
+      u.amounts = u.amounts.map((a) => round2(a + qaMonthly));
+      u.remarks = [u.remarks, 'incl. Quality Assurance'].filter(Boolean).join('; ');
+      updates.set(supportRow.id, u);
+    }
     await conn.beginTransaction();
     for (const [rowId, u] of updates) {
       await conn.query('UPDATE budget_rows SET remarks = ?, pct = NULL WHERE id = ?', [u.remarks, rowId]);
