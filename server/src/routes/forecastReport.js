@@ -47,6 +47,9 @@ const SELECT_SQL = `SELECT jo.id, jo.job_order_no, jo.description, jo.quantity,
     COALESCE(so.sales_order_no, ns.nsso_no) AS order_no,
     COALESCE(sol.net_of_tax, nl.net_of_tax, 0) AS jo_amount,
     jo.delivery_date, jo.planned_end_date AS forecast_date, ${STATUS_SQL} AS jo_status,
+    -- Prod Rating: the JO's GP against its job type's passing rate -- the commission report's rule.
+    COALESCE(NULLIF(sol.gp_rate, 0), so.actual_gp_rate) AS gp_rate, jt.gp_rate_head AS passing_gp_rate,
+    sol.is_approved_low_gp,
     (SELECT MAX(ab.date_created) FROM assembly_builds ab WHERE ab.job_order_id = jo.id AND ab.status <> 'cancelled') AS ab_date,
     (SELECT MAX(d.date_created) FROM item_delivery_lines idl JOIN item_deliveries d ON d.id = idl.item_delivery_id
       WHERE idl.job_order_id = jo.id AND d.status <> 'cancelled') AS id_date,
@@ -87,8 +90,19 @@ function buildFilter(q) {
   return { whereSql: `WHERE ${where.join(' AND ')}`, params };
 }
 
+// Above / below the job type's passing GP rate (or approved low), as lib/commissionReport.js judges
+// a passing JO. A job with no GP or no threshold (samples, internal work) cannot be rated.
+function prodRating(r) {
+  if (Number(r.is_approved_low_gp) === 1) return 'APPROVED LOW GP';
+  if (r.gp_rate == null || r.passing_gp_rate == null) return '';
+  return Number(r.gp_rate) >= Number(r.passing_gp_rate) ? 'ABOVE GP RATE' : 'BELOW GP RATE';
+}
+
 const shape = (r) => ({
   ...r,
+  prod_rating: prodRating(r),
+  gp_rate: r.gp_rate == null ? null : Number(r.gp_rate),
+  passing_gp_rate: r.passing_gp_rate == null ? null : Number(r.passing_gp_rate),
   quantity: Number(r.quantity || 0),
   jo_amount: Number(r.jo_amount || 0),
   invoice_qty: Number(r.invoice_qty || 0),
@@ -143,9 +157,10 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
       { header: 'AB Date', key: 'ab_date', width: 12 }, { header: 'ID Date', key: 'id_date', width: 12 },
       { header: 'Invoice Date', key: 'invoice_date', width: 13 }, { header: 'Invoice Qty', key: 'invoice_qty', width: 11, style: qty },
       { header: 'Invoice Amt', key: 'invoice_amount', width: 14, style: money }, { header: 'Unbilled Qty', key: 'unbilled_qty', width: 12, style: qty },
+      { header: 'Prod Rating', key: 'prod_rating', width: 16 }, { header: 'GP %', key: 'gp_rate', width: 8 }, { header: 'Passing GP %', key: 'passing_gp_rate', width: 12 },
     ];
     ws.getRow(1).font = { bold: true };
-    ws.autoFilter = 'A1:T1';
+    ws.autoFilter = 'A1:W1';
     for (const r of rows.map(shape)) {
       ws.addRow({
         ...r, delivery_date: day(r.delivery_date), forecast_date: day(r.forecast_date), ab_date: day(r.ab_date),

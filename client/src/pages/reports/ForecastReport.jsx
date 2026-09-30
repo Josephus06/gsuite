@@ -129,11 +129,11 @@ export default function ForecastReport() {
                   <th>Customer</th><th>Office Location</th><th>JO #</th><th>Job Type</th><th>Job Description</th><th>JO Location</th>
                   <th>Department</th><th>Sales Rep</th><th>JO Status</th><th style={{ textAlign: 'right' }}>JO Qty</th><th style={{ textAlign: 'right' }}>JO Amt</th>
                   <th>Delivery Date</th><th>Forecast Date</th><th>AB Date</th><th>ID Date</th><th>Invoice Date</th>
-                  <th style={{ textAlign: 'right' }}>Invoice Qty</th><th style={{ textAlign: 'right' }}>Invoice Amt</th><th style={{ textAlign: 'right' }}>Unbilled Qty</th><th></th>
+                  <th style={{ textAlign: 'right' }}>Invoice Qty</th><th style={{ textAlign: 'right' }}>Invoice Amt</th><th style={{ textAlign: 'right' }}>Unbilled Qty</th><th>Prod Rating</th><th></th>
                 </tr>
               </thead>
               <tbody>
-                {data && data.rows.length === 0 && <tr><td colSpan={20} className="muted" style={{ textAlign: 'center', padding: 20 }}>No job orders forecast in this period.</td></tr>}
+                {data && data.rows.length === 0 && <tr><td colSpan={21} className="muted" style={{ textAlign: 'center', padding: 20 }}>No job orders forecast in this period.</td></tr>}
                 {data && data.rows.map((r) => (
                   <tr key={r.id}>
                     <td data-label="Customer">{r.customer_name}</td>
@@ -155,6 +155,10 @@ export default function ForecastReport() {
                     <td data-label="Invoice Qty" style={{ textAlign: 'right' }}>{r.invoice_qty.toLocaleString()}</td>
                     <td data-label="Invoice Amt" style={{ textAlign: 'right' }}>{money(r.invoice_amount)}</td>
                     <td data-label="Unbilled Qty" style={{ textAlign: 'right' }}>{r.unbilled_qty.toLocaleString()}</td>
+                    <td data-label="Prod Rating" title={r.gp_rate != null ? `GP ${r.gp_rate}% vs passing ${r.passing_gp_rate ?? '—'}%` : ''}
+                      style={{ color: r.prod_rating === 'BELOW GP RATE' ? '#b91c1c' : r.prod_rating ? '#15803d' : undefined, fontWeight: 600 }}>
+                      {r.prod_rating || '—'}{r.gp_rate != null && <div className="muted" style={{ fontWeight: 400, fontSize: 11 }}>{r.gp_rate}% / {r.passing_gp_rate ?? '—'}%</div>}
+                    </td>
                     <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/production/${r.id}`)}>View</button></td>
                   </tr>
                 ))}
