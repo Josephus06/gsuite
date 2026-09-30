@@ -18,6 +18,9 @@ require('dotenv').config();
 const L = require('./lib/liveWindow');
 
 const DRY_RUN = process.argv.includes('--dry-run');
+// Rebuild only the LINES of bills already imported (header, status and payments untouched) -- for a
+// bill whose lines came in short.
+const RELINES = process.argv.includes('--relines');
 const fileArg = (process.argv.find((a) => a.startsWith('--file=')) || '').split('=')[1];
 const listArg = process.argv.slice(2).find((a) => !a.startsWith('--')) || '';
 const NUMBERS = [...new Set((fileArg ? fs.readFileSync(fileArg, 'utf8') : listArg).split(/[\s,]+/).map((s) => s.trim()).filter(Boolean))];
@@ -70,15 +73,23 @@ async function main() {
       if (i >= NUMBERS.length) return;
       const billNo = NUMBERS[i];
       try {
-        const [[dup]] = await pool.query('SELECT id FROM vendor_bills WHERE bill_no = ?', [billNo]);
-        if (dup) { out.exists += 1; continue; }
+        const [[dup]] = await pool.query('SELECT id FROM vendor_bills WHERE bill_no = ? AND purchase_order_id IS NULL', [billNo]);
+        if (dup && !RELINES) { out.exists += 1; continue; }
+        if (!dup && RELINES) { out.skipped.push(`${billNo}: not in T1S (nothing to re-line)`); continue; }
         const h = L.listRows(await L.api(t, 'get_transactions', { where: { UserPK_TransH: billNo, Module_TransH: 'VENDORBILL' }, limit: 1 }))[0];
         if (!h) { out.notFound += 1; continue; }
         if (h.SysFK_TransHSL_TransH) { out.hasPo += 1; continue; } // a PO bill: import-vendor-bills.js's job
         if (L.isVoidOrCancelled(h.Status_TransH)) { out.void += 1; continue; }
         const [[sup]] = await pool.query('SELECT id FROM suppliers WHERE live_pk = ? LIMIT 1', [h.SysFK_Accnt_TransH]);
         if (!sup) { out.skipped.push(`${billNo}: supplier not in T1S`); continue; }
-        const entries = L.listRows(await L.api(t, 'get_transaction_ledger_entries', { where: { SysFK_TransH_LdgrEntries: h.SysPK_TransH }, limit: 100, offset: 0 }));
+        // Paged: a bill can carry more than one page of ledger entries (VB-24357 has over 100), and a
+        // single call silently returned the first 100 -- 37 of its expense lines.
+        const entries = [];
+        for (let off = 0; ; off += 100) {
+          const pg = L.listRows(await L.api(t, 'get_transaction_ledger_entries', { where: { SysFK_TransH_LdgrEntries: h.SysPK_TransH }, limit: 100, offset: off }));
+          entries.push(...pg);
+          if (pg.length < 100) break;
+        }
         const lines = entries.filter((e) => e.Module_LdgrEntries === 'X');
         if (!lines.length) { out.skipped.push(`${billNo}: no expense lines in the source`); continue; }
         const unresolved = lines.filter((e) => !acctByLive.get(e.SysFK_COA_LdgrEntries));
@@ -92,7 +103,11 @@ async function main() {
         const conn = await pool.getConnection();
         try {
           await conn.beginTransaction();
-          const [r] = await conn.query(
+          let r;
+          if (RELINES) {
+            await conn.query('DELETE FROM vendor_bill_lines WHERE vendor_bill_id = ?', [dup.id]);
+            r = { insertId: dup.id };
+          } else [r] = await conn.query(
             `INSERT INTO vendor_bills
                (bill_no, purchase_order_id, supplier_id, date_created, date_due, term, reference_no, account_id, office_location_id,
                 memo, subtotal, discount_amount, net_of_tax, tax_amount, gross_amount, wtax_id, wtax_description,
