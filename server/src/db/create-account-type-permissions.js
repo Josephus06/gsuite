@@ -23,9 +23,11 @@ const ACTIONS = ['can_view', 'can_add', 'can_edit', 'can_delete', 'can_approve',
 
 // Kept in step with ACCOUNT_TYPE_OPTIONS in client/src/utils/accountTypes.js.
 const ACCOUNT_TYPES = [
-  'Sales', 'Production', 'Costing', 'Logistics', 'Purchasing', 'Inventory',
+  'Sales', 'Production', 'Costing Supervisor', 'Logistics', 'Purchasing', 'Inventory',
   'Accounts Receivable', 'Accounting', 'Treasury', 'HR', 'IT', 'Security',
-  'Account Manager', 'Artist', 'General Manager', 'System Admin',
+  'Accounting Manager', 'Artist', 'General Manager', 'System Admin', 'Audit Staff', 'Audit Supervisor',
+  'Production Manager', 'Sales Manager', 'SBU', 'Design Supervisor', 'HR Manager', 'Accounting Supervisor',
+  'Costing Staff',
 ];
 
 const DDL = `

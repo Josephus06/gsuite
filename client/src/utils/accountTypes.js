@@ -3,7 +3,9 @@
 // templates all read it. Kept in step with ACCOUNT_TYPES in
 // server/src/db/create-account-type-permissions.js.
 export const ACCOUNT_TYPE_OPTIONS = [
-  'Sales', 'Production', 'Costing', 'Logistics', 'Purchasing', 'Inventory',
+  'Sales', 'Production', 'Costing Supervisor', 'Logistics', 'Purchasing', 'Inventory',
   'Accounts Receivable', 'Accounting', 'Treasury', 'HR', 'IT', 'Security',
-  'Account Manager', 'Artist', 'General Manager', 'System Admin',
+  'Accounting Manager', 'Artist', 'General Manager', 'System Admin', 'Audit Staff', 'Audit Supervisor',
+  'Production Manager', 'Sales Manager', 'SBU', 'Design Supervisor', 'HR Manager', 'Accounting Supervisor',
+  'Costing Staff',
 ];
