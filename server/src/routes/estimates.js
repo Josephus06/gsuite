@@ -735,6 +735,34 @@ router.put('/:id/status', requireAuth, requireStatusChange, async (req, res, nex
       await conn.rollback();
       return res.status(400).json({ error: 'Credit Term is required before this estimate can be approved.' });
     }
+    // EVERY JOB LINE NEEDS A DELIVERY DATE AND TIME before the estimate can be approved. They are
+    // what the customer is being promised, and everything downstream is built on them: the Sales
+    // Order line and the Job Order both carry them through to Production's schedule.
+    //
+    // Insisted on here rather than as NOT NULL columns or on POST, for the same reason as the
+    // credit term above -- the lines are added one at a time while the estimate is still being
+    // built, so a line cannot be required to be complete the moment it is created.
+    if (NEEDS_CREDIT_TERM.includes(req.body.status)) {
+      const [incomplete] = await conn.query(
+        `SELECT line_no, description, delivery_date IS NULL AS no_date, delivery_time IS NULL AS no_time
+           FROM estimate_job_orders
+          WHERE estimate_id = ? AND (delivery_date IS NULL OR delivery_time IS NULL)
+          ORDER BY line_no`,
+        [req.params.id],
+      );
+      if (incomplete.length) {
+        await conn.rollback();
+        // Name the lines and say which half is missing: "fill in the delivery details" on a
+        // twelve-line estimate is a hunt.
+        const detail = incomplete.slice(0, 5).map((l) => {
+          const missing = l.no_date && l.no_time ? 'date and time' : (l.no_date ? 'date' : 'time');
+          return `line ${l.line_no}${l.description ? ` (${String(l.description).slice(0, 40)})` : ''} — no delivery ${missing}`;
+        }).join('; ');
+        return res.status(400).json({
+          error: `Delivery Date and Delivery Time are required on every job line before this estimate can be approved. ${detail}${incomplete.length > 5 ? `; and ${incomplete.length - 5} more` : ''}.`,
+        });
+      }
+    }
     // Approving out of the initial "pending supervisor approval" stage requires the
     // Can Approve Sales Estimate flag from the user's Account Type settings -- checked
     // fresh against the DB rather than trusting the JWT, since that flag can change

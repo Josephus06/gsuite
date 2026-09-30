@@ -1315,7 +1315,14 @@ export default function EstimateWizard() {
                 <thead>
                   <tr>
                     <th>#</th>
-                    {JOB_ORDER_COLUMNS.map((c) => <th key={c.key}>{c.label}</th>)}
+                    {/* The two required ones are marked in the header, so the asterisk is visible
+                        while the grid is being filled rather than only in the error at NEXT. */}
+                    {JOB_ORDER_COLUMNS.map((c) => (
+                      <th key={c.key}>
+                        {c.label}
+                        {(c.key === 'delivery_date' || c.key === 'delivery_time') && <span style={{ color: '#b91c1c' }}> *</span>}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 {jobOrders.map((jo, idx) => {
@@ -1423,7 +1430,28 @@ export default function EstimateWizard() {
 
             <div className="wizard-actions">
               <button type="button" className="btn" onClick={() => setStep(1)}>PREVIOUS</button>
-              <button type="button" className="btn btn-primary" onClick={() => saveHeaderAndGoTo(3)}>NEXT</button>
+              {/* Delivery Date and Time are what the customer is being promised and are required
+                  on every job line. The server refuses to approve an estimate without them, so
+                  this is the message rather than the enforcement -- said here, where the lines
+                  are, instead of three steps later when someone tries to approve. */}
+              <button
+                type="button" className="btn btn-primary"
+                onClick={() => {
+                  const missing = jobOrders
+                    .map((jo, i) => ({ n: i + 1, noDate: !jo.delivery_date, noTime: !jo.delivery_time }))
+                    .filter((x) => x.noDate || x.noTime);
+                  if (missing.length) {
+                    const detail = missing.slice(0, 5)
+                      .map((x) => `line ${x.n} (no delivery ${x.noDate && x.noTime ? 'date and time' : (x.noDate ? 'date' : 'time')})`)
+                      .join(', ');
+                    setError(`Delivery Date and Delivery Time are required on every job line: ${detail}${missing.length > 5 ? `, and ${missing.length - 5} more` : ''}.`);
+                    return;
+                  }
+                  saveHeaderAndGoTo(3);
+                }}
+              >
+                NEXT
+              </button>
             </div>
           </div>
         )}
