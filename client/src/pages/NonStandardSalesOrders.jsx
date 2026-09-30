@@ -9,9 +9,21 @@ import useAutoSearch from '../utils/useAutoSearch';
 
 const PAGE_SIZE = 10;
 const TYPE_LABELS = { rma: 'RMA', rma_installation: 'RMA - Installation', sample: 'Sample', internal: 'Internal' };
+// Every status an NSSO can actually hold, in lifecycle order -- the six recomputeNssoStatus can
+// reach through computeSalesOrderStatus, plus the two approval decisions either side of them.
+// The Status filter below is built from this map rather than listing its own options, which is
+// what went wrong before: the filter offered four of them, so the 46 NSSOs sitting at Pending
+// Billing and the 34 at Pending for JO could not be listed at all.
 const STATUS_LABELS = {
-  pending_approval: 'Pending / Needs Approval', pending_for_jo: 'Pending for JO', jo_in_process: 'JO In-Process',
-  pending_billing: 'Pending Billing', billed: 'Billed', cancelled: 'Cancelled',
+  pending_approval: 'Pending / Needs Approval',
+  pending_for_jo: 'Pending for JO',
+  jo_in_process: 'JO In-Process',
+  pending_delivery: 'Pending Delivery',
+  partially_delivered: 'Partially Delivered',
+  pending_billing: 'Pending Billing',
+  pending_billing_partially_delivered: 'Pending Billing / Partially Delivered',
+  billed: 'Billed',
+  cancelled: 'Cancelled',
 };
 
 function money(v) {
@@ -76,10 +88,9 @@ export default function NonStandardSalesOrders() {
             <label>Status</label>
             <select value={status} onChange={(e) => setStatus(e.target.value)}>
               <option value="">--ALL--</option>
-              <option value="pending_approval">Pending / Needs Approval</option>
-              <option value="jo_in_process">JO In-Process</option>
-              <option value="billed">Billed</option>
-              <option value="cancelled">Cancelled</option>
+              {Object.entries(STATUS_LABELS).map(([key, label]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
             </select>
           </div>
         </div>
