@@ -283,12 +283,16 @@ async function deriveOnHand(db, itemIds) {
     byPair.set(pair, a.opening + (since.get(a.from)?.get(pair) ?? 0));
   }
 
-  // Anything the ledger does not cover falls back to the full movement history -- the same view
-  // the Bin Card falls back to, and just as unreconciled.
+  // With no snapshot at all, everything is the full movement history. With one, a pair it does not
+  // list is a pair the source held NOTHING at when the snapshot was struck (the snapshot is the
+  // source's whole position -- every item and location with a balance), so it starts from zero at
+  // the snapshot date and counts only the movements since. Falling back to full history there
+  // showed stock -- negative, often -- that the source never had, from the migration's gaps.
   if (anchors.size === 0 || cutoffs.length === 0) {
     for (const [pair, bal] of await sumByPair(null)) byPair.set(pair, bal);
   } else {
-    for (const [pair, bal] of await sumByPair(null)) if (!byPair.has(pair)) byPair.set(pair, bal);
+    const cutoff = cutoffs.sort()[0];
+    for (const [pair, bal] of since.get(cutoff)) if (!byPair.has(pair)) byPair.set(pair, bal);
   }
   return byPair;
 }

@@ -89,6 +89,14 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
         opening = null;
       }
     }
+    // No row for this item/location, but the install has a snapshot: the source held none here when
+    // it was struck, so the card opens at zero on that date -- not on the full, unreconciled history.
+    if (full !== '1' && opening && !opening.window_from) {
+      try {
+        const [[g]] = await pool.query('SELECT MIN(window_from) AS window_from FROM live_stock_ledger');
+        if (g && g.window_from) opening = { beg_stock: 0, window_from: g.window_from, window_to: null };
+      } catch (err) { /* no snapshot column: keep the full-history view */ }
+    }
     const windowFrom = opening?.window_from ? String(opening.window_from).slice(0, 10) : null;
     // Asked "as of" a date before the opening balance was struck, the anchor is no help -- it
     // describes a later moment than the question. Answer from full history instead, and say so,
