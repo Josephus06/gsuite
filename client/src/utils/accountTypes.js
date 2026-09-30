@@ -7,5 +7,5 @@ export const ACCOUNT_TYPE_OPTIONS = [
   'Accounts Receivable', 'Accounting', 'Treasury', 'HR', 'IT', 'Security',
   'Accounting Manager', 'Artist', 'General Manager', 'System Admin', 'Audit Staff', 'Audit Supervisor',
   'Production Manager', 'Sales Manager', 'SBU', 'Design Supervisor', 'HR Manager', 'Accounting Supervisor',
-  'Costing Staff',
+  'Costing Staff', 'Account Payable',
 ];
