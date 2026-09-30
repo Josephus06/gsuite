@@ -198,6 +198,9 @@ import JobOrderPrint from './pages/JobOrderPrint';
 import PurchaseOrderPrint from './pages/PurchaseOrderPrint';
 import Forms from './pages/Forms';
 import BankReconciliations from './pages/accounting/BankReconciliations';
+import Budgets from './pages/accounting/Budgets';
+import BudgetEdit from './pages/accounting/BudgetEdit';
+import BudgetVsActual from './pages/reports/BudgetVsActual';
 import BankReconciliationView from './pages/accounting/BankReconciliationView';
 import FormEdit from './pages/FormEdit';
 import FormView from './pages/FormView';
@@ -273,6 +276,9 @@ function App() {
         <Route path="/forms/:id" element={<FormView />} />
         <Route path="/forms/:id/edit" element={<FormEdit />} />
         <Route path="/accounting/bank-reconciliation" element={<BankReconciliations />} />
+        <Route path="/budgets" element={<Budgets />} />
+        <Route path="/budgets/:id" element={<BudgetEdit />} />
+        <Route path="/reports/budget-vs-actual" element={<BudgetVsActual />} />
         <Route path="/accounting/bank-reconciliation/:id" element={<BankReconciliationView />} />
         <Route path="/hrd/:id" element={<HrdRoom />} />
         <Route path="/non-standard-job-orders" element={<NonStandardJobOrders />} />

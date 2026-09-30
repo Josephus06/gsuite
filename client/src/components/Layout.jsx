@@ -235,6 +235,7 @@ const NAV_STRUCTURE = [
         items: [
           { route: '/manage-accounting-period', label: 'Manage Accounting Period' },
           { route: '/accounting/bank-reconciliation', label: 'Bank Reconciliation' },
+          { route: '/budgets', label: 'Budgets' },
         ],
       },
       {
@@ -242,6 +243,7 @@ const NAV_STRUCTURE = [
         items: [
           { route: '/reports/trial-balance', label: 'Trial Balance' },
           { route: '/reports/income-statement', label: 'Income Statement' },
+          { route: '/reports/budget-vs-actual', label: 'Budget vs Actual' },
           { route: '/reports/balance-sheet', label: 'Balance Sheet' },
           { route: '/reports/ar-aging', label: 'AR Aging' },
           // Its own permission, not AR Aging's -- see the note on the route in routes/reports.js.

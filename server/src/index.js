@@ -81,6 +81,7 @@ const ticketReportRoutes = require('./routes/ticketReport');
 const driverRunRoutes = require('./routes/driverRuns');
 const deliverySummaryReportRoutes = require('./routes/deliverySummaryReport');
 const disbursementReportRoutes = require('./routes/disbursementReport');
+const budgetRoutes = require('./routes/budgets');
 const birReportRoutes = require('./routes/birReports');
 const collectionForecastRoutes = require('./routes/collectionForecast');
 const itineraryRoutes = require('./routes/itineraries');
@@ -276,6 +277,7 @@ app.use('/api/reports/artist-incentive', artistIncentiveReportRoutes);
 app.use('/api/reports/tickets', ticketReportRoutes);
 app.use('/api/reports/delivery-summary', deliverySummaryReportRoutes);
 app.use('/api/reports/disbursement', disbursementReportRoutes);
+app.use('/api/budgets', budgetRoutes);
 // BIR Reports > Sales Report / Purchase Report -- mounted under its own prefix so each page
 // keeps its own permission row rather than borrowing the Accounting reports'.
 app.use('/api/reports/bir', birReportRoutes);
