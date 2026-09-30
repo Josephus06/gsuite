@@ -72,18 +72,9 @@ export function invoiceTotals(si) {
     quantity: (si.lines || []).reduce((s, l) => s + Number(l.quantity || 0), 0),
     // amount_due is drawn down by payments and credit memos, so a settled invoice would
     // print 0.00. What the form asks for is what this document billed, so derive it.
-    // Gross less withholding -- except where the source system did not deduct it, and the paper
-    // must match the source. It was not consistent: INV-81997 bills 60,499.50 less 1,209.99 EWT
-    // = 59,289.51, while INV-82382 shows EWT 12.80 yet keeps Amount Due at the full 640.00. So a
-    // migrated invoice (no creator) still owing MORE than Gross - EWT is one where it was not
-    // deducted, and prints the Gross. Once payments draw it down that cannot be told, and the
-    // ordinary rule applies.
-    amountDue: (() => {
-      const gross = Number(si.gross_amount || 0);
-      const lessEwt = gross - Number(si.ewt_amount || 0);
-      const notDeducted = si.created_by_user_id == null && Number(si.amount_due) > lessEwt + 0.005;
-      return notDeducted ? gross : lessEwt;
-    })(),
+    // TOTAL AMOUNT DUE is Total Sales less Withholding Tax -- the two figures printed above it --
+    // on every invoice, so the form always adds up on its face (INV-82382: 640.00 - 12.80 = 627.20).
+    amountDue: Number(si.gross_amount || 0) - Number(si.ewt_amount || 0),
   };
 }
 
