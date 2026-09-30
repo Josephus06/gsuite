@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
-// The real mark, not the app's hand-drawn one (which still drives the loading spinner).
-import brandMark from '../assets/graphicstar-mark.png';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
+import PrintLetterhead from '../components/PrintLetterhead';
 import { displayDate } from '../utils/dates';
 
 // Mirrors the real system's "Print" report for an estimate (Report Viewer ->
@@ -58,28 +57,7 @@ export default function EstimatePrint() {
       </div>
 
       <div className="print-sheet">
-        <div className="print-letterhead">
-          {/* The GraphicStar letterhead, matching the emailed PDF's exactly (see wordmark() in
-              server/src/lib/estimatePdf.js). Drawn from the vector mark plus type rather than
-              placed as the bitmap logo: that file carries a bevel and a drop shadow, and scaled
-              down to letterhead size it prints muddy -- the same reason the PDF sets it in type. */}
-          <div className="print-logo">
-            <img src={brandMark} alt="" className="print-logo-mark" />
-            <div className="print-logo-type">
-              <div className="print-wordmark">
-                <span className="print-wordmark-a">GRAPHIC</span><span className="print-wordmark-b">STAR</span>
-              </div>
-              <div className="print-wordmark-rule" />
-              <div className="print-tagline">Creations Made Easy</div>
-            </div>
-          </div>
-          <div className="print-company-address">
-            <strong>GraphicStar Building</strong><br />
-            J.S. Alinsug St., Basak Mandaue City, Cebu 6014, Philippines<br />
-            Tel. #238-1234<br />
-            www.graphicstar.com.ph
-          </div>
-        </div>
+        <PrintLetterhead />
 
         <h2 className="print-title">Price Quotation</h2>
 

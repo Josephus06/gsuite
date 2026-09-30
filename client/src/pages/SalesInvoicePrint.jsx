@@ -4,6 +4,7 @@ import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import InvoicePrintType1, { FORM } from '../components/InvoicePrintType1';
 import InvoicePrintType2 from '../components/InvoicePrintType2';
+import DeliveryReceiptPrint from '../components/DeliveryReceiptPrint';
 import { invoiceTotals } from '../utils/invoicePrint';
 
 // Two invoice print formats, picked with ?type= :
@@ -11,15 +12,18 @@ import { invoiceTotals } from '../utils/invoicePrint';
 //             printed as the top band of a portrait A4 sheet.
 //   Type 2 -- self-contained export-style INVOICE on plain A4; draws its own grid.
 // Type 1 is the default because it is the one tied to the BIR-registered stationery.
+//
+// A Delivery Receipt takes neither: it has its own form (DeliveryReceiptPrint), which is the one
+// the live system prints and the only one a DR has. The ?type= switch is not offered for it.
 export default function SalesInvoicePrint() {
   const { id } = useParams();
   const [params, setParams] = useSearchParams();
   const [si, setSi] = useState(null);
 
-  // A Delivery Receipt only ever prints on plain paper -- it is not a Service Invoice, so the
-  // pre-printed pad (Type 1) is not offered, whatever the URL asks for.
+  // A Delivery Receipt is not a Service Invoice: it never goes on the pre-printed pad, and it
+  // does not borrow the export-invoice grid either. It has its own form, whatever the URL asks.
   const isDr = si?.invoice_type === 'DR';
-  const type = isDr || params.get('type') === '2' ? 2 : 1;
+  const type = params.get('type') === '2' ? 2 : 1;
   const calibrate = params.get('calibrate') === '1';
 
   useEffect(() => {
@@ -29,6 +33,8 @@ export default function SalesInvoicePrint() {
   const totals = useMemo(() => invoiceTotals(si), [si]);
 
   if (!si) return <LoadingSpinner />;
+
+  if (isDr) return <DeliveryReceiptPrint si={si} />;
 
   const setType = (t) => setParams(t === 1 ? {} : { type: '2' });
 
@@ -49,11 +55,9 @@ export default function SalesInvoicePrint() {
         <span style={{ marginRight: 'auto', font: '13px system-ui, sans-serif', color: '#334155' }}>
           {si.invoice_no} — {si.customer_name}
         </span>
-        {!isDr && (
-          <button className={`btn btn-sm ${type === 1 ? 'btn-primary' : ''}`} onClick={() => setType(1)}>
-            Type 1 · Pre-printed
-          </button>
-        )}
+        <button className={`btn btn-sm ${type === 1 ? 'btn-primary' : ''}`} onClick={() => setType(1)}>
+          Type 1 · Pre-printed
+        </button>
         <button className={`btn btn-sm ${type === 2 ? 'btn-primary' : ''}`} onClick={() => setType(2)}>
           Type 2 · Plain paper
         </button>

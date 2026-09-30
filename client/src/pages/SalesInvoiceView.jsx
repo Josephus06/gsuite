@@ -138,11 +138,14 @@ export default function SalesInvoiceView() {
           )}
           <ButtonMenu
             label="Print"
-            // A Delivery Receipt is not a Service Invoice, so it never goes on the pre-printed pad.
-            options={[
-              ...(si.invoice_type === 'DR' ? [] : [{ label: 'Type 1', hint: 'Pre-printed Service Invoice form', onClick: () => window.open(`/sales-invoices/${id}/print`, '_blank') }]),
-              { label: 'Type 2', hint: si.invoice_type === 'DR' ? 'Plain paper Delivery Receipt' : 'Plain paper, full invoice', onClick: () => window.open(`/sales-invoices/${id}/print?type=2`, '_blank') },
-            ]}
+            // A Delivery Receipt is not a Service Invoice: it has one form of its own and neither
+            // of the invoice formats, so it is not offered a choice it cannot use.
+            options={si.invoice_type === 'DR'
+              ? [{ label: 'Delivery Receipt', hint: 'Plain paper', onClick: () => window.open(`/sales-invoices/${id}/print`, '_blank') }]
+              : [
+                { label: 'Type 1', hint: 'Pre-printed Service Invoice form', onClick: () => window.open(`/sales-invoices/${id}/print`, '_blank') },
+                { label: 'Type 2', hint: 'Plain paper, full invoice', onClick: () => window.open(`/sales-invoices/${id}/print?type=2`, '_blank') },
+              ]}
           />
           {canTakePayment && isSettleable && <button className="btn btn-sm btn-primary" onClick={() => setShowPaymentModal(true)}>Accept Payment</button>}
           {canRaiseCreditMemo && isSettleable && <button className="btn btn-sm btn-primary" onClick={() => setShowCreditMemoModal(true)}>Credit Memo</button>}
