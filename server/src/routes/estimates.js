@@ -463,6 +463,10 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   try {
     await conn.beginTransaction();
     const values = pick(req.body, HEADER_FIELDS);
+    // A brand-new estimate has not been approved by anyone; it starts at
+    // pending_supervisor_approval and earns its approver by passing that stage.
+    const newApprovedIdx = HEADER_FIELDS.indexOf('approved_by_id');
+    if (newApprovedIdx >= 0) values[newApprovedIdx] = null;
     const tempNo = `TMP-${Date.now()}`;
     const [result] = await conn.query(
       `INSERT INTO estimates (estimate_no, ${HEADER_FIELDS.join(', ')}) VALUES (?, ${HEADER_FIELDS.map(() => '?').join(', ')})`,
@@ -498,6 +502,12 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), requireEdi
       return res.status(404).json({ error: 'Not found' });
     }
     const values = pick(req.body, HEADER_FIELDS);
+    // APPROVED BY IS NEVER TAKEN FROM AN EDIT. It is written in exactly one place -- the
+    // supervisor-approval transition in PUT /:id/status -- so an estimate can never name its own
+    // approver, and a form that does not carry the field cannot silently blank the supervisor who
+    // signed it off by round-tripping a null over it.
+    const approvedIdx = HEADER_FIELDS.indexOf('approved_by_id');
+    if (approvedIdx >= 0) values[approvedIdx] = oldRow.approved_by_id;
     await conn.query(
       `UPDATE estimates SET ${HEADER_FIELDS.map((f) => `${f} = ?`).join(', ')}, updated_at = NOW() WHERE id = ?`,
       [...values, req.params.id]
@@ -536,6 +546,11 @@ async function replicateEstimate(userId, sourceId) {
     const headerValues = HEADER_FIELDS.map((f) => {
       if (f === 'date_created') return new Date().toISOString().slice(0, 10);
       if (f === 'status') return 'pending_supervisor_approval';
+      // Approved By is the supervisor who signed THIS estimate off out of pending_supervisor_
+      // approval. A replica has not been approved by anyone -- it starts back at the beginning of
+      // the flow -- so carrying the source's approver across would put a supervisor's name on an
+      // estimate they have never seen, which is the one thing that field must never say.
+      if (f === 'approved_by_id') return null;
       return source[f];
     });
     const tempNo = `TMP-${Date.now()}`;
