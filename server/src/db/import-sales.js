@@ -272,6 +272,25 @@ async function resolveContact(customerId, name, title, email, phone) {
 // Live Type_TransH -> sales_invoices.invoice_type. 'dr' is a Delivery Receipt; si and the old 'bs'
 // Billing Statement are both SI (see db/add-invoice-type.js). The list row carries the type even
 // where the detail header does not.
+// Discount and withholding, which the first migration dropped -- INV-82382 came across as a line
+// of 878.40 under a 640.00 invoice because its 27.14% discount was never read. SubTotal_TransH is
+// the pre-discount sub total, SubTotalVatEx_TransH the net after it. The source's percent fields
+// do not hold the rate actually used (INV-82382: 12.80 on 640.00 is 2%, the fields read 0 and 1),
+// so the rate is derived from the two amounts.
+const invoiceMoney = (h) => {
+  const net = num(h.SubTotalVatEx_TransH);
+  const ewt = num(h.WTAXAmount_TransH);
+  return {
+    subtotal: h.SubTotal_TransH != null && h.SubTotal_TransH !== '' ? num(h.SubTotal_TransH) : net,
+    discount: num(h.DiscountAmount_TransH),
+    ewt,
+    ewtPct: net > 0 ? Math.round((ewt / net) * 1000000) / 10000 : 0,
+  };
+};
+// A line's net is Total_LdgrInvty (after its discount); SubTotalAmountOut is before it.
+const lineNet = (il) => num(il.Total_LdgrInvty != null && il.Total_LdgrInvty !== '' ? il.Total_LdgrInvty : il.SubTotalAmountOut_LdgrInvty);
+const lineDiscPrice = (il) => Math.round((num(il.Price_LdgrInvty) - num(il.DiscountRate_LdgrInvty)) * 1e6) / 1e6;
+
 const invoiceType = (h, listRow) => (String(h?.Type_TransH || listRow?.Type_TransH || '').toLowerCase() === 'dr' ? 'DR' : 'SI');
 
 // Live invoice status -> local sales_invoices.status.
@@ -393,22 +412,26 @@ async function main() {
           const [invRes] = await conn.query(
             `INSERT INTO sales_invoices (invoice_no, sales_order_id, date_created, date_due, term,
                bs_si_no, po_no, memo, department_id, subtotal,
-               net_of_tax, tax_amount, gross_amount, amount_due, status, sales_rep_id, office_location_id, invoice_type)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               net_of_tax, tax_amount, gross_amount, amount_due, status, sales_rep_id, office_location_id, invoice_type,
+               discount_amount, ewt_amount, withholding_tax_pct)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [ivHead.invc_pk, local.id, h.DateCreated_TransH || so.DateCreated_TransH, h.DateDue_TransH || null,
               clean(h.Term_TransH), trunc(h.ReferrenceNO_TransH, 60), trunc(h.PONo_TransH, 60), trunc(h.Memo_TransH, 500),
-              local.department_id, num(h.SubTotalVatEx_TransH), num(h.SubTotalVatEx_TransH), num(h.TaxAmount_TransH),
+              local.department_id, invoiceMoney(h).subtotal, num(h.SubTotalVatEx_TransH), num(h.TaxAmount_TransH),
               num(h.TotalAmount_TransH), num(h.AmountDue_TransH), invoiceStatus(h.Status_TransH),
-              local.sales_rep_id, local.office_location_id, invoiceType(h, ivHead)]);
+              local.sales_rep_id, local.office_location_id, invoiceType(h, ivHead),
+              invoiceMoney(h).discount, invoiceMoney(h).ewt, invoiceMoney(h).ewtPct]);
           for (const il of (inv.data?.[1] || [])) {
             await conn.query(
               `INSERT INTO sales_invoice_lines (sales_invoice_id, job_order_id, description, quantity, units,
-                 price_per_unit, subtotal, net_of_tax, tax_code, tax_amount, gross_amount)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 price_per_unit, subtotal, net_of_tax, tax_code, tax_amount, gross_amount,
+                 disc_percent, disc_amount, disc_price_per_unit)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [invRes.insertId, null, clean(il.DisplayDescription_LdgrInvty), num(il.Qty_LdgrInvty),
                 il.UnitOfMeasure_LdgrInvty || null, num(il.Price_LdgrInvty), num(il.SubTotalAmountOut_LdgrInvty),
-                num(il.SubTotalAmountOut_LdgrInvty), il.TaxCode_LdgrInvty || null, num(il.TaxAmount_LdgrInvty),
-                num(il.TotalAmountOut_LdgrInvty)]);
+                lineNet(il), il.TaxCode_LdgrInvty || null, num(il.TaxAmount_LdgrInvty),
+                num(il.TotalAmountOut_LdgrInvty), num(il.DiscountPercent_LdgrInvty), num(il.DiscountAmount_LdgrInvty),
+                lineDiscPrice(il)]);
           }
           await conn.commit();
           added += 1;
@@ -566,13 +589,14 @@ async function main() {
           const [invRes] = await conn.query(
             `INSERT INTO sales_invoices (invoice_no, sales_order_id, date_created, date_due, term,
                bs_si_no, po_no, memo, department_id, subtotal,
-               net_of_tax, tax_amount, gross_amount, amount_due, status, sales_rep_id, office_location_id, invoice_type)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               net_of_tax, tax_amount, gross_amount, amount_due, status, sales_rep_id, office_location_id, invoice_type,
+               discount_amount, ewt_amount, withholding_tax_pct)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [ivHead.invc_pk, salesOrderId, h.DateCreated_TransH || soDate, h.DateDue_TransH || null, clean(h.Term_TransH),
-              trunc(h.ReferrenceNO_TransH, 60), trunc(h.PONo_TransH, 60), trunc(h.Memo_TransH, 500), departmentId, num(h.SubTotalVatEx_TransH),
+              trunc(h.ReferrenceNO_TransH, 60), trunc(h.PONo_TransH, 60), trunc(h.Memo_TransH, 500), departmentId, invoiceMoney(h).subtotal,
               num(h.SubTotalVatEx_TransH), num(h.TaxAmount_TransH), num(h.TotalAmount_TransH),
               num(h.AmountDue_TransH), invoiceStatus(h.Status_TransH), repId, headOffice ? headOffice.id : null,
-              invoiceType(h, ivHead)]
+              invoiceType(h, ivHead), invoiceMoney(h).discount, invoiceMoney(h).ewt, invoiceMoney(h).ewtPct]
           );
           const invoiceId = invRes.insertId;
           for (const il of invLines) {
@@ -581,11 +605,13 @@ async function main() {
             const joId = jt ? joIdByJobType.get(jt) || null : null;
             await conn.query(
               `INSERT INTO sales_invoice_lines (sales_invoice_id, job_order_id, description, quantity, units,
-                 price_per_unit, subtotal, net_of_tax, tax_code, tax_amount, gross_amount)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 price_per_unit, subtotal, net_of_tax, tax_code, tax_amount, gross_amount,
+                 disc_percent, disc_amount, disc_price_per_unit)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [invoiceId, joId, clean(il.DisplayDescription_LdgrInvty), num(il.Qty_LdgrInvty), il.UnitOfMeasure_LdgrInvty || null,
-                num(il.Price_LdgrInvty), num(il.SubTotalAmountOut_LdgrInvty), num(il.SubTotalAmountOut_LdgrInvty),
-                il.TaxCode_LdgrInvty || null, num(il.TaxAmount_LdgrInvty), num(il.TotalAmountOut_LdgrInvty)]
+                num(il.Price_LdgrInvty), num(il.SubTotalAmountOut_LdgrInvty), lineNet(il),
+                il.TaxCode_LdgrInvty || null, num(il.TaxAmount_LdgrInvty), num(il.TotalAmountOut_LdgrInvty),
+                num(il.DiscountPercent_LdgrInvty), num(il.DiscountAmount_LdgrInvty), lineDiscPrice(il)]
             );
           }
           doneInvoices += 1;
