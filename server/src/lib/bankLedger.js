@@ -1,5 +1,5 @@
 const pool = require('../db');
-const { booksStart } = require('./openingBalances');
+const { booksStart, sourceBalance } = require('./openingBalances');
 
 // Every movement that should have hit a bank account, from the documents that caused it.
 //
@@ -140,16 +140,14 @@ async function bookBalance(accountId, asOf, q = pool) {
   const params = parts.map(() => accountId);
   // With an opening loaded and a date on or after the books start: the account's opening balance
   // (the source's own 2025-12-31 figure) plus movements from the start. Before it, history as ever.
+  // With the source's figures loaded: its balance up to the date (2025-12-31 plus each month's
+  // activity), then this ledger's own movements only after the last source date. Before the
+  // cut-over the source's figure IS the book balance.
   const books = await booksStart();
-  const fromOpening = books && String(asOf).slice(0, 10) >= books.start;
-  let opening = 0;
-  if (fromOpening) {
-    const [[ob]] = await q.query(
-      'SELECT COALESCE(SUM(debit - credit), 0) AS amt FROM opening_gl_balances WHERE account_id = ? AND as_of = ?',
-      [accountId, books.asOf],
-    );
-    opening = Number(ob.amt || 0);
-  }
+  const day = String(asOf).slice(0, 10);
+  if (books && day >= books.first && day < books.start) return Math.round((await sourceBalance(accountId, day)) * 100) / 100;
+  const fromOpening = books && day >= books.start;
+  const opening = fromOpening ? await sourceBalance(accountId, day) : 0;
   const [[row]] = await q.query(
     `SELECT COALESCE(SUM(m.amount), 0) AS balance FROM (${parts.join(' UNION ALL ')}) m
       WHERE m.txn_date <= ?${fromOpening ? ' AND m.txn_date >= ?' : ''}`,

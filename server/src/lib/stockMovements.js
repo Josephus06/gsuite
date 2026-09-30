@@ -33,7 +33,22 @@ const NON_STOCK_TYPES = ['Service', 'Non-Inventory', 'Landed Cost', 'Discount'];
 // The window `live_stock_ledger` was imported for. Its beg_qty is the opening balance as of this
 // date and already contains every movement before it, so the computed ledger only ever adds
 // movements from here forward -- counting anything earlier would double them.
+//
+// Read from the snapshot itself, not fixed: at the T1S cut-over the snapshot is re-imported as the
+// source's position at the close of 2026-09-30 (import-stock-ledger.js --from=2026-10-01), and the
+// anchor has to move with it. live_stock_ledger.window_from records the date it was imported for,
+// and the table replicates to the office box, so both servers follow a re-import with no setting
+// to change. SNAPSHOT_FROM is only the fallback when the table has no window_from yet.
 const SNAPSHOT_FROM = '2026-01-01';
+async function snapshotFrom(q) {
+  try {
+    const [[r]] = await q.query("SELECT DATE_FORMAT(MIN(window_from), '%Y-%m-%d') AS d FROM live_stock_ledger");
+    return (r && r.d) || SNAPSHOT_FROM;
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') return SNAPSHOT_FROM;
+    throw e;
+  }
+}
 
 // One SELECT per source. `?` placeholders are the shared filter, appended identically to each so
 // the union stays a single parameterised statement.
@@ -150,9 +165,10 @@ function ledgerQuery(filters = {}) {
   const itemId = filters.itemId || null;
   const locationId = filters.locationId || null;
   const to = filters.to || today();
-  const from = filters.from && filters.from > SNAPSHOT_FROM ? filters.from : SNAPSHOT_FROM;
+  const anchor = filters.snapshotFrom || SNAPSHOT_FROM;
+  const from = filters.from && filters.from > anchor ? filters.from : anchor;
 
-  const prior = movementsQuery({ itemId, locationId, from: SNAPSHOT_FROM, to: dayBefore(from) });
+  const prior = movementsQuery({ itemId, locationId, from: anchor, to: dayBefore(from) });
   const window = movementsQuery({ itemId, locationId, from, to });
 
   const snapWhere = ['sl.inventory_id IS NOT NULL', 'sl.location_id IS NOT NULL'];
@@ -242,5 +258,5 @@ function shapeLedgerRow(r) {
 }
 
 module.exports = {
-  movementsQuery, ledgerQuery, shapeLedgerRow, SOURCES, SNAPSHOT_FROM, NON_STOCK_TYPES, today,
+  movementsQuery, ledgerQuery, shapeLedgerRow, SOURCES, SNAPSHOT_FROM, snapshotFrom, NON_STOCK_TYPES, today,
 };

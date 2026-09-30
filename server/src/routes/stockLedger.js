@@ -2,7 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const {
-  movementsQuery, ledgerQuery, shapeLedgerRow, SOURCES, SNAPSHOT_FROM, today,
+  movementsQuery, ledgerQuery, shapeLedgerRow, SOURCES, snapshotFrom, today,
 } = require('../lib/stockMovements');
 
 const router = express.Router();
@@ -36,6 +36,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     // "As of" sends only `to`, meaning everything up to that date -- so the period opens at the
     // snapshot date, which is as far back as the data goes.
     const { sql, params } = ledgerQuery({
+      snapshotFrom: await snapshotFrom(pool),
       itemId: req.query.item_id || null,
       locationId: req.query.location_id || null,
       from: req.query.from || null,
@@ -56,7 +57,8 @@ router.get('/movements', requireAuth, requirePermission(ROUTE, 'can_view'), asyn
     const itemId = req.query.item_id || null;
     if (!itemId) return res.status(400).json({ message: 'item_id is required' });
     const to = req.query.to || today();
-    const from = req.query.from && req.query.from > SNAPSHOT_FROM ? req.query.from : SNAPSHOT_FROM;
+    const anchor = await snapshotFrom(pool);
+    const from = req.query.from && req.query.from > anchor ? req.query.from : anchor;
 
     const mv = movementsQuery({ itemId, locationId: req.query.location_id || null, from, to });
     const [rows] = await pool.query(

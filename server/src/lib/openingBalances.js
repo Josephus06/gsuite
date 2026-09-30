@@ -1,45 +1,69 @@
-// T1S's books start from the source system's closing position (src/db/create-opening-balances.js,
-// loaded by src/db/load-opening-balances.js). This is the one place reports ask about it.
+// T1S continues the source system's books (src/db/create-opening-balances.js, loaded by
+// src/db/load-opening-balances.js). This is the one place reports ask about it.
 //
-// booksStart() -> null when no opening is loaded (every report then behaves exactly as before),
-// otherwise { asOf: '2025-12-31', start: '2026-01-01' }. Read per call rather than cached: a load
-// or reload has to take effect on the next report without a restart, and it is one tiny query.
+// opening_gl_balances holds the SOURCE's figures as GL lines, one set per date:
+//   2025-12-31            every account's closing balance (2025 income/expense closed into RE)
+//   each 2026 month-end   that month's ACTIVITY per account, from the source's own trial balances
+// up to the cut-over. Summing the rows up to a date gives the source's position at that date.
+// T1S computes its own ledger from documents only AFTER the last of them -- its posting rules for
+// production, inventory and purchasing did not reproduce the source's (2026 Jan-Sep: T1S showed
+// PHP 217.7M profit against the source's 22.1M), while the documents themselves are all migrated.
+//
+// booksStart() -> null when nothing is loaded (every report then behaves exactly as before),
+// otherwise { first: '2025-12-31', asOf: <last source date>, start: <day after it> }. Read per call
+// rather than cached so a load takes effect on the next report without a restart.
 const pool = require('../db');
+
+const nextDay = (ymd) => {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+};
 
 async function booksStart() {
   try {
-    const [[r]] = await pool.query("SELECT DATE_FORMAT(MAX(as_of), '%Y-%m-%d') AS as_of FROM opening_gl_balances");
-    if (!r || !r.as_of) return null;
-    const d = new Date(`${r.as_of}T00:00:00Z`);
-    d.setUTCDate(d.getUTCDate() + 1);
-    return { asOf: r.as_of, start: d.toISOString().slice(0, 10) };
+    const [[r]] = await pool.query(
+      "SELECT DATE_FORMAT(MIN(as_of), '%Y-%m-%d') AS first, DATE_FORMAT(MAX(as_of), '%Y-%m-%d') AS last FROM opening_gl_balances",
+    );
+    if (!r || !r.last) return null;
+    return { first: r.first, asOf: r.last, start: nextDay(r.last) };
   } catch (e) {
     if (e.code === 'ER_NO_SUCH_TABLE') return null; // deployed ahead of its schema script
     throw e;
   }
 }
 
-// The opening balance of every account as GL lines dated the as-of day, shaped like the rows
-// lib/glImpact.js getPostedGlLines returns.
-async function openingGlLines(asOf) {
+// The source's rows dated within [fromDate, toDate] (fromDate optional) as GL lines, shaped like
+// the rows lib/glImpact.js getPostedGlLines returns.
+async function openingGlLines(toDate, fromDate = null) {
   const [rows] = await pool.query(
-    `SELECT ob.account_code, coa.account_name, ob.debit, ob.credit, ob.note
+    `SELECT DATE_FORMAT(ob.as_of, '%Y-%m-%d') AS as_of, ob.account_code, coa.account_name, ob.debit, ob.credit, ob.note
        FROM opening_gl_balances ob JOIN chart_of_accounts coa ON coa.id = ob.account_id
-      WHERE ob.as_of = ?`, [asOf],
+      WHERE ob.as_of <= ?${fromDate ? ' AND ob.as_of >= ?' : ''}`,
+    fromDate ? [String(toDate).slice(0, 10), String(fromDate).slice(0, 10)] : [String(toDate).slice(0, 10)],
   );
   return rows.map((r) => ({
     account_code: r.account_code,
     account_name: r.account_name,
     debit: Number(r.debit) || 0,
     credit: Number(r.credit) || 0,
-    entry_date: asOf,
+    entry_date: r.as_of,
     source_type: 'opening_balance',
-    source_no: `OPENING-${asOf}`,
+    source_no: r.as_of.endsWith('-12-31') ? `OPENING-${r.as_of}` : `SOURCE-${r.as_of.slice(0, 7)}`,
     source_id: null,
-    memo: r.note || 'Opening balance carried from the source system',
+    memo: r.note || (r.as_of.endsWith('-12-31') ? 'Opening balance carried from the source system' : `Source system activity for ${r.as_of.slice(0, 7)}`),
     location_id: null,
     department_id: null,
   }));
+}
+
+// Net balance (debit - credit) of one account from the source's rows up to a date.
+async function sourceBalance(accountId, toDate) {
+  const [[r]] = await pool.query(
+    'SELECT COALESCE(SUM(debit - credit), 0) AS amt FROM opening_gl_balances WHERE account_id = ? AND as_of <= ?',
+    [accountId, String(toDate).slice(0, 10)],
+  );
+  return Number(r.amt) || 0;
 }
 
 const round2 = (n) => Math.round(Number(n) * 100) / 100;
@@ -139,4 +163,4 @@ async function openingItems(side, asOf, books, { partyId, nameStarts, locationId
   return out;
 }
 
-module.exports = { booksStart, openingGlLines, openingItems, agingAnchor };
+module.exports = { booksStart, openingGlLines, sourceBalance, openingItems, agingAnchor };

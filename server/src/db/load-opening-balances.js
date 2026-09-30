@@ -134,8 +134,86 @@ function items(snapshot, typeMap, increases, mismatches) {
   return [...merged.values()].filter((i) => Math.abs(i.balance) >= 0.005);
 }
 
+// --- monthly activity ---------------------------------------------------------------------------
+// --monthly=<dir> holding tb-YYYY-MM-DD.json month-end trial balances from the source (same shape
+// as tb.json). Each month is loaded as that month's ACTIVITY per account -- this month-end's balance
+// minus the previous one's, starting from the raw 2025-12-31 TB in --dir -- dated the month-end.
+// Income and expense are NOT closed: the source never closes them, and within 2026 they are this
+// year's P&L. A month whose own activity does not balance (the source drifts: 701,688.15 out at
+// 2025-12-31, 773,380.04 at 2026-09-29) puts the difference on account 1 for that month, printed.
+function rawLeaves(tb) {
+  const out = new Map();
+  const walk = (n, g) => {
+    const kids = n.coaparent_chartofaccounts || [];
+    if (!kids.length) {
+      const a = Number(n.amount || 0);
+      const code = String(n.UserPK_COA).trim();
+      out.set(code, (out.get(code) || 0) + (g.normal === 'DEBIT' ? a : -a));
+      return;
+    }
+    kids.forEach((k) => walk(k, g));
+  };
+  for (const g of tb) { if (!g.type) continue; for (const a of g.accounts || []) for (const x of a.account_ledgers || []) walk(x, g); }
+  return out;
+}
+
+async function loadMonthly(monthlyDir, coaByCode) {
+  const files = fs.readdirSync(monthlyDir).filter((f) => /^tb-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort();
+  if (!files.length) throw new Error(`No tb-YYYY-MM-DD.json files in ${monthlyDir}`);
+  let prev = rawLeaves(readJson('tb.json'));
+  const months = [];
+  for (const f of files) {
+    const date = f.slice(3, 13);
+    const cur = rawLeaves(JSON.parse(fs.readFileSync(path.join(monthlyDir, f), 'utf8')));
+    const delta = new Map();
+    for (const code of new Set([...cur.keys(), ...prev.keys()])) {
+      const d = r2((cur.get(code) || 0) - (prev.get(code) || 0));
+      if (Math.abs(d) >= 0.005) delta.set(code, d);
+    }
+    const missing = [...delta.keys()].filter((c) => !coaByCode.has(c));
+    const total = r2([...delta.values()].reduce((s, v) => s + v, 0));
+    if (Math.abs(total) >= 0.005) delta.set(OPENING_DIFFERENCE, r2((delta.get(OPENING_DIFFERENCE) || 0) - total));
+    months.push({ date, delta, missing, difference: -total });
+    prev = cur;
+  }
+  console.log('MONTHLY ACTIVITY FROM THE SOURCE');
+  for (const m of months) {
+    let income = 0; let expense = 0;
+    for (const [code, v] of m.delta) {
+      const t = (coaByCode.get(code) || {}).account_type || '';
+      if (/income|revenue/i.test(t)) income -= v; else if (/expense|cost/i.test(t)) expense += v;
+    }
+    console.log(`  ${m.date}  accounts ${String(m.delta.size).padStart(3)}  income ${peso(income).padStart(16)}  expense ${peso(expense).padStart(16)}  source imbalance -> acct 1 ${peso(m.difference)}${m.missing.length ? `  MISSING ${m.missing.join(',')}` : ''}`);
+  }
+  if (months.some((m) => m.missing.length)) throw new Error('Some source accounts are not in the T1S chart of accounts; add them before loading.');
+  if (DRY) { console.log('\nDry run: nothing written.'); return; }
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    for (const m of months) {
+      await conn.query('DELETE FROM opening_gl_balances WHERE as_of = ?', [m.date]);
+      const rows = [...m.delta].map(([code, v]) => [m.date, coaByCode.get(code).id, code, v > 0 ? v : 0, v < 0 ? -v : 0,
+        code === OPENING_DIFFERENCE ? `Source trial balance did not balance for ${m.date.slice(0, 7)}` : null]);
+      if (rows.length) await conn.query('INSERT INTO opening_gl_balances (as_of, account_id, account_code, debit, credit, note) VALUES ?', [rows]);
+    }
+    await conn.commit();
+    console.log(`\nLoaded ${months.length} month(s): ${months.map((m) => m.date).join(', ')}.`);
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
 async function main() {
   if (!DIR) throw new Error('--dir=<snapshot directory> is required');
+  if (arg('monthly')) {
+    const [coaRows] = await pool.query('SELECT id, account_code, account_name, account_type FROM chart_of_accounts');
+    await loadMonthly(arg('monthly'), new Map(coaRows.map((c) => [String(c.account_code).trim(), c])));
+    await pool.end();
+    return;
+  }
   console.log(`Database: ${process.env.DB_NAME} on ${process.env.DB_HOST}${DRY ? '   (DRY RUN -- nothing written)' : ''}\nSnapshot: ${DIR}\n`);
 
   const [coa] = await pool.query('SELECT id, account_code, account_name FROM chart_of_accounts');

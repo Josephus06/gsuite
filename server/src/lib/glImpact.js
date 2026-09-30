@@ -1421,21 +1421,26 @@ async function computePostedGlLines({ toDate, fromDate }) {
   }
 }
 
-// The ledger every financial report reads. When T1S's books have an opening loaded
-// (lib/openingBalances.js), they start from the source system's closing position: only documents
-// dated from the books start (2026-01-01) are read, and each account's 2025-12-31 balance comes in
-// as one opening line dated that day. Records before the start stay in T1S as history but no
-// longer feed any balance -- they were migrated with known gaps, and the source's own closing is
-// the figure to continue from. A report that ends before the books start still reads history
-// as it always did; with no opening loaded nothing changes at all.
+// The ledger every financial report reads. When the source system's figures are loaded
+// (lib/openingBalances.js) T1S continues the source's books: its 2025-12-31 balances and its own
+// month-by-month activity up to the cut-over, then T1S's ledger computed from documents after
+// that. Documents before the cut-over stay in T1S as records to look up and act on, but do not
+// feed balances -- migrated with known gaps, and T1S's posting rules did not reproduce the
+// source's for production/inventory/purchasing. With nothing loaded nothing changes at all.
 async function getPostedGlLines({ toDate, fromDate }) {
   const books = await booksStart();
-  if (!books || String(toDate).slice(0, 10) < books.start) return computePostedGlLines({ toDate, fromDate });
-  const from = fromDate && String(fromDate).slice(0, 10) > books.start ? fromDate : books.start;
-  const lines = await computePostedGlLines({ toDate, fromDate: from });
-  // A window that opens after the books start has the opening before it, like any earlier line.
-  if (fromDate && String(fromDate).slice(0, 10) > books.start) return lines;
-  return [...(await openingGlLines(books.asOf)), ...lines];
+  const to = String(toDate).slice(0, 10);
+  const from = fromDate ? String(fromDate).slice(0, 10) : null;
+  // Before the first source figure (2025-12-31): history, exactly as before.
+  if (!books || to < books.first) return computePostedGlLines({ toDate, fromDate });
+  // The source's own figures -- the 2025-12-31 balances and each month's activity -- dated inside
+  // the window. A report ending before the books start reads ONLY these: up to the cut-over the
+  // source is the book of record (month-end granularity).
+  const source = await openingGlLines(to, from);
+  if (to < books.start) return source;
+  // After the last source date, T1S's own ledger from its documents.
+  const computed = await computePostedGlLines({ toDate, fromDate: from && from > books.start ? from : books.start });
+  return [...source, ...computed];
 }
 
 module.exports = {
