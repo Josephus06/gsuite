@@ -50,6 +50,20 @@ export function invoiceTotals(si) {
   if (!si) return null;
   const buckets = { vatable: 0, exempt: 0, zeroRated: 0 };
   for (const l of si.lines || []) buckets[taxBucket(l)] += Number(l.net_of_tax || 0);
+  // The boxes must add up to the invoice's own Net of Tax -- the figure its view, its GL and its
+  // Amount Due all use. 6,062 migrated invoices carry lines that do not sum to their header
+  // (INV-82382: one line of 80 x 10.98 = 878.40 on an invoice of 640.00), and the box printed the
+  // line figure. So the header amount is shared out in the lines' proportions: which box the money
+  // goes in still comes from the lines' tax codes, how much comes from the header.
+  const lineNet = buckets.vatable + buckets.exempt + buckets.zeroRated;
+  const headerNet = Number(si.net_of_tax);
+  if (lineNet > 0 && Number.isFinite(headerNet) && Math.abs(lineNet - headerNet) > 0.005) {
+    const keys = Object.keys(buckets);
+    for (const k of keys) buckets[k] = Math.round((buckets[k] / lineNet) * headerNet * 100) / 100;
+    // Rounding residue onto the largest box, so the three still sum to the header exactly.
+    const residue = Math.round((headerNet - keys.reduce((sum, k) => sum + buckets[k], 0)) * 100) / 100;
+    if (residue) { const big = keys.reduce((m, k) => (buckets[k] > buckets[m] ? k : m), keys[0]); buckets[big] += residue; }
+  }
   return {
     ...buckets,
     vat: Number(si.tax_amount || 0),
