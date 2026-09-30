@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import VendorBillModal from '../components/VendorBillModal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import Modal from '../components/Modal';
 import { isApprovedPo, isSettledPo, normalisePoStatus } from '../utils/poStatus';
 
 import { displayDate, displayDateTime } from '../utils/dates';
@@ -73,6 +74,43 @@ export default function PurchaseOrderView() {
   const [returns, setReturns] = useState([]);
   const [bills, setBills] = useState([]);
   const [showBillModal, setShowBillModal] = useState(false);
+  // Send Email: the approved PO's PDF to the supplier (POST /purchase-orders/:id/email).
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailInfo, setEmailInfo] = useState(null);
+  const [emailTo, setEmailTo] = useState('');
+  const [emailNote, setEmailNote] = useState('');
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [emailError, setEmailError] = useState('');
+  const [emailResult, setEmailResult] = useState(null);
+
+  async function openEmail() {
+    setEmailError('');
+    setEmailResult(null);
+    setEmailNote('');
+    setEmailOpen(true);
+    try {
+      const { data } = await api.get(`/purchase-orders/${id}/email-recipient`);
+      setEmailInfo(data);
+      setEmailTo(data.suggested || '');
+    } catch (err) {
+      setEmailInfo(null);
+      setEmailError(err.response?.data?.error || 'Could not look up the supplier’s address.');
+    }
+  }
+
+  async function sendEmail() {
+    setEmailBusy(true);
+    setEmailError('');
+    try {
+      const { data } = await api.post(`/purchase-orders/${id}/email`, { email: emailTo.trim(), note: emailNote.trim() });
+      setEmailResult(data);
+      api.get(`/purchase-orders/${id}/audit-logs`).then(({ data: logs }) => setAuditLogs(logs)).catch(() => {});
+    } catch (err) {
+      setEmailError(err.response?.data?.error || 'Could not send it.');
+    } finally {
+      setEmailBusy(false);
+    }
+  }
 
   function load() {
     return api.get(`/purchase-orders/${id}`).then(({ data }) => { setPo(data); setLoading(false); });
@@ -176,6 +214,8 @@ export default function PurchaseOrderView() {
           {showVendorReturn && <button className="btn btn-sm" onClick={() => navigate(`/purchase-orders/${id}/return`)}>Vendor Return</button>}
           {showApprove && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>Approve</button>}
           {showPrint && <button className="btn btn-sm" onClick={() => window.open(`/purchase-orders/${id}/print`, '_blank')}>Print</button>}
+          {/* Same gate as Print: emailing it is delivering the printout. */}
+          {showPrint && <button className="btn btn-sm btn-primary" onClick={openEmail}>Send Email</button>}
           {canEdit && canCancel && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
         </div>
       </div>
@@ -386,6 +426,84 @@ export default function PurchaseOrderView() {
           onClose={() => setShowBillModal(false)}
           onSaved={(vb) => { setShowBillModal(false); navigate(`/vendor-bills/${vb.id}`); }}
         />
+      )}
+
+      {emailOpen && (
+        <Modal title="Send Purchase Order to Supplier" onClose={() => !emailBusy && setEmailOpen(false)}>
+          {emailResult ? (
+            <>
+              <p>Sent to <strong>{emailResult.sentTo}</strong>.</p>
+              <p className="muted">
+                The Purchase Order went with it as <strong>{emailResult.attachedPdf}</strong>.
+                Replies come back to you, not to the system mailbox.
+              </p>
+              <div className="modal-actions">
+                <button type="button" className="btn btn-primary" onClick={() => setEmailOpen(false)}>Close</button>
+              </div>
+            </>
+          ) : (
+            <>
+              {emailInfo && !emailInfo.mailConfigured && (
+                <div className="error-banner">
+                  This server cannot send email — {emailInfo.mailProblem}. Ask whoever administers it
+                  to set that up; nothing here will work until they do.
+                </div>
+              )}
+
+              {emailInfo?.sentAt && (
+                <div className="muted" style={{ marginBottom: 12 }}>
+                  Already sent to <strong>{emailInfo.sentTo}</strong> on{' '}
+                  {displayDateTime(emailInfo.sentAt)}
+                  {emailInfo.sentByName ? ` by ${emailInfo.sentByName}` : ''}. Sending again will
+                  deliver another copy.
+                </div>
+              )}
+
+              <div className="field">
+                <label>
+                  Send to{' '}
+                  {emailInfo?.source && <span className="muted">(from {emailInfo.source})</span>}
+                </label>
+                <input
+                  autoFocus type="email" value={emailTo} placeholder="supplier@example.com"
+                  onChange={(event) => setEmailTo(event.target.value)}
+                />
+                {emailInfo && !emailInfo.suggested && (
+                  <div className="muted" style={{ marginTop: 4 }}>
+                    No address on file for {emailInfo.supplierName || 'this supplier'} — type one to send it.
+                  </div>
+                )}
+              </div>
+
+              <div className="field">
+                <label>Message <span className="muted">(optional)</span></label>
+                <textarea
+                  rows={3} value={emailNote}
+                  placeholder="Anything you want to say alongside the Purchase Order."
+                  onChange={(event) => setEmailNote(event.target.value)}
+                />
+              </div>
+
+              <p className="muted">
+                The supplier gets the Purchase Order — the same document the Print button produces —
+                attached as a PDF.
+              </p>
+
+              {emailError && <div className="error-banner">{emailError}</div>}
+
+              <div className="modal-actions">
+                <button type="button" className="btn" disabled={emailBusy} onClick={() => setEmailOpen(false)}>Cancel</button>
+                <button
+                  type="button" className="btn btn-primary"
+                  disabled={emailBusy || !emailTo.trim() || (emailInfo && !emailInfo.mailConfigured)}
+                  onClick={sendEmail}
+                >
+                  {emailBusy ? 'Sending…' : 'Send'}
+                </button>
+              </div>
+            </>
+          )}
+        </Modal>
       )}
     </div>
   );

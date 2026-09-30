@@ -1,5 +1,7 @@
 const express = require('express');
 const pool = require('../db');
+const mailer = require('../lib/mailer');
+const { buildPurchaseOrderPdf, purchaseOrderPdfFilename } = require('../lib/purchaseOrderPdf');
 const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { insertNumbered } = require('../lib/docNumber');
@@ -196,8 +198,9 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
 // isApproved(), not `status === 'approved'`: 19,066 of the purchase orders on the droplet carry
 // the live system's labels ('Fully Billed', 'Approved by General Manager') rather than this app's
 // codes, and every one of them was approved long ago. See lib/poStatus.js.
-router.get('/:id/print', requireAuth, async (req, res, next) => {
-  try {
+// The printable PO -- header, lines and the sign-off signatures. Shared by the print page and the
+// emailed PDF, so the supplier is sent exactly the document the Print button shows.
+async function loadPrintablePo(id) {
     const [[po]] = await pool.query(
       `SELECT po.*, s.name AS supplier_name, s.supplier_code, s.address AS supplier_address,
               s.tin AS supplier_tin, s.contact_no AS supplier_contact_no, s.email AS supplier_email,
@@ -214,29 +217,9 @@ router.get('/:id/print', requireAuth, async (req, res, next) => {
          LEFT JOIN payment_terms pt ON pt.id = po.term_id
          LEFT JOIN purchase_orders parent ON parent.id = po.parent_purchase_order_id
         WHERE po.id = ?`,
-      [req.params.id]
+      [id]
     );
-    if (!po) return res.status(404).json({ error: 'Not found' });
-
-    if (!(await isSystemAdmin(req.user.id))) {
-      const [[page]] = await pool.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
-      if (!page) return res.status(500).json({ error: `Page not registered: ${ROUTE}` });
-      const [[perm]] = await pool.query(
-        'SELECT can_print FROM user_page_permissions WHERE user_id = ? AND page_id = ?',
-        [req.user.id, page.id]
-      );
-      if (!perm || !perm.can_print) {
-        return res.status(403).json({ error: 'You do not have permission to print a Purchase Order' });
-      }
-      // Reported separately from the permission failure: "ask your admin for access" and "get it
-      // approved first" are different problems with different fixes.
-      if (!isApproved(po.status)) {
-        return res.status(403).json({
-          error: `This Purchase Order is ${po.status} -- only an approved Purchase Order can be printed.`,
-          reason: 'not_approved',
-        });
-      }
-    }
+    if (!po) return null;
 
     const [lines] = await pool.query(
       `SELECT pol.*, i.item_code, i.display_name AS item_name, t.code AS tax_code,
@@ -249,7 +232,7 @@ router.get('/:id/print', requireAuth, async (req, res, next) => {
          LEFT JOIN job_orders jo ON jo.id = pol.job_order_id
         WHERE pol.purchase_order_id = ?
         ORDER BY pol.id`,
-      [req.params.id]
+      [id]
     );
 
     // The signatures for the sign-off block, fetched here and nowhere else (a few KB of PNG each,
@@ -269,7 +252,169 @@ router.get('/:id/print', requireAuth, async (req, res, next) => {
       approvedSignature = approverId ? byId.get(String(approverId)) || null : null;
     }
 
-    res.json({ ...po, lines, prepared_signature: preparedSignature, approved_signature: approvedSignature });
+    return { ...po, lines, prepared_signature: preparedSignature, approved_signature: approvedSignature };
+}
+
+// Who may print -- and so email -- a PO: can_print on the page, and the PO approved. A System
+// Admin is exempt from both. Returns null when allowed, else { status, body } to answer with.
+async function printRefusal(userId, po, verb = 'print') {
+  if (await isSystemAdmin(userId)) return null;
+  const [[page]] = await pool.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
+  if (!page) return { status: 500, body: { error: `Page not registered: ${ROUTE}` } };
+  const [[perm]] = await pool.query(
+    'SELECT can_print FROM user_page_permissions WHERE user_id = ? AND page_id = ?',
+    [userId, page.id]
+  );
+  if (!perm || !perm.can_print) {
+    return { status: 403, body: { error: `You do not have permission to ${verb} a Purchase Order` } };
+  }
+  // Reported separately from the permission failure: "ask your admin for access" and "get it
+  // approved first" are different problems with different fixes.
+  if (!isApproved(po.status)) {
+    return {
+      status: 403,
+      body: { error: `This Purchase Order is ${po.status} -- only an approved Purchase Order can be ${verb === 'print' ? 'printed' : 'emailed'}.`, reason: 'not_approved' },
+    };
+  }
+  return null;
+}
+
+router.get('/:id/print', requireAuth, async (req, res, next) => {
+  try {
+    const po = await loadPrintablePo(req.params.id);
+    if (!po) return res.status(404).json({ error: 'Not found' });
+    const refused = await printRefusal(req.user.id, po);
+    if (refused) return res.status(refused.status).json(refused.body);
+    res.json(po);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ---------------------------------------------------------------- email to the supplier
+//
+// The approved PO, as a PDF, to the supplier -- the same document the Print button produces, so
+// nobody has to print it, scan it and attach it by hand. Open to whoever may print it (the same
+// gate), since emailing it is just delivering the printout.
+//
+// The address defaults to the one last used for this PO (a correction made once is the better
+// guess), then the supplier record's email; the sender can always override it. Each send is
+// written to the PO's audit log -- field 'emailed_to_supplier' -- which is also where "last sent"
+// is read back from. No schema change.
+const EMAIL_FIELD = 'emailed_to_supplier';
+const escHtml = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+const peso = (n) => `PHP ${Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+async function lastEmailed(poId) {
+  const [[row]] = await pool.query(
+    `SELECT a.new_value AS sent_to, a.set_at AS sent_at, u.display_name AS sent_by_name
+       FROM audit_logs a LEFT JOIN users u ON u.id = a.set_by_user_id
+      WHERE a.auditable_type = 'PurchaseOrder' AND a.auditable_id = ? AND a.field_name = ?
+      ORDER BY a.set_at DESC, a.id DESC LIMIT 1`,
+    [poId, EMAIL_FIELD]
+  );
+  return row || null;
+}
+
+function buildPoEmail(po, { senderName, senderEmail, note }) {
+  const subject = `Purchase Order ${po.po_no} from Cebu GraphicStar Imaging Corp.`;
+  const lines = po.lines || [];
+  const intro = `Please find attached our Purchase Order ${po.po_no}${po.need_by_date ? `, needed by ${String(po.need_by_date instanceof Date ? po.need_by_date.toISOString() : po.need_by_date).slice(0, 10)}` : ''}.`;
+  const text = [
+    `Dear ${po.supplier_name || 'Supplier'},`, '', intro, note ? `\n${note}\n` : '',
+    `Items: ${lines.length}`, `Total Amount: ${peso(po.total_amount)}`, '',
+    'Kindly confirm receipt of this order.', '', 'Thank you,', senderName || 'Purchasing', senderEmail || '',
+    'Cebu GraphicStar Imaging Corp.',
+  ].join('\n');
+  const html = `<div style="font-family:Arial,Helvetica,sans-serif;color:#1f2937;font-size:14px;line-height:1.5">
+  <p>Dear ${escHtml(po.supplier_name || 'Supplier')},</p>
+  <p>${escHtml(intro)}</p>
+  ${note ? `<p style="white-space:pre-wrap;border-left:3px solid #ec7601;padding-left:10px">${escHtml(note)}</p>` : ''}
+  <table style="border-collapse:collapse;margin:8px 0">
+    <tr><td style="padding:3px 12px 3px 0;color:#64748b">PO No.</td><td style="font-weight:bold">${escHtml(po.po_no)}</td></tr>
+    <tr><td style="padding:3px 12px 3px 0;color:#64748b">Items</td><td>${lines.length}</td></tr>
+    <tr><td style="padding:3px 12px 3px 0;color:#64748b">Total Amount</td><td style="font-weight:bold">${escHtml(peso(po.total_amount))}</td></tr>
+  </table>
+  <p>Kindly confirm receipt of this order.</p>
+  <p>Thank you,<br>${escHtml(senderName || 'Purchasing')}${senderEmail ? `<br><a href="mailto:${escHtml(senderEmail)}">${escHtml(senderEmail)}</a>` : ''}<br>
+  <span style="color:#0b109f;font-weight:bold">Cebu GraphicStar Imaging Corp.</span></p>
+</div>`;
+  return { subject, html, text };
+}
+
+router.get('/:id/email-recipient', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [[po]] = await pool.query(
+      `SELECT po.id, po.status, s.name AS supplier_name, s.email AS supplier_email
+         FROM purchase_orders po LEFT JOIN suppliers s ON s.id = po.supplier_id WHERE po.id = ?`,
+      [req.params.id]
+    );
+    if (!po) return res.status(404).json({ error: 'Not found' });
+    const last = await lastEmailed(req.params.id);
+    const onFile = String(po.supplier_email || '').trim();
+    res.json({
+      suggested: last?.sent_to || onFile || '',
+      source: last?.sent_to ? 'the address last used' : onFile ? 'the supplier record' : null,
+      supplierName: po.supplier_name,
+      sentAt: last?.sent_at || null,
+      sentTo: last?.sent_to || null,
+      sentByName: last?.sent_by_name || null,
+      mailConfigured: mailer.isConfigured(),
+      mailProblem: mailer.isConfigured() ? null : mailer.missingReason(),
+    });
+  } catch (err) { next(err); }
+});
+
+router.post('/:id/email', requireAuth, async (req, res, next) => {
+  try {
+    if (!mailer.isConfigured()) {
+      return res.status(503).json({ error: `Email is not set up on this server -- ${mailer.missingReason()}.` });
+    }
+    const po = await loadPrintablePo(req.params.id);
+    if (!po) return res.status(404).json({ error: 'Not found' });
+    const refused = await printRefusal(req.user.id, po, 'email');
+    if (refused) return res.status(refused.status).json(refused.body);
+
+    const to = String(req.body?.email || po.supplier_email || '').trim();
+    if (!to) return res.status(400).json({ error: 'This supplier has no email address on file. Enter one to send it to.' });
+    // Permissive on purpose -- catches a missing @ or a stray space, nothing more.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      return res.status(400).json({ error: `"${to}" does not look like an email address.` });
+    }
+
+    // Unlike the estimate's, the PDF IS the message here: a PO email without the PO is useless, so
+    // a PDF that will not build stops the send rather than going out empty-handed.
+    let pdf;
+    try { pdf = await buildPurchaseOrderPdf(po); } catch (pdfErr) {
+      console.error(`purchase order ${req.params.id}: PDF failed --`, pdfErr);
+      return res.status(500).json({ error: `The Purchase Order PDF could not be generated: ${pdfErr.message}` });
+    }
+
+    // Replies go to whoever sent it -- the buyer the supplier should answer.
+    const [[me]] = await pool.query('SELECT display_name, email FROM users WHERE id = ?', [req.user.id]);
+    const { subject, html, text } = buildPoEmail(po, {
+      senderName: me?.display_name, senderEmail: me?.email, note: String(req.body?.note || '').trim() || null,
+    });
+    const filename = purchaseOrderPdfFilename(po);
+    const sent = await mailer.send({
+      to, subject, html, text,
+      attachments: [{ filename, content: pdf, contentType: 'application/pdf' }],
+      replyTo: me?.email || undefined, fromName: me?.display_name,
+    });
+    if (!sent.ok) return res.status(502).json({ error: `The mail server refused it: ${sent.error}` });
+
+    // Recorded only after it actually went. 'Updated', not 'Emailed': audit_logs.event_type is an
+    // ENUM without the latter. A failed audit line must not turn a sent email into an error.
+    try {
+      await logAudit(pool, {
+        poId: req.params.id, userId: req.user.id, eventType: 'Updated',
+        fieldName: EMAIL_FIELD, newValue: to.slice(0, 255),
+      });
+    } catch (auditErr) {
+      console.error(`purchase order ${req.params.id}: emailed to ${to}, audit entry failed --`, auditErr.message);
+    }
+    res.json({ ok: true, sentTo: to, sentAt: new Date().toISOString(), attachedPdf: filename });
   } catch (err) {
     next(err);
   }
