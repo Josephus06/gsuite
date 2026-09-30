@@ -123,7 +123,11 @@ const MODULES = {
     label: 'Invoices', table: 'sales_invoices', keyCol: 'invoice_no', statusCol: 'status',
     endpoint: 'get_invoices', payload: {}, liveKey: 'invc_pk',
     status: (r) => invoiceStatus(r.Status_TransH),
-    totals: (r) => ({ subtotal: money(r.SubTotalVatEx_TransH), net_of_tax: money(r.SubTotalVatEx_TransH), tax_amount: money(r.TaxAmount_TransH), gross_amount: money(r.TotalAmount_TransH), amount_due: money(r.AmountDue_TransH) }),
+    // NOT subtotal or discount_amount: Sub Total is the PRE-discount figure (as the importer and
+    // repair-invoice-discounts.js write it, and the printed invoice reads it), and get_invoices' list
+    // rows carry neither it nor the discount -- only the net. Writing the net into subtotal undid that
+    // repair on every invoice with a discount (2,169 on the 2026-09-30 cut-over run).
+    totals: (r) => ({ net_of_tax: money(r.SubTotalVatEx_TransH), tax_amount: money(r.TaxAmount_TransH), gross_amount: money(r.TotalAmount_TransH), amount_due: money(r.AmountDue_TransH) }),
     // Text columns kept in step with the source, compared as strings rather than money. 'bs' is an
     // SI here -- see db/add-invoice-type.js.
     fields: (r) => ({ invoice_type: String(r.Type_TransH || '').toLowerCase() === 'dr' ? 'DR' : 'SI' }),
@@ -134,7 +138,8 @@ const MODULES = {
     status: (r) => dtStatus(r.Status_TransH),
     totals: (r) => {
       const gross = money(r.TotalAmount_TransH); const open = dtStatus(r.Status_TransH) === 'open';
-      return { subtotal: money(r.SubTotalVatEx_TransH), net_of_tax: money(r.SubTotalVatEx_TransH), tax_amount: money(r.TaxAmount_TransH), gross_amount: gross, amount_due: open ? gross : 0 };
+      // Not subtotal / discount_amount: the list rows carry only the net (see sales_invoices above).
+      return { net_of_tax: money(r.SubTotalVatEx_TransH), tax_amount: money(r.TaxAmount_TransH), gross_amount: gross, amount_due: open ? gross : 0 };
     },
   },
   purchase_orders: {
