@@ -139,6 +139,8 @@ function Grid({ page }) {
   return <>{lines}</>;
 }
 
+// The item Amount is the line's Net of Tax, so Unit Price x Qty = Amount on the paper; VAT is
+// added once, in the totals block below.
 // The Unit Price blank carries the price actually billed per unit: the line's Net of Tax over its
 // quantity, so any discount is already in it -- INV-81981 lists at 159.58 but bills 21,144.64 for
 // 150, i.e. 140.96. The list price (price_per_unit) printed there before. Falls back to the list
@@ -235,7 +237,7 @@ export default function InvoicePrintType1({ si, totals, calibrate }) {
                         : ''}
                     </Field>
                     <Field spec={{ ...c.unitPrice, y }} calibrate={calibrate && rowIdx === 0} name="unitPrice">{money(netUnitPrice(l))}</Field>
-                    <Field spec={{ ...c.amount, y }} calibrate={calibrate && rowIdx === 0} name="amount">{money(l.gross_amount)}</Field>
+                    <Field spec={{ ...c.amount, y }} calibrate={calibrate && rowIdx === 0} name="amount">{money(l.net_of_tax)}</Field>
                   </div>
                 );
               })}
