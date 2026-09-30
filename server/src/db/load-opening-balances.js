@@ -134,13 +134,21 @@ function items(snapshot, typeMap, increases, mismatches) {
   return [...merged.values()].filter((i) => Math.abs(i.balance) >= 0.005);
 }
 
-// --- monthly activity ---------------------------------------------------------------------------
-// --monthly=<dir> holding tb-YYYY-MM-DD.json month-end trial balances from the source (same shape
-// as tb.json). Each month is loaded as that month's ACTIVITY per account -- this month-end's balance
-// minus the previous one's, starting from the raw 2025-12-31 TB in --dir -- dated the month-end.
-// Income and expense are NOT closed: the source never closes them, and within 2026 they are this
-// year's P&L. A month whose own activity does not balance (the source drifts: 701,688.15 out at
-// 2025-12-31, 773,380.04 at 2026-09-29) puts the difference on account 1 for that month, printed.
+// --- the source's figures, month by month ------------------------------------------------------
+// --monthly=<dir> holding tb-YYYY-MM-DD.json trial balances from the source (generate_trial_balance).
+// The EARLIEST file is the base: every account's balance at that date. Each later file is loaded
+// as that period's ACTIVITY per account -- its balance minus the previous file's -- dated its own
+// date. Summed up to any date, the rows reproduce the source's trial balance at that date.
+//
+// Nothing is closed into Retained Earnings. The source never closes income/expense (its income at
+// 2025-12-31, 401.8M, is cumulative over several years, not one), so carrying them unclosed keeps
+// EVERY account -- Retained Earnings included -- equal to the source's; the balance sheet shows
+// cumulative income as Current Earnings exactly as the source does, and an income statement for
+// any year reads only that year's rows. (An earlier version closed "2025 profit" of 56,964,246.30
+// into RE -- that figure was cumulative, not 2025's, which is why closing was dropped.)
+//
+// A period whose own figures do not balance (the source drifts: 701,688.15 out at 2025-12-31,
+// 773,380.04 at 2026-09-29) puts the difference on account 1 for that period, printed.
 function rawLeaves(tb) {
   const out = new Map();
   const walk = (n, g) => {
@@ -160,7 +168,7 @@ function rawLeaves(tb) {
 async function loadMonthly(monthlyDir, coaByCode) {
   const files = fs.readdirSync(monthlyDir).filter((f) => /^tb-\d{4}-\d{2}-\d{2}\.json$/.test(f)).sort();
   if (!files.length) throw new Error(`No tb-YYYY-MM-DD.json files in ${monthlyDir}`);
-  let prev = rawLeaves(readJson('tb.json'));
+  let prev = new Map(); // the first file is loaded as full balances: its "activity" since nothing
   const months = [];
   for (const f of files) {
     const date = f.slice(3, 13);
@@ -214,6 +222,10 @@ async function main() {
     await pool.end();
     return;
   }
+  // The GL now comes ONLY from --monthly (the source's own figures, base + period activity). The
+  // old single-date path closed income/expense into Retained Earnings and would put a second set of
+  // rows on its date; refuse it rather than let a re-run double-count.
+  if (!ITEMS_ONLY) throw new Error('The GL is loaded with --monthly=<dir>. Without it this loads AR/AP open items only: pass --items-only.');
   console.log(`Database: ${process.env.DB_NAME} on ${process.env.DB_HOST}${DRY ? '   (DRY RUN -- nothing written)' : ''}\nSnapshot: ${DIR}\n`);
 
   const [coa] = await pool.query('SELECT id, account_code, account_name FROM chart_of_accounts');
