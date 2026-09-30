@@ -15,6 +15,103 @@ const tone = (v) => (v < -0.005 ? { color: 'var(--danger, #b91c1c)' } : v > 0.00
 // Reports > Budget vs Actual: one budget against the GL for a month, a quarter or year-to-date.
 // Actuals come from the same derived GL as the Income Statement.
 export default function BudgetVsActual() {
+  const [view, setView] = useState('single');
+  return (
+    <div>
+      <div className="page-header">
+        <h1>Budget vs Actual</h1>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button className={`btn btn-sm ${view === 'single' ? 'btn-primary' : ''}`} onClick={() => setView('single')}>One Budget</button>
+          <button className={`btn btn-sm ${view === 'departments' ? 'btn-primary' : ''}`} onClick={() => setView('departments')}>By Department</button>
+        </div>
+      </div>
+      {view === 'single' ? <SingleBudget /> : <ByDepartment />}
+    </div>
+  );
+}
+
+// Every department's approved budget side by side, plus Unassigned: actuals with no department.
+function ByDepartment() {
+  const now = new Date();
+  const [form, setForm] = useState({ year: String(now.getFullYear()), period: 'ytd', month: String(now.getMonth() + 1) });
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  async function generate() {
+    setLoading(true); setError('');
+    try { const { data: d } = await api.get('/budgets/report/departments', { params: form }); setData(d); }
+    catch (e) { setError(e.response?.data?.error || 'Could not build the report.'); }
+    setLoading(false);
+  }
+  const rows = data ? [...data.sections.map((sec) => ({ ...sec })), { key: 'net_income', label: 'Net Income', income: true, strong: true }] : [];
+  return (
+    <>
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="filter-grid">
+          <div className="field"><label>Fiscal Year</label>
+            <select value={form.year} onChange={(e) => set({ year: e.target.value })}>
+              {[now.getFullYear() + 1, now.getFullYear(), now.getFullYear() - 1].map((y) => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+          <div className="field"><label>Period</label>
+            <select value={form.period} onChange={(e) => set({ period: e.target.value })}>
+              <option value="month">Month</option><option value="quarter">Quarter to date</option><option value="ytd">Year to date</option>
+            </select>
+          </div>
+          <div className="field"><label>{form.period === 'month' ? 'Month' : 'Up to'}</label>
+            <select value={form.month} onChange={(e) => set({ month: e.target.value })}>
+              {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+            </select>
+          </div>
+        </div>
+        <button className="btn btn-primary" style={{ marginTop: 12 }} disabled={loading} onClick={generate}>{loading ? 'Generating...' : 'Generate'}</button>
+      </div>
+      {error && <div className="error-banner">{error}</div>}
+      {loading && <LoadingSpinner />}
+      {data && !loading && (
+        <div className="card">
+          <div style={{ marginBottom: 10 }}><strong>All departments</strong> · {data.period_label} · {data.approved_department_budgets} approved department budget{data.approved_department_budgets === 1 ? '' : 's'}</div>
+          {data.unassigned_cost_share > 0 && (
+            <div className="error-banner" style={{ marginBottom: 10 }}>
+              {data.unassigned_cost_share}% of this period's costs carry no department (the Unassigned column), so department figures understate
+              spending. Department is now required on new Cheques, Journals and Vendor Bills.
+            </div>
+          )}
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th rowSpan={2}>Section</th>
+                  {data.columns.map((c) => <th key={c.key} colSpan={3} style={{ textAlign: 'center' }}>{c.label}{!c.has_budget && c.key !== 'unassigned' ? ' (no budget)' : ''}</th>)}
+                </tr>
+                <tr>{data.columns.map((c) => ['Budget', 'Actual', 'Var.'].map((h) => <th key={c.key + h} className="text-right">{h}</th>))}</tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.key} style={r.strong ? { fontWeight: 800, borderTop: '2px solid var(--border, #d1d5db)' } : undefined}>
+                    <td>{r.label}</td>
+                    {data.columns.map((c) => {
+                      const bgt = c.budget[r.key] || 0; const act = c.actual[r.key] || 0;
+                      const v = variance(r.income, bgt, act);
+                      return [
+                        <td key={c.key + 'b'} className="text-right">{c.has_budget ? money(bgt) : '—'}</td>,
+                        <td key={c.key + 'a'} className="text-right">{money(act)}</td>,
+                        <td key={c.key + 'v'} className="text-right" style={c.has_budget ? tone(v) : undefined}>{c.has_budget ? money(v) : '—'}</td>,
+                      ];
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function SingleBudget() {
   const [options, setOptions] = useState([]);
   const [form, setForm] = useState({ budget_id: '', period: 'ytd', month: String(new Date().getMonth() + 1) });
   const [data, setData] = useState(null);
@@ -75,7 +172,6 @@ export default function BudgetVsActual() {
 
   return (
     <div>
-      <div className="page-header"><h1>Budget vs Actual</h1></div>
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="filter-grid">
           <div className="field" style={{ gridColumn: 'span 2' }}>

@@ -509,6 +509,79 @@ router.get('/report/vs-actual/export', requireAuth, requirePermission(REPORT_ROU
   } catch (err) { next(err); }
 });
 
+// All departments side by side: each department's APPROVED budget for the year against the actuals
+// carrying that department, plus an Unassigned column for actuals with no department at all --
+// shown, not hidden, because it is the measure of how far department budgets can be trusted yet.
+router.get('/report/departments', requireAuth, requirePermission(REPORT_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const m = Math.min(12, Math.max(1, Number(req.query.month) || 12));
+    const period = ['month', 'quarter', 'ytd'].includes(req.query.period) ? req.query.period : 'ytd';
+    const from = period === 'month' ? m : period === 'quarter' ? Math.floor((m - 1) / 3) * 3 + 1 : 1;
+
+    const accounts = await budgetAccounts('pl_capex');
+    const sectionById = new Map(accounts.map((a) => [a.id, a.section]));
+    const sectionByCode = new Map(accounts.map((a) => [a.account_code, a.section]));
+
+    const [budgets] = await pool.query(
+      `SELECT b.id, b.department_id, d.name AS department_name FROM budgets b JOIN departments d ON d.id = b.department_id
+        WHERE b.fiscal_year = ? AND b.dimension = 'department' AND b.status = 'approved'`, [year]);
+    const cols = new Map(); // key -> { key, label, budget: {section: n}, actual: {section: n}, has_budget }
+    const col = (key, label) => {
+      if (!cols.has(key)) cols.set(key, { key, label, budget: {}, actual: {}, has_budget: false });
+      return cols.get(key);
+    };
+    for (const b of budgets) col(String(b.department_id), b.department_name).has_budget = true;
+    if (budgets.length) {
+      const [lines] = await pool.query(
+        'SELECT budget_id, account_id, SUM(amount) AS amount FROM budget_lines WHERE budget_id IN (?) AND month BETWEEN ? AND ? GROUP BY budget_id, account_id',
+        [budgets.map((b) => b.id), from, m]);
+      const deptOf = new Map(budgets.map((b) => [b.id, String(b.department_id)]));
+      for (const l of lines) {
+        const sec = sectionById.get(Number(l.account_id)); if (!sec) continue;
+        const c = cols.get(deptOf.get(l.budget_id));
+        c.budget[sec] = (c.budget[sec] || 0) + Number(l.amount);
+      }
+    }
+
+    const gl = await getPostedGlLines({ fromDate: `${year}-01-01`, toDate: monthEnd(year, m) });
+    const deptIds = new Set();
+    for (const l of gl) {
+      const sec = sectionByCode.get(l.account_code); if (!sec) continue;
+      const mm = Number(String(l.entry_date instanceof Date ? l.entry_date.toISOString() : l.entry_date).slice(5, 7));
+      if (mm < from || mm > m) continue;
+      const key = l.department_id ? String(l.department_id) : 'unassigned';
+      if (l.department_id) deptIds.add(Number(l.department_id));
+      const c = col(key, key === 'unassigned' ? 'Unassigned' : null);
+      const signed = ((Number(l.debit) || 0) - (Number(l.credit) || 0)) * (isIncome(sec) ? -1 : 1);
+      c.actual[sec] = (c.actual[sec] || 0) + signed;
+    }
+    if (deptIds.size) {
+      const [names] = await pool.query('SELECT id, name FROM departments WHERE id IN (?)', [[...deptIds]]);
+      for (const n of names) { const c = cols.get(String(n.id)); if (c && !c.label) c.label = n.name; }
+    }
+    const netOf = (x) => (x.revenue || 0) - (x.cogs || 0) - (x.opex || 0) + (x.other_income || 0) - (x.other_expense || 0);
+    const columns = [...cols.values()]
+      .map((c) => ({
+        ...c, label: c.label || `#${c.key}`,
+        budget: { ...Object.fromEntries(Object.entries(c.budget).map(([k, v]) => [k, round2(v)])), net_income: round2(netOf(c.budget)) },
+        actual: { ...Object.fromEntries(Object.entries(c.actual).map(([k, v]) => [k, round2(v)])), net_income: round2(netOf(c.actual)) },
+      }))
+      .sort((a, b) => (a.key === 'unassigned') - (b.key === 'unassigned') || a.label.localeCompare(b.label));
+    const unassigned = columns.find((c) => c.key === 'unassigned');
+    const totalActualCost = columns.reduce((s, c) => s + (c.actual.cogs || 0) + (c.actual.opex || 0) + (c.actual.other_expense || 0), 0);
+    const unassignedCost = unassigned ? (unassigned.actual.cogs || 0) + (unassigned.actual.opex || 0) + (unassigned.actual.other_expense || 0) : 0;
+    res.json({
+      year, period, month: m, from_month: from,
+      period_label: period === 'month' ? `${MONTHS[m - 1]} ${year}` : `${MONTHS[from - 1]}-${MONTHS[m - 1]} ${year}`,
+      sections: SECTIONS.map(({ key, label }) => ({ key, label, income: isIncome(key) })),
+      columns,
+      approved_department_budgets: budgets.length,
+      unassigned_cost_share: totalActualCost ? round2((unassignedCost / totalActualCost) * 100) : 0,
+    });
+  } catch (err) { next(err); }
+});
+
 // ---------------------------------------------------------------- AI
 
 router.post('/report/ai/explain', requireAuth, requirePermission(REPORT_ROUTE, 'can_view'), async (req, res, next) => {
