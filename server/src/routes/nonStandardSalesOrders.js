@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 
@@ -368,8 +369,9 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     await conn.beginTransaction();
     const [r] = await conn.query(`INSERT INTO non_standard_sales_orders (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`, vals);
     const id = r.insertId;
-    const nssoNo = `NSSO-${TYPE_ABBR[type]}-${id}`;
-    await conn.query('UPDATE non_standard_sales_orders SET nsso_no = ? WHERE id = ?', [nssoNo, id]);
+    // Each type continues its own sequence from the migrated source numbers (NSSO-SAM-2435 -> 2436),
+    // not NSSO-<TYPE>-<row id>, which jumped to five figures once the source's NSSOs were imported.
+    const nssoNo = await assignDocNo(conn, { table: 'non_standard_sales_orders', column: 'nsso_no', prefix: `NSSO-${TYPE_ABBR[type]}-`, id });
     await logAudit(conn, { id, userId: req.user.id, eventType: 'Created', fieldName: 'nsso_no', newValue: nssoNo });
     await conn.commit();
 

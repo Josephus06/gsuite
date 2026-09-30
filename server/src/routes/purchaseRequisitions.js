@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { assignDocNo } = require('../lib/docNumber');
 
 const router = express.Router();
 const ROUTE = '/purchase-requisitions';
@@ -154,7 +155,10 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       [dateCreated || new Date().toISOString().slice(0, 10), dateNeeded || null, departmentId || null, requestorId || null, req.user.id, memo || null, req.user.id]
     );
     const prId = result.insertId;
-    await conn.query('UPDATE purchase_requisitions SET pr_no = ? WHERE id = ?', [`PR-${prId}`, prId]);
+    // Next free PR-# after the highest in use (the migrated source numbers run to PR-10711), not
+    // PR-<row id>: ids are auto-increment in steps across the replicated pair and would collide with
+    // a migrated number.
+    const prNo = await assignDocNo(conn, { table: 'purchase_requisitions', column: 'pr_no', prefix: 'PR-', id: prId });
 
     let lineNo = 1;
     for (const l of submitted) {
@@ -164,7 +168,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
         [prId, lineNo++, l.item_id, l.purchase_description || null, l.job_order_id || null, l.qty, l.purchase_unit || null, l.unit_title || null]
       );
     }
-    await logAudit(conn, { prId, userId: req.user.id, eventType: 'Created', fieldName: 'pr_no', newValue: `PR-${prId}` });
+    await logAudit(conn, { prId, userId: req.user.id, eventType: 'Created', fieldName: 'pr_no', newValue: prNo });
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM purchase_requisitions WHERE id = ?', [prId]);
