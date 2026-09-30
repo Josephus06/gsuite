@@ -67,7 +67,9 @@ async function main() {
   console.log(`Local DB: ${process.env.DB_NAME} on ${process.env.DB_HOST}`);
   console.log(`Bill Payments | window ${FROM}..${TO}${DRY_RUN ? ' | DRY RUN' : ''}\n`);
 
-  const [vbs] = await pool.query('SELECT id, bill_no, supplier_id_placeholder FROM (SELECT vb.id, vb.bill_no, po.supplier_id AS supplier_id_placeholder FROM vendor_bills vb JOIN purchase_orders po ON po.id = vb.purchase_order_id) t');
+  // Every bill, standalone (no-PO) expense bills included -- their supplier is their own. An inner
+  // join on the PO here skipped every payment of an expense bill as 'a bill we do not hold'.
+  const [vbs] = await pool.query('SELECT id, bill_no, supplier_id_placeholder FROM (SELECT vb.id, vb.bill_no, COALESCE(po.supplier_id, vb.supplier_id) AS supplier_id_placeholder FROM vendor_bills vb LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id) t');
   const vbByNo = new Map(vbs.map((v) => [v.bill_no, v]));
   const [sups] = await pool.query('SELECT id, name FROM suppliers');
   const supByName = new Map(sups.map((s) => [norm(s.name), s.id]));
