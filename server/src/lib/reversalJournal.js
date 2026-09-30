@@ -30,8 +30,14 @@ const REVERSAL_STATUS = 'REVERSAL';
 // reversal in the same period as the entry it cancels, so a historical void nets to zero inside
 // its own month exactly as it does today. A void happening NOW passes the real date and lands in
 // the current period, which is the point of the exercise.
+//
+// A Date (the void routes pass `new Date()`) is formatted as the Manila business day: String() on a
+// Date is "Wed Sep 30 2026 ...", whose first ten characters are not a date, and a void sent without
+// a picked reversal date failed on exactly that.
 function reversalDate({ voidedAt, documentDate }) {
-  return String(voidedAt || documentDate).slice(0, 10);
+  const v = voidedAt || documentDate;
+  if (v instanceof Date) return v.toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+  return String(v).slice(0, 10);
 }
 
 // Mirror image: what the document debited, the reversal credits.
