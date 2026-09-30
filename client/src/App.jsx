@@ -63,7 +63,6 @@ import JobTypeEdit from './pages/JobTypeEdit';
 import AssignedJobOrders from './pages/AssignedJobOrders';
 import ArtistIncentiveReport from './pages/reports/ArtistIncentiveReport';
 import DeliverySummary from './pages/reports/DeliverySummary';
-import PendingBilling from './pages/reports/PendingBilling';
 import DisbursementReport from './pages/reports/DisbursementReport';
 import ForecastReport from './pages/reports/ForecastReport';
 import ParkedBankItems from './pages/reports/ParkedBankItems';
@@ -429,7 +428,6 @@ function App() {
         <Route path="/commission-jo-detail" element={<CommissionJoDetail />} />
         <Route path="/reports/ticket-summary" element={<TicketSummary />} />
         <Route path="/reports/delivery-summary" element={<DeliverySummary />} />
-        <Route path="/reports/pending-billing" element={<PendingBilling />} />
         <Route path="/reports/disbursement" element={<DisbursementReport />} />
         <Route path="/reports/forecast" element={<ForecastReport />} />
         <Route path="/reports/parked-bank-items" element={<ParkedBankItems />} />

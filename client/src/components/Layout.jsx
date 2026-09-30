@@ -156,7 +156,6 @@ const NAV_STRUCTURE = [
       { route: '/non-standard-sales-orders', label: 'NSSO' },
       { route: '/warranty-certificates', label: 'Warranty Certificate' },
       { route: '/job-orders', label: 'Job Orders' },
-      { route: '/reports/pending-billing', label: 'Pending Billing' },
     ],
   },
   {
