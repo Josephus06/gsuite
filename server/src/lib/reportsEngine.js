@@ -6,6 +6,9 @@ function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
 
+// Account the balance sheet folds prior-years unclosed earnings into (see buildBalanceSheet).
+const RETAINED_EARNINGS_CODE = '29000';
+
 function yearStart(dateStr) {
   return `${String(dateStr).slice(0, 4)}-01-01`;
 }
@@ -151,18 +154,42 @@ async function buildBalanceSheet(asOfDate) {
   const balances = netBalancesByCode(glLines);
   const roots = buildTree(coaRows, balances);
 
-  let incomeTotal = 0;
-  let expenseTotal = 0;
-  for (const root of roots) {
-    if (root.account_type === 'INCOME') incomeTotal += root.rawAmount * -1;
-    if (root.account_type === 'EXPENSE') expenseTotal += root.rawAmount * 1;
-  }
-  const currentEarnings = round2(incomeTotal - expenseTotal);
+  const earningsOf = (rs) => {
+    let income = 0;
+    let expense = 0;
+    for (const root of rs) {
+      if (root.account_type === 'INCOME') income += root.rawAmount * -1;
+      if (root.account_type === 'EXPENSE') expense += root.rawAmount * 1;
+    }
+    return income - expense;
+  };
+  const totalEarnings = round2(earningsOf(roots));
+
+  // Presented the way the source's balance sheet does: profit from before this year sits in
+  // Retained Earnings, only this year's shows as Current Year Earnings. Nothing is ever closed
+  // (neither here nor in the source), so without this split all profit since inception landed on
+  // one line and Retained Earnings read 24.4M off the source's at 2025-12-31 -- same total equity,
+  // different lines.
+  const ys = yearStart(asOfDate);
+  const priorEarnings = round2(earningsOf(buildTree(coaRows, netBalancesByCode(glLines.filter((l) => String(l.entry_date).slice(0, 10) < ys)))));
+  const currentEarnings = round2(totalEarnings - priorEarnings);
 
   const { data, debitTotal, creditTotal } = groupRoots(roots, { typeFilter: ['ASSET', 'LIABILITY', 'EQUITY'] });
   const equityBucket = data.find((d) => d.type === 'EQUITY');
+  let reNode = null;
+  const findRe = (nodes) => { for (const n of nodes || []) { if (n.account_code === RETAINED_EARNINGS_CODE) reNode = n; findRe(n.children); } };
+  for (const g of data) for (const a of g.accounts || []) findRe(a.account_ledgers);
+  if (reNode && priorEarnings) {
+    reNode.amount = round2(Number(reNode.amount || 0) + priorEarnings);
+  } else if (priorEarnings) {
+    const prior = { account_code: 'PRIOR-EARNINGS', account_name: 'Retained Earnings (prior years, unclosed)', is_summary: false, amount: priorEarnings, children: [] };
+    if (equityBucket) {
+      if (!equityBucket.accounts.length) equityBucket.accounts.push({ sub_type: 'EQUITIES', account_ledgers: [] });
+      equityBucket.accounts[0].account_ledgers.push(prior);
+    }
+  }
   const earningsNode = {
-    account_code: 'CURRENT-EARNINGS', account_name: 'Current Earnings (Unclosed)',
+    account_code: 'CURRENT-EARNINGS', account_name: 'Current Year Earnings',
     is_summary: false, amount: currentEarnings, children: [],
   };
   if (equityBucket) {
@@ -171,7 +198,8 @@ async function buildBalanceSheet(asOfDate) {
   } else {
     data.push({ normal: 'CREDIT', type: 'EQUITY', accounts: [{ sub_type: 'EQUITIES', account_ledgers: [earningsNode] }] });
   }
-  const finalCreditTotal = round2(creditTotal + currentEarnings);
+  // creditTotal was summed before prior-years earnings were added to the RE line, so add ALL earnings.
+  const finalCreditTotal = round2(creditTotal + totalEarnings);
 
   return {
     as_of: asOfDate, data,
