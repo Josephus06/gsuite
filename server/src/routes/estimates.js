@@ -399,6 +399,15 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
     for (const jo of jobOrders) {
+      // Disc Price/Unit is Net of Tax / Qty -- the per-unit price after the discount and before
+      // tax. The wizard now writes it, but it was never computed before, so it is blank on every
+      // estimate raised until today. Derived here rather than backfilled: it is a pure function
+      // of two columns on the same row, so a stored copy could only ever go stale, and every
+      // screen and print reading this endpoint gets the same answer for old and new estimates.
+      if (jo.disc_price_per_unit == null || Number(jo.disc_price_per_unit) === 0) {
+        const qty = Number(jo.quantity) || 0;
+        jo.disc_price_per_unit = qty ? Number((Number(jo.net_of_tax || 0) / qty).toFixed(4)) : null;
+      }
       const [processes] = await pool.query(
         `SELECT p.*, pr.process_name, i.display_name AS item_name
          FROM estimate_job_order_processes p

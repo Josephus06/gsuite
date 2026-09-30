@@ -475,8 +475,7 @@ export default function EstimateWizard() {
     const computed = {};
 
     if (triggerKey === 'quantity') {
-      const qty = Number(current.quantity) || 0;
-      computed.price_per_unit = qty ? Number((Number(current.gross_amount || 0) / qty).toFixed(4)) : null;
+      Object.assign(computed, perUnitFor(current.quantity, current));
     }
 
     if (triggerKey === 'disc_percent' || triggerKey === 'disc_amount') {
@@ -488,8 +487,7 @@ export default function EstimateWizard() {
       }
       const discAmount = computed.disc_amount ?? current.disc_amount;
       Object.assign(computed, computeJobOrderTax(subtotal, discAmount, current.tax_code_id));
-      const qty = Number(current.quantity) || 0;
-      computed.price_per_unit = qty ? Number((computed.gross_amount / qty).toFixed(4)) : null;
+      Object.assign(computed, perUnitFor(current.quantity, computed));
       const totalCost = Number((current.processes || []).reduce((s, p) => s + (Number(p.total_cost) || 0), 0).toFixed(2));
       computed.gp_amount = Number((computed.net_of_tax - totalCost).toFixed(2));
       computed.gp_rate = computed.net_of_tax ? Number((computed.gp_amount / computed.net_of_tax * 100).toFixed(2)) : null;
@@ -572,6 +570,21 @@ export default function EstimateWizard() {
   // Code's rate (0 if none picked), Gross Amt = Net of Tax + Tax Amt -- computed here so
   // every trigger that can change subtotal, disc_amount, or tax_code_id (process-row
   // edits, Disc %/Amt edits, and picking a Tax Code) goes through the same formula.
+  // The two per-unit figures, derived together so no caller can set one and forget the other --
+  // which is exactly how Disc Price/Unit came to be blank on every estimate while Price/Unit was
+  // filled in four different places.
+  //
+  //   Price/Unit      = Gross Amt   / Qty   -- what a unit costs with tax
+  //   Disc Price/Unit = Net of Tax  / Qty   -- what a unit costs after discount, before tax
+  function perUnitFor(quantity, amounts) {
+    const qty = Number(quantity) || 0;
+    if (!qty) return { price_per_unit: null, disc_price_per_unit: null };
+    return {
+      price_per_unit: Number((Number(amounts?.gross_amount || 0) / qty).toFixed(4)),
+      disc_price_per_unit: Number((Number(amounts?.net_of_tax || 0) / qty).toFixed(4)),
+    };
+  }
+
   function computeJobOrderTax(subtotal, discAmount, taxCodeId) {
     const net_of_tax = Number((Number(subtotal || 0) - Number(discAmount || 0)).toFixed(2));
     const taxRate = taxCodeId ? Number(taxes.find((t) => t.id === Number(taxCodeId))?.rate) || 0 : 0;
@@ -640,7 +653,7 @@ export default function EstimateWizard() {
     }
     const discAmount = overrides.disc_amount ?? jo?.disc_amount;
     Object.assign(overrides, computeJobOrderTax(subtotal, discAmount, jo?.tax_code_id));
-    overrides.price_per_unit = qty ? Number((overrides.gross_amount / qty).toFixed(4)) : null;
+    Object.assign(overrides, perUnitFor(qty, overrides));
     overrides.gp_amount = Number((overrides.net_of_tax - totalCost).toFixed(2));
     overrides.gp_rate = overrides.net_of_tax ? Number((overrides.gp_amount / overrides.net_of_tax * 100).toFixed(2)) : null;
     await commitJobOrderRow(joIdx, overrides);
@@ -805,8 +818,7 @@ export default function EstimateWizard() {
           onSelect={(t) => {
             const jo = jobOrdersRef.current[idx];
             const computed = computeJobOrderTax(jo?.subtotal, jo?.disc_amount, t.id);
-            const qty = Number(jo?.quantity) || 0;
-            computed.price_per_unit = qty ? Number((computed.gross_amount / qty).toFixed(4)) : null;
+            Object.assign(computed, perUnitFor(jo?.quantity, computed));
             commitJobOrderRow(idx, { tax_code_id: t.id, ...computed });
           }}
         />
