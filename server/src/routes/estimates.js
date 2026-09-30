@@ -399,14 +399,27 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
     for (const jo of jobOrders) {
-      // Disc Price/Unit is Net of Tax / Qty -- the per-unit price after the discount and before
-      // tax. The wizard now writes it, but it was never computed before, so it is blank on every
-      // estimate raised until today. Derived here rather than backfilled: it is a pure function
-      // of two columns on the same row, so a stored copy could only ever go stale, and every
-      // screen and print reading this endpoint gets the same answer for old and new estimates.
-      if (jo.disc_price_per_unit == null || Number(jo.disc_price_per_unit) === 0) {
-        const qty = Number(jo.quantity) || 0;
-        jo.disc_price_per_unit = qty ? Number((Number(jo.net_of_tax || 0) / qty).toFixed(4)) : null;
+      // The two per-unit columns, both tax-exclusive and either side of the discount:
+      //
+      //   Price/Unit      = Subtotal   / Qty
+      //   Disc Price/Unit = Net of Tax / Qty
+      //
+      // Derived on read rather than backfilled. They are pure functions of columns on the same
+      // row, so a stored copy could only ever go stale, and this way every estimate answers the
+      // same way whether it was raised today or last year -- Disc Price/Unit was NULL on all
+      // 4,743 lines, and Price/Unit was stored as Gross / Qty, which included tax and so could
+      // not be compared with the discounted figure printed beside it.
+      //
+      // It also makes the row checkable: Price/Unit x Qty is the Subtotal, Disc Price/Unit x Qty
+      // is the Net of Tax.
+      //
+      // Sales Orders and invoices converted from an estimate keep their OWN copies, taken at
+      // conversion time; this changes what the estimate screen and the quotation print show, not
+      // what any document downstream was built from.
+      const qty = Number(jo.quantity) || 0;
+      if (qty) {
+        jo.price_per_unit = Number((Number(jo.subtotal || 0) / qty).toFixed(4));
+        jo.disc_price_per_unit = Number((Number(jo.net_of_tax || 0) / qty).toFixed(4));
       }
       const [processes] = await pool.query(
         `SELECT p.*, pr.process_name, i.display_name AS item_name

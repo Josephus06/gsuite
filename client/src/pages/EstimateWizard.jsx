@@ -487,7 +487,7 @@ export default function EstimateWizard() {
       }
       const discAmount = computed.disc_amount ?? current.disc_amount;
       Object.assign(computed, computeJobOrderTax(subtotal, discAmount, current.tax_code_id));
-      Object.assign(computed, perUnitFor(current.quantity, computed));
+      Object.assign(computed, perUnitFor(current.quantity, { subtotal, ...computed }));
       const totalCost = Number((current.processes || []).reduce((s, p) => s + (Number(p.total_cost) || 0), 0).toFixed(2));
       computed.gp_amount = Number((computed.net_of_tax - totalCost).toFixed(2));
       computed.gp_rate = computed.net_of_tax ? Number((computed.gp_amount / computed.net_of_tax * 100).toFixed(2)) : null;
@@ -574,14 +574,19 @@ export default function EstimateWizard() {
   // which is exactly how Disc Price/Unit came to be blank on every estimate while Price/Unit was
   // filled in four different places.
   //
-  //   Price/Unit      = Gross Amt   / Qty   -- what a unit costs with tax
-  //   Disc Price/Unit = Net of Tax  / Qty   -- what a unit costs after discount, before tax
-  function perUnitFor(quantity, amounts) {
+  //   Price/Unit      = Subtotal   / Qty   -- a unit before the discount
+  //   Disc Price/Unit = Net of Tax / Qty   -- the same unit after it
+  //
+  // BOTH ARE TAX-EXCLUSIVE, and they are a pair: Subtotal is the line before its discount and Net
+  // of Tax is the line after it, so the two columns sit either side of the Disc Amt between them
+  // and a reader can see what the discount did to a single unit. Price/Unit used to be Gross / Qty
+  // -- tax-inclusive -- which made it incomparable with the discounted figure beside it.
+  function perUnitFor(quantity, { subtotal, net_of_tax: netOfTax }) {
     const qty = Number(quantity) || 0;
     if (!qty) return { price_per_unit: null, disc_price_per_unit: null };
     return {
-      price_per_unit: Number((Number(amounts?.gross_amount || 0) / qty).toFixed(4)),
-      disc_price_per_unit: Number((Number(amounts?.net_of_tax || 0) / qty).toFixed(4)),
+      price_per_unit: Number((Number(subtotal || 0) / qty).toFixed(4)),
+      disc_price_per_unit: Number((Number(netOfTax || 0) / qty).toFixed(4)),
     };
   }
 
@@ -818,7 +823,7 @@ export default function EstimateWizard() {
           onSelect={(t) => {
             const jo = jobOrdersRef.current[idx];
             const computed = computeJobOrderTax(jo?.subtotal, jo?.disc_amount, t.id);
-            Object.assign(computed, perUnitFor(jo?.quantity, computed));
+            Object.assign(computed, perUnitFor(jo?.quantity, { subtotal: jo?.subtotal, ...computed }));
             commitJobOrderRow(idx, { tax_code_id: t.id, ...computed });
           }}
         />
