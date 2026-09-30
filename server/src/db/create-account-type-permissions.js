@@ -27,7 +27,7 @@ const ACCOUNT_TYPES = [
   'Accounts Receivable', 'Accounting', 'Treasury', 'HR', 'IT', 'Security',
   'Accounting Manager', 'Artist', 'General Manager', 'System Admin', 'Audit Staff', 'Audit Supervisor',
   'Production Manager', 'Sales Manager', 'SBU', 'Design Supervisor', 'HR Manager', 'Accounting Supervisor',
-  'Costing Staff', 'Account Payable',
+  'Costing Staff', 'Account Payable', 'CSA', 'Branch Supervisor',
 ];
 
 const DDL = `
