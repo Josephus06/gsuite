@@ -25,6 +25,9 @@ function argVal(name, def) { const a = process.argv.find((x) => x.startsWith(`--
 // Optional: only these SO numbers (comma-separated), for re-doing a known set of orders without a
 // full-window run. The --from/--to window must still cover their dates.
 const ONLY = new Set(argVal('only', '').split(',').map((s) => s.trim()).filter(Boolean));
+// Or Non-Standard Sales Orders, by number, from a file (one per line): their JOs' builds and QIs,
+// and their deliveries saved against the NSSO (item_deliveries.nsso_id). --from/--to are ignored.
+const NSSO_FILE = argVal('nsso-file', '');
 const FROM = argVal('from', '2026-01-01');
 const TO = argVal('to', '2026-07-31');
 // Four workers is the right default for a bulk run -- it is what makes a full year finish in
@@ -91,7 +94,7 @@ async function main() {
   // Local lookups.
   const [jos] = await pool.query(
     `SELECT jo.id, jo.job_order_no, jo.sales_order_id, so.sales_order_no
-       FROM job_orders jo JOIN sales_orders so ON so.id = jo.sales_order_id`);
+       FROM job_orders jo LEFT JOIN sales_orders so ON so.id = jo.sales_order_id`);
   const joByNo = new Map(jos.map((j) => [j.job_order_no, j]));
   const [sos] = await pool.query('SELECT id, sales_order_no FROM sales_orders');
   const soByNo = new Map(sos.map((s) => [s.sales_order_no, s.id]));
@@ -105,7 +108,9 @@ async function main() {
 
   // Collect target SOs (rep preset + date window), with their live PK + cert JOs. Reuses the
   // same on-disk window cache import-sales.js built, so this doesn't re-page the live list.
-  const soRows = await fetchWindow(token, {
+  const [nssoRows] = await pool.query('SELECT id, nsso_no FROM non_standard_sales_orders');
+  const nssoIdByNo = new Map(nssoRows.map((n) => [n.nsso_no, n.id]));
+  const soRows = NSSO_FILE ? [] : await fetchWindow(token, {
     endpoint: 'get_sales_orders', from: FROM, to: TO, keyField: 'so_upk',
     extra: { viewAll: true }, refresh: REFRESH, onProgress: (m) => console.log(m),
   });
@@ -119,7 +124,15 @@ async function main() {
     seenSo.add(so.so_upk);
     targetSos.push({ soNo: so.so_upk, soPk: so.so_pk });
   }
-  console.log(`\n${targetSos.length} target SO(s).`);
+  if (NSSO_FILE) {
+    const wanted = [...new Set(require('fs').readFileSync(NSSO_FILE, 'utf8').split(/[\s,]+/).map((x) => x.trim()).filter(Boolean))];
+    for (const no of wanted) {
+      if (!nssoIdByNo.has(no)) continue; // not imported yet: nothing to attach to
+      const h = rowsOf(await api(token, 'get_transactions', { where: { UserPK_TransH: no, Module_TransH: 'NONSALESORDER' }, limit: 1 }))[0];
+      if (h && !isVoidOrCancelled(h.Status_TransH)) targetSos.push({ soNo: no, soPk: h.SysPK_TransH, nssoId: nssoIdByNo.get(no) });
+    }
+  }
+  console.log(`\n${targetSos.length} target ${NSSO_FILE ? 'NSSO' : 'SO'}(s).`);
 
   let abCount = 0, abLines = 0, qiCount = 0, qiLines = 0, delCount = 0, delLines = 0, fail = 0, processed = 0;
   // Live documents skipped because their number is already taken locally by an unrelated record.
@@ -136,8 +149,8 @@ async function main() {
   const RETRYABLE = new Set(['ER_LOCK_DEADLOCK', 'ER_LOCK_WAIT_TIMEOUT']);
   const runSo = async (t, attempt = 1) => {
     try {
-      const localSoId = soByNo.get(t.soNo);
-      if (!localSoId) return;
+      const localSoId = t.nssoId ? null : soByNo.get(t.soNo);
+      if (!localSoId && !t.nssoId) return;
       const cert = listRows(await api(token, 'get_job_orders_for_cert', { soPK: t.soPk }));
       // live JO PK -> local job order (used to resolve delivery lines' SysFK_TransHJO_LdgrJob).
       const certByPk = new Map();
@@ -232,16 +245,18 @@ async function main() {
         const conn = await pool.getConnection();
         try {
           await conn.beginTransaction();
-          const [oldD] = await conn.query('SELECT id FROM item_deliveries WHERE sales_order_id = ?', [localSoId]);
+          const parentCol = t.nssoId ? 'nsso_id' : 'sales_order_id';
+          const parentId = t.nssoId || localSoId;
+          const [oldD] = await conn.query(`SELECT id FROM item_deliveries WHERE ${parentCol} = ?`, [parentId]);
           if (oldD.length) await conn.query('DELETE FROM item_delivery_lines WHERE item_delivery_id IN (?)', [oldD.map((d) => d.id)]);
-          await conn.query('DELETE FROM item_deliveries WHERE sales_order_id = ?', [localSoId]);
+          await conn.query(`DELETE FROM item_deliveries WHERE ${parentCol} = ?`, [parentId]);
           for (const del of dels) {
             const [[dupD]] = await conn.query('SELECT id FROM item_deliveries WHERE delivery_no = ? LIMIT 1', [del.UserPK_TransH]);
             if (dupD) { numberCollisions.push(`ID ${del.UserPK_TransH} (${t.soNo})`); continue; }
             const [r] = await conn.query(
-              `INSERT INTO item_deliveries (delivery_no, sales_order_id, date_created, memo, status, created_by_user_id)
-               VALUES (?,?,?,?,?,?)`,
-              [del.UserPK_TransH, localSoId, dOrNull(del.DateCreated_TransH) || day(new Date().toISOString()), del.Memo_TransH || null,
+              `INSERT INTO item_deliveries (delivery_no, sales_order_id, nsso_id, date_created, memo, status, created_by_user_id)
+               VALUES (?,?,?,?,?,?,?)`,
+              [del.UserPK_TransH, localSoId, t.nssoId || null, dOrNull(del.DateCreated_TransH) || day(new Date().toISOString()), del.Memo_TransH || null,
                (del.Status_TransH || 'delivered').toString().slice(0, 40), sysUser]);
             delCount += 1;
             // delivery lines: delivered JOs via the delivery's ledger-job rows
