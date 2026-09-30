@@ -21,6 +21,14 @@ export default function BudgetVsActual() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  // AI: a briefing, and questions about what is on screen. Both are asked of the report exactly as
+  // generated (budget / period / month), never of a half-changed filter.
+  const [generated, setGenerated] = useState(null);
+  const [briefing, setBriefing] = useState('');
+  const [question, setQuestion] = useState('');
+  const [qa, setQa] = useState([]);
+  const [aiBusy, setAiBusy] = useState('');
+  const [aiError, setAiError] = useState('');
 
   useEffect(() => {
     api.get('/budgets/report/options').then(({ data: o }) => {
@@ -32,7 +40,10 @@ export default function BudgetVsActual() {
   async function generate() {
     if (!form.budget_id) { setError('Choose a budget.'); return; }
     setLoading(true); setError('');
-    try { const { data: d } = await api.get('/budgets/report/vs-actual', { params: form }); setData(d); }
+    try {
+      const { data: d } = await api.get('/budgets/report/vs-actual', { params: form });
+      setData(d); setGenerated({ ...form }); setBriefing(''); setQa([]); setAiError('');
+    }
     catch (e) { setError(e.response?.data?.error || 'Could not build the report.'); }
     setLoading(false);
   }
@@ -42,6 +53,22 @@ export default function BudgetVsActual() {
       const url = URL.createObjectURL(blob); const a = document.createElement('a');
       a.href = url; a.download = `budget-vs-actual-${form.month}.xlsx`; a.click(); URL.revokeObjectURL(url);
     } catch { setError('Could not extract the report.'); }
+  }
+
+  async function explain() {
+    setAiBusy('explain'); setAiError('');
+    try { const { data: d } = await api.post('/budgets/report/ai/explain', generated); setBriefing(d.text); }
+    catch (e) { setAiError(e.response?.data?.error || 'The AI could not explain this report.'); }
+    setAiBusy('');
+  }
+  async function ask() {
+    const q = question.trim(); if (!q) return;
+    setAiBusy('ask'); setAiError('');
+    try {
+      const { data: d } = await api.post('/budgets/report/ai/ask', { ...generated, question: q, history: qa });
+      setQa((prev) => [...prev, { q, a: d.answer }]); setQuestion('');
+    } catch (e) { setAiError(e.response?.data?.error || 'The AI could not answer.'); }
+    setAiBusy('');
   }
 
   const label = (o) => `${o.fiscal_year} · ${o.name} · ${o.dimension_label} · v${o.version}${o.status === 'draft' ? ' (DRAFT)' : ''}`;
@@ -83,6 +110,37 @@ export default function BudgetVsActual() {
       {loading && <LoadingSpinner />}
       {data && !loading && (
         <div className="card">
+          {data.flag_count > 0 && (
+            <div className="error-banner" style={{ marginBottom: 10 }}>
+              ⚠ {data.flag_count} account{data.flag_count === 1 ? '' : 's'} flagged: the actual may be wrong (a spike, mostly manual
+              adjustments, a negative cost, or spending with no budget). Hover the ⚠ beside an account to see why.
+            </div>
+          )}
+          <div className="card" style={{ marginBottom: 12, background: 'var(--surface-2, #f8fafc)' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <strong>AI</strong>
+              {!data.ai_available && <span className="muted">AI is not set up on this server.</span>}
+              {data.ai_available && (
+                <>
+                  <button className="btn btn-sm btn-primary" disabled={!!aiBusy} onClick={explain}>{aiBusy === 'explain' ? 'Thinking...' : 'Explain this report'}</button>
+                  <input style={{ flex: 1, minWidth: 240 }} value={question} onChange={(e) => setQuestion(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && ask()} placeholder="Ask about these numbers, e.g. why are operating expenses over budget?" />
+                  <button className="btn btn-sm" disabled={!!aiBusy || !question.trim()} onClick={ask}>{aiBusy === 'ask' ? 'Thinking...' : 'Ask'}</button>
+                </>
+              )}
+            </div>
+            {aiError && <div className="error-banner" style={{ marginTop: 8 }}>{aiError}</div>}
+            {briefing && <div style={{ whiteSpace: 'pre-wrap', marginTop: 10, lineHeight: 1.5 }}>{briefing}</div>}
+            {qa.map((x, i) => (
+              <div key={i} style={{ marginTop: 10 }}>
+                <div><strong>Q:</strong> {x.q}</div>
+                <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}><strong>A:</strong> {x.a}</div>
+              </div>
+            ))}
+            {data.ai_available && (briefing || qa.length > 0) && (
+              <div className="muted" style={{ fontSize: 11, marginTop: 8 }}>AI-written from this report's figures and the transactions behind them. Check anything important against the ledger.</div>
+            )}
+          </div>
           <div style={{ marginBottom: 10 }}>
             <strong>{data.budget.name}</strong> · {data.budget.dimension_label} · {data.period_label}
             {data.budget.status === 'draft' && <span className="badge badge-warning" style={{ marginLeft: 8 }}>Draft budget</span>}
@@ -106,7 +164,12 @@ export default function BudgetVsActual() {
                       const v = variance(s.income, r.budget, r.actual); const yv = variance(s.income, r.ytd_budget, r.ytd_actual);
                       return (
                         <tr key={r.account_id}>
-                          <td>{r.account_code} — {r.account_name}</td>
+                          <td>
+                            {r.account_code} — {r.account_name}
+                            {r.flags?.length > 0 && (
+                              <span title={r.flags.map((f) => f.text).join('\n')} style={{ marginLeft: 6, cursor: 'help', color: 'var(--danger, #b91c1c)' }}>⚠</span>
+                            )}
+                          </td>
                           <td className="text-right">{money(r.budget)}</td>
                           <td className="text-right">{money(r.actual)}</td>
                           <td className="text-right" style={tone(v)}>{money(v)}</td>

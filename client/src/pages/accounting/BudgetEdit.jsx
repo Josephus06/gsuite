@@ -26,6 +26,7 @@ export default function BudgetEdit() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [pct, setPct] = useState('0');
+  const [notes, setNotes] = useState({}); // account_id -> why AI Suggest chose that figure
 
   async function load() {
     try {
@@ -79,6 +80,15 @@ export default function BudgetEdit() {
     const { data } = await api.get(`/budgets/${id}/suggest-from-actuals`, { params: { pct } });
     setAmounts(data.amounts); setDirty(true);
     setNotice(`Filled from ${data.from_year} actuals${Number(pct) ? ` ${Number(pct) > 0 ? '+' : ''}${pct}%` : ''}. Review, then Save.`);
+  });
+  const aiSuggest = () => run('AI Suggest', async () => {
+    if (dirty && !window.confirm('Replace the figures on screen with the AI suggestion?')) return;
+    const { data } = await api.get(`/budgets/${id}/ai-suggest`);
+    setAmounts(data.amounts); setNotes(data.notes || {}); setDirty(true);
+    const n = Object.keys(data.amounts || {}).length;
+    setNotice(n
+      ? `${data.source === 'ai' ? 'AI suggested' : 'Trend-based suggestion for'} ${n} accounts from ${data.based_on.join(', ')} actuals -- last year spread by each account's seasonality, then a growth % (reason under each account). Review, then Save.`
+      : 'There were no actuals last year to base a suggestion on.');
   });
   const exportFile = () => run('Export', async () => {
     const { data } = await api.get(`/budgets/${id}/export`, { responseType: 'blob' });
@@ -143,6 +153,9 @@ export default function BudgetEdit() {
               <input type="number" value={pct} onChange={(e) => setPct(e.target.value)} style={{ width: 90 }} />
             </div>
             <button className="btn btn-sm" disabled={!!busy} onClick={fillFromActuals}>{busy === 'Fill from actuals' ? 'Filling...' : 'Fill'}</button>
+            <button className="btn btn-sm btn-primary" disabled={!!busy} onClick={aiSuggest} title="Last year's actuals spread by each account's seasonality, with a growth % per account chosen by AI from the past three years">
+              {busy === 'AI Suggest' ? 'Thinking...' : 'AI Suggest'}
+            </button>
           </div>
         )}
       </div>
@@ -163,7 +176,10 @@ export default function BudgetEdit() {
                   <tr><td colSpan={14} style={{ fontWeight: 700, background: 'var(--surface-2, #f3f4f6)' }}>{s.label}</td></tr>
                   {s.accounts.map((a) => (
                     <tr key={a.id}>
-                      <td>{a.account_code} — {a.account_name}</td>
+                      <td>
+                        {a.account_code} — {a.account_name}
+                        {notes[a.id] && <div className="muted" style={{ fontSize: 11 }}>{notes[a.id]}</div>}
+                      </td>
                       {MONTHS.map((m, i) => (
                         <td key={m} className="text-right">
                           {editable

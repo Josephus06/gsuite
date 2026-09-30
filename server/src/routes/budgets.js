@@ -3,6 +3,7 @@ const ExcelJS = require('exceljs');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { getPostedGlLines } = require('../lib/glImpact');
+const budgetAi = require('../lib/budgetAi');
 
 // Budgets (Accounting > Budgets) and the Budget vs Actual report. See db/create-budgets.js.
 //
@@ -63,20 +64,24 @@ const dimensionLabel = (b) => (b.dimension === 'department' ? `Department: ${b.d
 
 // Actuals per account per month for one fiscal year, up to and including `toMonth`, narrowed to
 // the budget's department or location. Returns Map(account_code -> number[12]).
-async function actualsByMonth(year, toMonth, b) {
-  const lines = await getPostedGlLines({ fromDate: `${year}-01-01`, toDate: monthEnd(year, toMonth) });
+async function loadActuals(year, toMonth, b) {
+  const all = await getPostedGlLines({ fromDate: `${year}-01-01`, toDate: monthEnd(year, toMonth) });
   const map = new Map();
-  for (const l of lines) {
+  const lines = [];
+  for (const l of all) {
     if (b.dimension === 'department' && String(l.department_id) !== String(b.department_id)) continue;
     if (b.dimension === 'location' && String(l.location_id) !== String(b.location_id)) continue;
     const m = Number(String(l.entry_date instanceof Date ? l.entry_date.toISOString() : l.entry_date).slice(5, 7));
     if (!m) continue;
     if (!map.has(l.account_code)) map.set(l.account_code, new Array(12).fill(0));
     // Raw debit - credit; the sign is fixed per section by the caller.
-    map.get(l.account_code)[m - 1] += (Number(l.debit) || 0) - (Number(l.credit) || 0);
+    const amt = (Number(l.debit) || 0) - (Number(l.credit) || 0);
+    map.get(l.account_code)[m - 1] += amt;
+    lines.push({ ...l, month: m, amount: amt });
   }
-  return map;
+  return { map, lines };
 }
+async function actualsByMonth(year, toMonth, b) { return (await loadActuals(year, toMonth, b)).map; }
 
 // ---------------------------------------------------------------- setup
 
@@ -358,7 +363,7 @@ router.post('/:id/import', requireAuth, requirePermission(ROUTE, 'can_edit'), as
 
 // period: 'month' (just `month`), 'quarter' (the quarter `month` falls in, up to `month`) or
 // 'ytd' (January to `month`). YTD columns always run January to `month`.
-async function buildBudgetVsActual(budgetId, period, month) {
+async function buildBudgetVsActual(budgetId, period, month, { withLines = false } = {}) {
   const b = await loadBudget(budgetId);
   if (!b) return null;
   const m = Math.min(12, Math.max(1, Number(month) || 12));
@@ -370,7 +375,13 @@ async function buildBudgetVsActual(budgetId, period, month) {
     if (!budget.has(l.account_id)) budget.set(l.account_id, new Array(12).fill(0));
     budget.get(l.account_id)[l.month - 1] = Number(l.amount);
   }
-  const actual = await actualsByMonth(b.fiscal_year, m, b);
+  const { map: actual, lines: glLines } = await loadActuals(b.fiscal_year, m, b);
+  const sourcesByCode = new Map();
+  for (const l of glLines) {
+    if (!sourcesByCode.has(l.account_code)) sourcesByCode.set(l.account_code, {});
+    const src = sourcesByCode.get(l.account_code);
+    src[l.source_type] = (src[l.source_type] || 0) + l.amount;
+  }
   const sum = (arr, a, z) => (arr ? arr.slice(a - 1, z).reduce((s, v) => s + v, 0) : 0);
 
   const sections = SECTIONS.filter((s) => !s.capex || b.scope === 'pl_capex').map((s) => ({
@@ -390,6 +401,10 @@ async function buildBudgetVsActual(budgetId, period, month) {
       annual_budget: round2(sum(bud, 1, 12)),
     };
     if (!row.budget && !row.actual && !row.ytd_budget && !row.ytd_actual && !row.annual_budget) continue;
+    // Rule-based warnings that a number may be wrong -- see lib/budgetAi.js. Not AI.
+    row.flags = budgetAi.flagsFor(row, {
+      income: sec.income, months: (act || new Array(12).fill(0)).slice(0, m), sources: sourcesByCode.get(a.account_code) || {},
+    });
     sec.rows.push(row);
     for (const k of Object.keys(sec.totals)) sec.totals[k] = round2(sec.totals[k] + row[k]);
   }
@@ -404,7 +419,36 @@ async function buildBudgetVsActual(budgetId, period, month) {
     period, month: m, from_month: from,
     period_label: period === 'month' ? `${MONTHS[m - 1]} ${b.fiscal_year}` : `${MONTHS[from - 1]}-${MONTHS[m - 1]} ${b.fiscal_year}`,
     sections, summary,
+    flag_count: sections.reduce((n, sec) => n + sec.rows.filter((r) => r.flags.length).length, 0),
+    ai_available: budgetAi.aiConfigured(),
+    ...(withLines ? { _lines: glLines } : {}),
   };
+}
+
+// The largest transactions behind the biggest variances, for the AI to explain them from.
+function varianceDrivers(report) {
+  const rows = [];
+  for (const sec of report.sections) {
+    for (const r of sec.rows) {
+      const v = sec.income ? r.actual - r.budget : r.budget - r.actual;
+      rows.push({ sec, r, v });
+    }
+  }
+  rows.sort((a, b) => Math.abs(b.v) - Math.abs(a.v));
+  return rows.slice(0, 6).map(({ sec, r, v }) => {
+    const sign = sec.income ? -1 : 1;
+    const txns = (report._lines || [])
+      .filter((l) => l.account_code === r.account_code && l.month >= report.from_month && l.month <= report.month)
+      .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))
+      .slice(0, 5)
+      .map((l) => ({
+        date: String(l.entry_date instanceof Date ? l.entry_date.toISOString() : l.entry_date).slice(0, 10),
+        document: `${l.source_type} ${l.source_no || ''}`.trim(),
+        memo: String(l.memo || '').slice(0, 80),
+        amount: round2(l.amount * sign),
+      }));
+    return { account: `${r.account_code} ${r.account_name}`, variance: round2(v), largest_transactions: txns };
+  });
 }
 
 router.get('/report/vs-actual', requireAuth, requirePermission(REPORT_ROUTE, 'can_view'), async (req, res, next) => {
@@ -463,6 +507,95 @@ router.get('/report/vs-actual/export', requireAuth, requirePermission(REPORT_ROU
     await wb.xlsx.write(res);
     res.end();
   } catch (err) { next(err); }
+});
+
+// ---------------------------------------------------------------- AI
+
+router.post('/report/ai/explain', requireAuth, requirePermission(REPORT_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const report = await buildBudgetVsActual(req.body.budget_id, req.body.period, req.body.month, { withLines: true });
+    if (!report) return res.status(404).json({ error: 'Choose a budget.' });
+    res.json({ text: await budgetAi.explainReport(report, varianceDrivers(report)) });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+router.post('/report/ai/ask', requireAuth, requirePermission(REPORT_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const question = String(req.body.question || '').trim();
+    if (!question) return res.status(400).json({ error: 'Type a question.' });
+    const report = await buildBudgetVsActual(req.body.budget_id, req.body.period, req.body.month, { withLines: true });
+    if (!report) return res.status(404).json({ error: 'Choose a budget.' });
+    res.json({ answer: await budgetAi.askReport(report, varianceDrivers(report), question, req.body.history) });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+// AI Suggest for the budget grid. T1S computes each account's baseline -- last year's total
+// spread by the account's own seasonality over up to three past years -- and the AI only picks a
+// growth % per account with a reason (lib/budgetAi.js). Without AI, the account's own last-year
+// trend is used, clamped the same way. Nothing is saved: the grid shows it for review.
+router.get('/:id/ai-suggest', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const b = await loadBudget(req.params.id);
+    if (!b) return res.status(404).json({ error: 'Not found' });
+    const accounts = await budgetAccounts(b.scope);
+    const years = [b.fiscal_year - 3, b.fiscal_year - 2, b.fiscal_year - 1];
+    const byYear = {};
+    for (const y of years) byYear[y] = await actualsByMonth(y, 12, b);
+    const last = b.fiscal_year - 1;
+
+    const hist = [];
+    for (const a of accounts) {
+      const sign = isIncome(a.section) ? -1 : 1;
+      const ys = {};
+      for (const y of years) {
+        const raw = byYear[y].get(a.account_code);
+        if (raw && raw.some((v) => Math.abs(v) > 0.005)) ys[y] = raw.map((v) => v * sign);
+      }
+      if (!ys[last]) continue; // nothing last year to build on
+      hist.push({ ...a, income: isIncome(a.section), years: ys });
+    }
+
+    // Seasonality: each month's average share of its year, over the years that have data.
+    const baseline = (h) => {
+      const shares = new Array(12).fill(0); let n = 0;
+      for (const m of Object.values(h.years)) {
+        const t = m.reduce((s, v) => s + v, 0);
+        if (Math.abs(t) < 0.005) continue;
+        m.forEach((v, i) => { shares[i] += v / t; }); n += 1;
+      }
+      const lastTotal = h.years[last].reduce((s, v) => s + v, 0);
+      return shares.map((sh) => (n ? (sh / n) * lastTotal : lastTotal / 12));
+    };
+    const trendPct = (h) => {
+      const t1 = (h.years[last] || []).reduce((s, v) => s + v, 0);
+      const t0 = (h.years[last - 1] || []).reduce((s, v) => s + v, 0);
+      if (!t0 || Math.sign(t0) !== Math.sign(t1)) return 0;
+      return Math.max(-50, Math.min(50, Math.round(((t1 - t0) / Math.abs(t0)) * 100)));
+    };
+
+    let ai = {}; let source = 'trend';
+    if (budgetAi.aiConfigured() && hist.length) {
+      try { ai = await budgetAi.suggestGrowth({ ...b, dimension_label: dimensionLabel(b) }, hist); source = 'ai'; }
+      catch (e) { console.error('Budget AI suggest failed, using trend:', e.message); }
+    }
+    const amounts = {}; const notes = {};
+    for (const h of hist) {
+      const g = ai[h.account_code] ? ai[h.account_code].growth_pct : trendPct(h);
+      const reason = ai[h.account_code]?.reason || `last year's trend (${g >= 0 ? '+' : ''}${g}%)`;
+      amounts[h.id] = baseline(h).map((v) => round2(v * (1 + g / 100)));
+      notes[h.id] = `${g >= 0 ? '+' : ''}${g}%: ${reason}`;
+    }
+    res.json({ source, based_on: years.filter((y) => hist.some((h) => h.years[y])), amounts, notes });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
 });
 
 module.exports = router;
