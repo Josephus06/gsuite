@@ -10,6 +10,11 @@ function money(v) {
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
 const STATUS = { draft: 'Draft', approved: 'Approved', superseded: 'Superseded' };
+const ROW_NOTES = {
+  Support: 'IT, System, Quality, Costing, Technical/Engineering',
+  Others: 'Interest Expense; Taxes, Permits & Licenses (booked to Accounting)',
+  'Sales, Branches & Others': 'COGS booked to the sales teams, branches and other departments',
+};
 
 // A department budget, in the accounting workbook's shape: one monthly budget per department
 // (Admin / Selling) and for COGS. The monthly Sales Target is what the budget is sized against --
@@ -85,7 +90,7 @@ export default function DeptBudgetEdit({ budget: b, onReload }) {
     const base64 = await new Promise((resolve, reject) => { const fr = new FileReader(); fr.onload = () => resolve(String(fr.result).split(',')[1]); fr.onerror = reject; fr.readAsDataURL(file); });
     const { data } = await api.post(`/budgets/${b.id}/import-workbook`, { file_base64: base64 });
     await onReload();
-    setNotice(`Imported ${data.rows_updated} rows${data.sales_target ? `, Sales Target ${money(data.sales_target)}` : ''}.${data.unmatched.length ? ` Not matched: ${data.unmatched.join(', ')}.` : ''}`);
+    setNotice(`Imported ${data.rows_updated} rows${data.sales_target ? `, Sales Target ${money(data.sales_target)}` : ''}.${data.unmatched.length ? ` Not matched: ${data.unmatched.join(', ')}.` : ''}${data.cogs_skipped ? ' The workbook\'s COGS is one company figure, so set COGS per production department here.' : ''}`);
   });
   const approve = () => run('Approve', async () => {
     if (dirty) { setError('Save your changes before approving.'); return; }
@@ -170,8 +175,8 @@ export default function DeptBudgetEdit({ budget: b, onReload }) {
                     <tr key={r.id}>
                       <td>
                         {r.label}
-                        {r.label === 'Support' && <div className="muted" style={{ fontSize: 11 }}>IT, System, Quality, Costing, Technical/Engineering</div>}
-                        {grp !== 'cogs' && !r.department_id && r.label !== 'Support' && <span className="muted" style={{ fontSize: 11 }} title="No T1S department of this name: actuals come from the old system up to the cut-over only"> (no T1S dept)</span>}
+                        {ROW_NOTES[r.label] && <div className="muted" style={{ fontSize: 11 }}>{ROW_NOTES[r.label]}</div>}
+                        {grp !== 'cogs' && !r.department_id && !ROW_NOTES[r.label] && <span className="muted" style={{ fontSize: 11 }} title="No T1S department of this name: actuals come from the old system up to the cut-over only"> (no T1S dept)</span>}
                       </td>
                       <td className="text-right">
                         {editable ? <input type="number" step="0.01" style={{ width: 70, textAlign: 'right' }} value={r.pct ?? ''} onChange={(e) => setPct(r, e.target.value)} /> : (r.pct != null ? `${r.pct}%` : '')}
@@ -198,7 +203,7 @@ export default function DeptBudgetEdit({ budget: b, onReload }) {
                       <td>{editable ? <input style={{ width: 200 }} value={r.remarks || ''} onChange={(e) => patchRow(r.id, { remarks: e.target.value })} /> : (r.remarks || '')}</td>
                     </tr>
                   ))}
-                  {grp !== 'cogs' && (
+                  {(
                     <tr style={{ fontWeight: 700 }}>
                       <td>Total</td><td></td><td className="text-right">{money(groupTotal(grp, 0))}</td>
                       {MONTHS.map((m, i) => (showMonths

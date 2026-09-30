@@ -18,6 +18,7 @@
 //
 //   node src/db/create-department-budgets.js
 const pool = require('../db');
+const { upgradeRows } = require('../lib/departmentBudget');
 
 async function has(sql, params) { const [[r]] = await pool.query(sql, params); return r.n > 0; }
 const tableExists = (t) => has('SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?', [t]);
@@ -77,6 +78,28 @@ async function main() {
         UNIQUE KEY uq_source_dept_actual (year, month, source_department, section)
       )`);
     console.log('  source_dept_actuals: created.');
+  }
+  if (!(await tableExists('source_dept_account_actuals'))) {
+    await pool.query(`
+      CREATE TABLE source_dept_account_actuals (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        year SMALLINT NOT NULL,
+        month TINYINT NOT NULL,
+        source_department VARCHAR(100) NOT NULL,
+        section ENUM('opex','other_expense','cogs') NOT NULL,
+        account_code VARCHAR(30) NOT NULL,
+        amount DECIMAL(16,2) NOT NULL,
+        UNIQUE KEY uq_source_dept_account_actual (year, month, source_department, section, account_code)
+      )`);
+    console.log('  source_dept_account_actuals: created.');
+  }
+  // Department budgets made before a row-template change get the current rows (Others under
+  // Accounting; COGS by department). Idempotent.
+  const [dbs] = await pool.query("SELECT id FROM budgets WHERE kind = 'department'");
+  for (const b of dbs) {
+    const conn = await pool.getConnection();
+    try { await conn.beginTransaction(); const r = await upgradeRows(conn, b.id); await conn.commit(); if (r.added || r.removed) console.log(`  budget ${b.id}: ${r.added} row(s) added, ${r.removed} removed.`); }
+    catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
   }
   console.log('Done.');
   await pool.end();
