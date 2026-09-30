@@ -4,6 +4,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { getPostedGlLines } = require('../lib/glImpact');
 const budgetAi = require('../lib/budgetAi');
+const deptBudget = require('../lib/departmentBudget');
 
 // Budgets (Accounting > Budgets) and the Budget vs Actual report. See db/create-budgets.js.
 //
@@ -97,9 +98,11 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   try {
     const year = Number(req.query.year) || null;
     const [rows] = await pool.query(
-      `SELECT b.id, b.name, b.fiscal_year, b.dimension, b.scope, b.status, b.version, b.approved_at,
+      `SELECT b.id, b.name, b.fiscal_year, b.dimension, b.scope, b.status, b.version, b.approved_at, b.kind,
               d.name AS department_name, l.location_name, au.display_name AS approved_by_name,
-              COALESCE((SELECT SUM(amount) FROM budget_lines bl WHERE bl.budget_id = b.id), 0) AS total
+              CASE WHEN b.kind = 'department'
+                   THEN COALESCE((SELECT SUM(ra.amount) FROM budget_rows br JOIN budget_row_amounts ra ON ra.row_id = br.id WHERE br.budget_id = b.id), 0)
+                   ELSE COALESCE((SELECT SUM(amount) FROM budget_lines bl WHERE bl.budget_id = b.id), 0) END AS total
          FROM budgets b
          LEFT JOIN departments d ON d.id = b.department_id
          LEFT JOIN locations l ON l.id = b.location_id
@@ -112,6 +115,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 });
 
 function readHeader(body) {
+  const kind = body.kind === 'department' ? 'department' : 'account';
+  if (kind === 'department') { body = { ...body, dimension: 'company' }; }
   const year = Number(body.fiscal_year);
   if (!Number.isInteger(year) || year < 2000 || year > 2100) return { error: 'Choose a fiscal year.' };
   const dimension = ['company', 'department', 'location'].includes(body.dimension) ? body.dimension : 'company';
@@ -124,6 +129,8 @@ function readHeader(body) {
   return {
     name, fiscal_year: year, dimension, department_id: departmentId, location_id: locationId,
     scope: body.scope === 'pl_capex' ? 'pl_capex' : 'pl', notes: body.notes ? String(body.notes).slice(0, 1000) : null,
+    kind,
+    sales_target: body.sales_target === '' || body.sales_target == null ? null : round2(body.sales_target),
   };
 }
 
@@ -131,11 +138,20 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   try {
     const h = readHeader(req.body);
     if (h.error) return res.status(400).json({ error: h.error });
-    const [r] = await pool.query(
-      `INSERT INTO budgets (name, fiscal_year, dimension, department_id, location_id, scope, notes, created_by_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [h.name, h.fiscal_year, h.dimension, h.department_id, h.location_id, h.scope, h.notes, req.user.id]);
-    res.status(201).json(await loadBudget(r.insertId));
+    const conn = await pool.getConnection();
+    let id;
+    try {
+      await conn.beginTransaction();
+      const [r] = await conn.query(
+        `INSERT INTO budgets (name, fiscal_year, dimension, department_id, location_id, scope, notes, kind, sales_target, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [h.name, h.fiscal_year, h.dimension, h.department_id, h.location_id, h.scope, h.notes, h.kind, h.sales_target, req.user.id]);
+      id = r.insertId;
+      // A department budget starts with the accounting workbook's rows.
+      if (h.kind === 'department') await deptBudget.seedRows(conn, id);
+      await conn.commit();
+    } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
+    res.status(201).json(await loadBudget(id));
   } catch (err) { next(err); }
 });
 
@@ -143,6 +159,9 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
   try {
     const b = await loadBudget(req.params.id);
     if (!b) return res.status(404).json({ error: 'Not found' });
+    if (b.kind === 'department') {
+      return res.json({ ...b, dimension_label: dimensionLabel(b), rows: await deptBudget.loadRows(b.id) });
+    }
     const accounts = await budgetAccounts(b.scope);
     const [lines] = await pool.query('SELECT account_id, month, amount FROM budget_lines WHERE budget_id = ?', [b.id]);
     const amounts = {};
@@ -243,9 +262,9 @@ router.post('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve')
     // One live budget per year and department/location: the one approved before is superseded.
     await conn.query(
       `UPDATE budgets SET status = 'superseded', updated_at = NOW()
-        WHERE status = 'approved' AND fiscal_year = ? AND dimension = ?
+        WHERE status = 'approved' AND fiscal_year = ? AND dimension = ? AND kind = ?
           AND department_id <=> ? AND location_id <=> ? AND id <> ?`,
-      [b.fiscal_year, b.dimension, b.department_id, b.location_id, b.id]);
+      [b.fiscal_year, b.dimension, b.kind, b.department_id, b.location_id, b.id]);
     await conn.query(
       "UPDATE budgets SET status = 'approved', approved_by_user_id = ?, approved_at = NOW(), updated_at = NOW() WHERE id = ?",
       [req.user.id, b.id]);
@@ -266,9 +285,18 @@ router.post('/:id/new-version', requireAuth, requirePermission(ROUTE, 'can_add')
       [b.fiscal_year, b.dimension, b.department_id, b.location_id]);
     await conn.beginTransaction();
     const [r] = await conn.query(
-      `INSERT INTO budgets (name, fiscal_year, dimension, department_id, location_id, scope, notes, version, created_by_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [b.name, b.fiscal_year, b.dimension, b.department_id, b.location_id, b.scope, b.notes, v, req.user.id]);
+      `INSERT INTO budgets (name, fiscal_year, dimension, department_id, location_id, scope, notes, kind, sales_target, version, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [b.name, b.fiscal_year, b.dimension, b.department_id, b.location_id, b.scope, b.notes, b.kind, b.sales_target, v, req.user.id]);
+    if (b.kind === 'department') {
+      for (const row of await deptBudget.loadRows(b.id, conn)) {
+        const [nr] = await conn.query(
+          'INSERT INTO budget_rows (budget_id, grp, label, source_department, department_id, sort, pct, remarks) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          [r.insertId, row.grp, row.label, row.source_department, row.department_id, row.sort, row.pct, row.remarks]);
+        const vals = row.amounts.map((a, i) => [nr.insertId, i + 1, a]).filter((x) => x[2]);
+        if (vals.length) await conn.query('INSERT INTO budget_row_amounts (row_id, month, amount) VALUES ?', [vals]);
+      }
+    }
     await conn.query(
       'INSERT INTO budget_lines (budget_id, account_id, month, amount) SELECT ?, account_id, month, amount FROM budget_lines WHERE budget_id = ?',
       [r.insertId, b.id]);
@@ -464,7 +492,7 @@ router.get('/report/vs-actual', requireAuth, requirePermission(REPORT_ROUTE, 'ca
 router.get('/report/options', requireAuth, requirePermission(REPORT_ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT b.id, b.name, b.fiscal_year, b.dimension, b.status, b.version, d.name AS department_name, l.location_name
+      `SELECT b.id, b.name, b.fiscal_year, b.dimension, b.status, b.version, b.kind, d.name AS department_name, l.location_name
          FROM budgets b LEFT JOIN departments d ON d.id = b.department_id LEFT JOIN locations l ON l.id = b.location_id
         WHERE b.status <> 'superseded'
         ORDER BY b.fiscal_year DESC, b.status = 'approved' DESC, b.name`);
@@ -504,6 +532,177 @@ router.get('/report/vs-actual/export', requireAuth, requirePermission(REPORT_ROU
     ws.views = [{ state: 'frozen', ySplit: 3 }];
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="budget-vs-actual-${data.budget.fiscal_year}-${data.month}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) { next(err); }
+});
+
+// ---------------------------------------------------------------- department budgets
+
+// Save a department budget's grid: { sales_target, rows: [{ id, pct, remarks, amounts: [12] }] }.
+router.put('/:id/rows', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const b = await requireDraft(req, res); if (!b) return;
+    if (b.kind !== 'department') return res.status(400).json({ error: 'Not a department budget.' });
+    const own = new Set((await deptBudget.loadRows(b.id)).map((r) => Number(r.id)));
+    await conn.beginTransaction();
+    const target = req.body.sales_target === '' || req.body.sales_target == null ? null : round2(req.body.sales_target);
+    await conn.query('UPDATE budgets SET sales_target = ?, updated_at = NOW() WHERE id = ?', [target, b.id]);
+    for (const r of Array.isArray(req.body.rows) ? req.body.rows : []) {
+      if (!own.has(Number(r.id))) continue;
+      const pct = r.pct === '' || r.pct == null ? null : Number(r.pct);
+      await conn.query('UPDATE budget_rows SET pct = ?, remarks = ? WHERE id = ?',
+        [Number.isFinite(pct) ? pct : null, r.remarks ? String(r.remarks).slice(0, 500) : null, r.id]);
+      await conn.query('DELETE FROM budget_row_amounts WHERE row_id = ?', [r.id]);
+      const vals = (Array.isArray(r.amounts) ? r.amounts : []).slice(0, 12).map((a, i) => [r.id, i + 1, round2(a)]).filter((x) => x[2]);
+      if (vals.length) await conn.query('INSERT INTO budget_row_amounts (row_id, month, amount) VALUES ?', [vals]);
+    }
+    await conn.commit();
+    res.json({ ok: true });
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
+// Import the accounting manager's workbook layout: sheets whose header row reads "Department |
+// Monthly Budget" (Admin / Selling) and one reading "Month | Budget" (COGS). Rows are matched by
+// department name; the Remarks column and the "Budget @ 8.5M Sales" note come across too.
+router.post('/:id/import-workbook', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const b = await requireDraft(req, res); if (!b) return;
+    if (b.kind !== 'department') return res.status(400).json({ error: 'Not a department budget.' });
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(Buffer.from(String(req.body.file_base64 || ''), 'base64'));
+    const txt = (v) => {
+      if (v == null) return '';
+      if (typeof v === 'object') return String(v.richText ? v.richText.map((t) => t.text).join('') : (v.result ?? v.text ?? ''));
+      return String(v);
+    };
+    const num = (v) => { const n = Number(typeof v === 'object' && v ? (v.result ?? 0) : String(v ?? '').replace(/,/g, '')); return Number.isFinite(n) ? n : 0; };
+    const norm = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const rows = await deptBudget.loadRows(b.id);
+    const byNorm = new Map(rows.filter((r) => r.grp !== 'cogs').map((r) => [norm(r.label), r]));
+    const cogs = rows.find((r) => r.grp === 'cogs');
+    const updates = new Map(); const unmatched = []; let target = null;
+    for (const ws of wb.worksheets) {
+      let head = 0; let remarksCol = 0; let cogsHead = 0;
+      ws.eachRow((row, n) => {
+        const a = txt(row.getCell(1).value).trim().toLowerCase(); const bcell = txt(row.getCell(2).value).trim().toLowerCase();
+        if (!head && a === 'department' && bcell.startsWith('monthly budget')) {
+          head = n; row.eachCell((c, col) => { if (txt(c.value).trim().toLowerCase() === 'remarks') remarksCol = col; });
+        }
+        if (!cogsHead && a === 'month' && bcell === 'budget') cogsHead = n;
+        const note = /budget\s*@\s*([\d.]+)\s*m/i.exec(txt(row.getCell(2).value));
+        if (note && target == null) target = Number(note[1]) * 1000000;
+      });
+      if (head) {
+        ws.eachRow((row, n) => {
+          if (n <= head) return;
+          const label = txt(row.getCell(1).value).trim();
+          if (!label || /^total$/i.test(label)) return;
+          const r = byNorm.get(norm(label));
+          if (!r) { unmatched.push(label); return; }
+          const monthly = num(row.getCell(2).value);
+          updates.set(r.id, { amounts: new Array(12).fill(round2(monthly)), remarks: remarksCol ? txt(row.getCell(remarksCol).value).trim() || null : r.remarks });
+        });
+      }
+      if (cogsHead && cogs) {
+        const amounts = new Array(12).fill(0); let i = 0;
+        ws.eachRow((row, n) => {
+          if (n <= cogsHead || i >= 12) return;
+          const label = txt(row.getCell(1).value).trim();
+          if (!label && !row.getCell(1).value) return;
+          if (/^total$/i.test(label)) { i = 12; return; }
+          amounts[i] = round2(num(row.getCell(2).value)); i += 1;
+        });
+        updates.set(cogs.id, { amounts, remarks: cogs.remarks });
+      }
+    }
+    if (!updates.size) return res.status(400).json({ error: 'No "Department | Monthly Budget" or "Month | Budget" table found in this workbook.' });
+    await conn.beginTransaction();
+    for (const [rowId, u] of updates) {
+      await conn.query('UPDATE budget_rows SET remarks = ?, pct = NULL WHERE id = ?', [u.remarks, rowId]);
+      await conn.query('DELETE FROM budget_row_amounts WHERE row_id = ?', [rowId]);
+      const vals = u.amounts.map((a, i) => [rowId, i + 1, a]).filter((x) => x[2]);
+      if (vals.length) await conn.query('INSERT INTO budget_row_amounts (row_id, month, amount) VALUES ?', [vals]);
+    }
+    if (target != null) await conn.query('UPDATE budgets SET sales_target = ? WHERE id = ?', [target, b.id]);
+    await conn.commit();
+    res.json({ rows_updated: updates.size, unmatched, sales_target: target });
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
+router.get('/report/department-sheets', requireAuth, requirePermission(REPORT_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const b = await loadBudget(req.query.budget_id);
+    if (!b || b.kind !== 'department') return res.status(404).json({ error: 'Choose a department budget.' });
+    res.json(await deptBudget.buildReport(b));
+  } catch (err) { next(err); }
+});
+
+// The same three sheets as the accounting workbook: Admin Expenses, Selling Expenses, COGS.
+router.get('/report/department-sheets/export', requireAuth, requirePermission(REPORT_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const b = await loadBudget(req.query.budget_id);
+    if (!b || b.kind !== 'department') return res.status(404).json({ error: 'Choose a department budget.' });
+    const rep = await deptBudget.buildReport(b);
+    const Y = rep.budget.fiscal_year;
+    const wb = new ExcelJS.Workbook();
+    const FONT = { name: 'Courier New', size: 9 };
+    const NUM = '#,##0.00;[Red]-#,##0.00;"-"';
+    const BLUE = { name: 'Courier New', size: 9, bold: true, color: { argb: 'FF0070C0' } };
+    const note = rep.budget.sales_target ? `Note: Budget @ ${(rep.budget.sales_target / 1000000).toLocaleString('en-US', { maximumFractionDigits: 2 })}M Sales` : null;
+    const title = (ws, text) => {
+      ws.getCell('A1').value = 'CEBU GRAPHICSTAR IMAGING CORP'; ws.getCell('A2').value = text;
+      ['A1', 'A2'].forEach((c) => { ws.getCell(c).font = FONT; });
+    };
+    for (const g of rep.groups.filter((x) => x.grp !== 'cogs')) {
+      const ws = wb.addWorksheet(`${Y} ${g.grp === 'admin' ? 'Admin' : 'Selling'} Expenses`);
+      title(ws, `${Y} ${g.grp === 'admin' ? 'ADMIN' : 'Selling'} Expenses vs Budget`);
+      const head = ['Department', 'Monthly Budget'];
+      MONTHS.forEach((m) => head.push(`${m}-${String(Y).slice(2)}`, 'Variance'));
+      head.push('', 'Annual Budget', 'Annual Expenses', 'Variance', 'Remarks');
+      const hr = ws.getRow(4); hr.values = head; hr.font = { ...FONT, bold: true };
+      let r = 6;
+      for (const row of g.rows) {
+        const vals = [row.label, row.budget[0]];
+        MONTHS.forEach((_, i) => vals.push(row.actual[i], row.variance[i]));
+        vals.push(null, row.annual_budget, row.annual_actual, row.annual_variance, row.remarks || null);
+        ws.getRow(r).values = vals; ws.getRow(r).font = FONT; ws.getCell(r, 2).font = BLUE; r += 1;
+      }
+      const T = g.totals; const tv = ['Total', T.budget[0]];
+      MONTHS.forEach((_, i) => tv.push(T.actual[i], T.variance[i]));
+      tv.push(null, T.annual_budget, T.annual_actual, T.annual_variance);
+      r += 1; ws.getRow(r).values = tv; ws.getRow(r).font = { ...FONT, bold: true };
+      ws.getRow(r).eachCell((c) => { c.border = { top: { style: 'thin' }, bottom: { style: 'double' } }; });
+      if (note) { ws.getCell(r + 1, 2).value = note; ws.getCell(r + 1, 2).font = { ...FONT, bold: true, color: { argb: 'FFFF0000' } }; }
+      ws.getColumn(1).width = 26; ws.getColumn(2).width = 16;
+      for (let c = 3; c <= 31; c += 1) { ws.getColumn(c).width = 14; ws.getColumn(c).numFmt = NUM; }
+      ws.getColumn(2).numFmt = NUM; ws.getColumn(31).width = 36;
+      // Alternate month bands, as in the workbook.
+      for (let i = 1; i < 12; i += 2) {
+        for (let rr = 4; rr <= r; rr += 1) for (const c of [3 + i * 2, 4 + i * 2]) ws.getCell(rr, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEDEDED' } };
+      }
+      ws.views = [{ state: 'frozen', xSplit: 2, ySplit: 4 }];
+    }
+    const cg = rep.groups.find((x) => x.grp === 'cogs');
+    if (cg && cg.rows[0]) {
+      const ws = wb.addWorksheet(`${Y} COGS`);
+      title(ws, `${Y} COGS vs Budget for Production`);
+      ws.getRow(5).values = ['Month', 'Budget', 'Actual Expenses', 'Variance']; ws.getRow(5).font = { ...FONT, bold: true };
+      const row = cg.rows[0];
+      MONTHS.forEach((m, i) => {
+        const rr = ws.getRow(6 + i);
+        rr.values = [`${m}-${String(Y).slice(2)}`, row.budget[i], row.actual[i], row.variance[i]]; rr.font = FONT;
+        ws.getCell(6 + i, 2).font = { ...FONT, bold: true };
+      });
+      const tr = ws.getRow(19); tr.values = ['Total', row.annual_budget, row.annual_actual, row.annual_variance]; tr.font = { ...FONT, bold: true };
+      tr.eachCell((c) => { c.border = { top: { style: 'thin' }, bottom: { style: 'double' } }; });
+      if (note) { ws.getCell(20, 2).value = note; ws.getCell(20, 2).font = { ...FONT, bold: true, color: { argb: 'FFFF0000' } }; }
+      ws.getColumn(1).width = 10; [2, 3, 4].forEach((c) => { ws.getColumn(c).width = 18; ws.getColumn(c).numFmt = NUM; });
+    }
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${Y}-expenses-vs-budget.xlsx"`);
     await wb.xlsx.write(res);
     res.end();
   } catch (err) { next(err); }

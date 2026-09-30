@@ -15,18 +15,153 @@ const tone = (v) => (v < -0.005 ? { color: 'var(--danger, #b91c1c)' } : v > 0.00
 // Reports > Budget vs Actual: one budget against the GL for a month, a quarter or year-to-date.
 // Actuals come from the same derived GL as the Income Statement.
 export default function BudgetVsActual() {
-  const [view, setView] = useState('single');
+  const [view, setView] = useState('sheets');
   return (
     <div>
       <div className="page-header">
         <h1>Budget vs Actual</h1>
         <div style={{ display: 'flex', gap: 6 }}>
-          <button className={`btn btn-sm ${view === 'single' ? 'btn-primary' : ''}`} onClick={() => setView('single')}>One Budget</button>
+          <button className={`btn btn-sm ${view === 'sheets' ? 'btn-primary' : ''}`} onClick={() => setView('sheets')}>Expenses vs Budget</button>
+          <button className={`btn btn-sm ${view === 'single' ? 'btn-primary' : ''}`} onClick={() => setView('single')}>By Account</button>
           <button className={`btn btn-sm ${view === 'departments' ? 'btn-primary' : ''}`} onClick={() => setView('departments')}>By Department</button>
         </div>
       </div>
-      {view === 'single' ? <SingleBudget /> : <ByDepartment />}
+      {view === 'sheets' ? <DeptSheets /> : view === 'single' ? <SingleBudget /> : <ByDepartment />}
     </div>
+  );
+}
+
+// The accounting workbook's report: Admin Expenses, Selling Expenses and COGS vs Budget, each month
+// Actual then Variance (Budget - Actual, so negative = over budget, in red), then the year.
+const SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function DeptSheets() {
+  const [options, setOptions] = useState([]);
+  const [budgetId, setBudgetId] = useState('');
+  const [tab, setTab] = useState('admin');
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.get('/budgets/report/options').then(({ data: o }) => {
+      const dept = o.filter((x) => x.kind === 'department');
+      setOptions(dept); if (dept.length) setBudgetId(String(dept[0].id));
+    }).catch((e) => setError(e.response?.data?.error || 'Could not load budgets.'));
+  }, []);
+  async function generate() {
+    if (!budgetId) { setError('Choose a budget.'); return; }
+    setLoading(true); setError('');
+    try { const { data: d } = await api.get('/budgets/report/department-sheets', { params: { budget_id: budgetId } }); setData(d); }
+    catch (e) { setError(e.response?.data?.error || 'Could not build the report.'); }
+    setLoading(false);
+  }
+  async function extract() {
+    try {
+      const { data: blob } = await api.get('/budgets/report/department-sheets/export', { params: { budget_id: budgetId }, responseType: 'blob' });
+      const url = URL.createObjectURL(blob); const a = document.createElement('a');
+      a.href = url; a.download = `${data?.budget.fiscal_year || ''}-expenses-vs-budget.xlsx`; a.click(); URL.revokeObjectURL(url);
+    } catch { setError('Could not extract the report.'); }
+  }
+  const red = (v) => (v != null && v < -0.005 ? { color: 'var(--danger, #b91c1c)' } : undefined);
+  const cell = (v) => (v == null ? '' : money(v));
+  const Y = data ? String(data.budget.fiscal_year).slice(2) : '';
+  const band = (i) => (i % 2 ? { background: 'var(--surface-2, #f3f4f6)' } : undefined);
+  const src = (i) => (data?.month_source[i] === 't1s' ? 'T1S' : data?.month_source[i] === 'missing' ? 'not loaded' : '');
+  const g = data?.groups.find((x) => x.grp === tab);
+  const note = data?.budget.sales_target ? `Note: Budget @ ${(data.budget.sales_target / 1000000).toLocaleString('en-US', { maximumFractionDigits: 2 })}M Sales` : '';
+  return (
+    <>
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="filter-grid">
+          <div className="field" style={{ gridColumn: 'span 2' }}><label>Department Budget</label>
+            <select value={budgetId} onChange={(e) => setBudgetId(e.target.value)}>
+              {options.length === 0 && <option value="">No department budgets yet</option>}
+              {options.map((o) => <option key={o.id} value={o.id}>{`${o.fiscal_year} · ${o.name} · v${o.version}${o.status === 'draft' ? ' (DRAFT)' : ''}`}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <button className="btn btn-primary" disabled={loading} onClick={generate}>{loading ? 'Generating...' : 'Generate'}</button>
+          <button className="btn" disabled={!data} onClick={extract}>Extract</button>
+        </div>
+      </div>
+      {error && <div className="error-banner">{error}</div>}
+      {loading && <LoadingSpinner />}
+      {data && !loading && (
+        <div className="card">
+          <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            {data.groups.map((x) => (
+              <button key={x.grp} className={`btn btn-sm ${tab === x.grp ? 'btn-primary' : ''}`} onClick={() => setTab(x.grp)}>{data.budget.fiscal_year} {x.label}</button>
+            ))}
+            <span className="muted" style={{ marginLeft: 'auto', fontSize: 12 }}>
+              Actuals: the old system up to {data.books_as_of || 'the cut-over'}, T1S after.
+            </span>
+          </div>
+          {tab !== 'cogs' ? (
+            <div className="table-wrap">
+              <table style={{ fontFamily: 'Courier New, monospace', fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    <th>Department</th><th className="text-right" style={{ color: '#0070c0' }}>Monthly Budget</th>
+                    {SHORT.map((m, i) => [
+                      <th key={m + 'a'} className="text-right" style={band(i)}>{m}-{Y}{src(i) ? <div className="muted" style={{ fontSize: 10 }}>{src(i)}</div> : null}</th>,
+                      <th key={m + 'v'} className="text-right" style={band(i)}>Variance</th>,
+                    ])}
+                    <th className="text-right">Annual Budget</th><th className="text-right">Annual Expenses</th><th className="text-right">Variance</th><th>Remarks</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {g.rows.map((r) => (
+                    <tr key={r.id}>
+                      <td>{r.label}</td>
+                      <td className="text-right" style={{ color: '#0070c0', fontWeight: 700 }}>{money(r.budget[0])}</td>
+                      {SHORT.map((m, i) => [
+                        <td key={m + 'a'} className="text-right" style={band(i)}>{cell(r.actual[i])}</td>,
+                        <td key={m + 'v'} className="text-right" style={{ ...band(i), ...red(r.variance[i]) }}>{cell(r.variance[i])}</td>,
+                      ])}
+                      <td className="text-right">{money(r.annual_budget)}</td><td className="text-right">{money(r.annual_actual)}</td>
+                      <td className="text-right" style={red(r.annual_variance)}>{money(r.annual_variance)}</td><td>{r.remarks || ''}</td>
+                    </tr>
+                  ))}
+                  <tr style={{ fontWeight: 700, borderTop: '1px solid #000', borderBottom: '3px double #000' }}>
+                    <td>Total</td><td className="text-right" style={{ color: '#0070c0' }}>{money(g.totals.budget[0])}</td>
+                    {SHORT.map((m, i) => [
+                      <td key={m + 'a'} className="text-right" style={band(i)}>{cell(g.totals.actual[i])}</td>,
+                      <td key={m + 'v'} className="text-right" style={{ ...band(i), ...red(g.totals.variance[i]) }}>{cell(g.totals.variance[i])}</td>,
+                    ])}
+                    <td className="text-right">{money(g.totals.annual_budget)}</td><td className="text-right">{money(g.totals.annual_actual)}</td>
+                    <td className="text-right" style={red(g.totals.annual_variance)}>{money(g.totals.annual_variance)}</td><td></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <table style={{ fontFamily: 'Courier New, monospace', fontSize: 12, maxWidth: 640 }}>
+                <thead><tr><th>Month</th><th className="text-right">Budget</th><th className="text-right">Actual Expenses</th><th className="text-right">Variance</th></tr></thead>
+                <tbody>
+                  {g.rows[0] && SHORT.map((m, i) => (
+                    <tr key={m}>
+                      <td>{m}-{Y}{src(i) ? <span className="muted" style={{ fontSize: 10 }}> {src(i)}</span> : null}</td>
+                      <td className="text-right" style={{ fontWeight: 700 }}>{money(g.rows[0].budget[i])}</td>
+                      <td className="text-right">{cell(g.rows[0].actual[i])}</td>
+                      <td className="text-right" style={red(g.rows[0].variance[i])}>{cell(g.rows[0].variance[i])}</td>
+                    </tr>
+                  ))}
+                  {g.rows[0] && (
+                    <tr style={{ fontWeight: 700, borderTop: '1px solid #000', borderBottom: '3px double #000' }}>
+                      <td>Total</td><td className="text-right">{money(g.rows[0].annual_budget)}</td><td className="text-right">{money(g.rows[0].annual_actual)}</td>
+                      <td className="text-right" style={red(g.rows[0].annual_variance)}>{money(g.rows[0].annual_variance)}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+              <p className="muted" style={{ fontSize: 12 }}>COGS actual = Cost of Goods Sold + the Production departments&apos; operating expenses.</p>
+            </div>
+          )}
+          {note && <div style={{ color: 'var(--danger, #b91c1c)', fontWeight: 700, fontSize: 12, marginTop: 6 }}>{note}</div>}
+        </div>
+      )}
+    </>
   );
 }
 

@@ -12,6 +12,7 @@ function money(v) {
 const STATUS = { draft: 'Draft', approved: 'Approved', superseded: 'Superseded' };
 const STATUS_BADGE = { draft: 'badge-warning', approved: 'badge-success', superseded: '' };
 const SCOPE = { pl: 'P&L', pl_capex: 'P&L + Capital Spending' };
+const KIND = { department: 'By department (Admin / Selling / COGS)', account: 'By account' };
 const thisYear = new Date().getFullYear();
 
 // Accounting > Budgets: one budget per fiscal year (January-December) for the whole company, one
@@ -60,16 +61,17 @@ export default function Budgets() {
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>Name</th><th>Year</th><th>Budgeted By</th><th>Covers</th><th>Version</th><th>Status</th><th className="text-right">Annual Total</th><th>Approved By</th><th></th></tr>
+                <tr><th>Name</th><th>Year</th><th>Type</th><th>Budgeted By</th><th>Covers</th><th>Version</th><th>Status</th><th className="text-right">Annual Total</th><th>Approved By</th><th></th></tr>
               </thead>
               <tbody>
-                {rows.length === 0 && <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 20 }}>No budgets yet.</td></tr>}
+                {rows.length === 0 && <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>No budgets yet.</td></tr>}
                 {rows.map((b) => (
                   <tr key={b.id}>
                     <td>{b.name}</td>
                     <td>{b.fiscal_year}</td>
-                    <td>{b.dimension_label}</td>
-                    <td>{SCOPE[b.scope]}</td>
+                    <td>{KIND[b.kind] || KIND.account}</td>
+                    <td>{b.kind === 'department' ? '—' : b.dimension_label}</td>
+                    <td>{b.kind === 'department' ? '—' : SCOPE[b.scope]}</td>
                     <td>v{b.version}</td>
                     <td><span className={`badge ${STATUS_BADGE[b.status]}`}>{STATUS[b.status]}</span></td>
                     <td className="text-right">{money(b.total)}</td>
@@ -90,7 +92,7 @@ export default function Budgets() {
 
 function NewBudgetModal({ onClose, onCreated }) {
   const [meta, setMeta] = useState(null);
-  const [form, setForm] = useState({ name: '', fiscal_year: String(thisYear + 1), dimension: 'company', department_id: '', location_id: '', scope: 'pl' });
+  const [form, setForm] = useState({ kind: 'department', name: '', fiscal_year: String(thisYear + 1), sales_target: '', dimension: 'company', department_id: '', location_id: '', scope: 'pl' });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
@@ -118,6 +120,18 @@ function NewBudgetModal({ onClose, onCreated }) {
               {[thisYear + 1, thisYear, thisYear - 1].map((y) => <option key={y} value={y}>{y}</option>)}
             </select>
           </div>
+          <div className="field"><label>Type</label>
+            <select value={form.kind} onChange={(e) => set({ kind: e.target.value })}>
+              <option value="department">By department: Admin / Selling / COGS (the accounting workbook's format)</option>
+              <option value="account">By account (detailed, per GL account)</option>
+            </select>
+          </div>
+          {form.kind === 'department' && (
+            <div className="field"><label>Monthly Sales Target</label>
+              <input type="number" step="0.01" value={form.sales_target} onChange={(e) => set({ sales_target: e.target.value })} placeholder="e.g. 8500000" />
+            </div>
+          )}
+          {form.kind === 'account' && (<>
           <div className="field"><label>Budgeted By</label>
             <select value={form.dimension} onChange={(e) => set({ dimension: e.target.value })}>
               <option value="company">Whole company</option>
@@ -147,6 +161,7 @@ function NewBudgetModal({ onClose, onCreated }) {
               <option value="pl_capex">P&amp;L + capital spending (fixed assets)</option>
             </select>
           </div>
+          </>)}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
             <button className="btn" onClick={onClose}>Cancel</button>
             <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Creating...' : 'Create'}</button>

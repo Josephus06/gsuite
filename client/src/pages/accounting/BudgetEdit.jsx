@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import api from '../../api/client';
 import { useAuth } from '../../context/useAuth';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import DeptBudgetEdit from './DeptBudgetEdit';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 function money(v) {
@@ -119,6 +120,8 @@ export default function BudgetEdit() {
   });
 
   if (!b) return error ? <div className="error-banner" style={{ margin: 20 }}>{error}</div> : <LoadingSpinner />;
+  // The accounting workbook's format: one monthly budget per department, plus COGS.
+  if (b.kind === 'department') return <DeptBudgetEdit budget={b} onReload={load} />;
   const grand = sections.reduce((s, sec) => s + sectionTotal(sec), 0);
 
   return (
