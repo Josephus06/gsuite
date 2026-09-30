@@ -4,6 +4,8 @@ import { useAuth } from '../context/useAuth';
 import { computeProcessCosting } from '../utils/costing';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import DataTable from '../components/DataTable';
+import { displayDateTime } from '../utils/dates';
 
 const PAGE_SIZE = 10;
 
@@ -102,10 +104,20 @@ export default function ProcessCosting() {
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirtyCount]);
 
+  // System Info: who changed this process's brackets, what, and when (newest first).
+  const [tab, setTab] = useState('brackets');
+  const [auditLogs, setAuditLogs] = useState([]);
+  function loadAuditLogs(processId) {
+    api.get(`/processes/${processId}/audit-logs`).then(({ data }) => setAuditLogs(data)).catch(() => setAuditLogs([]));
+  }
+  const lastEdit = auditLogs[0];
+
   async function selectProcess(proc) {
     if (dirtyCount && !confirm(`You have ${dirtyCount} unsaved bracket change${dirtyCount === 1 ? '' : 's'} on ${selected.process_name}. Discard them?`)) return;
     setSelected(proc);
     setSaveMsg(null);
+    setAuditLogs([]);
+    loadAuditLogs(proc.id);
     const { data } = await api.get(`/processes/${proc.id}/cost-brackets`);
     setBrackets(data);
   }
@@ -144,6 +156,7 @@ export default function ProcessCosting() {
     } finally {
       setBrackets(next);
       setSaving(false);
+      loadAuditLogs(selected.id);
     }
   }
 
@@ -159,6 +172,7 @@ export default function ProcessCosting() {
       await api.delete(`/processes/${selected.id}/cost-brackets/${row.id}`);
     }
     setBrackets((prev) => prev.filter((_, i) => i !== idx));
+    if (row.id) loadAuditLogs(selected.id);
   }
 
   const filteredProcesses = processes.filter((p) => p.is_active).filter((p) =>
@@ -212,6 +226,30 @@ export default function ProcessCosting() {
                 formulas, computed live from the inputs. Selling Price is the price set on the bracket;
                 left blank, it is the Total Price rounded up to the peso.
               </p>
+              <div className="muted" style={{ marginBottom: 8 }}>
+                {lastEdit
+                  ? <>Last edited by <strong>{lastEdit.set_by_name || 'unknown user'}</strong> on {displayDateTime(lastEdit.set_at)}</>
+                  : 'No edits recorded yet.'}
+              </div>
+              <div className="status-tabs" style={{ marginBottom: 12 }}>
+                <button type="button" className={`status-tab ${tab === 'brackets' ? 'active' : ''}`} onClick={() => setTab('brackets')}>Brackets</button>
+                <button type="button" className={`status-tab ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}>System Info</button>
+              </div>
+              {tab === 'system' && (
+                <DataTable
+                  columns={[
+                    { key: 'set_at', label: 'Date Time', render: (r) => displayDateTime(r.set_at) },
+                    { key: 'set_by_name', label: 'Set By' },
+                    { key: 'event_type', label: 'Type' },
+                    { key: 'field_name', label: 'Field' },
+                    { key: 'old_value', label: 'Old Value' },
+                    { key: 'new_value', label: 'New Value' },
+                  ]}
+                  rows={auditLogs}
+                  emptyLabel="No changes recorded for this process yet. Edits made from now on are logged here."
+                />
+              )}
+              {tab === 'brackets' && (<>
               <div className="spreadsheet-wrap">
                 <table className="spreadsheet-table">
                   <thead>
@@ -265,6 +303,7 @@ export default function ProcessCosting() {
                 {dirtyCount > 0 && !saving && <span className="muted">{dirtyCount} unsaved bracket{dirtyCount === 1 ? '' : 's'} — marked on the left.</span>}
                 {saveMsg && <span style={{ color: saveMsg.ok ? 'var(--success, #15803d)' : 'var(--danger, #b91c1c)', fontWeight: 600 }}>{saveMsg.text}</span>}
               </div>
+              </>)}
             </>
           )}
         </div>
