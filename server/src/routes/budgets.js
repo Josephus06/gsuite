@@ -668,10 +668,20 @@ router.get('/report/department-sheets/export', requireAuth, requirePermission(RE
     for (const g of rep.groups.filter((x) => x.grp !== 'cogs')) {
       const ws = wb.addWorksheet(`${Y} ${g.grp === 'admin' ? 'Admin' : 'Selling'} Expenses`);
       title(ws, `${Y} ${g.grp === 'admin' ? 'ADMIN' : 'Selling'} Expenses vs Budget`);
+      // Two header rows, as the workbook: the month over its pair, then ACTUAL | Variance beneath.
       const head = ['Department', 'Monthly Budget'];
-      MONTHS.forEach((m) => head.push(`${m}-${String(Y).slice(2)}`, 'Variance'));
+      const sub = ['', ''];
+      MONTHS.forEach((m) => { head.push(`${m}-${String(Y).slice(2)}`, null); sub.push('ACTUAL', 'Variance'); });
       head.push('', 'Annual Budget', 'Annual Expenses', 'Variance', 'Remarks');
       const hr = ws.getRow(4); hr.values = head; hr.font = { ...FONT, bold: true };
+      const sr = ws.getRow(5); sr.values = sub; sr.font = { ...FONT, bold: true };
+      MONTHS.forEach((_, i) => {
+        ws.mergeCells(4, 3 + i * 2, 4, 4 + i * 2);
+        ws.getCell(4, 3 + i * 2).alignment = { horizontal: 'center' };
+      });
+      ws.getColumn(2).font = BLUE;
+      ws.getCell(4, 2).font = { ...BLUE };
+      for (let c = 1; c <= 31; c += 1) ws.getCell(5, c).border = { bottom: { style: 'thin' } };
       let r = 6;
       for (const row of g.rows) {
         const vals = [row.label, row.budget[0]];
@@ -692,7 +702,7 @@ router.get('/report/department-sheets/export', requireAuth, requirePermission(RE
       for (let i = 1; i < 12; i += 2) {
         for (let rr = 4; rr <= r; rr += 1) for (const c of [3 + i * 2, 4 + i * 2]) ws.getCell(rr, c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEDEDED' } };
       }
-      ws.views = [{ state: 'frozen', xSplit: 2, ySplit: 4 }];
+      ws.views = [{ state: 'frozen', xSplit: 2, ySplit: 5 }];
     }
     const cg = rep.groups.find((x) => x.grp === 'cogs');
     if (cg && cg.rows[0]) {

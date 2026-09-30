@@ -101,12 +101,20 @@ function DeptSheets() {
               <table style={{ fontFamily: 'Courier New, monospace', fontSize: 12 }}>
                 <thead>
                   <tr>
-                    <th>Department</th><th className="text-right" style={{ color: '#0070c0' }}>Monthly Budget</th>
+                    <th rowSpan={2}>Department</th><th rowSpan={2} className="text-right" style={{ color: '#0070c0' }}>Monthly Budget</th>
+                    {SHORT.map((m, i) => (
+                      <th key={m} colSpan={2} style={{ ...band(i), textAlign: 'center' }}>
+                        {m}-{Y}{src(i) ? <span className="muted" style={{ fontSize: 10 }}> ({src(i)})</span> : null}
+                      </th>
+                    ))}
+                    <th rowSpan={2} className="text-right">Annual Budget</th><th rowSpan={2} className="text-right">Annual Expenses</th>
+                    <th rowSpan={2} className="text-right">Variance</th><th rowSpan={2}>Remarks</th>
+                  </tr>
+                  <tr>
                     {SHORT.map((m, i) => [
-                      <th key={m + 'a'} className="text-right" style={band(i)}>{m}-{Y}{src(i) ? <div className="muted" style={{ fontSize: 10 }}>{src(i)}</div> : null}</th>,
-                      <th key={m + 'v'} className="text-right" style={band(i)}>Variance</th>,
+                      <th key={m + 'a'} className="text-right" style={{ ...band(i), fontWeight: 800 }}>ACTUAL</th>,
+                      <th key={m + 'v'} className="text-right" style={{ ...band(i), fontWeight: 800 }}>Variance</th>,
                     ])}
-                    <th className="text-right">Annual Budget</th><th className="text-right">Annual Expenses</th><th className="text-right">Variance</th><th>Remarks</th>
                   </tr>
                 </thead>
                 <tbody>
