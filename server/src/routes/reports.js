@@ -1,4 +1,5 @@
 const express = require('express');
+const ExcelJS = require('exceljs');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { buildTrialBalance, buildBalanceSheet, buildIncomeStatement, buildGeneralLedger, buildGlTransactions } = require('../lib/reportsEngine');
 const {
@@ -94,6 +95,67 @@ router.get('/income-statement', requireAuth, requirePermission('/reports/income-
 router.get('/balance-sheet', requireAuth, requirePermission('/reports/balance-sheet', 'can_view'), async (req, res, next) => {
   try {
     res.json(await buildBalanceSheet(req.query.asOf || today()));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The same balance sheet as an Excel file, laid out like the screen: type, sub-type, then each
+// account indented under its parent, Debit/Credit by the account's normal side. Amounts are
+// numbers with a display format, not text, so the accountant can re-total and tick them.
+router.get('/balance-sheet/export', requireAuth, requirePermission('/reports/balance-sheet', 'can_view'), async (req, res, next) => {
+  try {
+    const asOf = req.query.asOf || today();
+    const bs = await buildBalanceSheet(asOf);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Balance Sheet');
+    ws.columns = [
+      { header: 'Account Code', key: 'code', width: 16 },
+      { header: 'Account Title', key: 'name', width: 52 },
+      { header: 'Debit', key: 'debit', width: 18 },
+      { header: 'Credit', key: 'credit', width: 18 },
+    ];
+    ws.spliceRows(1, 0, [`Balance Sheet as of ${asOf}`], []);
+    ws.getRow(1).font = { bold: true, size: 14 };
+    ws.getRow(3).font = { bold: true };
+
+    const addNode = (node, depth, normal) => {
+      const amount = Number(node.amount || 0);
+      const row = ws.addRow({
+        code: node.account_code,
+        name: node.account_name,
+        debit: normal === 'DEBIT' && amount ? amount : null,
+        credit: normal !== 'DEBIT' && amount ? amount : null,
+      });
+      row.getCell('code').alignment = { indent: depth * 2 };
+      if (node.is_summary) row.font = { bold: true };
+      for (const child of node.children || []) addNode(child, depth + 1, normal);
+    };
+    for (const g of bs.data) {
+      const head = ws.addRow({ code: g.type });
+      head.font = { bold: true };
+      head.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+      for (const sub of g.accounts || []) {
+        ws.addRow({ code: sub.sub_type }).font = { italic: true };
+        for (const node of sub.account_ledgers || []) addNode(node, 1, g.normal);
+      }
+    }
+    ws.addRow({});
+    const totals = [
+      ['Total Assets', bs.asset_total, null],
+      ['Total Liabilities & Equity', null, bs.liability_equity_total],
+      ['Current Year Earnings (included above)', null, bs.current_earnings],
+    ];
+    for (const [label, debit, credit] of totals) ws.addRow({ name: label, debit, credit }).font = { bold: true };
+    ws.addRow({ name: bs.balanced ? 'Balanced' : 'OUT OF BALANCE' }).font = { bold: true, color: { argb: bs.balanced ? 'FF15803D' : 'FFB91C1C' } };
+    ws.getColumn('debit').numFmt = '#,##0.00;(#,##0.00)';
+    ws.getColumn('credit').numFmt = '#,##0.00;(#,##0.00)';
+    ws.views = [{ state: 'frozen', ySplit: 3 }];
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="balance-sheet-${asOf}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
   } catch (err) {
     next(err);
   }

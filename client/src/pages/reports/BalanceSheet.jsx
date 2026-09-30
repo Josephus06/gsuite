@@ -23,6 +23,7 @@ export default function BalanceSheet() {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [exporting, setExporting] = useState(false);
 
   async function generate() {
     if (!monthYear) { setError('Select a month first.'); return; }
@@ -35,6 +36,25 @@ export default function BalanceSheet() {
       setError(err.response?.data?.error || 'Failed to generate report');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function exportExcel() {
+    if (!report) return;
+    setExporting(true);
+    setError('');
+    try {
+      const res = await api.get('/reports/balance-sheet/export', { params: { asOf: report.as_of }, responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `balance-sheet-${report.as_of}.xlsx`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      setError('Failed to export the balance sheet');
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -51,9 +71,16 @@ export default function BalanceSheet() {
             <MonthYearPicker value={monthYear} onChange={setMonthYear} />
           </div>
         </div>
-        <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={generate} disabled={loading}>
-          {loading ? 'Generating...' : 'Generate'}
-        </button>
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <button className="btn btn-primary" onClick={generate} disabled={loading}>
+            {loading ? 'Generating...' : 'Generate'}
+          </button>
+          {/* Exports the sheet shown -- the as-of date it was generated for, not whatever the picker
+              has been changed to since. */}
+          <button className="btn" onClick={exportExcel} disabled={loading || exporting || !report}>
+            {exporting ? 'Exporting...' : 'Export to Excel'}
+          </button>
+        </div>
       </div>
 
       {error && <div className="card" style={{ color: '#b91c1c', marginBottom: 16 }}>{error}</div>}
@@ -66,7 +93,7 @@ export default function BalanceSheet() {
             <strong>As of {report.as_of}</strong>
             <span>Total Assets: {money(report.asset_total)}</span>
             <span>Total Liabilities &amp; Equity: {money(report.liability_equity_total)}</span>
-            <span>Current Earnings (Unclosed): {money(report.current_earnings)}</span>
+            <span>Current Year Earnings: {money(report.current_earnings)}</span>
             <span style={{ color: report.balanced ? '#15803d' : '#b91c1c', fontWeight: 600 }}>
               {report.balanced ? 'Balanced' : 'Out of Balance'}
             </span>
