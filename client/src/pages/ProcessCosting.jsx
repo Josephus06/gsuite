@@ -8,39 +8,68 @@ import LoadingSpinner from '../components/LoadingSpinner';
 const PAGE_SIZE = 10;
 
 const EMPTY_BRACKET = {
-  qty_min: '', qty_max: '', click_charge: 0, ink_cost: 0, direct_labor: 0,
+  qty_min: '', qty_max: '', click_charge: 0, new_ink_cost: 0, ink_cost: 0, direct_labor: 0,
   moh_power_equipment: 0, moh_depreciation: 0, moh_repairs_maintenance: 0,
-  moh_indirect_materials: 0, moh_indirect_labor: 0, other_charges: 0, sub_con: 0,
-  costing_allowance_pct: 0, markup_cogs_pct: 0, opex_admin_pct: 0, opex_selling_pct: 0,
+  moh_indirect_materials: 0, moh_indirect_labor: 0, other_charges: 0, sub_con: 0, markup_sub_con_pct: 0,
+  costing_allowance_pct: 0, markup_cogs_pct: 0, opex_admin_pct: 0, markup_opex_admin_pct: 0,
+  opex_selling_pct: 0, markup_opex_selling_pct: 0,
   disc_ceiling_pct: 0, disc_supervisor_pct: 0, disc_manager_pct: 0, disc_gm_pct: 0,
-  selling_price_override: '', is_active: true,
+  selling_price_override: '', costing_reference: '', is_active: true,
 };
 
 const BRACKET_FIELDS = Object.keys(EMPTY_BRACKET);
 
+// The costing team's workbook (costing.xlsx), column for column. An entry with `key` is an input;
+// one with `calc` is a formula cell, computed live by computeProcessCosting (shared/costing.js,
+// which documents each formula). Percent inputs sit left of the amount they produce, as in the
+// workbook.
 const COLUMNS = [
   { key: 'qty_min', label: 'Qty Min' },
   { key: 'qty_max', label: 'Qty Max' },
   { key: 'click_charge', label: 'Click Charge' },
-  { key: 'ink_cost', label: 'Ink Cost' },
-  { key: 'direct_labor', label: 'Direct Labor' },
+  { key: 'new_ink_cost', label: 'New INK Cost' },
+  { key: 'ink_cost', label: 'INK' },
+  { key: 'direct_labor', label: 'DL' },
   { key: 'moh_power_equipment', label: 'MOH (P/E)' },
   { key: 'moh_depreciation', label: 'MOH (DC)' },
   { key: 'moh_repairs_maintenance', label: 'MOH (R&M)' },
   { key: 'moh_indirect_materials', label: 'MOH (IM&C)' },
   { key: 'moh_indirect_labor', label: 'MOH (IL)' },
   { key: 'other_charges', label: 'Other Charges' },
-  { key: 'sub_con', label: 'Sub Con' },
+  { calc: 'subtotalMoh', label: 'SubTotal' },
   { key: 'costing_allowance_pct', label: 'Costing Allowance %' },
-  { key: 'markup_cogs_pct', label: 'Mark-Up COGS %' },
-  { key: 'opex_admin_pct', label: 'OPEX Admin %' },
-  { key: 'opex_selling_pct', label: 'OPEX Selling %' },
-  { key: 'disc_ceiling_pct', label: 'Disc. Ceiling %' },
-  { key: 'disc_supervisor_pct', label: 'Disc. Supervisor %' },
-  { key: 'disc_manager_pct', label: 'Disc. Manager %' },
-  { key: 'disc_gm_pct', label: 'Disc. GM %' },
-  { key: 'selling_price_override', label: 'Price Override' },
+  { calc: 'costingAllowance', label: 'Costing Allowance' },
+  { calc: 'subtotalAllowance', label: 'SubTotal (COGS)' },
+  { key: 'markup_cogs_pct', label: 'Mark-Up (COGS) %' },
+  { calc: 'markupCogs', label: 'Mark-Up (COGS)' },
+  { calc: 'costPerUnit', label: 'Total (COGS)', strong: true },
+  { key: 'opex_admin_pct', label: 'OPEX (Admin) %' },
+  { calc: 'opexAdmin', label: 'OPEX (Admin)' },
+  { key: 'markup_opex_admin_pct', label: 'Mark-Up OPEX (Admin) %' },
+  { calc: 'markupOpexAdmin', label: 'Mark-Up OPEX (Admin)' },
+  { key: 'opex_selling_pct', label: 'OPEX (Selling) %' },
+  { calc: 'opexSelling', label: 'OPEX (Selling)' },
+  { key: 'markup_opex_selling_pct', label: 'Mark-Up OPEX (Selling) %' },
+  { calc: 'markupOpexSelling', label: 'Mark-Up OPEX (Selling)' },
+  { calc: 'totalOpex', label: 'Total OPEX', strong: true },
+  { key: 'sub_con', label: 'Sub Con' },
+  { key: 'markup_sub_con_pct', label: 'Mark-Up Sub Con %' },
+  { calc: 'markupSubCon', label: 'Mark-Up Sub Con' },
+  { calc: 'totalSubCon', label: 'Total Sub Con', strong: true },
+  { calc: 'priceUnrounded', label: 'Total Price', strong: true },
+  { key: 'selling_price_override', label: 'Selling Price', placeholderCalc: 'pricePerUnit' },
+  { key: 'costing_reference', label: 'Costing Reference', text: true },
+  { key: 'disc_ceiling_pct', label: 'DC Account Officer %' },
+  { calc: 'discCeiling', label: 'DC Account Officer' },
+  { key: 'disc_supervisor_pct', label: 'DC Sales Supervisor %' },
+  { calc: 'discSupervisor', label: 'DC Sales Supervisor' },
+  { key: 'disc_manager_pct', label: 'DC Sales Manager %' },
+  { calc: 'discManager', label: 'DC Sales Manager' },
+  { key: 'disc_gm_pct', label: 'DC General Manager %' },
+  { calc: 'discGm', label: 'DC General Manager' },
 ];
+// Formula cells show 4 decimals, as the unit costs run to fractions of a centavo (0.1045).
+const fmt = (v) => (v == null || Number.isNaN(v) ? '—' : Number(v.toFixed(4)).toLocaleString('en-US', { maximumFractionDigits: 4 }));
 
 export default function ProcessCosting() {
   const { can } = useAuth();
@@ -146,18 +175,16 @@ export default function ProcessCosting() {
             <>
               <h2>{selected.process_name}</h2>
               <p className="muted" style={{ marginBottom: 16 }}>
-                One row per quantity bracket. Cost/COGS/Price are computed live from the raw inputs.
+                One row per quantity bracket, laid out as the costing workbook. Shaded columns are
+                formulas, computed live from the inputs. Selling Price is the price set on the bracket;
+                left blank, it is the Total Price rounded up to the peso.
               </p>
               <div className="spreadsheet-wrap">
                 <table className="spreadsheet-table">
                   <thead>
                     <tr>
                       <th></th>
-                      {COLUMNS.map((c) => <th key={c.key}>{c.label}</th>)}
-                      <th>SubTotal MOH</th>
-                      <th>Cost Basis <span className="muted">(SubTotal + Sub Con)</span></th>
-                      <th>COGS</th>
-                      <th>Price</th>
+                      {COLUMNS.map((c) => <th key={c.key || c.calc} style={c.calc ? { background: 'var(--accent-bg)' } : undefined}>{c.label}</th>)}
                     </tr>
                   </thead>
                   <tbody>
@@ -170,21 +197,22 @@ export default function ProcessCosting() {
                               <button type="button" className="btn btn-sm btn-danger" onClick={() => deleteBracket(idx)}>✕</button>
                             )}
                           </td>
-                          {COLUMNS.map((c) => (
+                          {COLUMNS.map((c) => (c.calc ? (
+                            <td key={c.calc} className="text-right" style={{ background: 'var(--accent-bg)', whiteSpace: 'nowrap' }}>
+                              {c.strong ? <strong>{fmt(computed?.[c.calc])}</strong> : fmt(computed?.[c.calc])}
+                            </td>
+                          ) : (
                             <td key={c.key}>
                               <input
-                                type={c.key === 'is_active' ? 'checkbox' : 'number'}
-                                step="0.01"
-                                value={b[c.key]}
+                                type={c.text ? 'text' : 'number'}
+                                step="any"
+                                value={b[c.key] ?? ''}
+                                placeholder={c.placeholderCalc && computed ? fmt(computed[c.placeholderCalc]) : undefined}
                                 onChange={(e) => updateBracketField(idx, c.key, e.target.value)}
                                 onBlur={() => commitBracket(idx)}
                               />
                             </td>
-                          ))}
-                          <td>{computed ? computed.subtotalMoh.toFixed(2) : '—'}</td>
-                          <td><strong>{computed ? computed.costBasis.toFixed(2) : '—'}</strong></td>
-                          <td>{computed ? computed.costPerUnit.toFixed(2) : '—'}</td>
-                          <td><strong>{computed ? computed.pricePerUnit.toFixed(2) : '—'}</strong></td>
+                          )))}
                         </tr>
                       );
                     })}

@@ -64,31 +64,57 @@ export function selectBracket(brackets, qty) {
   return brackets.find((b) => q >= num(b.qty_min) && q <= num(b.qty_max)) || null;
 }
 
-// Per-unit process cost/price for a given bracket.
-// costPerUnit = COGS only (before OPEX). pricePerUnit = COGS + OPEX, rounded up to a
-// whole peso (matches every real sample: e.g. 5.47 -> 6.00) unless a manual
-// selling_price_override is set on the bracket.
-// costBasis = SubTotal MOH + Sub Con -- the true production cost with no markup or OPEX
-// layered in, used for GP-rate reporting (as opposed to costPerUnit/TotalCOGS, which
-// already has markup_cogs_pct baked in and so overstates "cost").
+// Per-unit process cost/price for a given bracket -- the costing team's workbook
+// (costing.xlsx, 2026-09-30), cell for cell. Letters are its columns:
+//   N  SubTotal              = Click Charge + INK + DL + the five MOH   (SUM(F:L, D) --
+//                              Other Charges (M) and New INK Cost (E) are NOT in it, by the
+//                              costing team's decision)
+//   P  Costing Allowance     = N x O%          Q  SubTotal (COGS) = N + P
+//   S  Mark-Up (COGS)        = Q x R%          T  Total (COGS)    = Q + S
+//   V  OPEX(Admin)           = Q x U%          X  Mark-Up OPEX(Admin)   = V x W%
+//   Z  OPEX(Selling)         = Q x Y%          AB Mark-Up OPEX(Selling) = Q x AA%  (on Q, not Z --
+//                                                 kept exactly as the workbook has it)
+//   AC Total OPEX            = V + X + Z + AB
+//   AD Sub Con               AF Mark-Up Sub Con = AD x AE%     AG Total Sub Con = AD + AF
+//   AH Total Price           = T + AC + AG
+//   AI Selling Price         = the bracket's stored price (selling_price_override -- every
+//                              imported bracket carries the old system's) else AH rounded UP to
+//                              the peso, as the old system did (5.47 -> 6.00)
+//   AL/AN/AP/AR  the discount ceilings as amounts = AI x each level's %
+// costPerUnit = T (COGS before OPEX). costBasis = SubTotal + Sub Con -- the true production
+// cost with no markup or OPEX layered in, used for GP-rate reporting.
 export function computeProcessCosting(bracket) {
   if (!bracket) return null;
+  const pct = (v, p) => v * num(p) / 100;
   const subtotalMoh = num(bracket.click_charge) + num(bracket.ink_cost) + num(bracket.direct_labor)
     + num(bracket.moh_power_equipment) + num(bracket.moh_depreciation) + num(bracket.moh_repairs_maintenance)
-    + num(bracket.moh_indirect_materials) + num(bracket.moh_indirect_labor) + num(bracket.other_charges);
+    + num(bracket.moh_indirect_materials) + num(bracket.moh_indirect_labor);
   const subCon = num(bracket.sub_con);
   const costBasis = subtotalMoh + subCon;
-  const costingAllowance = subtotalMoh * num(bracket.costing_allowance_pct) / 100;
+  const costingAllowance = pct(subtotalMoh, bracket.costing_allowance_pct);
   const subtotalAllowance = subtotalMoh + costingAllowance;
-  const markupCogs = subtotalAllowance * num(bracket.markup_cogs_pct) / 100;
-  const costPerUnit = subtotalAllowance + markupCogs; // TotalCOGS
-  const opexAdmin = subtotalAllowance * num(bracket.opex_admin_pct) / 100;
-  const opexSelling = subtotalAllowance * num(bracket.opex_selling_pct) / 100;
-  const priceUnrounded = costPerUnit + opexAdmin + opexSelling;
+  const markupCogs = pct(subtotalAllowance, bracket.markup_cogs_pct);
+  const costPerUnit = subtotalAllowance + markupCogs; // Total (COGS)
+  const opexAdmin = pct(subtotalAllowance, bracket.opex_admin_pct);
+  const markupOpexAdmin = pct(opexAdmin, bracket.markup_opex_admin_pct);
+  const opexSelling = pct(subtotalAllowance, bracket.opex_selling_pct);
+  const markupOpexSelling = pct(subtotalAllowance, bracket.markup_opex_selling_pct);
+  const totalOpex = opexAdmin + markupOpexAdmin + opexSelling + markupOpexSelling;
+  const markupSubCon = pct(subCon, bracket.markup_sub_con_pct);
+  const totalSubCon = subCon + markupSubCon;
+  const priceUnrounded = costPerUnit + totalOpex + totalSubCon; // Total Price
   const pricePerUnit = bracket.selling_price_override != null && bracket.selling_price_override !== ''
     ? num(bracket.selling_price_override)
-    : Math.ceil(priceUnrounded);
-  return { subtotalMoh, subCon, costBasis, subtotalAllowance, costPerUnit, priceUnrounded, pricePerUnit };
+    : Math.ceil(Number(priceUnrounded.toFixed(6)));
+  return {
+    subtotalMoh, subCon, costBasis, costingAllowance, subtotalAllowance, markupCogs, costPerUnit,
+    opexAdmin, markupOpexAdmin, opexSelling, markupOpexSelling, totalOpex, markupSubCon, totalSubCon,
+    priceUnrounded, pricePerUnit,
+    discCeiling: pct(pricePerUnit, bracket.disc_ceiling_pct),
+    discSupervisor: pct(pricePerUnit, bracket.disc_supervisor_pct),
+    discManager: pct(pricePerUnit, bracket.disc_manager_pct),
+    discGm: pct(pricePerUnit, bracket.disc_gm_pct),
+  };
 }
 
 // Per-unit material cost/price for an inventory item (no quantity bands).

@@ -6,12 +6,13 @@ const router = express.Router();
 const ROUTE = '/process-costing';
 
 const FIELDS = [
-  'qty_min', 'qty_max', 'click_charge', 'ink_cost', 'direct_labor',
+  'qty_min', 'qty_max', 'click_charge', 'new_ink_cost', 'ink_cost', 'direct_labor',
   'moh_power_equipment', 'moh_depreciation', 'moh_repairs_maintenance',
-  'moh_indirect_materials', 'moh_indirect_labor', 'other_charges', 'sub_con',
-  'costing_allowance_pct', 'markup_cogs_pct', 'opex_admin_pct', 'opex_selling_pct',
+  'moh_indirect_materials', 'moh_indirect_labor', 'other_charges', 'sub_con', 'markup_sub_con_pct',
+  'costing_allowance_pct', 'markup_cogs_pct', 'opex_admin_pct', 'markup_opex_admin_pct',
+  'opex_selling_pct', 'markup_opex_selling_pct',
   'disc_ceiling_pct', 'disc_supervisor_pct', 'disc_manager_pct', 'disc_gm_pct',
-  'selling_price_override', 'is_active',
+  'selling_price_override', 'costing_reference', 'is_active',
 ];
 
 router.get('/:processId/cost-brackets', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
