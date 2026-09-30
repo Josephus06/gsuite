@@ -7,13 +7,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import PermissionTemplateModal from '../components/PermissionTemplateModal';
 
 import { displayDateTime } from '../utils/dates';
-
-// Kept in step with ACCOUNT_TYPE_OPTIONS in UserWizard.jsx -- both feed the same
-// account_type column and the same set of permission templates.
-const ACCOUNT_TYPE_OPTIONS = [
-  'Sales', 'Production', 'Costing', 'Logistics', 'Accounts Receivable',
-  'Account Manager', 'Artist', 'General Manager', 'System Admin',
-];
+import { ACCOUNT_TYPE_OPTIONS } from '../utils/accountTypes';
 
 export default function Users() {
   const { can, user, impersonate } = useAuth();

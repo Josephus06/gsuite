@@ -21,9 +21,10 @@ const DRY_RUN = process.argv.includes('--dry-run');
 const RESEED = process.argv.includes('--reseed');
 const ACTIONS = ['can_view', 'can_add', 'can_edit', 'can_delete', 'can_approve', 'can_print'];
 
-// Kept in step with ACCOUNT_TYPE_OPTIONS in client/src/pages/UserWizard.jsx.
+// Kept in step with ACCOUNT_TYPE_OPTIONS in client/src/utils/accountTypes.js.
 const ACCOUNT_TYPES = [
-  'Sales', 'Production', 'Costing', 'Logistics', 'Accounts Receivable',
+  'Sales', 'Production', 'Costing', 'Logistics', 'Purchasing', 'Inventory',
+  'Accounts Receivable', 'Accounting', 'Treasury', 'HR', 'IT', 'Security',
   'Account Manager', 'Artist', 'General Manager', 'System Admin',
 ];
 

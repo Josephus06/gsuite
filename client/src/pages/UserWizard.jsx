@@ -5,16 +5,12 @@ import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import SignaturePad from '../components/SignaturePad';
 import { PLANNER_FLAGS } from '../utils/plannerRoles';
+import { ACCOUNT_TYPE_OPTIONS } from '../utils/accountTypes';
 
 // Mirrors the real system's "Add / Update User" screen: a 4-step wizard (User
 // Account -> User Branches -> User Permissions and Restrictions -> Account Type)
 // instead of a single modal form + a separate permissions modal.
 const STEPS = ['User Account', 'User Branches', 'User Permissions and Restrictions', 'Account Type'];
-
-const ACCOUNT_TYPE_OPTIONS = [
-  'Sales', 'Production', 'Costing', 'Logistics', 'Accounts Receivable',
-  'Account Manager', 'Artist', 'General Manager', 'System Admin',
-];
 
 const PERMISSION_ACTIONS = [
   { key: 'can_view', label: 'Can View' },
