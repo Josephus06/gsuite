@@ -26,6 +26,30 @@ export default function DeptBudgetEdit({ budget: b, onReload }) {
   // The spec is one Monthly Budget per department (typed, or % of the Sales Target). Month-by-month
   // amounts are there for the exception, behind a link, not in everyone's way.
   const [showMonths, setShowMonths] = useState(false);
+  // Actuals come from the system (the report's own endpoint), never typed. Variance is worked out
+  // here from the budget on screen, so it moves as a budget is typed, before saving.
+  const [actual, setActual] = useState({}); // row id -> (number|null)[12]
+  const [monthSource, setMonthSource] = useState([]);
+  const [actualError, setActualError] = useState('');
+  useEffect(() => {
+    api.get('/budgets/report/department-sheets', { params: { budget_id: b.id } })
+      .then(({ data }) => {
+        const m = {};
+        for (const g of data.groups) for (const r of g.rows) m[r.id] = r.actual;
+        setActual(m); setMonthSource(data.month_source || []); setActualError('');
+      })
+      .catch((e) => setActualError(e.response?.data?.error || 'Could not load the actual expenses.'));
+  }, [b.id]);
+  const act = (r, i) => (actual[r.id] ? actual[r.id][i] : null);
+  const variance = (r, i) => (act(r, i) == null ? null : (Number(r.amounts[i]) || 0) - act(r, i));
+  const red = (v) => (v != null && v < -0.005 ? { color: 'var(--danger, #b91c1c)' } : undefined);
+  const band = (i) => (i % 2 ? { background: 'var(--surface-2, #f3f4f6)' } : undefined);
+  const annualActual = (r) => (actual[r.id] || []).reduce((sum, v) => sum + (v || 0), 0);
+  const groupActual = (grp, i) => {
+    const rs = rows.filter((r) => r.grp === grp);
+    return rs.some((r) => act(r, i) != null) ? rs.reduce((sum, r) => sum + (act(r, i) || 0), 0) : null;
+  };
+  const Y = String(b.fiscal_year).slice(2);
   useEffect(() => { setRows(b.rows); setTarget(b.sales_target ?? ''); setDirty(false); }, [b]);
 
   const editable = b.status === 'draft' && can('/budgets', 'can_edit');
@@ -110,21 +134,38 @@ export default function DeptBudgetEdit({ budget: b, onReload }) {
 
       <div className="card">
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
-          <button type="button" className="btn btn-sm" onClick={() => setShowMonths((v) => !v)}>{showMonths ? 'Hide months' : 'Show months (set a different budget per month)'}</button>
+          <button type="button" className="btn btn-sm" onClick={() => setShowMonths((v) => !v)}>{showMonths ? 'Show Actual & Variance' : 'Set a different budget per month'}</button>
         </div>
+        {actualError && <div className="error-banner" style={{ marginBottom: 8 }}>{actualError}</div>}
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <th style={{ minWidth: 180 }}>Department</th><th className="text-right">% of Sales</th><th className="text-right">Monthly Budget</th>
-                {showMonths && MONTHS.map((m) => <th key={m} className="text-right">{m}</th>)}
-                <th className="text-right">Annual Budget</th><th>Remarks</th>
+                <th rowSpan={2} style={{ minWidth: 180 }}>Department</th><th rowSpan={2} className="text-right">% of Sales</th>
+                <th rowSpan={2} className="text-right" style={{ color: '#0070c0' }}>Monthly Budget</th>
+                {MONTHS.map((m, i) => (
+                  <th key={m} colSpan={showMonths ? 1 : 2} style={{ ...band(i), textAlign: 'center' }}>
+                    {m}-{Y}{monthSource[i] === 't1s' ? <span className="muted" style={{ fontSize: 10 }}> (T1S)</span> : null}
+                  </th>
+                ))}
+                <th rowSpan={2} className="text-right">Annual Budget</th>
+                {!showMonths && <th rowSpan={2} className="text-right">Annual Expenses</th>}
+                {!showMonths && <th rowSpan={2} className="text-right">Variance</th>}
+                <th rowSpan={2}>Remarks</th>
+              </tr>
+              <tr>
+                {MONTHS.map((m, i) => (showMonths
+                  ? <th key={m} className="text-right" style={band(i)}>Budget</th>
+                  : [
+                    <th key={m + 'a'} className="text-right" style={{ ...band(i), fontWeight: 800 }}>ACTUAL</th>,
+                    <th key={m + 'v'} className="text-right" style={{ ...band(i), fontWeight: 800 }}>VARIANCE</th>,
+                  ]))}
               </tr>
             </thead>
             <tbody>
               {GROUPS.map(([grp, label]) => (
                 <Fragment key={grp}>
-                  <tr><td colSpan={showMonths ? 17 : 5} style={{ fontWeight: 700, background: 'var(--surface-2, #f3f4f6)' }}>{label}</td></tr>
+                  <tr><td colSpan={showMonths ? 17 : 31} style={{ fontWeight: 700, background: 'var(--surface-2, #f3f4f6)' }}>{label}</td></tr>
                   {rows.filter((r) => r.grp === grp).map((r) => (
                     <tr key={r.id}>
                       <td>
@@ -140,22 +181,38 @@ export default function DeptBudgetEdit({ budget: b, onReload }) {
                           ? <input type="number" step="0.01" style={{ width: 110, textAlign: 'right', fontWeight: 600, color: '#0070c0' }} value={r.amounts[0] || ''} onChange={(e) => setAll(r, e.target.value)} />
                           : <strong style={{ color: '#0070c0' }}>{money(r.amounts[0])}</strong>}
                       </td>
-                      {showMonths && MONTHS.map((m, i) => (
-                        <td key={m} className="text-right">
-                          {editable
-                            ? <input type="number" step="0.01" style={{ width: 96, textAlign: 'right' }} value={r.amounts[i] || ''} onChange={(e) => setMonth(r, i, e.target.value)} />
-                            : money(r.amounts[i])}
-                        </td>
-                      ))}
+                      {MONTHS.map((m, i) => (showMonths
+                        ? (
+                          <td key={m} className="text-right" style={band(i)}>
+                            {editable
+                              ? <input type="number" step="0.01" style={{ width: 96, textAlign: 'right' }} value={r.amounts[i] || ''} onChange={(e) => setMonth(r, i, e.target.value)} />
+                              : money(r.amounts[i])}
+                          </td>
+                        ) : [
+                          <td key={m + 'a'} className="text-right" style={band(i)}>{act(r, i) == null ? '' : money(act(r, i))}</td>,
+                          <td key={m + 'v'} className="text-right" style={{ ...band(i), ...red(variance(r, i)) }}>{variance(r, i) == null ? '' : money(variance(r, i))}</td>,
+                        ]))}
                       <td className="text-right"><strong>{money(annual(r))}</strong></td>
+                      {!showMonths && <td className="text-right">{money(annualActual(r))}</td>}
+                      {!showMonths && <td className="text-right" style={red(annual(r) - annualActual(r))}>{money(annual(r) - annualActual(r))}</td>}
                       <td>{editable ? <input style={{ width: 200 }} value={r.remarks || ''} onChange={(e) => patchRow(r.id, { remarks: e.target.value })} /> : (r.remarks || '')}</td>
                     </tr>
                   ))}
                   {grp !== 'cogs' && (
                     <tr style={{ fontWeight: 700 }}>
                       <td>Total</td><td></td><td className="text-right">{money(groupTotal(grp, 0))}</td>
-                      {showMonths && MONTHS.map((m, i) => <td key={m} className="text-right">{money(groupTotal(grp, i))}</td>)}
-                      <td className="text-right">{money(MONTHS.reduce((s, _, i) => s + groupTotal(grp, i), 0))}</td><td></td>
+                      {MONTHS.map((m, i) => (showMonths
+                        ? <td key={m} className="text-right" style={band(i)}>{money(groupTotal(grp, i))}</td>
+                        : [
+                          <td key={m + 'a'} className="text-right" style={band(i)}>{groupActual(grp, i) == null ? '' : money(groupActual(grp, i))}</td>,
+                          <td key={m + 'v'} className="text-right" style={{ ...band(i), ...red(groupActual(grp, i) == null ? null : groupTotal(grp, i) - groupActual(grp, i)) }}>
+                            {groupActual(grp, i) == null ? '' : money(groupTotal(grp, i) - groupActual(grp, i))}
+                          </td>,
+                        ]))}
+                      <td className="text-right">{money(MONTHS.reduce((s, _, i) => s + groupTotal(grp, i), 0))}</td>
+                      {!showMonths && <td className="text-right">{money(MONTHS.reduce((s, _, i) => s + (groupActual(grp, i) || 0), 0))}</td>}
+                      {!showMonths && <td className="text-right">{money(MONTHS.reduce((s, _, i) => s + groupTotal(grp, i) - (groupActual(grp, i) || 0), 0))}</td>}
+                      <td></td>
                     </tr>
                   )}
                 </Fragment>
