@@ -27,16 +27,21 @@ function leaves(node, out) {
   kids.forEach((k) => leaves(k, out));
 }
 
+// The source's keys, for the report's transaction drill-down (lib/departmentBudget.js drill).
+const coaKeys = new Map(); const deptKeys = new Map();
+
 // One month's department income statement -> { totals, accounts } rows.
 function parseMonth(j, year, month) {
   const [dates, sections] = j.data;
   const names = dates[0];
+  names.forEach((n, i) => { if (n !== 'Total' && dates[1]) deptKeys.set(n, dates[1][i] || null); });
   const totals = []; const accounts = [];
   for (const sec of sections) {
     const key = SECTIONS[sec.type]; if (!key) continue;
     const leafNodes = []; (sec.groups || []).forEach((g) => leaves(g, leafNodes));
     const sum = [];
     for (const leaf of leafNodes) {
+      if (leaf.SysPK_COA) coaKeys.set(String(leaf.UserPK_COA || '').trim(), { pk: leaf.SysPK_COA, title: leaf.Title_COA, side: leaf.NormalBalance_CoaTM });
       (leaf.amounts || []).forEach((a, i) => {
         const v = Number(a[0] || 0);
         sum[i] = (sum[i] || 0) + v;
@@ -124,8 +129,15 @@ async function main() {
       }
       nt += p.totals.length; na += p.accounts.length;
     }
+    for (const [code, k] of coaKeys) {
+      await conn.query('INSERT INTO source_coa_keys (account_code, coa_pk, title, side) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE coa_pk = VALUES(coa_pk), title = VALUES(title), side = VALUES(side)',
+        [code, k.pk, k.title || null, k.side || null]);
+    }
+    for (const [name, pk] of deptKeys) {
+      await conn.query('INSERT INTO source_dept_keys (source_department, dept_pk) VALUES (?, ?) ON DUPLICATE KEY UPDATE dept_pk = VALUES(dept_pk)', [name, pk]);
+    }
     await conn.commit();
-    console.log(`  loaded ${parsed.length} month(s): ${nt} department totals, ${na} account figures.`);
+    console.log(`  loaded ${parsed.length} month(s): ${nt} department totals, ${na} account figures, ${coaKeys.size} account keys, ${deptKeys.size} department keys.`);
   } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
   await pool.end();
 }

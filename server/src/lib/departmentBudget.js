@@ -154,8 +154,15 @@ async function rowActuals(year, rows) {
   const add = (labels, i, amt, deptName) => {
     for (const k of labels) {
       const r = byKey.get(k); if (r) out.get(r.id)[i] += amt;
-      const line = breakdown[cogsLine(deptName)];
-      if (k === COGS_ROW && line[i] != null) line[i] += amt;
+      if (k === COGS_ROW) {
+        const main = cogsLine(deptName);
+        if (breakdown[main][i] != null) breakdown[main][i] += amt;
+        if (main === COGS_OTHER) {
+          const sub = `${COGS_OTHER}|${deptName || 'No Department'}`;
+          if (!breakdown[sub]) breakdown[sub] = source.map((x) => (x && x !== 'missing' ? 0 : null));
+          if (breakdown[sub][i] != null) breakdown[sub][i] += amt;
+        }
+      }
     }
   };
 
@@ -185,7 +192,7 @@ async function rowActuals(year, rows) {
       } else {
         source[i] = 'missing';
         for (const r of rows) out.get(r.id)[i] = null;
-        for (const k of COGS_BREAKDOWN) breakdown[k][i] = null;
+        for (const k of Object.keys(breakdown)) breakdown[k][i] = null;
       }
     }
   }
@@ -216,7 +223,7 @@ async function rowActuals(year, rows) {
     }
   }
   for (const [k, v] of out) out.set(k, v.map((x) => (x == null ? null : round2(x))));
-  for (const k of COGS_BREAKDOWN) breakdown[k] = breakdown[k].map((x) => (x == null ? null : round2(x)));
+  for (const k of Object.keys(breakdown)) breakdown[k] = breakdown[k].map((x) => (x == null ? null : round2(x)));
   return { actuals: out, cogs_breakdown: breakdown, month_source: source, books_as_of: books?.asOf || null };
 }
 
@@ -256,11 +263,137 @@ async function buildReport(budget) {
     budget: { id: budget.id, name: budget.name, fiscal_year: budget.fiscal_year, status: budget.status, version: budget.version, sales_target: budget.sales_target == null ? null : Number(budget.sales_target) },
     month_source: monthSource, books_as_of: booksAsOf, groups,
     // Under each COGS month: CNC / DPOD / LFP / SIGN / Others actuals (the workbook's layout).
-    cogs_breakdown: COGS_BREAKDOWN.map((label) => ({ label, actual: cogsBreakdown[label] })),
+    cogs_breakdown: [
+      ...COGS_BREAKDOWN.map((label) => ({ label, line: label, actual: cogsBreakdown[label] })),
+      // The departments inside Others, largest first, as indented lines under it.
+      ...Object.keys(cogsBreakdown).filter((k) => k.startsWith(`${COGS_OTHER}|`))
+        .map((k) => ({ label: k.split('|')[1], line: k, parent: COGS_OTHER, actual: cogsBreakdown[k] }))
+        .filter((x) => x.actual.some((v) => v && Math.abs(v) > 0.005))
+        .sort((a, b) => b.actual.reduce((t, v) => t + Math.abs(v || 0), 0) - a.actual.reduce((t, v) => t + Math.abs(v || 0), 0)),
+    ],
+  };
+}
+
+// ---------------------------------------------------------------- drill-down
+
+// The transactions behind one amount on the report: a row's actual for a month, or one COGS
+// breakdown line (CNC, DPOD..., Others, or "Others|<dept>"). Up to the cut-over they are fetched
+// live from the source system -- get_transaction_ledgers, per account and department, exactly as
+// its own department income statement drills down -- after it, from T1S's ledger.
+const SITE = 'http://gsuite.graphicstar.com.ph';
+let sourceToken = null; let sourceTokenAt = 0;
+async function sourceLogin() {
+  if (sourceToken && Date.now() - sourceTokenAt < 20 * 60 * 1000) return sourceToken;
+  if (!process.env.LIVE_SITE_USERNAME || !process.env.LIVE_SITE_PASSWORD) {
+    throw Object.assign(new Error('Transactions for months before the cut-over come from the old system, and this server has no login for it (LIVE_SITE_USERNAME / LIVE_SITE_PASSWORD).'), { status: 503 });
+  }
+  const r = await fetch(`${SITE}/api/login`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: process.env.LIVE_SITE_USERNAME, password: process.env.LIVE_SITE_PASSWORD }),
+  });
+  sourceToken = (await r.json())?.data?.token; sourceTokenAt = Date.now();
+  if (!sourceToken) throw Object.assign(new Error('Could not log in to the old system.'), { status: 502 });
+  return sourceToken;
+}
+
+// Does an amount (kind, department, account) land on the drilled target?
+function hits(target, kind, deptName, account) {
+  const keys = rowsFor(kind, deptName, account);
+  if (target.rowKey) return keys.includes(target.rowKey);
+  if (!keys.includes(COGS_ROW)) return false;
+  const main = cogsLine(deptName);
+  if (target.line.includes('|')) return main === COGS_OTHER && `${COGS_OTHER}|${deptName || 'No Department'}` === target.line;
+  return main === target.line;
+}
+
+async function drill({ budget, month, rowId, line }) {
+  const year = budget.fiscal_year; const m = Number(month);
+  if (!(m >= 1 && m <= 12)) throw Object.assign(new Error('Choose a month.'), { status: 400 });
+  let target; let title;
+  if (rowId) {
+    const [[row]] = await pool.query('SELECT * FROM budget_rows WHERE id = ? AND budget_id = ?', [rowId, budget.id]);
+    if (!row) throw Object.assign(new Error('Row not found.'), { status: 404 });
+    const special = ['Accounting', 'Others', 'Support'].includes(row.label) || row.grp === 'cogs';
+    target = { rowKey: special ? row.label : `dept:${norm(row.source_department || row.label)}` };
+    title = row.label;
+  } else if (line) {
+    target = { line: String(line) }; title = `COGS: ${String(line).replace('|', ' / ')}`;
+  } else throw Object.assign(new Error('Choose a row or a COGS line.'), { status: 400 });
+
+  const books = await booksStart();
+  const fromSource = books && monthEnd(year, m) <= books.asOf;
+  const from = `${year}-${pad2(m)}-01`; const to = monthEnd(year, m);
+  const out = [];
+
+  if (fromSource) {
+    const [parts] = await pool.query(
+      "SELECT source_department, section, account_code, amount FROM source_dept_account_actuals WHERE year = ? AND month = ? AND section IN ('opex','cogs')",
+      [year, m]);
+    const wanted = parts.filter((p) => hits(target, p.section, p.source_department, p.account_code));
+    if (wanted.length) {
+      const [coaKeys] = await pool.query('SELECT * FROM source_coa_keys WHERE account_code IN (?)', [[...new Set(wanted.map((w) => w.account_code))]]);
+      const [deptKeys] = await pool.query('SELECT * FROM source_dept_keys WHERE source_department IN (?)', [[...new Set(wanted.map((w) => w.source_department))]]);
+      const coa = new Map(coaKeys.map((c) => [c.account_code, c])); const dept = new Map(deptKeys.map((d) => [d.source_department, d]));
+      const token = await sourceLogin();
+      const queue = [...wanted];
+      await Promise.all(Array.from({ length: 4 }, async () => {
+        while (queue.length) {
+          const w = queue.shift();
+          const c = coa.get(w.account_code); const d = dept.get(w.source_department);
+          if (!c) { out.push({ date: null, document: '(account not on file)', memo: `${w.account_code} in ${w.source_department}`, amount: Number(w.amount), account_code: w.account_code, department: w.source_department }); continue; }
+          const body = {
+            coa_pk: c.coa_pk, coa_code: c.account_code, coa_title: c.title, side: c.side,
+            locdept: { type: 'Department', name: w.source_department, pk: d ? d.dept_pk : null }, dateFilter: [from, to],
+          };
+          const r = await fetch(`${SITE}/api/get_transaction_ledgers`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body),
+          });
+          const j = await r.json();
+          for (const t of (j?.data?.[0] || [])) {
+            const dr = Number(t.DRAmount_LdgrEntries) || 0; const cr = Number(t.CRAmount_LdgrEntries) || 0;
+            if (!dr && !cr) continue;
+            out.push({
+              date: t.DateCreated_TransH, document: t.UserPK_TransH, memo: t.Memo_TransH,
+              name: t.Name_Cust || t.Name_Accnt || t.Name_Empl || t.name || null,
+              debit: round2(dr), credit: round2(cr), amount: round2(dr - cr),
+              account_code: w.account_code, account_name: c.title, department: w.source_department,
+            });
+          }
+        }
+      }));
+    }
+  } else {
+    const [coa] = await pool.query(
+      `SELECT coa.account_code, coa.account_name, t.account_sub_type FROM chart_of_accounts coa
+         JOIN chart_of_account_types t ON t.id = coa.coa_type_id WHERE t.account_type = 'EXPENSE'`);
+    const sub = new Map(coa.map((c) => [c.account_code, c]));
+    const [deps] = await pool.query('SELECT id, name FROM departments');
+    const deptName = new Map(deps.map((d) => [Number(d.id), d.name]));
+    for (const l of await getPostedGlLines({ fromDate: from, toDate: to })) {
+      const c = sub.get(l.account_code); if (!c) continue;
+      const kind = c.account_sub_type === 'OPERATING EXPENSES' ? 'opex' : /^COST OF/.test(c.account_sub_type) ? 'cogs' : null;
+      if (!kind) continue;
+      const name = l.department_id ? deptName.get(Number(l.department_id)) || '' : '';
+      if (kind === 'opex' && !name) continue;
+      if (!hits(target, kind, name, l.account_code)) continue;
+      const dr = Number(l.debit) || 0; const cr = Number(l.credit) || 0;
+      out.push({
+        date: String(l.entry_date instanceof Date ? l.entry_date.toISOString() : l.entry_date).slice(0, 10),
+        document: `${l.source_no || ''}`, source_type: l.source_type, source_id: l.source_id, memo: l.memo,
+        debit: round2(dr), credit: round2(cr), amount: round2(dr - cr),
+        account_code: l.account_code, account_name: c.account_name, department: name || 'No Department',
+      });
+    }
+  }
+  out.sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+  return {
+    title, month: m, year, from: fromSource ? 'source' : 't1s',
+    total: round2(out.reduce((t, r) => t + (r.amount || 0), 0)), transactions: out,
   };
 }
 
 module.exports = {
+  drill,
   TEMPLATE, GROUP_LABEL, OTHERS_ACCOUNTS, NOTES, COGS_OTHER, isSupportFamily, SUPPORT_NOTE,
   seedRows, upgradeRows, loadRows, rowActuals, buildReport,
 };

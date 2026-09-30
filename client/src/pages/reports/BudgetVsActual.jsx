@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import Modal from '../../components/Modal';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 function money(v) {
@@ -66,6 +67,18 @@ function DeptSheets() {
   const Y = data ? String(data.budget.fiscal_year).slice(2) : '';
   const band = (i) => (i % 2 ? { background: 'var(--surface-2, #f3f4f6)' } : undefined);
   const src = (i) => (data?.month_source[i] === 't1s' ? 'T1S' : data?.month_source[i] === 'missing' ? 'not loaded' : '');
+  // Click an actual to see the transactions behind it.
+  const [drill, setDrill] = useState(null); // { title, loading, error, data }
+  async function openDrill(params, title) {
+    setDrill({ title, loading: true });
+    try {
+      const { data: d } = await api.get('/budgets/report/department-sheets/drill', { params: { budget_id: budgetId, ...params } });
+      setDrill({ title, data: d });
+    } catch (e) { setDrill({ title, error: e.response?.data?.error || 'Could not load the transactions.' }); }
+  }
+  const link = (value, params, title) => (value == null ? '' : (
+    <button type="button" className="link-btn" style={{ font: 'inherit', padding: 0 }} title="Show the transactions" onClick={() => openDrill(params, title)}>{money(value)}</button>
+  ));
   const g = data?.groups.find((x) => x.grp === tab);
   const note = data?.budget.sales_target ? `Note: Budget @ ${(data.budget.sales_target / 1000000).toLocaleString('en-US', { maximumFractionDigits: 2 })}M Sales` : '';
   return (
@@ -123,7 +136,7 @@ function DeptSheets() {
                       <td>{r.label}{r.includes && <div className="muted" style={{ fontSize: 10 }}>{r.includes}</div>}</td>
                       <td className="text-right" style={{ color: '#0070c0', fontWeight: 700 }}>{money(r.budget[0])}</td>
                       {SHORT.map((m, i) => [
-                        <td key={m + 'a'} className="text-right" style={band(i)}>{cell(r.actual[i])}</td>,
+                        <td key={m + 'a'} className="text-right" style={band(i)}>{link(r.actual[i], { row_id: r.id, month: i + 1 }, `${r.label} · ${m}-${Y}`)}</td>,
                         <td key={m + 'v'} className="text-right" style={{ ...band(i), ...red(r.variance[i]) }}>{cell(r.variance[i])}</td>,
                       ])}
                       <td className="text-right">{money(r.annual_budget)}</td><td className="text-right">{money(r.annual_actual)}</td>
@@ -153,13 +166,13 @@ function DeptSheets() {
                       <tr style={{ borderTop: '1px solid var(--border, #e5e7eb)' }}>
                         <td style={{ fontWeight: 700 }}>{m}-{Y}{src(i) ? <span className="muted" style={{ fontSize: 10 }}> {src(i)}</span> : null}</td>
                         <td className="text-right" style={{ fontWeight: 700 }}>{money(g.rows[0].budget[i])}</td>
-                        <td className="text-right" style={{ fontWeight: 700 }}>{cell(g.rows[0].actual[i])}</td>
+                        <td className="text-right" style={{ fontWeight: 700 }}>{link(g.rows[0].actual[i], { row_id: g.rows[0].id, month: i + 1 }, `COGS · ${m}-${Y}`)}</td>
                         <td className="text-right" style={{ fontWeight: 700, ...red(g.rows[0].variance[i]) }}>{cell(g.rows[0].variance[i])}</td>
                       </tr>
                       {(data.cogs_breakdown || []).map((b) => (
-                        <tr key={b.label} className="muted">
-                          <td></td><td style={{ paddingLeft: 24 }}>{b.label}</td>
-                          <td className="text-right">{cell(b.actual[i])}</td><td></td>
+                        <tr key={b.line} className="muted" style={b.parent ? { fontSize: 11 } : undefined}>
+                          <td></td><td style={{ paddingLeft: b.parent ? 48 : 24 }}>{b.label}</td>
+                          <td className="text-right">{link(b.actual[i], { line: b.line, month: i + 1 }, `COGS · ${b.parent ? `${b.parent} · ` : ''}${b.label} · ${m}-${Y}`)}</td><td></td>
                         </tr>
                       ))}
                     </Fragment>
@@ -176,6 +189,39 @@ function DeptSheets() {
 
           {note && <div style={{ color: 'var(--danger, #b91c1c)', fontWeight: 700, fontSize: 12, marginTop: 6 }}>{note}</div>}
         </div>
+      )}
+      {drill && (
+        <Modal title={`Transactions: ${drill.title}`} onClose={() => setDrill(null)} xl>
+          {drill.loading && <LoadingSpinner />}
+          {drill.error && <div className="error-banner">{drill.error}</div>}
+          {drill.data && (
+            <>
+              <div className="muted" style={{ marginBottom: 8 }}>
+                {drill.data.transactions.length} transaction{drill.data.transactions.length === 1 ? '' : 's'} ·
+                {drill.data.from === 'source' ? ' from the old system (before the cut-over)' : ' from T1S'} ·
+                total <strong>{money(drill.data.total)}</strong>
+              </div>
+              <div className="table-wrap" style={{ maxHeight: '65vh', overflow: 'auto' }}>
+                <table style={{ fontSize: 12 }}>
+                  <thead><tr><th>Date</th><th>Document</th><th>Memo</th><th>Name</th><th>Account</th><th>Department</th><th className="text-right">Debit</th><th className="text-right">Credit</th><th className="text-right">Amount</th></tr></thead>
+                  <tbody>
+                    {drill.data.transactions.length === 0 && <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 16 }}>No transactions.</td></tr>}
+                    {drill.data.transactions.map((t, k) => (
+                      <tr key={k}>
+                        <td style={{ whiteSpace: 'nowrap' }}>{t.date || ''}</td><td style={{ whiteSpace: 'nowrap' }}>{t.document}</td>
+                        <td>{t.memo || ''}</td><td>{t.name || ''}</td>
+                        <td>{t.account_code} {t.account_name || ''}</td><td>{t.department || ''}</td>
+                        <td className="text-right">{t.debit ? money(t.debit) : ''}</td><td className="text-right">{t.credit ? money(t.credit) : ''}</td>
+                        <td className="text-right" style={t.amount < 0 ? { color: 'var(--danger, #b91c1c)' } : undefined}>{money(t.amount)}</td>
+                      </tr>
+                    ))}
+                    <tr style={{ fontWeight: 700, borderTop: '2px solid #000' }}><td colSpan={8}>Total</td><td className="text-right">{money(drill.data.total)}</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </Modal>
       )}
     </>
   );

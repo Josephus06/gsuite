@@ -93,6 +93,26 @@ async function main() {
       )`);
     console.log('  source_dept_account_actuals: created.');
   }
+  // The source's own keys for an account and a department -- what its transaction drill-down
+  // (get_transaction_ledgers) is asked by. Filled by load-source-dept-actuals.js.
+  if (!(await tableExists('source_coa_keys'))) {
+    await pool.query(`
+      CREATE TABLE source_coa_keys (
+        account_code VARCHAR(30) PRIMARY KEY,
+        coa_pk VARCHAR(64) NOT NULL,
+        title VARCHAR(200) NULL,
+        side VARCHAR(10) NULL
+      )`);
+    console.log('  source_coa_keys: created.');
+  }
+  if (!(await tableExists('source_dept_keys'))) {
+    await pool.query(`
+      CREATE TABLE source_dept_keys (
+        source_department VARCHAR(100) PRIMARY KEY,
+        dept_pk VARCHAR(64) NULL
+      )`);
+    console.log('  source_dept_keys: created.');
+  }
   // Department budgets made before a row-template change get the current rows (Others under
   // Accounting; COGS by department). Idempotent.
   const [dbs] = await pool.query("SELECT id FROM budgets WHERE kind = 'department'");

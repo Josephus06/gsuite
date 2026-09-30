@@ -643,6 +643,18 @@ router.post('/:id/import-workbook', requireAuth, requirePermission(ROUTE, 'can_e
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
+// The transactions behind one amount (a row's month, or a COGS line's month). See drill().
+router.get('/report/department-sheets/drill', requireAuth, requirePermission(REPORT_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const b = await loadBudget(req.query.budget_id);
+    if (!b || b.kind !== 'department') return res.status(404).json({ error: 'Choose a department budget.' });
+    res.json(await deptBudget.drill({ budget: b, month: req.query.month, rowId: req.query.row_id, line: req.query.line }));
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
 router.get('/report/department-sheets', requireAuth, requirePermission(REPORT_ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const b = await loadBudget(req.query.budget_id);
@@ -682,8 +694,8 @@ router.get('/report/department-sheets/export', requireAuth, requirePermission(RE
             mr.font = FONT; ws.getCell(r, 2).font = { ...FONT, bold: true }; r += 1;
             for (const b of rep.cogs_breakdown) {
               const br = ws.getRow(r);
-              br.values = [null, b.label, b.actual[i]]; br.font = { ...FONT, color: { argb: 'FF555555' } };
-              ws.getCell(r, 2).alignment = { indent: 1 }; r += 1;
+              br.values = [null, b.label, b.actual[i]]; br.font = { ...FONT, color: { argb: 'FF555555' }, size: b.parent ? 8 : 9 };
+              ws.getCell(r, 2).alignment = { indent: b.parent ? 3 : 1 }; r += 1;
             }
           });
           r += 1;
