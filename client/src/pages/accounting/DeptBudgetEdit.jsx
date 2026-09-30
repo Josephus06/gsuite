@@ -23,6 +23,9 @@ export default function DeptBudgetEdit({ budget: b, onReload }) {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  // The spec is one Monthly Budget per department (typed, or % of the Sales Target). Month-by-month
+  // amounts are there for the exception, behind a link, not in everyone's way.
+  const [showMonths, setShowMonths] = useState(false);
   useEffect(() => { setRows(b.rows); setTarget(b.sales_target ?? ''); setDirty(false); }, [b]);
 
   const editable = b.status === 'draft' && can('/budgets', 'can_edit');
@@ -106,19 +109,22 @@ export default function DeptBudgetEdit({ budget: b, onReload }) {
       {notice && <div className="card" style={{ marginBottom: 12, padding: '8px 12px' }}>{notice}</div>}
 
       <div className="card">
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+          <button type="button" className="btn btn-sm" onClick={() => setShowMonths((v) => !v)}>{showMonths ? 'Hide months' : 'Show months (set a different budget per month)'}</button>
+        </div>
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
                 <th style={{ minWidth: 180 }}>Department</th><th className="text-right">% of Sales</th><th className="text-right">Monthly Budget</th>
-                {MONTHS.map((m) => <th key={m} className="text-right">{m}</th>)}
+                {showMonths && MONTHS.map((m) => <th key={m} className="text-right">{m}</th>)}
                 <th className="text-right">Annual Budget</th><th>Remarks</th>
               </tr>
             </thead>
             <tbody>
               {GROUPS.map(([grp, label]) => (
                 <Fragment key={grp}>
-                  <tr><td colSpan={17} style={{ fontWeight: 700, background: 'var(--surface-2, #f3f4f6)' }}>{label}</td></tr>
+                  <tr><td colSpan={showMonths ? 17 : 5} style={{ fontWeight: 700, background: 'var(--surface-2, #f3f4f6)' }}>{label}</td></tr>
                   {rows.filter((r) => r.grp === grp).map((r) => (
                     <tr key={r.id}>
                       <td>
@@ -134,7 +140,7 @@ export default function DeptBudgetEdit({ budget: b, onReload }) {
                           ? <input type="number" step="0.01" style={{ width: 110, textAlign: 'right', fontWeight: 600, color: '#0070c0' }} value={r.amounts[0] || ''} onChange={(e) => setAll(r, e.target.value)} />
                           : <strong style={{ color: '#0070c0' }}>{money(r.amounts[0])}</strong>}
                       </td>
-                      {MONTHS.map((m, i) => (
+                      {showMonths && MONTHS.map((m, i) => (
                         <td key={m} className="text-right">
                           {editable
                             ? <input type="number" step="0.01" style={{ width: 96, textAlign: 'right' }} value={r.amounts[i] || ''} onChange={(e) => setMonth(r, i, e.target.value)} />
@@ -148,7 +154,7 @@ export default function DeptBudgetEdit({ budget: b, onReload }) {
                   {grp !== 'cogs' && (
                     <tr style={{ fontWeight: 700 }}>
                       <td>Total</td><td></td><td className="text-right">{money(groupTotal(grp, 0))}</td>
-                      {MONTHS.map((m, i) => <td key={m} className="text-right">{money(groupTotal(grp, i))}</td>)}
+                      {showMonths && MONTHS.map((m, i) => <td key={m} className="text-right">{money(groupTotal(grp, i))}</td>)}
                       <td className="text-right">{money(MONTHS.reduce((s, _, i) => s + groupTotal(grp, i), 0))}</td><td></td>
                     </tr>
                   )}
