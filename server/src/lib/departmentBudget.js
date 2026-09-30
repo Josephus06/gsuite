@@ -16,10 +16,10 @@
 //               other departments keep their own taxes and licenses)
 //   Support     the whole Support family: Support, Support-IT/-System/-Costing/-Technical, and
 //               Quality Assurance
-//   COGS        broken down by department: Cost of Goods Sold + operating expenses of each
-//               Production department, and one line for COGS booked to every other department
-//               (the sales teams and branches carry about a third of it), so the total is the
-//               company's COGS.
+//   COGS        ONE budget line for the company (the workbook's COGS sheet). Its actual is all
+//               Cost of Goods Sold + the Production departments' operating expenses, broken down
+//               under each month by CNC / DPOD / LFP / SIGN, and Others for COGS booked to the
+//               sales teams and branches (about a third), so the breakdown adds up to the total.
 const pool = require('../db');
 const { getPostedGlLines } = require('./glImpact');
 const { booksStart } = require('./openingBalances');
@@ -27,14 +27,17 @@ const { booksStart } = require('./openingBalances');
 const TEMPLATE = {
   admin: ['Accounting', 'Others', 'Building & Maintenance', 'Execom', 'Human Resource', 'Logistics', 'Supply Chain', 'Support', 'Treasury'],
   selling: ['Marketing', 'Design', 'E-Commerce', 'Branch - Ayala', 'Branch-SM_Cebu', 'Sales-1', 'Sales-2', 'Sales-3', 'Sales-4', 'Sales-5'],
-  cogs: ['Production-CNC', 'Production-DPOD', 'Production-LFP', 'Production-SIGNAGE', 'Sales, Branches & Others'],
+  cogs: ['COGS (Production)'],
 };
 const GROUP_LABEL = { admin: 'Admin Expenses', selling: 'Selling Expenses', cogs: 'COGS (Production)' };
 // Accounting's accounts that go on the Others line: Interest Expense; Taxes, Permits And Licenses.
 const OTHERS_ACCOUNTS = new Set(['30619', '30620']);
 const OTHERS_NOTE = 'Interest Expense; Taxes, Permits & Licenses (booked to Accounting)';
 const SUPPORT_NOTE = 'IT, System, Quality, Costing, Technical/Engineering';
-const COGS_OTHER = 'Sales, Branches & Others';
+const COGS_OTHER = 'Others';
+const COGS_ROW = 'COGS (Production)';
+// The breakdown lines under each COGS month, in the workbook's order.
+const COGS_BREAKDOWN = ['CNC', 'DPOD', 'LFP', 'SIGN', 'Others'];
 
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -46,10 +49,10 @@ const isSupportFamily = (name) => /^support/i.test(String(name || '').trim()) ||
 // "Production-SIGNAGE"; both are Signage.
 function cogsLine(deptName) {
   const n = norm(deptName);
-  if (n.startsWith('productioncnc')) return 'Production-CNC';
-  if (n.startsWith('productiondpod')) return 'Production-DPOD';
-  if (n.startsWith('productionlfp')) return 'Production-LFP';
-  if (n.startsWith('productionsign')) return 'Production-SIGNAGE';
+  if (n.startsWith('productioncnc')) return 'CNC';
+  if (n.startsWith('productiondpod')) return 'DPOD';
+  if (n.startsWith('productionlfp')) return 'LFP';
+  if (n.startsWith('productionsign')) return 'SIGN';
   return COGS_OTHER;
 }
 const isAccounting = (name) => norm(name) === 'accounting';
@@ -63,7 +66,7 @@ async function seedRows(conn, budgetId) {
   for (const grp of ['admin', 'selling', 'cogs']) {
     for (const name of TEMPLATE[grp]) {
       sort += 1;
-      const deptId = name === 'Others' || name === COGS_OTHER ? null : byNorm.get(norm(name)) || null;
+      const deptId = name === 'Others' || grp === 'cogs' ? null : byNorm.get(norm(name)) || null;
       await conn.query(
         'INSERT INTO budget_rows (budget_id, grp, label, source_department, department_id, sort) VALUES (?, ?, ?, ?, ?, ?)',
         [budgetId, grp, name, name, deptId, sort]);
@@ -72,8 +75,8 @@ async function seedRows(conn, budgetId) {
 }
 
 // Bring a budget made before a template change up to the current rows (idempotent): adds any
-// missing row in its place, and drops the old single "COGS (Production)" row -- its total cannot
-// be split by department, so that budget is set again per department.
+// missing row in its place and drops COGS rows no longer in the template (the short-lived
+// per-department COGS budget lines of 2026-09-30, replaced by one COGS budget with a breakdown).
 async function upgradeRows(conn, budgetId) {
   const [have] = await conn.query('SELECT id, grp, label FROM budget_rows WHERE budget_id = ?', [budgetId]);
   const key = (g, l) => `${g}|${l}`;
@@ -92,7 +95,7 @@ async function upgradeRows(conn, budgetId) {
         await conn.query('UPDATE budget_rows SET sort = ? WHERE budget_id = ? AND grp = ? AND label = ?', [sort, budgetId, grp, name]);
         continue;
       }
-      const deptId = name === 'Others' || name === COGS_OTHER ? null : byNorm.get(norm(name)) || null;
+      const deptId = name === 'Others' || grp === 'cogs' ? null : byNorm.get(norm(name)) || null;
       await conn.query(
         'INSERT INTO budget_rows (budget_id, grp, label, source_department, department_id, sort) VALUES (?, ?, ?, ?, ?, ?)',
         [budgetId, grp, name, name, deptId, sort]);
@@ -119,10 +122,10 @@ async function loadRows(budgetId, db = pool) {
 // Which row(s) an amount belongs to. kind: 'opex' | 'cogs'; deptName: the department's name;
 // account: the account code (for the Accounting / Others split). Returns row labels.
 function rowsFor(kind, deptName, account) {
-  if (kind === 'cogs') return [cogsLine(deptName)];
+  if (kind === 'cogs') return [COGS_ROW];
   // opex
   const out = [];
-  if (isProduction(deptName)) out.push(cogsLine(deptName)); // production overheads count as COGS
+  if (isProduction(deptName)) out.push(COGS_ROW); // production overheads count as COGS
   else if (isAccounting(deptName)) out.push(account && OTHERS_ACCOUNTS.has(String(account)) ? 'Others' : 'Accounting');
   else if (isSupportFamily(deptName)) out.push('Support');
   else out.push(`dept:${norm(deptName)}`);
@@ -146,7 +149,15 @@ async function rowActuals(year, rows) {
     byKey.set(special ? r.label : `dept:${norm(r.source_department || r.label)}`, r);
   }
   const out = new Map(rows.map((r) => [r.id, source.map((s) => (s ? 0 : null))]));
-  const add = (labels, i, amt) => { for (const k of labels) { const r = byKey.get(k); if (r) out.get(r.id)[i] += amt; } };
+  // COGS by producing department, for the lines shown under each COGS month.
+  const breakdown = Object.fromEntries(COGS_BREAKDOWN.map((k) => [k, source.map((s) => (s ? 0 : null))]));
+  const add = (labels, i, amt, deptName) => {
+    for (const k of labels) {
+      const r = byKey.get(k); if (r) out.get(r.id)[i] += amt;
+      const line = breakdown[cogsLine(deptName)];
+      if (k === COGS_ROW && line[i] != null) line[i] += amt;
+    }
+  };
 
   // Source months: per-account figures where loaded (they carry the Accounting / Others split),
   // else the department totals.
@@ -164,16 +175,17 @@ async function rowActuals(year, rows) {
       if (acctMonths.has(m)) {
         for (const a of acct) {
           if (a.month !== m || a.source_department === 'Total') continue;
-          if (a.section === 'opex' || a.section === 'cogs') add(rowsFor(a.section, a.source_department, a.account_code), i, Number(a.amount));
+          if (a.section === 'opex' || a.section === 'cogs') add(rowsFor(a.section, a.source_department, a.account_code), i, Number(a.amount), a.source_department);
         }
       } else if (totMonths.has(m)) {
         for (const t of tot) {
           if (t.month !== m || t.source_department === 'Total') continue;
-          if (t.section === 'opex' || t.section === 'cogs') add(rowsFor(t.section, t.source_department, null), i, Number(t.amount));
+          if (t.section === 'opex' || t.section === 'cogs') add(rowsFor(t.section, t.source_department, null), i, Number(t.amount), t.source_department);
         }
       } else {
         source[i] = 'missing';
         for (const r of rows) out.get(r.id)[i] = null;
+        for (const k of COGS_BREAKDOWN) breakdown[k][i] = null;
       }
     }
   }
@@ -200,20 +212,21 @@ async function rowActuals(year, rows) {
       // A cost with no department cannot belong to a department row; COGS without one still
       // counts, on the catch-all line.
       if (kind === 'opex' && !name) continue;
-      add(rowsFor(kind, name, l.account_code), m - 1, (Number(l.debit) || 0) - (Number(l.credit) || 0));
+      add(rowsFor(kind, name, l.account_code), m - 1, (Number(l.debit) || 0) - (Number(l.credit) || 0), name);
     }
   }
   for (const [k, v] of out) out.set(k, v.map((x) => (x == null ? null : round2(x))));
-  return { actuals: out, month_source: source, books_as_of: books?.asOf || null };
+  for (const k of COGS_BREAKDOWN) breakdown[k] = breakdown[k].map((x) => (x == null ? null : round2(x)));
+  return { actuals: out, cogs_breakdown: breakdown, month_source: source, books_as_of: books?.asOf || null };
 }
 
-const NOTES = { Others: OTHERS_NOTE, Support: SUPPORT_NOTE, [COGS_OTHER]: 'COGS booked to the sales teams, branches and any department outside Production' };
+const NOTES = { Others: OTHERS_NOTE, Support: SUPPORT_NOTE, [COGS_ROW]: 'Actual broken down by CNC, DPOD, LFP, SIGN and Others (sales teams and branches)' };
 
 // The report: three groups, each row with budget and actual per month; variance is Budget - Actual
 // exactly as the workbook computes it (positive = under budget).
 async function buildReport(budget) {
   const rows = await loadRows(budget.id);
-  const { actuals, month_source: monthSource, books_as_of: booksAsOf } = await rowActuals(budget.fiscal_year, rows);
+  const { actuals, cogs_breakdown: cogsBreakdown, month_source: monthSource, books_as_of: booksAsOf } = await rowActuals(budget.fiscal_year, rows);
   const groups = ['admin', 'selling', 'cogs'].map((grp) => {
     const gr = rows.filter((r) => r.grp === grp).map((r) => {
       const act = actuals.get(r.id);
@@ -242,6 +255,8 @@ async function buildReport(budget) {
   return {
     budget: { id: budget.id, name: budget.name, fiscal_year: budget.fiscal_year, status: budget.status, version: budget.version, sales_target: budget.sales_target == null ? null : Number(budget.sales_target) },
     month_source: monthSource, books_as_of: booksAsOf, groups,
+    // Under each COGS month: CNC / DPOD / LFP / SIGN / Others actuals (the workbook's layout).
+    cogs_breakdown: COGS_BREAKDOWN.map((label) => ({ label, actual: cogsBreakdown[label] })),
   };
 }
 

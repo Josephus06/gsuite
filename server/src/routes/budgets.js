@@ -608,9 +608,19 @@ router.post('/:id/import-workbook', requireAuth, requirePermission(ROUTE, 'can_e
           updates.set(r.id, { amounts: new Array(12).fill(round2(monthly)), remarks: remarksCol ? txt(row.getCell(remarksCol).value).trim() || null : r.remarks });
         });
       }
-      // The workbook's COGS is one company figure a month; the budget now sets COGS per
-      // production department, which that figure cannot be split into. Reported, not guessed.
-      if (cogsHead && cogs) cogsSkipped = true;
+      if (cogsHead && cogs) {
+        const amounts = new Array(12).fill(0); let i = 0;
+        ws.eachRow((row, n) => {
+          if (n <= cogsHead || i >= 12) return;
+          // Column A holds the month as a real date; breakdown lines (CNC, DPOD...) leave it empty.
+          const v = row.getCell(1).value;
+          if (v == null || (typeof v === 'string' && !v.trim())) return;
+          const label = v instanceof Date ? 'month' : txt(v).trim();
+          if (/^total$/i.test(label)) { i = 12; return; }
+          amounts[i] = round2(num(row.getCell(2).value)); i += 1;
+        });
+        updates.set(cogs.id, { amounts, remarks: cogs.remarks });
+      }
     }
     if (!updates.size) return res.status(400).json({ error: 'No "Department | Monthly Budget" or "Month | Budget" table found in this workbook.' });
     const supportRow = rows.find((x) => x.label === 'Support');
@@ -659,6 +669,33 @@ router.get('/report/department-sheets/export', requireAuth, requirePermission(RE
     };
     const SHEET = { admin: ['Admin Expenses', 'ADMIN Expenses vs Budget'], selling: ['Selling Expenses', 'Selling Expenses vs Budget'], cogs: ['COGS', 'COGS vs Budget for Production'] };
     for (const g of rep.groups) {
+      if (g.grp === 'cogs') {
+        const ws = wb.addWorksheet(`${Y} ${SHEET.cogs[0]}`);
+        title(ws, `${Y} ${SHEET.cogs[1]}`);
+        ws.getRow(5).values = ['Month', 'Budget', 'Actual Expenses', 'Variance']; ws.getRow(5).font = { ...FONT, bold: true };
+        ws.getRow(5).eachCell((c) => { c.border = { bottom: { style: 'thin' } }; });
+        const row = g.rows[0]; let r = 7;
+        if (row) {
+          MONTHS.forEach((m, i) => {
+            const mr = ws.getRow(r);
+            mr.values = [`${m}-${String(Y).slice(2)}`, row.budget[i], row.actual[i], row.variance[i]];
+            mr.font = FONT; ws.getCell(r, 2).font = { ...FONT, bold: true }; r += 1;
+            for (const b of rep.cogs_breakdown) {
+              const br = ws.getRow(r);
+              br.values = [null, b.label, b.actual[i]]; br.font = { ...FONT, color: { argb: 'FF555555' } };
+              ws.getCell(r, 2).alignment = { indent: 1 }; r += 1;
+            }
+          });
+          r += 1;
+          const tr = ws.getRow(r); tr.values = ['Total', row.annual_budget, row.annual_actual, row.annual_variance]; tr.font = { ...FONT, bold: true };
+          tr.eachCell((c) => { c.border = { top: { style: 'thin' }, bottom: { style: 'double' } }; });
+          if (note) { ws.getCell(r + 1, 2).value = note; ws.getCell(r + 1, 2).font = { ...FONT, bold: true, color: { argb: 'FFFF0000' } }; }
+        }
+        ws.getColumn(1).width = 10; ws.getColumn(2).width = 18; [2, 3, 4].forEach((c) => { ws.getColumn(c).numFmt = NUM; });
+        ws.getColumn(3).width = 18; ws.getColumn(4).width = 18;
+        ws.views = [{ state: 'frozen', ySplit: 5 }];
+        continue;
+      }
       const ws = wb.addWorksheet(`${Y} ${SHEET[g.grp][0]}`);
       title(ws, `${Y} ${SHEET[g.grp][1]}`);
       // Two header rows, as the workbook: the month over its pair, then ACTUAL | Variance beneath.

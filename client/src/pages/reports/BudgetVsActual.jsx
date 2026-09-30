@@ -96,6 +96,7 @@ function DeptSheets() {
               Actuals: the old system up to {data.books_as_of || 'the cut-over'}, T1S after.
             </span>
           </div>
+          {tab !== 'cogs' && (
             <div className="table-wrap">
               <table style={{ fontFamily: 'Courier New, monospace', fontSize: 12 }}>
                 <thead>
@@ -141,7 +142,37 @@ function DeptSheets() {
                 </tbody>
               </table>
             </div>
-          {tab === 'cogs' && <p className="muted" style={{ fontSize: 12 }}>COGS actual = Cost of Goods Sold + each Production department&apos;s operating expenses; COGS booked to any other department is on the last line.</p>}
+          )}
+          {tab === 'cogs' && g.rows[0] && (
+            <div className="table-wrap">
+              <table style={{ fontFamily: 'Courier New, monospace', fontSize: 12, maxWidth: 760 }}>
+                <thead><tr><th>Month</th><th className="text-right">Budget</th><th className="text-right">Actual Expenses</th><th className="text-right">Variance</th></tr></thead>
+                <tbody>
+                  {SHORT.map((m, i) => (
+                    <Fragment key={m}>
+                      <tr style={{ borderTop: '1px solid var(--border, #e5e7eb)' }}>
+                        <td style={{ fontWeight: 700 }}>{m}-{Y}{src(i) ? <span className="muted" style={{ fontSize: 10 }}> {src(i)}</span> : null}</td>
+                        <td className="text-right" style={{ fontWeight: 700 }}>{money(g.rows[0].budget[i])}</td>
+                        <td className="text-right" style={{ fontWeight: 700 }}>{cell(g.rows[0].actual[i])}</td>
+                        <td className="text-right" style={{ fontWeight: 700, ...red(g.rows[0].variance[i]) }}>{cell(g.rows[0].variance[i])}</td>
+                      </tr>
+                      {(data.cogs_breakdown || []).map((b) => (
+                        <tr key={b.label} className="muted">
+                          <td></td><td style={{ paddingLeft: 24 }}>{b.label}</td>
+                          <td className="text-right">{cell(b.actual[i])}</td><td></td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  ))}
+                  <tr style={{ fontWeight: 700, borderTop: '1px solid #000', borderBottom: '3px double #000' }}>
+                    <td>Total</td><td className="text-right">{money(g.rows[0].annual_budget)}</td><td className="text-right">{money(g.rows[0].annual_actual)}</td>
+                    <td className="text-right" style={red(g.rows[0].annual_variance)}>{money(g.rows[0].annual_variance)}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p className="muted" style={{ fontSize: 12 }}>Actual = Cost of Goods Sold + the Production departments&apos; operating expenses. Others = COGS booked to the sales teams and branches.</p>
+            </div>
+          )}
 
           {note && <div style={{ color: 'var(--danger, #b91c1c)', fontWeight: 700, fontSize: 12, marginTop: 6 }}>{note}</div>}
         </div>
