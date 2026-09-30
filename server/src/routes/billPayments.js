@@ -46,10 +46,10 @@ router.get('/for-vendor-bill/:vbId', requireAuth, requirePermission(ROUTE, 'can_
   try {
     const [[vb]] = await pool.query(
       `SELECT vb.id, vb.bill_no, vb.office_location_id, vb.account_id AS ap_account_id, vb.memo,
-              po.supplier_id, s.name AS supplier_name, coa.account_code, coa.account_name
+              COALESCE(po.supplier_id, vb.supplier_id) AS supplier_id, s.name AS supplier_name, coa.account_code, coa.account_name
        FROM vendor_bills vb
-       JOIN purchase_orders po ON po.id = vb.purchase_order_id
-       LEFT JOIN suppliers s ON s.id = po.supplier_id
+       LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
+       LEFT JOIN suppliers s ON s.id = COALESCE(po.supplier_id, vb.supplier_id)
        LEFT JOIN chart_of_accounts coa ON coa.id = vb.account_id
        WHERE vb.id = ?`,
       [req.params.vbId]
@@ -59,8 +59,8 @@ router.get('/for-vendor-bill/:vbId', requireAuth, requirePermission(ROUTE, 'can_
     const [applyLines] = await pool.query(
       `SELECT vb2.id AS vendor_bill_id, vb2.bill_no, vb2.date_created, vb2.date_due, vb2.gross_amount, vb2.amount_due
        FROM vendor_bills vb2
-       JOIN purchase_orders po2 ON po2.id = vb2.purchase_order_id
-       WHERE po2.supplier_id = ? AND vb2.status = 'open'
+       LEFT JOIN purchase_orders po2 ON po2.id = vb2.purchase_order_id
+       WHERE COALESCE(po2.supplier_id, vb2.supplier_id) = ? AND vb2.status = 'open'
        ORDER BY vb2.id DESC`,
       [vb.supplier_id]
     );
@@ -69,7 +69,7 @@ router.get('/for-vendor-bill/:vbId', requireAuth, requirePermission(ROUTE, 'can_
       `SELECT id AS bill_credit_id, bill_credit_no, date_created, total_amount, applied_amount,
               (total_amount - applied_amount) AS remaining
        FROM bill_credits
-       WHERE vendor_bill_id IN (SELECT vb3.id FROM vendor_bills vb3 JOIN purchase_orders po3 ON po3.id = vb3.purchase_order_id WHERE po3.supplier_id = ?)
+       WHERE vendor_bill_id IN (SELECT vb3.id FROM vendor_bills vb3 LEFT JOIN purchase_orders po3 ON po3.id = vb3.purchase_order_id WHERE COALESCE(po3.supplier_id, vb3.supplier_id) = ?)
          AND status = 'open' AND applied_amount < total_amount
        ORDER BY id DESC`,
       [vb.supplier_id]

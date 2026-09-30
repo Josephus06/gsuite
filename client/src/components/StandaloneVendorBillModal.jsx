@@ -1,0 +1,279 @@
+import { useEffect, useState } from 'react';
+import api from '../api/client';
+import EntityPicker from './EntityPicker';
+import LoadingSpinner from './LoadingSpinner';
+
+function money(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+}
+function addDays(dateStr, days) {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+const round2 = (n) => Math.round(n * 100) / 100;
+// A line's Amount is net of VAT; tax is added on top and withholding taken on the net -- the source
+// bills the same way (VB-24532: 2,223.21 + 266.79 VAT = 2,490.00, 2% withheld = 44.46). A preview
+// only: the server recomputes every figure on save.
+function lineAmounts(l, taxRate, wtaxRate) {
+  const net = round2(Number(l.amount || 0));
+  const tax = round2(net * (Number(taxRate || 0) / 100));
+  const gross = round2(net + tax);
+  const wtax = l.is_withhold ? round2(net * (Number(wtaxRate || 0) / 100)) : 0;
+  return { net, tax, gross, wtax, due: round2(gross - wtax) };
+}
+const blankLine = () => ({ key: Math.random().toString(36).slice(2), account: null, description: '', department_id: '', amount: '', tax_code_id: '', is_withhold: false });
+
+// Create New on the Vendor Bills list: a supplier's bill with no Purchase Order behind it -- rent,
+// utilities, freight, professional fees. Laid out as the source's Vendor Bill > Create screen:
+// header, an Expenses tab of account lines, and a Withholding Tax tab. Each line debits its
+// account; the bill credits the header Account (Accounts Payable - Trade unless changed) and is
+// paid through Bill Payment like any other.
+export default function StandaloneVendorBillModal({ onClose, onSaved }) {
+  const [meta, setMeta] = useState(null);
+  const [locations, setLocations] = useState([]);
+  const [paymentTerms, setPaymentTerms] = useState([]);
+  const [supplier, setSupplier] = useState(null);
+  const [apAccount, setApAccount] = useState(null);
+  const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
+  const [dateDue, setDateDue] = useState(new Date().toISOString().slice(0, 10));
+  const [paymentTerm, setPaymentTerm] = useState(null);
+  const [term, setTerm] = useState('');
+  const [referenceNo, setReferenceNo] = useState('');
+  const [officeLocation, setOfficeLocation] = useState(null);
+  const [memo, setMemo] = useState('');
+  const [wtaxId, setWtaxId] = useState('');
+  const [tab, setTab] = useState('expenses');
+  const [lines, setLines] = useState([blankLine()]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    Promise.all([api.get('/vendor-bills/standalone-meta'), api.get('/lookups/locations'), api.get('/lookups/payment-terms')])
+      .then(([m, loc, terms]) => {
+        setMeta(m.data);
+        setLocations(loc.data);
+        setPaymentTerms(terms.data || []);
+        if (m.data.ap_account) setApAccount(m.data.ap_account);
+      })
+      .catch((err) => setError(err.response?.data?.error || 'Could not load the form.'));
+  }, []);
+
+  if (!meta) {
+    return (
+      <div className="modal-overlay">
+        <div className="modal modal-xl">{error ? <div className="error-banner">{error}</div> : <LoadingSpinner />}</div>
+      </div>
+    );
+  }
+
+  const taxRate = (id) => Number((meta.taxes.find((t) => String(t.id) === String(id)) || {}).rate || 0);
+  const wtax = meta.wtaxes.find((w) => String(w.id) === String(wtaxId));
+  const wtaxRate = Number(wtax?.rate || 0);
+  const priced = lines.map((l) => ({ ...l, amt: lineAmounts(l, taxRate(l.tax_code_id), wtaxRate) }));
+  const sum = (k) => priced.reduce((s, l) => s + l.amt[k], 0);
+  const setLine = (key, patch) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  const allWithheld = lines.length > 0 && lines.every((l) => l.is_withhold);
+  const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+  function pickSupplier(s) {
+    setSupplier(s);
+    const t = s ? paymentTerms.find((x) => norm(x.term_name) === norm(s.term_name)) : null;
+    setPaymentTerm(t || null);
+    setTerm(t ? t.term_name : (s?.term_name || ''));
+    const days = t ? Number(t.no_of_days) : (s && s.no_of_days != null ? Number(s.no_of_days) : null);
+    if (days != null) setDateDue(addDays(dateCreated, days || 0));
+  }
+
+  async function handleSave() {
+    setError('');
+    if (!supplier) { setError('Choose a vendor.'); return; }
+    const payload = lines.filter((l) => l.account || l.description.trim() || Number(l.amount));
+    if (!payload.length) { setError('Add at least one expense.'); return; }
+    const noAcct = payload.findIndex((l) => !l.account);
+    if (noAcct >= 0) { setError(`Choose an account on expense ${noAcct + 1}.`); setTab('expenses'); return; }
+    const noDept = payload.findIndex((l) => !l.department_id);
+    if (noDept >= 0) { setError(`Choose a department on expense ${noDept + 1}.`); setTab('expenses'); return; }
+    if (payload.some((l) => l.is_withhold) && !wtaxId) { setError('Choose the withholding tax on the Withholding Tax tab.'); setTab('wtax'); return; }
+    setSaving(true);
+    try {
+      const { data: vb } = await api.post('/vendor-bills', {
+        supplier_id: supplier.id,
+        account_id: apAccount?.id || null,
+        date_created: dateCreated,
+        date_due: dateDue,
+        term,
+        reference_no: referenceNo,
+        office_location_id: officeLocation?.id || null,
+        memo,
+        wtax_id: wtaxId || null,
+        lines: payload.map((l) => ({
+          account_id: l.account.id, description: l.description, department_id: Number(l.department_id),
+          qty: 1, unit_price: Number(l.amount || 0), tax_code_id: l.tax_code_id || null, is_withhold: l.is_withhold,
+        })),
+      });
+      onSaved(vb);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const postable = meta.accounts;
+  return (
+    <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal modal-xl" style={{ padding: 0, overflow: 'hidden' }}>
+        <div className="estimate-banner" style={{ borderRadius: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <h2 style={{ margin: 0, color: '#fff' }}>Vendor Bill — Create</h2>
+          <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 24, lineHeight: 1, cursor: 'pointer' }}>×</button>
+        </div>
+
+        <div style={{ padding: 24 }}>
+          {error && <div className="error-banner">{error}</div>}
+
+          <div className="review-grid" style={{ gridTemplateColumns: '1fr 1fr 280px' }}>
+            <div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div className="field">
+                  <label>Date</label>
+                  <input type="date" value={dateCreated} onChange={(e) => {
+                    setDateCreated(e.target.value);
+                    if (paymentTerm && e.target.value) setDateDue(addDays(e.target.value, Number(paymentTerm.no_of_days) || 0));
+                  }} />
+                </div>
+                <div className="field"><label>Date Due</label><input type="date" value={dateDue} onChange={(e) => setDateDue(e.target.value)} /></div>
+              </div>
+              <div className="field">
+                <label>Vendor</label>
+                <EntityPicker
+                  label="Vendor" items={meta.suppliers} value={supplier?.id || ''} getLabel={(s) => s.name}
+                  columns={[{ key: 'name', label: 'Name' }, { key: 'supplier_code', label: 'Code' }, { key: 'tin', label: 'TIN' }]}
+                  searchKeys={['name', 'supplier_code', 'tin']} placeholder="Select Vendor..." onSelect={pickSupplier}
+                />
+              </div>
+              <div className="field">
+                <label>Account</label>
+                <EntityPicker
+                  label="Account" items={postable} value={apAccount?.id || ''} getLabel={(a) => a.account_name}
+                  columns={[{ key: 'account_code', label: 'Code' }, { key: 'account_name', label: 'Account' }, { key: 'account_type', label: 'Type' }]}
+                  searchKeys={['account_code', 'account_name']} onSelect={setApAccount}
+                />
+              </div>
+              <div className="field"><label>Reference #</label><input value={referenceNo} onChange={(e) => setReferenceNo(e.target.value)} /></div>
+            </div>
+            <div>
+              <div className="field">
+                <label>Office Location</label>
+                <EntityPicker
+                  label="Office Location" items={locations} value={officeLocation?.id || ''} getLabel={(l) => l.location_name}
+                  columns={[{ key: 'location_name', label: 'Name' }]} searchKeys={['location_name']} onSelect={setOfficeLocation}
+                />
+              </div>
+              <div className="field">
+                <label>Term</label>
+                <EntityPicker
+                  label="Term" items={paymentTerms} value={paymentTerm?.id || ''} getLabel={(t) => t.term_name}
+                  columns={[{ key: 'term_name', label: 'Term' }, { key: 'no_of_days', label: 'Days', render: (t) => Number(t.no_of_days || 0) }]}
+                  searchKeys={['term_name']} placeholder={term || 'Select Term...'}
+                  onSelect={(t) => { setPaymentTerm(t); setTerm(t ? t.term_name : ''); if (t) setDateDue(addDays(dateCreated, Number(t.no_of_days) || 0)); }}
+                  onClear={() => { setPaymentTerm(null); setTerm(''); }}
+                />
+              </div>
+              <div className="field"><label>Memo</label><textarea rows={4} value={memo} onChange={(e) => setMemo(e.target.value)} /></div>
+            </div>
+            <div className="card" style={{ background: 'var(--surface-2, #f3f4f6)' }}>
+              {[
+                ['Sub Total', sum('net')], ['Discount Amount', 0], ['Net of Tax', sum('net')], ['Tax Amount', sum('tax')],
+                ['Gross Amount', sum('gross')], ['Withholding Tax Amount', sum('wtax')], ['Amount', sum('gross')],
+              ].map(([label, v]) => (
+                <div key={label} style={{ display: 'flex', justifyContent: 'space-between' }}><span className="muted">{label}</span><span className="hi">{money(v)}</span></div>
+              ))}
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}><span>Amount Due</span><span>{money(sum('due'))}</span></div>
+            </div>
+          </div>
+
+          <div className="status-tabs" style={{ marginTop: 20 }}>
+            <button type="button" className={`status-tab ${tab === 'expenses' ? 'active' : ''}`} onClick={() => setTab('expenses')}>Expenses</button>
+            <button type="button" className={`status-tab ${tab === 'wtax' ? 'active' : ''}`} onClick={() => setTab('wtax')}>Withholding Tax{wtax ? ` (${wtax.code} ${Number(wtax.rate)}%)` : ''}</button>
+          </div>
+
+          {tab === 'expenses' && (
+            <>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th style={{ minWidth: 160 }}>Account Code</th><th>Account Title</th><th style={{ minWidth: 200 }}>Description</th><th>Department</th>
+                      <th>Amount (net of VAT)</th><th>Tax Code</th><th>Tax Amount</th><th>Gross Amount</th>
+                      <th>
+                        Apply Withholding Tax{' '}
+                        <input type="checkbox" checked={allWithheld} title="Apply to every line"
+                          onChange={(e) => setLines((ls) => ls.map((l) => ({ ...l, is_withhold: e.target.checked })))} />
+                      </th>
+                      <th>Withholding Tax Amount</th><th>Amount Due</th><th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {priced.map((l) => (
+                      <tr key={l.key}>
+                        <td>
+                          <EntityPicker
+                            label="Account" items={postable} value={l.account?.id || ''} getLabel={(a) => a.account_code}
+                            columns={[{ key: 'account_code', label: 'Code' }, { key: 'account_name', label: 'Account' }, { key: 'account_type', label: 'Type' }]}
+                            searchKeys={['account_code', 'account_name']} placeholder="Select..."
+                            onSelect={(a) => setLine(l.key, { account: a })}
+                          />
+                        </td>
+                        <td>{l.account?.account_name || ''}</td>
+                        <td><input value={l.description} onChange={(e) => setLine(l.key, { description: e.target.value })} /></td>
+                        <td>
+                          <select value={l.department_id} onChange={(e) => setLine(l.key, { department_id: e.target.value })}>
+                            <option value="">Select Department</option>
+                            {meta.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                          </select>
+                        </td>
+                        <td><input type="number" min="0" step="any" style={{ width: 120 }} value={l.amount} onChange={(e) => setLine(l.key, { amount: e.target.value })} /></td>
+                        <td>
+                          <select value={l.tax_code_id} onChange={(e) => setLine(l.key, { tax_code_id: e.target.value })}>
+                            <option value="">Select Tax</option>
+                            {meta.taxes.map((t) => <option key={t.id} value={t.id}>{t.code} ({Number(t.rate)}%)</option>)}
+                          </select>
+                        </td>
+                        <td style={{ textAlign: 'right' }}>{money(l.amt.tax)}</td>
+                        <td style={{ textAlign: 'right' }}>{money(l.amt.gross)}</td>
+                        <td style={{ textAlign: 'center' }}>
+                          <input type="checkbox" checked={l.is_withhold} onChange={(e) => setLine(l.key, { is_withhold: e.target.checked })} />
+                        </td>
+                        <td style={{ textAlign: 'right' }}>{money(l.amt.wtax)}</td>
+                        <td style={{ textAlign: 'right' }}>{money(l.amt.due)}</td>
+                        <td>{lines.length > 1 && <button type="button" className="btn btn-sm btn-danger" onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}>Delete</button>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button type="button" className="btn btn-primary btn-sm" style={{ marginTop: 8 }} onClick={() => setLines((ls) => [...ls, blankLine()])}>Add Expense</button>
+            </>
+          )}
+
+          {tab === 'wtax' && (
+            <div className="field" style={{ maxWidth: 720 }}>
+              <label>Withholding Tax (applied to the lines ticked "Apply Withholding Tax")</label>
+              <select value={wtaxId} onChange={(e) => setWtaxId(e.target.value)}>
+                <option value="">None</option>
+                {meta.wtaxes.map((w) => <option key={w.id} value={w.id}>{w.code} — {Number(w.rate)}% — {w.name}</option>)}
+              </select>
+            </div>
+          )}
+
+          <div className="modal-actions">
+            <button type="button" className="btn" onClick={onClose}>Back to Lists</button>
+            <button type="button" className="btn btn-primary" disabled={saving} onClick={handleSave}>{saving ? 'Saving...' : 'SAVE'}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

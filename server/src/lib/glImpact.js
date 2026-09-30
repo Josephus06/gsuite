@@ -703,8 +703,23 @@ async function computeVendorBillGl(vb, lines) {
   const grossAmount = Number(vb.gross_amount) || 0;
   const netOfTax = Number(vb.net_of_tax) || 0;
   const taxAmount = Number(vb.tax_amount) || 0;
-  if (grossAmount) rows.push({ account_code: apAcct.account_code, account_name: apAcct.account_name, debit: 0, credit: grossAmount });
-  if (netOfTax && vb.account_code) rows.push({ account_code: vb.account_code, account_name: vb.account_name, debit: netOfTax, credit: 0 });
+  // A standalone bill's header Account is the payable it credits (default AP - Trade); on a PO bill
+  // the header account is the debit offset and AP - Trade is always the credit.
+  const creditAcct = !vb.purchase_order_id && vb.account_code ? { account_code: vb.account_code, account_name: vb.account_name } : apAcct;
+  if (grossAmount) rows.push({ account_code: creditAcct.account_code, account_name: creditAcct.account_name, debit: 0, credit: grossAmount });
+  // A standalone (expense) bill's lines each name the account they debit; a PO bill debits its one
+  // header account for the whole net, as it always has.
+  const acctLines = lines.filter((l) => l.account_id && Number(l.net_of_tax));
+  if (acctLines.length) {
+    const byAcct = new Map();
+    for (const l of acctLines) byAcct.set(l.account_id, (byAcct.get(l.account_id) || 0) + Number(l.net_of_tax));
+    for (const acct of await coaByIds([...byAcct.keys()])) {
+      const amt = Number(byAcct.get(acct.id).toFixed(2));
+      if (amt) rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: amt, credit: 0 });
+    }
+  } else if (netOfTax && vb.account_code) {
+    rows.push({ account_code: vb.account_code, account_name: vb.account_name, debit: netOfTax, credit: 0 });
+  }
   if (taxAmount && vatAcct) rows.push({ account_code: vatAcct.account_code, account_name: vatAcct.account_name, debit: taxAmount, credit: 0 });
   return rows;
 }
@@ -1341,8 +1356,14 @@ async function computePostedGlLines({ toDate, fromDate }) {
        LEFT JOIN chart_of_accounts coa ON coa.id = vb.account_id
        WHERE vb.status != 'cancelled' AND ${sql}`, params
     );
+    // A standalone (no-PO) bill debits its lines' own accounts, so its lines have to come along;
+    // a PO bill's entry is its header alone, as before.
+    const standaloneIds = headers.filter((h) => !h.purchase_order_id).map((h) => h.id);
+    const standaloneLines = standaloneIds.length
+      ? await linesByParent('SELECT * FROM vendor_bill_lines WHERE vendor_bill_id IN (?)', 'vendor_bill_id', standaloneIds)
+      : new Map();
     for (const vb of headers) {
-      const rows = glFor('vendor_bill', vb.id, await computeVendorBillGl(vb, []));
+      const rows = glFor('vendor_bill', vb.id, await computeVendorBillGl(vb, standaloneLines.get(vb.id) || []));
       push(rows, {
         entry_date: vb.date_created, source_type: 'vendor_bill', source_no: vb.bill_no, source_id: vb.id, memo: vb.memo || null,
         location_id: vb.office_location_id || null, department_id: null,

@@ -146,7 +146,7 @@ router.get('/purchase', requireAuth, requirePermission(PURCHASE_ROUTE, 'can_view
     const where = ['1 = 1'];
     const params = [];
 
-    if (supplierId) { where.push('po.supplier_id = ?'); params.push(supplierId); }
+    if (supplierId) { where.push('COALESCE(po.supplier_id, vb.supplier_id) = ?'); params.push(supplierId); }
     if (search) {
       where.push('(vb.bill_no LIKE ? OR vb.reference_no LIKE ? OR po.po_no LIKE ? OR s.name LIKE ? OR s.tin LIKE ?)');
       const like = `%${search}%`;
@@ -159,7 +159,7 @@ router.get('/purchase', requireAuth, requirePermission(PURCHASE_ROUTE, 'can_view
 
     const baseFrom = `FROM vendor_bills vb
        LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
-       LEFT JOIN suppliers s ON s.id = po.supplier_id`;
+       LEFT JOIN suppliers s ON s.id = COALESCE(po.supplier_id, vb.supplier_id)`;
 
     const select = `SELECT vb.id, vb.bill_no, po.po_no AS created_from, vb.reference_no,
               vb.date_created, s.name AS supplier_name,

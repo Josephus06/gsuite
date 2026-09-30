@@ -63,10 +63,10 @@ router.get('/for-vendor-bill/:vbId', requireAuth, requirePermission(ROUTE, 'can_
   try {
     const [[vb]] = await pool.query(
       `SELECT vb.id, vb.bill_no, vb.office_location_id, vb.memo, vb.amount_due,
-              po.supplier_id, s.name AS supplier_name
+              COALESCE(po.supplier_id, vb.supplier_id) AS supplier_id, s.name AS supplier_name
        FROM vendor_bills vb
-       JOIN purchase_orders po ON po.id = vb.purchase_order_id
-       LEFT JOIN suppliers s ON s.id = po.supplier_id
+       LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
+       LEFT JOIN suppliers s ON s.id = COALESCE(po.supplier_id, vb.supplier_id)
        WHERE vb.id = ?`,
       [req.params.vbId]
     );
@@ -84,8 +84,8 @@ router.get('/for-vendor-bill/:vbId', requireAuth, requirePermission(ROUTE, 'can_
     const [applyLines] = await pool.query(
       `SELECT vb2.id AS vendor_bill_id, vb2.bill_no, vb2.date_created, vb2.date_due, vb2.gross_amount, vb2.amount_due
        FROM vendor_bills vb2
-       JOIN purchase_orders po2 ON po2.id = vb2.purchase_order_id
-       WHERE po2.supplier_id = ? AND vb2.status = 'open'
+       LEFT JOIN purchase_orders po2 ON po2.id = vb2.purchase_order_id
+       WHERE COALESCE(po2.supplier_id, vb2.supplier_id) = ? AND vb2.status = 'open'
        ORDER BY vb2.id DESC`,
       [vb.supplier_id]
     );
@@ -112,8 +112,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
               vb.bill_no, s.name AS supplier_name
        FROM bill_credits bc
        JOIN vendor_bills vb ON vb.id = bc.vendor_bill_id
-       JOIN purchase_orders po ON po.id = vb.purchase_order_id
-       LEFT JOIN suppliers s ON s.id = po.supplier_id
+       LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
+       LEFT JOIN suppliers s ON s.id = COALESCE(po.supplier_id, vb.supplier_id)
        ${whereSql}
        ORDER BY bc.id DESC`,
       params
@@ -132,8 +132,8 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
               apcoa.account_code AS ap_account_code, apcoa.account_name AS ap_account_name
        FROM bill_credits bc
        JOIN vendor_bills vb ON vb.id = bc.vendor_bill_id
-       JOIN purchase_orders po ON po.id = vb.purchase_order_id
-       LEFT JOIN suppliers s ON s.id = po.supplier_id
+       LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
+       LEFT JOIN suppliers s ON s.id = COALESCE(po.supplier_id, vb.supplier_id)
        LEFT JOIN locations loc ON loc.id = bc.office_location_id
        LEFT JOIN chart_of_accounts apcoa ON apcoa.id = bc.ap_account_id
        WHERE bc.id = ?`,

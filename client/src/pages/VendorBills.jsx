@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import { useAuth } from '../context/useAuth';
+import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 
 const PAGE_SIZE = 10;
 const STATUS_LABELS = { open: 'Open', paid_in_full: 'Paid in Full', cancelled: 'Cancelled' };
@@ -15,9 +17,12 @@ function money(v) {
 }
 function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
-// Mirrors Saved Invoices' list layout -- the AP-side counterpart, reached from a
-// Purchase Order's "Bill" button rather than its own standalone Add flow.
+// Mirrors Saved Invoices' list layout -- the AP-side counterpart. A PO-backed bill is raised from
+// the Purchase Order's "Bill" button; Create New here raises a standalone expense bill with no PO.
 export default function VendorBills() {
+  const { can } = useAuth();
+  const navigate = useNavigate();
+  const [showCreate, setShowCreate] = useState(false);
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -50,7 +55,17 @@ export default function VendorBills() {
     <div>
       <div className="page-header">
         <h1>Vendor Bills</h1>
+        {can('/vendor-bills', 'can_add') && (
+          <button className="btn btn-primary" onClick={() => setShowCreate(true)}>Create New</button>
+        )}
       </div>
+
+      {showCreate && (
+        <StandaloneVendorBillModal
+          onClose={() => setShowCreate(false)}
+          onSaved={(vb) => { setShowCreate(false); navigate(`/vendor-bills/${vb.id}`); }}
+        />
+      )}
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="filter-grid">
@@ -97,7 +112,7 @@ export default function VendorBills() {
                 {pageRows.map((row) => (
                   <tr key={row.id}>
                     <td data-label="Bill #">{row.bill_no}</td>
-                    <td data-label="PO #">{row.po_no}</td>
+                    <td data-label="PO #">{row.po_no || <span className="muted">No PO</span>}</td>
                     <td data-label="Date Created">{formatDate(row.date_created)}</td>
                     <td data-label="Date Due">{formatDate(row.date_due)}</td>
                     <td data-label="Office Location">{row.office_location_name}</td>

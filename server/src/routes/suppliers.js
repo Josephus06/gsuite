@@ -59,8 +59,8 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     const [[{ balance }]] = await pool.query(
       `SELECT IFNULL(ROUND(SUM(vb.amount_due), 2), 0) AS balance
          FROM vendor_bills vb
-         JOIN purchase_orders po ON po.id = vb.purchase_order_id
-        WHERE po.supplier_id = ?`, [req.params.id]
+         LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
+        WHERE COALESCE(po.supplier_id, vb.supplier_id) = ?`, [req.params.id]
     );
 
     // Items this supplier has been bought from, with the last price paid. Empty until the
@@ -108,8 +108,8 @@ const LEDGER_SQL = `
   UNION ALL
   SELECT 'VB', vb.id, vb.bill_no, vb.date_created, vb.status, vb.reference_no, vb.memo, vb.gross_amount
     FROM vendor_bills vb
-    JOIN purchase_orders po ON po.id = vb.purchase_order_id
-   WHERE po.supplier_id = ?
+    LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
+   WHERE COALESCE(po.supplier_id, vb.supplier_id) = ?
   UNION ALL
   SELECT 'BPAY', bp.id, bp.bill_payment_no, bp.date_created, bp.status, bp.reference_no, bp.memo, bp.total_amount
     FROM bill_payments bp

@@ -99,8 +99,8 @@ async function collectOpenApItemsFromDocs(asOf, filters = {}) {
             vb.gross_amount, vb.wtax_amount, vb.amount_due, vb.status, vb.reference_no, vb.memo,
             po.po_no, loc.location_name
        FROM vendor_bills vb
-       JOIN purchase_orders po ON po.id = vb.purchase_order_id
-       JOIN suppliers s ON s.id = po.supplier_id
+       LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
+       JOIN suppliers s ON s.id = COALESCE(po.supplier_id, vb.supplier_id)
        LEFT JOIN locations loc ON loc.id = vb.office_location_id
       WHERE vb.cancelled_at IS NULL AND vb.status <> 'cancelled' AND vb.date_created <= ?
             ${billLoc.sql}${nameClause}${supClause}`,
@@ -134,8 +134,8 @@ async function collectOpenApItemsFromDocs(asOf, filters = {}) {
             bc.total_amount, bc.memo, loc.location_name
        FROM bill_credits bc
        JOIN vendor_bills vb ON vb.id = bc.vendor_bill_id
-       JOIN purchase_orders po ON po.id = vb.purchase_order_id
-       JOIN suppliers s ON s.id = po.supplier_id
+       LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
+       JOIN suppliers s ON s.id = COALESCE(po.supplier_id, vb.supplier_id)
        LEFT JOIN locations loc ON loc.id = bc.office_location_id
       WHERE bc.status <> 'voided' AND bc.voided_at IS NULL AND bc.date_created <= ?
             ${creditLoc.sql}${nameClause}${supClause}`,
