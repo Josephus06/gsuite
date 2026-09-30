@@ -139,6 +139,15 @@ function Grid({ page }) {
   return <>{lines}</>;
 }
 
+// The Unit Price blank carries the price actually billed per unit: the line's Net of Tax over its
+// quantity, so any discount is already in it -- INV-81981 lists at 159.58 but bills 21,144.64 for
+// 150, i.e. 140.96. The list price (price_per_unit) printed there before. Falls back to the list
+// price only when there is no quantity to divide by.
+const netUnitPrice = (l) => {
+  const qty = Number(l.quantity);
+  return qty > 0 ? Number(l.net_of_tax || 0) / qty : l.price_per_unit;
+};
+
 export default function InvoicePrintType1({ si, totals, calibrate }) {
   const pages = layoutPages(si.lines || [], FORM);
 
@@ -225,7 +234,7 @@ export default function InvoicePrintType1({ si, totals, calibrate }) {
                         ? wrapped.map((t, i) => <div key={i} style={{ whiteSpace: 'nowrap' }}>{t}</div>)
                         : ''}
                     </Field>
-                    <Field spec={{ ...c.unitPrice, y }} calibrate={calibrate && rowIdx === 0} name="unitPrice">{money(l.price_per_unit)}</Field>
+                    <Field spec={{ ...c.unitPrice, y }} calibrate={calibrate && rowIdx === 0} name="unitPrice">{money(netUnitPrice(l))}</Field>
                     <Field spec={{ ...c.amount, y }} calibrate={calibrate && rowIdx === 0} name="amount">{money(l.gross_amount)}</Field>
                   </div>
                 );
