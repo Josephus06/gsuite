@@ -54,7 +54,7 @@ async function listFilter(query, userId) {
   // An invoice has exactly one source -- a Sales Order, an Estimate or a Non-Standard Sales Order --
   // so the customer is whichever of the three it actually has. Same COALESCE everywhere the
   // customer is read below.
-  if (customerId) { where.push('COALESCE(so.customer_id, e.customer_id, ns.customer_id) = ?'); params.push(customerId); }
+  if (customerId) { where.push('COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) = ?'); params.push(customerId); }
   if (salesRepId) { where.push('si.sales_rep_id = ?'); params.push(salesRepId); }
   // Date Created, inclusive at both ends, and either end usable on its own -- "everything since
   // March" is as ordinary a question as a closed month. Compared as plain dates because the
@@ -110,7 +110,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN sales_orders so ON so.id = si.sales_order_id
        LEFT JOIN estimates e ON e.id = si.estimate_id
        LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-       ${needsSource ? 'LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id)' : ''}`;
+       ${needsSource ? 'LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)' : ''}`;
     const [[{ total }]] = await pool.query(
       `SELECT COUNT(*) AS total ${countFrom} ${whereSql}`, params
     );
@@ -125,7 +125,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN sales_orders so ON so.id = si.sales_order_id
        LEFT JOIN estimates e ON e.id = si.estimate_id
        LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id)
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
        LEFT JOIN employees sr ON sr.id = si.sales_rep_id
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        LEFT JOIN departments d ON d.id = si.department_id
@@ -157,7 +157,7 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
        LEFT JOIN sales_orders so ON so.id = si.sales_order_id
        LEFT JOIN estimates e ON e.id = si.estimate_id
        LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id)
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
        LEFT JOIN employees sr ON sr.id = si.sales_rep_id
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        LEFT JOIN departments d ON d.id = si.department_id
@@ -544,6 +544,30 @@ router.get('/by-delivery-ticket/:deliveryTicketId', requireAuth, requirePermissi
 // Every department is offered, not just the ones already on an invoice: a DISTINCT over 74,280
 // rows on an unindexed column costs more than the 29-row table, and a department with no invoices
 // yet is a legitimate thing to ask about and get an empty list for.
+// What the standalone (no-order) invoice form picks from: every active customer with its agreed
+// term, the sellable items, and the tax codes. Served under this page's own can_view for the same
+// reason /meta is -- a picker borrowing another page's scope sits empty for whoever lacks it.
+router.get('/standalone-meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [customers] = await pool.query(
+      `SELECT c.id, c.name, c.company_name, c.customer_code, c.tin, pt.term_name AS customer_term,
+              (SELECT a.address_line FROM customer_addresses a WHERE a.customer_id = c.id
+                ORDER BY (a.address_type = 'BILLING') DESC, a.is_default DESC, a.id LIMIT 1) AS address
+         FROM customers c LEFT JOIN payment_terms pt ON pt.id = c.payment_term_id
+        WHERE c.is_active = 1 ORDER BY c.name`
+    );
+    const [items] = await pool.query(
+      `SELECT i.id, i.item_code, i.display_name, i.item_type, i.selling_price, u.code AS unit
+         FROM inventories i LEFT JOIN units_of_measure u ON u.id = COALESCE(i.sales_unit_id, i.base_unit_id)
+        WHERE i.is_active = 1 ORDER BY i.item_code`
+    );
+    const [taxes] = await pool.query('SELECT id, code, rate FROM taxes ORDER BY code');
+    res.json({ customers, items, taxes });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [departments] = await pool.query('SELECT id, name FROM departments ORDER BY name');
@@ -599,7 +623,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
        LEFT JOIN estimates e ON e.id = si.estimate_id
        LEFT JOIN delivery_tickets dt ON dt.id = si.delivery_ticket_id
        LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id)
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
        LEFT JOIN employees sr ON sr.id = si.sales_rep_id
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        LEFT JOIN departments d ON d.id = si.department_id
@@ -625,9 +649,13 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // resolve. job_order_no stays null on those lines and the JO # column reads empty, which is
     // the truth: no Job Order exists until the Estimate is converted.
     const [lines] = await pool.query(
-      `SELECT sil.*, jo.job_order_no, jt.item_code, jt.display_name AS item_name
+      `SELECT sil.*, jo.job_order_no,
+              COALESCE(jt.item_code, inv.item_code) AS item_code,
+              COALESCE(jt.display_name, inv.display_name) AS item_name,
+              inv.income_account_id
        FROM sales_invoice_lines sil
        LEFT JOIN job_orders jo ON jo.id = sil.job_order_id
+       LEFT JOIN inventories inv ON inv.id = sil.item_id
        LEFT JOIN sales_order_lines sol ON sol.id = sil.sales_order_line_id
        LEFT JOIN job_types jt ON jt.id = COALESCE(jo.job_type_id, sol.job_type_id, sil.job_type_id)
        WHERE sil.sales_invoice_id = ?`,
@@ -985,6 +1013,102 @@ async function billNsso(req, res, conn) {
   return res.status(201).json(row);
 }
 
+// A standalone invoice names its customer itself and has no source document.
+const isStandalone = (b) => Boolean(b && b.customer_id && !b.sales_order_id && !b.estimate_id && !b.nsso_id && !b.delivery_ticket_id);
+
+// Billing a customer directly, with item lines and no order behind it -- the source raises its
+// monthly rent this way (INV-83455: RENTAL, 1 LOT x 15,000, 8% withheld). Nothing is delivered
+// against it and no Job Order moves, so the lines are exactly what was typed; the amounts are
+// computed here from quantity, price, discount and the tax code's rate, never taken from the
+// browser. The customer is recorded on the invoice itself (sales_invoices.customer_id).
+async function billStandalone(req, res, conn) {
+  const {
+    customer_id: customerId, date_created: dateCreated, date_due: dateDue, term, bs_si_no: bsSiNo,
+    po_no: poNo, sales_rep_id: salesRepId, office_location_id: officeLocationId, department_id: departmentId,
+    bill_to_address: billToAddress, memo, withholding_tax_pct: withholdingTaxPct, lines: rawLines,
+  } = req.body;
+
+  const [[cust]] = await conn.query('SELECT id, name FROM customers WHERE id = ?', [customerId]);
+  if (!cust) return res.status(400).json({ error: 'Choose a customer.' });
+
+  const submitted = (Array.isArray(rawLines) ? rawLines : []).filter((l) => Number(l.quantity) > 0);
+  if (!submitted.length) return res.status(400).json({ error: 'Add at least one item with a quantity.' });
+
+  const itemIds = [...new Set(submitted.map((l) => Number(l.item_id)).filter(Boolean))];
+  const [items] = itemIds.length
+    ? await conn.query('SELECT id, item_code, display_name FROM inventories WHERE id IN (?)', [itemIds])
+    : [[]];
+  const itemById = new Map(items.map((i) => [i.id, i]));
+  const [taxes] = await conn.query('SELECT id, code, rate FROM taxes');
+  const taxById = new Map(taxes.map((t) => [t.id, t]));
+
+  const lines = [];
+  for (const l of submitted) {
+    const item = l.item_id ? itemById.get(Number(l.item_id)) : null;
+    if (l.item_id && !item) return res.status(400).json({ error: 'One of the items no longer exists.' });
+    const description = String(l.description || '').trim() || (item ? item.display_name : '');
+    if (!description) return res.status(400).json({ error: 'Every line needs an item or a description.' });
+    const price = Number(l.price_per_unit);
+    if (!Number.isFinite(price) || price < 0) return res.status(400).json({ error: `Enter a price for ${description}.` });
+    const tax = l.tax_code_id ? taxById.get(Number(l.tax_code_id)) : null;
+    const qty = Number(l.quantity);
+    const amounts = computeBillableLineAmounts({
+      pricePerUnit: price, discPercent: l.disc_percent, taxRate: tax ? tax.rate : 0, billableQty: qty,
+    });
+    lines.push({
+      item_id: item ? item.id : null, description, quantity: qty, units: l.units || null, price_per_unit: price,
+      disc_percent: Number(l.disc_percent || 0), tax_code: tax ? tax.code : null, ...amounts,
+    });
+  }
+
+  const subtotal = lines.reduce((sum, l) => sum + l.subtotal, 0);
+  const discountAmount = lines.reduce((sum, l) => sum + l.disc_amount, 0);
+  const netOfTax = lines.reduce((sum, l) => sum + l.net_of_tax, 0);
+  const taxAmount = lines.reduce((sum, l) => sum + l.tax_amount, 0);
+  const grossAmount = lines.reduce((sum, l) => sum + l.gross_amount, 0);
+  const ewtAmount = Number((netOfTax * (Number(withholdingTaxPct || 0) / 100)).toFixed(2));
+  const amountDue = Number((grossAmount - ewtAmount).toFixed(2));
+  await assertPeriodOpen(dateCreated, 'ar', conn);
+
+  await conn.beginTransaction();
+  const [result] = await conn.query(
+    `INSERT INTO sales_invoices
+       (invoice_no, invoice_type, customer_id, date_created, date_due, term, bs_si_no, po_no, sales_rep_id, office_location_id,
+        department_id, bill_to_address, memo, withholding_tax_pct, subtotal, discount_amount, net_of_tax,
+        ewt_amount, tax_amount, gross_amount, amount_due, created_by_user_id)
+     VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      normaliseInvoiceType(req.body.invoice_type), cust.id, dateCreated || new Date().toISOString().slice(0, 10), dateDue || null, term || null,
+      bsSiNo || null, poNo || null, salesRepId || null, officeLocationId || null, departmentId || null,
+      billToAddress || null, memo || null, withholdingTaxPct || 0, subtotal, discountAmount, netOfTax,
+      ewtAmount, taxAmount, grossAmount, amountDue, req.user.id,
+    ]
+  );
+  const invoiceId = result.insertId;
+  const invoiceNo = await assignDocNo(conn, { table: 'sales_invoices', column: 'invoice_no', prefix: 'INV-', id: invoiceId });
+
+  for (const l of lines) {
+    await conn.query(
+      `INSERT INTO sales_invoice_lines
+         (sales_invoice_id, item_id, description, quantity, units, price_per_unit, subtotal, disc_percent,
+          disc_amount, disc_price_per_unit, net_of_tax, tax_code, tax_amount, gross_amount)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        invoiceId, l.item_id, l.description, l.quantity, l.units, l.price_per_unit, l.subtotal, l.disc_percent,
+        l.disc_amount, l.quantity ? Number((l.net_of_tax / l.quantity).toFixed(4)) : null, l.net_of_tax,
+        l.tax_code, l.tax_amount, l.gross_amount,
+      ]
+    );
+  }
+
+  await logAudit(conn, { invoiceId, userId: req.user.id, eventType: 'Created', fieldName: 'invoice_no', newValue: invoiceNo });
+  await logAudit(conn, { invoiceId, userId: req.user.id, eventType: 'Created', fieldName: 'customer_id', newValue: cust.name });
+  await conn.commit();
+
+  const [[row]] = await pool.query('SELECT * FROM sales_invoices WHERE id = ?', [invoiceId]);
+  return res.status(201).json(row);
+}
+
 // Which permission a create needs depends on what is being created.
 //
 // Raising an invoice against an Estimate is an ADD -- Create New on the invoice list, a new
@@ -1019,7 +1143,7 @@ async function requireInvoiceCreatePermission(req, res, next) {
       if (await userCan(req.user.id, ROUTE, 'can_view')) return next();
       return res.status(403).json({ error: 'You do not have permission to perform this action' });
     }
-    const action = req.body?.estimate_id ? 'can_add' : 'can_edit';
+    const action = req.body?.estimate_id || isStandalone(req.body) ? 'can_add' : 'can_edit';
     if (await userCan(req.user.id, ROUTE, action)) return next();
     return res.status(403).json({ error: 'You do not have permission to perform this action' });
   } catch (err) {
@@ -1045,6 +1169,10 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
     // A Non-Standard Sales Order bills like a Sales Order, from its own lines and Job Orders.
     if (req.body.nsso_id) {
       return billNsso(req, res, conn);
+    }
+    // No order at all: a customer and item lines (monthly rent, one-off charges).
+    if (isStandalone(req.body)) {
+      return billStandalone(req, res, conn);
     }
 
     if (!salesOrderId) return res.status(400).json({ error: 'Sales Order is required.' });

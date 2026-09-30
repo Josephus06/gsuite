@@ -140,7 +140,7 @@ async function collectOpenItemsFromDocs(asOf, filters = {}) {
      LEFT JOIN sales_orders so ON so.id = si.sales_order_id
      LEFT JOIN estimates e ON e.id = si.estimate_id
      LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-     JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id)
+     JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
      LEFT JOIN locations loc ON loc.id = si.office_location_id
      WHERE si.status != 'cancelled' AND si.date_created <= ?${invLoc.sql}${nameClause}${custClause}`,
     [asOf, ...invLoc.params, ...nameParam, ...custParam]
@@ -487,7 +487,7 @@ async function buildArAgingCustomerDetailsFromDocs(customerId, asOf) {
      LEFT JOIN sales_orders so ON so.id = si.sales_order_id
      LEFT JOIN estimates e ON e.id = si.estimate_id
      LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-     WHERE COALESCE(so.customer_id, e.customer_id, ns.customer_id) = ? AND si.status != 'cancelled' AND si.date_created <= ?`,
+     WHERE COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) = ? AND si.status != 'cancelled' AND si.date_created <= ?`,
     [asOf, asOf, customerId, asOf]
   );
 
@@ -567,7 +567,7 @@ async function buildArAgingCustomerLedger(customerId, asOf) {
      LEFT JOIN sales_orders so ON so.id = si.sales_order_id
      LEFT JOIN estimates e ON e.id = si.estimate_id
      LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-     WHERE COALESCE(so.customer_id, e.customer_id, ns.customer_id) = ? AND si.status != 'cancelled' AND si.date_created <= ?`,
+     WHERE COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) = ? AND si.status != 'cancelled' AND si.date_created <= ?`,
     [customerId, asOf]
   );
   for (const si of invoices) {

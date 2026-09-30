@@ -175,7 +175,7 @@ export default function SalesInvoiceView() {
                 <button type="button" className="link-btn" onClick={() => navigate(`/estimates/${si.estimate_id}`)}>{si.estimate_no}</button>
               ) : si.nsso_id ? (
                 <button type="button" className="link-btn" onClick={() => navigate(`/non-standard-sales-orders/${si.nsso_id}`)}>{si.nsso_no}</button>
-              ) : <span className="hi">—</span>}
+              ) : <span className="hi">{si.customer_id ? 'Direct (no order)' : '—'}</span>}
             </div>
             {si.delivery_ticket_id && (
               <div>Delivery Ticket : <button type="button" className="link-btn" onClick={() => navigate(`/delivery-tickets/${si.delivery_ticket_id}`)}>{si.dt_no}</button></div>

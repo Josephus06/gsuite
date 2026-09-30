@@ -61,7 +61,7 @@ router.get('/open', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
        LEFT JOIN sales_orders so ON so.id = si.sales_order_id
        LEFT JOIN estimates e ON e.id = si.estimate_id
        LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-       JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id)
+       JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
        LEFT JOIN users fu ON fu.id = si.collection_forecast_set_by_user_id`;
     const whereSql = `WHERE ${where.join(' AND ')}`;
 
@@ -104,7 +104,7 @@ router.get('/customers', requireAuth, requirePermission(ROUTE, 'can_view'), asyn
          LEFT JOIN sales_orders so ON so.id = si.sales_order_id
          LEFT JOIN estimates e ON e.id = si.estimate_id
          LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-         JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id)
+         JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
         WHERE ${OPEN_INVOICE}
         GROUP BY c.id, c.name
         ORDER BY c.name`,
@@ -183,7 +183,7 @@ router.get('/calendar', requireAuth, requirePermission(ROUTE, 'can_view'), async
          LEFT JOIN sales_orders so ON so.id = si.sales_order_id
          LEFT JOIN estimates e ON e.id = si.estimate_id
          LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-         JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id)
+         JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
         WHERE ${where.join(' AND ')}
         ORDER BY c.name, si.date_due IS NULL, si.date_due, si.id`,
       params,

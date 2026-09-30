@@ -4,7 +4,7 @@ import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import SyncFromSourceButton from '../components/SyncFromSourceButton';
-import SalesInvoiceModal from '../components/SalesInvoiceModal';
+import StandaloneInvoiceModal from '../components/StandaloneInvoiceModal';
 import { useAuth } from '../context/useAuth';
 
 import { displayDate } from '../utils/dates';
@@ -151,8 +151,9 @@ export default function SalesInvoices() {
       </div>
 
       {showCreate && (
-        <SalesInvoiceModal
-          fromEstimate
+        // Create New bills a customer directly, with item lines and no order behind it (rent and
+        // other one-off charges). Order-based invoices are raised from the order itself.
+        <StandaloneInvoiceModal
           onClose={() => setShowCreate(false)}
           onSaved={(si) => { setShowCreate(false); navigate(`/sales-invoices/${si.id}`); }}
         />

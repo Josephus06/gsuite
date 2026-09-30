@@ -117,7 +117,34 @@ async function computeSalesInvoiceGl(si, lines) {
   const grossAmount = Number(si.gross_amount) || 0;
   const netOfTax = Number(si.net_of_tax) || 0;
   if (grossAmount) rows.push({ account_code: arAcct.account_code, account_name: arAcct.account_name, debit: grossAmount, credit: 0 });
-  if (netOfTax) rows.push({ account_code: salesAcct.account_code, account_name: salesAcct.account_name, debit: 0, credit: netOfTax });
+
+  // A line billing an inventory item (a standalone invoice's lines -- RENTAL, say) credits that
+  // item's own income account; everything else, and any item with none set, credits Sales. The
+  // split is taken out of the header's Net of Tax, so the entry balances exactly as it always did.
+  const incomeByAccount = new Map(); // account id -> net
+  const itemLines = lines.filter((l) => l.item_id && Number(l.net_of_tax));
+  if (itemLines.length) {
+    const missing = [...new Set(itemLines.filter((l) => l.income_account_id === undefined).map((l) => l.item_id))];
+    const incomeOf = new Map(itemLines.filter((l) => l.income_account_id !== undefined).map((l) => [l.item_id, l.income_account_id]));
+    if (missing.length) {
+      const [inv] = await pool.query('SELECT id, income_account_id FROM inventories WHERE id IN (?)', [missing]);
+      for (const i of inv) incomeOf.set(i.id, i.income_account_id);
+    }
+    for (const l of itemLines) {
+      const acctId = incomeOf.get(l.item_id);
+      if (acctId) incomeByAccount.set(acctId, (incomeByAccount.get(acctId) || 0) + Number(l.net_of_tax));
+    }
+  }
+  let toSales = netOfTax;
+  for (const [acctId, amt] of incomeByAccount) {
+    const acct = await coaById(acctId);
+    if (!acct) continue;
+    const credit = Number(amt.toFixed(2));
+    rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: 0, credit });
+    toSales -= credit;
+  }
+  toSales = Number(toSales.toFixed(2));
+  if (toSales) rows.push({ account_code: salesAcct.account_code, account_name: salesAcct.account_name, debit: 0, credit: toSales });
 
   const taxTotals = new Map(); // tax_code -> amount
   for (const l of lines) {
