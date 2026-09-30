@@ -46,7 +46,7 @@ router.get('/open', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
     const where = [OPEN_INVOICE];
     const params = [];
 
-    if (customerId) { where.push('so.customer_id = ?'); params.push(customerId); }
+    if (customerId) { where.push('c.id = ?'); params.push(customerId); }
     // Which half of the worklist to show: what still needs planning, or what has been planned.
     if (forecast === 'unset') where.push('si.collection_forecast_date IS NULL');
     if (forecast === 'set') where.push('si.collection_forecast_date IS NOT NULL');
@@ -58,8 +58,10 @@ router.get('/open', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
     }
 
     const baseFrom = `FROM sales_invoices si
-       JOIN sales_orders so ON so.id = si.sales_order_id
-       JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+       LEFT JOIN estimates e ON e.id = si.estimate_id
+       LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
+       JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id)
        LEFT JOIN users fu ON fu.id = si.collection_forecast_set_by_user_id`;
     const whereSql = `WHERE ${where.join(' AND ')}`;
 
@@ -99,8 +101,10 @@ router.get('/customers', requireAuth, requirePermission(ROUTE, 'can_view'), asyn
     const [rows] = await pool.query(
       `SELECT c.id, c.name, COUNT(*) AS open_invoices, COALESCE(SUM(si.amount_due), 0) AS outstanding
          FROM sales_invoices si
-         JOIN sales_orders so ON so.id = si.sales_order_id
-         JOIN customers c ON c.id = so.customer_id
+         LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+         LEFT JOIN estimates e ON e.id = si.estimate_id
+         LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
+         JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id)
         WHERE ${OPEN_INVOICE}
         GROUP BY c.id, c.name
         ORDER BY c.name`,
@@ -170,14 +174,16 @@ router.get('/calendar', requireAuth, requirePermission(ROUTE, 'can_view'), async
     const { customer_id: customerId } = req.query;
     const where = [OPEN_INVOICE, 'si.collection_forecast_date BETWEEN ? AND ?'];
     const params = [start, end];
-    if (customerId) { where.push('so.customer_id = ?'); params.push(customerId); }
+    if (customerId) { where.push('c.id = ?'); params.push(customerId); }
 
     const [rows] = await pool.query(
       `SELECT si.id, si.invoice_no, si.date_created, si.date_due, si.amount_due,
               si.collection_forecast_date, c.id AS customer_id, c.name AS customer_name
          FROM sales_invoices si
-         JOIN sales_orders so ON so.id = si.sales_order_id
-         JOIN customers c ON c.id = so.customer_id
+         LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+         LEFT JOIN estimates e ON e.id = si.estimate_id
+         LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
+         JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id)
         WHERE ${where.join(' AND ')}
         ORDER BY c.name, si.date_due IS NULL, si.date_due, si.id`,
       params,

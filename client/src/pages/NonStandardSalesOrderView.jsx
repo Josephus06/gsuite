@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import NsjoCreateModal from '../components/NsjoCreateModal';
+import SalesInvoiceModal from '../components/SalesInvoiceModal';
 import { displayDate, displayDateTime } from '../utils/dates';
 
 const TYPE_LABELS = { rma: 'RMA', rma_installation: 'RMA - Installation', sample: 'Sample', internal: 'Internal' };
@@ -12,18 +13,24 @@ const TYPE_LABELS = { rma: 'RMA', rma_installation: 'RMA - Installation', sample
 const STATUS = {
   pending_approval: ['Pending', 'Needs Approval'], pending_for_jo: ['Pending for JO', 'Approved'],
   jo_in_process: ['JO In-Process', ''], billed: ['Billed', ''], cancelled: ['Cancelled', ''],
+  // Delivery and billing move an NSSO through the same statuses a Sales Order goes through.
+  pending_delivery: ['Pending Delivery', ''], partially_delivered: ['Partially Delivered', ''],
+  pending_billing: ['Pending Billing', ''], pending_billing_partially_delivered: ['Pending Billing', 'Partially Delivered'],
 };
+const num = (v) => Number(v || 0);
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'; }
 function formatDate(v) { return v ? displayDate(v) : ''; }
 
 export default function NonStandardSalesOrderView() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const [n, setN] = useState(null);
   const [tab, setTab] = useState('items');
   const [auditLogs, setAuditLogs] = useState([]);
   const [joModalLine, setJoModalLine] = useState(null);
+  const [showBillMenu, setShowBillMenu] = useState(false);
+  const [billType, setBillType] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -44,6 +51,14 @@ export default function NonStandardSalesOrderView() {
   const notApproved = n.status === 'pending_approval';
   const [statusMain, statusSub] = STATUS[n.status] || [n.status, ''];
   const b = n.billing || {};
+  // Delivered and billed exactly like a Sales Order: Item Delivery once a line's Job Order has
+  // something built and QI'd but not yet shipped, Bill once something shipped is not yet invoiced.
+  // Same permissions the Sales Order buttons ask for.
+  const hasDeliverableLine = isOpen && n.lines.some((l) => l.created_job_order_id
+    && Math.min(num(l.quantity_built), num(l.quantity_inspected)) - num(l.quantity_delivered) > 0);
+  const hasInvoiceableLine = isOpen && n.lines.some((l) => l.created_job_order_id && num(l.quantity_delivered) > num(l.quantity_invoiced));
+  const canRaiseDelivery = can('/item-deliveries', 'can_add');
+  const canBillSI = can('/sales-invoices', user?.is_head_office === false ? 'can_view' : 'can_edit');
 
   return (
     <div>
@@ -53,6 +68,18 @@ export default function NonStandardSalesOrderView() {
           <button className="btn btn-sm" onClick={() => navigate('/non-standard-sales-orders')}>Back</button>
           {canEdit && isOpen && <button className="btn btn-sm" onClick={() => navigate(`/non-standard-sales-orders/${id}/edit`)}>Edit</button>}
           {canApprove && notApproved && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>Approve</button>}
+          {hasDeliverableLine && canRaiseDelivery && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/non-standard-sales-orders/${id}/item-delivery/new`)}>Item Delivery</button>}
+          {hasInvoiceableLine && canBillSI && (
+            <div style={{ position: 'relative' }}>
+              <button className="btn btn-sm btn-primary" onClick={() => setShowBillMenu((v) => !v)}>Bill ▾</button>
+              {showBillMenu && (
+                <div className="card" style={{ position: 'absolute', right: 0, top: '110%', zIndex: 20, padding: 6, minWidth: 80 }}>
+                  <button type="button" className="btn btn-sm" style={{ width: '100%', marginBottom: 4 }} onClick={() => { setShowBillMenu(false); setBillType('SI'); }}>SI</button>
+                  <button type="button" className="btn btn-sm" style={{ width: '100%' }} onClick={() => { setShowBillMenu(false); setBillType('DR'); }}>DR</button>
+                </div>
+              )}
+            </div>
+          )}
           {canEdit && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
         </div>
       </div>
@@ -146,8 +173,8 @@ export default function NonStandardSalesOrderView() {
                     <td>{l.job_location_name}</td>
                     <td>{l.description}</td>
                     <td style={{ textAlign: 'right' }}>{Number(l.quantity)}</td>
-                    <td style={{ textAlign: 'right' }}>0</td><td style={{ textAlign: 'right' }}>0</td>
-                    <td style={{ textAlign: 'right' }}>0</td><td style={{ textAlign: 'right' }}>0</td>
+                    <td style={{ textAlign: 'right' }}>{num(l.quantity_built)}</td><td style={{ textAlign: 'right' }}>{num(l.quantity_inspected)}</td>
+                    <td style={{ textAlign: 'right' }}>{num(l.quantity_delivered)}</td><td style={{ textAlign: 'right' }}>{num(l.quantity_invoiced)}</td>
                     <td>{l.units}</td>
                     <td style={{ textAlign: 'right' }}>{money(l.net_of_tax)}</td>
                     <td style={{ textAlign: 'right' }}>{l.length ?? '-'}</td><td style={{ textAlign: 'right' }}>{l.width ?? '-'}</td>
@@ -181,7 +208,18 @@ export default function NonStandardSalesOrderView() {
                     <td><button type="button" className="link-btn" onClick={() => navigate(`/job-orders/${l.created_job_order_id}`)}>{l.created_job_order_no}</button></td>
                     <td></td></tr>
                 ))}
-                {!n.nested_sales_order_no && !n.nested_estimate_no && !n.lines.some((l) => l.created_job_order_no) && (
+                {(n.deliveries || []).map((d) => (
+                  <tr key={`del-${d.id}`}><td>Item Delivery</td>
+                    <td><button type="button" className="link-btn" onClick={() => navigate(`/item-deliveries/${d.id}`)}>{d.delivery_no}</button></td>
+                    <td>{d.status}</td></tr>
+                ))}
+                {(n.invoices || []).map((si) => (
+                  <tr key={`si-${si.id}`}><td>Invoice</td>
+                    <td><button type="button" className="link-btn" onClick={() => navigate(`/sales-invoices/${si.id}`)}>{si.invoice_no}</button></td>
+                    <td>{si.status}</td></tr>
+                ))}
+                {!n.nested_sales_order_no && !n.nested_estimate_no && !n.lines.some((l) => l.created_job_order_no)
+                  && !(n.deliveries || []).length && !(n.invoices || []).length && (
                   <tr><td colSpan={3} className="muted" style={{ textAlign: 'center', padding: 20 }}>No related records.</td></tr>
                 )}
               </tbody>
@@ -202,6 +240,15 @@ export default function NonStandardSalesOrderView() {
             emptyLabel="No audit history yet."
           />
         </div>
+      )}
+
+      {billType && (
+        <SalesInvoiceModal
+          nssoId={Number(id)}
+          invoiceType={billType}
+          onClose={() => setBillType(null)}
+          onSaved={async (si) => { setBillType(null); await load(); navigate(`/sales-invoices/${si.id}`); }}
+        />
       )}
 
       {joModalLine && (

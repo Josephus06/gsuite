@@ -154,7 +154,7 @@ export default function ItemDeliveryView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(`/sales-orders/${d.sales_order_id}`)}>Back to Lists</button>
+          <button className="btn btn-sm" onClick={() => navigate(d.nsso_id ? `/non-standard-sales-orders/${d.nsso_id}` : `/sales-orders/${d.sales_order_id}`)}>Back to Lists</button>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Item Delivery isn't implemented in this build">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           {canVoid && !isCancelled && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
@@ -170,7 +170,7 @@ export default function ItemDeliveryView() {
         </div>
         <div className="estimate-status">
           {isCancelled ? 'Cancelled' : 'Saved'}
-          <button type="button" className="estimate-so-link" onClick={() => navigate(`/sales-orders/${d.sales_order_id}`)}>
+          <button type="button" className="estimate-so-link" onClick={() => navigate(d.nsso_id ? `/non-standard-sales-orders/${d.nsso_id}` : `/sales-orders/${d.sales_order_id}`)}>
             {d.sales_order_no}
           </button>
         </div>
@@ -291,7 +291,7 @@ export default function ItemDeliveryView() {
                 <tr>
                   <td>{formatDate(d.date_created)}</td>
                   <td>
-                    <button type="button" className="link-btn" onClick={() => navigate(`/sales-orders/${d.sales_order_id}`)}>
+                    <button type="button" className="link-btn" onClick={() => navigate(d.nsso_id ? `/non-standard-sales-orders/${d.nsso_id}` : `/sales-orders/${d.sales_order_id}`)}>
                       {d.sales_order_no}
                     </button>
                   </td>

@@ -290,7 +290,10 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     }
     const [lines] = await pool.query(
       `SELECT l.*, jt.display_name AS job_type_name, jl.location_name AS job_location_name,
-              sjo.job_order_no AS source_job_order_no, cjo.job_order_no AS created_job_order_no
+              sjo.job_order_no AS source_job_order_no, cjo.job_order_no AS created_job_order_no,
+              -- The line's Job Order progress, which decides whether Item Delivery and Bill apply --
+              -- the same quantities a Sales Order line is judged on.
+              cjo.quantity_built, cjo.quantity_inspected, cjo.quantity_delivered, cjo.quantity_invoiced
        FROM non_standard_sales_order_lines l
        LEFT JOIN job_types jt ON jt.id = l.job_type_id
        LEFT JOIN locations jl ON jl.id = l.job_location_id
@@ -311,7 +314,14 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       );
       billing = b || null;
     }
-    res.json({ ...n, lines, billing });
+    // Related Records: what has been delivered and billed off this NSSO.
+    const [deliveries] = await pool.query(
+      'SELECT id, delivery_no, date_created, status FROM item_deliveries WHERE nsso_id = ? ORDER BY id DESC', [req.params.id]
+    );
+    const [invoices] = await pool.query(
+      'SELECT id, invoice_no, date_created, gross_amount, status FROM sales_invoices WHERE nsso_id = ? ORDER BY id DESC', [req.params.id]
+    );
+    res.json({ ...n, lines, billing, deliveries, invoices });
   } catch (err) { next(err); }
 });
 

@@ -16,8 +16,12 @@ function size(l) {
 // Sales Order's Item Delivery button. Only JO lines with something both Built and QI'd
 // that hasn't shipped yet show up; each line's Qty to Deliver is capped at
 // min(quantity_built, quantity_inspected) - quantity_delivered, enforced server-side.
-export default function ItemDelivery() {
+// Reached from a Non-Standard Sales Order too (source="nsso"): the same form over that order's
+// lines, saved against the NSSO instead of a Sales Order.
+export default function ItemDelivery({ source = 'sales-order' }) {
   const { id } = useParams();
+  const isNsso = source === 'nsso';
+  const backTo = isNsso ? `/non-standard-sales-orders/${id}` : `/sales-orders/${id}`;
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
@@ -32,8 +36,9 @@ export default function ItemDelivery() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.get(`/item-deliveries/for-sales-order/${id}`).then(({ data: d }) => { setData(d); setLoading(false); });
-  }, [id]);
+    api.get(isNsso ? `/item-deliveries/for-nsso/${id}` : `/item-deliveries/for-sales-order/${id}`)
+      .then(({ data: d }) => { setData(d); setLoading(false); });
+  }, [id, isNsso]);
 
   // Its own call rather than part of the form payload: the list is tiny, rarely changes, and
   // keeping it separate means adding a courier does not touch the delivery endpoint.
@@ -56,7 +61,7 @@ export default function ItemDelivery() {
     setSaving(true);
     try {
       const { data: created } = await api.post('/item-deliveries', {
-        sales_order_id: Number(id),
+        ...(isNsso ? { nsso_id: Number(id) } : { sales_order_id: Number(id) }),
         date_created: dateCreated,
         memo,
         lines: payload,
@@ -77,7 +82,7 @@ export default function ItemDelivery() {
       <div className="page-header">
         <h1>Item Delivery</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(`/sales-orders/${id}`)}>Back to Lists</button>
+          <button className="btn btn-sm" onClick={() => navigate(backTo)}>Back to Lists</button>
           <button className="btn btn-sm btn-primary" disabled={saving} onClick={handleSave}>{saving ? <LoadingSpinner inline size="sm" label="Saving..." /> : 'Save'}</button>
         </div>
       </div>
@@ -100,7 +105,7 @@ export default function ItemDelivery() {
           </div>
           <div className="field">
             <label>Created Form</label>
-            <div><button type="button" className="link-btn" onClick={() => navigate(`/sales-orders/${id}`)}>{data.sales_order_no}</button></div>
+            <div><button type="button" className="link-btn" onClick={() => navigate(backTo)}>{data.sales_order_no}</button></div>
           </div>
         </div>
       </div>

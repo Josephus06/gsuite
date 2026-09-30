@@ -173,6 +173,8 @@ export default function SalesInvoiceView() {
                 <button type="button" className="link-btn" onClick={() => navigate(`/sales-orders/${si.sales_order_id}`)}>{si.sales_order_no}</button>
               ) : si.estimate_id ? (
                 <button type="button" className="link-btn" onClick={() => navigate(`/estimates/${si.estimate_id}`)}>{si.estimate_no}</button>
+              ) : si.nsso_id ? (
+                <button type="button" className="link-btn" onClick={() => navigate(`/non-standard-sales-orders/${si.nsso_id}`)}>{si.nsso_no}</button>
               ) : <span className="hi">—</span>}
             </div>
             {si.delivery_ticket_id && (
@@ -286,6 +288,9 @@ export default function SalesInvoiceView() {
           )}
           {si.estimate_id && (
             <p>Estimate: <button type="button" className="btn btn-sm" onClick={() => navigate(`/estimates/${si.estimate_id}`)}>{si.estimate_no}</button></p>
+          )}
+          {si.nsso_id && (
+            <p>Non-Standard SO: <button type="button" className="btn btn-sm" onClick={() => navigate(`/non-standard-sales-orders/${si.nsso_id}`)}>{si.nsso_no}</button></p>
           )}
           {si.delivery_ticket_id && (
             <p>Delivery Ticket: <button type="button" className="btn btn-sm" onClick={() => navigate(`/delivery-tickets/${si.delivery_ticket_id}`)}>{si.dt_no}</button></p>

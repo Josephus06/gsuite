@@ -290,6 +290,7 @@ function App() {
         <Route path="/non-standard-sales-orders/new" element={<NonStandardSalesOrderWizard />} />
         <Route path="/non-standard-sales-orders/:id/edit" element={<NonStandardSalesOrderWizard />} />
         <Route path="/non-standard-sales-orders/:id" element={<NonStandardSalesOrderView />} />
+        <Route path="/non-standard-sales-orders/:id/item-delivery/new" element={<ItemDelivery source="nsso" />} />
         <Route path="/warranty-certificates" element={<WarrantyCertificates />} />
         <Route path="/warranty-certificates/new" element={<WarrantyCertificateForm />} />
         <Route path="/warranty-certificates/:id/edit" element={<WarrantyCertificateForm />} />

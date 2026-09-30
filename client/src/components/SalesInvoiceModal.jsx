@@ -37,8 +37,11 @@ function addDays(dateStr, days) {
 // behind a flag rather than deleted, since the Estimate flow below still depends on it -- with it
 // hidden, Create New cannot pick an Estimate, so it cannot produce an invoice either.
 const SHOW_ESTIMATE_FIELD = false;
+//
+// From a Non-Standard Sales Order (pass nssoId) it is the Sales Order flow over the NSSO's lines:
+// each line's delivered-but-uninvoiced gap, billed to the NSSO's customer.
 
-export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, fromEstimate, invoiceType = 'SI', onClose, onSaved }) {
+export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicketId, fromEstimate, invoiceType = 'SI', onClose, onSaved }) {
   const [data, setData] = useState(null);
   const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
   const [dateDue, setDateDue] = useState('');
@@ -75,7 +78,9 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, from
       ? `/sales-invoices/for-delivery-ticket/${deliveryTicketId}`
       : fromEstimate
         ? (estimate ? `/sales-invoices/for-estimate/${estimate.id}` : null)
-        : `/sales-invoices/for-sales-order/${salesOrderId}`;
+        : nssoId
+          ? `/sales-invoices/for-nsso/${nssoId}`
+          : `/sales-invoices/for-sales-order/${salesOrderId}`;
     Promise.all([
       source ? api.get(source) : Promise.resolve(null),
       api.get('/employees'),
@@ -141,7 +146,7 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, from
       setError(err.response?.data?.error || 'Could not load this record.');
       setLoading(false);
     });
-  }, [salesOrderId, deliveryTicketId, fromTicket, fromEstimate, estimate]);
+  }, [salesOrderId, nssoId, deliveryTicketId, fromTicket, fromEstimate, estimate]);
 
   if (loading || (!data && !error)) {
     return (
@@ -165,7 +170,7 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, from
   // A ticket-sourced line may be an ad-hoc charge with no sales_order_line_id at all, so
   // it needs its own key; SO-sourced lines keep using theirs, and estimate-sourced lines
   // are keyed on the estimate line they came from.
-  const lineKey = (l, idx) => l.delivery_ticket_line_id ?? l.sales_order_line_id ?? l.estimate_job_order_id ?? idx;
+  const lineKey = (l, idx) => l.delivery_ticket_line_id ?? l.sales_order_line_id ?? l.nsso_line_id ?? l.estimate_job_order_id ?? idx;
   const includedLines = data.lines.filter((l, idx) => !excludedIds.has(lineKey(l, idx)));
   const subtotal = includedLines.reduce((s, l) => s + Number(l.subtotal || 0), 0);
   const discountAmount = includedLines.reduce((s, l) => s + Number(l.disc_amount || 0), 0);
@@ -192,8 +197,10 @@ export default function SalesInvoiceModal({ salesOrderId, deliveryTicketId, from
           }
           : fromTicket
             ? { delivery_ticket_id: deliveryTicketId, sales_order_id: data.sales_order_id }
-            : { sales_order_line_ids: includedLines.map((l) => l.sales_order_line_id) }),
-        ...(fromEstimate ? {} : { sales_order_id: fromTicket ? data.sales_order_id : salesOrderId }),
+            : nssoId
+              ? { nsso_id: nssoId, nsso_line_ids: includedLines.map((l) => l.nsso_line_id) }
+              : { sales_order_line_ids: includedLines.map((l) => l.sales_order_line_id) }),
+        ...(fromEstimate || nssoId ? {} : { sales_order_id: fromTicket ? data.sales_order_id : salesOrderId }),
         // SI or DR, chosen on the Sales Order's Bill menu. A converted Delivery Ticket stays SI.
         invoice_type: fromTicket ? 'SI' : invoiceType,
         date_created: dateCreated,

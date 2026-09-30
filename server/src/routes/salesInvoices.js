@@ -5,6 +5,7 @@ const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
+const { recomputeNssoStatus } = require('../lib/nssoStatus');
 const { computeSalesInvoiceGl } = require('../lib/glImpact');
 
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
@@ -50,9 +51,10 @@ async function listFilter(query, userId) {
   if (status) { where.push('si.status = ?'); params.push(status); }
   // SI or DR -- see normaliseInvoiceType.
   if (type) { where.push('si.invoice_type = ?'); params.push(normaliseInvoiceType(type)); }
-  // An invoice raised from an Estimate has no Sales Order, so the customer is whichever of the
-  // two sources it actually has. Same COALESCE everywhere the customer is read below.
-  if (customerId) { where.push('COALESCE(so.customer_id, e.customer_id) = ?'); params.push(customerId); }
+  // An invoice has exactly one source -- a Sales Order, an Estimate or a Non-Standard Sales Order --
+  // so the customer is whichever of the three it actually has. Same COALESCE everywhere the
+  // customer is read below.
+  if (customerId) { where.push('COALESCE(so.customer_id, e.customer_id, ns.customer_id) = ?'); params.push(customerId); }
   if (salesRepId) { where.push('si.sales_rep_id = ?'); params.push(salesRepId); }
   // Date Created, inclusive at both ends, and either end usable on its own -- "everything since
   // March" is as ordinary a question as a closed month. Compared as plain dates because the
@@ -75,8 +77,8 @@ async function listFilter(query, userId) {
   const salesScope = await getSalesRepEmployeeScope(userId);
   if (salesScope) { where.push('si.sales_rep_id IN (?)'); params.push(salesScope); }
   if (search) {
-    where.push('(si.invoice_no LIKE ? OR so.sales_order_no LIKE ? OR e.estimate_no LIKE ? OR c.name LIKE ?)');
-    params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    where.push('(si.invoice_no LIKE ? OR so.sales_order_no LIKE ? OR e.estimate_no LIKE ? OR ns.nsso_no LIKE ? OR c.name LIKE ?)');
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
   }
   return { where, params };
 }
@@ -107,7 +109,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const countFrom = `FROM sales_invoices si
        LEFT JOIN sales_orders so ON so.id = si.sales_order_id
        LEFT JOIN estimates e ON e.id = si.estimate_id
-       ${needsSource ? 'LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id)' : ''}`;
+       LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
+       ${needsSource ? 'LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id)' : ''}`;
     const [[{ total }]] = await pool.query(
       `SELECT COUNT(*) AS total ${countFrom} ${whereSql}`, params
     );
@@ -115,13 +118,14 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const [rows] = await pool.query(
       `SELECT si.id, si.invoice_no, si.date_created, si.date_due, si.net_of_tax, si.tax_amount,
               si.gross_amount, si.amount_due, si.bs_si_no, si.term, si.status, si.memo, si.invoice_type,
-              so.sales_order_no, e.estimate_no, c.name AS customer_name,
+              COALESCE(so.sales_order_no, ns.nsso_no) AS sales_order_no, e.estimate_no, c.name AS customer_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               loc.location_name AS office_location_name, d.name AS department_name
        FROM sales_invoices si
        LEFT JOIN sales_orders so ON so.id = si.sales_order_id
        LEFT JOIN estimates e ON e.id = si.estimate_id
-       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id)
+       LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id)
        LEFT JOIN employees sr ON sr.id = si.sales_rep_id
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        LEFT JOIN departments d ON d.id = si.department_id
@@ -146,13 +150,14 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
     const [rows] = await pool.query(
       `SELECT si.invoice_no, si.date_created, si.date_due, si.net_of_tax, si.tax_amount,
               si.gross_amount, si.amount_due, si.bs_si_no, si.term, si.status, si.memo, si.invoice_type,
-              so.sales_order_no, e.estimate_no, c.name AS customer_name,
+              COALESCE(so.sales_order_no, ns.nsso_no) AS sales_order_no, e.estimate_no, c.name AS customer_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               loc.location_name AS office_location_name, d.name AS department_name
        FROM sales_invoices si
        LEFT JOIN sales_orders so ON so.id = si.sales_order_id
        LEFT JOIN estimates e ON e.id = si.estimate_id
-       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id)
+       LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id)
        LEFT JOIN employees sr ON sr.id = si.sales_rep_id
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        LEFT JOIN departments d ON d.id = si.department_id
@@ -289,6 +294,76 @@ router.get('/for-sales-order/:salesOrderId', requireAuth, requirePermission(ROUT
     });
 
     res.json({ ...so, lines: billableLines });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Powers Create SI from a Non-Standard Sales Order -- billed exactly like a Sales Order: each line
+// whose Job Order has been delivered but not yet (fully) invoiced, for that remaining quantity,
+// with Subtotal/Disc/Net/Tax/Gross recomputed against it. The NSSO line's Job Order is
+// created_job_order_id. Returned under the same field names the Sales Order form reads.
+router.get('/for-nsso/:nssoId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [[ns]] = await pool.query(
+      `SELECT ns.id, ns.nsso_no, ns.status, ns.sales_rep_id, ns.office_location_id, ns.shipping_address,
+              c.name AS customer_name,
+              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
+              loc.location_name AS office_location_name,
+              ns.sales_division_id, sd.name AS sales_division_name,
+              pt.term_name AS customer_term
+       FROM non_standard_sales_orders ns
+       LEFT JOIN customers c ON c.id = ns.customer_id
+       LEFT JOIN employees sr ON sr.id = ns.sales_rep_id
+       LEFT JOIN locations loc ON loc.id = ns.office_location_id
+       LEFT JOIN sales_divisions sd ON sd.id = ns.sales_division_id
+       LEFT JOIN payment_terms pt ON pt.id = c.payment_term_id
+       WHERE ns.id = ?`,
+      [req.params.nssoId]
+    );
+    if (!ns) return res.status(404).json({ error: 'Not found' });
+    if (ns.status === 'cancelled') return res.status(409).json({ error: 'This NSSO is cancelled.' });
+
+    const [lines] = await pool.query(
+      `SELECT l.id AS nsso_line_id, l.created_job_order_id AS job_order_id, jo.job_order_no, jt.display_name AS item_name,
+              l.description, l.job_location_id, loc.location_name AS job_location_name,
+              l.quantity AS ordered_quantity, l.units, l.price_per_unit, l.disc_percent,
+              t.code AS tax_code, t.rate AS tax_rate,
+              jo.quantity_delivered, jo.quantity_invoiced
+       FROM non_standard_sales_order_lines l
+       JOIN job_orders jo ON jo.id = l.created_job_order_id
+       LEFT JOIN job_types jt ON jt.id = l.job_type_id
+       LEFT JOIN locations loc ON loc.id = l.job_location_id
+       LEFT JOIN taxes t ON t.id = l.tax_code_id
+       WHERE l.nsso_id = ? AND jo.quantity_delivered > jo.quantity_invoiced
+       ORDER BY l.line_no`,
+      [req.params.nssoId]
+    );
+
+    const billableLines = lines.map((l) => {
+      const billableQty = Number(l.quantity_delivered) - Number(l.quantity_invoiced);
+      return {
+        ...l,
+        quantity: billableQty,
+        ...computeBillableLineAmounts({
+          pricePerUnit: l.price_per_unit, discPercent: l.disc_percent, taxRate: l.tax_rate, billableQty,
+        }),
+      };
+    });
+
+    res.json({ ...ns, nsso_id: ns.id, sales_order_no: ns.nsso_no, lines: billableLines });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/by-nsso/:nssoId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT id, invoice_no, date_created, gross_amount, status FROM sales_invoices WHERE nsso_id = ? ORDER BY id DESC',
+      [req.params.nssoId]
+    );
+    res.json(rows);
   } catch (err) {
     next(err);
   }
@@ -508,7 +583,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // header blanks sit above the line items. The address falls back to any address on file
     // when no BILLING one is flagged default, since most customers carry only one.
     const [[si]] = await pool.query(
-      `SELECT si.*, so.sales_order_no, e.estimate_no, c.name AS customer_name, dt.dt_no,
+      `SELECT si.*, so.sales_order_no, e.estimate_no, ns.nsso_no, c.name AS customer_name, dt.dt_no,
               c.tin AS customer_tin, c.company_name AS customer_company,
               COALESCE(
                 (SELECT ca.address_line FROM customer_addresses ca
@@ -523,7 +598,8 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
        LEFT JOIN sales_orders so ON so.id = si.sales_order_id
        LEFT JOIN estimates e ON e.id = si.estimate_id
        LEFT JOIN delivery_tickets dt ON dt.id = si.delivery_ticket_id
-       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id)
+       LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id)
        LEFT JOIN employees sr ON sr.id = si.sales_rep_id
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        LEFT JOIN departments d ON d.id = si.department_id
@@ -811,6 +887,104 @@ async function billEstimate(req, res, conn) {
   return res.status(201).json(row);
 }
 
+// Billing a Non-Standard Sales Order. The Sales Order path below, line for line, over the NSSO's
+// lines: each selected line's Job Order must have delivered-but-uninvoiced quantity, that
+// remaining quantity is what is billed, and the Job Order's quantity_invoiced moves by it. The
+// customer is the NSSO's -- the invoice records nsso_id and each line its nsso_line_id.
+async function billNsso(req, res, conn) {
+  const {
+    nsso_id: nssoId, date_created: dateCreated, date_due: dateDue, term, bs_si_no: bsSiNo,
+    po_no: poNo, sales_rep_id: salesRepId, office_location_id: officeLocationId, department_id: departmentId,
+    bill_to_address: billToAddress, memo, withholding_tax_pct: withholdingTaxPct, nsso_line_ids: lineIds,
+  } = req.body;
+
+  const [[ns]] = await conn.query('SELECT id, nsso_no, status FROM non_standard_sales_orders WHERE id = ?', [nssoId]);
+  if (!ns) return res.status(404).json({ error: 'Not found' });
+  if (ns.status === 'cancelled') return res.status(409).json({ error: 'This NSSO is cancelled.' });
+
+  const submittedIds = (Array.isArray(lineIds) ? lineIds : []).map(Number);
+  if (!submittedIds.length) return res.status(400).json({ error: 'Include at least one item.' });
+
+  const [rawLines] = await conn.query(
+    `SELECT l.*, jo.id AS job_order_id, jo.quantity_delivered, jo.quantity_invoiced, t.rate AS tax_rate
+     FROM non_standard_sales_order_lines l JOIN job_orders jo ON jo.id = l.created_job_order_id
+     LEFT JOIN taxes t ON t.id = l.tax_code_id
+     WHERE l.nsso_id = ? AND l.id IN (?)`,
+    [nssoId, submittedIds]
+  );
+  if (rawLines.length !== submittedIds.length) return res.status(400).json({ error: 'One of the selected items is no longer eligible.' });
+  for (const l of rawLines) {
+    if (Number(l.quantity_delivered) <= Number(l.quantity_invoiced)) {
+      return res.status(409).json({ error: `Line ${l.line_no} has nothing left to invoice.` });
+    }
+  }
+
+  const lines = rawLines.map((l) => {
+    const invoicedNow = Number(l.quantity_delivered) - Number(l.quantity_invoiced);
+    return {
+      ...l,
+      invoicedNow,
+      ...computeBillableLineAmounts({
+        pricePerUnit: l.price_per_unit, discPercent: l.disc_percent, taxRate: l.tax_rate, billableQty: invoicedNow,
+      }),
+    };
+  });
+
+  const subtotal = lines.reduce((s, l) => s + Number(l.subtotal || 0), 0);
+  const discountAmount = lines.reduce((s, l) => s + Number(l.disc_amount || 0), 0);
+  const netOfTax = lines.reduce((s, l) => s + Number(l.net_of_tax || 0), 0);
+  const taxAmount = lines.reduce((s, l) => s + Number(l.tax_amount || 0), 0);
+  const grossAmount = lines.reduce((s, l) => s + Number(l.gross_amount || 0), 0);
+  const ewtAmount = netOfTax * (Number(withholdingTaxPct || 0) / 100);
+  const amountDue = grossAmount - ewtAmount;
+  await assertPeriodOpen(dateCreated, 'ar', conn);
+
+  await conn.beginTransaction();
+  const [result] = await conn.query(
+    `INSERT INTO sales_invoices
+       (invoice_no, invoice_type, nsso_id, date_created, date_due, term, bs_si_no, po_no, sales_rep_id, office_location_id,
+        department_id, bill_to_address, memo, withholding_tax_pct, subtotal, discount_amount, net_of_tax,
+        ewt_amount, tax_amount, gross_amount, amount_due, created_by_user_id)
+     VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      normaliseInvoiceType(req.body.invoice_type), nssoId, dateCreated || new Date().toISOString().slice(0, 10), dateDue || null, term || null,
+      bsSiNo || null, poNo || null, salesRepId || null, officeLocationId || null, departmentId || null,
+      billToAddress || null, memo || null, withholdingTaxPct || 0, subtotal, discountAmount, netOfTax,
+      ewtAmount, taxAmount, grossAmount, amountDue, req.user.id,
+    ]
+  );
+  const invoiceId = result.insertId;
+  const invoiceNo = await assignDocNo(conn, { table: 'sales_invoices', column: 'invoice_no', prefix: 'INV-', id: invoiceId });
+
+  for (const l of lines) {
+    await conn.query(
+      `INSERT INTO sales_invoice_lines
+         (sales_invoice_id, nsso_line_id, job_type_id, job_order_id, description, job_location_id, quantity, units,
+          price_per_unit, subtotal, disc_percent, disc_amount, disc_price_per_unit, net_of_tax, tax_code,
+          tax_amount, gross_amount)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (SELECT code FROM taxes WHERE id = ?), ?, ?)`,
+      [
+        invoiceId, l.id, l.job_type_id, l.job_order_id, l.description, l.job_location_id, l.invoicedNow, l.units,
+        l.price_per_unit, l.subtotal, l.disc_percent, l.disc_amount,
+        l.invoicedNow ? Number((Number(l.net_of_tax) / l.invoicedNow).toFixed(4)) : null, l.net_of_tax,
+        l.tax_code_id, l.tax_amount, l.gross_amount,
+      ]
+    );
+    await conn.query(
+      'UPDATE job_orders SET quantity_invoiced = quantity_invoiced + ?, updated_at = NOW() WHERE id = ?',
+      [l.invoicedNow, l.job_order_id]
+    );
+  }
+
+  await recomputeNssoStatus(conn, nssoId);
+  await logAudit(conn, { invoiceId, userId: req.user.id, eventType: 'Created', fieldName: 'invoice_no', newValue: invoiceNo });
+  await logAudit(conn, { invoiceId, userId: req.user.id, eventType: 'Created', fieldName: 'nsso_id', newValue: ns.nsso_no });
+  await conn.commit();
+
+  const [[row]] = await pool.query('SELECT * FROM sales_invoices WHERE id = ?', [invoiceId]);
+  return res.status(201).json(row);
+}
+
 // Which permission a create needs depends on what is being created.
 //
 // Raising an invoice against an Estimate is an ADD -- Create New on the invoice list, a new
@@ -867,6 +1041,10 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
     // which would otherwise reject it for the very thing that makes it what it is.
     if (req.body.estimate_id) {
       return billEstimate(req, res, conn);
+    }
+    // A Non-Standard Sales Order bills like a Sales Order, from its own lines and Job Orders.
+    if (req.body.nsso_id) {
+      return billNsso(req, res, conn);
     }
 
     if (!salesOrderId) return res.status(400).json({ error: 'Sales Order is required.' });
@@ -1295,7 +1473,7 @@ router.get('/:id/reversal-preview', requireAuth, requirePermission(ROUTE, 'can_v
 router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[si]] = await conn.query('SELECT status, sales_order_id, delivery_ticket_id, date_created FROM sales_invoices WHERE id = ?', [req.params.id]);
+    const [[si]] = await conn.query('SELECT status, sales_order_id, nsso_id, delivery_ticket_id, date_created FROM sales_invoices WHERE id = ?', [req.params.id]);
     if (si) await assertPeriodOpen(si.date_created, 'ar', conn);
     if (!si) return res.status(404).json({ error: 'Not found' });
     if (si.status === 'cancelled') return res.status(409).json({ error: 'This Sales Invoice is already cancelled.' });
@@ -1359,7 +1537,8 @@ router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_void'), asy
       locationId: body.location_id ? Number(body.location_id) : (fullSi.office_location_id || null),
       date: reversalDateIn,
     });
-    const [[so]] = await conn.query('SELECT status FROM sales_orders WHERE id = ?', [si.sales_order_id]);
+    if (si.nsso_id) await recomputeNssoStatus(conn, si.nsso_id);
+    const [[so]] = si.sales_order_id ? await conn.query('SELECT status FROM sales_orders WHERE id = ?', [si.sales_order_id]) : [[null]];
     if (so && so.status !== 'cancelled') {
       const [freshLines] = await conn.query(
         `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, jo.quantity_invoiced

@@ -3,6 +3,7 @@ const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
+const { recomputeNssoStatus } = require('../lib/nssoStatus');
 const { computeItemDeliveryGl } = require('../lib/glImpact');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 
@@ -79,7 +80,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     const where = [];
     const params = [];
-    if (customerId) { where.push('so.customer_id = ?'); params.push(customerId); }
+    if (customerId) { where.push('COALESCE(so.customer_id, ns.customer_id) = ?'); params.push(customerId); }
     if (asOf) { where.push('del.date_created <= ?'); params.push(asOf); }
     // 'none' rather than an empty string, which would be indistinguishable from "no filter" --
     // and the unrecorded deliveries are exactly the set someone will want to go and fill in.
@@ -89,14 +90,17 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       params.push(req.query.delivery_method_id);
     }
     if (search) {
-      where.push('(del.delivery_no LIKE ? OR so.sales_order_no LIKE ? OR c.name LIKE ?)');
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      where.push('(del.delivery_no LIKE ? OR so.sales_order_no LIKE ? OR ns.nsso_no LIKE ? OR c.name LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
+    // A delivery comes from a Sales Order or a Non-Standard Sales Order -- one of the two, so both
+    // are LEFT joins and the customer is whichever it has.
     const baseFrom = `FROM item_deliveries del
-       JOIN sales_orders so ON so.id = del.sales_order_id
-       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN sales_orders so ON so.id = del.sales_order_id
+       LEFT JOIN non_standard_sales_orders ns ON ns.id = del.nsso_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, ns.customer_id)
        LEFT JOIN delivery_methods dm ON dm.id = del.delivery_method_id`;
 
     const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${baseFrom} ${whereSql}`, params);
@@ -106,7 +110,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const offset = (pageNum - 1) * limitNum;
 
     const [rows] = await pool.query(
-      `SELECT del.id, del.delivery_no, del.date_created, del.status, so.sales_order_no, c.name AS customer_name,
+      `SELECT del.id, del.delivery_no, del.date_created, del.status,
+              COALESCE(so.sales_order_no, ns.nsso_no) AS sales_order_no, c.name AS customer_name,
               del.delivery_cost, del.delivery_reference, dm.name AS delivery_method_name,
               (SELECT COALESCE(SUM(qty_delivered), 0) FROM item_delivery_lines WHERE item_delivery_id = del.id) AS total_qty_delivered
        ${baseFrom} ${whereSql}
@@ -163,6 +168,52 @@ router.get('/by-sales-order/:salesOrderId', requireAuth, requirePermission(ROUTE
   }
 });
 
+// The NSSO counterparts of the two above: an NSSO's lines reach their Job Order through
+// created_job_order_id, and from there delivery works exactly as it does for a Sales Order.
+router.get('/for-nsso/:nssoId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [[ns]] = await pool.query(
+      `SELECT ns.id, ns.nsso_no, ns.status, c.name AS customer_name
+       FROM non_standard_sales_orders ns LEFT JOIN customers c ON c.id = ns.customer_id WHERE ns.id = ?`,
+      [req.params.nssoId]
+    );
+    if (!ns) return res.status(404).json({ error: 'Not found' });
+    if (ns.status === 'cancelled') return res.status(409).json({ error: 'This NSSO is cancelled.' });
+
+    const [lines] = await pool.query(
+      `SELECT jo.id AS job_order_id, jo.job_order_no, jo.description, jo.quantity_built, jo.quantity_inspected,
+              jo.quantity_delivered, jo.units, jo.length, jo.width, jo.height,
+              jt.display_name AS item_name,
+              loc.location_name AS job_location_name
+       FROM non_standard_sales_order_lines l
+       JOIN job_orders jo ON jo.id = l.created_job_order_id
+       LEFT JOIN job_types jt ON jt.id = l.job_type_id
+       LEFT JOIN locations loc ON loc.id = l.job_location_id
+       WHERE l.nsso_id = ?
+         AND LEAST(jo.quantity_built, jo.quantity_inspected) - jo.quantity_delivered > 0
+       ORDER BY l.line_no`,
+      [req.params.nssoId]
+    );
+
+    // Same field names the Sales Order form reads, so one form serves both.
+    res.json({ ...ns, sales_order_no: ns.nsso_no, lines });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/by-nsso/:nssoId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT id, delivery_no, date_created, status FROM item_deliveries WHERE nsso_id = ? ORDER BY id DESC',
+      [req.params.nssoId]
+    );
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // The methods a delivery can be booked against. Two segments, so it can never be read as an
 // /:id -- but it is declared above that route anyway, which is the habit that stops the next
 // single-segment endpoint being swallowed.
@@ -179,13 +230,17 @@ router.get('/meta/delivery-methods', requireAuth, requirePermission(ROUTE, 'can_
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[d]] = await pool.query(
-      `SELECT del.*, so.sales_order_no, so.contact_email, so.contact_title, so.contact_phone,
+      `SELECT del.*, COALESCE(so.sales_order_no, ns.nsso_no) AS sales_order_no, ns.nsso_no,
+              COALESCE(so.contact_email, ns.contact_email) AS contact_email,
+              COALESCE(so.contact_title, ns.contact_title) AS contact_title,
+              COALESCE(so.contact_phone, ns.contact_phone) AS contact_phone,
               c.name AS customer_name, cc.contact_name, u.display_name AS created_by_name,
               dm.name AS delivery_method_name, dm.is_third_party AS delivery_is_third_party
        FROM item_deliveries del
-       JOIN sales_orders so ON so.id = del.sales_order_id
-       LEFT JOIN customers c ON c.id = so.customer_id
-       LEFT JOIN customer_contacts cc ON cc.id = so.contact_person_id
+       LEFT JOIN sales_orders so ON so.id = del.sales_order_id
+       LEFT JOIN non_standard_sales_orders ns ON ns.id = del.nsso_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, ns.customer_id)
+       LEFT JOIN customer_contacts cc ON cc.id = COALESCE(so.contact_person_id, ns.contact_person_id)
        LEFT JOIN users u ON u.id = del.created_by_user_id
        LEFT JOIN delivery_methods dm ON dm.id = del.delivery_method_id
        WHERE del.id = ?`,
@@ -236,8 +291,16 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
 router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const { sales_order_id: salesOrderId, date_created: dateCreated, memo, lines } = req.body;
-    if (!salesOrderId) return res.status(400).json({ error: 'Sales Order is required.' });
+    const { sales_order_id: rawSo, nsso_id: rawNsso, date_created: dateCreated, memo, lines } = req.body;
+    // Exactly one source: a Sales Order, or a Non-Standard Sales Order.
+    const salesOrderId = rawSo ? Number(rawSo) : null;
+    const nssoId = !salesOrderId && rawNsso ? Number(rawNsso) : null;
+    if (!salesOrderId && !nssoId) return res.status(400).json({ error: 'Sales Order is required.' });
+    if (nssoId) {
+      const [[ns]] = await conn.query('SELECT status FROM non_standard_sales_orders WHERE id = ?', [nssoId]);
+      if (!ns) return res.status(404).json({ error: 'Not found' });
+      if (ns.status === 'cancelled') return res.status(409).json({ error: 'This NSSO is cancelled.' });
+    }
     await assertPeriodOpen(dateCreated, 'non_gl', conn);
 
     const dm = await readDeliveryMethod(req.body, conn);
@@ -247,10 +310,14 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     if (!submitted.length) return res.status(400).json({ error: 'Enter a Qty to Deliver for at least one item.' });
 
     const [jos] = await conn.query(
-      `SELECT jo.id, jo.job_order_no, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered
-       FROM job_orders jo JOIN sales_order_lines sol ON sol.job_order_id = jo.id
-       WHERE sol.sales_order_id = ?`,
-      [salesOrderId]
+      nssoId
+        ? `SELECT jo.id, jo.job_order_no, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered
+           FROM job_orders jo JOIN non_standard_sales_order_lines l ON l.created_job_order_id = jo.id
+           WHERE l.nsso_id = ?`
+        : `SELECT jo.id, jo.job_order_no, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered
+           FROM job_orders jo JOIN sales_order_lines sol ON sol.job_order_id = jo.id
+           WHERE sol.sales_order_id = ?`,
+      [nssoId || salesOrderId]
     );
     const byId = new Map(jos.map((j) => [j.id, j]));
 
@@ -266,10 +333,10 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
     await conn.beginTransaction();
     const [result] = await conn.query(
-      `INSERT INTO item_deliveries (delivery_no, sales_order_id, date_created, memo, created_by_user_id,
+      `INSERT INTO item_deliveries (delivery_no, sales_order_id, nsso_id, date_created, memo, created_by_user_id,
                                    delivery_method_id, delivery_cost, delivery_reference)
-       VALUES ('', ?, ?, ?, ?, ?, ?, ?)`,
-      [salesOrderId, dateCreated || new Date().toISOString().slice(0, 10), memo || null, req.user.id,
+       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [salesOrderId, nssoId, dateCreated || new Date().toISOString().slice(0, 10), memo || null, req.user.id,
         dm.methodId, dm.cost, dm.ref]
     );
     const deliveryId = result.insertId;
@@ -289,14 +356,18 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     // one line being fully delivered doesn't mean the order is "Partially Delivered" if
     // another line hasn't even gotten a Job Order yet; that pulls the whole order back
     // to "In Process" instead. See computeSalesOrderStatus for the full hierarchy.
-    const [freshLines] = await conn.query(
-      `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, jo.quantity_invoiced
-       FROM sales_order_lines sol
-       LEFT JOIN job_orders jo ON jo.id = sol.job_order_id WHERE sol.sales_order_id = ?`,
-      [salesOrderId]
-    );
-    const newStatus = computeSalesOrderStatus(freshLines);
-    await conn.query('UPDATE sales_orders SET status = ?, updated_at = NOW() WHERE id = ?', [newStatus, salesOrderId]);
+    if (nssoId) {
+      await recomputeNssoStatus(conn, nssoId);
+    } else {
+      const [freshLines] = await conn.query(
+        `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, jo.quantity_invoiced
+         FROM sales_order_lines sol
+         LEFT JOIN job_orders jo ON jo.id = sol.job_order_id WHERE sol.sales_order_id = ?`,
+        [salesOrderId]
+      );
+      const newStatus = computeSalesOrderStatus(freshLines);
+      await conn.query('UPDATE sales_orders SET status = ?, updated_at = NOW() WHERE id = ?', [newStatus, salesOrderId]);
+    }
     await logAudit(conn, { deliveryId, userId: req.user.id, eventType: 'Created', fieldName: 'delivery_no', newValue: deliveryNo });
     if (dm.method) {
       await logAudit(conn, {
@@ -388,7 +459,7 @@ router.put('/:id/delivery-method', requireAuth, requirePermission(ROUTE, 'can_ed
 router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[d]] = await conn.query('SELECT status, sales_order_id, date_created FROM item_deliveries WHERE id = ?', [req.params.id]);
+    const [[d]] = await conn.query('SELECT status, sales_order_id, nsso_id, date_created FROM item_deliveries WHERE id = ?', [req.params.id]);
     if (!d) return res.status(404).json({ error: 'Not found' });
     if (d.status === 'cancelled') return res.status(409).json({ error: 'This Item Delivery is already cancelled.' });
     await assertPeriodOpen(d.date_created, 'non_gl', conn);
@@ -404,7 +475,8 @@ router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_void'), asy
       [req.user.id, req.params.id]
     );
 
-    const [[so]] = await conn.query('SELECT status FROM sales_orders WHERE id = ?', [d.sales_order_id]);
+    if (d.nsso_id) await recomputeNssoStatus(conn, d.nsso_id);
+    const [[so]] = d.sales_order_id ? await conn.query('SELECT status FROM sales_orders WHERE id = ?', [d.sales_order_id]) : [[null]];
     if (so && so.status !== 'cancelled') {
       const [freshLines] = await conn.query(
         `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, jo.quantity_invoiced

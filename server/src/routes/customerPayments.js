@@ -166,12 +166,13 @@ router.get('/for-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can
       // whichever source it has. An INNER JOIN here made the payment form fail to load at all
       // for those invoices -- they could be raised but never collected.
       `SELECT si.id AS sales_invoice_id, si.invoice_no, si.office_location_id, si.department_id, si.memo,
-              si.amount_due, COALESCE(so.customer_id, e.customer_id) AS customer_id, c.name AS customer_name,
+              si.amount_due, COALESCE(so.customer_id, e.customer_id, ns.customer_id) AS customer_id, c.name AS customer_name,
               loc.location_name AS office_location_name, d.name AS department_name
        FROM sales_invoices si
        LEFT JOIN sales_orders so ON so.id = si.sales_order_id
        LEFT JOIN estimates e ON e.id = si.estimate_id
-       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id)
+       LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id)
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        LEFT JOIN departments d ON d.id = si.department_id
        WHERE si.id = ?`,
@@ -259,10 +260,11 @@ router.get('/for-customer/:customerId', requireAuth, requirePermission(ROUTE, 'c
          FROM sales_invoices si
          LEFT JOIN sales_orders so ON so.id = si.sales_order_id
          LEFT JOIN estimates e ON e.id = si.estimate_id
-         LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id)
+         LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
+         LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id)
          LEFT JOIN customer_payment_lines mine
                 ON mine.sales_invoice_id = si.id AND mine.customer_payment_id = ?
-        WHERE COALESCE(so.customer_id, e.customer_id) = ? AND si.status != 'cancelled'
+        WHERE COALESCE(so.customer_id, e.customer_id, ns.customer_id) = ? AND si.status != 'cancelled'
           AND (si.amount_due > 0 OR mine.id IS NOT NULL)
         ORDER BY si.id DESC`,
       [req.query.payment_id || 0, req.params.customerId],
