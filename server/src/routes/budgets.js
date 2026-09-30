@@ -569,8 +569,11 @@ router.get('/report/departments', requireAuth, requirePermission(REPORT_ROUTE, '
       }))
       .sort((a, b) => (a.key === 'unassigned') - (b.key === 'unassigned') || a.label.localeCompare(b.label));
     const unassigned = columns.find((c) => c.key === 'unassigned');
-    const totalActualCost = columns.reduce((s, c) => s + (c.actual.cogs || 0) + (c.actual.opex || 0) + (c.actual.other_expense || 0), 0);
-    const unassignedCost = unassigned ? (unassigned.actual.cogs || 0) + (unassigned.actual.opex || 0) + (unassigned.actual.other_expense || 0) : 0;
+    // By SIZE, whatever the sign: some departments carry credit-balance costs (a negative Direct
+    // Labor, say), and a plain ratio of signed totals came out at -79%.
+    const costSize = (c) => Math.abs(c.actual.cogs || 0) + Math.abs(c.actual.opex || 0) + Math.abs(c.actual.other_expense || 0);
+    const totalActualCost = columns.reduce((s, c) => s + costSize(c), 0);
+    const unassignedCost = unassigned ? costSize(unassigned) : 0;
     res.json({
       year, period, month: m, from_month: from,
       period_label: period === 'month' ? `${MONTHS[m - 1]} ${year}` : `${MONTHS[from - 1]}-${MONTHS[m - 1]} ${year}`,
