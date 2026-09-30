@@ -102,10 +102,14 @@ router.get('/for-purchase-order/:poId', requireAuth, requirePermission(ROUTE, 'c
       };
     });
 
+    // For lines whose PO line has no department -- the bill must be given one (see POST /).
+    // Sent here rather than read from /lookups, which the people billing may not be granted.
+    const [departments] = await pool.query('SELECT id, name FROM departments WHERE is_active = TRUE ORDER BY name');
     res.json({
       ...po,
       default_account: defaultAccount || null,
       lines: billableLines,
+      departments,
     });
   } catch (err) {
     next(err);
@@ -282,11 +286,18 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       const lineWtaxAmount = isWithhold ? Number((amounts.net_of_tax * wtaxRate / 100).toFixed(2)) : 0;
       computedLines.push({
         purchase_order_line_id: poLine.id, item_id: poLine.item_id, location_id: poLine.location_id,
-        department_id: poLine.department_id, qty, rate: poLine.rate, unit_price: unitPrice, disc_percent: discPercent,
+        // The PO line's department, or -- where the PO never had one -- the one chosen on the bill.
+        department_id: poLine.department_id || Number(s.department_id) || null, qty, rate: poLine.rate, unit_price: unitPrice, disc_percent: discPercent,
         tax_code_id: poLine.tax_code_id, is_withhold: isWithhold, wtax_amount: lineWtaxAmount,
         amount_due: Number((amounts.ext_price - lineWtaxAmount).toFixed(2)), ...amounts,
       });
     }
+
+    // Every bill line needs a department so department budgets see the spending (see
+    // lib/requireDepartment.js). Bills are items, so unlike cheques and journals there is no
+    // balance-sheet line to exempt.
+    const noDept = computedLines.findIndex((l) => !l.department_id);
+    if (noDept >= 0) return res.status(400).json({ error: `Choose a Department on line ${noDept + 1}. Its Purchase Order line has none, and it is required so department budgets can be tracked.` });
 
     const subtotal = computedLines.reduce((s, l) => s + l.subtotal, 0);
     const discountAmount = computedLines.reduce((s, l) => s + l.disc_amount, 0);

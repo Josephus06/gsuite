@@ -104,7 +104,7 @@ export default function JournalForm() {
           <table>
             <thead>
               <tr>
-                <th></th><th>Account</th><th>Department</th><th>Type</th><th>Name</th>
+                <th></th><th>Account</th><th title="Required on income, expense and fixed-asset lines, so department budgets can be tracked">Department *</th><th>Type</th><th>Name</th>
                 <th style={{ textAlign: 'right' }}>Debit</th><th style={{ textAlign: 'right' }}>Credit</th><th>Memo</th>
               </tr>
             </thead>

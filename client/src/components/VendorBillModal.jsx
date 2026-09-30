@@ -58,6 +58,8 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // For bill lines whose PO line carries no department: one must be chosen here (required on save).
+  const [departments, setDepartments] = useState([]);
 
   useEffect(() => {
     Promise.all([
@@ -66,6 +68,7 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
       api.get('/lookups/locations'),
       api.get('/lookups/withholding-taxes'),
     ]).then(([poRes, acctRes, locRes, wtaxRes]) => {
+      setDepartments(poRes.data.departments || []);
       const d = poRes.data;
       setData(d);
       setAccounts(acctRes.data);
@@ -124,6 +127,7 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
           unit_price: l.unit_price,
           disc_percent: l.disc_percent,
           is_withhold: l.is_withhold,
+          department_id: l.department_id || null,
         })),
       });
       onSaved(vb);
@@ -215,7 +219,15 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
                       <td>{l.item_code} {l.item_name ? `— ${l.item_name}` : ''}</td>
                       <td>{l.purchase_description}</td>
                       <td>{l.location_name}</td>
-                      <td>{l.department_name}</td>
+                      <td>
+                        {l.department_name || (
+                          <select value={l.department_id || ''} onChange={(e) => updateLine(l.purchase_order_line_id, { department_id: e.target.value })}
+                            style={!l.department_id ? { borderColor: 'var(--danger, #b91c1c)' } : undefined} title="Required: this PO line has no department">
+                            <option value="">--Required--</option>
+                            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                          </select>
+                        )}
+                      </td>
                       <td>{qty(l.rr_qty)}</td>
                       <td>{qty(l.billed_qty)}</td>
                       <td>

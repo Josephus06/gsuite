@@ -1,4 +1,5 @@
 const express = require('express');
+const { missingDepartmentError } = require('../lib/requireDepartment');
 const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
@@ -172,6 +173,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const rows = normalizeLines(b.lines);
     if (!rows.length) return res.status(400).json({ error: 'Add at least one expense line with an account and amount.' });
     if (!b.account_id) return res.status(400).json({ error: 'Select the bank Account to draw the cheque against.' });
+    const deptError = await missingDepartmentError(rows);
+    if (deptError) return res.status(400).json({ error: deptError });
     const t = headerTotals(rows);
     await assertPeriodOpen(b.date_created, 'other_gl');
 

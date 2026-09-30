@@ -156,7 +156,7 @@ export default function ChequeForm() {
           <table>
             <thead>
               <tr>
-                <th></th><th>Account</th><th>Description</th><th>Department</th><th style={{ textAlign: 'right' }}>Amount</th>
+                <th></th><th>Account</th><th>Description</th><th title="Required on income, expense and fixed-asset lines, so department budgets can be tracked">Department *</th><th style={{ textAlign: 'right' }}>Amount</th>
                 <th>Tax Code</th><th style={{ textAlign: 'right' }}>Tax Amount</th><th>Apply WTax</th>
                 <th style={{ textAlign: 'right' }}>Gross</th><th style={{ textAlign: 'right' }}>Withholding Tax</th><th style={{ textAlign: 'right' }}>Total</th>
               </tr>

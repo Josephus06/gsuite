@@ -1,4 +1,5 @@
 const express = require('express');
+const { missingDepartmentError } = require('../lib/requireDepartment');
 const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
@@ -106,6 +107,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const totalCredit = round2(rows.reduce((s, l) => s + num(l.credit), 0));
     if (totalDebit !== totalCredit) return res.status(400).json({ error: `Journal is out of balance: debit ${totalDebit} vs credit ${totalCredit}.` });
     if (totalDebit === 0) return res.status(400).json({ error: 'Enter debit/credit amounts.' });
+    const deptError = await missingDepartmentError(rows);
+    if (deptError) return res.status(400).json({ error: deptError });
     await assertPeriodOpen(dateCreated, 'other_gl');
 
     await conn.beginTransaction();
