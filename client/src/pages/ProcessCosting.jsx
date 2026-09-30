@@ -88,35 +88,68 @@ export default function ProcessCosting() {
     })();
   }, []);
 
+  // Edits are held on the screen until Save -- a changed row is marked `_dirty` (new rows start
+  // dirty) and nothing reaches the server until the Save button sends them all.
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState(null); // { ok, text }
+  const dirtyCount = brackets.filter((b) => b._dirty).length;
+
+  // Leaving the page with unsaved edits asks first.
+  useEffect(() => {
+    if (!dirtyCount) return undefined;
+    const warn = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirtyCount]);
+
   async function selectProcess(proc) {
+    if (dirtyCount && !confirm(`You have ${dirtyCount} unsaved bracket change${dirtyCount === 1 ? '' : 's'} on ${selected.process_name}. Discard them?`)) return;
     setSelected(proc);
+    setSaveMsg(null);
     const { data } = await api.get(`/processes/${proc.id}/cost-brackets`);
     setBrackets(data);
   }
 
   function updateBracketField(idx, field, value) {
+    setSaveMsg(null);
     setBrackets((prev) => {
       const next = [...prev];
-      next[idx] = { ...next[idx], [field]: value };
+      next[idx] = { ...next[idx], [field]: value, _dirty: true };
       return next;
     });
   }
 
-  async function commitBracket(idx) {
-    const row = brackets[idx];
-    const payload = {};
-    BRACKET_FIELDS.forEach((f) => { payload[f] = row[f] === '' ? null : row[f]; });
-    if (row.id) {
-      await api.put(`/processes/${selected.id}/cost-brackets/${row.id}`, payload);
-    } else {
-      if (row.qty_min === '' || row.qty_max === '') return;
-      const { data } = await api.post(`/processes/${selected.id}/cost-brackets`, payload);
-      setBrackets((prev) => prev.map((r, i) => (i === idx ? data : r)));
+  async function saveAll() {
+    const incomplete = brackets.find((b) => b._dirty && !b.id && (b.qty_min === '' || b.qty_max === ''));
+    if (incomplete) { setSaveMsg({ ok: false, text: 'Enter Qty Min and Qty Max on every new bracket before saving.' }); return; }
+    setSaving(true);
+    setSaveMsg(null);
+    let saved = 0;
+    const next = [...brackets];
+    try {
+      for (let i = 0; i < next.length; i += 1) {
+        const row = next[i];
+        if (!row._dirty) continue;
+        const payload = {};
+        BRACKET_FIELDS.forEach((f) => { payload[f] = row[f] === '' ? null : row[f]; });
+        const { data } = row.id
+          ? await api.put(`/processes/${selected.id}/cost-brackets/${row.id}`, payload)
+          : await api.post(`/processes/${selected.id}/cost-brackets`, payload);
+        next[i] = data;
+        saved += 1;
+      }
+      setSaveMsg({ ok: true, text: `Saved ${saved} bracket${saved === 1 ? '' : 's'}.` });
+    } catch (err) {
+      setSaveMsg({ ok: false, text: `Saved ${saved}, then stopped: ${err.response?.data?.error || 'the save failed'}. The unsaved rows are still marked.` });
+    } finally {
+      setBrackets(next);
+      setSaving(false);
     }
   }
 
   function addBracket() {
-    setBrackets((prev) => [...prev, { ...EMPTY_BRACKET }]);
+    setSaveMsg(null);
+    setBrackets((prev) => [...prev, { ...EMPTY_BRACKET, _dirty: true }]);
   }
 
   async function deleteBracket(idx) {
@@ -191,14 +224,16 @@ export default function ProcessCosting() {
                     {brackets.map((b, idx) => {
                       const computed = computeProcessCosting(b);
                       return (
-                        <tr key={b.id || `draft-${idx}`} className={!b.id ? 'draft-row' : ''}>
+                        <tr key={b.id || `draft-${idx}`} className={!b.id ? 'draft-row' : ''}
+                          style={b._dirty ? { boxShadow: 'inset 3px 0 0 var(--warning, #d97706)' } : undefined}
+                          title={b._dirty ? 'Unsaved changes' : undefined}>
                           <td>
                             {can('/process-costing', 'can_delete') && (
                               <button type="button" className="btn btn-sm btn-danger" onClick={() => deleteBracket(idx)}>✕</button>
                             )}
                           </td>
                           {COLUMNS.map((c) => (c.calc ? (
-                            <td key={c.calc} className="text-right" style={{ background: 'var(--accent-bg)', whiteSpace: 'nowrap' }}>
+                            <td key={c.calc} className="text-right" style={{ background: 'var(--accent-bg)', whiteSpace: 'nowrap', verticalAlign: 'middle' }}>
                               {c.strong ? <strong>{fmt(computed?.[c.calc])}</strong> : fmt(computed?.[c.calc])}
                             </td>
                           ) : (
@@ -209,7 +244,6 @@ export default function ProcessCosting() {
                                 value={b[c.key] ?? ''}
                                 placeholder={c.placeholderCalc && computed ? fmt(computed[c.placeholderCalc]) : undefined}
                                 onChange={(e) => updateBracketField(idx, c.key, e.target.value)}
-                                onBlur={() => commitBracket(idx)}
                               />
                             </td>
                           )))}
@@ -219,9 +253,18 @@ export default function ProcessCosting() {
                   </tbody>
                 </table>
               </div>
-              {can('/process-costing', 'can_add') && (
-                <button type="button" className="btn btn-primary" style={{ marginTop: 12 }} onClick={addBracket}>Add Bracket</button>
-              )}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
+                {can('/process-costing', 'can_add') && (
+                  <button type="button" className="btn" onClick={addBracket}>Add Bracket</button>
+                )}
+                {(can('/process-costing', 'can_edit') || can('/process-costing', 'can_add')) && (
+                  <button type="button" className="btn btn-primary" disabled={saving || !dirtyCount} onClick={saveAll}>
+                    {saving ? 'Saving…' : `Save${dirtyCount ? ` (${dirtyCount})` : ''}`}
+                  </button>
+                )}
+                {dirtyCount > 0 && !saving && <span className="muted">{dirtyCount} unsaved bracket{dirtyCount === 1 ? '' : 's'} — marked on the left.</span>}
+                {saveMsg && <span style={{ color: saveMsg.ok ? 'var(--success, #15803d)' : 'var(--danger, #b91c1c)', fontWeight: 600 }}>{saveMsg.text}</span>}
+              </div>
             </>
           )}
         </div>
