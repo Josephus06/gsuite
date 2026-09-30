@@ -35,6 +35,7 @@ import Users from './pages/Users';
 import UserWizard from './pages/UserWizard';
 import Customers from './pages/Customers';
 import CustomerView from './pages/CustomerView';
+import CustomerForm from './pages/CustomerForm';
 import Leads from './pages/Leads';
 import Pipeline from './pages/Pipeline';
 import CrmDashboard from './pages/CrmDashboard';
@@ -242,6 +243,8 @@ function App() {
         <Route path="/users/new" element={<UserWizard />} />
         <Route path="/users/:id/edit" element={<UserWizard />} />
         <Route path="/customers" element={<Customers />} />
+        <Route path="/customers/new" element={<CustomerForm />} />
+        <Route path="/customers/:id/edit" element={<CustomerForm />} />
         <Route path="/customers/:id" element={<CustomerView />} />
         <Route path="/crm-dashboard" element={<CrmDashboard />} />
         <Route path="/leads" element={<Leads />} />
