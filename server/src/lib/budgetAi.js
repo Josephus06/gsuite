@@ -171,4 +171,156 @@ async function suggestGrowth(budget, accounts) {
   return out;
 }
 
-module.exports = { aiConfigured, flagsFor, explainReport, askReport, suggestGrowth };
+// ---------------------------------------------------------------- department report
+//
+// The accounting manager's workbook report (Admin / Selling / COGS, one row per department, a
+// month per column) is a different shape from the per-account grid above, so it gets its own
+// context and its own flags rather than being forced through reportContext.
+//
+// SAME DIVISION OF LABOUR as the account side: flags are plain rules computed here -- free,
+// instant, repeatable, and correct whether or not OpenAI has any credit -- and the model only
+// ever reads what this report already computed.
+//
+// Variance here is Budget - Actual, so POSITIVE IS GOOD on every row: these sheets are costs.
+
+// Months with an actual, i.e. the ones a comparison is entitled to use. `month_source` marks a
+// month 'missing' when neither the source system nor the T1S ledger has it yet, and a missing
+// month is not an underspend.
+function monthsWithActuals(report) {
+  return (report.month_source || []).map((s, i) => (s && s !== 'missing' ? i : -1)).filter((i) => i >= 0);
+}
+
+function deptFlagsFor(row, report) {
+  const flags = [];
+  const live = monthsWithActuals(report);
+  const actuals = live.map((i) => row.actual[i]).filter((v) => v != null);
+  const budgets = live.map((i) => row.budget[i] || 0);
+  const ytdActual = round2(actuals.reduce((s, v) => s + v, 0));
+  const ytdBudget = round2(budgets.reduce((s, v) => s + v, 0));
+
+  // 1. Over its own budget for the months that have closed. 10% AND 50k, so a small row does not
+  //    flag on a rounding difference and a large one does not hide behind a small percentage.
+  if (ytdBudget > 0 && ytdActual > ytdBudget * 1.1 && ytdActual - ytdBudget > 50000) {
+    flags.push({
+      kind: 'over',
+      text: `over budget by ${round2(ytdActual - ytdBudget).toLocaleString('en-US')} so far (${Math.round(((ytdActual / ytdBudget) - 1) * 100)}% above)`,
+    });
+  }
+  // 2. One month far out of line with this row's own other months.
+  const nonzero = actuals.filter((v) => Math.abs(v) > 0.005).map(Math.abs);
+  if (nonzero.length >= 3) {
+    for (const i of live) {
+      const v = row.actual[i];
+      if (v == null) continue;
+      const med = median(nonzero.filter((x) => x !== Math.abs(v)));
+      if (med > 0 && Math.abs(v) > 3 * med && Math.abs(v) > 50000) {
+        flags.push({ kind: 'spike', text: `${MONTHS[i]} actual ${round2(v).toLocaleString('en-US')} is ${(Math.abs(v) / med).toFixed(1)}x this department's usual month` });
+      }
+    }
+  }
+  // 3. Spending with nothing budgeted against it, and its opposite -- a budget nothing has been
+  //    spent against, which usually means the department is not mapped rather than thrifty.
+  if (!row.annual_budget && Math.abs(ytdActual) > 10000) {
+    flags.push({ kind: 'unbudgeted', text: `${round2(ytdActual).toLocaleString('en-US')} spent with no budget set` });
+  }
+  if (row.annual_budget > 0 && live.length >= 3 && Math.abs(ytdActual) < 0.005) {
+    flags.push({ kind: 'no-actual', text: `budgeted ${round2(row.annual_budget).toLocaleString('en-US')} with no actual in ${live.length} closed month(s)` });
+  }
+  // 4. A cost row with a credit balance is a posting error or a reversal, not an underspend.
+  if (ytdActual < -1000) {
+    flags.push({ kind: 'sign', text: `actual is negative (${ytdActual.toLocaleString('en-US')}) for a cost row` });
+  }
+  // 5. The report already knows this one; surfacing it as a flag puts it where the others are.
+  if (row.no_t1s_department) {
+    flags.push({ kind: 'unmapped', text: 'no T1S department is mapped to this row, so its actual can only come from the source system' });
+  }
+  return flags;
+}
+
+// Every row's flags, keyed by row id, plus the report-wide ones.
+function deptFlags(report) {
+  const byRow = {};
+  for (const g of report.groups || []) {
+    for (const r of g.rows) {
+      const f = deptFlagsFor(r, report);
+      if (f.length) byRow[r.id] = f;
+    }
+  }
+  const missing = (report.month_source || [])
+    .map((s, i) => (!s || s === 'missing' ? MONTHS[i] : null)).filter(Boolean);
+  return {
+    rows: byRow,
+    report: missing.length
+      ? [{ kind: 'no-data', text: `No actuals yet for ${missing.join(', ')} — those months are blank, not under budget.` }]
+      : [],
+  };
+}
+
+function deptReportContext(report) {
+  const live = monthsWithActuals(report);
+  const closed = live.map((i) => MONTHS[i]);
+  const flags = deptFlags(report);
+  const groups = (report.groups || []).map((g) => ({
+    sheet: g.label,
+    total_annual_budget: g.totals.annual_budget,
+    total_actual_to_date: round2(live.reduce((s, i) => s + (g.totals.actual[i] || 0), 0)),
+    rows: g.rows.map((r) => ({
+      department: r.label,
+      annual_budget: r.annual_budget,
+      budget_to_date: round2(live.reduce((s, i) => s + (r.budget[i] || 0), 0)),
+      actual_to_date: round2(live.reduce((s, i) => s + (r.actual[i] || 0), 0)),
+      // The month columns, named, so the model can talk about a specific month without counting.
+      by_month: Object.fromEntries(live.map((i) => [MONTHS[i], { budget: r.budget[i] || 0, actual: r.actual[i] }])),
+      flags: (flags.rows[r.id] || []).map((f) => f.text),
+    })),
+  }));
+  return {
+    budget: `${report.budget.name} (FY ${report.budget.fiscal_year}, v${report.budget.version}, ${report.budget.status})`,
+    sales_target: report.budget.sales_target,
+    months_with_actuals: closed,
+    books_actuals_switch_to_t1s_after: report.books_as_of || null,
+    report_flags: flags.report.map((f) => f.text),
+    sheets: groups,
+    cogs_actual_breakdown_by_line: (report.cogs_breakdown || []).map((c) => ({
+      line: c.parent ? `${c.parent} > ${c.label}` : c.label,
+      actual_to_date: round2(live.reduce((s, i) => s + (c.actual[i] || 0), 0)),
+    })),
+  };
+}
+
+const SYSTEM_DEPT = [
+  'You are a management accountant writing for the General Manager of GraphicStar, a signage and printing company in the Philippines. Amounts are Philippine pesos.',
+  'You are given the department budget report as JSON: three sheets (Admin Expenses, Selling Expenses, COGS), one row per department, budget and actual per month, plus rule-based flags.',
+  'These sheets are COSTS. Variance is Budget - Actual, so POSITIVE IS GOOD: under budget is good, over budget is bad.',
+  'Only the months listed in months_with_actuals have actuals. A month that is not listed is MISSING DATA, never an underspend, and must not be described as one.',
+  'Use ONLY the data given. Do not invent causes, vendors, or figures. When the data cannot explain something, say what to check instead.',
+  'Flags mark numbers that may be wrong (spikes, unbudgeted spending, negative costs, unmapped departments). Treat a flagged actual with caution and say so.',
+  'Write plainly, no jargon, no preamble. Use peso amounts with thousands separators.',
+].join('\n');
+
+async function explainDeptReport(report) {
+  return chat([
+    { role: 'system', content: SYSTEM_DEPT },
+    {
+      role: 'user',
+      content: `Write a short briefing (under 220 words):\n1. One or two sentences on total spending against budget for the months that have actuals.\n2. The 3-5 departments that matter most -- biggest overspend first, and any large underspend worth questioning.\n3. Any flagged numbers that should be checked before trusting the report.\nUse short paragraphs or bullets.\n\nDATA:\n${JSON.stringify(deptReportContext(report))}`,
+    },
+  ], { temperature: 0.2 });
+}
+
+async function askDeptReport(report, question, history = []) {
+  const past = (Array.isArray(history) ? history : []).slice(-6).flatMap((h) => [
+    { role: 'user', content: String(h.q || '').slice(0, 500) },
+    { role: 'assistant', content: String(h.a || '').slice(0, 2000) },
+  ]);
+  return chat([
+    { role: 'system', content: `${SYSTEM_DEPT}\nAnswer the user's question in under 150 words. If the question is about something not in the data (another year, an account-level detail, a document not listed), say so and suggest where in T1S to look.\n\nDATA:\n${JSON.stringify(deptReportContext(report))}` },
+    ...past,
+    { role: 'user', content: String(question).slice(0, 500) },
+  ], { temperature: 0.1 });
+}
+
+module.exports = {
+  aiConfigured, flagsFor, explainReport, askReport, suggestGrowth,
+  deptFlags, explainDeptReport, askDeptReport,
+};

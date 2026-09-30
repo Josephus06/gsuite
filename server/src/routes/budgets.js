@@ -659,7 +659,10 @@ router.get('/report/department-sheets', requireAuth, requirePermission(REPORT_RO
   try {
     const b = await loadBudget(req.query.budget_id);
     if (!b || b.kind !== 'department') return res.status(404).json({ error: 'Choose a department budget.' });
-    res.json(await deptBudget.buildReport(b));
+    const report = await deptBudget.buildReport(b);
+    // Rule-based warnings that a number may be wrong -- see lib/budgetAi.js. Not AI, and computed
+    // whether or not an OpenAI key is set, so the useful half of this never depends on a balance.
+    res.json({ ...report, flags: budgetAi.deptFlags(report), ai_available: budgetAi.aiConfigured() });
   } catch (err) { next(err); }
 });
 
@@ -849,6 +852,35 @@ router.post('/report/ai/ask', requireAuth, requirePermission(REPORT_ROUTE, 'can_
     const report = await buildBudgetVsActual(req.body.budget_id, req.body.period, req.body.month, { withLines: true });
     if (!report) return res.status(404).json({ error: 'Choose a budget.' });
     res.json({ answer: await budgetAi.askReport(report, varianceDrivers(report), question, req.body.history) });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+// The same two, for the DEPARTMENT report (Admin / Selling / COGS sheets). Separate endpoints
+// rather than a flag on the account ones: the two reports are different shapes, carry different
+// rules -- costs only, variance positive-is-good, months that simply have no actuals yet -- and
+// a prompt that tried to serve both would state neither correctly.
+router.post('/report/ai/dept-explain', requireAuth, requirePermission(REPORT_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const b = await loadBudget(req.body.budget_id);
+    if (!b || b.kind !== 'department') return res.status(404).json({ error: 'Choose a department budget.' });
+    res.json({ text: await budgetAi.explainDeptReport(await deptBudget.buildReport(b)) });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+router.post('/report/ai/dept-ask', requireAuth, requirePermission(REPORT_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const question = String(req.body.question || '').trim();
+    if (!question) return res.status(400).json({ error: 'Type a question.' });
+    const b = await loadBudget(req.body.budget_id);
+    if (!b || b.kind !== 'department') return res.status(404).json({ error: 'Choose a department budget.' });
+    const report = await deptBudget.buildReport(b);
+    res.json({ answer: await budgetAi.askDeptReport(report, question, req.body.history) });
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
     next(err);

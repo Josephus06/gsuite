@@ -42,15 +42,40 @@ function DeptSheets() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // AI, mirroring the account report's panel. Everything it says comes from the report the user
+  // is looking at, so it is cleared whenever a different budget is generated.
+  const [aiBusy, setAiBusy] = useState('');
+  const [aiError, setAiError] = useState('');
+  const [briefing, setBriefing] = useState('');
+  const [question, setQuestion] = useState('');
+  const [qa, setQa] = useState([]);
   useEffect(() => {
     api.get('/budgets/report/options').then(({ data: o }) => {
       const dept = o.filter((x) => x.kind === 'department');
       setOptions(dept); if (dept.length) setBudgetId(String(dept[0].id));
     }).catch((e) => setError(e.response?.data?.error || 'Could not load budgets.'));
   }, []);
+  async function explain() {
+    setAiBusy('explain'); setAiError(''); setBriefing('');
+    try { const { data: d } = await api.post('/budgets/report/ai/dept-explain', { budget_id: budgetId }); setBriefing(d.text); }
+    catch (e) { setAiError(e.response?.data?.error || 'The AI could not answer.'); }
+    setAiBusy('');
+  }
+  async function ask() {
+    const q = question.trim();
+    if (!q) return;
+    setAiBusy('ask'); setAiError('');
+    try {
+      const { data: d } = await api.post('/budgets/report/ai/dept-ask', { budget_id: budgetId, question: q, history: qa });
+      setQa((prev) => [...prev, { q, a: d.answer }]);
+      setQuestion('');
+    } catch (e) { setAiError(e.response?.data?.error || 'The AI could not answer.'); }
+    setAiBusy('');
+  }
   async function generate() {
     if (!budgetId) { setError('Choose a budget.'); return; }
     setLoading(true); setError('');
+    setBriefing(''); setQa([]); setAiError('');
     try { const { data: d } = await api.get('/budgets/report/department-sheets', { params: { budget_id: budgetId } }); setData(d); }
     catch (e) { setError(e.response?.data?.error || 'Could not build the report.'); }
     setLoading(false);
@@ -101,6 +126,47 @@ function DeptSheets() {
       {loading && <LoadingSpinner />}
       {data && !loading && (
         <div className="card">
+          {/* Rule-based, so these appear whether or not the AI is reachable -- and the months with
+              no actuals are said out loud, because a blank month reads as an underspend otherwise. */}
+          {(data.flags?.report || []).map((f, i) => (
+            <div key={i} className="warning-banner" style={{ marginBottom: 10 }}>{f.text}</div>
+          ))}
+          {Object.keys(data.flags?.rows || {}).length > 0 && (
+            <div className="error-banner" style={{ marginBottom: 10 }}>
+              ⚠ {Object.keys(data.flags.rows).length} department row{Object.keys(data.flags.rows).length === 1 ? '' : 's'} flagged:
+              over budget, a one-month spike, spending with no budget, a negative cost, or no T1S department mapped.
+              Hover the ⚠ beside a row to see why.
+            </div>
+          )}
+
+          <div className="card" style={{ marginBottom: 12, background: 'var(--surface-2, #f8fafc)' }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <strong>AI</strong>
+              {!data.ai_available && <span className="muted">AI is not set up on this server.</span>}
+              {data.ai_available && (
+                <>
+                  <button className="btn btn-sm btn-primary" disabled={!!aiBusy} onClick={explain}>{aiBusy === 'explain' ? 'Thinking...' : 'Explain this report'}</button>
+                  <input style={{ flex: 1, minWidth: 240 }} value={question} onChange={(e) => setQuestion(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && ask()} placeholder="Ask about these sheets, e.g. which department is furthest over budget?" />
+                  <button className="btn btn-sm" disabled={!!aiBusy || !question.trim()} onClick={ask}>{aiBusy === 'ask' ? 'Thinking...' : 'Ask'}</button>
+                </>
+              )}
+            </div>
+            {aiError && <div className="error-banner" style={{ marginTop: 8 }}>{aiError}</div>}
+            {briefing && <div style={{ whiteSpace: 'pre-wrap', marginTop: 10, lineHeight: 1.5 }}>{briefing}</div>}
+            {qa.map((x, i) => (
+              <div key={i} style={{ marginTop: 10 }}>
+                <div><strong>Q:</strong> {x.q}</div>
+                <div style={{ whiteSpace: 'pre-wrap', lineHeight: 1.5 }}><strong>A:</strong> {x.a}</div>
+              </div>
+            ))}
+            {data.ai_available && (briefing || qa.length > 0) && (
+              <div className="muted" style={{ fontSize: 11, marginTop: 8 }}>
+                AI-written from this report's own figures. It is told which months have no actuals yet. Check anything important against the ledger.
+              </div>
+            )}
+          </div>
+
           <div style={{ display: 'flex', gap: 6, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             {data.groups.map((x) => (
               <button key={x.grp} className={`btn btn-sm ${tab === x.grp ? 'btn-primary' : ''}`} onClick={() => setTab(x.grp)}>{data.budget.fiscal_year} {x.label}</button>
@@ -133,7 +199,20 @@ function DeptSheets() {
                 <tbody>
                   {g.rows.map((r) => (
                     <tr key={r.id}>
-                      <td>{r.label}{r.includes && <div className="muted" style={{ fontSize: 10 }}>{r.includes}</div>}</td>
+                      <td>
+                        {r.label}
+                        {/* The reasons in the title, so a flag can be understood without leaving
+                            the row it is on. */}
+                        {(data.flags?.rows?.[r.id] || []).length > 0 && (
+                          <span
+                            style={{ marginLeft: 6, cursor: 'help' }}
+                            title={data.flags.rows[r.id].map((f) => `• ${f.text}`).join('\n')}
+                          >
+                            ⚠
+                          </span>
+                        )}
+                        {r.includes && <div className="muted" style={{ fontSize: 10 }}>{r.includes}</div>}
+                      </td>
                       <td className="text-right" style={{ color: '#0070c0', fontWeight: 700 }}>{money(r.budget[0])}</td>
                       {SHORT.map((m, i) => [
                         <td key={m + 'a'} className="text-right" style={band(i)}>{link(r.actual[i], { row_id: r.id, month: i + 1 }, `${r.label} · ${m}-${Y}`)}</td>,
