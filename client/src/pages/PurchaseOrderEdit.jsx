@@ -27,6 +27,8 @@ export default function PurchaseOrderEdit() {
   const [locations, setLocations] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [items, setItems] = useState([]);
+  const [serviceItems, setServiceItems] = useState([]);
+  const [nonInventoryItems, setNonInventoryItems] = useState([]);
 
   const [dateCreated, setDateCreated] = useState('');
   const [needByDate, setNeedByDate] = useState('');
@@ -56,6 +58,8 @@ export default function PurchaseOrderEdit() {
     load('Locations', api.get('/lookups/locations'), setLocations);
     load('Departments', api.get('/lookups/departments'), setDepartments);
     load('Items', api.get('/inventory'), setItems);
+    load('Service items', api.get('/inventory', { params: { item_type: 'Service' } }), setServiceItems);
+    load('Non-inventory items', api.get('/inventory', { params: { item_type: 'Non-Inventory' } }), setNonInventoryItems);
 
     api.get(`/purchase-orders/${id}`).then((poRes) => {
       const p = poRes.data;
@@ -271,7 +275,10 @@ export default function PurchaseOrderEdit() {
 
         <div style={{ marginTop: 10 }}>
           <EntityPicker
-            label="Item" items={items} value="" getLabel={(i) => i.display_name}
+            // The same lists as the create form: PO-3 buys Service items, PO-4 Service and
+            // Non-Inventory, the rest stock items.
+            label="Item" items={po?.type === 'PO3' ? serviceItems : po?.type === 'PO4' ? [...serviceItems, ...nonInventoryItems] : items}
+            value="" getLabel={(i) => i.display_name}
             columns={[{ key: 'item_code', label: 'Code' }, { key: 'display_name', label: 'Name' }]}
             searchKeys={['item_code', 'display_name']}
             onSelect={addLine}

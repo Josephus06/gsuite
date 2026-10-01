@@ -110,12 +110,13 @@ export default function PurchaseOrderCreate() {
 
   // Which item master the Materials picker draws from. PO-3 ("Services with JO") buys work against
   // a job order, so it lists Service items. PO-4 ("Services/Non-Inventory without JO") lists
-  // Non-Inventory -- the consumables and shop supplies that are stocked by name but carry no
-  // quantity. Both live in the one `inventories` table and are told apart by item_type, which is
-  // why this is a choice of list rather than a different endpoint.
+  // Service AND Non-Inventory -- its name says both, and repairs and labor (REPAIRS LABOR &
+  // MATERIALS, SERVICE LABOR, Repairs & Maintenance ...) are Service items bought without a JO.
+  // Both live in the one `inventories` table and are told apart by item_type, which is why this
+  // is a choice of list rather than a different endpoint.
   const isNonInventoryCategory = poCategory === 'PO4';
-  const pickerItems = isNonInventoryCategory ? nonInventoryItems : serviceItems;
-  const itemKindLabel = isNonInventoryCategory ? 'Non-Inventory Item' : 'Service Item';
+  const pickerItems = isNonInventoryCategory ? [...serviceItems, ...nonInventoryItems] : serviceItems;
+  const itemKindLabel = isNonInventoryCategory ? 'Service / Non-Inventory Item' : 'Service Item';
 
   async function handleSave() {
     setError('');
