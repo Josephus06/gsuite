@@ -574,19 +574,21 @@ export default function EstimateWizard() {
   // which is exactly how Disc Price/Unit came to be blank on every estimate while Price/Unit was
   // filled in four different places.
   //
-  //   Price/Unit      = Subtotal   / Qty   -- a unit before the discount
-  //   Disc Price/Unit = Net of Tax / Qty   -- the same unit after it
+  //   Price/Unit      = Subtotal / Qty
+  //   Disc Price/Unit = Price/Unit - Disc Amt   -- the source's rule: the line's whole Disc Amt
+  //                                                comes off one unit's price (not Disc Amt / Qty)
   //
-  // BOTH ARE TAX-EXCLUSIVE, and they are a pair: Subtotal is the line before its discount and Net
-  // of Tax is the line after it, so the two columns sit either side of the Disc Amt between them
-  // and a reader can see what the discount did to a single unit. Price/Unit used to be Gross / Qty
-  // -- tax-inclusive -- which made it incomparable with the discounted figure beside it.
+  // Disc Amt is taken as Subtotal - Net of Tax, which every caller already passes. Both are
+  // tax-exclusive. Price/Unit used to be Gross / Qty -- tax-inclusive -- which made it
+  // incomparable with the discounted figure beside it.
   function perUnitFor(quantity, { subtotal, net_of_tax: netOfTax }) {
     const qty = Number(quantity) || 0;
     if (!qty) return { price_per_unit: null, disc_price_per_unit: null };
+    const sub = Number(subtotal || 0);
+    const discAmt = sub - Number(netOfTax || 0);
     return {
-      price_per_unit: Number((Number(subtotal || 0) / qty).toFixed(4)),
-      disc_price_per_unit: Number((Number(netOfTax || 0) / qty).toFixed(4)),
+      price_per_unit: Number((sub / qty).toFixed(4)),
+      disc_price_per_unit: Number((sub / qty - discAmt).toFixed(4)),
     };
   }
 
