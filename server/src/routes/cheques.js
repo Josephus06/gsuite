@@ -75,9 +75,10 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 // CR the credit's AP account. Same bookkeeping as a Bill Payment's credit lines.
 
 const isVendor = (t) => ['VENDOR', 'supplier'].includes(String(t || ''));
-// Whose credit it is: the vendor on its bill (the PO's supplier where the bill came from one).
-const CREDIT_SUPPLIER_SQL = `(SELECT COALESCE(po.supplier_id, vb.supplier_id) FROM vendor_bills vb
-    LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id WHERE vb.id = bc.vendor_bill_id)`;
+// Whose credit it is: the vendor on its bill (the PO's supplier where the bill came from one), or,
+// for a credit with no bill (made from a cheque), its own supplier_id.
+const CREDIT_SUPPLIER_SQL = `COALESCE((SELECT COALESCE(po.supplier_id, vb.supplier_id) FROM vendor_bills vb
+    LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id WHERE vb.id = bc.vendor_bill_id), bc.supplier_id)`;
 
 async function chequeCredits(db, chequeId) {
   return (await chequeCreditsByCheque([Number(chequeId)])).get(Number(chequeId)) || [];
@@ -142,7 +143,8 @@ router.get('/vendor-credits', requireAuth, requirePermission(ROUTE, 'can_view'),
       `SELECT bc.id AS bill_credit_id, bc.bill_credit_no, bc.date_created, bc.memo, bc.total_amount, bc.applied_amount
          FROM bill_credits bc
         WHERE ${CREDIT_SUPPLIER_SQL} = ? AND (bc.status = 'open' AND bc.applied_amount < bc.total_amount OR bc.id IN (?))
-        ORDER BY bc.date_created, bc.id`, [supplierId, [...mine.keys(), 0]]);
+          AND (bc.cheque_id IS NULL OR bc.cheque_id <> ?) -- not a credit made from this very cheque
+        ORDER BY bc.date_created, bc.id`, [supplierId, [...mine.keys(), 0], chequeId]);
     res.json(rows.map((r) => ({
       bill_credit_id: r.bill_credit_id, bill_credit_no: r.bill_credit_no, date_created: r.date_created, memo: r.memo,
       total_amount: Number(r.total_amount),
@@ -246,7 +248,15 @@ router.get('/:id/related', requireAuth, requirePermission(ROUTE, 'can_view'), as
         ORDER BY j.date_created DESC, j.id DESC`,
       [req.params.id]
     );
-    res.json(rows);
+    // ...and the Bill Credits made from it (its "Bill Credit" button).
+    const [credits] = await pool.query(
+      `SELECT bc.id, bc.bill_credit_no, bc.date_created, bc.status, bc.total_amount AS amount
+         FROM bill_credits bc WHERE bc.cheque_id = ? ORDER BY bc.id DESC`, [req.params.id],
+    ).catch((e) => { if (e.code === 'ER_BAD_FIELD_ERROR') return [[]]; throw e; });
+    res.json([
+      ...credits.map((c) => ({ ...c, kind: 'bill_credit', doc_no: c.bill_credit_no, path: `/bill-credits/${c.id}` })),
+      ...rows.map((r) => ({ ...r, kind: 'journal', doc_no: r.journal_no, path: `/journals/${r.id}` })),
+    ]);
   } catch (err) { next(err); }
 });
 

@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
+import BillCreditModal from '../components/BillCreditModal';
 import { displayDate, displayDateTime } from '../utils/dates';
 
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'; }
@@ -28,6 +29,7 @@ export default function ChequeView() {
   const [editingRelease, setEditingRelease] = useState(false);
   const [releaseDate, setReleaseDate] = useState('');
   const [savingRelease, setSavingRelease] = useState(false);
+  const [showBillCredit, setShowBillCredit] = useState(false);
 
   // Date Released is editable at any time, on any cheque (voided included).
   async function saveRelease() {
@@ -73,6 +75,10 @@ export default function ChequeView() {
           {can('/cheques', 'can_edit') && c.status !== 'void' && <button className="btn btn-sm" onClick={() => navigate(`/cheques/${c.id}/edit`)}>Edit</button>}
           {can('/cheques', 'can_print') && <button className="btn btn-sm" onClick={() => window.open(`/cheques/${c.id}/print`, '_blank')}>Print Voucher</button>}
           {can('/cheques', 'can_print') && <button className="btn btn-sm" onClick={() => window.open(`/cheques/${c.id}/print?as=cheque`, '_blank')}>Print Cheque</button>}
+          {/* As on a Vendor Bill: a new Bill Credit for this cheque's vendor, made from the cheque. */}
+          {can('/bill-credits', 'can_add') && c.status !== 'void' && ['VENDOR', 'supplier'].includes(c.payee_type) && c.payee_id && (
+            <button className="btn btn-sm btn-primary" onClick={() => setShowBillCredit(true)}>Bill Credit</button>
+          )}
           {can('/cheques', 'can_void') && c.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
@@ -244,9 +250,9 @@ export default function ChequeView() {
                   <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>No related records.</td></tr>
                 )}
                 {related.map((r) => (
-                  <tr key={r.id}>
+                  <tr key={`${r.kind}-${r.id}`}>
                     <td>{r.date_created ? String(r.date_created).slice(0, 10) : ''}</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/journals/${r.id}`)}>{r.journal_no}</button></td>
+                    <td><button type="button" className="link-btn" onClick={() => navigate(r.path || `/journals/${r.id}`)}>{r.doc_no || r.journal_no}</button></td>
                     <td style={{ textAlign: 'right' }}>{money(r.amount)}</td>
                     <td>{r.status}</td>
                   </tr>
@@ -255,6 +261,14 @@ export default function ChequeView() {
             </table>
           </div>
         </div>
+      )}
+
+      {showBillCredit && (
+        <BillCreditModal
+          chequeId={c.id}
+          onClose={() => setShowBillCredit(false)}
+          onSaved={(bc) => { setShowBillCredit(false); navigate(`/bill-credits/${bc.id}`); }}
+        />
       )}
 
       {tab === 'system' && (

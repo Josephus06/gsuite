@@ -133,9 +133,9 @@ async function collectOpenApItemsFromDocs(asOf, filters = {}) {
     `SELECT bc.id, s.id AS supplier_id, s.name AS supplier_name, bc.bill_credit_no, bc.date_created,
             bc.total_amount, bc.memo, loc.location_name
        FROM bill_credits bc
-       JOIN vendor_bills vb ON vb.id = bc.vendor_bill_id
+       LEFT JOIN vendor_bills vb ON vb.id = bc.vendor_bill_id
        LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
-       JOIN suppliers s ON s.id = COALESCE(po.supplier_id, vb.supplier_id)
+       JOIN suppliers s ON s.id = COALESCE(po.supplier_id, vb.supplier_id, bc.supplier_id)
        LEFT JOIN locations loc ON loc.id = bc.office_location_id
       WHERE bc.status <> 'voided' AND bc.voided_at IS NULL AND bc.date_created <= ?
             ${creditLoc.sql}${nameClause}${supClause}`,
@@ -159,8 +159,17 @@ async function collectOpenApItemsFromDocs(asOf, filters = {}) {
       GROUP BY bpl.bill_credit_id`,
     [asOf],
   );
+  // ...and any standing Cheque that has used it (cheque_bill_credits; absent on an older schema).
+  const [chequeDrawn] = await pool.query(
+    `SELECT cbc.bill_credit_id AS credit_id, SUM(cbc.applied_amount) AS amt
+       FROM cheque_bill_credits cbc JOIN cheques c ON c.id = cbc.cheque_id
+      WHERE c.status <> 'void' AND c.date_created <= ?
+      GROUP BY cbc.bill_credit_id`,
+    [asOf],
+  ).catch((e) => { if (e.code === 'ER_NO_SUCH_TABLE') return [[]]; throw e; });
   const appliedByCredit = new Map(creditApplied.map((r) => [r.id, Number(r.amt)]));
   const drawnByCredit = new Map(creditDrawn.map((r) => [r.credit_id, Number(r.amt)]));
+  for (const r of chequeDrawn) drawnByCredit.set(r.credit_id, (drawnByCredit.get(r.credit_id) || 0) + Number(r.amt));
 
   const payLoc = locationClause('bp', filters);
   const [payments] = await pool.query(

@@ -29,7 +29,9 @@ function computeLine(l, wtaxRate) {
 // capped at this credit's own Total Amount and rejected (not clamped) if exceeded -- see
 // schema.sql's comment on bill_credits for why this deliberately differs from the real
 // system's own (buggy) default.
-export default function BillCreditModal({ vendorBillId, onClose, onSaved }) {
+// Opened from a Vendor Bill (vendorBillId) or from a Cheque to a vendor (chequeId) -- the cheque
+// screen has the same "Bill Credit" button; such a credit records the vendor itself, not a bill.
+export default function BillCreditModal({ vendorBillId, chequeId, onClose, onSaved }) {
   const [data, setData] = useState(null);
   const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
   const [officeLocation, setOfficeLocation] = useState(null);
@@ -50,7 +52,7 @@ export default function BillCreditModal({ vendorBillId, onClose, onSaved }) {
 
   useEffect(() => {
     Promise.all([
-      api.get(`/bill-credits/for-vendor-bill/${vendorBillId}`),
+      api.get(chequeId ? `/bill-credits/for-cheque/${chequeId}` : `/bill-credits/for-vendor-bill/${vendorBillId}`),
       api.get('/lookups/chart-of-accounts'),
       api.get('/lookups/locations'),
       api.get('/lookups/departments'),
@@ -68,8 +70,8 @@ export default function BillCreditModal({ vendorBillId, onClose, onSaved }) {
       if (d.ap_account_id) setApAccount({ id: d.ap_account_id });
       if (d.office_location_id) setOfficeLocation({ id: d.office_location_id });
       setLoading(false);
-    });
-  }, [vendorBillId]);
+    }).catch((e) => { setError(e.response?.data?.error || 'Could not load.'); setLoading(false); });
+  }, [vendorBillId, chequeId]);
 
   const wtaxRate = wtax ? Number(wtax.rate) : 0;
   const computedLines = useMemo(() => lines.map((l) => ({ ...l, ...computeLine(l, wtaxRate) })), [lines, wtaxRate]);
@@ -81,8 +83,15 @@ export default function BillCreditModal({ vendorBillId, onClose, onSaved }) {
 
   if (loading || !data) {
     return (
-      <div className="modal-overlay">
-        <div className="modal modal-xl"><LoadingSpinner /></div>
+      <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+        <div className="modal modal-xl">
+          {loading ? <LoadingSpinner /> : (
+            <>
+              <div className="error-banner">{error || 'Could not load.'}</div>
+              <div className="modal-actions"><button type="button" className="btn" onClick={onClose}>Close</button></div>
+            </>
+          )}
+        </div>
       </div>
     );
   }
@@ -113,7 +122,8 @@ export default function BillCreditModal({ vendorBillId, onClose, onSaved }) {
     setSaving(true);
     try {
       const { data: bc } = await api.post('/bill-credits', {
-        vendor_bill_id: vendorBillId,
+        vendor_bill_id: chequeId ? null : vendorBillId,
+        cheque_id: chequeId || null,
         date_created: dateCreated,
         office_location_id: officeLocation?.id || null,
         ap_account_id: apAccount?.id || null,

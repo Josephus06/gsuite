@@ -58,6 +58,8 @@ export default function BillCreditView() {
   const canEdit = can('/bill-credits', 'can_edit');
   const canVoid = can('/bill-credits', 'can_void');
   const isOpen = bc.status === 'open';
+  // What it was created from: a Vendor Bill, or a Cheque to the vendor.
+  const source = bc.vendor_bill_id ? `/vendor-bills/${bc.vendor_bill_id}` : `/cheques/${bc.cheque_id}`;
   const unapplied = Number(bc.total_amount) - Number(bc.applied_amount);
 
   return (
@@ -65,7 +67,7 @@ export default function BillCreditView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(`/vendor-bills/${bc.vendor_bill_id}`)}>Back</button>
+          <button className="btn btn-sm" onClick={() => navigate(source)}>Back</button>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Bill Credit isn't implemented in this build">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
@@ -80,7 +82,7 @@ export default function BillCreditView() {
           <span className="estimate-no">{bc.bill_credit_no}</span>
         </div>
         <div className="estimate-status">{STATUS_LABELS[bc.status] || bc.status}</div>
-        <div><button type="button" className="link-btn" onClick={() => navigate(`/vendor-bills/${bc.vendor_bill_id}`)}>{bc.bill_no}</button></div>
+        <div><button type="button" className="link-btn" onClick={() => navigate(source)}>{bc.bill_no}</button></div>
 
         <div className="estimate-detail-grid">
           <div>

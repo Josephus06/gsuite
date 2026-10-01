@@ -96,6 +96,40 @@ router.get('/for-vendor-bill/:vbId', requireAuth, requirePermission(ROUTE, 'can_
   }
 });
 
+// The Cheque screen's "Bill Credit" button: a credit for the cheque's Vendor payee, created from
+// the cheque rather than from a bill. Pre-fills the same modal: vendor, office, memo, AP account,
+// and the vendor's open bills to apply it to.
+router.get('/for-cheque/:chequeId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [[c]] = await pool.query(
+      `SELECT c.id, c.cheque_no, c.office_location_id, c.memo, c.payee_type, c.payee_id, c.status, s.name AS supplier_name
+         FROM cheques c LEFT JOIN suppliers s ON s.id = c.payee_id WHERE c.id = ?`, [req.params.chequeId]);
+    if (!c) return res.status(404).json({ error: 'Not found' });
+    if (!['VENDOR', 'supplier'].includes(String(c.payee_type)) || !c.payee_id) {
+      return res.status(400).json({ error: 'A Bill Credit can only be made from a cheque whose Payee is a Vendor.' });
+    }
+    if (c.status === 'void') return res.status(409).json({ error: 'This cheque is voided.' });
+    const [[apAccount]] = await pool.query("SELECT id FROM chart_of_accounts WHERE account_code = '20100' LIMIT 1");
+    const [applyLines] = await pool.query(
+      `SELECT vb2.id AS vendor_bill_id, vb2.bill_no, vb2.date_created, vb2.date_due, vb2.gross_amount, vb2.amount_due
+       FROM vendor_bills vb2
+       LEFT JOIN purchase_orders po2 ON po2.id = vb2.purchase_order_id
+       WHERE COALESCE(po2.supplier_id, vb2.supplier_id) = ? AND vb2.status = 'open'
+       ORDER BY vb2.id DESC`, [c.payee_id]);
+    res.json({
+      cheque_id: c.id, bill_no: c.cheque_no, supplier_id: c.payee_id, supplier_name: c.supplier_name,
+      office_location_id: c.office_location_id, memo: c.memo, ap_account_id: apAccount?.id || null, apply_lines: applyLines,
+    });
+  } catch (err) { next(err); }
+});
+
+// Whose credit it is: the vendor on its bill, or its own supplier_id when it came from a cheque.
+const CREDIT_FROM_SQL = `FROM bill_credits bc
+       LEFT JOIN vendor_bills vb ON vb.id = bc.vendor_bill_id
+       LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
+       LEFT JOIN suppliers s ON s.id = COALESCE(po.supplier_id, vb.supplier_id, bc.supplier_id)
+       LEFT JOIN cheques ch ON ch.id = bc.cheque_id`;
+
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const { search, status } = req.query;
@@ -109,11 +143,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(
       `SELECT bc.id, bc.bill_credit_no, bc.date_created, bc.total_amount, bc.applied_amount, bc.status,
-              vb.bill_no, s.name AS supplier_name
-       FROM bill_credits bc
-       JOIN vendor_bills vb ON vb.id = bc.vendor_bill_id
-       LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
-       LEFT JOIN suppliers s ON s.id = COALESCE(po.supplier_id, vb.supplier_id)
+              COALESCE(vb.bill_no, ch.cheque_no) AS bill_no, s.name AS supplier_name
+       ${CREDIT_FROM_SQL}
        ${whereSql}
        ORDER BY bc.id DESC`,
       params
@@ -127,13 +158,10 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[bc]] = await pool.query(
-      `SELECT bc.*, vb.bill_no, s.name AS supplier_name, s.tin,
+      `SELECT bc.*, COALESCE(vb.bill_no, ch.cheque_no) AS bill_no, ch.cheque_no, s.name AS supplier_name, s.tin,
               loc.location_name AS office_location_name,
               apcoa.account_code AS ap_account_code, apcoa.account_name AS ap_account_name
-       FROM bill_credits bc
-       JOIN vendor_bills vb ON vb.id = bc.vendor_bill_id
-       LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
-       LEFT JOIN suppliers s ON s.id = COALESCE(po.supplier_id, vb.supplier_id)
+       ${CREDIT_FROM_SQL}
        LEFT JOIN locations loc ON loc.id = bc.office_location_id
        LEFT JOIN chart_of_accounts apcoa ON apcoa.id = bc.ap_account_id
        WHERE bc.id = ?`,
@@ -187,8 +215,17 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const {
       vendor_bill_id: vendorBillId, date_created: dateCreated, office_location_id: officeLocationId,
       ap_account_id: apAccountId, memo, wtax_id: wtaxId, expense_lines: expenseLines, apply_lines: applyLines,
+      cheque_id: chequeId,
     } = req.body;
-    if (!vendorBillId) return res.status(400).json({ error: 'Created From (Vendor Bill) is required.' });
+    // Created from a Vendor Bill, or from a Cheque to a Vendor (which then names the supplier).
+    let supplierId = null;
+    if (!vendorBillId && chequeId) {
+      const [[c]] = await conn.query('SELECT payee_type, payee_id, status FROM cheques WHERE id = ?', [chequeId]);
+      if (!c) return res.status(400).json({ error: 'The cheque this credit is made from was not found.' });
+      if (!['VENDOR', 'supplier'].includes(String(c.payee_type)) || !c.payee_id) return res.status(400).json({ error: 'A Bill Credit can only be made from a cheque whose Payee is a Vendor.' });
+      if (c.status === 'void') return res.status(409).json({ error: 'This cheque is voided.' });
+      supplierId = c.payee_id;
+    } else if (!vendorBillId) return res.status(400).json({ error: 'Created From (Vendor Bill or Cheque) is required.' });
 
     const submittedExpenses = (Array.isArray(expenseLines) ? expenseLines : []).filter((l) => l.account_id && Number(l.amount) > 0);
     if (!submittedExpenses.length) return res.status(400).json({ error: 'Add at least one expense line.' });
@@ -233,11 +270,11 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
     const [result] = await conn.query(
       `INSERT INTO bill_credits
-         (bill_credit_no, vendor_bill_id, date_created, office_location_id, ap_account_id, memo, wtax_id,
+         (bill_credit_no, vendor_bill_id, ${supplierId ? 'supplier_id, cheque_id, ' : ''}date_created, office_location_id, ap_account_id, memo, wtax_id,
           wtax_description, wtax_amount, subtotal, tax_amount, total_amount, applied_amount, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ('', ?, ${supplierId ? '?, ?, ' : ''}?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        vendorBillId, dateCreated || new Date().toISOString().slice(0, 10), officeLocationId || null, apAccountId || null,
+        vendorBillId || null, ...(supplierId ? [supplierId, chequeId] : []), dateCreated || new Date().toISOString().slice(0, 10), officeLocationId || null, apAccountId || null,
         memo || null, wtaxId || null, wtaxDescription, wtaxAmount, subtotal, taxAmount, totalAmount, totalApplied, req.user.id,
       ]
     );

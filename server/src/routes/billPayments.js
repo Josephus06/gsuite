@@ -69,10 +69,11 @@ router.get('/for-vendor-bill/:vbId', requireAuth, requirePermission(ROUTE, 'can_
       `SELECT id AS bill_credit_id, bill_credit_no, date_created, total_amount, applied_amount,
               (total_amount - applied_amount) AS remaining
        FROM bill_credits
-       WHERE vendor_bill_id IN (SELECT vb3.id FROM vendor_bills vb3 LEFT JOIN purchase_orders po3 ON po3.id = vb3.purchase_order_id WHERE COALESCE(po3.supplier_id, vb3.supplier_id) = ?)
+       WHERE (vendor_bill_id IN (SELECT vb3.id FROM vendor_bills vb3 LEFT JOIN purchase_orders po3 ON po3.id = vb3.purchase_order_id WHERE COALESCE(po3.supplier_id, vb3.supplier_id) = ?)
+              OR (vendor_bill_id IS NULL AND supplier_id = ?))
          AND status = 'open' AND applied_amount < total_amount
        ORDER BY id DESC`,
-      [vb.supplier_id]
+      [vb.supplier_id, vb.supplier_id]
     );
 
     res.json({ ...vb, apply_lines: applyLines, debit_lines: debitLines });
@@ -312,10 +313,11 @@ router.get('/:id/edit-options', requireAuth, requirePermission(ROUTE, 'can_edit'
     const [credits] = await pool.query(
       `SELECT id AS bill_credit_id, bill_credit_no, date_created, total_amount, applied_amount, status
          FROM bill_credits
-        WHERE (status = 'open' AND applied_amount < total_amount AND vendor_bill_id IN
-                (SELECT vb3.id FROM vendor_bills vb3 LEFT JOIN purchase_orders po3 ON po3.id = vb3.purchase_order_id WHERE COALESCE(po3.supplier_id, vb3.supplier_id) = ?))
+        WHERE (status = 'open' AND applied_amount < total_amount AND (vendor_bill_id IN
+                (SELECT vb3.id FROM vendor_bills vb3 LEFT JOIN purchase_orders po3 ON po3.id = vb3.purchase_order_id WHERE COALESCE(po3.supplier_id, vb3.supplier_id) = ?)
+                OR (vendor_bill_id IS NULL AND supplier_id = ?)))
            OR id IN (?)
-        ORDER BY id DESC`, [bp.supplier_id, [...myCredit.keys(), 0]]);
+        ORDER BY id DESC`, [bp.supplier_id, bp.supplier_id, [...myCredit.keys(), 0]]);
     const reconciled = await isReconciled(pool, req.params.id);
     res.json({
       ...bp,
