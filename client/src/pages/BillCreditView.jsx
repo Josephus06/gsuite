@@ -12,7 +12,8 @@ function money(v) {
 }
 function formatDate(v) { return v ? displayDate(v) : '—'; }
 
-const STATUS_LABELS = { open: 'Open', voided: 'Voided' };
+// fully_applied: migrated from the source with its own status (import-bill-credits.js).
+const STATUS_LABELS = { open: 'Open', fully_applied: 'Fully Applied', voided: 'Voided' };
 
 // Mirrors the real "Bill Credit" detail view -- reached from a Vendor Bill's Related
 // Records tab after crediting it, or from the Bill Credits list.

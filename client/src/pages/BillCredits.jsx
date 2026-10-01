@@ -7,7 +7,8 @@ import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
 
 const PAGE_SIZE = 10;
-const STATUS_LABELS = { open: 'Open', voided: 'Voided' };
+// fully_applied: migrated from the source with its own status (import-bill-credits.js).
+const STATUS_LABELS = { open: 'Open', fully_applied: 'Fully Applied', voided: 'Voided' };
 
 function money(v) {
   const n = Number(v);
@@ -61,6 +62,7 @@ export default function BillCredits() {
             <select value={status} onChange={(e) => setStatus(e.target.value)}>
               <option value="">--ALL--</option>
               <option value="open">Open</option>
+              <option value="fully_applied">Fully Applied</option>
               <option value="voided">Voided</option>
             </select>
           </div>
