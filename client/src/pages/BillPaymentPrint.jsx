@@ -15,6 +15,9 @@ import letterhead from '../assets/graphicstar-letterhead.png';
 // real cheque, measure, and adjust. Cheque dates keep the bank's own format, not the app's.
 const CHEQUE = {
   size: { width: 203, height: 76 }, // BPI personal/commercial cheque, 8 x 3 in
+  // Printed PORTRAIT on A4 (the user's rule, 2026-10-01), the cheque at the sheet's top-left plus this
+  // offset -- move the whole cheque here if it sits off on the paper; move single fields below.
+  sheet: { width: 210, height: 297, left: 0, top: 0 },
   date: { x: 148, y: 9, digitGap: 5.6, groupGap: 3.4 }, // M M  D D  Y Y Y Y
   payee: { x: 26, y: 21, w: 120 },
   amount: { x: 150, y: 21, w: 45 },
@@ -112,7 +115,10 @@ export default function BillPaymentPrint({ kind = 'bill-payment' }) {
         .bpp-sign .bpp-line { margin-top: 12mm; border-top: 1px dashed #64748b; }
         .bpp-void { position: absolute; top: 40%; left: 0; right: 0; text-align: center; font-size: 64pt; font-weight: 800;
           color: rgba(220,38,38,.18); transform: rotate(-20deg); pointer-events: none; }
-        .chq-wrap { width: ${CHEQUE.size.width}mm; height: ${CHEQUE.size.height}mm; margin: 0 auto; background: #fff; position: relative;
+        .chq-sheet { width: ${CHEQUE.sheet.width}mm; height: ${CHEQUE.sheet.height}mm; margin: 0 auto; background: #fff; position: relative;
+          box-shadow: 0 1px 6px rgba(0,0,0,.25); }
+        .chq-wrap { width: ${CHEQUE.size.width}mm; height: ${CHEQUE.size.height}mm; position: absolute; left: ${CHEQUE.sheet.left}mm; top: ${CHEQUE.sheet.top}mm;
+          outline: 0.2mm dashed rgba(100,116,139,.5);
           box-shadow: 0 1px 6px rgba(0,0,0,.25); font-family: system-ui, 'Segoe UI', sans-serif; font-size: 11pt; color: #000; }
         .chq-f { position: absolute; white-space: nowrap; }
         .chq-out { outline: 0.2mm dashed rgba(220,38,38,.7); }
@@ -122,7 +128,9 @@ export default function BillPaymentPrint({ kind = 'bill-payment' }) {
           .bpp-no-print { display: none !important; }
           .bpp-sheet, .chq-wrap { box-shadow: none; margin: 0; }
           .bpp-sheet { min-height: 297mm; }
-          @page { ${mode === 'cheque' ? `size: ${CHEQUE.size.width}mm ${CHEQUE.size.height}mm;` : 'size: A4 portrait;'} margin: 0; }
+          @page { size: A4 portrait; margin: 0; }
+          .chq-sheet { box-shadow: none !important; outline: none !important; }
+          .chq-wrap { outline: none !important; box-shadow: none !important; }
         }
       `}</style>
 
@@ -264,6 +272,7 @@ function ChequeFace({ bp, payee, words, calibrate }) {
     x += CHEQUE.date.groupGap;
   });
   return (
+    <div className="chq-sheet">
     <div className="chq-wrap">
       {calibrate && <ChequeGrid />}
       {bp.status === 'voided' && <div className="bpp-void" style={{ top: '25%', fontSize: '40pt' }}>VOID</div>}
@@ -271,6 +280,7 @@ function ChequeFace({ bp, payee, words, calibrate }) {
       <div className={cls()} style={{ left: `${CHEQUE.payee.x}mm`, top: `${CHEQUE.payee.y}mm`, width: `${CHEQUE.payee.w}mm`, textAlign: 'center', overflow: 'hidden' }}>{payee}</div>
       <div className={cls()} style={{ left: `${CHEQUE.amount.x}mm`, top: `${CHEQUE.amount.y}mm`, width: `${CHEQUE.amount.w}mm`, textAlign: 'center' }}>{money(bp.total_amount)}</div>
       <div className={cls()} style={{ left: `${CHEQUE.words.x}mm`, top: `${CHEQUE.words.y}mm`, width: `${CHEQUE.words.w}mm`, textAlign: 'center', whiteSpace: 'normal', lineHeight: 1.3 }}>{words}</div>
+    </div>
     </div>
   );
 }
