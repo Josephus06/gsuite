@@ -27,7 +27,10 @@ export default function DeliveryReceiptPrint({ si }) {
   // rows (see invoiceTotals) -- on a receipt the customer is signing, the figure has to be the
   // one they can add up themselves.
   const total = lines.reduce((s, l) => s + Number(l.gross_amount || 0), 0);
-  const address = si.bill_to_address || si.customer_address || '';
+  // Billing address: the one typed on this invoice, else the customer's own Bill To Address,
+  // else any address on file for them.
+  const billingAddress = si.bill_to_address || si.customer_bill_to_address || si.customer_address || '';
+  const orderNo = si.order_ref_no || si.sales_order_no || '';
 
   return (
     <div className="estimate-print">
@@ -52,7 +55,6 @@ export default function DeliveryReceiptPrint({ si }) {
         .dr-items .dr-num { text-align: right; }
         .dr-items .dr-mid { text-align: center; }
         .dr-items tfoot td { border-bottom: none; border-top: 1px solid #999; font-weight: 700; padding-top: 10px; }
-        .dr-order { margin: 0 0 18px; font-size: 12px; }
         /* The acknowledgement. Boxed, because it is the part of the page that is signed, and
            kept off a page break so a signature can never land away from what it acknowledges. */
         .dr-ack {
@@ -78,22 +80,18 @@ export default function DeliveryReceiptPrint({ si }) {
         <div className="print-info-grid">
           <div>
             <div><strong>Sold To :</strong> {si.customer_name}</div>
-            <div><strong>Address :</strong> {address}</div>
+            <div><strong>Billing Address :</strong> {billingAddress}</div>
             <div><strong>TIN :</strong> {si.customer_tin}</div>
           </div>
           <div className="print-info-right">
             <div><strong>Delivery Receipt # :</strong> {si.invoice_no}</div>
+            {/* The order this delivery is against -- what the customer's receiving clerk checks
+                the goods off with. */}
+            <div><strong>SO # :</strong> {orderNo}</div>
             <div><strong>Date :</strong> {displayDate(si.date_created)}</div>
             <div><strong>Term :</strong> {si.term}</div>
           </div>
         </div>
-
-        {/* The order this delivery is against -- what the customer's receiving clerk checks the
-            goods off with. Blank on an invoice raised straight from an Estimate, which has no
-            Sales Order behind it. */}
-        {si.sales_order_no && (
-          <p className="dr-order"><strong>Order ID :</strong> {si.sales_order_no}</p>
-        )}
 
         <table className="dr-items">
           <colgroup>

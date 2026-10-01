@@ -41,9 +41,9 @@ const ACCOUNT_TYPE_FIELDS = [
   'is_production_supervisor', 'can_edit_approved_po', 'approval_code',
 ];
 
-// Supervisors are NOT in the list above on purpose. Every field there is written verbatim on
-// each PUT -- absent means NULL -- so leaving supervisor_id in it would blank the primary
-// supervisor on any update that didn't resend it, and drift from user_supervisors. The column
+// Supervisors are NOT in the list above on purpose. Every field there that a PUT carries is
+// written verbatim, so leaving supervisor_id in it would let a resent stale value overwrite the
+// primary supervisor and drift from user_supervisors. The column
 // is written only by saveSupervisors(), from the table.
 // `supervisor_ids` is the payload field; a lone legacy `supervisor_id` is still accepted so a
 // client running older code keeps working against a freshly deployed server.
@@ -138,10 +138,12 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       return res.status(400).json({ error: 'username, email, password, and display_name are required' });
     }
     const passwordHash = await bcrypt.hash(password, 10);
-    const accountTypeValues = ACCOUNT_TYPE_FIELDS.map((f) => (req.body[f] === undefined || req.body[f] === '' ? null : req.body[f]));
+    // Fields not sent take the column default rather than NULL -- see the note on PUT below.
+    const sentFields = ACCOUNT_TYPE_FIELDS.filter((f) => req.body[f] !== undefined);
+    const accountTypeValues = sentFields.map((f) => (req.body[f] === '' ? null : req.body[f]));
     const [result] = await pool.query(
-      `INSERT INTO users (employee_id, username, email, password_hash, display_name, default_branch_id, is_active, ${ACCOUNT_TYPE_FIELDS.join(', ')})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ${ACCOUNT_TYPE_FIELDS.map(() => '?').join(', ')})`,
+      `INSERT INTO users (employee_id, username, email, password_hash, display_name, default_branch_id, is_active${sentFields.map((f) => `, ${f}`).join('')})
+       VALUES (?, ?, ?, ?, ?, ?, ?${sentFields.map(() => ', ?').join('')})`,
       [employee_id || null, username, email, passwordHash, display_name, default_branch_id || null, is_active ?? true, ...accountTypeValues]
     );
     // Written after the insert rather than in it, so the signature columns stay out of the
@@ -167,10 +169,14 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
     const { email, password, display_name, employee_id, default_branch_id, is_active } = req.body;
-    const accountTypeValues = ACCOUNT_TYPE_FIELDS.map((f) => (req.body[f] === undefined || req.body[f] === '' ? null : req.body[f]));
+    // A field the request does not carry at all is left as stored. A browser tab opened before a
+    // deploy that added a flag knows nothing of it, and writing NULL for it failed the whole save
+    // on the NOT NULL column (can_edit_approved_po, 2026-10-01) -- permissions included.
+    const sentFields = ACCOUNT_TYPE_FIELDS.filter((f) => req.body[f] !== undefined);
+    const accountTypeValues = sentFields.map((f) => (req.body[f] === '' ? null : req.body[f]));
     const fields = [
       'email = ?', 'display_name = ?', 'employee_id = ?', 'default_branch_id = ?', 'is_active = ?',
-      ...ACCOUNT_TYPE_FIELDS.map((f) => `${f} = ?`),
+      ...sentFields.map((f) => `${f} = ?`),
     ];
     const values = [email, display_name, employee_id || null, default_branch_id || null, is_active ?? true, ...accountTypeValues];
 

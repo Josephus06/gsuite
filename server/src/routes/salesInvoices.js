@@ -609,6 +609,10 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     const [[si]] = await pool.query(
       `SELECT si.*, so.sales_order_no, e.estimate_no, ns.nsso_no, c.name AS customer_name, dt.dt_no,
               c.tin AS customer_tin, c.company_name AS customer_company,
+              c.bill_to_address AS customer_bill_to_address,
+              -- The order behind the invoice for the printed "SO #": its own Sales Order, else the
+              -- one its Estimate was converted to, else its Non-Standard SO.
+              COALESCE(so.sales_order_no, eso.sales_order_no, ns.nsso_no) AS order_ref_no,
               COALESCE(
                 (SELECT ca.address_line FROM customer_addresses ca
                   WHERE ca.customer_id = c.id AND ca.address_type = 'BILLING' AND ca.is_default = TRUE LIMIT 1),
@@ -621,6 +625,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
        FROM sales_invoices si
        LEFT JOIN sales_orders so ON so.id = si.sales_order_id
        LEFT JOIN estimates e ON e.id = si.estimate_id
+       LEFT JOIN sales_orders eso ON eso.id = e.sales_order_id
        LEFT JOIN delivery_tickets dt ON dt.id = si.delivery_ticket_id
        LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
        LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
