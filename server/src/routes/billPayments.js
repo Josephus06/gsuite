@@ -4,6 +4,8 @@ const { CREDIT_STATUS_SQL, syncChequeForCredit } = require('../lib/billCreditSta
 const { insertNumbered } = require('../lib/docNumber');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
+const { computeBillPaymentGl } = require('../lib/glImpact');
+const { postReversalJournal } = require('../lib/reversalJournal');
 
 const router = express.Router();
 // Reached from an Open Vendor Bill's "Bill Payment" button, confirmed against the real
@@ -139,7 +141,12 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
 
-    res.json({ ...bp, lines });
+    // GL Impact, as the ledger posts it (lib/glImpact.js computeBillPaymentGl), and the reversal
+    // journal a void wrote.
+    const glImpact = await computeBillPaymentGl(bp);
+    const [[reversal]] = await pool.query(
+      "SELECT id, journal_no, date_created FROM journals WHERE source_type = 'bill_payment' AND source_id = ? AND status <> 'void' LIMIT 1", [bp.id]);
+    res.json({ ...bp, lines, gl_impact: glImpact, reversal_journal: reversal || null });
   } catch (err) {
     next(err);
   }
@@ -490,10 +497,21 @@ router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async
     }
     await conn.query("UPDATE bill_payments SET status = 'voided', voided_by_user_id = ?, voided_at = NOW() WHERE id = ?", [req.user.id, req.params.id]);
     await logAudit(conn, { paymentId: req.params.id, userId: req.user.id, eventType: 'Cancelled', fieldName: 'status', oldValue: 'open', newValue: 'voided' });
+    // The payment keeps posting its DR AP / CR bank in its own period; this journal cancels it in
+    // the period of the void, as a voided Cheque's does (lib/reversalJournal.js).
+    const [[full]] = await conn.query('SELECT * FROM bill_payments WHERE id = ?', [req.params.id]);
+    const reversal = await postReversalJournal(conn, {
+      sourceType: 'bill_payment', sourceId: Number(req.params.id), sourceNo: full.bill_payment_no,
+      glRows: await computeBillPaymentGl(full), documentDate: full.date_created, voidedAt: new Date(),
+      reason: req.body?.reason || null, userId: req.user.id, locationId: full.office_location_id || null,
+    });
+    if (reversal) {
+      await logAudit(conn, { paymentId: req.params.id, userId: req.user.id, eventType: 'Created', fieldName: 'reversal_journal_no', newValue: reversal.journalNo });
+    }
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM bill_payments WHERE id = ?', [req.params.id]);
-    res.json(row);
+    res.json({ ...row, reversal_journal_no: reversal?.journalNo || null });
   } catch (err) {
     await conn.rollback();
     next(err);

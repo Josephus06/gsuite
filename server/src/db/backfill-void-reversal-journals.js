@@ -24,7 +24,8 @@
 // so the 668 imported cheque reversals are left exactly as they are. Safe to re-run.
 const pool = require('../db');
 const { postReversalJournal } = require('../lib/reversalJournal');
-const { computeSalesInvoiceGl, computeDeliveryTicketGl, computeChequeGl } = require('../lib/glImpact');
+const { computeSalesInvoiceGl, computeDeliveryTicketGl, computeChequeGl, computeBillPaymentGl } = require('../lib/glImpact');
+const { booksStart } = require('../lib/openingBalances');
 require('dotenv').config();
 
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -75,6 +76,23 @@ const KINDS = [
     locationId: (d) => d.office_location_id || null,
     gl: (d, lines) => computeChequeGl(d, lines),
   },
+  {
+    // Bill Payments posted nothing until 2026-10-01, so a voided one only needs a reversal from
+    // the books' start: before it, neither the payment nor a reversal feeds any balance, and
+    // thousands of journals cancelling entries that never post would only be noise.
+    sourceType: 'bill_payment',
+    label: 'Bill Payments (voided, from the books start)',
+    headers: `SELECT bp.* FROM bill_payments bp
+               WHERE bp.status = 'voided' AND bp.date_created >= ?
+                 AND NOT EXISTS (SELECT 1 FROM journals j
+                                  WHERE j.source_type = 'bill_payment' AND j.source_id = bp.id AND j.status <> 'void')
+               ORDER BY bp.id`,
+    params: async () => [(await booksStart())?.start || '2100-01-01'],
+    lines: 'SELECT 1 FROM DUAL WHERE ? IS NOT NULL',
+    no: (d) => d.bill_payment_no,
+    locationId: (d) => d.office_location_id || null,
+    gl: (d) => computeBillPaymentGl(d),
+  },
 ];
 
 async function main() {
@@ -86,7 +104,7 @@ async function main() {
   let grandAmount = 0;
 
   for (const kind of KINDS) {
-    const [docs] = await pool.query(kind.headers);
+    const [docs] = await pool.query(kind.headers, kind.params ? await kind.params() : []);
     console.log(`${kind.label}: ${docs.length} needing a reversal`);
 
     let written = 0;

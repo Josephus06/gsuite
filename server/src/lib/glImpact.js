@@ -394,6 +394,24 @@ async function computeTransitGl(lines, { qtyField, assetIsDebit }) {
 // to nothing because live exposes no payment->invoice detail, not because they are advances, and
 // the same cash is already booked through the synthetic CPAY-* payments. Posting their unapplied
 // amount would add roughly PHP 500M to the ledger twice. See customer-payments-cpay-vs-pay.
+// GL Impact for a Bill Payment, as the source posts it (read off BPAY-13714 and BPAY-13700):
+//   DR the payable it settles (its A/P account, Accounts Payable - Trade 20100 by default)
+//   CR the bank account it is drawn on
+// both for the full amount -- applied or not: an unapplied payment is an advance against the
+// vendor, which the source also books as a debit to AP. Bill Payments posted nothing at all before
+// this, so from the cut-over every one left AP overstated and the bank overstated by its amount.
+async function computeBillPaymentGl(bp) {
+  const amount = Number((Number(bp.total_amount) || 0).toFixed(2));
+  if (!amount || !bp.bank_account_id) return [];
+  const ap = bp.ap_account_id ? await coaById(bp.ap_account_id) : await coaByCode('20100');
+  const bank = await coaById(bp.bank_account_id);
+  if (!ap || !bank) return [];
+  return [
+    { account_code: ap.account_code, account_name: ap.account_name, debit: amount, credit: 0 },
+    { account_code: bank.account_code, account_name: bank.account_name, debit: 0, credit: amount },
+  ];
+}
+
 async function computeCustomerPaymentGl(cp, lines) {
   const arAcct = await coaByCode('12100');
   // An in-app payment saved without a Deposit To account is cash waiting to be banked, which is
@@ -1211,6 +1229,21 @@ async function computePostedGlLines({ toDate, fromDate }) {
     }
   }
 
+  // Bill Payments -- computeBillPaymentGl above. VOID ONES POST, cancelled by their reversal journal
+  // in the period of the void (lib/reversalJournal.js), as Cheques do: excluding them as well would
+  // reverse them twice.
+  {
+    const { sql, params } = dateFilter('bp.date_created');
+    const [headers] = await pool.query(`SELECT bp.* FROM bill_payments bp WHERE ${sql}`, params);
+    for (const bp of headers) {
+      const rows = await computeBillPaymentGl(bp);
+      push(glFor('bill_payment', bp.id, rows), {
+        entry_date: bp.date_created, source_type: 'bill_payment', source_no: bp.bill_payment_no, source_id: bp.id,
+        memo: bp.memo || null, location_id: bp.office_location_id || null,
+      });
+    }
+  }
+
   // Fund Transfers -- move money between two bank accounts: DR the To account / CR the From account.
   {
     const [tbl] = await pool.query("SHOW TABLES LIKE 'fund_transfers'");
@@ -1526,6 +1559,7 @@ module.exports = {
   computeChequeGl,
   chequeCreditsByCheque,
   computeCustomerPaymentGl,
+  computeBillPaymentGl,
   computeCreditMemoGl,
   computeCustomerRefundGl,
   computeCommissionPayableGl,

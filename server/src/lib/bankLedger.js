@@ -44,7 +44,8 @@ const SOURCE_SQL = {
            b.payee_name AS party, b.memo,
            -b.total_amount AS amount
       FROM bill_payments b
-     WHERE b.bank_account_id = ? AND b.status <> 'void' AND b.date_released IS NOT NULL`,
+     -- 'voided' is what a voided Bill Payment carries; testing only 'void' left every one in the book.
+     WHERE b.bank_account_id = ? AND b.status NOT IN ('void', 'voided') AND b.date_released IS NOT NULL`,
   deposit: `
     SELECT 'deposit' AS source_kind, d.id AS source_id, d.bd_no AS doc_no,
            NULL AS reference, d.date_created AS txn_date,

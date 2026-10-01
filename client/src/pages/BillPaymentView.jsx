@@ -167,6 +167,7 @@ export default function BillPaymentView() {
       <div className="status-tabs" style={{ marginTop: 20 }}>
         <button className={`status-tab ${tab === 'apply' ? 'active' : ''}`} onClick={() => setTab('apply')}>Apply</button>
         <button className={`status-tab ${tab === 'debits' ? 'active' : ''}`} onClick={() => setTab('debits')}>Debits</button>
+        <button className={`status-tab ${tab === 'gl' ? 'active' : ''}`} onClick={() => setTab('gl')}>GL Impact</button>
         <button className={`status-tab ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}>System Info</button>
       </div>
 
@@ -207,6 +208,36 @@ export default function BillPaymentView() {
                   <tr key={l.id}>
                     <td><button type="button" className="link-btn" onClick={() => navigate(`/bill-credits/${l.bill_credit_id}`)}>{l.bill_credit_no}</button></td>
                     <td>{money(l.applied_amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* What this payment posts (DR A/P / CR bank, as the source posts it). A voided one still
+          shows it: the void does not un-post it, its reversal journal cancels it. */}
+      {tab === 'gl' && (
+        <div className="card">
+          {bp.reversal_journal && (
+            <div className="muted" style={{ marginBottom: 10 }}>
+              Reversed by{' '}
+              <button type="button" className="link-btn" onClick={() => navigate(`/journals/${bp.reversal_journal.id}`)}>{bp.reversal_journal.journal_no}</button>
+            </div>
+          )}
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Account</th><th style={{ textAlign: 'right' }}>Debit</th><th style={{ textAlign: 'right' }}>Credit</th></tr></thead>
+              <tbody>
+                {(bp.gl_impact || []).length === 0 && (
+                  <tr><td colSpan={3} className="muted" style={{ textAlign: 'center', padding: 20 }}>No GL entry (no bank account on this payment).</td></tr>
+                )}
+                {(bp.gl_impact || []).map((g) => (
+                  <tr key={g.account_code}>
+                    <td>{g.account_code} — {g.account_name}</td>
+                    <td style={{ textAlign: 'right' }}>{g.debit ? money(g.debit) : ''}</td>
+                    <td style={{ textAlign: 'right' }}>{g.credit ? money(g.credit) : ''}</td>
                   </tr>
                 ))}
               </tbody>
