@@ -5,7 +5,7 @@ const { buildPurchaseOrderPdf, purchaseOrderPdfFilename } = require('../lib/purc
 const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { insertNumbered } = require('../lib/docNumber');
-const { isApproved } = require('../lib/poStatus');
+const { isApproved, normalisePoStatus } = require('../lib/poStatus');
 
 const router = express.Router();
 const ROUTE = '/purchase-orders';
@@ -562,6 +562,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 //   PO3/PO4: created straight into pending_approval_gm. A General Manager approves any amount; a
 //     Purchasing Supervisor may approve one up to APPROVAL_THRESHOLD, so the same ceiling applies
 //     to a supervisor whatever the type -- it is the amount the threshold exists to judge.
+// A General Manager (or System Admin) may also approve at the FIRST stage: that approves the PO
+// outright, skipping the supervisor tier.
 // A System Admin can also perform the GM-tier approval (matches the "GM" ~ admin-level
 // authority precedent used elsewhere, e.g. approving PO3/PO4 costing without a dedicated
 // GM account existing yet).
@@ -574,18 +576,30 @@ router.put('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve'),
 
     let newStatus;
     await conn.beginTransaction();
-    if (po.status === 'pending_approval') {
+    // Normalised: an imported PO reads 'Pending Approval' / 'Pending Approval for GM', and the
+    // view (which normalises) offered Approve on those while this route refused them.
+    const st = normalisePoStatus(po.status);
+    const isGm = actingUser.account_type === 'System Admin' || actingUser.account_type === 'General Manager';
+    if (st === 'pending_approval' && isGm) {
+      // The GM outranks the supervisor tier, so a GM approving at the first stage approves it
+      // outright -- any amount -- rather than waiting on a Purchasing Supervisor (PO-20623 sat
+      // un-approvable for the GM). Stamped in the GM columns: that is who signed it.
+      newStatus = 'approved';
+      await conn.query(
+        "UPDATE purchase_orders SET status = 'approved', approved_by_gm_user_id = ?, approved_by_gm_at = NOW() WHERE id = ?",
+        [req.user.id, req.params.id]
+      );
+    } else if (st === 'pending_approval') {
       if (!actingUser.is_purchasing_supervisor) {
         await conn.rollback();
-        return res.status(403).json({ error: 'Only a Purchasing Supervisor can approve this Purchase Order at this stage.' });
+        return res.status(403).json({ error: 'Only a Purchasing Supervisor or General Manager can approve this Purchase Order at this stage.' });
       }
       newStatus = Number(po.total_amount) > APPROVAL_THRESHOLD ? 'pending_approval_gm' : 'approved';
       await conn.query(
         'UPDATE purchase_orders SET status = ?, approved_by_supervisor_user_id = ?, approved_by_supervisor_at = NOW() WHERE id = ?',
         [newStatus, req.user.id, req.params.id]
       );
-    } else if (po.status === 'pending_approval_gm') {
-      const isGm = actingUser.account_type === 'System Admin' || actingUser.account_type === 'General Manager';
+    } else if (st === 'pending_approval_gm') {
       // A Purchasing Supervisor may clear this tier too, but only under the threshold. PO3/PO4 are
       // created straight into pending_approval_gm, so without this a 500-peso service PO waited on
       // the General Manager while a 9,000-peso PO1 did not -- the amount, not the type, is what

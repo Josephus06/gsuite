@@ -187,7 +187,8 @@ export default function PurchaseOrderView() {
   const SUPERVISOR_APPROVAL_LIMIT = 10000;
   const withinSupervisorLimit = Number(po.total_amount || 0) <= SUPERVISOR_APPROVAL_LIMIT;
   const showApprove = canApprovePO && (
-    (st === 'pending_approval' && !!user?.is_purchasing_supervisor)
+    // A GM may also approve at the first stage -- it approves outright (server: PUT /approve).
+    (st === 'pending_approval' && (!!user?.is_purchasing_supervisor || user?.account_type === 'System Admin' || user?.account_type === 'General Manager'))
     || (st === 'pending_approval_gm' && (
       user?.account_type === 'System Admin' || user?.account_type === 'General Manager'
       || (!!user?.is_purchasing_supervisor && withinSupervisorLimit)
