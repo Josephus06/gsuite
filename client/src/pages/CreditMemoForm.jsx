@@ -42,7 +42,9 @@ export default function CreditMemoForm() {
   useEffect(() => {
     Promise.all([
       api.get('/customers'), api.get('/lookups/locations'), api.get('/lookups/departments'),
-      api.get('/inventory'), api.get('/lookups/taxes'),
+      // A credit memo's lines are Discount items (DISCOUNT, EX-DEAL, SALES ADJUSTMENT, WRITE OFF...),
+      // as on the source -- the default item list leaves that type out altogether.
+      api.get('/inventory', { params: { item_type: 'Discount' } }), api.get('/lookups/taxes'),
     ]).then(([c, l, d, i, t]) => {
       const locations = l.data;
       setLookups({
@@ -211,7 +213,7 @@ export default function CreditMemoForm() {
               </table>
             </div>
             <div style={{ marginTop: 12 }}>
-              <EntityPicker label="Materials" items={lookups.items} value="" getLabel={(i) => i?.display_name}
+              <EntityPicker label="Discount Items" items={lookups.items} value="" getLabel={(i) => i?.display_name}
                 columns={[{ key: 'item_code', label: 'Item Code' }, { key: 'display_name', label: 'Display Name' }, { key: 'sales_description', label: 'Sales Desc.' }]}
                 searchKeys={['item_code', 'display_name', 'sales_description']}
                 triggerLabel="Add Item" triggerClassName="btn btn-primary" onSelect={addItem} />

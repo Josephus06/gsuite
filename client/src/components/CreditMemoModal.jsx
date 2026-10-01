@@ -56,7 +56,9 @@ export default function CreditMemoModal({ invoiceId, onClose, onSaved }) {
     Promise.all([
       api.get(`/credit-memos/for-invoice/${invoiceId}`),
       api.get('/lookups/departments'),
-      api.get('/inventory'),
+      // A credit memo's lines are Discount items (DISCOUNT, EX-DEAL, SALES ADJUSTMENT, WRITE OFF...),
+      // as on the source -- the default item list leaves that type out altogether.
+      api.get('/inventory', { params: { item_type: 'Discount' } }),
       api.get('/lookups/taxes'),
     ]).then(([srcRes, deptRes, itemRes, taxRes]) => {
       const d = srcRes.data;
