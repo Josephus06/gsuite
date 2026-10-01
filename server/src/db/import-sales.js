@@ -333,13 +333,20 @@ async function main() {
   // used to get VAT12 regardless -- wrong on non-VAT lines, and NULL on every line wherever no tax
   // is coded exactly 'VAT12'. A blank source code falls back to the 12% tax only when the line
   // actually carries tax.
+  //
+  // The four source codes map by name (the user's table, 2026-10-01) -- three of them are 0% and
+  // carry no rate in the code, so the rate fallback below cannot tell them apart.
+  const SOURCE_TAX_MAP = {
+    'VAT_PH:0-VAT': 'VATPH_0', 'VAT_PH:EXEMPT': 'VATPH_EX',
+    'VAT_PH:VATIN-12': 'VATPH_12', 'VAT_PH:ZRATE': 'VATPH_ZRATE',
+  };
   const taxIdByCode = new Map();
   const [[vat12]] = await pool.query('SELECT id FROM taxes WHERE rate = 12 ORDER BY id LIMIT 1');
   async function lineTaxId(l) {
     const code = String(l.TaxCode_LdgrJob || '').trim();
     if (!code) return num(l.TaxAmount_LdgrJob) ? (vat?.id ?? vat12?.id ?? null) : null;
     if (taxIdByCode.has(code)) return taxIdByCode.get(code);
-    let [[t]] = await pool.query('SELECT id FROM taxes WHERE code = ? LIMIT 1', [code]);
+    let [[t]] = await pool.query('SELECT id FROM taxes WHERE code IN (?, ?) LIMIT 1', [SOURCE_TAX_MAP[code] || code, code]);
     const rate = code.match(/(\d+(\.\d+)?)\s*$/);
     if (!t && rate) [[t]] = await pool.query('SELECT id FROM taxes WHERE rate = ? ORDER BY id LIMIT 1', [Number(rate[1])]);
     taxIdByCode.set(code, t ? t.id : null);
