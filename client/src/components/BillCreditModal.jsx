@@ -69,6 +69,14 @@ export default function BillCreditModal({ vendorBillId, chequeId, onClose, onSav
       setMemo(d.memo || '');
       if (d.ap_account_id) setApAccount({ id: d.ap_account_id });
       if (d.office_location_id) setOfficeLocation({ id: d.office_location_id });
+      // From a cheque, its expense lines come pre-filled (see /for-cheque); a bill sends none.
+      if (Array.isArray(d.lines) && d.lines.length) {
+        setLines(d.lines.map((l, i) => ({
+          key: `src-${i}`, account_id: l.account_id, account_label: '', department_id: l.department_id || null,
+          amount: Number(l.amount) || 0, tax_code_id: l.tax_code_id || null, tax_rate: Number(l.tax_rate) || 0,
+          is_withhold: !!l.is_withhold,
+        })));
+      }
       setLoading(false);
     }).catch((e) => { setError(e.response?.data?.error || 'Could not load.'); setLoading(false); });
   }, [vendorBillId, chequeId]);

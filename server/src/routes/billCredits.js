@@ -116,9 +116,20 @@ router.get('/for-cheque/:chequeId', requireAuth, requirePermission(ROUTE, 'can_v
        LEFT JOIN purchase_orders po2 ON po2.id = vb2.purchase_order_id
        WHERE COALESCE(po2.supplier_id, vb2.supplier_id) = ? AND vb2.status = 'open'
        ORDER BY vb2.id DESC`, [c.payee_id]);
+    // The cheque's own expense lines start the credit's Expenses tab, so the credit mirrors what
+    // was paid (account, department, amount, tax code, withholding) -- the biller trims or edits
+    // them from there. They used to start empty.
+    const [lines] = await pool.query(
+      `SELECT cl.account_id, coa.account_code, coa.account_name, cl.department_id, cl.amount,
+              cl.tax_code_id, t.rate AS tax_rate, cl.apply_withholding_tax AS is_withhold
+         FROM cheque_lines cl
+         LEFT JOIN chart_of_accounts coa ON coa.id = cl.account_id
+         LEFT JOIN taxes t ON t.id = cl.tax_code_id
+        WHERE cl.cheque_id = ? ORDER BY cl.line_no`, [c.id]);
     res.json({
       cheque_id: c.id, bill_no: c.cheque_no, supplier_id: c.payee_id, supplier_name: c.supplier_name,
       office_location_id: c.office_location_id, memo: c.memo, ap_account_id: apAccount?.id || null, apply_lines: applyLines,
+      lines,
     });
   } catch (err) { next(err); }
 });
