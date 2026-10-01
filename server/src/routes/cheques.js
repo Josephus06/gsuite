@@ -4,7 +4,7 @@ const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
-const { computeChequeGl } = require('../lib/glImpact');
+const { computeChequeGl, chequeCreditsByCheque } = require('../lib/glImpact');
 const { postReversalJournal } = require('../lib/reversalJournal');
 
 const router = express.Router();
@@ -69,15 +69,91 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   } catch (err) { next(err); }
 });
 
-function computeGl(cheque, lines) {
-  // DR each expense account for its net amount; VAT input on any tax; CR 21402 for withholding;
-  // CR the bank account for the total cash paid.
-  const rows = [];
-  for (const l of lines) {
-    if (num(l.amount)) rows.push({ account_code: l.account_code, account_name: l.account_name, debit: round2(l.amount), credit: 0, department_id: l.department_id || null });
-  }
-  return rows; // tax/wtax/bank legs appended by the caller (which has the fixed accounts)
+// ---------------------------------------------------------------- bill credits on a cheque
+// A Cheque to a Vendor may use up that vendor's open Bill Credits (cheque_bill_credits): each takes
+// its applied amount off the credit's remaining balance and off the cash the cheque pays, and posts
+// CR the credit's AP account. Same bookkeeping as a Bill Payment's credit lines.
+
+const isVendor = (t) => ['VENDOR', 'supplier'].includes(String(t || ''));
+// Whose credit it is: the vendor on its bill (the PO's supplier where the bill came from one).
+const CREDIT_SUPPLIER_SQL = `(SELECT COALESCE(po.supplier_id, vb.supplier_id) FROM vendor_bills vb
+    LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id WHERE vb.id = bc.vendor_bill_id)`;
+
+async function chequeCredits(db, chequeId) {
+  return (await chequeCreditsByCheque([Number(chequeId)])).get(Number(chequeId)) || [];
 }
+
+// [{ bill_credit_id, applied_amount }] from the request, positive amounts only.
+function normalizeCredits(credits) {
+  return (Array.isArray(credits) ? credits : [])
+    .map((c) => ({ bill_credit_id: Number(c.bill_credit_id), applied_amount: round2(c.applied_amount) }))
+    .filter((c) => c.bill_credit_id && c.applied_amount > 0);
+}
+
+// Take the credits up: each must be the payee vendor's, open, and have that much left.
+async function applyCredits(conn, chequeId, supplierId, credits) {
+  for (const c of credits) {
+    const [[bc]] = await conn.query(
+      `SELECT bc.bill_credit_no, bc.total_amount, bc.applied_amount, bc.status, ${CREDIT_SUPPLIER_SQL} AS supplier_id
+         FROM bill_credits bc WHERE bc.id = ? FOR UPDATE`, [c.bill_credit_id]);
+    if (!bc || bc.status !== 'open') throw Object.assign(new Error('One of the selected bill credits is no longer open.'), { status: 400 });
+    if (Number(bc.supplier_id) !== Number(supplierId)) throw Object.assign(new Error(`${bc.bill_credit_no} is not this vendor's credit.`), { status: 400 });
+    const remaining = round2(Number(bc.total_amount) - Number(bc.applied_amount));
+    if (c.applied_amount > remaining + 0.001) throw Object.assign(new Error(`${bc.bill_credit_no} has only ${remaining.toFixed(2)} left to apply.`), { status: 409 });
+    await conn.query('UPDATE bill_credits SET applied_amount = applied_amount + ? WHERE id = ?', [c.applied_amount, c.bill_credit_id]);
+    try {
+      await conn.query('INSERT INTO cheque_bill_credits (cheque_id, bill_credit_id, applied_amount) VALUES (?, ?, ?)', [chequeId, c.bill_credit_id, c.applied_amount]);
+    } catch (e) {
+      if (e.code === 'ER_NO_SUCH_TABLE') throw Object.assign(new Error('Bill credits on cheques are not set up on this server yet (src/db/create-cheque-bill-credits.js).'), { status: 503 });
+      throw e;
+    }
+  }
+}
+
+// Give a cheque's credits back (edit, void). Returns what it had taken.
+async function releaseCredits(conn, chequeId) {
+  let rows = [];
+  try {
+    [rows] = await conn.query('SELECT bill_credit_id, applied_amount FROM cheque_bill_credits WHERE cheque_id = ?', [chequeId]);
+  } catch (e) { if (e.code === 'ER_NO_SUCH_TABLE') return []; throw e; }
+  for (const r of rows) await conn.query('UPDATE bill_credits SET applied_amount = GREATEST(applied_amount - ?, 0) WHERE id = ?', [Number(r.applied_amount), r.bill_credit_id]);
+  await conn.query('DELETE FROM cheque_bill_credits WHERE cheque_id = ?', [chequeId]);
+  return rows;
+}
+
+// Credits on a cheque must belong to a Vendor payee, and leave something to pay.
+function creditsError(b, credits, t) {
+  if (!credits.length) return null;
+  if (!isVendor(b.payee_type) || !b.payee_id) return 'Bill credits can only be applied when the Payee is a Vendor.';
+  const credit = round2(credits.reduce((s, c) => s + c.applied_amount, 0));
+  if (credit >= round2(t.gross_amount - t.withholding_tax_amount)) return 'The bill credits applied must be less than the amount the cheque pays.';
+  return null;
+}
+
+// The vendor's open credits for the form, with what THIS cheque already uses counted as available.
+router.get('/vendor-credits', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const supplierId = Number(req.query.supplier_id);
+    if (!supplierId) return res.json([]);
+    const chequeId = Number(req.query.cheque_id) || 0;
+    const mine = new Map();
+    if (chequeId) for (const c of await chequeCredits(pool, chequeId)) mine.set(Number(c.bill_credit_id), Number(c.applied_amount));
+    const [rows] = await pool.query(
+      `SELECT bc.id AS bill_credit_id, bc.bill_credit_no, bc.date_created, bc.memo, bc.total_amount, bc.applied_amount
+         FROM bill_credits bc
+        WHERE ${CREDIT_SUPPLIER_SQL} = ? AND (bc.status = 'open' AND bc.applied_amount < bc.total_amount OR bc.id IN (?))
+        ORDER BY bc.date_created, bc.id`, [supplierId, [...mine.keys(), 0]]);
+    res.json(rows.map((r) => ({
+      bill_credit_id: r.bill_credit_id, bill_credit_no: r.bill_credit_no, date_created: r.date_created, memo: r.memo,
+      total_amount: Number(r.total_amount),
+      remaining: round2(Number(r.total_amount) - Number(r.applied_amount) + (mine.get(Number(r.bill_credit_id)) || 0)),
+      applied_amount: mine.get(Number(r.bill_credit_id)) || 0,
+    })));
+  } catch (err) {
+    if (err.code === 'ER_NO_SUCH_TABLE') return res.json([]);
+    next(err);
+  }
+});
 
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
@@ -111,15 +187,10 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // for all 690 imported voided cheques even though their reversal is right there.
     // (The /void handler below now posts that reversal itself, so a cheque voided in-app reads
     // the same as an imported one -- it used to only flip the status, and the entry it left
-    // behind had nothing reversing it.)
-    const gl = computeGl(c, lines);
-    const tax = round2(c.tax_amount);
-    const wtax = round2(c.withholding_tax_amount);
-    const total = round2(c.total_amount);
-    if (tax) { const [[v]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '14300'"); if (v) gl.push({ account_code: v.account_code, account_name: v.account_name, debit: tax, credit: 0 }); }
-    if (wtax) { const [[w]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '21402'"); if (w) gl.push({ account_code: w.account_code, account_name: w.account_name, debit: 0, credit: wtax }); }
-    if (total && c.account_code) gl.push({ account_code: c.account_code, account_name: c.account_name, debit: 0, credit: total });
-    res.json({ ...c, lines, gl });
+    // behind had nothing reversing it.) The same function the ledger uses, bill credits included.
+    const credits = await chequeCredits(pool, req.params.id);
+    const gl = await computeChequeGl({ ...c, bank_code: c.account_code, bank_name: c.account_name }, lines, credits);
+    res.json({ ...c, lines, credits, gl });
   } catch (err) { next(err); }
 });
 
@@ -147,7 +218,7 @@ router.get('/:id/print', requireAuth, async (req, res, next) => {
          LEFT JOIN chart_of_accounts coa ON coa.id = cl.account_id
          LEFT JOIN departments d ON d.id = cl.department_id
         WHERE cl.cheque_id = ? ORDER BY cl.line_no`, [req.params.id]);
-    res.json({ ...c, lines });
+    res.json({ ...c, lines, credits: await chequeCredits(pool, req.params.id) });
   } catch (err) { next(err); }
 });
 
@@ -196,12 +267,14 @@ function normalizeLines(lines) {
     });
 }
 
-function headerTotals(rows) {
+// total_amount is the cash the cheque pays: gross, less withholding, less any bill credits used.
+function headerTotals(rows, credits = []) {
   const net = round2(rows.reduce((s, l) => s + l.amount, 0));
   const tax = round2(rows.reduce((s, l) => s + l.tax_amount, 0));
   const wtax = round2(rows.reduce((s, l) => s + l.withholding_tax_amount, 0));
   const gross = round2(net + tax);
-  return { subtotal: net, net_of_tax: net, tax_amount: tax, withholding_tax_amount: wtax, gross_amount: gross, total_amount: round2(gross - wtax) };
+  const credit = round2(credits.reduce((s, c) => s + c.applied_amount, 0));
+  return { subtotal: net, net_of_tax: net, tax_amount: tax, withholding_tax_amount: wtax, gross_amount: gross, credit_amount: credit, total_amount: round2(gross - wtax - credit) };
 }
 
 router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
@@ -213,7 +286,10 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     if (!b.account_id) return res.status(400).json({ error: 'Select the bank Account to draw the cheque against.' });
     const deptError = await missingDepartmentError(rows);
     if (deptError) return res.status(400).json({ error: deptError });
-    const t = headerTotals(rows);
+    const credits = normalizeCredits(b.credits);
+    const t = headerTotals(rows, credits);
+    const crError = creditsError(b, credits, t);
+    if (crError) return res.status(400).json({ error: crError });
     await assertPeriodOpen(b.date_created, 'other_gl');
 
     await conn.beginTransaction();
@@ -238,10 +314,15 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
         [chequeId, lineNo, l.account_id, l.department_id, l.description, l.amount, l.tax_code_id, l.tax_amount, l.apply_withholding_tax, l.withholding_tax_amount, l.gross_amount, l.total_amount]
       );
     }
+    await applyCredits(conn, chequeId, b.payee_id, credits);
     await logAudit(conn, { chequeId, userId: req.user.id, eventType: 'Created', fieldName: 'cheque_no', newValue: chequeNo });
     await conn.commit();
     res.status(201).json({ id: chequeId, cheque_no: chequeNo });
-  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+  } catch (err) {
+    await conn.rollback();
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  } finally { conn.release(); }
 });
 
 // Editing a saved cheque: header and expense lines rewritten, every change logged. The GL is
@@ -273,7 +354,13 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     });
     const deptError = await missingDepartmentError(toCheck);
     if (deptError) return res.status(400).json({ error: deptError });
-    const t = headerTotals(rows);
+    // A request that does not mention credits keeps the ones the cheque has.
+    const credits = b.credits === undefined
+      ? normalizeCredits(await chequeCredits(conn, req.params.id))
+      : normalizeCredits(b.credits);
+    const t = headerTotals(rows, credits);
+    const crError = creditsError(b, credits, t);
+    if (crError) return res.status(400).json({ error: crError });
     const day = (v) => (v == null || v === '' ? null : String(v instanceof Date ? v.toISOString() : v).slice(0, 10));
     const next_ = {
       date_created: day(b.date_created) || day(c.date_created), payee_type: trunc(b.payee_type, 20), payee_id: b.payee_id || null,
@@ -305,6 +392,11 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
         [req.params.id, lineNo, l.account_id, l.department_id, l.description, l.amount, l.tax_code_id, l.tax_amount, l.apply_withholding_tax, l.withholding_tax_amount, l.gross_amount, l.total_amount]);
     }
+    // Bill credits: give back what it had, take up what it has now (checked against what is left).
+    const oldCredits = await releaseCredits(conn, req.params.id);
+    await applyCredits(conn, req.params.id, b.payee_id, credits);
+    const csig = (cs) => cs.map((x) => `BC${x.bill_credit_id}:${Number(x.applied_amount).toFixed(2)}`).sort().join(', ');
+    if (csig(oldCredits) !== csig(credits)) await logAudit(conn, { chequeId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'bill_credits', oldValue: csig(oldCredits) || null, newValue: csig(credits) || null });
     for (const f of CHEQUE_EDIT_FIELDS) {
       const was = f.includes('date') ? day(c[f]) : c[f];
       if (String(was ?? '') !== String(next_[f] ?? '')) await logAudit(conn, { chequeId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: f, oldValue: was, newValue: next_[f] });
@@ -357,9 +449,13 @@ router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async
       `SELECT cl.amount, cl.department_id, coa.account_code, coa.account_name
          FROM cheque_lines cl LEFT JOIN chart_of_accounts coa ON coa.id = cl.account_id
         WHERE cl.cheque_id = ? ORDER BY cl.line_no`, [req.params.id]);
+    // Its bill credits are reversed with the rest of its entry and go back to the vendor. The
+    // rows stay, so the voided cheque's GL Impact still shows what it had used.
+    const credits = await chequeCredits(conn, req.params.id);
+    for (const cr of credits) await conn.query('UPDATE bill_credits SET applied_amount = GREATEST(applied_amount - ?, 0) WHERE id = ?', [Number(cr.applied_amount), cr.bill_credit_id]);
     const reversal = await postReversalJournal(conn, {
       sourceType: 'cheque', sourceId: Number(req.params.id), sourceNo: fullCheque.cheque_no,
-      glRows: await computeChequeGl(fullCheque, chequeLines),
+      glRows: await computeChequeGl(fullCheque, chequeLines, credits),
       documentDate: fullCheque.date_created, voidedAt: new Date(),
       reason: req.body?.reason || null, userId: req.user.id, locationId: fullCheque.office_location_id || null,
     });

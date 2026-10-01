@@ -286,6 +286,16 @@ router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async
     if (usedByPayments.n > 0) {
       return res.status(409).json({ error: 'This Bill Credit has already been used to offset a Bill Payment and cannot be voided.' });
     }
+    // Or a Cheque that is still standing (a voided cheque has given its credits back).
+    const [onCheques] = await conn.query(
+      `SELECT c.cheque_no FROM cheque_bill_credits cbc JOIN cheques c ON c.id = cbc.cheque_id
+        WHERE cbc.bill_credit_id = ? AND c.status <> 'void' LIMIT 1`, [req.params.id]).catch((e) => {
+      if (e.code === 'ER_NO_SUCH_TABLE') return [[]];
+      throw e;
+    });
+    if (onCheques.length) {
+      return res.status(409).json({ error: `This Bill Credit has been used on Cheque ${onCheques[0].cheque_no} and cannot be voided. Remove it from the cheque first.` });
+    }
 
     await conn.beginTransaction();
     for (const a of applications) {

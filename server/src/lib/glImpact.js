@@ -635,7 +635,10 @@ async function computeCommissionVoucherGl(cv, lines, expenses) {
 // the cheque's own lines with their account_code/account_name already resolved -- the shape the
 // Cheques block in getPostedGlLines builds. Lifted out of that block so the void path can post the
 // mirror of the very same entry rather than a second opinion about what a cheque posts.
-async function computeChequeGl(c, lines) {
+// `credits`: the vendor's Bill Credits used up on the cheque (cheque_bill_credits), each with its
+// credit's AP account. A bill credit left the vendor's AP with a debit balance; using it here
+// clears that (CR AP) and the bank pays that much less -- total_amount is already net of them.
+async function computeChequeGl(c, lines, credits = []) {
   const rows = (lines || []).filter((l) => Number(l.amount)).map((l) => ({
     account_code: l.account_code, account_name: l.account_name, debit: Number(l.amount) || 0, credit: 0, department_id: l.department_id || null,
   }));
@@ -644,6 +647,10 @@ async function computeChequeGl(c, lines) {
   const total = Number(c.total_amount) || 0;
   if (tax) { const v = await coaByCode('14300'); if (v) rows.push({ account_code: v.account_code, account_name: v.account_name, debit: tax, credit: 0 }); }
   if (wtax) { const w = await coaByCode('21402'); if (w) rows.push({ account_code: w.account_code, account_name: w.account_name, debit: 0, credit: wtax }); }
+  for (const cr of credits || []) {
+    const amt = Number(cr.applied_amount) || 0;
+    if (amt && cr.ap_account_code) rows.push({ account_code: cr.ap_account_code, account_name: cr.ap_account_name, debit: 0, credit: amt });
+  }
   if (total && c.bank_code) rows.push({ account_code: c.bank_code, account_name: c.bank_name, debit: 0, credit: total });
   return rows;
 }
@@ -810,6 +817,24 @@ async function computeBillCreditGl(bc, lines) {
 // parent id, so each type costs a handful of queries instead of one per document. `sql` must
 // select the parent column and end in `IN (?)`. Chunked so a window holding tens of thousands
 // of documents doesn't build one enormous statement (or blow max_allowed_packet).
+// Bill Credits used on cheques, by cheque id, with each credit's AP account. Empty where the
+// table is not there yet (code deployed ahead of db/create-cheque-bill-credits.js).
+async function chequeCreditsByCheque(ids) {
+  if (!ids.length) return new Map();
+  try {
+    return await linesByParent(
+      `SELECT cbc.cheque_id, cbc.bill_credit_id, cbc.applied_amount, bc.bill_credit_no,
+              coa.account_code AS ap_account_code, coa.account_name AS ap_account_name
+         FROM cheque_bill_credits cbc
+         JOIN bill_credits bc ON bc.id = cbc.bill_credit_id
+         LEFT JOIN chart_of_accounts coa ON coa.id = bc.ap_account_id
+        WHERE cbc.cheque_id IN (?) ORDER BY cbc.id`, 'cheque_id', ids);
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') return new Map();
+    throw e;
+  }
+}
+
 async function linesByParent(sql, parentCol, ids, chunkSize = 1000) {
   const byParent = new Map();
   for (let i = 0; i < ids.length; i += chunkSize) {
@@ -1178,8 +1203,9 @@ async function computePostedGlLines({ toDate, fromDate }) {
         `SELECT cl.cheque_id, cl.amount, cl.department_id, coa.account_code, coa.account_name
            FROM cheque_lines cl LEFT JOIN chart_of_accounts coa ON coa.id = cl.account_id
           WHERE cl.cheque_id IN (?) ORDER BY cl.line_no`, 'cheque_id', headers.map((h) => h.id));
+      const creditsBy = await chequeCreditsByCheque(headers.map((h) => h.id));
       for (const c of headers) {
-        const rows = await computeChequeGl(c, linesBy.get(c.id) || []);
+        const rows = await computeChequeGl(c, linesBy.get(c.id) || [], creditsBy.get(c.id) || []);
         push(glFor('cheque', c.id, rows), { entry_date: c.date_created, source_type: 'cheque', source_no: c.cheque_no, source_id: c.id, memo: c.memo || null, location_id: c.office_location_id || null });
       }
     }
@@ -1498,6 +1524,7 @@ module.exports = {
   computeTransitGl,
   computeDeliveryTicketGl,
   computeChequeGl,
+  chequeCreditsByCheque,
   computeCustomerPaymentGl,
   computeCreditMemoGl,
   computeCustomerRefundGl,

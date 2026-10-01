@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { displayDate } from '../utils/dates';
 
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'; }
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -24,6 +25,9 @@ export default function ChequeForm() {
     account_id: '', cheque_date: today(), cheque_number: '', currency: 'PHP', conversion_rate: 1, memo: '', date_released: '',
   });
   const [lines, setLines] = useState([{ ...EMPTY_LINE }]);
+  // The Vendor payee's open Bill Credits, each with what this cheque applies of it.
+  const [credits, setCredits] = useState([]);
+  const [tab, setTab] = useState('expenses');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -54,6 +58,18 @@ export default function ChequeForm() {
       .catch((e) => { setError(e.response?.data?.error || 'Failed to load.'); setLoading(false); });
   }, [id, editing]);
 
+  // Reload the vendor's credits whenever the payee changes; a non-vendor payee has none.
+  const vendorId = header.payee_type === 'VENDOR' ? header.payee_id : '';
+  useEffect(() => {
+    if (loading || !vendorId) { setCredits([]); return; }
+    let alive = true;
+    api.get('/cheques/vendor-credits', { params: { supplier_id: vendorId, cheque_id: editing ? id : undefined } })
+      .then(({ data }) => { if (alive) setCredits(data.map((x) => ({ ...x, applied: x.applied_amount ? String(x.applied_amount) : '' }))); })
+      .catch(() => { if (alive) setCredits([]); });
+    return () => { alive = false; };
+  }, [vendorId, loading, editing, id]);
+  const setCredit = (i, applied) => setCredits((cs) => cs.map((x, idx) => (idx === i ? { ...x, applied } : x)));
+
   const setH = (patch) => setHeader((h) => ({ ...h, ...patch }));
   const setLine = (i, patch) => setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   const addLine = () => setLines((ls) => [...ls, { ...EMPTY_LINE }]);
@@ -81,8 +97,9 @@ export default function ChequeForm() {
     const tax = computed.reduce((s, c) => s + c.tax, 0);
     const wtax = computed.reduce((s, c) => s + c.wtax, 0);
     const gross = net + tax;
-    return { net, tax, wtax, gross, total: gross - wtax };
-  }, [computed, lines]);
+    const credit = credits.reduce((s, x) => s + (Number(x.applied) || 0), 0);
+    return { net, tax, wtax, gross, credit, total: gross - wtax - credit };
+  }, [computed, lines, credits]);
 
   async function save() {
     setError('');
@@ -96,11 +113,14 @@ export default function ChequeForm() {
         apply_withholding_tax: l.apply_withholding_tax, withholding_tax_amount: l.withholding_tax_amount,
       }));
     if (!payload.length) { setError('Add at least one expense line with an account and amount.'); return; }
+    const creditPayload = credits.filter((x) => Number(x.applied) > 0).map((x) => ({ bill_credit_id: x.bill_credit_id, applied_amount: Number(x.applied) }));
+    const over = credits.find((x) => Number(x.applied) > x.remaining + 0.001);
+    if (over) { setError(`${over.bill_credit_no} has only ${money(over.remaining)} left to apply.`); setTab('credits'); return; }
+    if (creditPayload.length && totals.total <= 0) { setError('The bill credits applied must be less than the amount the cheque pays.'); setTab('credits'); return; }
     setSaving(true);
     try {
-      const { data } = editing
-        ? await api.put(`/cheques/${id}`, { ...header, lines: payload })
-        : await api.post('/cheques', { ...header, lines: payload });
+      const body = { ...header, lines: payload, credits: creditPayload };
+      const { data } = editing ? await api.put(`/cheques/${id}`, body) : await api.post('/cheques', body);
       navigate(`/cheques/${data.id}`);
     } catch (e) { setError(e.response?.data?.error || 'Save failed.'); setSaving(false); }
   }
@@ -173,6 +193,7 @@ export default function ChequeForm() {
             <TotalsRow label="Tax Amount" value={totals.tax} />
             <TotalsRow label="Withholding Tax Amount" value={totals.wtax} />
             <TotalsRow label="Gross Amount" value={totals.gross} />
+            {totals.credit > 0 && <TotalsRow label="Less: Bill Credits" value={totals.credit} />}
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0 0', fontWeight: 700 }}>
               <span>Total Amount</span><span style={{ color: '#2563eb' }}>{money(totals.total)}</span>
             </div>
@@ -181,7 +202,44 @@ export default function ChequeForm() {
       </div>
 
       <div className="card">
-        <div className="status-tabs" style={{ marginBottom: 8 }}><button className="status-tab active">Expenses</button></div>
+        <div className="status-tabs" style={{ marginBottom: 8 }}>
+          <button type="button" className={`status-tab ${tab === 'expenses' ? 'active' : ''}`} onClick={() => setTab('expenses')}>Expenses</button>
+          <button type="button" className={`status-tab ${tab === 'credits' ? 'active' : ''}`} onClick={() => setTab('credits')}>
+            Bill Credits{credits.length ? ` (${credits.length})` : ''}
+          </button>
+        </div>
+        {tab === 'credits' && (
+          <div className="table-wrap">
+            {!vendorId ? (
+              <div className="muted" style={{ padding: 16 }}>Choose a Vendor as the Payee to apply that vendor&rsquo;s open bill credits.</div>
+            ) : (
+              <table>
+                <thead><tr>
+                  <th>Bill Credit #</th><th>Date</th><th>Memo</th><th style={{ textAlign: 'right' }}>Original</th>
+                  <th style={{ textAlign: 'right' }}>Remaining</th><th style={{ textAlign: 'right' }}>Apply</th>
+                </tr></thead>
+                <tbody>
+                  {credits.length === 0 && <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>This vendor has no open bill credits.</td></tr>}
+                  {credits.map((x, i) => (
+                    <tr key={x.bill_credit_id}>
+                      <td>{x.bill_credit_no}</td>
+                      <td>{x.date_created ? displayDate(String(x.date_created).slice(0, 10)) : ''}</td>
+                      <td>{x.memo || ''}</td>
+                      <td style={{ textAlign: 'right' }}>{money(x.total_amount)}</td>
+                      <td style={{ textAlign: 'right' }}>{money(x.remaining)}</td>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        <input type="number" step="0.01" min="0" style={{ width: 110, textAlign: 'right' }} value={x.applied} onChange={(e) => setCredit(i, e.target.value)} />
+                        <button type="button" className="btn btn-sm" style={{ marginLeft: 6 }} onClick={() => setCredit(i, String(x.remaining))}>Full</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                {totals.credit > 0 && <tfoot><tr style={{ fontWeight: 700 }}><td colSpan={5} style={{ textAlign: 'right' }}>Total applied</td><td style={{ textAlign: 'right' }}>{money(totals.credit)}</td></tr></tfoot>}
+              </table>
+            )}
+          </div>
+        )}
+        {tab === 'expenses' && (<>
         <div className="table-wrap">
           <table>
             <thead>
@@ -223,6 +281,7 @@ export default function ChequeForm() {
           </table>
         </div>
         <button className="btn btn-sm btn-primary" style={{ marginTop: 10 }} onClick={addLine}>Add Expense</button>
+        </>)}
       </div>
     </div>
   );

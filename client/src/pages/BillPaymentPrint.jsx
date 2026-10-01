@@ -245,6 +245,9 @@ function ChequeLines({ bp }) {
         {wtax > 0 && (
           <tr><td colSpan={2}>Less: Withholding Tax</td><td className="bpp-num">({money(wtax)})</td></tr>
         )}
+        {(bp.credits || []).map((x) => (
+          <tr key={`bc-${x.bill_credit_id}`}><td colSpan={2}>Less: Bill Credit {x.bill_credit_no}</td><td className="bpp-num">({money(x.applied_amount)})</td></tr>
+        ))}
       </tbody>
     </table>
   );

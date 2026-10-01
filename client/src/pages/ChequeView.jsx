@@ -58,6 +58,8 @@ export default function ChequeView() {
   const wtaxLines = lines.filter((l) => num(l.withholding_tax_amount) > 0 || l.apply_withholding_tax);
   const totalDebit = gl.reduce((s, l) => s + num(l.debit), 0);
   const totalCredit = gl.reduce((s, l) => s + num(l.credit), 0);
+  const credits = c.credits || [];
+  const creditTotal = credits.reduce((s, x) => s + num(x.applied_amount), 0);
   const T = ({ label, value }) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}><span>{label}</span><span style={{ color: '#2563eb' }}>{money(value)}</span></div>
   );
@@ -125,6 +127,7 @@ export default function ChequeView() {
             <T label="Tax Amount" value={c.tax_amount} />
             <T label="Gross Amount" value={c.gross_amount} />
             <T label="Withholding Tax Amount" value={c.withholding_tax_amount} />
+            {creditTotal > 0 && <T label="Less: Bill Credits" value={creditTotal} />}
             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0 0', fontWeight: 700 }}><span>Total Amount</span><span style={{ color: '#2563eb' }}>{money(c.total_amount)}</span></div>
           </div>
         </div>
@@ -133,6 +136,7 @@ export default function ChequeView() {
       <div className="status-tabs" style={{ marginTop: 20 }}>
         <button className={`status-tab ${tab === 'expenses' ? 'active' : ''}`} onClick={() => setTab('expenses')}>Expenses</button>
         <button className={`status-tab ${tab === 'wtax' ? 'active' : ''}`} onClick={() => setTab('wtax')}>Withholding Tax</button>
+        <button className={`status-tab ${tab === 'credits' ? 'active' : ''}`} onClick={() => setTab('credits')}>Bill Credits{credits.length ? ` (${credits.length})` : ''}</button>
         <button className={`status-tab ${tab === 'gl' ? 'active' : ''}`} onClick={() => setTab('gl')}>GL Impact</button>
         <button className={`status-tab ${tab === 'related' ? 'active' : ''}`} onClick={() => setTab('related')}>
           Related Records{related.length ? ` (${related.length})` : ''}
@@ -169,7 +173,8 @@ export default function ChequeView() {
                 <td style={{ textAlign: 'right' }}>{money(c.tax_amount)}</td><td />
                 <td style={{ textAlign: 'right' }}>{money(c.gross_amount)}</td>
                 <td style={{ textAlign: 'right' }}>{money(c.withholding_tax_amount)}</td>
-                <td style={{ textAlign: 'right' }}>{money(c.total_amount)}</td>
+                {/* The lines' own total; any bill credits come off it in the panel above. */}
+                <td style={{ textAlign: 'right' }}>{money(num(c.gross_amount) - num(c.withholding_tax_amount))}</td>
               </tr></tfoot>
             </table>
           </div>
@@ -189,6 +194,28 @@ export default function ChequeView() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {tab === 'credits' && (
+        <div className="card">
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Bill Credit #</th><th>AP Account</th><th style={{ textAlign: 'right' }}>Applied</th></tr></thead>
+              <tbody>
+                {credits.length === 0 && <tr><td colSpan={3} className="muted" style={{ textAlign: 'center', padding: 20 }}>No bill credits applied.</td></tr>}
+                {credits.map((x) => (
+                  <tr key={x.bill_credit_id}>
+                    <td><button type="button" className="link-btn" onClick={() => navigate(`/bill-credits/${x.bill_credit_id}`)}>{x.bill_credit_no}</button></td>
+                    <td>{x.ap_account_code} — {x.ap_account_name}</td>
+                    <td style={{ textAlign: 'right' }}>{money(x.applied_amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              {credits.length > 0 && <tfoot><tr style={{ fontWeight: 700 }}><td colSpan={2} style={{ textAlign: 'right' }}>Total</td><td style={{ textAlign: 'right' }}>{money(creditTotal)}</td></tr></tfoot>}
+            </table>
+          </div>
+          {c.status === 'void' && credits.length > 0 && <div className="muted" style={{ marginTop: 8 }}>Voided: these credits were given back to the vendor.</div>}
         </div>
       )}
 
