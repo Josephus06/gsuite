@@ -310,6 +310,8 @@ export default function SalesOrderView() {
             <div>Production Lead Time : <span className="hi">{so.production_lead_time}</span></div>
             <div>Price Validity : <span className="hi">{so.price_validity}</span></div>
             <div>Order Confirmation : <span className="hi">{so.order_confirmation_type}</span></div>
+            {/* The customer's confirmation number -- the source prints it as "PO #". */}
+            <div>PO # : <span className="hi">{so.order_confirmation_ref}</span></div>
           </div>
           <div>
             <h4>Billing Details</h4>
