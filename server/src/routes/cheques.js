@@ -133,6 +133,7 @@ router.get('/:id/print', requireAuth, async (req, res, next) => {
     }
     const [[c]] = await pool.query(
       `SELECT c.*, coa.account_code AS bank_account_code, coa.account_name AS bank_account_name, loc.location_name,
+              ${PAYEE_ACCOUNT_NAME_SQL} AS payee_account_name,
               u.display_name AS created_by_name, u.signature_data AS prepared_signature
          FROM cheques c
          LEFT JOIN chart_of_accounts coa ON coa.id = c.account_id

@@ -67,7 +67,7 @@ export default function BillPaymentPrint({ kind = 'bill-payment' }) {
     api.get(`/${isCheque ? 'cheques' : 'bill-payments'}/${id}/print`)
       // A cheque carries the same facts under its own names; read it as a payment from here on.
       .then(({ data }) => setBp(isCheque ? {
-        ...data, supplier_name: data.payee_name, check_date: data.cheque_date, check_no: data.cheque_number,
+        ...data, supplier_name: data.payee_account_name || data.payee_name, check_date: data.cheque_date, check_no: data.cheque_number,
         reference_no: data.cheque_no, status: data.status === 'void' ? 'voided' : data.status,
       } : data))
       .catch((e) => setError(e.response?.data?.error || `Could not load this ${docName}.`));
@@ -127,7 +127,7 @@ export default function BillPaymentPrint({ kind = 'bill-payment' }) {
       `}</style>
 
       <div className="bpp-toolbar bpp-no-print">
-        <button className={`btn btn-sm ${mode === 'voucher' ? 'btn-primary' : ''}`} onClick={() => setMode('voucher')}>Payment Voucher</button>
+        <button className={`btn btn-sm ${mode === 'voucher' ? 'btn-primary' : ''}`} onClick={() => setMode('voucher')}>{isCheque ? 'Cheque Voucher' : 'Payment Voucher'}</button>
         <button className={`btn btn-sm ${mode === 'cheque' ? 'btn-primary' : ''}`} onClick={() => setMode('cheque')}>Cheque (BPI)</button>
         {mode === 'cheque' && (
           <button className="btn btn-sm" onClick={() => setParams(calibrate ? { as: 'cheque' } : { as: 'cheque', calibrate: '1' })}>
@@ -156,16 +156,18 @@ export default function BillPaymentPrint({ kind = 'bill-payment' }) {
               www.graphicstar.com.ph
             </div>
           </div>
-          <div className="bpp-title">Payment Voucher</div>
+          <div className="bpp-title">{isCheque ? 'Cheque Voucher' : 'Payment Voucher'}</div>
           <div className="bpp-cols">
             <div>
-              <div>Date : {longDate(bp.check_date || bp.date_created)}</div>
+              {/* A cheque has its own document date; its check date gets a line of its own. */}
+              <div>Date : {longDate(isCheque ? bp.date_created : (bp.check_date || bp.date_created))}</div>
               <div>Paid To : {bp.supplier_name}</div>
               <div>Payee Name : {payee}</div>
               <div>Memo : {bp.memo || ''}</div>
             </div>
             <div>
               <div>Ref # : {bp.reference_no || bp.bill_payment_no}</div>
+              {isCheque && <div>Check Date : {longDate(bp.check_date)}</div>}
               {bp.check_no && <div>Check No : {bp.check_no}{bp.bank_account_name ? ` — ${bp.bank_account_name}` : ''}</div>}
               <div>Amount in words : {words}</div>
             </div>
@@ -228,7 +230,7 @@ function ChequeLines({ bp }) {
     <table className="bpp-table">
       <thead>
         <tr>
-          <th style={{ width: '30%' }}>Account</th><th style={{ width: '16%' }}>Department</th><th>Description</th>
+          <th style={{ width: '35%' }}>Account</th><th>Description</th>
           <th className="bpp-num" style={{ width: '17%' }}>Amount</th>
         </tr>
       </thead>
@@ -236,13 +238,12 @@ function ChequeLines({ bp }) {
         {bp.lines.map((l) => (
           <tr key={l.id}>
             <td>{l.account_code ? `${l.account_code} — ${l.account_name || ''}` : ''}</td>
-            <td>{l.department_name || ''}</td>
             <td>{l.description || ''}</td>
             <td className="bpp-num">{money(l.gross_amount ?? l.amount)}</td>
           </tr>
         ))}
         {wtax > 0 && (
-          <tr><td colSpan={3}>Less: Withholding Tax</td><td className="bpp-num">({money(wtax)})</td></tr>
+          <tr><td colSpan={2}>Less: Withholding Tax</td><td className="bpp-num">({money(wtax)})</td></tr>
         )}
       </tbody>
     </table>
