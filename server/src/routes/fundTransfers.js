@@ -138,6 +138,50 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
+// Edit a saved transfer. Its GL entry is derived from these fields (lib/glImpact.js), so saving is
+// all it takes to move the entry -- both the old and the new date must be in an open period.
+const EDIT_FIELDS = ['date_created', 'from_account_id', 'to_account_id', 'amount', 'memo'];
+router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[ft]] = await conn.query('SELECT * FROM fund_transfers WHERE id = ?', [req.params.id]);
+    if (!ft) return res.status(404).json({ error: 'Not found' });
+    if (ft.status === 'void') return res.status(409).json({ error: 'This Fund Transfer is voided and cannot be edited.' });
+    const b = req.body;
+    const day = (v) => (v == null || v === '' ? null : String(v instanceof Date ? v.toISOString() : v).slice(0, 10));
+    const next_ = {
+      date_created: day(b.date_created) || day(ft.date_created),
+      from_account_id: b.from_account_id ? Number(b.from_account_id) : null,
+      to_account_id: b.to_account_id ? Number(b.to_account_id) : null,
+      amount: round2(b.amount),
+      memo: trunc(b.memo, 1000),
+    };
+    if (!next_.from_account_id || !next_.to_account_id) return res.status(400).json({ error: 'Select both a From and a To account.' });
+    if (next_.from_account_id === next_.to_account_id) return res.status(400).json({ error: 'From and To accounts must be different.' });
+    if (next_.amount <= 0) return res.status(400).json({ error: 'Enter an amount greater than 0.' });
+    await assertPeriodOpen(ft.date_created, 'other_gl', conn);
+    await assertPeriodOpen(next_.date_created, 'other_gl', conn);
+
+    await conn.beginTransaction();
+    await conn.query(
+      `UPDATE fund_transfers SET ${EDIT_FIELDS.map((f) => `${f} = ?`).join(', ')} WHERE id = ?`,
+      [...EDIT_FIELDS.map((f) => next_[f]), req.params.id]
+    );
+    const was = { ...ft, date_created: day(ft.date_created), amount: round2(ft.amount) };
+    for (const f of EDIT_FIELDS) {
+      if (String(was[f] ?? '') !== String(next_[f] ?? '')) {
+        await logAudit(conn, { ftId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: f, oldValue: was[f], newValue: next_[f] });
+      }
+    }
+    await conn.commit();
+    res.json({ id: Number(req.params.id), ft_no: ft.ft_no });
+  } catch (err) {
+    await conn.rollback();
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  } finally { conn.release(); }
+});
+
 router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {

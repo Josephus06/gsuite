@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -7,18 +7,33 @@ import LoadingSpinner from '../components/LoadingSpinner';
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'; }
 function today() { return new Date().toISOString().slice(0, 10); }
 
-// Create a Fund Transfer: move an amount from one bank account to another. GL: DR To / CR From.
+// Create or edit a Fund Transfer: move an amount from one bank account to another. GL: DR To / CR From.
 export default function FundTransferForm() {
   const navigate = useNavigate();
+  const { id } = useParams(); // set when editing (/fund-transfers/:id/edit)
   const [meta, setMeta] = useState(null);
+  const [ftNo, setFtNo] = useState('');
   const [header, setHeader] = useState({ date_created: today(), from_account_id: '', to_account_id: '', amount: '', memo: '' });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.get('/fund-transfers/meta').then(({ data }) => { setMeta(data); setLoading(false); }).catch((e) => { setError(e.response?.data?.error || 'Failed to load.'); setLoading(false); });
-  }, []);
+    Promise.all([api.get('/fund-transfers/meta'), id ? api.get(`/fund-transfers/${id}`) : null])
+      .then(([m, ft]) => {
+        setMeta(m.data);
+        if (ft) {
+          const d = ft.data;
+          setFtNo(d.ft_no);
+          setHeader({
+            date_created: String(d.date_created || '').slice(0, 10), from_account_id: d.from_account_id || '',
+            to_account_id: d.to_account_id || '', amount: d.amount ?? '', memo: d.memo || '',
+          });
+        }
+        setLoading(false);
+      })
+      .catch((e) => { setError(e.response?.data?.error || 'Failed to load.'); setLoading(false); });
+  }, [id]);
 
   const setH = (patch) => setHeader((h) => ({ ...h, ...patch }));
   const acct = (id) => (meta?.accounts || []).find((a) => String(a.id) === String(id));
@@ -31,20 +46,24 @@ export default function FundTransferForm() {
     if (amt <= 0) { setError('Enter an amount greater than 0.'); return; }
     setSaving(true);
     try {
-      const { data } = await api.post('/fund-transfers', { ...header, amount: amt });
+      const { data } = id
+        ? await api.put(`/fund-transfers/${id}`, { ...header, amount: amt })
+        : await api.post('/fund-transfers', { ...header, amount: amt });
       navigate(`/fund-transfers/${data.id}`);
     } catch (e) { setError(e.response?.data?.error || 'Save failed.'); setSaving(false); }
   }
 
-  if (loading || !meta) return <LoadingSpinner />;
+  if (loading) return <LoadingSpinner />;
+  if (!meta) return <div className="error-banner">{error || 'Failed to load.'}</div>;
   const from = acct(header.from_account_id);
   const to = acct(header.to_account_id);
 
   return (
     <div>
       <div className="page-header">
-        <div style={{ fontWeight: 600 }}>Fund Transfer <span className="muted">/ Create</span></div>
+        <div style={{ fontWeight: 600 }}>Fund Transfer <span className="muted">/ {id ? `Edit ${ftNo}` : 'Create'}</span></div>
         <div style={{ display: 'flex', gap: 8 }}>
+          {id && <button className="btn btn-sm" onClick={() => navigate(`/fund-transfers/${id}`)}>Cancel</button>}
           <button className="btn btn-sm" onClick={() => navigate('/fund-transfers')}>Back to Lists</button>
           <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
         </div>

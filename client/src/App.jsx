@@ -380,6 +380,7 @@ function App() {
         <Route path="/cheques/:id" element={<ChequeView />} />
         <Route path="/fund-transfers" element={<FundTransfers />} />
         <Route path="/fund-transfers/new" element={<FundTransferForm />} />
+        <Route path="/fund-transfers/:id/edit" element={<FundTransferForm />} />
         <Route path="/fund-transfers/:id" element={<FundTransferView />} />
         <Route path="/manage-accounting-period" element={<ManageAccountingPeriod />} />
         <Route path="/commission-payables" element={<CommissionPayables />} />
