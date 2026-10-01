@@ -1,6 +1,7 @@
 const pool = require('../db');
 const { getPostedGlLines } = require('./glImpact');
 const { splitSourceLinesByDepartment } = require('./openingBalances');
+const { departmentLedger, pool4 } = require('./sourceLedger');
 const { displayMonth } = require('./dates');
 
 function round2(n) {
@@ -461,7 +462,8 @@ async function resolveGlLineNames(lines) {
 async function buildGlTransactions({ accountCode, breakdown = 'total', columnKey = 'total', asOfDate, fromDate }) {
   const from = fromDate || yearStart(asOfDate);
   const [coaRows, posted] = await Promise.all([loadCoa(), getPostedGlLines({ toDate: asOfDate, fromDate: from })]);
-  const glLines = breakdown === 'department' ? await splitSourceLinesByDepartment(posted) : posted;
+  // Split in every mode: a source month split by department is what lets its documents be listed.
+  const glLines = await splitSourceLinesByDepartment(posted);
   const monthKey = (d) => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`; };
 
   // A clicked account may be a summary; its transactions post to descendant leaf accounts, so
@@ -478,18 +480,65 @@ async function buildGlTransactions({ accountCode, breakdown = 'total', columnKey
   else if (breakdown === 'months') lines = lines.filter((l) => monthKey(l.entry_date) === String(columnKey));
 
   const names = await resolveGlLineNames(lines);
-  const rows = lines
-    .map((l) => ({
-      source_no: l.source_no, source_type: l.source_type, entry_date: l.entry_date,
-      name: names.get(`${l.source_type}:${l.source_id}`) || l.memo || '',
-      debit: round2(l.debit || 0), credit: round2(l.credit || 0),
-    }))
-    .sort((a, b) => new Date(a.entry_date) - new Date(b.entry_date) || String(a.source_no).localeCompare(String(b.source_no)));
+  const own = lines.filter((l) => !l.source_department);
+  const rows = own.map((l) => ({
+    source_no: l.source_no, source_type: l.source_type, entry_date: l.entry_date,
+    name: names.get(`${l.source_type}:${l.source_id}`) || l.memo || '',
+    debit: round2(l.debit || 0), credit: round2(l.credit || 0),
+  }));
+  rows.push(...await itemiseSourceLines(lines.filter((l) => l.source_department)));
+  rows.sort((a, b) => new Date(a.entry_date) - new Date(b.entry_date) || String(a.source_no).localeCompare(String(b.source_no)));
   return {
     account_code: accountCode, rows,
     total_debit: round2(rows.reduce((s, r) => s + r.debit, 0)),
     total_credit: round2(rows.reduce((s, r) => s + r.credit, 0)),
   };
+}
+
+// A source month's per-department line -> the documents behind it, read live from the source
+// (lib/sourceLedger). The source's own figure stays the authority: if its ledger does not add up
+// to the line, the difference is shown as one line saying so, and if the source cannot be reached
+// the line is shown as it is -- the drill-down never disagrees with the report it came from.
+async function itemiseSourceLines(lines) {
+  if (!lines.length) return [];
+  const sum = (l) => ({
+    source_no: l.source_no, source_type: l.source_type, entry_date: l.entry_date, name: l.memo || '',
+    debit: round2(l.debit || 0), credit: round2(l.credit || 0),
+  });
+  const codes = [...new Set(lines.map((l) => l.account_code))];
+  const depts = [...new Set(lines.map((l) => l.source_department))];
+  const [coaKeys] = await pool.query('SELECT * FROM source_coa_keys WHERE account_code IN (?)', [codes]);
+  const [deptKeys] = await pool.query('SELECT * FROM source_dept_keys WHERE source_department IN (?)', [depts]);
+  const coa = new Map(coaKeys.map((c) => [c.account_code, c]));
+  const dept = new Map(deptKeys.map((d) => [d.source_department, d.dept_pk]));
+  const out = [];
+  await pool4(lines, async (l) => {
+    const c = coa.get(l.account_code);
+    const month = String(l.entry_date).slice(0, 7);
+    const last = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
+    let docs;
+    try {
+      if (!c) throw new Error('account not on file');
+      docs = await departmentLedger({ coa: c, department: l.source_department, deptPk: dept.get(l.source_department), from: `${month}-01`, to: `${month}-${last}` });
+    } catch (e) {
+      out.push({ ...sum(l), name: `${l.memo} (could not list its documents: ${e.message})` });
+      return;
+    }
+    let rest = (Number(l.debit) || 0) - (Number(l.credit) || 0);
+    for (const t of docs) {
+      rest -= t.amount;
+      out.push({ source_no: t.document, source_type: 'source_ledger', entry_date: t.date, name: t.name || t.memo || '', debit: t.debit, credit: t.credit });
+    }
+    rest = round2(rest);
+    if (Math.abs(rest) >= 0.01) {
+      out.push({
+        source_no: l.source_no, source_type: l.source_type, entry_date: l.entry_date,
+        name: `Difference: the old system's ledger for ${l.source_department} vs its ${month} figure`,
+        debit: rest > 0 ? rest : 0, credit: rest < 0 ? -rest : 0,
+      });
+    }
+  }, 6);
+  return out;
 }
 
 module.exports = { buildTrialBalance, buildBalanceSheet, buildIncomeStatement, buildGeneralLedger, buildGlTransactions };

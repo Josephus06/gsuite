@@ -280,21 +280,7 @@ async function buildReport(budget) {
 // breakdown line (CNC, DPOD..., Others, or "Others|<dept>"). Up to the cut-over they are fetched
 // live from the source system -- get_transaction_ledgers, per account and department, exactly as
 // its own department income statement drills down -- after it, from T1S's ledger.
-const SITE = 'http://gsuite.graphicstar.com.ph';
-let sourceToken = null; let sourceTokenAt = 0;
-async function sourceLogin() {
-  if (sourceToken && Date.now() - sourceTokenAt < 20 * 60 * 1000) return sourceToken;
-  if (!process.env.LIVE_SITE_USERNAME || !process.env.LIVE_SITE_PASSWORD) {
-    throw Object.assign(new Error('Transactions for months before the cut-over come from the old system, and this server has no login for it (LIVE_SITE_USERNAME / LIVE_SITE_PASSWORD).'), { status: 503 });
-  }
-  const r = await fetch(`${SITE}/api/login`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: process.env.LIVE_SITE_USERNAME, password: process.env.LIVE_SITE_PASSWORD }),
-  });
-  sourceToken = (await r.json())?.data?.token; sourceTokenAt = Date.now();
-  if (!sourceToken) throw Object.assign(new Error('Could not log in to the old system.'), { status: 502 });
-  return sourceToken;
-}
+const { departmentLedger, pool4 } = require('./sourceLedger');
 
 // Does an amount (kind, department, account) land on the drilled target?
 function hits(target, kind, deptName, account) {
@@ -334,33 +320,13 @@ async function drill({ budget, month, rowId, line }) {
       const [coaKeys] = await pool.query('SELECT * FROM source_coa_keys WHERE account_code IN (?)', [[...new Set(wanted.map((w) => w.account_code))]]);
       const [deptKeys] = await pool.query('SELECT * FROM source_dept_keys WHERE source_department IN (?)', [[...new Set(wanted.map((w) => w.source_department))]]);
       const coa = new Map(coaKeys.map((c) => [c.account_code, c])); const dept = new Map(deptKeys.map((d) => [d.source_department, d]));
-      const token = await sourceLogin();
-      const queue = [...wanted];
-      await Promise.all(Array.from({ length: 4 }, async () => {
-        while (queue.length) {
-          const w = queue.shift();
-          const c = coa.get(w.account_code); const d = dept.get(w.source_department);
-          if (!c) { out.push({ date: null, document: '(account not on file)', memo: `${w.account_code} in ${w.source_department}`, amount: Number(w.amount), account_code: w.account_code, department: w.source_department }); continue; }
-          const body = {
-            coa_pk: c.coa_pk, coa_code: c.account_code, coa_title: c.title, side: c.side,
-            locdept: { type: 'Department', name: w.source_department, pk: d ? d.dept_pk : null }, dateFilter: [from, to],
-          };
-          const r = await fetch(`${SITE}/api/get_transaction_ledgers`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body),
-          });
-          const j = await r.json();
-          for (const t of (j?.data?.[0] || [])) {
-            const dr = Number(t.DRAmount_LdgrEntries) || 0; const cr = Number(t.CRAmount_LdgrEntries) || 0;
-            if (!dr && !cr) continue;
-            out.push({
-              date: t.DateCreated_TransH, document: t.UserPK_TransH, memo: t.Memo_TransH,
-              name: t.Name_Cust || t.Name_Accnt || t.Name_Empl || t.name || null,
-              debit: round2(dr), credit: round2(cr), amount: round2(dr - cr),
-              account_code: w.account_code, account_name: c.title, department: w.source_department,
-            });
-          }
+      await pool4(wanted, async (w) => {
+        const c = coa.get(w.account_code); const d = dept.get(w.source_department);
+        if (!c) { out.push({ date: null, document: '(account not on file)', memo: `${w.account_code} in ${w.source_department}`, amount: Number(w.amount), account_code: w.account_code, department: w.source_department }); return; }
+        for (const t of await departmentLedger({ coa: c, department: w.source_department, deptPk: d ? d.dept_pk : null, from, to })) {
+          out.push({ ...t, account_code: w.account_code, account_name: c.title, department: w.source_department });
         }
-      }));
+      });
     }
   } else {
     const [coa] = await pool.query(

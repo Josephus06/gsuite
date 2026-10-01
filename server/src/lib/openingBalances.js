@@ -104,6 +104,7 @@ async function splitSourceLinesByDepartment(lines) {
       out.push({
         ...l, debit: s.net > 0 ? round2(s.net) : 0, credit: s.net < 0 ? round2(-s.net) : 0,
         department_id: deptId.get(normName(s.dept)) || `src:${s.dept}`,
+        source_department: s.dept, // what lib/sourceLedger is asked by, to list the documents
         memo: `${l.memo} -- ${s.dept}`,
       });
     }
