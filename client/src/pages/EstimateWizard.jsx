@@ -478,6 +478,23 @@ export default function EstimateWizard() {
       Object.assign(computed, perUnitFor(current.quantity, current));
     }
 
+    // Disc Amt is typed PER PIECE (the user's rule, 2026-10-01): 63.8888 off a 363.8888 piece makes
+    // it 300.00, and 50 pieces Net 15,000.00. It is stored as the whole line's discount
+    // (per piece x Qty) because every total, the SO and the invoice read disc_amount that way.
+    if (triggerKey === 'disc_amount_unit') {
+      const subtotal = Number(current.subtotal) || 0;
+      const qty = Number(current.quantity) || 0;
+      const perPiece = Number(current.disc_amount_unit) || 0;
+      computed.disc_amount = Number((qty ? perPiece * qty : perPiece).toFixed(2));
+      computed.disc_percent = subtotal ? Number((computed.disc_amount / subtotal * 100).toFixed(2)) : 0;
+      computed.disc_amount_unit = null;
+      Object.assign(computed, computeJobOrderTax(subtotal, computed.disc_amount, current.tax_code_id));
+      Object.assign(computed, perUnitFor(current.quantity, { subtotal, ...computed }));
+      const totalCost = Number((current.processes || []).reduce((s, p) => s + (Number(p.total_cost) || 0), 0).toFixed(2));
+      computed.gp_amount = Number((computed.net_of_tax - totalCost).toFixed(2));
+      computed.gp_rate = computed.net_of_tax ? Number((computed.gp_amount / computed.net_of_tax * 100).toFixed(2)) : null;
+    }
+
     if (triggerKey === 'disc_percent' || triggerKey === 'disc_amount') {
       const subtotal = Number(current.subtotal) || 0;
       if (triggerKey === 'disc_percent') {
@@ -575,20 +592,19 @@ export default function EstimateWizard() {
   // filled in four different places.
   //
   //   Price/Unit      = Subtotal / Qty
-  //   Disc Price/Unit = Price/Unit - Disc Amt   -- the source's rule: the line's whole Disc Amt
-  //                                                comes off one unit's price (not Disc Amt / Qty)
+  //   Disc Price/Unit = Price/Unit - Disc Amt (per piece) = Net of Tax / Qty
+  //   Net of Tax      = Qty x Disc Price/Unit
   //
-  // Disc Amt is taken as Subtotal - Net of Tax, which every caller already passes. Both are
-  // tax-exclusive. Price/Unit used to be Gross / Qty -- tax-inclusive -- which made it
-  // incomparable with the discounted figure beside it.
+  // The user's rule (2026-10-01): the Disc Amt shown and typed is per piece -- see the
+  // disc_amount_unit trigger. Stored disc_amount is the line's whole discount, so Net of Tax /
+  // Qty is exactly Price/Unit less the per-piece discount. All tax-exclusive.
   function perUnitFor(quantity, { subtotal, net_of_tax: netOfTax }) {
     const qty = Number(quantity) || 0;
     if (!qty) return { price_per_unit: null, disc_price_per_unit: null };
     const sub = Number(subtotal || 0);
-    const discAmt = sub - Number(netOfTax || 0);
     return {
       price_per_unit: Number((sub / qty).toFixed(4)),
-      disc_price_per_unit: Number((sub / qty - discAmt).toFixed(4)),
+      disc_price_per_unit: Number((Number(netOfTax || 0) / qty).toFixed(4)),
     };
   }
 
@@ -837,6 +853,18 @@ export default function EstimateWizard() {
           <option value="">—</option>
           {UNIT_OPTIONS.map((u) => <option key={u} value={u}>{u}</option>)}
         </select>
+      );
+    }
+    if (col.key === 'disc_amount') {
+      const qty = Number(row.quantity) || 0;
+      const perPiece = row.disc_amount_unit ?? (row.disc_amount === '' || row.disc_amount == null ? ''
+        : Number((qty ? Number(row.disc_amount) / qty : Number(row.disc_amount)).toFixed(4)));
+      return (
+        <input
+          type="number" step="0.0001" value={perPiece} title="Discount per piece"
+          onChange={(e) => updateJobOrderField(idx, 'disc_amount_unit', e.target.value)}
+          onBlur={() => (row.disc_amount_unit != null ? recalcAndCommitJobOrder(idx, {}, 'disc_amount_unit') : null)}
+        />
       );
     }
     if (col.readOnly) {

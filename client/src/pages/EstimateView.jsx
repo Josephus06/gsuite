@@ -34,7 +34,8 @@ const JOB_VIEW_COLUMNS = [
   { key: 'contingency_amount', label: 'Contingency Amt' },
   { key: 'subtotal', label: 'Subtotal' },
   { key: 'disc_percent', label: 'Disc %' },
-  { key: 'disc_amount', label: 'Disc Amt' },
+  // Per piece, as typed on the estimate (the line's whole discount / Qty).
+  { key: 'disc_amount', label: 'Disc Amt', render: (jo) => (Number(jo.quantity) ? Number((Number(jo.disc_amount || 0) / Number(jo.quantity)).toFixed(4)) : jo.disc_amount) },
   { key: 'disc_price_per_unit', label: 'Disc Price/Unit' },
   { key: 'net_of_tax', label: 'Net of Tax' },
   { key: 'tax_code', label: 'Tax Code' },

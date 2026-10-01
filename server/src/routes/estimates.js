@@ -410,9 +410,9 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       // 4,743 lines, and Price/Unit was stored as Gross / Qty, which included tax and so could
       // not be compared with the discounted figure printed beside it.
       //
-      // Price/Unit x Qty is the Subtotal. Disc Price/Unit = Price/Unit - Disc Amt -- the line's
-      // whole discount off one unit's price, as the source computes it -- with Disc Amt taken as
-      // Subtotal - Net of Tax, matching the client's perUnitFor.
+      // Price/Unit x Qty is the Subtotal. Disc Price/Unit = Price/Unit - Disc Amt per piece =
+      // Net of Tax / Qty, so Net of Tax = Qty x Disc Price/Unit (the user's rule, 2026-10-01;
+      // matches the client's perUnitFor).
       //
       // Sales Orders and invoices converted from an estimate keep their OWN copies, taken at
       // conversion time; this changes what the estimate screen and the quotation print show, not
@@ -421,7 +421,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       if (qty) {
         const sub = Number(jo.subtotal || 0);
         jo.price_per_unit = Number((sub / qty).toFixed(4));
-        jo.disc_price_per_unit = Number((sub / qty - (sub - Number(jo.net_of_tax || 0))).toFixed(4));
+        jo.disc_price_per_unit = Number((Number(jo.net_of_tax || 0) / qty).toFixed(4));
       }
       const [processes] = await pool.query(
         `SELECT p.*, pr.process_name, i.display_name AS item_name
