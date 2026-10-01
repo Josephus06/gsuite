@@ -56,6 +56,8 @@ export default function ChequeView() {
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/cheques')}>Back to Lists</button>
           {can('/cheques', 'can_edit') && c.status !== 'void' && <button className="btn btn-sm" disabled title="Editing a posted Cheque isn't implemented in this build -- void and re-enter instead">Edit</button>}
+          {can('/cheques', 'can_print') && <button className="btn btn-sm" onClick={() => window.open(`/cheques/${c.id}/print`, '_blank')}>Print Voucher</button>}
+          {can('/cheques', 'can_print') && <button className="btn btn-sm" onClick={() => window.open(`/cheques/${c.id}/print?as=cheque`, '_blank')}>Print Cheque</button>}
           {can('/cheques', 'can_void') && c.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>

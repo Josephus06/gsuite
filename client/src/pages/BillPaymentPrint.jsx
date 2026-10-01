@@ -4,7 +4,7 @@ import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import letterhead from '../assets/graphicstar-letterhead.png';
 
-// Bill Payment printouts, as the old system prints them:
+// Bill Payment and Cheque printouts (kind "bill-payment" | "cheque"), as the old system prints them:
 //   Payment Voucher -- A4, letterhead, who was paid what for which bills, four sign-off lines.
 //   Cheque (BPI)    -- only the variable text, placed on the bank's pre-printed cheque: the date
 //                      as spaced digits in the date boxes, the payee, the amount, the amount in words.
@@ -53,7 +53,9 @@ const ymd = (v) => (v ? String(v).slice(0, 10) : '');
 const longDate = (v) => (v ? new Date(`${ymd(v)}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : '');
 const shortDate = (v) => { const d = ymd(v); return d ? `${d.slice(5, 7)}/${d.slice(8, 10)}/${d.slice(0, 4)}` : ''; };
 
-export default function BillPaymentPrint() {
+export default function BillPaymentPrint({ kind = 'bill-payment' }) {
+  const isCheque = kind === 'cheque';
+  const docName = isCheque ? 'Cheque' : 'Bill Payment';
   const { id } = useParams();
   const [params, setParams] = useSearchParams();
   const mode = params.get('as') === 'cheque' ? 'cheque' : 'voucher';
@@ -62,14 +64,19 @@ export default function BillPaymentPrint() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.get(`/bill-payments/${id}/print`).then(({ data }) => setBp(data))
-      .catch((e) => setError(e.response?.data?.error || 'Could not load this Bill Payment.'));
-  }, [id]);
+    api.get(`/${isCheque ? 'cheques' : 'bill-payments'}/${id}/print`)
+      // A cheque carries the same facts under its own names; read it as a payment from here on.
+      .then(({ data }) => setBp(isCheque ? {
+        ...data, supplier_name: data.payee_name, check_date: data.cheque_date, check_no: data.cheque_number,
+        reference_no: data.cheque_no, status: data.status === 'void' ? 'voided' : data.status,
+      } : data))
+      .catch((e) => setError(e.response?.data?.error || `Could not load this ${docName}.`));
+  }, [id, isCheque, docName]);
 
   if (error) {
     return (
       <div style={{ maxWidth: 620, margin: '80px auto', padding: 24, textAlign: 'center', font: '14px/1.6 system-ui, sans-serif' }}>
-        <h2 style={{ marginBottom: 8 }}>Can&rsquo;t print this Bill Payment</h2>
+        <h2 style={{ marginBottom: 8 }}>Can&rsquo;t print this {docName}</h2>
         <p style={{ color: '#64748b' }}>{error}</p>
       </div>
     );
@@ -163,6 +170,7 @@ export default function BillPaymentPrint() {
               <div>Amount in words : {words}</div>
             </div>
           </div>
+          {isCheque ? <ChequeLines bp={bp} /> : (
           <table className="bpp-table">
             <thead>
               <tr>
@@ -191,6 +199,7 @@ export default function BillPaymentPrint() {
               })}
             </tbody>
           </table>
+          )}
           <div className="bpp-total">Total : {money(bp.total_amount)}</div>
           <div className="bpp-sign">
             {['Prepared By:', 'Checked By:', 'Approved By:', 'Received BY:'].map((r, i) => (
@@ -209,6 +218,34 @@ export default function BillPaymentPrint() {
         <ChequeFace bp={bp} payee={payee} words={words} calibrate={calibrate} />
       )}
     </div>
+  );
+}
+
+// The cheque's own voucher table: the expense lines it pays, then any tax withheld.
+function ChequeLines({ bp }) {
+  const wtax = Number(bp.withholding_tax_amount || 0);
+  return (
+    <table className="bpp-table">
+      <thead>
+        <tr>
+          <th style={{ width: '30%' }}>Account</th><th style={{ width: '16%' }}>Department</th><th>Description</th>
+          <th className="bpp-num" style={{ width: '17%' }}>Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {bp.lines.map((l) => (
+          <tr key={l.id}>
+            <td>{l.account_code ? `${l.account_code} — ${l.account_name || ''}` : ''}</td>
+            <td>{l.department_name || ''}</td>
+            <td>{l.description || ''}</td>
+            <td className="bpp-num">{money(l.gross_amount ?? l.amount)}</td>
+          </tr>
+        ))}
+        {wtax > 0 && (
+          <tr><td colSpan={3}>Less: Withholding Tax</td><td className="bpp-num">({money(wtax)})</td></tr>
+        )}
+      </tbody>
+    </table>
   );
 }
 

@@ -2,7 +2,7 @@ const express = require('express');
 const { missingDepartmentError } = require('../lib/requireDepartment');
 const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeChequeGl } = require('../lib/glImpact');
 const { postReversalJournal } = require('../lib/reversalJournal');
@@ -110,6 +110,33 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     if (wtax) { const [[w]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '21402'"); if (w) gl.push({ account_code: w.account_code, account_name: w.account_name, debit: 0, credit: wtax }); }
     if (total && c.account_code) gl.push({ account_code: c.account_code, account_name: c.account_name, debit: 0, credit: total });
     res.json({ ...c, lines, gl });
+  } catch (err) { next(err); }
+});
+
+// The Payment Voucher and the BPI cheque face (client/src/pages/BillPaymentPrint.jsx, kind
+// "cheque") -- the same two printouts as a Bill Payment. System Admin always; everyone else needs
+// can_print on /cheques. A voided cheque still prints, marked VOID.
+router.get('/:id/print', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await isSystemAdmin(req.user.id)) && !(await userCan(req.user.id, ROUTE, 'can_print'))) {
+      return res.status(403).json({ error: 'You do not have permission to print a Cheque.' });
+    }
+    const [[c]] = await pool.query(
+      `SELECT c.*, coa.account_code AS bank_account_code, coa.account_name AS bank_account_name, loc.location_name,
+              u.display_name AS created_by_name, u.signature_data AS prepared_signature
+         FROM cheques c
+         LEFT JOIN chart_of_accounts coa ON coa.id = c.account_id
+         LEFT JOIN locations loc ON loc.id = c.office_location_id
+         LEFT JOIN users u ON u.id = c.created_by_user_id
+        WHERE c.id = ?`, [req.params.id]);
+    if (!c) return res.status(404).json({ error: 'Not found' });
+    const [lines] = await pool.query(
+      `SELECT cl.*, coa.account_code, coa.account_name, d.name AS department_name
+         FROM cheque_lines cl
+         LEFT JOIN chart_of_accounts coa ON coa.id = cl.account_id
+         LEFT JOIN departments d ON d.id = cl.department_id
+        WHERE cl.cheque_id = ? ORDER BY cl.line_no`, [req.params.id]);
+    res.json({ ...c, lines });
   } catch (err) { next(err); }
 });
 

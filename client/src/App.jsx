@@ -228,6 +228,7 @@ function App() {
       <Route path="/job-orders/:id/print" element={<ProtectedRoute><JobOrderPrint /></ProtectedRoute>} />
       <Route path="/purchase-orders/:id/print" element={<ProtectedRoute><PurchaseOrderPrint /></ProtectedRoute>} />
       <Route path="/bill-payments/:id/print" element={<ProtectedRoute><BillPaymentPrint /></ProtectedRoute>} />
+      <Route path="/cheques/:id/print" element={<ProtectedRoute><BillPaymentPrint kind="cheque" /></ProtectedRoute>} />
       {/* The four request forms, printed on their own sheet -- standalone for the same reason. */}
       <Route path="/forms/:id/print" element={<ProtectedRoute><FormPrint /></ProtectedRoute>} />
       <Route
