@@ -101,7 +101,7 @@ async function main() {
   const out = {
     seen: 0, imported: 0, exists: 0, outOfYear: 0, void: 0, empty: 0, lines: 0,
     fromBill: 0, fromCheque: 0, fromNeither: 0, apps: 0, appsLinked: 0, appsUnresolved: 0, appsAmountUnresolved: 0,
-    noSupplier: [], badAccount: [], failed: [], collisions: [],
+    noSupplier: [], badAccount: [], failed: [], collisions: [], missingBills: new Map(),
   };
   const credits = await allPages(t, 'get_transactions', {
     where: { Module_TransH: 'BILLCREDIT' },
@@ -161,7 +161,12 @@ async function main() {
       out.apps += 1;
       const billId = vbByNo.get(vbPkToNo.get(a.SysFK_TransHSL_LdgrTr));
       if (billId) { out.appsLinked += 1; resolvedApps.push({ vendor_bill_id: billId, applied_amount: round2(a.Amount_LdgrTr) }); }
-      else { out.appsUnresolved += 1; out.appsAmountUnresolved += num(a.Amount_LdgrTr); }
+      else {
+        out.appsUnresolved += 1; out.appsAmountUnresolved += num(a.Amount_LdgrTr);
+        const billNo = vbPkToNo.get(a.SysFK_TransHSL_LdgrTr) || `pk:${String(a.SysFK_TransHSL_LdgrTr).slice(0, 8)}`;
+        const k = out.missingBills.get(billNo) || { amount: 0, credits: [], year: day(h.DateCreated_TransH).slice(0, 4) };
+        k.amount += num(a.Amount_LdgrTr); k.credits.push(no); out.missingBills.set(billNo, k);
+      }
     }
 
     const total = round2(h.TotalAmount_TransH);
@@ -205,6 +210,14 @@ async function main() {
   console.log(`\n${DRY_RUN ? 'WOULD IMPORT' : 'IMPORTED'} ${out.imported} credit(s), ${out.lines} line(s). seen ${out.seen}, already here ${out.exists}, other years ${out.outOfYear}, void ${out.void}, empty PHP 0 shells ${out.empty}`);
   console.log(`created from: bill ${out.fromBill}, cheque ${out.fromCheque}, neither found in T1S ${out.fromNeither}`);
   console.log(`applications: ${out.apps}, linked ${out.appsLinked}, bill not in T1S ${out.appsUnresolved} (PHP ${out.appsAmountUnresolved})`);
+  // The bills those unlinked applications paid down, largest first: what would need importing.
+  const mb = [...out.missingBills.entries()].sort((a, b) => b[1].amount - a[1].amount);
+  if (mb.length) {
+    const byYear = {}; for (const [, v] of mb) byYear[v.year] = round2((byYear[v.year] || 0) + v.amount);
+    const notInSource = mb.filter(([k]) => k.startsWith('pk:'));
+    console.log(`  ...on ${mb.length} bill(s) T1S does not hold (${notInSource.length} not even a source vendor bill); PHP by credit year ${JSON.stringify(byYear)}`);
+    for (const [k, v] of mb.slice(0, 12)) console.log(`     ${k}  PHP ${round2(v.amount)}  via ${v.credits.slice(0, 3).join(',')}${v.credits.length > 3 ? '...' : ''}`);
+  }
   console.log(`no supplier: ${show('noSupplier')}`);
   console.log(`unmapped account: ${show('badAccount')}`);
   console.log(`failed: ${show('failed')}`);
