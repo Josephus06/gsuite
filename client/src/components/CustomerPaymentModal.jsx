@@ -12,8 +12,8 @@ function formatDate(v) { return v ? displayDate(v) : '—'; }
 
 // The real modal's Receipt and Payment Type are plain selects with a fixed set of
 // options, not master-list lookups -- stored as their label on the payment.
-const RECEIPT_TYPES = ['Official Receipt', 'Collection Receipt', 'Acknowledgement Receipt'];
-const PAYMENT_TYPES = ['Full Payment', 'Partial Payment', 'Advance Payment'];
+const RECEIPT_TYPES = ['Official Receipt', 'Collection Receipt', 'Provisional Receipt'];
+const PAYMENT_TYPES = ['Full Payment', 'Partial Payment', 'Down Payment'];
 
 // Mirrors the real "Customer Payment" popup, reached from an Open Invoice's "Accept
 // Payment" button. Every one of this customer's still-open invoices is listed in APPLY,
