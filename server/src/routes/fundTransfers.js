@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 
 const router = express.Router();
@@ -73,6 +73,34 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       { account_code: ft.from_account_code, account_name: ft.from_account_name, debit: 0, credit: amt },
     ] : [];
     res.json({ ...ft, gl });
+  } catch (err) { next(err); }
+});
+
+// The Fund Transfer Voucher, as the old system prints it (client/src/pages/FundTransferPrint.jsx).
+// Its lines are the transfer's GL entry -- shown even on a voided transfer, which prints marked VOID.
+router.get('/:id/print', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await isSystemAdmin(req.user.id)) && !(await userCan(req.user.id, ROUTE, 'can_print'))) {
+      return res.status(403).json({ error: 'You do not have permission to print a Fund Transfer.' });
+    }
+    const [[ft]] = await pool.query(
+      `SELECT ft.*, fa.account_code AS from_account_code, fa.account_name AS from_account_name,
+              ta.account_code AS to_account_code, ta.account_name AS to_account_name,
+              u.display_name AS prepared_by_name, u.signature_data AS prepared_signature
+       FROM fund_transfers ft
+       LEFT JOIN chart_of_accounts fa ON fa.id = ft.from_account_id
+       LEFT JOIN chart_of_accounts ta ON ta.id = ft.to_account_id
+       LEFT JOIN users u ON u.id = ft.created_by_user_id
+       WHERE ft.id = ?`,
+      [req.params.id]
+    );
+    if (!ft) return res.status(404).json({ error: 'Not found' });
+    const amt = round2(ft.amount);
+    const lines = [
+      { account_code: ft.to_account_code, account_name: ft.to_account_name, debit: amt, credit: 0 },
+      { account_code: ft.from_account_code, account_name: ft.from_account_name, debit: 0, credit: amt },
+    ];
+    res.json({ ...ft, lines });
   } catch (err) { next(err); }
 });
 
