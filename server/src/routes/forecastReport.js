@@ -39,9 +39,19 @@ const FROM_SQL = `FROM job_orders jo
   LEFT JOIN sales_order_lines sol ON sol.id = jo.sales_order_line_id
   LEFT JOIN non_standard_sales_order_lines nl ON nl.id = jo.nsso_line_id`;
 
+// The production STATUS column of the sales template (Downloads/SALES 1.xlsx): how far the job has
+// been built.
+const BUILD_STATUS_SQL = `CASE
+    WHEN jo.production_stage IN ('completed', 'invoiced') OR jo.quantity_built >= jo.quantity THEN 'BUILT'
+    WHEN jo.quantity_built > 0 THEN 'PARTIALLY BUILT'
+    WHEN jo.production_stage = 'for_qi' THEN 'FOR BUILD'
+    ELSE 'IN PROGRESS' END`;
+
 // Last build / delivery / invoice per Job Order, and what has been invoiced. Correlated, so they
 // only run for the page of rows actually returned.
 const SELECT_SQL = `SELECT jo.id, jo.job_order_no, jo.description, jo.quantity,
+    COALESCE(so.date_created, ns.date_created) AS order_date, ${BUILD_STATUS_SQL} AS build_status,
+    COALESCE(jo.delivery_date, sol.delivery_date, nl.delivery_date) AS line_delivery_date,
     c.name AS customer_name, ol.location_name AS office_location, jl.location_name AS job_location,
     sd.name AS department, CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep, jt.display_name AS job_type,
     COALESCE(so.sales_order_no, ns.nsso_no) AS order_no,
@@ -60,22 +70,51 @@ const SELECT_SQL = `SELECT jo.id, jo.job_order_no, jo.description, jo.quantity,
     (SELECT COALESCE(SUM(sil.net_of_tax), 0) FROM sales_invoice_lines sil JOIN sales_invoices si ON si.id = sil.sales_invoice_id
       WHERE sil.job_order_id = jo.id AND si.status <> 'cancelled') AS invoice_amount`;
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const ymd = (d) => d.toISOString().slice(0, 10);
+const addDays = (s, n) => { const d = new Date(`${s}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return ymd(d); };
+
+// The period the Date Forecast filter selects: a month (default -- "extract per month"), a range,
+// or everything up to a date. { start, end } -- either may be null for an open-ended range.
+function periodOf(q) {
+  const mode = q.mode || 'month';
+  if (mode === 'as_of') return { start: null, end: DATE_RE.test(String(q.as_of || '')) ? q.as_of : null };
+  if (mode === 'range') return { start: DATE_RE.test(String(q.from || '')) ? q.from : null, end: DATE_RE.test(String(q.to || '')) ? q.to : null };
+  const month = /^\d{4}-\d{2}$/.test(String(q.month || '')) ? q.month : new Date().toISOString().slice(0, 7);
+  const [y, m] = month.split('-').map(Number);
+  return { start: `${month}-01`, end: ymd(new Date(Date.UTC(y, m, 0))) };
+}
+
+// The sales template's week columns: weeks ending FRIDAY (09/25/2026 ...), the last one cut at
+// the period's end (09/30/2026). Each is { start, end }, headed by its end date. A period with
+// no start begins at the earliest forecast in it (`firstForecast`).
+function weeksOf({ start, end }, firstForecast) {
+  const from = start || firstForecast;
+  if (!from || !end || from > end) return [];
+  const weeks = [];
+  let s = from;
+  while (s <= end) {
+    const dow = new Date(`${s}T00:00:00Z`).getUTCDay(); // 0 Sun .. 5 Fri
+    const fri = addDays(s, (5 - dow + 7) % 7);
+    const e = fri < end ? fri : end;
+    weeks.push({ start: s, end: e });
+    s = addDays(e, 1);
+  }
+  return weeks;
+}
+
+// Which week is "this week" -- the WEEKLY TARGET column -- or -1 when today is outside the period.
+function currentWeekIndex(weeks) {
+  const today = ymd(new Date(Date.now() + 8 * 3600 * 1000)); // business time, UTC+8
+  return weeks.findIndex((w) => today >= w.start && today <= w.end);
+}
+
 function buildFilter(q) {
   const where = ['jo.planned_end_date IS NOT NULL'];
   const params = [];
-  // Date Forecast: a month (default -- "extract per month"), everything up to a date, or a range.
-  const mode = q.mode || 'month';
-  if (mode === 'as_of' && q.as_of) { where.push('jo.planned_end_date <= ?'); params.push(q.as_of); }
-  else if (mode === 'range') {
-    if (q.from) { where.push('jo.planned_end_date >= ?'); params.push(q.from); }
-    if (q.to) { where.push('jo.planned_end_date <= ?'); params.push(q.to); }
-  } else {
-    const month = /^\d{4}-\d{2}$/.test(String(q.month || '')) ? q.month : new Date().toISOString().slice(0, 7);
-    const [y, m] = month.split('-').map(Number);
-    const start = `${month}-01`;
-    const end = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
-    where.push('jo.planned_end_date BETWEEN ? AND ?'); params.push(start, end);
-  }
+  const { start, end } = periodOf(q);
+  if (start) { where.push('jo.planned_end_date >= ?'); params.push(start); }
+  if (end) { where.push('jo.planned_end_date <= ?'); params.push(end); }
   if (q.status) { where.push(`${STATUS_SQL} = ?`); params.push(q.status); }
   if (q.office_location_id) { where.push('COALESCE(so.office_location_id, ns.office_location_id) = ?'); params.push(q.office_location_id); }
   if (q.job_location_id) { where.push('jo.job_location_id = ?'); params.push(q.job_location_id); }
@@ -98,17 +137,66 @@ function prodRating(r) {
   return Number(r.gp_rate) >= Number(r.passing_gp_rate) ? 'ABOVE GP RATE' : 'BELOW GP RATE';
 }
 
-const shape = (r) => ({
+const day = (v) => (v ? String(v instanceof Date ? v.toISOString() : v).slice(0, 10) : '');
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// The week columns for one row: its Net of Tax under the week its forecast falls in. WEEKLY TARGET
+// is that amount when the week is this week; PENDING is it when the job falls in another week and
+// is not yet fully invoiced -- what is still to come in.
+function weekSplit(r, weeks, cur) {
+  const fc = day(r.forecast_date);
+  const wi = weeks.findIndex((w) => fc >= w.start && fc <= w.end);
+  const amt = Number(r.jo_amount || 0);
+  const unbilled = Number(r.quantity || 0) - Number(r.invoice_qty || 0) > 0;
+  return {
+    weeks: weeks.map((_, i) => (i === wi ? amt : 0)),
+    weekly_target: wi >= 0 && wi === cur ? amt : 0,
+    pending: !(wi >= 0 && wi === cur) && unbilled ? amt : 0,
+  };
+}
+
+const shape = (r, weeks, cur) => ({
   ...r,
   prod_rating: prodRating(r),
   gp_rate: r.gp_rate == null ? null : Number(r.gp_rate),
   passing_gp_rate: r.passing_gp_rate == null ? null : Number(r.passing_gp_rate),
   quantity: Number(r.quantity || 0),
   jo_amount: Number(r.jo_amount || 0),
+  // Net of Tax / Qty: the discounted price per piece, as the sales order line has it.
+  unit_price: Number(r.quantity) ? round2(Number(r.jo_amount || 0) / Number(r.quantity)) : 0,
   invoice_qty: Number(r.invoice_qty || 0),
   invoice_amount: Number(r.invoice_amount || 0),
   unbilled_qty: Number(r.quantity || 0) - Number(r.invoice_qty || 0),
+  ...weekSplit(r, weeks, cur),
 });
+
+// The period's weeks, and every row's forecast / amount / invoiced qty for the column totals --
+// one light query over the whole filter, so the totals do not depend on the page shown.
+async function weeksAndTotals(q, whereSql, params) {
+  const period = periodOf(q);
+  const [all] = await pool.query(
+    `SELECT jo.planned_end_date AS forecast_date, jo.quantity, COALESCE(sol.net_of_tax, nl.net_of_tax, 0) AS jo_amount,
+            (SELECT COALESCE(SUM(sil.quantity), 0) FROM sales_invoice_lines sil JOIN sales_invoices si ON si.id = sil.sales_invoice_id
+              WHERE sil.job_order_id = jo.id AND si.status <> 'cancelled') AS invoice_qty
+       ${FROM_SQL} ${whereSql}`, params);
+  const first = all.reduce((m, r) => { const d = day(r.forecast_date); return !m || d < m ? d : m; }, null);
+  const last = all.reduce((m, r) => { const d = day(r.forecast_date); return !m || d > m ? d : m; }, null);
+  const weeks = weeksOf({ start: period.start, end: period.end || last }, first);
+  const cur = currentWeekIndex(weeks);
+  const totals = { weeks: weeks.map(() => 0), weekly_target: 0, pending: 0, qty: 0, amount: 0 };
+  for (const r of all) {
+    const s = weekSplit(r, weeks, cur);
+    s.weeks.forEach((v, i) => { totals.weeks[i] += v; });
+    totals.weekly_target += s.weekly_target; totals.pending += s.pending;
+    totals.qty += Number(r.quantity || 0); totals.amount += Number(r.jo_amount || 0);
+  }
+  totals.weeks = totals.weeks.map(round2);
+  ['weekly_target', 'pending', 'amount'].forEach((k) => { totals[k] = round2(totals[k]); });
+  return { weeks, cur, totals, count: all.length };
+}
+
+// Sales Rep, then newest Sales Order first -- the template's order.
+const ORDER_SQL = "ORDER BY sales_rep, order_date DESC, jo.job_order_no";
 
 router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
@@ -126,47 +214,93 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const { whereSql, params } = buildFilter(req.query);
     const pageNum = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 25));
-    const [[totals]] = await pool.query(
-      `SELECT COUNT(*) AS total, COALESCE(SUM(jo.quantity), 0) AS qty, COALESCE(SUM(COALESCE(sol.net_of_tax, nl.net_of_tax, 0)), 0) AS amount
-         ${FROM_SQL} ${whereSql}`, params);
+    const { weeks, cur, totals, count } = await weeksAndTotals(req.query, whereSql, params);
     const [rows] = await pool.query(
-      `${SELECT_SQL} ${FROM_SQL} ${whereSql} ORDER BY jo.planned_end_date, jo.job_order_no LIMIT ? OFFSET ?`,
+      `${SELECT_SQL} ${FROM_SQL} ${whereSql} ${ORDER_SQL} LIMIT ? OFFSET ?`,
       [...params, limit, (pageNum - 1) * limit]);
-    res.json({ rows: rows.map(shape), total: Number(totals.total), total_qty: Number(totals.qty), total_amount: Number(totals.amount), page: pageNum, limit });
+    res.json({
+      rows: rows.map((r) => shape(r, weeks, cur)), total: count, total_qty: totals.qty, total_amount: totals.amount,
+      weeks: weeks.map((w) => w.end), current_week: cur, week_totals: totals.weeks,
+      total_weekly_target: totals.weekly_target, total_pending: totals.pending, page: pageNum, limit,
+    });
   } catch (err) { next(err); }
 });
 
-// Download: every row under the current filters, the same columns as the screen.
+// Download, in the sales team's own workbook layout (Downloads/SALES 1.xlsx, sheet "Back-Order"):
+// one row per Job Order, its Net of Tax under the Friday week its forecast falls in, then Delivery /
+// Forecast Date, STATUS, WEEKLY TARGET and PENDING, and a totals row. Bold 11pt, every cell
+// bordered, tall wrapped rows, no gridlines -- as the template.
 router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const { whereSql, params } = buildFilter(req.query);
-    const [rows] = await pool.query(`${SELECT_SQL} ${FROM_SQL} ${whereSql} ORDER BY jo.planned_end_date, jo.job_order_no`, params);
-    const day = (v) => (v ? String(v instanceof Date ? v.toISOString() : v).slice(0, 10) : '');
-    const money = { numFmt: '#,##0.00' };
-    const qty = { numFmt: '#,##0.00##' };
+    const { weeks, cur } = await weeksAndTotals(req.query, whereSql, params);
+    const [raw] = await pool.query(`${SELECT_SQL} ${FROM_SQL} ${whereSql} ${ORDER_SQL}`, params);
+    const rows = raw.map((r) => shape(r, weeks, cur));
+    const mdy = (v) => { const s = day(v); return s ? `${s.slice(5, 7)}/${s.slice(8, 10)}/${s.slice(0, 4)}` : ''; };
+
     const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet('Forecast', { views: [{ state: 'frozen', ySplit: 1 }] });
-    ws.columns = [
-      { header: 'Customer', key: 'customer_name', width: 34 }, { header: 'Office Location', key: 'office_location', width: 18 },
-      { header: 'JO #', key: 'job_order_no', width: 18 }, { header: 'SO / NSSO #', key: 'order_no', width: 16 },
-      { header: 'Job Type', key: 'job_type', width: 26 }, { header: 'Job Description', key: 'description', width: 40 },
-      { header: 'JO Location', key: 'job_location', width: 18 }, { header: 'Department', key: 'department', width: 16 },
-      { header: 'Sales Rep', key: 'sales_rep', width: 24 }, { header: 'JO Status', key: 'jo_status', width: 24 },
-      { header: 'JO Qty', key: 'quantity', width: 10, style: qty }, { header: 'JO Amt', key: 'jo_amount', width: 14, style: money },
-      { header: 'Delivery Date', key: 'delivery_date', width: 13 }, { header: 'Forecast Date', key: 'forecast_date', width: 13 },
-      { header: 'AB Date', key: 'ab_date', width: 12 }, { header: 'ID Date', key: 'id_date', width: 12 },
-      { header: 'Invoice Date', key: 'invoice_date', width: 13 }, { header: 'Invoice Qty', key: 'invoice_qty', width: 11, style: qty },
-      { header: 'Invoice Amt', key: 'invoice_amount', width: 14, style: money }, { header: 'Unbilled Qty', key: 'unbilled_qty', width: 12, style: qty },
-      { header: 'Prod Rating', key: 'prod_rating', width: 16 }, { header: 'GP %', key: 'gp_rate', width: 8 }, { header: 'Passing GP %', key: 'passing_gp_rate', width: 12 },
+    const ws = wb.addWorksheet(`Back-Order (${rows.length})`.slice(0, 31), {
+      views: [{ state: 'frozen', ySplit: 1, showGridLines: false, zoomScale: 70 }],
+      pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
+    });
+    const cols = [
+      { header: 'Date', width: 15.7 }, { header: 'Customer', width: 35.6 }, { header: 'JO #', width: 19 },
+      { header: 'JO Status', width: 23.1 }, { header: 'Sales Rep', width: 23.3 }, { header: 'Job Type', width: 35.6 },
+      { header: 'Description', width: 35.6 }, { header: 'Unit Price', width: 21.4, money: true }, { header: 'Qty', width: 11.2 },
+      { header: 'Net of Tax', width: 17.1, money: true },
+      ...weeks.map((w) => ({ header: mdy(w.end), width: 19.4, money: true, week: true })),
+      { header: 'Delivery Date', width: 19.4 }, { header: 'Forecast Date', width: 20.4 }, { header: 'STATUS', width: 19.4 },
+      { header: 'WEEKLY TARGET', width: 22.3, money: true }, { header: 'PENDING', width: 17.3, money: true },
     ];
-    ws.getRow(1).font = { bold: true };
-    ws.autoFilter = 'A1:W1';
-    for (const r of rows.map(shape)) {
-      ws.addRow({
-        ...r, delivery_date: day(r.delivery_date), forecast_date: day(r.forecast_date), ab_date: day(r.ab_date),
-        id_date: day(r.id_date), invoice_date: day(r.invoice_date),
+    ws.columns = cols.map((c) => ({ width: c.width }));
+    const border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+    const font = { bold: true, size: 11 };
+
+    const head = ws.getRow(1);
+    cols.forEach((c, i) => {
+      const cell = head.getCell(i + 1);
+      cell.value = c.header; cell.font = font; cell.border = border;
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    });
+    head.height = 59.4;
+
+    rows.forEach((r, n) => {
+      const values = [
+        mdy(r.order_date), r.customer_name || '', r.job_order_no, r.jo_status, r.sales_rep || '', r.job_type || '',
+        r.description || '', r.unit_price, r.quantity, r.jo_amount,
+        ...r.weeks.map((v) => (v ? v : null)),
+        mdy(r.line_delivery_date), mdy(r.forecast_date), r.build_status,
+        r.weekly_target || null, r.pending || null,
+      ];
+      const row = ws.getRow(n + 2);
+      values.forEach((v, i) => {
+        const cell = row.getCell(i + 1);
+        cell.value = v; cell.font = font; cell.border = border;
+        const c = cols[i];
+        if (c.money) cell.numFmt = '#,##0.00';
+        const centered = ['Delivery Date', 'Forecast Date', 'STATUS'].includes(c.header);
+        cell.alignment = { vertical: 'middle', wrapText: true, horizontal: centered ? 'center' : undefined };
       });
+      row.height = 59.4;
+    });
+
+    // Totals under Net of Tax, every week, WEEKLY TARGET and PENDING -- live SUMs, as the template.
+    const last = rows.length + 1;
+    const total = ws.getRow(last + 1);
+    cols.forEach((c, i) => {
+      if (!(c.money && c.header !== 'Unit Price')) return;
+      const col = ws.getColumn(i + 1).letter;
+      const cell = total.getCell(i + 1);
+      cell.value = rows.length ? { formula: `SUM(${col}2:${col}${last})` } : 0;
+      cell.font = font; cell.numFmt = '#,##0.00'; cell.border = border;
+    });
+    total.height = 30;
+    // This week's column, marked so the target reads at a glance.
+    if (cur >= 0) {
+      const wcol = 11 + cur;
+      for (let r = 1; r <= last + 1; r += 1) ws.getRow(r).getCell(wcol).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } };
     }
+
     const label = req.query.mode === 'range' ? `${req.query.from || ''}_${req.query.to || ''}`
       : req.query.mode === 'as_of' ? `as-of-${req.query.as_of || ''}` : (req.query.month || new Date().toISOString().slice(0, 7));
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

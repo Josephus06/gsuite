@@ -9,7 +9,8 @@ function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
-const d = (v) => (v ? displayDate(String(v).slice(0, 10)) : '');
+// The app's date format on screen; the download keeps the sales workbook's own 09/25/2026.
+const mdy = (v) => (v ? displayDate(String(v).slice(0, 10)) : '');
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const PAGE_SIZE = 25;
 const EMPTY = {
@@ -117,52 +118,66 @@ export default function ForecastReport() {
         {data && (
           <div style={{ display: 'flex', gap: 24, marginBottom: 10, flexWrap: 'wrap' }}>
             <span><strong>{data.total.toLocaleString()}</strong> job order(s)</span>
-            <span>JO Qty <strong>{Number(data.total_qty).toLocaleString()}</strong></span>
-            <span>JO Amt <strong>{money(data.total_amount)}</strong></span>
+            <span>Net of Tax <strong>{money(data.total_amount)}</strong></span>
+            <span>Weekly Target <strong>{money(data.total_weekly_target)}</strong></span>
+            <span>Pending <strong>{money(data.total_pending)}</strong></span>
           </div>
         )}
-        {loading ? <LoadingSpinner /> : (
+        {loading ? <LoadingSpinner /> : data && (
           <div className="table-wrap">
+            {/* The sales team's workbook layout (SALES 1.xlsx): Net of Tax under the Friday week its
+                forecast falls in; this week's column is shaded and feeds WEEKLY TARGET. */}
             <table className="responsive-cards">
               <thead>
                 <tr>
-                  <th>Customer</th><th>Office Location</th><th>JO #</th><th>Job Type</th><th>Job Description</th><th>JO Location</th>
-                  <th>Department</th><th>Sales Rep</th><th>JO Status</th><th style={{ textAlign: 'right' }}>JO Qty</th><th style={{ textAlign: 'right' }}>JO Amt</th>
-                  <th>Delivery Date</th><th>Forecast Date</th><th>AB Date</th><th>ID Date</th><th>Invoice Date</th>
-                  <th style={{ textAlign: 'right' }}>Invoice Qty</th><th style={{ textAlign: 'right' }}>Invoice Amt</th><th style={{ textAlign: 'right' }}>Unbilled Qty</th><th>Prod Rating</th><th></th>
+                  <th>Date</th><th>Customer</th><th>JO #</th><th>JO Status</th><th>Sales Rep</th><th>Job Type</th><th>Description</th>
+                  <th style={{ textAlign: 'right' }}>Unit Price</th><th style={{ textAlign: 'right' }}>Qty</th><th style={{ textAlign: 'right' }}>Net of Tax</th>
+                  {data.weeks.map((w, i) => (
+                    <th key={w} style={{ textAlign: 'right', background: i === data.current_week ? 'var(--color-warning-soft, #fff2cc)' : undefined }}>{mdy(w)}</th>
+                  ))}
+                  <th>Delivery Date</th><th>Forecast Date</th><th>STATUS</th>
+                  <th style={{ textAlign: 'right' }}>WEEKLY TARGET</th><th style={{ textAlign: 'right' }}>PENDING</th><th></th>
                 </tr>
               </thead>
               <tbody>
-                {data && data.rows.length === 0 && <tr><td colSpan={21} className="muted" style={{ textAlign: 'center', padding: 20 }}>No job orders forecast in this period.</td></tr>}
-                {data && data.rows.map((r) => (
+                {data.rows.length === 0 && <tr><td colSpan={16 + data.weeks.length} className="muted" style={{ textAlign: 'center', padding: 20 }}>No job orders forecast in this period.</td></tr>}
+                {data.rows.map((r) => (
                   <tr key={r.id}>
+                    <td data-label="Date">{mdy(r.order_date)}</td>
                     <td data-label="Customer">{r.customer_name}</td>
-                    <td data-label="Office Location">{r.office_location}</td>
                     <td data-label="JO #">{r.job_order_no}</td>
-                    <td data-label="Job Type">{r.job_type}</td>
-                    <td data-label="Job Description">{r.description}</td>
-                    <td data-label="JO Location">{r.job_location}</td>
-                    <td data-label="Department">{r.department}</td>
-                    <td data-label="Sales Rep">{r.sales_rep}</td>
                     <td data-label="JO Status">{r.jo_status}</td>
-                    <td data-label="JO Qty" style={{ textAlign: 'right' }}>{r.quantity.toLocaleString()}</td>
-                    <td data-label="JO Amt" style={{ textAlign: 'right' }}>{money(r.jo_amount)}</td>
-                    <td data-label="Delivery Date">{d(r.delivery_date)}</td>
-                    <td data-label="Forecast Date">{d(r.forecast_date)}</td>
-                    <td data-label="AB Date">{d(r.ab_date)}</td>
-                    <td data-label="ID Date">{d(r.id_date)}</td>
-                    <td data-label="Invoice Date">{d(r.invoice_date)}</td>
-                    <td data-label="Invoice Qty" style={{ textAlign: 'right' }}>{r.invoice_qty.toLocaleString()}</td>
-                    <td data-label="Invoice Amt" style={{ textAlign: 'right' }}>{money(r.invoice_amount)}</td>
-                    <td data-label="Unbilled Qty" style={{ textAlign: 'right' }}>{r.unbilled_qty.toLocaleString()}</td>
-                    <td data-label="Prod Rating" title={r.gp_rate != null ? `GP ${r.gp_rate}% vs passing ${r.passing_gp_rate ?? '—'}%` : ''}
-                      style={{ color: r.prod_rating === 'BELOW GP RATE' ? '#b91c1c' : r.prod_rating ? '#15803d' : undefined, fontWeight: 600 }}>
-                      {r.prod_rating || '—'}{r.gp_rate != null && <div className="muted" style={{ fontWeight: 400, fontSize: 11 }}>{r.gp_rate}% / {r.passing_gp_rate ?? '—'}%</div>}
-                    </td>
+                    <td data-label="Sales Rep">{r.sales_rep}</td>
+                    <td data-label="Job Type">{r.job_type}</td>
+                    <td data-label="Description">{r.description}</td>
+                    <td data-label="Unit Price" style={{ textAlign: 'right' }}>{money(r.unit_price)}</td>
+                    <td data-label="Qty" style={{ textAlign: 'right' }}>{r.quantity.toLocaleString()}</td>
+                    <td data-label="Net of Tax" style={{ textAlign: 'right' }}>{money(r.jo_amount)}</td>
+                    {r.weeks.map((v, i) => (
+                      <td key={i} data-label={mdy(data.weeks[i])} style={{ textAlign: 'right', background: i === data.current_week ? 'var(--color-warning-soft, #fff2cc)' : undefined }}>{v ? money(v) : ''}</td>
+                    ))}
+                    <td data-label="Delivery Date">{mdy(r.line_delivery_date)}</td>
+                    <td data-label="Forecast Date">{mdy(r.forecast_date)}</td>
+                    <td data-label="STATUS" style={{ fontWeight: 600 }}>{r.build_status}</td>
+                    <td data-label="Weekly Target" style={{ textAlign: 'right' }}>{r.weekly_target ? money(r.weekly_target) : ''}</td>
+                    <td data-label="Pending" style={{ textAlign: 'right' }}>{r.pending ? money(r.pending) : ''}</td>
                     <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/production/${r.id}`)}>View</button></td>
                   </tr>
                 ))}
               </tbody>
+              {data.rows.length > 0 && (
+                <tfoot>
+                  <tr style={{ fontWeight: 700 }}>
+                    <td colSpan={9}>TOTAL (all {data.total.toLocaleString()} rows)</td>
+                    <td style={{ textAlign: 'right' }}>{money(data.total_amount)}</td>
+                    {data.week_totals.map((v, i) => <td key={i} style={{ textAlign: 'right' }}>{money(v)}</td>)}
+                    <td colSpan={3} />
+                    <td style={{ textAlign: 'right' }}>{money(data.total_weekly_target)}</td>
+                    <td style={{ textAlign: 'right' }}>{money(data.total_pending)}</td>
+                    <td />
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         )}
