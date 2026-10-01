@@ -63,6 +63,22 @@ function money(v) {
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
 
+// Edits made on the Sales Order (PUT /sales-orders/:id), newest first.
+function SoHistory({ id }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => { api.get(`/sales-orders/${id}/audit-logs`).then((r) => setRows(r.data)).catch(() => setRows([])); }, [id]);
+  if (!rows) return null;
+  if (!rows.length) return <p className="muted" style={{ marginTop: 12 }}>No edits recorded.</p>;
+  return (
+    <div className="table-wrap" style={{ marginTop: 12 }}>
+      <table>
+        <thead><tr><th>Date Time</th><th>Set By</th><th>Field</th><th>Old Value</th><th>New Value</th></tr></thead>
+        <tbody>{rows.map((r) => <tr key={r.id}><td>{displayDateTime(r.set_at)}</td><td>{r.set_by_name}</td><td>{r.field_name}</td><td>{r.old_value}</td><td>{r.new_value}</td></tr>)}</tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function SalesOrderView() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -224,7 +240,10 @@ export default function SalesOrderView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/sales-orders')}>Back</button>
-          {canEdit && <button className="btn btn-sm" disabled title="Editing a Sales Order isn't implemented in this build -- amend the originating Estimate instead">Edit</button>}
+          {/* System Admin only (the server enforces it too). */}
+          {user?.account_type === 'System Admin' && !String(so.status || '').toLowerCase().includes('cancel') && (
+            <button className="btn btn-sm" onClick={() => navigate(`/sales-orders/${id}/edit`)}>Edit</button>
+          )}
           {hasDeliverableLine && canRaiseDelivery && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/sales-orders/${id}/item-delivery/new`)}>Item Delivery</button>}
           {hasInvoiceableLine && (canBillSI || canBillDT) && (
             <div style={{ position: 'relative' }}>
@@ -431,6 +450,7 @@ export default function SalesOrderView() {
             <div className="field"><label>Created At</label><input readOnly value={so.created_at ? displayDateTime(so.created_at) : ''} /></div>
             <div className="field"><label>Last Updated</label><input readOnly value={so.updated_at ? displayDateTime(so.updated_at) : ''} /></div>
           </div>
+          <SoHistory id={id} />
         </div>
       )}
 

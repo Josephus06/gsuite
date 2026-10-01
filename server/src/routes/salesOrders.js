@@ -1,7 +1,8 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
+const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
 
 const router = express.Router();
 const ROUTE = '/sales-orders';
@@ -132,6 +133,143 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
   } catch (err) {
     next(err);
   }
+});
+
+// ---------------------------------------------------------------- edit (System Admin only)
+//
+// Header details and every line -- description, qty, price, Disc Amt (PER PIECE, the estimate's
+// rule: Disc Price/Unit = Price/Unit - Disc Amt, Net of Tax = Qty x Disc Price/Unit), tax code,
+// sizes, delivery date/time, remarks. Amounts are recomputed here, never trusted from the browser;
+// the header totals follow; a line's Job Order takes the new quantity and description; the SO
+// status is recomputed. The CUSTOMER is not editable: an invoice reads its customer through its
+// SO, so changing it would silently move invoices and receivables to someone else.
+const SO_HEADER_EDIT = ['ref_no', 'date_created', 'contact_person_id', 'contact_email', 'contact_title', 'contact_phone',
+  'blanket_po_memo', 'sales_rep_id', 'office_location_id', 'contract_description', 'memo', 'shipping_address',
+  'production_lead_time', 'price_validity', 'order_confirmation_type', 'order_confirmation_ref', 'credit_term',
+  'bill_to_contact_number'];
+const SO_LINE_EDIT = ['description', 'quantity', 'units', 'price_per_unit', 'tax_code_id', 'length', 'width', 'height', 'uom',
+  'shipping', 'remarks', 'memo', 'delivery_date', 'delivery_time'];
+
+async function soAudit(conn, soId, userId, fieldName, oldValue, newValue) {
+  await conn.query(
+    `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+     VALUES ('SalesOrder', ?, 'Updated', ?, ?, ?, ?)`,
+    [soId, String(fieldName).slice(0, 150), oldValue == null ? null : String(oldValue).slice(0, 2000), newValue == null ? null : String(newValue).slice(0, 2000), userId]);
+}
+
+router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT a.*, u.display_name AS set_by_name FROM audit_logs a LEFT JOIN users u ON u.id = a.set_by_user_id
+        WHERE a.auditable_type = 'SalesOrder' AND a.auditable_id = ? ORDER BY a.set_at DESC, a.id DESC`, [req.params.id]);
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+router.put('/:id', requireAuth, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!(await isSystemAdmin(req.user.id))) return res.status(403).json({ error: 'Only a System Admin can edit a Sales Order.' });
+    const [[so]] = await conn.query('SELECT * FROM sales_orders WHERE id = ?', [req.params.id]);
+    if (!so) return res.status(404).json({ error: 'Not found' });
+    if (String(so.status || '').toLowerCase().includes('cancel')) return res.status(409).json({ error: 'This Sales Order is cancelled.' });
+    const b = req.body || {};
+    const blank = (v) => (v === '' || v === undefined ? null : v);
+    const day = (v) => (v == null || v === '' ? null : String(v instanceof Date ? v.toISOString() : v).slice(0, 10));
+    const r2 = (v) => Number((Number(v) || 0).toFixed(2));
+    const r4 = (v) => Number((Number(v) || 0).toFixed(4));
+
+    const [oldLines] = await conn.query('SELECT * FROM sales_order_lines WHERE sales_order_id = ? ORDER BY line_no', [req.params.id]);
+    const byId = new Map(oldLines.map((l) => [Number(l.id), l]));
+    const sent = Array.isArray(b.lines) ? b.lines : [];
+    for (const l of sent) if (!byId.has(Number(l.id))) return res.status(400).json({ error: 'A line does not belong to this Sales Order.' });
+    const taxIds = [...new Set(sent.map((l) => Number(l.tax_code_id)).filter(Boolean))];
+    const [taxRows] = taxIds.length ? await conn.query('SELECT id, rate FROM taxes WHERE id IN (?)', [taxIds]) : [[]];
+    const rate = new Map(taxRows.map((t) => [Number(t.id), Number(t.rate)]));
+
+    await conn.beginTransaction();
+    // header
+    const head = {};
+    for (const f of SO_HEADER_EDIT) head[f] = b[f] === undefined ? so[f] : blank(b[f]);
+    head.date_created = day(head.date_created) || day(so.date_created);
+    await conn.query(`UPDATE sales_orders SET ${SO_HEADER_EDIT.map((f) => `${f} = ?`).join(', ')}, updated_at = NOW() WHERE id = ?`,
+      [...SO_HEADER_EDIT.map((f) => head[f]), req.params.id]);
+    for (const f of SO_HEADER_EDIT) {
+      const was = f.includes('date') ? day(so[f]) : so[f];
+      if (String(was ?? '') !== String(head[f] ?? '')) await soAudit(conn, req.params.id, req.user.id, f, was, head[f]);
+    }
+    // lines
+    let qtyChanged = false; let pricingChanged = false;
+    for (const l of sent) {
+      const old = byId.get(Number(l.id));
+      const v = {};
+      for (const f of SO_LINE_EDIT) v[f] = l[f] === undefined ? old[f] : blank(l[f]);
+      v.delivery_date = day(v.delivery_date);
+      const qty = Number(v.quantity) || 0;
+      if (Math.abs(qty - Number(old.quantity || 0)) > 0.00005) qtyChanged = true;
+      if (qty <= 0) throw Object.assign(new Error(`Line ${old.line_no}: quantity must be more than 0.`), { status: 400 });
+      // Amounts are recomputed ONLY when a pricing input changed (qty, price, per-piece discount, tax
+      // code). Migrated lines often do not reconcile (a tax-inclusive Price/Unit, no tax code), so
+      // rewriting them on a memo-only save would silently move money.
+      const oldPerPiece = Number(old.quantity) ? Number(old.disc_amount || 0) / Number(old.quantity) : 0;
+      const linePricing = Math.abs(qty - Number(old.quantity || 0)) > 0.00005
+        || Math.abs(Number(v.price_per_unit || 0) - Number(old.price_per_unit || 0)) > 0.00005
+        || (l.disc_per_piece !== undefined && Math.abs(Number(l.disc_per_piece || 0) - oldPerPiece) > 0.0001)
+        || String(v.tax_code_id ?? '') !== String(old.tax_code_id ?? '');
+      if (linePricing) pricingChanged = true;
+      const price = r4(v.price_per_unit);
+      const subtotal = r2(qty * price);
+      const perPiece = l.disc_per_piece === undefined ? (Number(old.quantity) ? Number(old.disc_amount || 0) / Number(old.quantity) : 0) : Number(l.disc_per_piece) || 0;
+      const discAmount = r2(perPiece * qty);
+      const net = r2(subtotal - discAmount);
+      const taxRate = v.tax_code_id ? (rate.get(Number(v.tax_code_id)) ?? 0) : 0;
+      const taxAmount = r2(net * taxRate / 100);
+      // GP keeps the line's cost as it was: cost = old net - old GP.
+      const cost = Number(old.net_of_tax || 0) - Number(old.gp_amount || 0);
+      const amounts = {
+        price_per_unit: price, subtotal, disc_amount: discAmount, disc_percent: subtotal ? r2(discAmount / subtotal * 100) : 0,
+        disc_price_per_unit: r4(net / qty), net_of_tax: net, tax_amount: taxAmount, gross_amount: r2(net + taxAmount),
+        gp_amount: old.gp_amount == null ? null : r2(net - cost), gp_rate: old.gp_amount == null ? old.gp_rate : (net ? r2((net - cost) / net * 100) : null),
+      };
+      const cols = linePricing ? { ...v, ...amounts } : v;
+      await conn.query(`UPDATE sales_order_lines SET ${Object.keys(cols).map((k) => `${k} = ?`).join(', ')} WHERE id = ?`,
+        [...Object.values(cols), old.id]);
+      for (const [k, nv] of Object.entries(cols)) {
+        const ov = k.includes('date') ? day(old[k]) : old[k];
+        const same = typeof nv === 'number' ? Math.abs(Number(ov || 0) - nv) < 0.00005 : String(ov ?? '') === String(nv ?? '');
+        if (!same) await soAudit(conn, req.params.id, req.user.id, `line ${old.line_no} · ${k}`, ov, nv);
+      }
+      if (old.job_order_id) {
+        await conn.query('UPDATE job_orders SET quantity = ?, description = ?, updated_at = NOW() WHERE id = ?', [qty, v.description, old.job_order_id]);
+      }
+    }
+    // header totals from the lines as they now stand -- only when some line's pricing changed
+    if (pricingChanged) {
+    const [[t]] = await conn.query(
+      `SELECT COALESCE(SUM(subtotal),0) sub, COALESCE(SUM(disc_amount),0) disc, COALESCE(SUM(net_of_tax),0) net,
+              COALESCE(SUM(tax_amount),0) tax, COALESCE(SUM(gross_amount),0) gross, COALESCE(SUM(gp_amount),0) gp
+         FROM sales_order_lines WHERE sales_order_id = ?`, [req.params.id]);
+    await conn.query(
+      `UPDATE sales_orders SET subtotal = ?, discount_total = ?, net_of_tax = ?, tax_total = ?, total_amount = ?,
+              est_gp_amount = ?, est_gp_rate = ? WHERE id = ?`,
+      [r2(t.sub), r2(t.disc), r2(t.net), r2(t.tax), r2(t.gross), r2(t.gp), Number(t.net) ? r2(t.gp / t.net * 100) : null, req.params.id]);
+    if (Math.abs(Number(so.total_amount || 0) - r2(t.gross)) > 0.005) await soAudit(conn, req.params.id, req.user.id, 'total_amount', so.total_amount, r2(t.gross));
+    }
+    // Status only when a quantity changed: migrated JOs carry no invoiced qty, so recomputing an old
+    // billed order's status from them would wrongly reopen it.
+    const [statusLines] = await conn.query(
+      `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, jo.quantity_invoiced
+         FROM sales_order_lines sol LEFT JOIN job_orders jo ON jo.id = sol.job_order_id WHERE sol.sales_order_id = ?`, [req.params.id]);
+    if (qtyChanged && statusLines.some((l) => l.job_order_id)) {
+      await conn.query('UPDATE sales_orders SET status = ? WHERE id = ?', [computeSalesOrderStatus(statusLines), req.params.id]);
+    }
+    await conn.commit();
+    res.json({ ok: true });
+  } catch (err) {
+    await conn.rollback();
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  } finally { conn.release(); }
 });
 
 // Mirrors the real system's "Create JO" cell on a Sales Order line: turns that line

@@ -54,6 +54,7 @@ import EstimateWizard from './pages/EstimateWizard';
 import EstimatePrint from './pages/EstimatePrint';
 import SalesOrders from './pages/SalesOrders';
 import SalesOrderView from './pages/SalesOrderView';
+import SalesOrderEdit from './pages/SalesOrderEdit';
 import JobOrders from './pages/JobOrders';
 import JobOrderView from './pages/JobOrderView';
 import JobOrderEdit from './pages/JobOrderEdit';
@@ -274,6 +275,7 @@ function App() {
         <Route path="/estimates/:id" element={<EstimateView />} />
         <Route path="/estimates/:id/print" element={<EstimatePrint />} />
         <Route path="/sales-orders" element={<SalesOrders />} />
+        <Route path="/sales-orders/:id/edit" element={<SalesOrderEdit />} />
         <Route path="/sales-orders/:id" element={<SalesOrderView />} />
         <Route path="/hrd" element={<Hrd />} />
         <Route path="/product" element={<Product />} />
