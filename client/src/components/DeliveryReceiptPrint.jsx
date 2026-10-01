@@ -1,5 +1,5 @@
 import PrintLetterhead from './PrintLetterhead';
-import { money, qtyText } from '../utils/invoicePrint';
+import { money, qtyText, billingAddress as billingAddressOf } from '../utils/invoicePrint';
 import { displayDate } from '../utils/dates';
 
 // The DELIVERY RECEIPT, rebuilt to match the live system's own DR print.
@@ -29,7 +29,7 @@ export default function DeliveryReceiptPrint({ si }) {
   const total = lines.reduce((s, l) => s + Number(l.gross_amount || 0), 0);
   // Billing address: the one typed on this invoice, else the customer's own Bill To Address,
   // else any address on file for them.
-  const billingAddress = si.bill_to_address || si.customer_bill_to_address || si.customer_address || '';
+  const billingAddress = billingAddressOf(si);
   const orderNo = si.order_ref_no || si.sales_order_no || '';
 
   return (

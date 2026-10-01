@@ -1,4 +1,4 @@
-import { money, qtyText, formatDate, layoutPages } from '../utils/invoicePrint';
+import { money, qtyText, formatDate, layoutPages, billingAddress } from '../utils/invoicePrint';
 
 // TYPE 1 -- overlay for the PRE-PRINTED "SERVICE INVOICE" pad.
 //
@@ -214,7 +214,7 @@ export default function InvoicePrintType1({ si, totals, calibrate }) {
               <Field spec={FORM.header.customerName} calibrate={calibrate} name="customerName">{si.customer_name}</Field>
               <Field spec={FORM.header.customerTin} calibrate={calibrate} name="customerTin">{si.customer_tin}</Field>
               <Field spec={FORM.header.customerAddress} calibrate={calibrate} name="customerAddress">
-                {si.customer_address || si.bill_to_address}
+                {billingAddress(si)}
               </Field>
               <Field spec={FORM.header.date} calibrate={calibrate} name="date">{formatDate(si.date_created)}</Field>
               <Field spec={FORM.header.terms} calibrate={calibrate} name="terms">{si.term}</Field>

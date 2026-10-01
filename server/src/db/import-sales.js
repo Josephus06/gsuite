@@ -440,7 +440,7 @@ async function main() {
                discount_amount, ewt_amount, withholding_tax_pct)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [ivHead.invc_pk, local.id, h.DateCreated_TransH || so.DateCreated_TransH, h.DateDue_TransH || null,
-              clean(h.Term_TransH), trunc(h.ReferrenceNO_TransH, 60), trunc(h.PONo_TransH, 60), trunc(h.Memo_TransH, 500),
+              clean(h.Term_TransH), trunc(h.ReferrenceNO_TransH, 60), trunc(h.PONo_TransH || h.invc_po || h.so_po, 60), trunc(h.Memo_TransH, 500),
               local.department_id, invoiceMoney(h).subtotal, num(h.SubTotalVatEx_TransH), num(h.TaxAmount_TransH),
               num(h.TotalAmount_TransH), num(h.AmountDue_TransH), invoiceStatus(h.Status_TransH),
               local.sales_rep_id, local.office_location_id, invoiceType(h, ivHead),
@@ -617,7 +617,7 @@ async function main() {
                discount_amount, ewt_amount, withholding_tax_pct)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [ivHead.invc_pk, salesOrderId, h.DateCreated_TransH || soDate, h.DateDue_TransH || null, clean(h.Term_TransH),
-              trunc(h.ReferrenceNO_TransH, 60), trunc(h.PONo_TransH, 60), trunc(h.Memo_TransH, 500), departmentId, invoiceMoney(h).subtotal,
+              trunc(h.ReferrenceNO_TransH, 60), trunc(h.PONo_TransH || h.invc_po || h.so_po, 60), trunc(h.Memo_TransH, 500), departmentId, invoiceMoney(h).subtotal,
               num(h.SubTotalVatEx_TransH), num(h.TaxAmount_TransH), num(h.TotalAmount_TransH),
               num(h.AmountDue_TransH), invoiceStatus(h.Status_TransH), repId, headOffice ? headOffice.id : null,
               invoiceType(h, ivHead), invoiceMoney(h).discount, invoiceMoney(h).ewt, invoiceMoney(h).ewtPct]

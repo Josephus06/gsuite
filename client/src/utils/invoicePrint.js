@@ -78,6 +78,12 @@ export function invoiceTotals(si) {
   };
 }
 
+// The billing address an invoice shows and prints: the one typed on the invoice, else the
+// customer's own Bill To Address, else any address on file for them. Migrated invoices carry
+// none of their own, so without the fallbacks every one of them came up blank.
+export const billingAddress = (si) =>
+  si?.bill_to_address || si?.customer_bill_to_address || si?.customer_address || '';
+
 // All figures in this database are Philippine peso. The sample Type 2 template was an export
 // invoice denominated in US$ -- change this if that format is used for dollar billing.
 export const CURRENCY = { code: 'PHP', symbol: '₱' };

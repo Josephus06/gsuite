@@ -11,6 +11,7 @@ import ReversalJournalModal from '../components/ReversalJournalModal';
 import SalesInvoiceEditModal from '../components/SalesInvoiceEditModal';
 
 import { displayDate, displayDateTime } from '../utils/dates';
+import { billingAddress } from '../utils/invoicePrint';
 
 function qty(v) {
   const n = Number(v);
@@ -194,7 +195,7 @@ export default function SalesInvoiceView() {
             <div>Sales Rep : <span className="hi">{si.sales_rep_name || '—'}</span></div>
             <div>Office Location : <span className="hi">{si.office_location_name || '—'}</span></div>
             <div>Department : <span className="hi">{si.department_name || '—'}</span></div>
-            <div>Bill to Address : <span className="hi">{si.bill_to_address || ''}</span></div>
+            <div>Bill to Address : <span className="hi">{billingAddress(si)}</span></div>
           </div>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { money, qtyText, formatDate, paginate, CURRENCY } from '../utils/invoicePrint';
+import { money, qtyText, formatDate, paginate, CURRENCY, billingAddress } from '../utils/invoicePrint';
 
 // TYPE 2 -- the export-style INVOICE. Unlike Type 1 this uses NO pre-printed stationery:
 // the page draws its own title, boxes, column headings and rules, so it prints on plain
@@ -88,7 +88,7 @@ export default function InvoicePrintType2({ si, totals }) {
                   <td className="t2-billto" colSpan={5}>
                     <div style={{ fontWeight: 700 }}>{si.customer_name}</div>
                     {si.customer_tin && <div>TIN: {si.customer_tin}</div>}
-                    <div>{si.customer_address || si.bill_to_address || ''}</div>
+                    <div>{billingAddress(si)}</div>
                   </td>
                   <td className="t2-mark" colSpan={3}>
                     <span className="t2-lbl">MARK:</span>
