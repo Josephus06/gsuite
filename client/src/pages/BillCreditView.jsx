@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
+import BillCreditModal from '../components/BillCreditModal';
 import { displayDate, displayDateTime } from '../utils/dates';
 
 function money(v) {
@@ -26,6 +27,7 @@ export default function BillCreditView() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [error, setError] = useState('');
 
   function load() {
@@ -69,7 +71,8 @@ export default function BillCreditView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(source)}>Back</button>
-          {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Bill Credit isn't implemented in this build">Edit</button>}
+          {/* A voided credit is final; one already spent on a payment or cheque opens read-only with the reason. */}
+          {canEdit && bc.status !== 'voided' && <button className="btn btn-sm" onClick={() => setEditing(true)}>Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
@@ -214,6 +217,14 @@ export default function BillCreditView() {
             emptyLabel="No audit history yet."
           />
         </div>
+      )}
+
+      {editing && (
+        <BillCreditModal
+          billCreditId={bc.id}
+          onClose={() => setEditing(false)}
+          onSaved={() => { setEditing(false); load(); }}
+        />
       )}
     </div>
   );

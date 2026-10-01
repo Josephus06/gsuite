@@ -31,7 +31,9 @@ function computeLine(l, wtaxRate) {
 // system's own (buggy) default.
 // Opened from a Vendor Bill (vendorBillId) or from a Cheque to a vendor (chequeId) -- the cheque
 // screen has the same "Bill Credit" button; such a credit records the vendor itself, not a bill.
-export default function BillCreditModal({ vendorBillId, chequeId, onClose, onSaved }) {
+// Or opened on a saved credit (billCreditId) to edit it: the same form, filled from the credit,
+// saved with PUT. The server refuses the edit once the credit is spent (see in_use).
+export default function BillCreditModal({ vendorBillId, chequeId, billCreditId, onClose, onSaved }) {
   const [data, setData] = useState(null);
   const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
   const [officeLocation, setOfficeLocation] = useState(null);
@@ -52,7 +54,8 @@ export default function BillCreditModal({ vendorBillId, chequeId, onClose, onSav
 
   useEffect(() => {
     Promise.all([
-      api.get(chequeId ? `/bill-credits/for-cheque/${chequeId}` : `/bill-credits/for-vendor-bill/${vendorBillId}`),
+      api.get(billCreditId ? `/bill-credits/${billCreditId}/edit-form`
+        : chequeId ? `/bill-credits/for-cheque/${chequeId}` : `/bill-credits/for-vendor-bill/${vendorBillId}`),
       api.get('/lookups/chart-of-accounts'),
       api.get('/lookups/locations'),
       api.get('/lookups/departments'),
@@ -77,9 +80,16 @@ export default function BillCreditModal({ vendorBillId, chequeId, onClose, onSav
           is_withhold: !!l.is_withhold,
         })));
       }
+      if (billCreditId) {
+        if (d.date_created) setDateCreated(String(d.date_created).slice(0, 10));
+        if (d.wtax_id) setWtax({ id: d.wtax_id, rate: d.wtax_rate, name: d.wtax_name });
+        setApplyAmounts(Object.fromEntries((d.apply_lines || [])
+          .filter((a) => Number(a.applied_amount) > 0).map((a) => [a.vendor_bill_id, Number(a.applied_amount)])));
+        if (d.in_use) setError(d.in_use);
+      }
       setLoading(false);
     }).catch((e) => { setError(e.response?.data?.error || 'Could not load.'); setLoading(false); });
-  }, [vendorBillId, chequeId]);
+  }, [vendorBillId, chequeId, billCreditId]);
 
   const wtaxRate = wtax ? Number(wtax.rate) : 0;
   const computedLines = useMemo(() => lines.map((l) => ({ ...l, ...computeLine(l, wtaxRate) })), [lines, wtaxRate]);
@@ -128,9 +138,7 @@ export default function BillCreditModal({ vendorBillId, chequeId, onClose, onSav
 
     setSaving(true);
     try {
-      const { data: bc } = await api.post('/bill-credits', {
-        vendor_bill_id: chequeId ? null : vendorBillId,
-        cheque_id: chequeId || null,
+      const payload = {
         date_created: dateCreated,
         office_location_id: officeLocation?.id || null,
         ap_account_id: apAccount?.id || null,
@@ -140,7 +148,10 @@ export default function BillCreditModal({ vendorBillId, chequeId, onClose, onSav
           account_id: l.account_id, department_id: l.department_id, amount: l.amount, tax_code_id: l.tax_code_id, is_withhold: l.is_withhold,
         })),
         apply_lines: applyLines,
-      });
+      };
+      const { data: bc } = billCreditId
+        ? await api.put(`/bill-credits/${billCreditId}`, payload)
+        : await api.post('/bill-credits', { ...payload, vendor_bill_id: chequeId ? null : vendorBillId, cheque_id: chequeId || null });
       onSaved(bc);
     } catch (err) {
       setError(err.response?.data?.error || 'Save failed');
@@ -153,7 +164,7 @@ export default function BillCreditModal({ vendorBillId, chequeId, onClose, onSav
     <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal modal-xl" style={{ padding: 0, overflow: 'hidden' }}>
         <div className="estimate-banner" style={{ borderRadius: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <h2 style={{ margin: 0, color: '#fff' }}>Bill Credit</h2>
+          <h2 style={{ margin: 0, color: '#fff' }}>{billCreditId ? `Edit ${data.bill_credit_no || 'Bill Credit'}` : 'Bill Credit'}</h2>
           <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 24, lineHeight: 1, cursor: 'pointer' }}>×</button>
         </div>
 
@@ -317,7 +328,7 @@ export default function BillCreditModal({ vendorBillId, chequeId, onClose, onSav
 
           <div className="modal-actions">
             <button type="button" className="btn" onClick={onClose}>Cancel</button>
-            <button type="button" className="btn btn-primary" disabled={saving} onClick={handleSave}>
+            <button type="button" className="btn btn-primary" disabled={saving || !!data.in_use} onClick={handleSave}>
               {saving ? <LoadingSpinner inline size="sm" label="Saving..." /> : 'Save'}
             </button>
           </div>
