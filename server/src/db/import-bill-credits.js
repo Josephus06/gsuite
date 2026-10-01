@@ -87,6 +87,10 @@ async function main() {
   const billVendor = new Map(bv.filter((b) => b.supplier_id).map((b) => [b.id, b.supplier_id]));
   const [users] = await pool.query('SELECT id, display_name FROM users');
   const userByName = new Map(users.filter((u) => u.display_name).map((u) => [norm(u.display_name), u.id]));
+  // audit_logs.set_by_user_id is required: the migration's entries are recorded against admin.
+  const [[sysUser]] = await pool.query("SELECT id FROM users WHERE username = 'admin' LIMIT 1");
+  const systemUserId = sysUser?.id;
+  if (!systemUserId) throw new Error('No admin user to record the migration against.');
   const [have] = await pool.query('SELECT bill_credit_no FROM bill_credits');
   const haveNo = new Set(have.map((r) => r.bill_credit_no));
   console.log(`accounts ${[...acctByLive.values()].filter(Boolean).length}/${liveCoa.length} | departments ${[...deptByLive.values()].filter(Boolean).length}/${liveDepts.length} | suppliers ${supByLive.size} | bills ${vbByNo.size} | cheques ${chqByNo.size} | credits already here ${haveNo.size}`);
@@ -195,7 +199,7 @@ async function main() {
       }
       await conn.query(
         `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, new_value, set_by_user_id)
-         VALUES ('BillCredit', ?, 'Created', 'bill_credit_no', ?, NULL)`, [r.insertId, `${no} (migrated from the source)`]);
+         VALUES ('BillCredit', ?, 'Created', 'bill_credit_no', ?, ?)`, [r.insertId, `${no} (migrated from the source)`, systemUserId]);
       await conn.commit();
       out.imported += 1; out.lines += lines.length; haveNo.add(no);
     } catch (e) {
