@@ -182,7 +182,10 @@ export default function TransferOrderEdit() {
   if (loading) return <LoadingSpinner />;
 
   const isPending = !to || to.status === 'pending_fulfillment';
-  const canEdit = can('/transfer-orders', 'can_edit') && isPending;
+  // Can Edit on Transfer Orders; or, with Can Add, a NEW TO or one you created yourself (the server
+  // allows the same -- requireToEdit in routes/transferOrders.js).
+  const canEdit = isPending && (can('/transfer-orders', 'can_edit')
+    || (can('/transfer-orders', 'can_add') && (isNew || Number(to?.created_by_user_id) === Number(user?.id))));
 
   return (
     <div>

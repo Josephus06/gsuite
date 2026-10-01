@@ -38,7 +38,7 @@ function formatDate(v) { return v ? displayDate(v) : '—'; }
 export default function TransferOrderView() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const [to, setTo] = useState(null);
   const [lines, setLines] = useState([]);
   const [tab, setTab] = useState('items');
@@ -89,7 +89,9 @@ export default function TransferOrderView() {
 
   if (loading || !to) return <LoadingSpinner />;
 
-  const canEdit = can('/transfer-orders', 'can_edit');
+  // Can Edit, or the TO's own creator with Can Add (the server's requireToEdit).
+  const canEdit = can('/transfer-orders', 'can_edit')
+    || (can('/transfer-orders', 'can_add') && Number(to?.created_by_user_id) === Number(user?.id));
   // Fulfilling and receiving are separate jobs done by the two warehouses, and each now has its
   // own permission page. They both used to be can_approve on the Transfer Order, so one switch
   // let a person do both ends of the transfer.
@@ -111,7 +113,7 @@ export default function TransferOrderView() {
           {canEdit && isPending && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/transfer-orders/${id}/edit`)}>Edit</button>}
           {mayFulfill && canStillFulfill && lines.length > 0 && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfillModal(true)}>Fulfill</button>}
           {mayReceive && canReceive && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfillmentsPicker(true)}>Receive</button>}
-          {canEdit && canCancel && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
+          {can('/transfer-orders', 'can_edit') && canCancel && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
         </div>
       </div>

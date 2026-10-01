@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { computeTransitGl } = require('../lib/glImpact');
 const { isNonStockItem } = require('../lib/itemTypes');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
@@ -840,7 +840,22 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   }
 });
 
-router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+// Editing a TO's header and materials: can_edit on Transfer Orders, OR the person who created it
+// (with can_add) while nothing is fulfilled yet. Raising a TO includes filling in its materials --
+// without this, someone who may create TOs but not edit others' (Joel Taboada, 2026-10-01) could
+// save the header but never add a single material to it.
+async function requireToEdit(req, res, next) {
+  try {
+    if (await userCan(req.user.id, ROUTE, 'can_edit')) return next();
+    if (await userCan(req.user.id, ROUTE, 'can_add')) {
+      const [[t]] = await pool.query('SELECT created_by_user_id, status FROM transfer_orders WHERE id = ?', [req.params.id]);
+      if (t && Number(t.created_by_user_id) === Number(req.user.id) && t.status === 'pending_fulfillment') return next();
+    }
+    return res.status(403).json({ error: 'You do not have permission to perform this action' });
+  } catch (err) { return next(err); }
+}
+
+router.put('/:id', requireAuth, requireToEdit, async (req, res, next) => {
   try {
     const [[t]] = await pool.query('SELECT status, date_created FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
@@ -865,7 +880,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
   }
 });
 
-router.post('/:id/lines', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.post('/:id/lines', requireAuth, requireToEdit, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[t]] = await conn.query('SELECT status, date_created, withdraw_from_location_id, job_order_id FROM transfer_orders WHERE id = ?', [req.params.id]);
@@ -906,7 +921,7 @@ router.post('/:id/lines', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
   }
 });
 
-router.put('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/lines/:lineId', requireAuth, requireToEdit, async (req, res, next) => {
   try {
     const [[t]] = await pool.query('SELECT status, date_created FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
@@ -953,7 +968,7 @@ router.put('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_edit
   }
 });
 
-router.delete('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.delete('/:id/lines/:lineId', requireAuth, requireToEdit, async (req, res, next) => {
   try {
     const [[t]] = await pool.query('SELECT status, date_created FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
