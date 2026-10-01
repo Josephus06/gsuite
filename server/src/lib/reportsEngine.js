@@ -2,6 +2,7 @@ const pool = require('../db');
 const { getPostedGlLines } = require('./glImpact');
 const { splitSourceLinesByDepartment } = require('./openingBalances');
 const { departmentLedger, pool4 } = require('./sourceLedger');
+const { linkFor, linksForNumbers } = require('./docLinks');
 const { displayMonth } = require('./dates');
 
 function round2(n) {
@@ -487,6 +488,10 @@ async function buildGlTransactions({ accountCode, breakdown = 'total', columnKey
     debit: round2(l.debit || 0), credit: round2(l.credit || 0),
   }));
   rows.push(...await itemiseSourceLines(lines.filter((l) => l.source_department)));
+  // Each row opens its document: T1S's own lines by type + id, the source's by document number.
+  own.forEach((l, i) => { rows[i].link = linkFor(l.source_type, l.source_id); });
+  const byNo = await linksForNumbers(rows.filter((r) => r.source_type === 'source_ledger').map((r) => r.source_no));
+  for (const r of rows) if (r.source_type === 'source_ledger') r.link = byNo.get(String(r.source_no)) || null;
   rows.sort((a, b) => new Date(a.entry_date) - new Date(b.entry_date) || String(a.source_no).localeCompare(String(b.source_no)));
   return {
     account_code: accountCode, rows,

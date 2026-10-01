@@ -88,7 +88,10 @@ function TransactionsModal({ ctx, onClose }) {
               <tbody>
                 {data.rows.map((r, i) => (
                   <tr key={i}>
-                    <td>{r.source_no}</td>
+                    {/* Opens in a new tab so the report and this list stay where they are. */}
+                    <td>{r.link
+                      ? <a href={r.link} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--link, #2563eb)', textDecoration: 'underline' }}>{r.source_no}</a>
+                      : r.source_no}</td>
                     <td>{(r.entry_date || '').slice(0, 10)}</td>
                     <td>{r.name}</td>
                     <td style={{ textAlign: 'right' }}>{money(r.debit)}</td>
