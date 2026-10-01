@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/useAuth';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -17,6 +18,8 @@ function money(v) {
 function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 export default function CreditMemos() {
+  const navigate = useNavigate();
+  const { can } = useAuth();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('');
@@ -48,6 +51,7 @@ export default function CreditMemos() {
     <div>
       <div className="page-header">
         <h1>Credit Memos</h1>
+        {can('/credit-memos', 'can_add') && <button className="btn btn-primary" onClick={() => navigate('/credit-memos/new')}>Add Credit Memo</button>}
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>

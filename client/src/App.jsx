@@ -106,6 +106,7 @@ import CustomerPayments from './pages/CustomerPayments';
 import CreditMemos from './pages/CreditMemos';
 import CustomerPaymentView from './pages/CustomerPaymentView';
 import CreditMemoView from './pages/CreditMemoView';
+import CreditMemoForm from './pages/CreditMemoForm';
 import CustomerRefunds from './pages/CustomerRefunds';
 import CustomerRefundEdit from './pages/CustomerRefundEdit';
 import CustomerRefundView from './pages/CustomerRefundView';
@@ -359,6 +360,7 @@ function App() {
         <Route path="/customer-payments" element={<CustomerPayments />} />
         <Route path="/customer-payments/:id" element={<CustomerPaymentView />} />
         <Route path="/credit-memos" element={<CreditMemos />} />
+        <Route path="/credit-memos/new" element={<CreditMemoForm />} />
         <Route path="/credit-memos/:id" element={<CreditMemoView />} />
         <Route path="/customer-refunds" element={<CustomerRefunds />} />
         <Route path="/customer-refunds/new" element={<CustomerRefundEdit />} />

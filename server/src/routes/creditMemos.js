@@ -113,6 +113,33 @@ router.get('/for-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can
   }
 });
 
+// The standalone "Create Credit Memo" page (client/src/pages/CreditMemoForm.jsx): no source invoice,
+// just a customer -- the old system's credit_memo_crud screen. Gives the customer's open invoices
+// for APPLY, the default A/R account, and the rep the memo will be filed under.
+router.get('/for-customer/:customerId', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
+  try {
+    const [[c]] = await pool.query('SELECT id, name, default_sales_rep_id FROM customers WHERE id = ?', [req.params.customerId]);
+    if (!c) return res.status(404).json({ error: 'Customer not found.' });
+    const [[arAcct]] = await pool.query("SELECT id, account_code, account_name FROM chart_of_accounts WHERE account_code = '12100'");
+    const [applyLines] = await pool.query(
+      `SELECT si.id AS sales_invoice_id, si.invoice_no, si.bs_si_no, si.date_created, si.gross_amount, si.amount_due
+         FROM sales_invoices si
+         LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+         LEFT JOIN estimates e ON e.id = si.estimate_id
+         LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
+        WHERE COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) = ?
+          AND si.status <> 'cancelled' AND si.amount_due > 0.005
+        ORDER BY si.date_created DESC, si.id DESC`, [c.id]);
+    res.json({
+      customer_id: c.id, customer_name: c.name,
+      ar_account_id: arAcct?.id || null, ar_account_code: arAcct?.account_code || null, ar_account_name: arAcct?.account_name || null,
+      apply_lines: applyLines,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/by-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [rows] = await pool.query(
@@ -229,22 +256,31 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   const conn = await pool.getConnection();
   try {
     const {
-      sales_invoice_id: salesInvoiceId, date_created: dateCreated, office_location_id: officeLocationId,
+      sales_invoice_id: salesInvoiceId, customer_id: bodyCustomerId, date_created: dateCreated, office_location_id: officeLocationId,
       ar_account_id: arAccountId, memo, lines, apply_lines: applyLines,
     } = req.body;
-    if (!salesInvoiceId) return res.status(400).json({ error: 'Invoice is required.' });
+    // Raised from an invoice (its customer), or on its own from Credit Memos > Add (a customer,
+    // no source invoice) -- the old system allows both.
+    if (!salesInvoiceId && !bodyCustomerId) return res.status(400).json({ error: 'Choose the Customer.' });
 
-    const [[si]] = await conn.query(
-      `SELECT si.id, si.status, COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) AS customer_id
-         FROM sales_invoices si
-         LEFT JOIN sales_orders so ON so.id = si.sales_order_id
-         LEFT JOIN estimates e ON e.id = si.estimate_id
-         LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-        WHERE si.id = ?`,
-      [salesInvoiceId]
-    );
-    if (!si) return res.status(404).json({ error: 'Invoice not found.' });
-    if (si.status === 'cancelled') return res.status(409).json({ error: 'This Invoice is void and cannot be credited.' });
+    let si;
+    if (salesInvoiceId) {
+      [[si]] = await conn.query(
+        `SELECT si.id, si.status, si.sales_rep_id, COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) AS customer_id
+           FROM sales_invoices si
+           LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+           LEFT JOIN estimates e ON e.id = si.estimate_id
+           LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
+          WHERE si.id = ?`,
+        [salesInvoiceId]
+      );
+      if (!si) return res.status(404).json({ error: 'Invoice not found.' });
+      if (si.status === 'cancelled') return res.status(409).json({ error: 'This Invoice is void and cannot be credited.' });
+    } else {
+      const [[cust]] = await conn.query('SELECT id, default_sales_rep_id FROM customers WHERE id = ?', [bodyCustomerId]);
+      if (!cust) return res.status(404).json({ error: 'Customer not found.' });
+      si = { id: null, customer_id: cust.id, sales_rep_id: cust.default_sales_rep_id || null };
+    }
 
     const submitted = (Array.isArray(lines) ? lines : []).filter((l) => Number(l.quantity) > 0);
     if (!submitted.length) return res.status(400).json({ error: 'Add at least one item to credit.' });
@@ -297,14 +333,26 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     }
     await assertPeriodOpen(dateCreated, 'ar', conn);
 
+    // Every applied invoice must be this customer's.
+    for (const l of submittedApply) {
+      const [[a]] = await conn.query(
+        `SELECT COALESCE(so.customer_id, e.customer_id, ns.customer_id, s2.customer_id) AS customer_id
+           FROM sales_invoices s2 LEFT JOIN sales_orders so ON so.id = s2.sales_order_id
+           LEFT JOIN estimates e ON e.id = s2.estimate_id LEFT JOIN non_standard_sales_orders ns ON ns.id = s2.nsso_id
+          WHERE s2.id = ?`, [l.sales_invoice_id]);
+      if (!a || Number(a.customer_id) !== Number(si.customer_id)) {
+        return res.status(400).json({ error: 'One of the invoices to apply to belongs to a different customer.' });
+      }
+    }
+
     await conn.beginTransaction();
     const [result] = await conn.query(
       `INSERT INTO credit_memos
-         (credit_memo_no, sales_invoice_id, customer_id, date_created, office_location_id, ar_account_id, memo,
+         (credit_memo_no, sales_invoice_id, customer_id, sales_rep_id, date_created, office_location_id, ar_account_id, memo,
           subtotal, discount_amount, net_of_tax, tax_amount, gross_amount, applied_amount, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        salesInvoiceId, si.customer_id, dateCreated || new Date().toISOString().slice(0, 10),
+        si.id, si.customer_id, si.sales_rep_id || null, dateCreated || new Date().toISOString().slice(0, 10),
         officeLocationId || null, arAccountId || null, memo || null,
         subtotal, discountAmount, netOfTax, taxAmount, grossAmount, appliedTotal, req.user.id,
       ]
