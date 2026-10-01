@@ -157,7 +157,13 @@ export default function ForecastReport() {
                       <td key={i} data-label={mdy(data.weeks[i])} style={{ textAlign: 'right', background: i === data.current_week ? 'var(--color-warning-soft, #fff2cc)' : undefined }}>{v ? money(v) : ''}</td>
                     ))}
                     <td data-label="Delivery Date">{mdy(r.line_delivery_date)}</td>
-                    <td data-label="Forecast Date">{mdy(r.forecast_date)}</td>
+                    {/* Late: a planner forecast it past the delivery date (allowed for planners since 2026-10-01). */}
+                    {(() => {
+                      const due = String(r.delivery_date || r.line_delivery_date || '').slice(0, 10);
+                      const fc = String(r.forecast_date || '').slice(0, 10);
+                      const late = due && fc && fc > due;
+                      return <td data-label="Forecast Date" style={late ? { color: 'var(--danger, #b91c1c)', fontWeight: 600 } : undefined}>{mdy(r.forecast_date)}{late ? ' · Late' : ''}</td>;
+                    })()}
                     <td data-label="STATUS" style={{ fontWeight: 600 }}>{r.build_status}</td>
                     <td data-label="Weekly Target" style={{ textAlign: 'right' }}>{r.weekly_target ? money(r.weekly_target) : ''}</td>
                     <td data-label="Pending" style={{ textAlign: 'right' }}>{r.pending ? money(r.pending) : ''}</td>

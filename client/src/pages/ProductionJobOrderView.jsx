@@ -392,7 +392,8 @@ export default function ProductionJobOrderView() {
     // in front of them, rather than after a round trip. Both inputs also carry max={deliveryDay},
     // which stops most of these before they are typed.
     const deliveryDay = jo?.delivery_date ? String(jo.delivery_date).slice(0, 10) : '';
-    if (deliveryDay) {
+    // Planners may forecast past it (2026-10-01) -- the server allows them; the report shows it as Late.
+    if (deliveryDay && !isPlanner(user)) {
       const late = [['Planned Start', plannedStart], ['Planned End', plannedEnd]].find(([, d]) => d && d > deliveryDay);
       if (late) {
         setScheduleError(`${late[0]} cannot be later than the Delivery Date (${deliveryDay}).`);
@@ -720,7 +721,7 @@ export default function ProductionJobOrderView() {
                   Planned Start :
                   <input
                     type="date" value={plannedStart} disabled={savingSchedule}
-                    max={deliveryDay || undefined}
+                    max={(!isPlanner(user) && deliveryDay) || undefined}
                     onChange={(e) => setPlannedStart(e.target.value)}
                     style={SCHEDULE_INPUT}
                   />
@@ -729,7 +730,7 @@ export default function ProductionJobOrderView() {
                   Planned End :
                   <input
                     type="date" value={plannedEnd} disabled={savingSchedule}
-                    max={deliveryDay || undefined}
+                    max={(!isPlanner(user) && deliveryDay) || undefined}
                     onChange={(e) => setPlannedEnd(e.target.value)}
                     style={SCHEDULE_INPUT}
                   />

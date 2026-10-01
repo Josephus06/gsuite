@@ -456,7 +456,11 @@ router.put('/:id/planned-dates', requireAuth, requireScheduler, async (req, res,
     // than discovered on the delivery date. A job order with no delivery date on it constrains
     // nothing (plenty of migrated ones have none), and clearing a planned date is always fine.
     const deliveryDay = jo.delivery_date ? String(jo.delivery_date).slice(0, 10) : null;
-    if (deliveryDay) {
+    // Planners may plan past it (the user's rule, 2026-10-01): for a job already running late the
+    // delivery date has passed, and the forecast has to say when it will really be done. The JO is then
+    // shown as Late on the Forecast Report; the delivery date Sales promised is left as it was.
+    const [[me]] = await conn.query(`SELECT ${PLANNER_COLUMNS} FROM users WHERE id = ?`, [req.user.id]);
+    if (deliveryDay && !isPlanner(me)) {
       const late = [['Planned Start', start], ['Planned End', end]].find(([, d]) => d && d > deliveryDay);
       if (late) {
         return res.status(400).json({ error: `${late[0]} cannot be later than the Delivery Date (${deliveryDay}).` });
