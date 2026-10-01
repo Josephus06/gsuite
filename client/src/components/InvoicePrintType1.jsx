@@ -35,8 +35,8 @@ export const FORM = {
   // regular weight so the emphasis means something.
   header: {
     customerName: { x: 30, y: 19, w: 105, bold: true },
-    customerTin: { x: 30, y: 22, w: 105, bold: true },
-    customerAddress: { x: 30, y: 25, w: 105, lines: 2, bold: true },
+    customerTin: { x: 30, y: 24, w: 105, bold: true },
+    customerAddress: { x: 30, y: 27, w: 105, lines: 2, bold: true },
     date: { x: 175, y: 21, w: 26, bold: true },
     terms: { x: 175, y: 28, w: 26, lines: 2, bold: true },
   },
