@@ -147,7 +147,7 @@ const SO_HEADER_EDIT = ['ref_no', 'date_created', 'contact_person_id', 'contact_
   'blanket_po_memo', 'sales_rep_id', 'office_location_id', 'contract_description', 'memo', 'shipping_address',
   'production_lead_time', 'price_validity', 'order_confirmation_type', 'order_confirmation_ref', 'credit_term',
   'bill_to_contact_number'];
-const SO_LINE_EDIT = ['description', 'quantity', 'units', 'price_per_unit', 'tax_code_id', 'length', 'width', 'height', 'uom',
+const SO_LINE_EDIT = ['description', 'job_location_id', 'quantity', 'units', 'price_per_unit', 'tax_code_id', 'length', 'width', 'height', 'uom',
   'shipping', 'remarks', 'memo', 'delivery_date', 'delivery_time'];
 
 async function soAudit(conn, soId, userId, fieldName, oldValue, newValue) {
@@ -240,7 +240,7 @@ router.put('/:id', requireAuth, async (req, res, next) => {
         if (!same) await soAudit(conn, req.params.id, req.user.id, `line ${old.line_no} · ${k}`, ov, nv);
       }
       if (old.job_order_id) {
-        await conn.query('UPDATE job_orders SET quantity = ?, description = ?, updated_at = NOW() WHERE id = ?', [qty, v.description, old.job_order_id]);
+        await conn.query('UPDATE job_orders SET quantity = ?, description = ?, job_location_id = ?, updated_at = NOW() WHERE id = ?', [qty, v.description, v.job_location_id, old.job_order_id]);
       }
     }
     // header totals from the lines as they now stand -- only when some line's pricing changed

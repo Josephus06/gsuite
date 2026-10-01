@@ -64,7 +64,7 @@ export default function SalesOrderEdit() {
         'production_lead_time', 'price_validity', 'order_confirmation_type', 'order_confirmation_ref', 'credit_term', 'bill_to_contact_number']
         .map((k) => [k, head[k] ?? null])),
       lines: lines.map((l) => ({
-        id: l.id, description: l.description, quantity: l.quantity, units: l.units, price_per_unit: l.price_per_unit,
+        id: l.id, job_location_id: l.job_location_id || null, description: l.description, quantity: l.quantity, units: l.units, price_per_unit: l.price_per_unit,
         disc_per_piece: l.disc_per_piece, tax_code_id: l.tax_code_id || null, length: l.length, width: l.width, height: l.height,
         uom: l.uom, shipping: l.shipping, remarks: l.remarks, memo: l.memo, delivery_date: l.delivery_date || null, delivery_time: l.delivery_time || null,
       })) };
@@ -140,7 +140,7 @@ export default function SalesOrderEdit() {
           <table>
             <thead>
               <tr>
-                <th>#</th><th>JO #</th><th>Description</th><th>Qty</th><th>Units</th><th>Price/Unit</th><th>Subtotal</th>
+                <th>#</th><th>JO #</th><th>Job Location</th><th>Description</th><th>Qty</th><th>Units</th><th>Price/Unit</th><th>Subtotal</th>
                 <th title="Per piece">Disc Amt</th><th>Disc Price/Unit</th><th>Net of Tax</th><th>Tax Code</th><th>Tax Amt</th><th>Gross Amt</th>
                 <th>Length</th><th>Width</th><th>Height</th><th>UOM</th><th>Delivery Date</th><th>Delivery Time</th><th>Remarks</th>
               </tr>
@@ -153,6 +153,12 @@ export default function SalesOrderEdit() {
                   <tr key={l.id}>
                     <td>{l.line_no}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>{l.job_order_no || '—'}</td>
+                    <td>
+                      <select style={{ width: 170 }} value={l.job_location_id || ''} onChange={(e) => setLine(i, 'job_location_id', e.target.value)}>
+                        <option value="">—</option>
+                        {lk.locations.map((x) => <option key={x.id} value={x.id}>{x.location_name}</option>)}
+                      </select>
+                    </td>
                     <td><textarea rows={2} style={{ width: 220 }} value={l.description ?? ''} onChange={(e) => setLine(i, 'description', e.target.value)} /></td>
                     <td>{inp('quantity', 70, 'number')}</td>
                     <td>{inp('units', 70)}</td>
@@ -183,7 +189,7 @@ export default function SalesOrderEdit() {
           </table>
         </div>
         <p className="muted" style={{ marginTop: 8 }}>
-          Disc Amt is per piece. A line&rsquo;s Job Order takes its new quantity and description on save.
+          Disc Amt is per piece. A line&rsquo;s Job Order takes its new quantity, description and job location on save.
         </p>
       </div>
 
