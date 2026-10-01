@@ -25,8 +25,11 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     if (asOf) { commonWhere.push('so.date_created <= ?'); commonParams.push(asOf); }
     if (customerId) { commonWhere.push('so.customer_id = ?'); commonParams.push(customerId); }
     if (search) {
-      commonWhere.push('(so.sales_order_no LIKE ? OR e.estimate_no LIKE ? OR c.name LIKE ? OR so.contract_description LIKE ?)');
-      commonParams.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+      // The Sales Rep's name too: a supervisor typing a rep's name ("vanessa") expects that rep's
+      // orders, and only got customers who happened to share the name. sr is joined whenever
+      // search is set (countFrom below).
+      commonWhere.push("(so.sales_order_no LIKE ? OR e.estimate_no LIKE ? OR c.name LIKE ? OR so.contract_description LIKE ? OR CONCAT(sr.first_name, ' ', sr.last_name) LIKE ?)");
+      commonParams.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
     // Account Officers only ever see their own sales orders; Supervisors see their own
     // plus their direct reports' -- everyone else is unrestricted.
