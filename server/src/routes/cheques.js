@@ -233,6 +233,100 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
+// Editing a saved cheque: header and expense lines rewritten, every change logged. The GL is
+// derived from these rows (lib/glImpact.js), so nothing posted needs re-posting. A voided cheque
+// is not editable -- its reversal journal was built from what it was. Once the bank statement is
+// matched to it, its date, bank account and amount are fixed.
+const CHEQUE_EDIT_FIELDS = ['date_created', 'payee_type', 'payee_id', 'payee_name', 'office_location_id', 'account_id',
+  'cheque_date', 'cheque_number', 'date_released', 'currency', 'conversion_rate', 'memo'];
+router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const b = req.body;
+    const [[c]] = await conn.query('SELECT * FROM cheques WHERE id = ?', [req.params.id]);
+    if (!c) return res.status(404).json({ error: 'Not found' });
+    if (c.status === 'void') return res.status(409).json({ error: 'This cheque is voided and cannot be edited.' });
+    const rows = normalizeLines(b.lines);
+    if (!rows.length) return res.status(400).json({ error: 'Add at least one expense line with an account and amount.' });
+    if (!b.account_id) return res.status(400).json({ error: 'Select the bank Account to draw the cheque against.' });
+    // Department is required on lines the edit adds or changes -- not on lines carried over as they
+    // were: no migrated cheque has departments, and a memo fix must not demand them on every line.
+    const lineKey = (l) => `${l.account_id}|${round2(l.amount)}|${l.description || ''}|${l.department_id || ''}`;
+    const [existingLines] = await conn.query('SELECT account_id, amount, description, department_id FROM cheque_lines WHERE cheque_id = ?', [req.params.id]);
+    const untouched = new Map();
+    for (const l of existingLines) untouched.set(lineKey(l), (untouched.get(lineKey(l)) || 0) + 1);
+    const toCheck = rows.map((l) => {
+      const k = lineKey(l);
+      if (untouched.get(k)) { untouched.set(k, untouched.get(k) - 1); return { ...l, department_id: l.department_id || -1 }; }
+      return l;
+    });
+    const deptError = await missingDepartmentError(toCheck);
+    if (deptError) return res.status(400).json({ error: deptError });
+    const t = headerTotals(rows);
+    const day = (v) => (v == null || v === '' ? null : String(v instanceof Date ? v.toISOString() : v).slice(0, 10));
+    const next_ = {
+      date_created: day(b.date_created) || day(c.date_created), payee_type: trunc(b.payee_type, 20), payee_id: b.payee_id || null,
+      payee_name: trunc(b.payee_name, 255), office_location_id: b.office_location_id || null, account_id: b.account_id,
+      cheque_date: day(b.cheque_date), cheque_number: trunc(b.cheque_number, 60), date_released: day(b.date_released),
+      currency: trunc(b.currency, 10), conversion_rate: num(b.conversion_rate) || 1, memo: trunc(b.memo, 1000),
+    };
+    const [[m]] = await conn.query("SELECT COUNT(*) n FROM bank_reconciliation_matches WHERE source_kind = 'cheque' AND source_id = ?", [req.params.id]);
+    if (Number(m.n) && (day(c.date_created) !== next_.date_created || Number(c.account_id) !== Number(next_.account_id)
+        || Math.abs(Number(c.total_amount) - t.total_amount) > 0.005)) {
+      return res.status(409).json({ error: 'This cheque is already matched on a bank reconciliation, so its date, bank account and amount cannot change. Unmatch it there first; the other fields can still be edited.' });
+    }
+    await assertPeriodOpen(c.date_created, 'other_gl', conn);
+    await assertPeriodOpen(next_.date_created, 'other_gl', conn);
+
+    await conn.beginTransaction();
+    await conn.query(
+      `UPDATE cheques SET ${CHEQUE_EDIT_FIELDS.map((f) => `${f} = ?`).join(', ')},
+              subtotal = ?, net_of_tax = ?, tax_amount = ?, withholding_tax_amount = ?, gross_amount = ?, total_amount = ?
+        WHERE id = ?`,
+      [...CHEQUE_EDIT_FIELDS.map((f) => next_[f]), t.subtotal, t.net_of_tax, t.tax_amount, t.withholding_tax_amount, t.gross_amount, t.total_amount, req.params.id]);
+    const [oldLines] = await conn.query('SELECT account_id, department_id, description, amount, tax_code_id, withholding_tax_amount FROM cheque_lines WHERE cheque_id = ? ORDER BY line_no', [req.params.id]);
+    await conn.query('DELETE FROM cheque_lines WHERE cheque_id = ?', [req.params.id]);
+    let lineNo = 0;
+    for (const l of rows) {
+      lineNo += 1;
+      await conn.query(
+        `INSERT INTO cheque_lines (cheque_id, line_no, account_id, department_id, description, amount, tax_code_id, tax_amount, apply_withholding_tax, withholding_tax_amount, gross_amount, total_amount)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [req.params.id, lineNo, l.account_id, l.department_id, l.description, l.amount, l.tax_code_id, l.tax_amount, l.apply_withholding_tax, l.withholding_tax_amount, l.gross_amount, l.total_amount]);
+    }
+    for (const f of CHEQUE_EDIT_FIELDS) {
+      const was = f.includes('date') ? day(c[f]) : c[f];
+      if (String(was ?? '') !== String(next_[f] ?? '')) await logAudit(conn, { chequeId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: f, oldValue: was, newValue: next_[f] });
+    }
+    const sig = (ls) => ls.map((l) => `${l.account_id}/${l.department_id || ''}:${Number(l.amount).toFixed(2)}${Number(l.withholding_tax_amount) ? ` wtax ${Number(l.withholding_tax_amount).toFixed(2)}` : ''}`).join('; ');
+    if (sig(oldLines) !== sig(rows)) await logAudit(conn, { chequeId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'expense_lines', oldValue: sig(oldLines).slice(0, 1000), newValue: sig(rows).slice(0, 1000) });
+    if (Math.abs(Number(c.total_amount) - t.total_amount) > 0.005) await logAudit(conn, { chequeId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'total_amount', oldValue: c.total_amount, newValue: t.total_amount });
+    await conn.commit();
+    res.json({ id: Number(req.params.id), cheque_no: c.cheque_no });
+  } catch (err) {
+    await conn.rollback();
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  } finally { conn.release(); }
+});
+
+// Date Released on its own, editable at any time and on any cheque (the user's rule): the money
+// is released after the cheque is written, and a wrong date must always be correctable.
+router.put('/:id/date-released', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const raw = req.body.date_released;
+    const dateReleased = raw === '' || raw == null ? null : String(raw).slice(0, 10);
+    if (dateReleased && !/^\d{4}-\d{2}-\d{2}$/.test(dateReleased)) return res.status(400).json({ error: 'Date Released must be a date.' });
+    const [[c]] = await conn.query('SELECT date_released FROM cheques WHERE id = ?', [req.params.id]);
+    if (!c) return res.status(404).json({ error: 'Not found' });
+    await conn.query('UPDATE cheques SET date_released = ? WHERE id = ?', [dateReleased, req.params.id]);
+    const was = c.date_released ? String(c.date_released instanceof Date ? c.date_released.toISOString() : c.date_released).slice(0, 10) : null;
+    if (was !== dateReleased) await logAudit(conn, { chequeId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'date_released', oldValue: was, newValue: dateReleased });
+    res.json({ ok: true, date_released: dateReleased });
+  } catch (err) { next(err); } finally { conn.release(); }
+});
+
 router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {

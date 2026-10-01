@@ -371,6 +371,7 @@ function App() {
         <Route path="/deposits/:id" element={<DepositView />} />
         <Route path="/cheques" element={<Cheques />} />
         <Route path="/cheques/new" element={<ChequeForm />} />
+        <Route path="/cheques/:id/edit" element={<ChequeForm />} />
         <Route path="/cheques/:id" element={<ChequeView />} />
         <Route path="/fund-transfers" element={<FundTransfers />} />
         <Route path="/fund-transfers/new" element={<FundTransferForm />} />

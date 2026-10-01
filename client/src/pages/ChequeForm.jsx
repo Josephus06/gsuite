@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -9,14 +9,17 @@ function today() { return new Date().toISOString().slice(0, 10); }
 const PAYEE_TYPES = [{ v: 'VENDOR', l: 'Vendor' }, { v: 'CUSTOMER', l: 'Customer' }, { v: 'EMPLOYEE', l: 'Employee' }];
 const EMPTY_LINE = { account_id: '', account_label: '', department_id: '', description: '', amount: '', tax_code_id: '', apply_withholding_tax: false, withholding_tax_amount: '' };
 
-// Create a Cheque -- mirrors the live form: header (Date/Payee/Account/Cheque details/Currency/Memo),
+// Create a Cheque (or, at /cheques/:id/edit, edit a saved one) -- mirrors the live form: header (Date/Payee/Account/Cheque details/Currency/Memo),
 // a running totals panel, and an Expenses grid. GL: DR each expense account / CR the bank Account.
 export default function ChequeForm() {
   const navigate = useNavigate();
+  const { id } = useParams();
+  const editing = !!id;
+  const [chequeNo, setChequeNo] = useState('');
   const [meta, setMeta] = useState(null);
   const [header, setHeader] = useState({
     date_created: today(), payee_type: 'VENDOR', payee_id: '', payee_name: '', office_location_id: '',
-    account_id: '', cheque_date: today(), cheque_number: '', currency: 'PHP', conversion_rate: 1, memo: '',
+    account_id: '', cheque_date: today(), cheque_number: '', currency: 'PHP', conversion_rate: 1, memo: '', date_released: '',
   });
   const [lines, setLines] = useState([{ ...EMPTY_LINE }]);
   const [loading, setLoading] = useState(true);
@@ -24,8 +27,30 @@ export default function ChequeForm() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.get('/cheques/meta').then(({ data }) => { setMeta(data); setLoading(false); }).catch((e) => { setError(e.response?.data?.error || 'Failed to load.'); setLoading(false); });
-  }, []);
+    Promise.all([api.get('/cheques/meta'), editing ? api.get(`/cheques/${id}`) : Promise.resolve(null)])
+      .then(([m, ch]) => {
+        setMeta(m.data);
+        if (ch) {
+          const c = ch.data;
+          const day = (v) => (v ? String(v).slice(0, 10) : '');
+          setChequeNo(c.cheque_no);
+          setHeader({
+            date_created: day(c.date_created), payee_type: c.payee_type || 'VENDOR', payee_id: c.payee_id || '', payee_name: c.payee_name || '',
+            office_location_id: c.office_location_id || '', account_id: c.account_id || '', cheque_date: day(c.cheque_date),
+            cheque_number: c.cheque_number || '', currency: c.currency || 'PHP', conversion_rate: Number(c.conversion_rate) || 1,
+            memo: c.memo || '', date_released: day(c.date_released),
+          });
+          setLines((c.lines || []).map((l) => ({
+            account_id: l.account_id || '', account_label: l.account_code ? `${l.account_code} — ${l.account_name}` : '',
+            department_id: l.department_id || '', description: l.description || '', amount: Number(l.amount) || '',
+            tax_code_id: l.tax_code_id || '', apply_withholding_tax: !!l.apply_withholding_tax,
+            withholding_tax_amount: Number(l.withholding_tax_amount) || '',
+          })));
+        }
+        setLoading(false);
+      })
+      .catch((e) => { setError(e.response?.data?.error || 'Failed to load.'); setLoading(false); });
+  }, [id, editing]);
 
   const setH = (patch) => setHeader((h) => ({ ...h, ...patch }));
   const setLine = (i, patch) => setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
@@ -71,7 +96,9 @@ export default function ChequeForm() {
     if (!payload.length) { setError('Add at least one expense line with an account and amount.'); return; }
     setSaving(true);
     try {
-      const { data } = await api.post('/cheques', { ...header, lines: payload });
+      const { data } = editing
+        ? await api.put(`/cheques/${id}`, { ...header, lines: payload })
+        : await api.post('/cheques', { ...header, lines: payload });
       navigate(`/cheques/${data.id}`);
     } catch (e) { setError(e.response?.data?.error || 'Save failed.'); setSaving(false); }
   }
@@ -86,9 +113,9 @@ export default function ChequeForm() {
   return (
     <div>
       <div className="page-header">
-        <div style={{ fontWeight: 600 }}>Cheque <span className="muted">/ Create</span></div>
+        <div style={{ fontWeight: 600 }}>Cheque <span className="muted">/ {editing ? `Edit ${chequeNo}` : 'Create'}</span></div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/cheques')}>Back to Lists</button>
+          <button className="btn btn-sm" onClick={() => navigate(editing ? `/cheques/${id}` : '/cheques')}>{editing ? 'Cancel' : 'Back to Lists'}</button>
           <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
         </div>
       </div>
@@ -128,6 +155,7 @@ export default function ChequeForm() {
             </div>
             <div className="field"><label>Cheque Date</label><input type="date" value={header.cheque_date} onChange={(e) => setH({ cheque_date: e.target.value })} /></div>
             <div className="field"><label>Cheque No</label><input value={header.cheque_number} onChange={(e) => setH({ cheque_number: e.target.value })} /></div>
+            {editing && <div className="field"><label>Date Released</label><input type="date" value={header.date_released} onChange={(e) => setH({ date_released: e.target.value })} /></div>}
             <div style={{ display: 'flex', gap: 10 }}>
               <div className="field" style={{ flex: 1 }}><label>Currency</label><input value={header.currency} onChange={(e) => setH({ currency: e.target.value })} /></div>
               <div className="field" style={{ flex: 1 }}><label>Conversion Rate</label><input type="number" step="0.000001" value={header.conversion_rate} onChange={(e) => setH({ conversion_rate: e.target.value })} /></div>

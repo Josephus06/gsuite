@@ -23,6 +23,17 @@ export default function ChequeView() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [editingRelease, setEditingRelease] = useState(false);
+  const [releaseDate, setReleaseDate] = useState('');
+  const [savingRelease, setSavingRelease] = useState(false);
+
+  // Date Released is editable at any time, on any cheque (voided included).
+  async function saveRelease() {
+    setSavingRelease(true); setError('');
+    try { await api.put(`/cheques/${id}/date-released`, { date_released: releaseDate || null }); await load(); setEditingRelease(false); }
+    catch (err) { setError(err.response?.data?.error || 'Could not save Date Released.'); }
+    finally { setSavingRelease(false); }
+  }
 
   function load() { return api.get(`/cheques/${id}`).then(({ data }) => { setC(data); setLoading(false); }); }
   useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -55,7 +66,7 @@ export default function ChequeView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/cheques')}>Back to Lists</button>
-          {can('/cheques', 'can_edit') && c.status !== 'void' && <button className="btn btn-sm" disabled title="Editing a posted Cheque isn't implemented in this build -- void and re-enter instead">Edit</button>}
+          {can('/cheques', 'can_edit') && c.status !== 'void' && <button className="btn btn-sm" onClick={() => navigate(`/cheques/${c.id}/edit`)}>Edit</button>}
           {can('/cheques', 'can_print') && <button className="btn btn-sm" onClick={() => window.open(`/cheques/${c.id}/print`, '_blank')}>Print Voucher</button>}
           {can('/cheques', 'can_print') && <button className="btn btn-sm" onClick={() => window.open(`/cheques/${c.id}/print?as=cheque`, '_blank')}>Print Cheque</button>}
           {can('/cheques', 'can_void') && c.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
@@ -82,7 +93,25 @@ export default function ChequeView() {
             <div>Date : <span className="hi">{formatDate(c.date_created)}</span></div>
             <div>Cheque Date : <span className="hi">{formatChequeDate(c.cheque_date)}</span></div>
             <div>Cheque No : <span className="hi">{c.cheque_number || ''}</span></div>
-            <div>Date Released : <span className="hi">{formatDate(c.date_released)}</span></div>
+            <div>
+              Date Released : {editingRelease ? (
+                <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                  <input type="date" value={releaseDate} onChange={(e) => setReleaseDate(e.target.value)} style={{ width: 160 }} />
+                  <button className="btn btn-sm btn-primary" disabled={savingRelease} onClick={saveRelease}>Save</button>
+                  <button className="btn btn-sm" disabled={savingRelease} onClick={() => setEditingRelease(false)}>Cancel</button>
+                </span>
+              ) : (
+                <>
+                  <span className="hi">{formatDate(c.date_released) || '—'}</span>
+                  {can('/cheques', 'can_edit') && (
+                    <button type="button" className="link-btn" style={{ marginLeft: 8, color: 'inherit', textDecoration: 'underline' }}
+                      onClick={() => { setReleaseDate(c.date_released ? String(c.date_released).slice(0, 10) : ''); setEditingRelease(true); }}>
+                      Edit
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
             <div>Currency : <span className="hi">{c.currency || ''}</span></div>
             <div>Conversion : <span className="hi">{Number(c.conversion_rate)}</span></div>
             <div>Memo : <span className="hi">{c.memo || ''}</span></div>

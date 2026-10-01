@@ -79,7 +79,8 @@ export default function BillPaymentView() {
   const canEdit = can('/bill-payments', 'can_edit');
   const canVoid = can('/bill-payments', 'can_void');
   const canPrint = can('/bill-payments', 'can_print');
-  const isOpen = bp.status === 'open';
+  // Anything not voided: 11,432 migrated payments say 'posted', and they are as live as 'open'.
+  const isOpen = bp.status !== 'voided';
   const applyLines = bp.lines.filter((l) => l.vendor_bill_id);
   const debitLines = bp.lines.filter((l) => l.bill_credit_id);
 
@@ -139,7 +140,7 @@ export default function BillPaymentView() {
               ) : (
                 <>
                   <span className="hi">{bp.date_released ? formatDate(bp.date_released) : '—'}</span>
-                  {canEdit && bp.status !== 'voided' && (
+                  {canEdit && (
                     <button
                       type="button"
                       className="link-btn"

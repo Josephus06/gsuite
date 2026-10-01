@@ -436,9 +436,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 });
 
 // Date Released on its own, the way the source system edits it: a payment is raised on one day
-// and the money actually handed over on another, and that second date is set once it happens. It
-// is the only field a posted payment can still change, so this is a narrow endpoint rather than a
-// general PUT -- nothing else about a payment that has already moved money should be editable.
+// and the money actually handed over on another, and that second date is set once it happens. Its
+// own endpoint (the full edit is PUT /:id) so it stays editable at any time, on any payment.
 //
 // Clearing it back to empty is allowed: a release recorded by mistake has to be retractable, and
 // the payment then reads as not yet released, which is what it is.
@@ -452,9 +451,8 @@ router.put('/:id/date-released', requireAuth, requirePermission(ROUTE, 'can_edit
 
     const [[bp]] = await pool.query('SELECT status, date_released FROM bill_payments WHERE id = ?', [req.params.id]);
     if (!bp) return res.status(404).json({ error: 'Not found' });
-    if (bp.status === 'voided') {
-      return res.status(409).json({ error: 'This Bill Payment is voided -- it released nothing.' });
-    }
+    // Editable at any time, voided payments included (the user's rule, 2026-10-01): a wrong date
+    // must always be correctable.
 
     await pool.query('UPDATE bill_payments SET date_released = ? WHERE id = ?', [dateReleased, req.params.id]);
     const conn = await pool.getConnection();
