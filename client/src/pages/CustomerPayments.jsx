@@ -14,6 +14,9 @@ const PAGE_SIZE = 10;
 const NO_FILTERS = { search: '', status: '', departmentId: '', locationId: '', dateFrom: '', dateTo: '' };
 // A saved payment sits NOT DEPOSITED until a bank deposit sweeps it into the bank.
 const STATUS_LABELS = { not_deposited: 'Not Deposited', deposited: 'Deposited', voided: 'Void' };
+// The source list's Receipt column shows the short code.
+const RECEIPT_CODES = { 'Official Receipt': 'OR', 'Collection Receipt': 'CR', 'Provisional Receipt': 'PR' };
+const receiptCode = (t) => RECEIPT_CODES[t] || t || '';
 
 function money(v) {
   const n = Number(v);
@@ -227,37 +230,44 @@ export default function CustomerPayments() {
             <table className="responsive-cards">
               <thead>
                 <tr>
-                  <th>Payment #</th>
+                  <th>Customer Payment No</th>
                   <th>Date Created</th>
                   <th>Customer</th>
                   <th>Location</th>
-                  <th>Department</th>
-                  <th>OR #</th>
+                  <th>Prepared By</th>
+                  <th>Issued By</th>
                   <th>Payment Method</th>
-                  <th>Payment Amount</th>
-                  <th>Applied Amount</th>
-                  <th>Unapplied Amount</th>
+                  <th>Receipt</th>
+                  <th>OR/CR</th>
+                  <th>PR</th>
+                  <th>Applied Payment</th>
+                  <th>Unapplied Payment</th>
+                  <th>Total Amount</th>
                   <th>Status</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && (
-                  <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: 20 }}>No customer payments found.</td></tr>
+                  <tr><td colSpan={15} className="muted" style={{ textAlign: 'center', padding: 20 }}>No customer payments found.</td></tr>
                 )}
                 {rows.map((row) => (
                   <tr key={row.id}>
-                    <td data-label="Payment #">{row.customer_payment_no}</td>
+                    <td data-label="Customer Payment No">{row.customer_payment_no}</td>
                     <td data-label="Date Created">{formatDate(row.date_created)}</td>
                     <td data-label="Customer">{row.customer_name}</td>
                     <td data-label="Location">{row.office_location_name}</td>
-                    <td data-label="Department">{row.department_name}</td>
-                    <td data-label="OR #">{row.or_no}</td>
+                    <td data-label="Prepared By">{row.prepared_by_name}</td>
+                    <td data-label="Issued By">{row.issued_by_name}</td>
                     <td data-label="Payment Method">{row.payment_method_name}</td>
-                    <td data-label="Payment Amount">{money(row.payment_amount)}</td>
-                    <td data-label="Applied Amount">{money(row.applied_amount)}</td>
-                    <td data-label="Unapplied Amount">{money(row.unapplied_amount)}</td>
-                    <td data-label="Status">{STATUS_LABELS[row.status] || row.status}</td>
+                    <td data-label="Receipt">{receiptCode(row.receipt_type)}</td>
+                    {/* One number per payment, shown under OR/CR or under PR by its receipt type -- the source's two columns. */}
+                    <td data-label="OR/CR">{receiptCode(row.receipt_type) === 'PR' ? '' : row.or_no}</td>
+                    <td data-label="PR">{receiptCode(row.receipt_type) === 'PR' ? row.or_no : ''}</td>
+                    <td data-label="Applied Payment">{money(row.applied_amount)}</td>
+                    <td data-label="Unapplied Payment">{money(row.unapplied_amount)}</td>
+                    <td data-label="Total Amount">{money(row.payment_amount)}</td>
+                    <td data-label="Status">{(STATUS_LABELS[row.status] || row.status || '').toUpperCase()}</td>
                     <td><Link className="btn btn-sm btn-primary" to={`/customer-payments/${row.id}`}>View</Link></td>
                   </tr>
                 ))}

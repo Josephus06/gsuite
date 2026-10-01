@@ -14,6 +14,20 @@ const router = express.Router();
 // tab).
 const ROUTE = '/customer-payments';
 
+// prepared_by_name / issued_by_name (add-customer-payment-people.js) hold the source's names on
+// migrated payments. Read through these two expressions so a database the migration has not
+// reached yet still serves the list and the payment -- names blank -- instead of a 500. Checked
+// once, then remembered once found.
+let peopleColumns = null;
+async function peopleSql() {
+  if (!peopleColumns) {
+    const [cols] = await pool.query("SHOW COLUMNS FROM customer_payments LIKE 'issued_by_name'");
+    if (!cols.length) return { prepared: 'u.display_name', issued: 'iu.display_name' };
+    peopleColumns = { prepared: 'COALESCE(u.display_name, cp.prepared_by_name)', issued: 'COALESCE(iu.display_name, cp.issued_by_name)' };
+  }
+  return peopleColumns;
+}
+
 // The page asks for ten. The cap exists so a hand-written page_size cannot ask for all 130,000
 // back and undo the reason this endpoint is paged at all.
 const DEFAULT_PAGE_SIZE = 10;
@@ -341,15 +355,19 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       params
     );
 
+    const people = await peopleSql();
     const [rows] = await pool.query(
-      `SELECT cp.id, cp.customer_payment_no, cp.date_created, cp.or_no, cp.payment_amount, cp.applied_amount,
+      `SELECT cp.id, cp.customer_payment_no, cp.date_created, cp.or_no, cp.receipt_type, cp.payment_amount, cp.applied_amount,
               cp.unapplied_amount, cp.status, c.name AS customer_name, pm.name AS payment_method_name,
-              d.name AS department_name, loc.location_name AS office_location_name
+              d.name AS department_name, loc.location_name AS office_location_name,
+              ${people.prepared} AS prepared_by_name, ${people.issued} AS issued_by_name
        FROM customer_payments cp
        LEFT JOIN customers c ON c.id = cp.customer_id
        LEFT JOIN payment_methods pm ON pm.id = cp.payment_method_id
        LEFT JOIN departments d ON d.id = cp.department_id
        LEFT JOIN locations loc ON loc.id = cp.office_location_id
+       LEFT JOIN users u ON u.id = cp.created_by_user_id
+       LEFT JOIN users iu ON iu.id = cp.issued_by_user_id
        ${whereSql}
        ORDER BY cp.id DESC
        LIMIT ? OFFSET ?`,
@@ -528,11 +546,13 @@ router.get('/export-unapplied', requireAuth, requirePermission(ROUTE, 'can_view'
 
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
+    const people = await peopleSql();
     const [[cp]] = await pool.query(
       `SELECT cp.*, c.name AS customer_name, d.name AS department_name,
               loc.location_name AS office_location_name, pm.name AS payment_method_name,
               dep.account_code AS deposit_account_code, dep.account_name AS deposit_account_name,
-              iu.display_name AS issued_by_name, u.display_name AS created_by_name
+              -- The T1S user when there is one; a migrated payment has only the source's names.
+              ${people.issued} AS issued_by_name, ${people.prepared} AS created_by_name
        FROM customer_payments cp
        LEFT JOIN customers c ON c.id = cp.customer_id
        LEFT JOIN departments d ON d.id = cp.department_id

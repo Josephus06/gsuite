@@ -14,6 +14,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const pool = require('../db');
+const { sourcePaymentHeader } = require('./lib/paymentHeader');
 const { upperCustomerName } = require('../lib/customerName');
 
 const APPLY = process.argv.includes('--apply');
@@ -63,14 +64,17 @@ function paymentStatus(live) {
     }
     let done = 0;
     for (const p of todo) {
+      const h = sourcePaymentHeader(p);
       await conn.query(
         `INSERT INTO customer_payments
            (customer_payment_no, date_created, customer_id, office_location_id, payment_method_id,
-            or_no, payment_type, receipt_type, payment_amount, applied_amount, unapplied_amount, memo, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'Official Receipt', ?, ?, ?, ?, ?)`,
+            or_no, payment_type, receipt_type, reference_no, prepared_by_name, issued_by_name,
+            payment_amount, applied_amount, unapplied_amount, memo, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [p.cp_pk, String(p.DateCreated_TransH).slice(0, 10), custByName.get(clean(p.Name_Cust).toLowerCase()) || null,
           locByName.get(clean(p.Name_Loc).toLowerCase()) || null, methodByName.get((p.PaymentMethod_TransH || '').toUpperCase()) || null,
-          clean(p.ORNo_TransH) || null, clean(p.Type_TransH) || null, num(p.TotalAmount_TransH), num(p.AppliedPayments_TransH),
+          h.or_no, h.payment_type, h.receipt_type || 'Official Receipt', h.reference_no, h.prepared_by_name, h.issued_by_name,
+          num(p.TotalAmount_TransH), num(p.AppliedPayments_TransH),
           num(p.UnappliedPayments_TransH), clean(p.Memo_TransH) || null, paymentStatus(p.Status_TransH)]);
       done += 1;
     }

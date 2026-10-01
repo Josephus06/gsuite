@@ -19,6 +19,7 @@
 const pool = require('../db');
 require('dotenv').config();
 const { fetchWindow, isVoidOrCancelled } = require('./lib/liveWindow');
+const { sourcePaymentHeader } = require('./lib/paymentHeader');
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -116,13 +117,17 @@ async function main() {
         await conn.query('DELETE FROM customer_payments WHERE id = ?', [existing.id]);
         replaced += 1;
       } else created += 1;
+      // Receipt (CR/OR/PR), its number, type, reference and the two people: lib/paymentHeader.js.
+      const h = sourcePaymentHeader(p);
       await conn.query(
         `INSERT INTO customer_payments
            (customer_payment_no, date_created, customer_id, office_location_id, payment_method_id,
-            or_no, payment_type, receipt_type, payment_amount, applied_amount, unapplied_amount, memo, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'Official Receipt', ?, ?, ?, ?, ?)`,
-        [no, p.DateCreated_TransH, p._customerId, locId, methodId, clean(p.ORNo_TransH),
-          clean(p.Type_TransH), num(p.TotalAmount_TransH), num(p.AppliedPayments_TransH),
+            or_no, payment_type, receipt_type, reference_no, prepared_by_name, issued_by_name,
+            payment_amount, applied_amount, unapplied_amount, memo, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [no, p.DateCreated_TransH, p._customerId, locId, methodId, h.or_no,
+          h.payment_type, h.receipt_type || 'Official Receipt', h.reference_no, h.prepared_by_name, h.issued_by_name,
+          num(p.TotalAmount_TransH), num(p.AppliedPayments_TransH),
           num(p.UnappliedPayments_TransH), clean(p.Memo_TransH) || null, paymentStatus(p.Status_TransH)]
       );
       await conn.commit();
