@@ -83,9 +83,38 @@ async function main() {
   for (const e of [...emps].sort((a, b) => a.is_active - b.is_active)) empByName.set(norm(`${e.first_name} ${e.last_name}`), e.id);
   const [users] = await pool.query('SELECT display_name, employee_id FROM users WHERE employee_id IS NOT NULL');
   for (const u of users) if (!empByName.has(norm(u.display_name))) empByName.set(norm(u.display_name), u.employee_id);
+  // Middle initials dropped ("Jerusha Gwyneth S. Del Mar" = "Jerusha Gwyneth Del Mar").
+  const noInitials = (n) => n.split(' ').filter((t) => t.length > 1).join(' ');
+  const empByStripped = new Map();
+  for (const [k, id] of empByName) if (!empByStripped.has(noInitials(k))) empByStripped.set(noInitials(k), id);
+  const allEmpNames = [...empByName.entries()];
+
+  // Prepared/Approved By as the source spells them -> who they are here. Confirmed by the user
+  // 2026-10-01: spelling variants and changed surnames are the same person; former staff with no
+  // record are created as inactive employees; "Administrator" is not a person and stays blank.
+  const ALIASES = {
+    'lindy caseris': 'lindy casires',
+    'moldy molde': 'moldy butalon',
+    'mariannilyn l lamis': 'mariannilyn l er-er',
+    'josephus(approver)': 'josephus(approver) -',
+  };
+  const SKIP = new Set(['administrator']);
+  const created = new Map(); // name -> new employee id (apply) / null (dry run)
+  // so: the local order, for the one person held twice (Cindy Marie Deniay_AYALA / _SM): the
+  // record that is the order's own sales rep, else the first.
+  function resolvePerson(raw, so) {
+    const k = norm(raw);
+    if (!k || SKIP.has(k)) return null;
+    if (empByName.has(k)) return empByName.get(k);
+    if (ALIASES[k] && empByName.has(ALIASES[k])) return empByName.get(ALIASES[k]);
+    if (empByStripped.has(noInitials(k))) return empByStripped.get(noInitials(k));
+    const prefixed = allEmpNames.filter(([n]) => n.startsWith(`${k}_`)).map(([, id]) => id).sort((a, b) => a - b);
+    if (prefixed.length) return prefixed.find((id) => id === so.sales_rep_id) || prefixed[0];
+    return { create: String(raw).trim() };
+  }
 
   const [locals] = await pool.query(
-    `SELECT id, sales_order_no, prepared_by_id, approved_by_id, ${text.map(([c]) => c).join(', ')}
+    `SELECT id, sales_order_no, sales_rep_id, prepared_by_id, approved_by_id, ${text.map(([c]) => c).join(', ')}
        FROM sales_orders WHERE date_created BETWEEN ? AND ?`, [FROM, TO]);
   const byNo = new Map(locals.map((s) => [s.sales_order_no, s]));
   console.log(`Local orders in window: ${locals.length}`);
@@ -119,8 +148,8 @@ async function main() {
       const set = {};
       for (const [field, src] of [['prepared_by_id', 'PreparedBy_TransH'], ['approved_by_id', 'ApprovedBy_TransH']]) {
         if (so[field] || !clean(h[src], 200)) continue;
-        const id = empByName.get(norm(h[src]));
-        if (id) set[field] = id; else unknownPeople.set(h[src], (unknownPeople.get(h[src]) || 0) + 1);
+        const id = resolvePerson(h[src], so);
+        if (id && typeof id === 'object') { set[field] = id; unknownPeople.set(id.create, (unknownPeople.get(id.create) || 0) + 1); } else if (id) set[field] = id;
       }
       for (const [col, src, n] of text) {
         if (so[col] != null && String(so[col]).trim() !== '') continue;
@@ -138,13 +167,22 @@ async function main() {
   console.log(`\n\nMatched ${seen} of ${locals.length} local orders. Orders to fill: ${touched}`);
   console.log('Fields to fill:', fills);
   if (unknownPeople.size) {
-    console.log(`Prepared/Approved names with no local employee (${unknownPeople.size}; left blank):`);
+    console.log(`Former staff with no employee record -- ${APPLY ? 'created' : 'would be created'} as INACTIVE employees (${unknownPeople.size}):`);
     [...unknownPeople.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15).forEach(([n, c]) => console.log(`  ${c}x ${n}`));
   }
   const sample = ops.find((o) => o.no === 'SO-72237') || ops[0];
   if (sample) console.log('\nSample:', sample.no, JSON.stringify(sample.set));
 
   if (APPLY) {
+    // Create each former staff member once, inactive, then point their orders at the new record.
+    for (const name of unknownPeople.keys()) {
+      const parts = name.split(/s+/);
+      const last = parts.length > 1 ? parts.pop() : '-';
+      const [r] = await pool.query('INSERT INTO employees (first_name, last_name, is_active) VALUES (?, ?, 0)', [parts.join(' '), last]);
+      created.set(name, r.insertId);
+      console.log(`  created inactive employee #${r.insertId} ${name}`);
+    }
+    for (const o of ops) for (const k of Object.keys(o.set)) if (o.set[k] && typeof o.set[k] === 'object') o.set[k] = created.get(o.set[k].create);
     let done = 0;
     for (const o of ops) {
       const keys = Object.keys(o.set);
