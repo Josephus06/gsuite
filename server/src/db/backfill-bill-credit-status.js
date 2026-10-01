@@ -23,14 +23,16 @@ async function main() {
 
   // Cheques a credit was made from, whose status the rule would change.
   const [cheques] = await pool.query(
-    `SELECT c.cheque_no, c.status, c.total_amount, t.applied, t.credit_id
+    `SELECT c.cheque_no, c.status, t.credit_id,
+            IF(t.live_credits > 0 AND t.open_credits = 0, 'fully_applied', 'open') AS target
        FROM cheques c
        JOIN (SELECT cheque_id, MIN(id) AS credit_id,
-                    SUM(CASE WHEN status = 'voided' THEN 0 ELSE applied_amount END) AS applied
+                    SUM(status <> 'voided') AS live_credits,
+                    SUM(status <> 'voided' AND applied_amount < total_amount - 0.005) AS open_credits
                FROM bill_credits WHERE cheque_id IS NOT NULL GROUP BY cheque_id) t ON t.cheque_id = c.id
       WHERE c.status <> 'void'
-        AND c.status <> IF(t.applied >= c.total_amount - 0.005 AND c.total_amount > 0, 'fully_applied', 'open')`);
-  console.log(`2. Cheques to re-status from their credits: ${cheques.length}${sample(cheques.map((c) => ({ x: `${c.cheque_no} ${c.status}->${c.applied >= c.total_amount - 0.005 ? 'fully_applied' : 'open'}` })), 'x')}`);
+        AND c.status <> IF(t.live_credits > 0 AND t.open_credits = 0, 'fully_applied', 'open')`);
+  console.log(`2. Cheques to re-status from their credits: ${cheques.length}${sample(cheques.map((c) => ({ x: `${c.cheque_no} ${c.status}->${c.target}` })), 'x')}`);
 
   const [bills] = await pool.query(`SELECT bill_no FROM vendor_bills WHERE ${BILL_WHERE} ORDER BY id`);
   console.log(`3. Vendor bills Open with nothing due: ${bills.length}${sample(bills, 'bill_no')}`);

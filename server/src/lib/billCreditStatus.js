@@ -19,18 +19,23 @@ async function syncBillCreditStatus(conn, creditId) {
 
 
 // A cheque paid to a vendor in advance becomes a Bill Credit (bill_credits.cheque_id), and that
-// credit is what gets applied to the vendor's bills. Once its credits have applied the whole
-// cheque, the cheque is FULLY APPLIED -- the source's own status for exactly this; Open again if
-// an application is reversed. Void stays Void. Only cheques a credit was made from are touched,
-// so a migrated Fully Applied cheque with no T1S credit keeps its status.
+// credit is what gets applied to the vendor's bills. Once EVERY credit made from the cheque is
+// fully applied, the cheque is FULLY APPLIED -- the source's own status for exactly this; Open
+// again if one is reversed. Void stays Void.
+//
+// Judged on the credits, not on the cheque's total: a credit need not equal its cheque (withholding,
+// or the advance split over several credits), and comparing against the cheque total turned 360
+// cheques the source shows FULLY APPLIED back to Open on the first backfill.
 async function syncChequeForCredit(conn, creditId) {
   await conn.query(
     `UPDATE cheques c
-        JOIN (SELECT bc.cheque_id, SUM(CASE WHEN bc.status = 'voided' THEN 0 ELSE bc.applied_amount END) AS applied
+        JOIN (SELECT bc.cheque_id,
+                     SUM(bc.status <> 'voided') AS live_credits,
+                     SUM(bc.status <> 'voided' AND bc.applied_amount < bc.total_amount - 0.005) AS open_credits
                 FROM bill_credits bc
                WHERE bc.cheque_id = (SELECT cheque_id FROM bill_credits WHERE id = ?)
                GROUP BY bc.cheque_id) t ON t.cheque_id = c.id
-        SET c.status = IF(t.applied >= c.total_amount - 0.005 AND c.total_amount > 0, 'fully_applied', 'open')
+        SET c.status = IF(t.live_credits > 0 AND t.open_credits = 0, 'fully_applied', 'open')
       WHERE c.status <> 'void'`,
     [creditId]
   );
