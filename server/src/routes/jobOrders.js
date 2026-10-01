@@ -14,7 +14,7 @@ const {
   notifyDesignSupervisors, notifyAssignedArtist, notifySalesRep, NOTIFY_TYPE_JO_REVISION,
 } = require('../lib/designNotifications');
 const {
-  maySalesReviseJobOrder, isOpenForSalesRework, REWORK_PROTECTED_FIELDS,
+  maySalesReviseJobOrder, isOpenForSalesRework, isBeforeProduction, REWORK_PROTECTED_FIELDS,
 } = require('../lib/jobOrderRevision');
 
 const router = express.Router();
@@ -72,8 +72,12 @@ const PROCESS_FIELDS = [
 // it, and 24 of 27 sales accounts hold can_view alone -- so before this, the standard answer to
 // "change the material" was to find someone else to do it.
 //
-// Returns 'permission' | 'rework' | null, because the two are not equivalent downstream: a rework
-// grant is scoped to the spec (see REWORK_PROTECTED_FIELDS) where can_edit is not.
+// ALSO the job order's own sales rep, in full, for as long as Production does not have it yet
+// (isBeforeProduction) -- the 'owner' grant. Asked for 2026-10-01: a rep raising a JO is still
+// shaping it until it goes to Production, and should not need someone else's can_edit to do so.
+//
+// Returns 'permission' | 'owner' | 'rework' | null, because they are not equivalent downstream: a
+// rework grant is scoped to the spec (see REWORK_PROTECTED_FIELDS) where the others are not.
 async function jobOrderEditGrant(userId, jobOrderId) {
   const [[page]] = await pool.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
   const [[perm]] = await pool.query(
@@ -84,12 +88,15 @@ async function jobOrderEditGrant(userId, jobOrderId) {
   if (await isSystemAdmin(userId)) return 'permission';
 
   const [[jo]] = await pool.query(
-    'SELECT sales_rep_id, status, production_stage, revision_reason FROM job_orders WHERE id = ?',
+    'SELECT sales_rep_id, status, production_stage, revision_reason, advance_copy_at FROM job_orders WHERE id = ?',
     [jobOrderId]
   );
-  if (!jo || !isOpenForSalesRework(jo)) return null;
+  if (!jo) return null;
   const [[me]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [userId]);
-  if (me?.employee_id && String(jo.sales_rep_id) === String(me.employee_id)) return 'rework';
+  const isRep = !!me?.employee_id && String(jo.sales_rep_id) === String(me.employee_id);
+  if (!isRep) return null;
+  if (isBeforeProduction(jo)) return 'owner';
+  if (isOpenForSalesRework(jo)) return 'rework';
   return null;
 }
 

@@ -45,6 +45,14 @@ export function mayReworkJobOrder(user, jo) {
   return !!user.employee_id && String(jo.sales_rep_id) === String(user.employee_id);
 }
 
+// The job order's own sales rep may edit it in full until Production has it: no production stage
+// yet, and not forwarded as an Advance Copy. Same rule as the server's isBeforeProduction.
+export function mayEditOwnJobOrder(user, jo) {
+  if (!user || !jo) return false;
+  if (jo.production_stage || jo.advance_copy_at || jo.status === 'Cancelled' || jo.status === 'Completed') return false;
+  return !!user.employee_id && String(jo.sales_rep_id) === String(user.employee_id);
+}
+
 // Is Sales still being asked to answer a suggested delivery date?
 export function awaitingDateDecision(jo) {
   return jo?.production_stage === 'for_revision'

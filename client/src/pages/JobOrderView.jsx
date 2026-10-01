@@ -8,7 +8,7 @@ import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import JobOrderAttachments, { ARTIST_KINDS } from '../components/JobOrderAttachments';
 import RevisionNotice from '../components/RevisionNotice';
-import { maySalesRevise, mayReworkJobOrder, awaitingDateDecision } from '../utils/salesRevision';
+import { maySalesRevise, mayReworkJobOrder, mayEditOwnJobOrder, awaitingDateDecision } from '../utils/salesRevision';
 import { isAdvanceCopy, canForwardAdvanceCopy } from '../utils/advanceCopy';
 
 import { displayDateTime } from '../utils/dates';
@@ -320,6 +320,8 @@ export default function JobOrderView() {
   // makes "Sales can change the material" true rather than an instruction to go and find someone
   // who can.
   const canRework = mayReworkJobOrder(user, jo);
+  // ...and the rep's own JO in full, until Production has it (no production stage yet).
+  const canEditOwn = mayEditOwnJobOrder(user, jo);
   const inDesignPhase = !isSpecialJo && !jo.production_stage && jo.status !== 'Cancelled';
 
   const processes = jo.processes || [];
@@ -343,9 +345,9 @@ export default function JobOrderView() {
           {can('/job-orders', 'can_print') && (
             <button className="btn btn-sm" onClick={() => window.open(`/job-orders/${id}/print`, '_blank')}>Print</button>
           )}
-          {(canEdit || canRework) && jo.status !== 'Cancelled' && (
+          {(canEdit || canRework || canEditOwn) && jo.status !== 'Cancelled' && (
             <button className="btn btn-sm btn-primary"
-              title={canRework && !canEdit ? 'Change the materials and processes Production asked about' : undefined}
+              title={canRework && !canEdit && !canEditOwn ? 'Change the materials and processes Production asked about' : undefined}
               onClick={() => navigate(`/job-orders/${id}/edit`)}>Edit</button>
           )}
           {isPendingRma && canApproveRma && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApproveRma}>{isRmaType ? 'Approve RMA' : 'Approve'}</button>}

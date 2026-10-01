@@ -87,6 +87,15 @@ function isOpenForSalesRework(jo) {
     && jo?.status !== 'Cancelled';
 }
 
+// Before Production has the job order, it is still Sales's to shape: its own sales rep may edit it
+// in full (the 'owner' grant). "Not in production yet" = no production stage -- every job order
+// Production has received carries one, from pending_for_scheduling on -- and not forwarded as an
+// Advance Copy, which Production can already see and raise Transfer Orders against.
+function isBeforeProduction(jo) {
+  return !!jo && !jo.production_stage && !jo.advance_copy_at
+    && jo.status !== 'Cancelled' && jo.status !== 'Completed';
+}
+
 // The fields that grant does NOT open. The full edit form posts every field it holds, so a rep
 // working under it could otherwise move the delivery date -- the one thing this whole flow exists
 // to route through Production's suggestion and Sales's decision -- or reassign the job to another
@@ -100,6 +109,7 @@ const REWORK_PROTECTED_FIELDS = [
 module.exports = {
   maySalesReviseJobOrder,
   isOpenForSalesRework,
+  isBeforeProduction,
   REWORK_PROTECTED_FIELDS,
   SALES_ACCOUNT_TYPE,
   REVISION_MATERIAL_PROCESS,
