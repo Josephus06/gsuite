@@ -53,7 +53,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(
       `SELECT j.id, j.journal_no, j.date_created, j.status, j.memo, j.total_debit, j.total_credit
-       FROM journals j ${whereSql} ORDER BY j.id DESC`,
+       FROM journals j ${whereSql} ORDER BY j.date_created DESC, j.id DESC`,
       params
     );
     res.json(rows);
