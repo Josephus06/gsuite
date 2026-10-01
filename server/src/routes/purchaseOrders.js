@@ -1201,7 +1201,10 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (!po) return res.status(404).json({ error: 'Not found' });
     // Pending Approval: anyone with can_edit. Approved: only someone switched on for it
     // (users.can_edit_approved_po, per user). Received/billed lines stay protected below either way.
-    if (!['pending_approval', 'pending_approval_gm'].includes(po.status)) {
+    // Normalised: a PO imported from the source carries its labels ('Pending Approval', 'Pending
+    // Approval for GM'), which the raw codes never matched -- so an imported PO still awaiting
+    // approval was refused as if approved (PO-20609).
+    if (!['pending_approval', 'pending_approval_gm'].includes(normalisePoStatus(po.status))) {
       const [[me]] = await conn.query('SELECT can_edit_approved_po FROM users WHERE id = ?', [req.user.id]);
       const cancelled = String(po.status || '').toLowerCase().includes('cancel');
       if (!(me?.can_edit_approved_po && isApproved(po.status) && !cancelled)) {
@@ -1329,7 +1332,7 @@ router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
   try {
     const [[po]] = await conn.query('SELECT status, date_created FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!po) return res.status(404).json({ error: 'Not found' });
-    if (po.status === 'cancelled') return res.status(409).json({ error: 'This PO is already cancelled.' });
+    if (normalisePoStatus(po.status) === 'cancelled') return res.status(409).json({ error: 'This PO is already cancelled.' });
     await assertPeriodOpen(po.date_created, 'non_gl', conn);
 
     const [lines] = await conn.query('SELECT purchase_requisition_line_id, qty FROM purchase_order_lines WHERE purchase_order_id = ?', [req.params.id]);
