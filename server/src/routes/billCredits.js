@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { syncBillCreditStatus } = require('../lib/billCreditStatus');
+const { syncBillCreditStatus, syncChequeForCredit } = require('../lib/billCreditStatus');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
@@ -334,6 +334,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     );
     const creditId = result.insertId;
     await syncBillCreditStatus(conn, creditId); // Fully Applied when created fully applied
+    await syncChequeForCredit(conn, creditId); // ...and so is the cheque it was made from
     const creditNo = await assignDocNo(conn, { table: 'bill_credits', column: 'bill_credit_no', prefix: 'BC-', id: creditId });
 
     await insertCreditLines(conn, creditId, computedLines, submittedApply);
@@ -428,6 +429,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         creditId]);
     // Open or Fully Applied from what the edit leaves applied (lib/billCreditStatus.js).
     await syncBillCreditStatus(conn, creditId);
+    await syncChequeForCredit(conn, creditId);
 
     // One audit row per header figure that actually changed.
     const changes = [
@@ -471,6 +473,7 @@ router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async
       await reverseVendorBillApplication(conn, a.vendor_bill_id, Number(a.applied_amount));
     }
     await conn.query("UPDATE bill_credits SET status = 'voided', voided_by_user_id = ?, voided_at = NOW() WHERE id = ?", [req.user.id, req.params.id]);
+    await syncChequeForCredit(conn, req.params.id); // its cheque is no longer applied by it
     await logAudit(conn, { creditId: req.params.id, userId: req.user.id, eventType: 'Cancelled', fieldName: 'status', oldValue: 'open', newValue: 'voided' });
     await conn.commit();
 

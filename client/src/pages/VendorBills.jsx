@@ -9,7 +9,7 @@ import { useAuth } from '../context/useAuth';
 import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 
 const PAGE_SIZE = 10;
-const STATUS_LABELS = { open: 'Open', paid_in_full: 'Paid in Full', cancelled: 'Cancelled' };
+const STATUS_LABELS = { open: 'Open', paid_in_full: 'Paid in Full', paid: 'Paid in Full', cancelled: 'Cancelled' };
 
 function money(v) {
   const n = Number(v);

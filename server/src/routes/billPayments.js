@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { CREDIT_STATUS_SQL } = require('../lib/billCreditStatus');
+const { CREDIT_STATUS_SQL, syncChequeForCredit } = require('../lib/billCreditStatus');
 const { insertNumbered } = require('../lib/docNumber');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
@@ -199,7 +199,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       await applyToVendorBill(conn, l.vendor_bill_id, Number(l.applied_amount));
     }
     for (const l of submittedDebits) {
-      await conn.query(`UPDATE bill_credits SET applied_amount = applied_amount + ?, ${CREDIT_STATUS_SQL} WHERE id = ?`, [Number(l.applied_amount), l.bill_credit_id]);
+      { await conn.query(`UPDATE bill_credits SET applied_amount = applied_amount + ?, ${CREDIT_STATUS_SQL} WHERE id = ?`, [Number(l.applied_amount), l.bill_credit_id]); await syncChequeForCredit(conn, l.bill_credit_id); }
     }
 
     const { id: paymentId } = await insertNumbered(conn, {
@@ -388,7 +388,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     const [billsBefore] = touchedBills.length ? await conn.query('SELECT id, amount_due, status FROM vendor_bills WHERE id IN (?)', [touchedBills]) : [[]];
     for (const l of oldLines) {
       if (l.vendor_bill_id) await reverseVendorBillApplication(conn, l.vendor_bill_id, Number(l.applied_amount));
-      if (l.bill_credit_id) await conn.query(`UPDATE bill_credits SET applied_amount = GREATEST(applied_amount - ?, 0), ${CREDIT_STATUS_SQL} WHERE id = ?`, [Number(l.applied_amount), l.bill_credit_id]);
+      if (l.bill_credit_id) { await conn.query(`UPDATE bill_credits SET applied_amount = GREATEST(applied_amount - ?, 0), ${CREDIT_STATUS_SQL} WHERE id = ?`, [Number(l.applied_amount), l.bill_credit_id]); await syncChequeForCredit(conn, l.bill_credit_id); }
     }
     // 2. Apply the new ones -- same checks as a new payment, against the amounts as they now stand.
     for (const l of applyLines) {
@@ -402,7 +402,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       if (!bc || bc.status !== 'open') throw Object.assign(new Error('One of the selected credits is no longer valid.'), { status: 400 });
       const remaining = Number(bc.total_amount) - Number(bc.applied_amount);
       if (Number(l.applied_amount) > remaining + 1e-9) throw Object.assign(new Error(`Applied Amount (${l.applied_amount}) exceeds this credit's remaining balance (${remaining.toFixed(2)}).`), { status: 409 });
-      await conn.query(`UPDATE bill_credits SET applied_amount = applied_amount + ?, ${CREDIT_STATUS_SQL} WHERE id = ?`, [Number(l.applied_amount), l.bill_credit_id]);
+      { await conn.query(`UPDATE bill_credits SET applied_amount = applied_amount + ?, ${CREDIT_STATUS_SQL} WHERE id = ?`, [Number(l.applied_amount), l.bill_credit_id]); await syncChequeForCredit(conn, l.bill_credit_id); }
     }
     for (const b of billsBefore) {
       await conn.query('UPDATE vendor_bills SET status = ? WHERE id = ? AND ABS(amount_due - ?) < 0.005', [b.status, b.id, b.amount_due]);
@@ -486,7 +486,7 @@ router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async
     await conn.beginTransaction();
     for (const l of lines) {
       if (l.vendor_bill_id) await reverseVendorBillApplication(conn, l.vendor_bill_id, Number(l.applied_amount));
-      if (l.bill_credit_id) await conn.query(`UPDATE bill_credits SET applied_amount = GREATEST(applied_amount - ?, 0), ${CREDIT_STATUS_SQL} WHERE id = ?`, [Number(l.applied_amount), l.bill_credit_id]);
+      if (l.bill_credit_id) { await conn.query(`UPDATE bill_credits SET applied_amount = GREATEST(applied_amount - ?, 0), ${CREDIT_STATUS_SQL} WHERE id = ?`, [Number(l.applied_amount), l.bill_credit_id]); await syncChequeForCredit(conn, l.bill_credit_id); }
     }
     await conn.query("UPDATE bill_payments SET status = 'voided', voided_by_user_id = ?, voided_at = NOW() WHERE id = ?", [req.user.id, req.params.id]);
     await logAudit(conn, { paymentId: req.params.id, userId: req.user.id, eventType: 'Cancelled', fieldName: 'status', oldValue: 'open', newValue: 'voided' });

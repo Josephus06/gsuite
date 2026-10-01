@@ -18,7 +18,7 @@ function money(v) {
 }
 function formatDate(v) { return v ? displayDate(v) : '—'; }
 
-const STATUS_LABELS = { open: 'Open', paid_in_full: 'Paid in Full', cancelled: 'Cancelled' };
+const STATUS_LABELS = { open: 'Open', paid_in_full: 'Paid in Full', paid: 'Paid in Full', cancelled: 'Cancelled' };
 
 // Mirrors the real "Vendor Bill" detail view -- reached from a Purchase Order's Related
 // Records tab after billing it. Each line is a frozen snapshot of what was actually billed
