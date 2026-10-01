@@ -40,7 +40,7 @@ router.post('/login', async (req, res, next) => {
       `SELECT id, username, email, display_name, password_hash, default_branch_id,
               account_type, can_approve_sales_estimate, is_design_supervisor,
               is_supervisor, is_purchasing_supervisor, ${PLANNER_COLUMNS},
-              is_production_supervisor
+              is_production_supervisor, can_edit_approved_po
          FROM users WHERE (username = ? OR email = ?) AND is_active = TRUE`,
       [username, username]
     );
@@ -67,6 +67,7 @@ router.post('/login', async (req, res, next) => {
         is_purchasing_supervisor: !!user.is_purchasing_supervisor,
         ...Object.fromEntries(PLANNER_FLAGS.map((flag) => [flag, !!user[flag]])),
         is_production_supervisor: !!user.is_production_supervisor,
+        can_edit_approved_po: !!user.can_edit_approved_po,
         account_type: user.account_type,
       },
     });
@@ -179,7 +180,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
               account_type, can_approve_sales_estimate, is_design_supervisor,
               is_account_officer, is_supervisor, is_sales_manager,
               is_sales_marketing_director, is_sales_business_unit, is_purchasing_supervisor,
-              ${PLANNER_COLUMNS}, is_production_supervisor, supervisor_id,
+              ${PLANNER_COLUMNS}, is_production_supervisor, can_edit_approved_po, supervisor_id,
               avatar_data
        FROM users WHERE id = ?`,
       [req.user.id]
@@ -195,6 +196,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
     user.is_purchasing_supervisor = !!user.is_purchasing_supervisor;
     for (const flag of PLANNER_FLAGS) user[flag] = !!user[flag];
     user.is_production_supervisor = !!user.is_production_supervisor;
+    user.can_edit_approved_po = !!user.can_edit_approved_po;
 
     // The "Default Login Location" branch (User Branches tab, is_default = TRUE) --
     // distinct from users.default_branch_id (a separate, legacy field set on the User

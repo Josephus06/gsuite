@@ -1199,8 +1199,14 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
   try {
     const [[po]] = await conn.query('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!po) return res.status(404).json({ error: 'Not found' });
+    // Pending Approval: anyone with can_edit. Approved: only someone switched on for it
+    // (users.can_edit_approved_po, per user). Received/billed lines stay protected below either way.
     if (!['pending_approval', 'pending_approval_gm'].includes(po.status)) {
-      return res.status(409).json({ error: 'Only a Purchase Order that is still Pending Approval can be edited.' });
+      const [[me]] = await conn.query('SELECT can_edit_approved_po FROM users WHERE id = ?', [req.user.id]);
+      const cancelled = String(po.status || '').toLowerCase().includes('cancel');
+      if (!(me?.can_edit_approved_po && isApproved(po.status) && !cancelled)) {
+        return res.status(409).json({ error: 'Only a Purchase Order that is still Pending Approval can be edited.' });
+      }
     }
     await assertPeriodOpen([po.date_created, req.body.date_created], 'non_gl', conn);
 

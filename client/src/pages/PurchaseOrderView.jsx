@@ -180,7 +180,9 @@ export default function PurchaseOrderView() {
   // Approved it may already have Receiving Reports / Vendor Bills built on top of its
   // lines, and this build has no undo path for that, same reasoning as every other
   // transaction type here only supporting Cancel (never Edit) once posted.
-  const showEdit = canEdit && (st === 'pending_approval' || st === 'pending_approval_gm');
+  // ...unless this user is switched on to edit approved POs (Users > Account Type).
+  const showEdit = canEdit && (st === 'pending_approval' || st === 'pending_approval_gm'
+    || (!!user?.can_edit_approved_po && isApprovedPo(po.status) && st !== 'cancelled'));
   // A Purchasing Supervisor signs any type of PO up to this, including the PO3/PO4 that are raised
   // straight into the GM tier; above it the General Manager alone. Kept in step with
   // APPROVAL_THRESHOLD in routes/purchaseOrders.js, which is what actually enforces it.
