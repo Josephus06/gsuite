@@ -19,7 +19,7 @@ const CHEQUE = {
   // offset -- move the whole cheque here if it sits off on the paper; move single fields below.
   sheet: { width: 210, height: 297, left: 0, top: 0 },
   date: { x: 146, y: 12, digitGap: 4.5, groupGap: 3.4 }, // M M  D D  Y Y Y Y
-  payee: { x: -4, y: 21, w: 120 },
+  payee: { x: -2, y: 21, w: 120 },
   amount: { x: 145, y: 19, w: 45 },
   words: { x: 22, y: 30, w: 135 },
 };
@@ -119,7 +119,7 @@ export default function BillPaymentPrint({ kind = 'bill-payment' }) {
           box-shadow: 0 1px 6px rgba(0,0,0,.25); }
         .chq-wrap { width: ${CHEQUE.size.width}mm; height: ${CHEQUE.size.height}mm; position: absolute; left: ${CHEQUE.sheet.left}mm; top: ${CHEQUE.sheet.top}mm;
           outline: 0.2mm dashed rgba(100,116,139,.5);
-          box-shadow: 0 1px 6px rgba(0,0,0,.25); font-family: system-ui, 'Segoe UI', sans-serif; font-size: 11pt; color: #000; }
+          box-shadow: 0 1px 6px rgba(0,0,0,.25); font-family: system-ui, 'Segoe UI', sans-serif; font-size: 9pt; color: #000; }
         .chq-f { position: absolute; white-space: nowrap; }
         .chq-out { outline: 0.2mm dashed rgba(220,38,38,.7); }
         @media print {
