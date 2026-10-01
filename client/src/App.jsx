@@ -146,6 +146,7 @@ import PurchaseReturnEdit from './pages/PurchaseReturnEdit';
 import PurchaseReturnView from './pages/PurchaseReturnView';
 import VendorBills from './pages/VendorBills';
 import VendorBillView from './pages/VendorBillView';
+import VendorBillEdit from './pages/VendorBillEdit';
 import BillPayments from './pages/BillPayments';
 import BillPaymentView from './pages/BillPaymentView';
 import BillPaymentPrint from './pages/BillPaymentPrint';
@@ -407,6 +408,7 @@ function App() {
         <Route path="/purchase-orders/:id" element={<PurchaseOrderView />} />
         <Route path="/vendor-bills" element={<VendorBills />} />
         <Route path="/vendor-bills/:id" element={<VendorBillView />} />
+        <Route path="/vendor-bills/:id/edit" element={<VendorBillEdit />} />
         <Route path="/bill-payments" element={<BillPayments />} />
         <Route path="/bill-payments/:id" element={<BillPaymentView />} />
         <Route path="/bill-credits" element={<BillCredits />} />
