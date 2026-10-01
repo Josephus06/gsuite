@@ -7,6 +7,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../context/useAuth';
 
 import { displayDateTime } from '../utils/dates';
+import { convertAreaToBaseUnit, convertLengthToBaseUnit } from '../utils/costing';
 
 // Mirrors the real system's full-page Job Order Edit form (not a modal): a 3-column
 // header form + a Materials tab with an inline-editable process/material table + a
@@ -29,7 +30,9 @@ const PROCESS_COLUMNS = [
   { key: 'item_id', label: 'Item', type: 'picker-item' },
   { key: 'length', label: 'Length', type: 'number' },
   { key: 'width', label: 'Width', type: 'number' },
-  { key: 'uom', label: 'UOM', type: 'text', readOnly: true },
+  // A dropdown of the item's own Unit of Measures, as on the Estimate -- Length/Width are read
+  // in it and converted into the item's unit for Total.
+  { key: 'uom', label: 'UOM', type: 'select-uom' },
   { key: 'qty', label: 'Qty', type: 'number' },
   { key: 'total', label: 'Total', type: 'number', readOnly: true },
   { key: 'unit', label: 'Unit', type: 'text', readOnly: true },
@@ -78,6 +81,7 @@ export default function JobOrderEdit() {
   const [processesList, setProcessesList] = useState([]);
   const [inventoryItems, setInventoryItems] = useState([]);
   const [units, setUnits] = useState([]);
+  const [uomsByItem, setUomsByItem] = useState({});
 
   useEffect(() => {
     Promise.all([
@@ -111,8 +115,21 @@ export default function JobOrderEdit() {
       setInventoryItems(invRes.data);
       setUnits(unitRes.data);
       setLoading(false);
+      // Each line's UOM options, for the items already on the JO.
+      [...new Set((joRes.data.processes || []).map((r) => r.item_id).filter(Boolean))].forEach(ensureUomsLoaded);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // An item's Unit of Measures (its Inventory "Unit of Measures" tab), fetched once per item --
+  // the same list the Estimate wizard's UOM dropdown offers.
+  async function ensureUomsLoaded(itemId) {
+    if (!itemId) return;
+    try {
+      const { data } = await api.get(`/inventory/${itemId}/unit-of-measures`);
+      setUomsByItem((prev) => ({ ...prev, [itemId]: data }));
+    } catch { /* no list: the dropdown still shows the line's current UOM */ }
+  }
 
   function unitLabel(unitId) {
     return units.find((u) => u.id === unitId)?.title || '';
@@ -160,16 +177,20 @@ export default function JobOrderEdit() {
     setProcesses((prev) => prev.map((p) => (p.id === procId ? { ...p, ...data } : p)));
   }
 
-  // Recomputes Total (Qty x area) and, when the Item changes, the UOM/Unit auto-fill --
-  // same pattern as the Estimate wizard's process/material rows: Total = qty x
-  // (length x width) when the item is flagged length/width-based, else just qty.
+  // Recomputes Total and, when the Item changes, the UOM/Unit auto-fill -- the Estimate wizard's
+  // rule (shared/costing.js): Total = Qty x size, where size is Length x Width converted from the
+  // chosen UOM into the item's own area unit for an area item (48 x 96 IN of a Square-Foot sheet
+  // = 32), Length converted into its linear unit for a length item, else 1.
   async function recalcAndCommitMaterial(procId, overrides = {}) {
     const current = { ...processes.find((p) => p.id === procId), ...overrides };
     const item = current.item_id ? inventoryItems.find((i) => i.id === Number(current.item_id)) : null;
-    const area = (item?.is_length_based && item?.is_width_based && num(current.length) > 0 && num(current.width) > 0)
-      ? num(current.length) * num(current.width)
-      : 1;
-    const total = Number((area * num(current.qty)).toFixed(4));
+    let size = 1;
+    if (item?.is_length_based && item?.is_width_based && num(current.length) > 0 && num(current.width) > 0) {
+      size = convertAreaToBaseUnit(current.length, current.width, current.uom, item.base_unit_code);
+    } else if (item?.is_length_based && !item?.is_width_based && num(current.length) > 0) {
+      size = convertLengthToBaseUnit(current.length, current.uom, item.base_unit_code);
+    }
+    const total = Number((size * num(current.qty)).toFixed(4));
     await commitMaterial(procId, { ...overrides, total });
   }
 
@@ -198,7 +219,8 @@ export default function JobOrderEdit() {
           label="Item" items={inventoryItems} value={val} getLabel={(i) => i.display_name}
           columns={[{ key: 'item_code', label: 'Code' }, { key: 'display_name', label: 'Name' }, { key: 'category_name', label: 'Category' }]}
           searchKeys={['item_code', 'display_name']}
-          onSelect={(i) => recalcAndCommitMaterial(row.id, { item_id: i.id, uom: unitLabel(i.base_unit_id), unit: unitLabel(i.base_unit_id) })}
+          // UOM starts at the item's base unit CODE, as on the Estimate, and is then changeable.
+          onSelect={(i) => { ensureUomsLoaded(i.id); recalcAndCommitMaterial(row.id, { item_id: i.id, uom: i.base_unit_code || '', unit: unitLabel(i.base_unit_id) }); }}
         />
       );
     }
@@ -217,6 +239,17 @@ export default function JobOrderEdit() {
         <select value={val} onChange={(e) => { updateMaterial(row.id, col.key, e.target.value); commitMaterial(row.id, { [col.key]: e.target.value || null }); }}>
           <option value="">—</option>
           {col.options.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+      );
+    }
+    if (col.type === 'select-uom') {
+      const options = row.item_id ? (uomsByItem[row.item_id] || []) : [];
+      return (
+        <select value={val} disabled={!row.item_id}
+          onChange={(e) => { updateMaterial(row.id, 'uom', e.target.value); recalcAndCommitMaterial(row.id, { uom: e.target.value }); }}>
+          {val && !options.some((u) => u.code === val) && <option value={val}>{val}</option>}
+          <option value="">—</option>
+          {options.map((u) => <option key={u.id} value={u.code}>{u.code}</option>)}
         </select>
       );
     }
