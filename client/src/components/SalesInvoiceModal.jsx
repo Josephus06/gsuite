@@ -12,6 +12,26 @@ function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
+const r2 = (n) => Math.round(n * 100) / 100;
+// A line at a Price/Unit the biller typed in: every other figure follows from it, by the same
+// formula the server uses when it saves (computeBillableLineAmounts), so what is shown here is
+// what gets posted. A blank or invalid entry leaves the line as it came.
+function repriced(line, priceText) {
+  if (priceText === undefined || priceText === '') return line;
+  const price = Number(priceText);
+  if (!Number.isFinite(price) || price < 0) return line;
+  const q = Number(line.quantity) || 0;
+  const subtotal = r2(price * q);
+  const discAmount = r2(subtotal * (Number(line.disc_percent) || 0) / 100);
+  const netOfTax = r2(subtotal - discAmount);
+  const taxAmount = r2(netOfTax * (Number(line.tax_rate) || 0) / 100);
+  return {
+    ...line, price_per_unit: price, subtotal, disc_amount: discAmount, net_of_tax: netOfTax,
+    disc_price_per_unit: q ? netOfTax / q : line.disc_price_per_unit,
+    tax_amount: taxAmount, gross_amount: r2(netOfTax + taxAmount),
+  };
+}
+
 function addDays(dateStr, days) {
   const d = new Date(dateStr);
   d.setDate(d.getDate() + days);
@@ -20,9 +40,9 @@ function addDays(dateStr, days) {
 
 // Mirrors the real "Create SI" popup, reached three ways: from a Sales Order's Bill
 // dropdown, from a Delivery Ticket's own Bill > SI (pass deliveryTicketId), or from Create
-// New on the invoice list (pass fromEstimate). Every line is a straight copy of
-// already-computed billing figures -- there's no per-line "amount to invoice" input on the
-// real screen, just Delete to exclude a line entirely.
+// New on the invoice list (pass fromEstimate). Every line starts as a copy of the already-
+// computed billing figures; the biller may change a line's Price/Unit (2026-10-01, not on the
+// real screen) and the line's amounts and the totals follow, or Delete to exclude a line.
 //
 // From a Sales Order it bills each line's remaining (Delivered minus already-Invoiced)
 // gap. From a Delivery Ticket it bills that ticket's own stored lines verbatim, ad-hoc
@@ -59,6 +79,9 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
   const [memo, setMemo] = useState('');
   const [withholdingPct, setWithholdingPct] = useState(0);
   const [excludedIds, setExcludedIds] = useState(new Set());
+  // Price/Unit typed over a line's own, keyed like excludedIds. Not offered when billing an
+  // Estimate, whose save path does not take it.
+  const [priceEdits, setPriceEdits] = useState({});
   const [employees, setEmployees] = useState([]);
   const [locations, setLocations] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -171,7 +194,16 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
   // it needs its own key; SO-sourced lines keep using theirs, and estimate-sourced lines
   // are keyed on the estimate line they came from.
   const lineKey = (l, idx) => l.delivery_ticket_line_id ?? l.sales_order_line_id ?? l.nsso_line_id ?? l.estimate_job_order_id ?? idx;
-  const includedLines = data.lines.filter((l, idx) => !excludedIds.has(lineKey(l, idx)));
+  const shownLines = data.lines.map((l, idx) => repriced(l, priceEdits[lineKey(l, idx)]));
+  const includedLines = shownLines.filter((l, idx) => !excludedIds.has(lineKey(data.lines[idx], idx)));
+  const canEditPrice = !fromEstimate;
+  // Only the lines whose price actually changed are sent, keyed by the source line id the
+  // server bills from.
+  const priceOverrides = Object.fromEntries(data.lines
+    .map((l, idx) => [lineKey(l, idx), priceEdits[lineKey(l, idx)], idx])
+    .filter(([key, v, idx]) => v !== undefined && v !== '' && !excludedIds.has(key)
+      && Number(v) !== Number(data.lines[idx].price_per_unit))
+    .map(([key, v]) => [key, Number(v)]));
   const subtotal = includedLines.reduce((s, l) => s + Number(l.subtotal || 0), 0);
   const discountAmount = includedLines.reduce((s, l) => s + Number(l.disc_amount || 0), 0);
   const netOfTax = includedLines.reduce((s, l) => s + Number(l.net_of_tax || 0), 0);
@@ -214,6 +246,7 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
         bill_to_address: billToAddress,
         memo,
         withholding_tax_pct: withholdingPct,
+        ...(canEditPrice && Object.keys(priceOverrides).length ? { price_overrides: priceOverrides } : {}),
       });
       onSaved(si);
     } catch (err) {
@@ -392,8 +425,8 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
                       : 'Nothing left to invoice.'}
                   </td></tr>
                 )}
-                {data.lines.map((l, idx) => {
-                  const key = lineKey(l, idx);
+                {shownLines.map((l, idx) => {
+                  const key = lineKey(data.lines[idx], idx);
                   const excluded = excludedIds.has(key);
                   return (
                     <tr key={key} style={excluded ? { opacity: 0.4, textDecoration: 'line-through' } : undefined}>
@@ -411,7 +444,16 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
                       <td>{l.job_location_name}</td>
                       <td>{qty(l.quantity)}</td>
                       <td>{l.units}</td>
-                      <td>{money(l.price_per_unit)}</td>
+                      <td>
+                        {canEditPrice && !excluded ? (
+                          <input
+                            type="number" min="0" step="0.01" style={{ width: 110, textAlign: 'right' }}
+                            value={priceEdits[key] ?? data.lines[idx].price_per_unit ?? ''}
+                            title="Change the price for this invoice; the amounts follow"
+                            onChange={(e) => setPriceEdits((prev) => ({ ...prev, [key]: e.target.value }))}
+                          />
+                        ) : money(l.price_per_unit)}
+                      </td>
                       <td>{money(l.subtotal)}</td>
                       <td>{l.disc_percent}</td>
                       <td>{money(l.disc_amount)}</td>

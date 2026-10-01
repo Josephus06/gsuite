@@ -235,6 +235,33 @@ function computeBillableLineAmounts({ pricePerUnit, discPercent, taxRate, billab
   return { subtotal, disc_amount: discAmount, net_of_tax: netOfTax, tax_amount: taxAmount, gross_amount: grossAmount };
 }
 
+// The Create SI form lets the biller change a line's Price/Unit before saving (requested
+// 2026-10-01). It sends `price_overrides: { <source line id>: price }` for the lines it changed;
+// every other figure on the line is then recomputed from that price by the helper above, so the
+// form can never post a total the server did not work out itself. Returns null when the line
+// was not changed. A negative or non-numeric price is refused rather than ignored.
+function priceOverrideFor(body, lineId) {
+  const raw = body?.price_overrides?.[lineId];
+  if (raw === undefined || raw === null || raw === '') return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    const err = new Error('Price/Unit must be a number of zero or more.');
+    err.status = 400;
+    throw err;
+  }
+  return n;
+}
+
+// A line billed at a changed price: its own Price/Unit, and Disc Price/Unit re-derived as Net of
+// Tax / Qty, the same pair the Estimate keeps.
+function repricedLine(line, price, amounts, qty) {
+  return {
+    price_per_unit: price,
+    disc_price_per_unit: qty ? Number((amounts.net_of_tax / qty).toFixed(4)) : line.disc_price_per_unit,
+    ...amounts,
+  };
+}
+
 // Powers the Create SI form -- only SO lines with a JO that's been delivered but not
 // yet (fully) invoiced show up (quantity_delivered > quantity_invoiced), each one billed
 // for exactly the still-uninvoiced delivered qty (which can be less than the line's full
@@ -482,7 +509,8 @@ router.get('/for-delivery-ticket/:deliveryTicketId', requireAuth, requirePermiss
       `SELECT dtl.id AS delivery_ticket_line_id, dtl.sales_order_line_id, dtl.job_order_id, jo.job_order_no,
               dtl.item_name, dtl.description, dtl.location_id AS job_location_id, loc.location_name AS job_location_name,
               dtl.quantity, dtl.units, dtl.price_per_unit, dtl.subtotal, dtl.disc_percent, dtl.disc_amount,
-              dtl.disc_price_per_unit, dtl.net_of_tax, dtl.tax_code, dtl.tax_amount, dtl.gross_amount
+              dtl.disc_price_per_unit, dtl.net_of_tax, dtl.tax_code, dtl.tax_amount, dtl.gross_amount,
+              (SELECT t.rate FROM taxes t WHERE t.code = dtl.tax_code LIMIT 1) AS tax_rate
        FROM delivery_ticket_lines dtl
        LEFT JOIN job_orders jo ON jo.id = dtl.job_order_id
        LEFT JOIN locations loc ON loc.id = dtl.location_id
@@ -717,10 +745,21 @@ async function billDeliveryTicket(req, res, conn) {
   if (dt.status === 'void') return res.status(409).json({ error: 'This Delivery Ticket is void and cannot be billed.' });
   if (dt.status === 'converted') return res.status(409).json({ error: 'This Delivery Ticket has already been converted to an Invoice.' });
 
-  const [lines] = await conn.query(
-    'SELECT * FROM delivery_ticket_lines WHERE delivery_ticket_id = ? ORDER BY line_no', [deliveryTicketId]
+  const [storedLines] = await conn.query(
+    `SELECT dtl.*, (SELECT t.rate FROM taxes t WHERE t.code = dtl.tax_code LIMIT 1) AS tax_rate
+       FROM delivery_ticket_lines dtl WHERE dtl.delivery_ticket_id = ? ORDER BY dtl.line_no`, [deliveryTicketId]
   );
-  if (!lines.length) return res.status(400).json({ error: 'This Delivery Ticket has no items to bill.' });
+  if (!storedLines.length) return res.status(400).json({ error: 'This Delivery Ticket has no items to bill.' });
+  // The ticket's lines are billed as stored, except any whose Price/Unit the biller changed on the
+  // form -- those are recomputed from the new price (see priceOverrideFor).
+  const lines = storedLines.map((l) => {
+    const price = priceOverrideFor(req.body, l.id);
+    if (price === null) return l;
+    const amounts = computeBillableLineAmounts({
+      pricePerUnit: price, discPercent: l.disc_percent, taxRate: l.tax_rate, billableQty: Number(l.quantity) || 0,
+    });
+    return { ...l, ...repricedLine(l, price, amounts, Number(l.quantity) || 0) };
+  });
 
   const sum = (key) => Number(lines.reduce((s, l) => s + Number(l[key] || 0), 0).toFixed(2));
   const subtotal = sum('subtotal');
@@ -954,12 +993,14 @@ async function billNsso(req, res, conn) {
 
   const lines = rawLines.map((l) => {
     const invoicedNow = Number(l.quantity_delivered) - Number(l.quantity_invoiced);
+    const price = priceOverrideFor(req.body, l.id);
+    const amounts = computeBillableLineAmounts({
+      pricePerUnit: price ?? l.price_per_unit, discPercent: l.disc_percent, taxRate: l.tax_rate, billableQty: invoicedNow,
+    });
     return {
       ...l,
       invoicedNow,
-      ...computeBillableLineAmounts({
-        pricePerUnit: l.price_per_unit, discPercent: l.disc_percent, taxRate: l.tax_rate, billableQty: invoicedNow,
-      }),
+      ...(price === null ? amounts : repricedLine(l, price, amounts, invoicedNow)),
     };
   });
 
@@ -1215,12 +1256,14 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
     // recomputed against that billable qty rather than copied from the line's full-Qty totals.
     const lines = rawLines.map((l) => {
       const invoicedNow = Number(l.quantity_delivered) - Number(l.quantity_invoiced);
+      const price = priceOverrideFor(req.body, l.id);
+      const amounts = computeBillableLineAmounts({
+        pricePerUnit: price ?? l.price_per_unit, discPercent: l.disc_percent, taxRate: l.tax_rate, billableQty: invoicedNow,
+      });
       return {
         ...l,
         invoicedNow,
-        ...computeBillableLineAmounts({
-          pricePerUnit: l.price_per_unit, discPercent: l.disc_percent, taxRate: l.tax_rate, billableQty: invoicedNow,
-        }),
+        ...(price === null ? amounts : repricedLine(l, price, amounts, invoicedNow)),
       };
     });
 
