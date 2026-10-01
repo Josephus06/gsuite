@@ -202,6 +202,7 @@ import WarrantyCertificateForm from './pages/WarrantyCertificateForm';
 import WarrantyCertificateView from './pages/WarrantyCertificateView';
 import WarrantyCertificatePrint from './pages/WarrantyCertificatePrint';
 import SalesInvoicePrint from './pages/SalesInvoicePrint';
+import DeliveryTicketPrint from './pages/DeliveryTicketPrint';
 import JobOrderPrint from './pages/JobOrderPrint';
 import PurchaseOrderPrint from './pages/PurchaseOrderPrint';
 import Forms from './pages/Forms';
@@ -228,6 +229,7 @@ function App() {
       {/* Pre-printed Billing Statement overlay -- no app chrome, since anything else on the
           page would print on top of the form. */}
       <Route path="/sales-invoices/:id/print" element={<ProtectedRoute><SalesInvoicePrint /></ProtectedRoute>} />
+      <Route path="/delivery-tickets/:id/print" element={<ProtectedRoute><DeliveryTicketPrint /></ProtectedRoute>} />
       {/* Printable production sheet. Standalone so the app chrome never lands on the page. */}
       <Route path="/job-orders/:id/print" element={<ProtectedRoute><JobOrderPrint /></ProtectedRoute>} />
       <Route path="/purchase-orders/:id/print" element={<ProtectedRoute><PurchaseOrderPrint /></ProtectedRoute>} />

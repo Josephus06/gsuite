@@ -186,6 +186,14 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     const [[dt]] = await pool.query(
       `SELECT dt.*, so.sales_order_no, so.contact_email, so.contact_title, so.contact_phone,
               c.name AS customer_name, c.tin AS customer_tin, cc.contact_name,
+              -- For the printed ticket's Address and Business Style lines: the customer's default
+              -- address on file, else any, else the free-text one on the customer record.
+              COALESCE(
+                (SELECT ca.address_line FROM customer_addresses ca
+                  WHERE ca.customer_id = c.id ORDER BY ca.is_default DESC, ca.id LIMIT 1),
+                c.address
+              ) AS customer_address,
+              (SELECT bs.name FROM business_styles bs WHERE bs.id = c.business_style_id) AS business_style,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               loc.location_name AS office_location_name, d.name AS department_name,
               u.display_name AS created_by_name
