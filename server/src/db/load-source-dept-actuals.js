@@ -8,7 +8,9 @@
 // each). Verified 2026-09-30 against the accounting manager's 2025 workbook -- its Admin and
 // Selling actuals are exactly this report's Operating Expenses per department.
 //
-//   node src/db/load-source-dept-actuals.js --from=2025-01 --to=2026-08 [--save=<raw.json>]   fetch + load
+// Needs the revenue / other_income sections (db/create-department-budgets.js) before it runs.
+//
+//   node src/db/load-source-dept-actuals.js --from=2025-01 --to=2026-09 [--save=<raw.json>]   fetch + load
 //   node src/db/load-source-dept-actuals.js --raw=<raw.json> --year=2025                   load saved raw responses
 // A raw file is { "<month>": <the source's response> } for one year. Replaces the months it
 // loads. Droplet and office replicate: load ONE of them. Railway: its own.
@@ -18,7 +20,13 @@ const pool = require('../db');
 const SITE = 'http://gsuite.graphicstar.com.ph';
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const arg = (n) => (process.argv.find((a) => a.startsWith(`--${n}=`)) || '').split('=').slice(1).join('=') || null;
-const SECTIONS = { 'OPERATING EXPENSES': 'opex', 'OTHER EXPENSES': 'other_expense', 'COST OF GOODS SOLD': 'cogs' };
+// Revenue and other income too: the Income Statement's Department breakdown splits the source's
+// months by these (lib/openingBalances splitSourceLinesByDepartment). Amounts are as the source
+// states them -- on the account's normal side (source_coa_keys.side).
+const SECTIONS = {
+  REVENUES: 'revenue', 'OTHER INCOME': 'other_income',
+  'OPERATING EXPENSES': 'opex', 'OTHER EXPENSES': 'other_expense', 'COST OF GOODS SOLD': 'cogs',
+};
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 function leaves(node, out) {

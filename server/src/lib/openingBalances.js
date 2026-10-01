@@ -57,6 +57,61 @@ async function openingGlLines(toDate, fromDate = null) {
   }));
 }
 
+// The source's month lines carry no department -- they are its trial balance. For a report broken
+// down by department, each one is split by the source's own DEPARTMENT income statement for that
+// month (source_dept_account_actuals, db/load-source-dept-actuals.js): one line per department,
+// matched to the T1S department of the same name, or keyed `src:<name>` where T1S has none (e.g.
+// Quality Assurance). Whatever the split does not cover -- the source's "No Department", a month
+// not loaded, a balance-sheet account -- stays on the original line, unassigned, so every account's
+// total is exactly what it was.
+const normName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+async function splitSourceLinesByDepartment(lines) {
+  const months = new Set();
+  for (const l of lines) if (l.source_type === 'opening_balance') months.add(String(l.entry_date).slice(0, 7));
+  if (!months.size) return lines;
+  let parts = []; let sides = []; let deps = [];
+  try {
+    [parts] = await pool.query(
+      `SELECT year, month, source_department, account_code, SUM(amount) AS amount FROM source_dept_account_actuals
+        WHERE CONCAT(year, '-', LPAD(month, 2, '0')) IN (?) GROUP BY year, month, source_department, account_code`,
+      [[...months]],
+    );
+    [sides] = await pool.query('SELECT account_code, side FROM source_coa_keys');
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') return lines;
+    throw e;
+  }
+  if (!parts.length) return lines;
+  [deps] = await pool.query('SELECT id, name FROM departments');
+  const deptId = new Map(deps.map((d) => [normName(d.name), Number(d.id)]));
+  const credit = new Set(sides.filter((s) => String(s.side).toUpperCase() === 'CREDIT').map((s) => s.account_code));
+  const byKey = new Map(); // "YYYY-MM|code" -> [{ dept, net }]
+  for (const p of parts) {
+    if (p.source_department === 'Total' || p.source_department === 'No Department') continue;
+    const k = `${p.year}-${String(p.month).padStart(2, '0')}|${p.account_code}`;
+    // The source states each amount on the account's normal side; as debit - credit:
+    const net = credit.has(p.account_code) ? -Number(p.amount) : Number(p.amount);
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push({ dept: p.source_department, net });
+  }
+  const out = [];
+  for (const l of lines) {
+    const split = l.source_type === 'opening_balance' && byKey.get(`${String(l.entry_date).slice(0, 7)}|${l.account_code}`);
+    if (!split) { out.push(l); continue; }
+    let rest = (Number(l.debit) || 0) - (Number(l.credit) || 0);
+    for (const s of split) {
+      rest -= s.net;
+      out.push({
+        ...l, debit: s.net > 0 ? round2(s.net) : 0, credit: s.net < 0 ? round2(-s.net) : 0,
+        department_id: deptId.get(normName(s.dept)) || `src:${s.dept}`,
+        memo: `${l.memo} -- ${s.dept}`,
+      });
+    }
+    if (Math.abs(rest) >= 0.005) out.push({ ...l, debit: rest > 0 ? round2(rest) : 0, credit: rest < 0 ? round2(-rest) : 0 });
+  }
+  return out;
+}
+
 // Net balance (debit - credit) of one account from the source's rows up to a date.
 async function sourceBalance(accountId, toDate) {
   const [[r]] = await pool.query(
@@ -163,4 +218,4 @@ async function openingItems(side, asOf, books, { partyId, nameStarts, locationId
   return out;
 }
 
-module.exports = { booksStart, openingGlLines, sourceBalance, openingItems, agingAnchor };
+module.exports = { booksStart, openingGlLines, splitSourceLinesByDepartment, sourceBalance, openingItems, agingAnchor };

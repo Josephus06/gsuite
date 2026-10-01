@@ -1,5 +1,6 @@
 const pool = require('../db');
 const { getPostedGlLines } = require('./glImpact');
+const { splitSourceLinesByDepartment } = require('./openingBalances');
 const { displayMonth } = require('./dates');
 
 function round2(n) {
@@ -316,13 +317,15 @@ function partitionGlLines(glLines, breakdown, fromDate, asOfDate) {
 async function resolvePartitionLabels(partitions, breakdown) {
   const table = breakdown === 'location' ? 'locations' : 'departments';
   const nameCol = breakdown === 'location' ? 'location_name' : 'name';
-  const ids = partitions.map((p) => p.key).filter((k) => k !== 'unassigned');
+  // `src:<name>`: a source-system department T1S has no record of (splitSourceLinesByDepartment).
+  const ids = partitions.map((p) => p.key).filter((k) => k !== 'unassigned' && !k.startsWith('src:'));
   let names = new Map();
   if (ids.length) {
     const [rows] = await pool.query(`SELECT id, ${nameCol} AS name FROM ${table} WHERE id IN (?)`, [ids]);
     names = new Map(rows.map((r) => [String(r.id), r.name]));
   }
-  const labeled = partitions.map((p) => ({ ...p, label: p.key === 'unassigned' ? 'Unassigned' : (names.get(p.key) || `#${p.key}`) }));
+  const labelOf = (k) => (k === 'unassigned' ? 'Unassigned' : k.startsWith('src:') ? k.slice(4) : (names.get(k) || `#${k}`));
+  const labeled = partitions.map((p) => ({ ...p, label: labelOf(p.key) }));
   labeled.sort((a, b) => a.label.localeCompare(b.label));
   return labeled;
 }
@@ -338,10 +341,13 @@ async function resolvePartitionLabels(partitions, breakdown) {
 // Percent-of-revenue per line/column, matching the real payload's `amounts:[[value,pct]]`.
 async function buildIncomeStatement(asOfDate, fromDateOverride, breakdown = 'total') {
   const fromDate = fromDateOverride || yearStart(asOfDate);
-  const [coaRows, glLines] = await Promise.all([
+  const [coaRows, posted] = await Promise.all([
     loadCoa(),
     getPostedGlLines({ toDate: asOfDate, fromDate }),
   ]);
+  // Months before the cut-over are the source's trial balance; by department they are split by
+  // the source's own department income statement.
+  const glLines = breakdown === 'department' ? await splitSourceLinesByDepartment(posted) : posted;
 
   let partitions = partitionGlLines(glLines, breakdown, fromDate, asOfDate);
   if (breakdown === 'location' || breakdown === 'department') {
@@ -454,7 +460,8 @@ async function resolveGlLineNames(lines) {
 // over the report's period -- Trans #, date, party name, debit, credit + totals.
 async function buildGlTransactions({ accountCode, breakdown = 'total', columnKey = 'total', asOfDate, fromDate }) {
   const from = fromDate || yearStart(asOfDate);
-  const [coaRows, glLines] = await Promise.all([loadCoa(), getPostedGlLines({ toDate: asOfDate, fromDate: from })]);
+  const [coaRows, posted] = await Promise.all([loadCoa(), getPostedGlLines({ toDate: asOfDate, fromDate: from })]);
+  const glLines = breakdown === 'department' ? await splitSourceLinesByDepartment(posted) : posted;
   const monthKey = (d) => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`; };
 
   // A clicked account may be a summary; its transactions post to descendant leaf accounts, so

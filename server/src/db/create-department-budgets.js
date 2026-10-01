@@ -93,6 +93,15 @@ async function main() {
       )`);
     console.log('  source_dept_account_actuals: created.');
   }
+  // Revenue and other income by department as well (the Income Statement's Department breakdown
+  // for months before the cut-over). Idempotent.
+  for (const t of ['source_dept_actuals', 'source_dept_account_actuals']) {
+    const [[col]] = await pool.query(`SHOW COLUMNS FROM ${t} LIKE 'section'`);
+    if (!/revenue/.test(col.Type)) {
+      await pool.query(`ALTER TABLE ${t} MODIFY section ENUM('opex','other_expense','cogs','revenue','other_income') NOT NULL`);
+      console.log(`  ${t}.section: + revenue, other_income.`);
+    }
+  }
   // The source's own keys for an account and a department -- what its transaction drill-down
   // (get_transaction_ledgers) is asked by. Filled by load-source-dept-actuals.js.
   if (!(await tableExists('source_coa_keys'))) {
