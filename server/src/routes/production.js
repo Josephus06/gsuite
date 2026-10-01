@@ -7,6 +7,7 @@ const { isNonStockItem } = require('../lib/itemTypes');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 const { deriveOnHand } = require('../lib/stockLedger');
+const { completeDesignProcesses } = require('../lib/designAutoComplete');
 const {
   maySalesReviseJobOrder, REVISION_REASONS, REVISION_DELIVERY_DATE, REVISION_MATERIAL_PROCESS,
   REVISION_APPROVED, REVISION_DECLINED, DATE_CHANGE_REASONS,
@@ -524,6 +525,8 @@ router.put('/:id/acknowledge', requireAuth, requireScheduler, async (req, res, n
        VALUES ('JobOrder', ?, 'Updated', 'production_stage', ?, 'in_process', ?)`,
       [req.params.id, jo.production_stage, req.user.id]
     );
+    // Design / Layout lines are done by the time a JO is In-Process (lib/designAutoComplete.js).
+    await completeDesignProcesses(conn, req.params.id);
     await conn.commit();
     res.json({ production_stage: 'in_process' });
   } catch (err) {

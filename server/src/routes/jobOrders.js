@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { completeDesignProcesses } = require('../lib/designAutoComplete');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { isPlannerUser } = require('../lib/plannerRoles');
 const { isAdvanceCopy } = require('../lib/advanceCopy');
@@ -353,6 +354,8 @@ router.put('/:id/forward-to-production', requireAuth, requirePermission('/non-st
     );
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'status', oldValue: jo.status, newValue: 'Released' });
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'sub_status', newValue: 'Approved' });
+    // Design / Layout lines are done by the time a JO is In-Process (lib/designAutoComplete.js).
+    await completeDesignProcesses(conn, req.params.id);
     await conn.commit();
     const [[updated]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
     res.json(updated);
@@ -431,6 +434,8 @@ router.put('/:id/approve-rwip', requireAuth, requirePermission('/production', 'c
       [u?.employee_id || null, req.params.id]
     );
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Approved', fieldName: 'status', oldValue: 'Pending RMA Approval', newValue: 'Released' });
+    // Design / Layout lines are done by the time a JO is In-Process (lib/designAutoComplete.js).
+    await completeDesignProcesses(conn, req.params.id);
     await conn.commit();
     const [[updated]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
     res.json(updated);
@@ -536,6 +541,8 @@ router.put('/:id', requireAuth, requireJobOrderEdit, async (req, res, next) => {
     }
     if (schedulingNow) {
       await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'production_stage', oldValue: 'pending_for_scheduling', newValue: 'in_process' });
+      // Design / Layout lines are done by the time a JO is In-Process (lib/designAutoComplete.js).
+      await completeDesignProcesses(conn, req.params.id);
     }
     await conn.commit();
     const [[row]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
