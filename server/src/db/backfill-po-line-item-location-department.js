@@ -23,13 +23,23 @@
 //
 // RESUMABLE: only touches lines still missing a value (or still on MISC-PO).
 //
-//   node src/db/backfill-po-line-item-location-department.js --dry-run
-//   node src/db/backfill-po-line-item-location-department.js
+// ALSO (2026-10-01) two more fields the same line carries on the source:
+//   purchase_requisition_line_id -- the PR line the PO line was raised from. The source gives the
+//                    PR (SysFK_TransHPR_LdgrInvty) by key; PR keys are mapped to numbers from the
+//                    PURCHASEREQ list, and within the local PR the line is the one with the same
+//                    item (then the same qty). T1S holds 2026's PRs only, so older POs stay unlinked.
+//   tax_code_id   -- the source's TaxCode (VAT_PH:VATIN-12 ...) to ours by rate, and for 0% by the
+//                    code's own wording (exempt / zero-rated).
+// The PO screen reads PR #, Location, Department and Tax Code from these columns.
+//
+//   node src/db/backfill-po-line-item-location-department.js --dry-run [--from=2026-01-01]
+//   node src/db/backfill-po-line-item-location-department.js [--from=2026-01-01]
 const pool = require('../db');
 require('dotenv').config();
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
 const DRY_RUN = process.argv.includes('--dry-run');
+const FROM = (process.argv.find((a) => a.startsWith('--from=')) || '').split('=')[1] || null;
 const CONCURRENCY = 4;
 
 const norm = (s) => (s || '').toString().replace(/\s+/g, ' ').trim().toLowerCase();
@@ -91,17 +101,47 @@ async function main() {
   const miscId = misc?.id || null;
 
   const [lineRows] = await pool.query(
-    'SELECT live_line_pk, id, item_id, location_id, department_id FROM purchase_order_lines WHERE live_line_pk IS NOT NULL'
+    'SELECT live_line_pk, id, item_id, qty, location_id, department_id, purchase_requisition_line_id, tax_code_id FROM purchase_order_lines WHERE live_line_pk IS NOT NULL'
   );
   const lineByPk = new Map(lineRows.map((r) => [r.live_line_pk, r]));
 
-  const [pos] = await pool.query('SELECT id, po_no, live_pk FROM purchase_orders WHERE live_pk IS NOT NULL');
-  console.log(`${pos.length} purchase order(s) to walk, ${lineByPk.size} line(s) with a live key.`);
-  console.log(`${itemByCode.size} item(s), ${locByName.size} location(s), ${depByName.size} department(s) to match against.\n`);
+  const [pos] = FROM
+    ? await pool.query('SELECT id, po_no, live_pk FROM purchase_orders WHERE live_pk IS NOT NULL AND date_created >= ?', [FROM])
+    : await pool.query('SELECT id, po_no, live_pk FROM purchase_orders WHERE live_pk IS NOT NULL');
+  console.log(`${pos.length} purchase order(s) to walk${FROM ? ` (dated from ${FROM})` : ''}, ${lineByPk.size} line(s) with a live key.`);
+  console.log(`${itemByCode.size} item(s), ${locByName.size} location(s), ${depByName.size} department(s) to match against.`);
+
+  // Our PRs and their lines, by PR number -- to resolve the PR line each PO line came from.
+  const [prs] = await pool.query('SELECT id, pr_no FROM purchase_requisitions');
+  const prIdByNo = new Map(prs.map((r) => [r.pr_no, r.id]));
+  const [prLines] = await pool.query('SELECT id, purchase_requisition_id, item_id, qty FROM purchase_requisition_lines ORDER BY line_no, id');
+  const prLinesByPr = new Map();
+  for (const l of prLines) { if (!prLinesByPr.has(l.purchase_requisition_id)) prLinesByPr.set(l.purchase_requisition_id, []); prLinesByPr.get(l.purchase_requisition_id).push(l); }
+  // Tax codes: by rate, and for 0% by the code's wording.
+  const [taxRows] = await pool.query('SELECT id, code, rate FROM taxes');
+  const taxFor = (code, rate) => {
+    if (!code) return null;
+    const r = Number(rate) || 0; const c = String(code).toUpperCase();
+    if (r) return (taxRows.find((t) => Number(t.rate) === r) || {}).id || null;
+    const want = /EX/.test(c) ? 'EX' : /Z/.test(c) ? 'ZRATE' : '0';
+    return (taxRows.find((t) => Number(t.rate) === 0 && String(t.code).toUpperCase().endsWith(`_${want}`)) || {}).id || null;
+  };
 
   const token = await login();
 
-  let done = 0, itemSet = 0, locSet = 0, depSet = 0, noLine = 0, failed = 0;
+  // The source's PR keys -> numbers, paged to exhaustion (only PRs T1S holds can be linked).
+  const prNoByPk = new Map();
+  for (let off = 0, empty = 0; off < 200000; off += 500) {
+    let rows = [];
+    try { rows = listRows(await api(token, 'get_transactions', { where: { Module_TransH: 'PURCHASEREQ' }, limit: 500, offset: off })); } catch { /* retried below */ }
+    if (!rows.length) { empty += 1; if (empty >= 2) break; continue; }
+    empty = 0;
+    for (const r of rows) prNoByPk.set(r.SysPK_TransH, r.UserPK_TransH);
+  }
+  console.log(`${prNoByPk.size} source PR(s) mapped; ${prIdByNo.size} PR(s) held here.\n`);
+  const prLineTaken = new Set(lineRows.filter((r) => r.purchase_requisition_line_id).map((r) => r.purchase_requisition_line_id));
+
+  let done = 0, itemSet = 0, locSet = 0, depSet = 0, prSet = 0, taxSet = 0, prNotHere = 0, noLine = 0, failed = 0;
   const missingItems = new Set();
   const missingLocs = new Set();
   const missingDeps = new Set();
@@ -142,6 +182,19 @@ async function main() {
       if (itemId && (local.item_id === null || local.item_id === miscId)) { sets.push('item_id = ?'); params.push(itemId); }
       if (locId && local.location_id === null) { sets.push('location_id = ?'); params.push(locId); }
       if (depId && local.department_id === null) { sets.push('department_id = ?'); params.push(depId); }
+      // The PR line: within the local PR of that number, same item, then same qty, not already taken.
+      if (!local.purchase_requisition_line_id && l.SysFK_TransHPR_LdgrInvty) {
+        const prId = prIdByNo.get(prNoByPk.get(l.SysFK_TransHPR_LdgrInvty));
+        if (!prId) prNotHere += 1;
+        else {
+          const item = itemId || local.item_id;
+          const cands = (prLinesByPr.get(prId) || []).filter((x) => !prLineTaken.has(x.id) && Number(x.item_id) === Number(item));
+          const pick = cands.find((x) => Number(x.qty) === Number(local.qty)) || cands[0];
+          if (pick) { prLineTaken.add(pick.id); sets.push('purchase_requisition_line_id = ?'); params.push(pick.id); }
+        }
+      }
+      const taxId = local.tax_code_id ? null : taxFor(l.TaxCode_LdgrInvty, l.TaxRate_LdgrInvty);
+      if (taxId) { sets.push('tax_code_id = ?'); params.push(taxId); }
       if (!sets.length) continue;
 
       if (!DRY_RUN) {
@@ -150,6 +203,8 @@ async function main() {
       if (sets.some((s) => s.startsWith('item_id'))) itemSet += 1;
       if (sets.some((s) => s.startsWith('location_id'))) locSet += 1;
       if (sets.some((s) => s.startsWith('department_id'))) depSet += 1;
+      if (sets.some((s) => s.startsWith('purchase_requisition_line_id'))) prSet += 1;
+      if (sets.some((s) => s.startsWith('tax_code_id'))) taxSet += 1;
     }
 
     done += 1;
@@ -159,7 +214,8 @@ async function main() {
   });
 
   console.log(`\nDone. Walked ${done} purchase order(s), ${failed} failed to fetch.`);
-  console.log(`Item set on ${itemSet} line(s), location on ${locSet}, department on ${depSet}.`);
+  console.log(`Item set on ${itemSet} line(s), location on ${locSet}, department on ${depSet}, PR line on ${prSet}, tax code on ${taxSet}.`);
+  if (prNotHere) console.log(`${prNotHere} line(s) came from a PR T1S does not hold (left unlinked).`);
   if (noLine) console.log(`${noLine} live line(s) had no matching local row.`);
   if (missingItems.size) {
     console.log(`\n${missingItems.size} item code(s) live uses have no local inventories row (those lines keep what they had):`);
