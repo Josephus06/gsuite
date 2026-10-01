@@ -328,6 +328,23 @@ async function main() {
 
   const token = await login();
   const [[vat]] = await pool.query("SELECT id, code FROM taxes WHERE code = 'VAT12' LIMIT 1");
+  // A Sales Order line's tax code comes from the SOURCE line (TaxCode_LdgrJob, e.g.
+  // "VAT_PH:VATIN-12"), matched to a local tax by code, else by the rate at its end. Every line
+  // used to get VAT12 regardless -- wrong on non-VAT lines, and NULL on every line wherever no tax
+  // is coded exactly 'VAT12'. A blank source code falls back to the 12% tax only when the line
+  // actually carries tax.
+  const taxIdByCode = new Map();
+  const [[vat12]] = await pool.query('SELECT id FROM taxes WHERE rate = 12 ORDER BY id LIMIT 1');
+  async function lineTaxId(l) {
+    const code = String(l.TaxCode_LdgrJob || '').trim();
+    if (!code) return num(l.TaxAmount_LdgrJob) ? (vat?.id ?? vat12?.id ?? null) : null;
+    if (taxIdByCode.has(code)) return taxIdByCode.get(code);
+    let [[t]] = await pool.query('SELECT id FROM taxes WHERE code = ? LIMIT 1', [code]);
+    const rate = code.match(/(\d+(\.\d+)?)\s*$/);
+    if (!t && rate) [[t]] = await pool.query('SELECT id FROM taxes WHERE rate = ? ORDER BY id LIMIT 1', [Number(rate[1])]);
+    taxIdByCode.set(code, t ? t.id : null);
+    return t ? t.id : null;
+  }
   const [[headOffice]] = await pool.query("SELECT id FROM locations WHERE location_name LIKE 'Head Office%' LIMIT 1");
 
   // Confirm the preset's reps exist locally; index their ids by normalized name. With
@@ -553,7 +570,7 @@ async function main() {
             [salesOrderId, lineNo, jobTypeId, clean(l.Description_LdgrJob), num(l.Qty_LdgrJob),
               l.UnitOfMeasure_LdgrJob || null, l.Unit_LdgrJob || null, num(l.Price_LdgrJob),
               num(l.SubTotal_LdgrJob), num(l.DiscountPercent_LdgrJob), num(l.DiscountAmount_LdgrJob),
-              num(l.VatExAmount_LdgrJob), vat ? vat.id : null, num(l.TaxAmount_LdgrJob), num(l.GrossAmount_LdgrJob),
+              num(l.VatExAmount_LdgrJob), await lineTaxId(l), num(l.TaxAmount_LdgrJob), num(l.GrossAmount_LdgrJob),
               num(l.GPRate_LdgrJob), decOrNull(l.Length_LdgrJob), decOrNull(l.Width_LdgrJob), decOrNull(l.Height_LdgrJob)]
           );
           lineIdByPk.set(l.SysPK_LdgrJob, lineRes.insertId);

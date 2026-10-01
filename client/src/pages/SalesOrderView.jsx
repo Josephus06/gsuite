@@ -39,7 +39,10 @@ const LINE_COLUMNS = [
   { key: 'disc_percent', label: 'Disc %' },
   { key: 'disc_amount', label: 'Disc Amt' },
   { key: 'disc_price_per_unit', label: 'Disc Price/Unit' },
+  { key: 'net_of_tax', label: 'Net of Tax' },
   { key: 'tax_code', label: 'Tax Code' },
+  { key: 'tax_amount', label: 'Tax Amt' },
+  { key: 'gross_amount', label: 'Gross Amt' },
   { key: 'length', label: 'Length' },
   { key: 'width', label: 'Width' },
   { key: 'height', label: 'Height' },
@@ -215,7 +218,12 @@ export default function SalesOrderView() {
   });
   // "Bill" only makes sense once at least one JO line has been delivered but not yet
   // (fully) invoiced -- mirrors the Create SI form's own eligibility filter.
-  const hasInvoiceableLine = lines.some((l) => l.job_order_id && Number(l.quantity_delivered || 0) > Number(l.quantity_invoiced || 0));
+  // A Billed (or Cancelled) order offers no Bill at all, whatever its line counters say -- on
+  // migrated orders quantity_invoiced was not always carried over, so the counters alone kept
+  // the button up on orders the source had already billed.
+  const isClosedForBilling = so.status === 'billed' || so.status === 'cancelled';
+  const hasInvoiceableLine = !isClosedForBilling
+    && lines.some((l) => l.job_order_id && Number(l.quantity_delivered || 0) > Number(l.quantity_invoiced || 0));
   const canEdit = can('/sales-orders', 'can_edit');
   // Raising a delivery is Item Delivery's own permission now, not Sales Orders'. Without this
   // the button would show to anyone who can read the order and only fail on save.
