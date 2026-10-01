@@ -52,6 +52,16 @@ export default function EstimatePrint() {
 
   return (
     <div className="estimate-print">
+      {/* The quotation prints portrait on A4, like the emailed PDF. With no @page rule the browser
+          was free to pick landscape. Rendered here, not in index.css, because .print-sheet is
+          shared with print pages that may want the other orientation. */}
+      <style>{`
+        @page { size: A4 portrait; margin: 12mm; }
+        @media print {
+          .estimate-print .print-sheet { padding: 0; font-size: 11px; }
+          .estimate-print .print-items-table { width: 100%; table-layout: auto; }
+        }
+      `}</style>
       <div className="print-toolbar">
         <button className="btn btn-primary" onClick={() => window.print()}>Print</button>
       </div>

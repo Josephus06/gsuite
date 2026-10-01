@@ -166,6 +166,7 @@ export default function EstimateWizard() {
 
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [error, setError] = useState('');
   // Files chosen before the estimate exists, plus anything a failed upload left behind.
   const [pendingAttachments, setPendingAttachments] = useState([]);
@@ -218,8 +219,24 @@ export default function EstimateWizard() {
 
   useEffect(() => { init(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Any one of these requests failing used to leave the page on "Loading..." for good, with
+  // nothing on screen to say which; now the failing request and its message are shown instead.
   async function init() {
     setLoading(true);
+    setLoadError(null);
+    try {
+      await loadAll();
+    } catch (err) {
+      const url = err?.config?.url || '';
+      const status = err?.response?.status;
+      const msg = err?.response?.data?.error || err?.response?.data?.message || err?.message || 'Unknown error';
+      setLoadError(`${url ? `${url} ` : ''}${status ? `(${status}) ` : ''}${msg}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function loadAll() {
     const [cust, emp, sd, loc, jt, proc, tax, itm, uom, pt] = await Promise.all([
       api.get('/customers'),
       api.get('/employees'),
@@ -270,7 +287,6 @@ export default function EstimateWizard() {
       }
       if (Object.keys(overrides).length) setHeader((h) => ({ ...h, ...overrides }));
     }
-    setLoading(false);
   }
 
   async function loadEstimate(estId) {
@@ -1109,6 +1125,15 @@ export default function EstimateWizard() {
   ];
 
   if (loading) return <LoadingSpinner />;
+  if (loadError) {
+    return (
+      <div className="card" style={{ margin: 24, padding: 24 }}>
+        <h3 style={{ marginTop: 0 }}>This estimate could not be opened</h3>
+        <p style={{ color: 'var(--danger, #c0392b)', wordBreak: 'break-word' }}>{loadError}</p>
+        <button type="button" className="btn" onClick={init}>Try again</button>
+      </div>
+    );
+  }
 
   return (
     <div>
