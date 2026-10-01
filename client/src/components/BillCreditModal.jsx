@@ -106,18 +106,17 @@ export default function BillCreditModal({ vendorBillId, chequeId, onClose, onSav
     setLines((prev) => prev.filter((l) => l.key !== key));
   }
 
-  // Applied Amount per bill is capped at the credit's current running Total Amount, not
-  // the bill's own balance -- a credit can never apply more than it's actually worth.
-  function applyMax(billAmountDue) {
-    const alreadyApplied = applyTotal;
-    return Math.max(0, Math.min(Number(billAmountDue), totalAmount - alreadyApplied));
-  }
 
   async function handleSave() {
     setError('');
     const submittedLines = lines.filter((l) => l.account_id && Number(l.amount) > 0);
     if (!submittedLines.length) { setError('Add at least one expense line.'); return; }
     const applyLines = Object.entries(applyAmounts).filter(([, v]) => Number(v) > 0).map(([id, v]) => ({ vendor_bill_id: Number(id), applied_amount: Number(v) }));
+    // A credit can never apply more than it is worth.
+    if (applyTotal > totalAmount + 0.005) {
+      setError(`Applied ${money(applyTotal)} is more than this credit's Total Amount of ${money(totalAmount)}. Add expense lines worth at least that much, or lower the Applied Amounts.`);
+      return;
+    }
 
     setSaving(true);
     try {
@@ -284,14 +283,16 @@ export default function BillCreditModal({ vendorBillId, chequeId, onClose, onSav
                       <td>
                         <input
                           type="checkbox" checked={Number(applyAmounts[l.vendor_bill_id] || 0) > 0}
-                          onChange={(e) => setApplyAmounts((prev) => ({ ...prev, [l.vendor_bill_id]: e.target.checked ? applyMax(l.amount_due) : 0 }))}
+                          // Ticking moves the bill's whole Amount Due into Applied Amount (Amount Due then
+                          // reads 0); the save still refuses more than the credit's own Total Amount.
+                          onChange={(e) => setApplyAmounts((prev) => ({ ...prev, [l.vendor_bill_id]: e.target.checked ? Number(l.amount_due) : 0 }))}
                         />
                       </td>
                       <td>{l.bill_no}</td>
                       <td>{formatDate(l.date_created)}</td>
                       <td>{formatDate(l.date_due)}</td>
                       <td>{money(l.gross_amount)}</td>
-                      <td>{money(l.amount_due)}</td>
+                      <td>{money(Math.max(0, Number(l.amount_due) - (Number(applyAmounts[l.vendor_bill_id]) || 0)))}</td>
                       <td>
                         <input
                           type="number" step="0.01" style={{ width: 100 }}
