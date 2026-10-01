@@ -147,6 +147,7 @@ import VendorBills from './pages/VendorBills';
 import VendorBillView from './pages/VendorBillView';
 import BillPayments from './pages/BillPayments';
 import BillPaymentView from './pages/BillPaymentView';
+import BillPaymentPrint from './pages/BillPaymentPrint';
 import BillCredits from './pages/BillCredits';
 import BillCreditView from './pages/BillCreditView';
 import ChartOfAccountTypes from './pages/ChartOfAccountTypes';
@@ -226,6 +227,7 @@ function App() {
       {/* Printable production sheet. Standalone so the app chrome never lands on the page. */}
       <Route path="/job-orders/:id/print" element={<ProtectedRoute><JobOrderPrint /></ProtectedRoute>} />
       <Route path="/purchase-orders/:id/print" element={<ProtectedRoute><PurchaseOrderPrint /></ProtectedRoute>} />
+      <Route path="/bill-payments/:id/print" element={<ProtectedRoute><BillPaymentPrint /></ProtectedRoute>} />
       {/* The four request forms, printed on their own sheet -- standalone for the same reason. */}
       <Route path="/forms/:id/print" element={<ProtectedRoute><FormPrint /></ProtectedRoute>} />
       <Route

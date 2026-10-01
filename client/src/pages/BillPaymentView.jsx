@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
+import BillPaymentModal from '../components/BillPaymentModal';
 import { displayDate, displayDateTime } from '../utils/dates';
 
 function money(v) {
@@ -31,6 +32,7 @@ export default function BillPaymentView() {
   const [editingRelease, setEditingRelease] = useState(false);
   const [releaseDate, setReleaseDate] = useState('');
   const [savingRelease, setSavingRelease] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   async function saveRelease() {
     setSavingRelease(true);
@@ -76,6 +78,7 @@ export default function BillPaymentView() {
 
   const canEdit = can('/bill-payments', 'can_edit');
   const canVoid = can('/bill-payments', 'can_void');
+  const canPrint = can('/bill-payments', 'can_print');
   const isOpen = bp.status === 'open';
   const applyLines = bp.lines.filter((l) => l.vendor_bill_id);
   const debitLines = bp.lines.filter((l) => l.bill_credit_id);
@@ -86,8 +89,9 @@ export default function BillPaymentView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/bill-payments')}>Back</button>
-          {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Bill Payment isn't implemented in this build">Edit</button>}
-          <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
+          {canEdit && isOpen && <button className="btn btn-sm" onClick={() => setEditOpen(true)}>Edit</button>}
+          {canPrint && <button className="btn btn-sm" onClick={() => window.open(`/bill-payments/${id}/print`, '_blank')}>Print Voucher</button>}
+          {canPrint && <button className="btn btn-sm" onClick={() => window.open(`/bill-payments/${id}/print?as=cheque`, '_blank')}>Print Cheque</button>}
           {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
@@ -208,6 +212,18 @@ export default function BillPaymentView() {
             </table>
           </div>
         </div>
+      )}
+
+      {editOpen && (
+        <BillPaymentModal
+          paymentId={id}
+          onClose={() => setEditOpen(false)}
+          onSaved={async () => {
+            setEditOpen(false);
+            await load();
+            if (tab === 'system') api.get(`/bill-payments/${id}/audit-logs`).then(({ data }) => setAuditLogs(data));
+          }}
+        />
       )}
 
       {tab === 'system' && (

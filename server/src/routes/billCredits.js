@@ -54,7 +54,7 @@ async function reverseVendorBillApplication(conn, vendorBillId, amount) {
   if (!vb) return;
   const newDue = Number((Number(vb.amount_due) + amount).toFixed(2));
   await conn.query(
-    "UPDATE vendor_bills SET amount_due = ?, status = IF(status = 'paid_in_full' AND ? > 0.005, 'open', status) WHERE id = ?",
+    "UPDATE vendor_bills SET amount_due = ?, status = IF(status IN ('paid_in_full', 'paid') AND ? > 0.005, 'open', status) WHERE id = ?",
     [newDue, newDue, vendorBillId]
   );
 }
