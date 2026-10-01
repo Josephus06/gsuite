@@ -7,6 +7,8 @@ import LoadingSpinner from '../components/LoadingSpinner';
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'; }
 function today() { return new Date().toISOString().slice(0, 10); }
 const PAYEE_TYPES = [{ v: 'VENDOR', l: 'Vendor' }, { v: 'CUSTOMER', l: 'Customer' }, { v: 'EMPLOYEE', l: 'Employee' }];
+// Cheques imported before the fix stored these lower-case names; read them as the form's codes.
+const PAYEE_TYPE_ALIASES = { supplier: 'VENDOR', customer: 'CUSTOMER', employee: 'EMPLOYEE' };
 const EMPTY_LINE = { account_id: '', account_label: '', department_id: '', description: '', amount: '', tax_code_id: '', apply_withholding_tax: false, withholding_tax_amount: '' };
 
 // Create a Cheque (or, at /cheques/:id/edit, edit a saved one) -- mirrors the live form: header (Date/Payee/Account/Cheque details/Currency/Memo),
@@ -35,7 +37,7 @@ export default function ChequeForm() {
           const day = (v) => (v ? String(v).slice(0, 10) : '');
           setChequeNo(c.cheque_no);
           setHeader({
-            date_created: day(c.date_created), payee_type: c.payee_type || 'VENDOR', payee_id: c.payee_id || '', payee_name: c.payee_name || '',
+            date_created: day(c.date_created), payee_type: PAYEE_TYPE_ALIASES[c.payee_type] || c.payee_type || 'VENDOR', payee_id: c.payee_id || '', payee_name: c.payee_name || '',
             office_location_id: c.office_location_id || '', account_id: c.account_id || '', cheque_date: day(c.cheque_date),
             cheque_number: c.cheque_number || '', currency: c.currency || 'PHP', conversion_rate: Number(c.conversion_rate) || 1,
             memo: c.memo || '', date_released: day(c.date_released),

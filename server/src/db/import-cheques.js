@@ -23,6 +23,7 @@
 //   node src/db/import-cheques.js
 //   node src/db/import-cheques.js --from=2021-01-01 --to=2026-12-31
 const pool = require('../db');
+const { chequeStatus, makePayeeResolver } = require('../lib/chequeSource');
 require('dotenv').config();
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
@@ -67,18 +68,7 @@ async function api(token, ep, payload, attempts = 5) {
   throw last;
 }
 
-// Live statuses seen on cheques: OPEN / VOID / CANCELLED / RELEASED.
-//
-// The local vocabulary is 'open' | 'void' -- NOT 'voided'. routes/cheques.js tests
-// `status === 'void'` to decide whether the Void button and the GL reversal apply, and the
-// view header reads the same value, so anything else renders a voided cheque as OPEN and
-// leaves it lookng re-voidable.
-function mapStatus(s) {
-  const v = norm(s);
-  if (v === 'void' || v === 'cancelled' || v === 'canceled') return 'void';
-  if (v === 'released') return 'released';
-  return 'open';
-}
+// Status and payee mapping live in lib/chequeSource.js (shared with the status sync).
 
 async function main() {
   console.log(`Local DB: ${process.env.DB_NAME} on ${process.env.DB_HOST}`);
@@ -89,12 +79,7 @@ async function main() {
   const [coas] = await pool.query('SELECT id, account_code, account_name FROM chart_of_accounts');
   const coaByCode = new Map(coas.map((c) => [String(c.account_code), c.id]));
   const coaByName = new Map(coas.map((c) => [norm(c.account_name), c.id]));
-  const [sups] = await pool.query('SELECT id, name FROM suppliers');
-  const supByName = new Map(sups.map((s) => [norm(s.name), s.id]));
-  const [emps] = await pool.query("SELECT id, CONCAT(first_name,' ',last_name) nm FROM employees");
-  const empByName = new Map(emps.map((e) => [norm(e.nm), e.id]));
-  const [custs] = await pool.query('SELECT id, name FROM customers');
-  const custByName = new Map(custs.map((c) => [norm(c.name), c.id]));
+  const resolvePayee = await makePayeeResolver(pool);
   const [locs] = await pool.query('SELECT id, location_name FROM locations');
   const locByName = new Map(locs.map((l) => [norm(l.location_name), l.id]));
   const [depts] = await pool.query('SELECT id, name FROM departments');
@@ -159,14 +144,7 @@ async function main() {
 
       const meta = listBySysPk.get(h.SysPK_TransH) || {};
 
-      // Payee: live records a single name; try vendor, then employee, then customer, and keep
-      // the name regardless so the document still reads correctly when nothing matches.
-      const payeeName = h.PayeeName_TransH || meta.Name_Accnt || h.transaction_account?.Name_Accnt || null;
-      const pn = norm(payeeName);
-      let payeeType = null; let payeeId = null;
-      if (supByName.has(pn)) { payeeType = 'supplier'; payeeId = supByName.get(pn); }
-      else if (empByName.has(pn)) { payeeType = 'employee'; payeeId = empByName.get(pn); }
-      else if (custByName.has(pn)) { payeeType = 'customer'; payeeId = custByName.get(pn); }
+      const { payeeType, payeeId, payeeName } = resolvePayee(h, h.transaction_account?.Name_Accnt || meta.Name_Accnt || null);
 
       // Bank account: only the list endpoint names it (Title_COA).
       let accountId = coaByName.get(norm(meta.Title_COA)) || null;
@@ -223,7 +201,7 @@ async function main() {
             dOrNull(h.DateDue_TransH), h.Currency_TransH || 'PHP', num(h.Conversion_TransH) || 1,
             h.Memo_TransH || meta.Memo_TransH || null,
             subtotal, subtotal, taxAmount, wtaxAmount, grossAmount, totalAmount,
-            mapStatus(meta.Status_TransH || h.Status_TransH),
+            chequeStatus(h.Status_TransH || meta.Status_TransH),
             userByName.get(norm(h.PreparedBy_TransH || meta.PreparedBy_TransH)) || null,
           ]
         );

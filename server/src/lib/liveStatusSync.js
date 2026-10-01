@@ -9,6 +9,7 @@
 // scan is date-bounded to the oldest local record so it stops at the migrated window instead of
 // walking the entire multi-year ledger.
 const pool = require('../db');
+const { chequeStatus } = require('./chequeSource');
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
 const day = (v) => (v || '').toString().slice(0, 10);
@@ -168,12 +169,11 @@ const MODULES = {
   // Live values actually observed, per module, are noted on each mapping.
 
   cheques: {
-    // live: OPEN, FULLY APPLIED, VOID     local: open, void
+    // live: OPEN, FULLY APPLIED, VOID     local: open, fully_applied, void
     label: 'Cheques', table: 'cheques', keyCol: 'cheque_no', statusCol: 'status',
     endpoint: 'get_transactions', payload: { where: { Module_TransH: 'CHEQUE' } }, liveKey: 'UserPK_TransH',
-    // FULLY APPLIED is a settlement state, not a cancellation -- the cheque is still live, so it
-    // maps to open rather than being invented as a third local status.
-    status: (r) => (String(r.Status_TransH).toUpperCase() === 'VOID' ? 'void' : 'open'),
+    // FULLY APPLIED used to be folded into 'open', so settled cheques read OPEN against live.
+    status: (r) => chequeStatus(r.Status_TransH),
     totals: (r) => ({ subtotal: money(r.SubTotal_TransH), net_of_tax: money(r.SubTotalVatEx_TransH), tax_amount: money(r.TaxAmount_TransH), gross_amount: money(r.TotalAmount_TransH), total_amount: money(r.TotalAmount_TransH) }),
   },
 

@@ -8,6 +8,8 @@ import { displayDate, displayDateTime } from '../utils/dates';
 
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'; }
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
+// Live's banner wording. FULLY APPLIED is a settled cheque, still live -- only 'void' is cancelled.
+const STATUS_LABELS = { open: 'OPEN', fully_applied: 'FULLY APPLIED', void: 'VOID' };
 function formatDate(v) { return v ? displayDate(v) : ''; }
 // Cheque dates keep the bank's format (e.g. Sep 18, 2026), not the app-wide 18 Sept 2026 -- as asked.
 function formatChequeDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : ''; }
@@ -79,12 +81,12 @@ export default function ChequeView() {
         <div className="estimate-banner-title">
           <h1>Cheque</h1>
           <span className="estimate-no">{c.cheque_no}</span>
-          <span style={{ marginLeft: 10, opacity: 0.85 }}>{c.status === 'void' ? 'VOID' : 'OPEN'}</span>
+          <span style={{ marginLeft: 10, opacity: 0.85 }}>{STATUS_LABELS[c.status] || String(c.status || '').toUpperCase()}</span>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 320px', gap: 20, marginTop: 12, alignItems: 'start' }}>
           <div>
             <h4>Payee</h4>
-            <div className="hi">{c.payee_name}</div>
+            <div className="hi">{c.payee_account_name || c.payee_name}</div>
             <div>Payee Name : <span className="hi">{c.payee_name}</span></div>
             <div>Office Location : <span className="hi">{c.location_name || ''}</span></div>
             <div>Account : <span className="hi">{c.account_name || ''}</span></div>

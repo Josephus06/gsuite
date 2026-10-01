@@ -40,6 +40,15 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
   } catch (err) { next(err); }
 });
 
+// The Payee is the linked vendor/customer/employee record; Payee Name is a separate free-typed
+// field. Live prints both and they often differ (vendor YUTYCO, payee name the person who
+// collected the cheque). Imported rows used to carry lower-case 'supplier'/'customer'/'employee'.
+const PAYEE_ACCOUNT_NAME_SQL = `CASE
+    WHEN c.payee_type IN ('VENDOR', 'supplier') THEN (SELECT s.name FROM suppliers s WHERE s.id = c.payee_id)
+    WHEN c.payee_type IN ('CUSTOMER', 'customer') THEN (SELECT cu.name FROM customers cu WHERE cu.id = c.payee_id)
+    WHEN c.payee_type IN ('EMPLOYEE', 'employee') THEN (SELECT CONCAT(e.first_name, ' ', e.last_name) FROM employees e WHERE e.id = c.payee_id)
+  END`;
+
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const { search, status, as_of: asOf } = req.query;
@@ -51,7 +60,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(
       `SELECT c.id, c.cheque_no, c.date_created, c.cheque_date, c.cheque_number, c.payee_name, c.total_amount, c.status, c.memo,
-              coa.account_name
+              coa.account_name, ${PAYEE_ACCOUNT_NAME_SQL} AS payee_account_name
        FROM cheques c LEFT JOIN chart_of_accounts coa ON coa.id = c.account_id
        ${whereSql} ORDER BY c.id DESC`,
       params
@@ -74,6 +83,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
   try {
     const [[c]] = await pool.query(
       `SELECT c.*, coa.account_code, coa.account_name, loc.location_name,
+              ${PAYEE_ACCOUNT_NAME_SQL} AS payee_account_name,
               CONCAT(u.display_name) AS created_by_name
        FROM cheques c
        LEFT JOIN chart_of_accounts coa ON coa.id = c.account_id

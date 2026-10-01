@@ -8,7 +8,7 @@ import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
 
 const PAGE_SIZE = 15;
-const STATUS_LABELS = { open: 'Open', void: 'Void' };
+const STATUS_LABELS = { open: 'Open', fully_applied: 'Fully Applied', void: 'Void' };
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'; }
 function formatDate(v) { return v ? displayDate(v) : ''; }
 // Cheque dates keep the bank's format (e.g. Sep 18, 2026), not the app-wide 18 Sept 2026 -- as asked.
@@ -57,6 +57,7 @@ export default function Cheques() {
             <select value={status} onChange={(e) => setStatus(e.target.value)}>
               <option value="">--ALL--</option>
               <option value="open">Open</option>
+              <option value="fully_applied">Fully Applied</option>
               <option value="void">Void</option>
             </select>
           </div>
@@ -79,7 +80,7 @@ export default function Cheques() {
                     <td data-label="Date">{formatDate(row.date_created)}</td>
                     <td data-label="Cheque Date">{formatChequeDate(row.cheque_date)}</td>
                     <td data-label="Cheque #">{row.cheque_number}</td>
-                    <td data-label="Payee">{row.payee_name}</td>
+                    <td data-label="Payee">{row.payee_account_name || row.payee_name}</td>
                     <td data-label="Account">{row.account_name}</td>
                     <td data-label="Total" style={{ textAlign: 'right' }}>{money(row.total_amount)}</td>
                     <td data-label="Status">{STATUS_LABELS[row.status] || row.status}</td>
