@@ -290,6 +290,28 @@ router.get('/item-receipts', requireAuth, requirePermission(RECEIPT_ROUTE, 'can_
   }
 });
 
+// The Add/Update form's pickers -- Requestor and Add Material -- under this page's own permission.
+// The form used to read GET /employees and GET /inventory, which answer only to the Employees and
+// Inventory pages: a storekeeper granted Transfer Orders but not those (Dave Delerio) had the form
+// fail to load at all, so could not raise a TO. Only the fields the form shows are sent.
+router.get('/form-meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [employees] = await pool.query(
+      `SELECT e.id, e.first_name, e.last_name, e.position_title FROM employees e ORDER BY e.id DESC`
+    );
+    // Active items only, as the shared item picker serves them for data entry.
+    const [items] = await pool.query(
+      `SELECT i.id, i.item_code, i.display_name, u.title AS base_unit_title, su.title AS stock_unit_title
+         FROM inventories i
+         LEFT JOIN units_of_measure u ON u.id = i.base_unit_id
+         LEFT JOIN units_of_measure su ON su.id = i.stock_unit_id
+        WHERE i.is_active = 1
+        ORDER BY i.id DESC`
+    );
+    res.json({ employees, items });
+  } catch (err) { next(err); }
+});
+
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[row]] = await pool.query(

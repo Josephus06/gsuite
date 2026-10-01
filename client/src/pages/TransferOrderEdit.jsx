@@ -74,13 +74,14 @@ export default function TransferOrderEdit() {
   useEffect(() => {
     Promise.all([
       api.get('/lookups/locations'),
-      api.get('/employees'),
-      api.get('/inventory'),
+      // Requestors and items from the TO's own endpoint: /employees and /inventory answer only to
+      // those pages' permissions, and a refusal there stopped the whole form from loading.
+      api.get('/transfer-orders/form-meta'),
       isNew ? Promise.resolve(null) : api.get(`/transfer-orders/${id}`),
-    ]).then(async ([locRes, empRes, invRes, toRes]) => {
+    ]).then(async ([locRes, metaRes, toRes]) => {
       setLocations(locRes.data);
-      setEmployees(empRes.data);
-      setInventoryItems(invRes.data);
+      setEmployees(metaRes.data.employees);
+      setInventoryItems(metaRes.data.items);
 
       const prefill = location.state?.prefill;
       if (isNew && prefill && !autoCreated.current) {
@@ -120,6 +121,10 @@ export default function TransferOrderEdit() {
           memo: toRes.data.memo || '',
         });
       }
+      setLoading(false);
+    }).catch((err) => {
+      // Without this a refused lookup left the form on its spinner with nothing said.
+      setError(err.response?.data?.error || 'Could not load the Transfer Order form.');
       setLoading(false);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
