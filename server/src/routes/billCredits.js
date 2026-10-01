@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { syncBillCreditStatus } = require('../lib/billCreditStatus');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
@@ -332,6 +333,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       ]
     );
     const creditId = result.insertId;
+    await syncBillCreditStatus(conn, creditId); // Fully Applied when created fully applied
     const creditNo = await assignDocNo(conn, { table: 'bill_credits', column: 'bill_credit_no', prefix: 'BC-', id: creditId });
 
     await insertCreditLines(conn, creditId, computedLines, submittedApply);
@@ -422,9 +424,10 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
        WHERE id = ?`,
       [newDate, officeLocationId || null, apAccountId || null, memo || null, wtaxId || null, built.wtaxDescription,
         built.wtaxAmount, built.subtotal, built.taxAmount, built.totalAmount, built.totalApplied,
-        // A migrated Fully Applied credit is Open again once the edit leaves some of it unapplied.
-        bc.status === 'fully_applied' && built.totalApplied < built.totalAmount - 0.005 ? 'open' : bc.status,
+        bc.status,
         creditId]);
+    // Open or Fully Applied from what the edit leaves applied (lib/billCreditStatus.js).
+    await syncBillCreditStatus(conn, creditId);
 
     // One audit row per header figure that actually changed.
     const changes = [

@@ -60,7 +60,9 @@ export default function BillCreditView() {
 
   const canEdit = can('/bill-credits', 'can_edit');
   const canVoid = can('/bill-credits', 'can_void');
-  const isOpen = bc.status === 'open';
+  // Fully Applied can still be voided: the server reverses its bill applications, and refuses
+  // with the reason if a payment or cheque has spent it.
+  const isOpen = bc.status !== 'voided';
   // What it was created from: a Vendor Bill, or a Cheque to the vendor.
   const source = bc.vendor_bill_id ? `/vendor-bills/${bc.vendor_bill_id}` : `/cheques/${bc.cheque_id}`;
   const unapplied = Number(bc.total_amount) - Number(bc.applied_amount);

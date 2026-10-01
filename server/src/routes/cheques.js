@@ -1,6 +1,7 @@
 const express = require('express');
 const { missingDepartmentError } = require('../lib/requireDepartment');
 const pool = require('../db');
+const { CREDIT_STATUS_SQL } = require('../lib/billCreditStatus');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
@@ -101,7 +102,7 @@ async function applyCredits(conn, chequeId, supplierId, credits) {
     if (Number(bc.supplier_id) !== Number(supplierId)) throw Object.assign(new Error(`${bc.bill_credit_no} is not this vendor's credit.`), { status: 400 });
     const remaining = round2(Number(bc.total_amount) - Number(bc.applied_amount));
     if (c.applied_amount > remaining + 0.001) throw Object.assign(new Error(`${bc.bill_credit_no} has only ${remaining.toFixed(2)} left to apply.`), { status: 409 });
-    await conn.query('UPDATE bill_credits SET applied_amount = applied_amount + ? WHERE id = ?', [c.applied_amount, c.bill_credit_id]);
+    await conn.query(`UPDATE bill_credits SET applied_amount = applied_amount + ?, ${CREDIT_STATUS_SQL} WHERE id = ?`, [c.applied_amount, c.bill_credit_id]);
     try {
       await conn.query('INSERT INTO cheque_bill_credits (cheque_id, bill_credit_id, applied_amount) VALUES (?, ?, ?)', [chequeId, c.bill_credit_id, c.applied_amount]);
     } catch (e) {
@@ -117,7 +118,7 @@ async function releaseCredits(conn, chequeId) {
   try {
     [rows] = await conn.query('SELECT bill_credit_id, applied_amount FROM cheque_bill_credits WHERE cheque_id = ?', [chequeId]);
   } catch (e) { if (e.code === 'ER_NO_SUCH_TABLE') return []; throw e; }
-  for (const r of rows) await conn.query('UPDATE bill_credits SET applied_amount = GREATEST(applied_amount - ?, 0) WHERE id = ?', [Number(r.applied_amount), r.bill_credit_id]);
+  for (const r of rows) await conn.query(`UPDATE bill_credits SET applied_amount = GREATEST(applied_amount - ?, 0), ${CREDIT_STATUS_SQL} WHERE id = ?`, [Number(r.applied_amount), r.bill_credit_id]);
   await conn.query('DELETE FROM cheque_bill_credits WHERE cheque_id = ?', [chequeId]);
   return rows;
 }
@@ -462,7 +463,7 @@ router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async
     // Its bill credits are reversed with the rest of its entry and go back to the vendor. The
     // rows stay, so the voided cheque's GL Impact still shows what it had used.
     const credits = await chequeCredits(conn, req.params.id);
-    for (const cr of credits) await conn.query('UPDATE bill_credits SET applied_amount = GREATEST(applied_amount - ?, 0) WHERE id = ?', [Number(cr.applied_amount), cr.bill_credit_id]);
+    for (const cr of credits) await conn.query(`UPDATE bill_credits SET applied_amount = GREATEST(applied_amount - ?, 0), ${CREDIT_STATUS_SQL} WHERE id = ?`, [Number(cr.applied_amount), cr.bill_credit_id]);
     const reversal = await postReversalJournal(conn, {
       sourceType: 'cheque', sourceId: Number(req.params.id), sourceNo: fullCheque.cheque_no,
       glRows: await computeChequeGl(fullCheque, chequeLines, credits),
