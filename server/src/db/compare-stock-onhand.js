@@ -13,7 +13,8 @@
 // (posted unconverted) or / conversion (converted twice).
 //
 //   node src/db/compare-stock-onhand.js [--as-of=YYYY-MM-DD] [--out=stock-diffs.json] [--top=40] [--pause=1500]
-// Heavy on the source's Stock Ledger report: run it after office hours.
+// Run it after office hours: the source's Stock Ledger report is heavy, and T1S's movements are read
+// --batch items at a time with --db-pause ms between (default 25 / 300) so the droplet keeps serving.
 const fs = require('fs');
 const pool = require('../db');
 require('dotenv').config();
@@ -26,6 +27,8 @@ const OUT = arg('out', null);
 const TOP = Number(arg('top', 40));
 const PAGE = 100;
 const PAUSE = Number(arg('pause', 1500)); // ms between source pages, so the old system is not hammered
+const BATCH = Number(arg('batch', 25)); // items per T1S movement query
+const DB_PAUSE = Number(arg('db-pause', 300)); // ms between those queries, so T1S keeps answering users
 const norm = (s) => (s == null ? '' : String(s).trim().toLowerCase());
 const normWs = (s) => norm(s).replace(/[\s-]+/g, '');
 const r4 = (n) => Math.round((Number(n) || 0) * 10000) / 10000;
@@ -74,11 +77,23 @@ async function main() {
     const k = `${r.inventory_id}|${r.location_id}`;
     t1s.set(k, (t1s.get(k) || 0) + Number(r.beg_qty || 0) * Number(it.cf));
   }
-  const [moves] = await pool.query(
-    `SELECT m.item_id, COALESCE(m.to_location_id, m.from_location_id) AS location_id, m.trans_date, m.trans_no, m.trans_type,
-            m.qty_in, m.qty_out, m.doc_uom, m.uom
-       FROM (${movementsSql(false)}) m
-      WHERE m.trans_date >= ? AND m.trans_date <= ?`, [FROM, AS_OF]);
+  // Movements a small batch of items at a time (item_id IN (?) pushed into every branch), with a
+  // pause between batches: the whole union in one query starved the 4 GB droplet and T1S stopped
+  // answering (2026-10-02).
+  const moves = [];
+  const ids = items.map((i) => i.id);
+  for (let i = 0; i < ids.length; i += BATCH) {
+    const chunk = ids.slice(i, i + BATCH);
+    const [rows] = await pool.query(
+      `SELECT m.item_id, COALESCE(m.to_location_id, m.from_location_id) AS location_id, m.trans_date, m.trans_no, m.trans_type,
+              m.qty_in, m.qty_out, m.doc_uom, m.uom
+         FROM (${movementsSql(true)}) m
+        WHERE m.trans_date >= ? AND m.trans_date <= ?`, [chunk, chunk, chunk, chunk, chunk, chunk, FROM, AS_OF]);
+    for (const r of rows) moves.push(r);
+    process.stdout.write(`\r  T1S movements: ${Math.min(i + BATCH, ids.length)}/${ids.length} items`);
+    await sleep(DB_PAUSE);
+  }
+  process.stdout.write('\n');
   const movesByPair = new Map();
   for (const m of moves) {
     if (m.location_id == null) continue;
