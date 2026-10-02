@@ -34,7 +34,9 @@ function computeLine(l, wtaxRate) {
   const discAmount = typed ? (discPercent > 0 && discPercent < 100 ? netOfTax / (1 - discPercent / 100) - netOfTax : 0) : q * unitPrice * (discPercent / 100);
   const taxAmount = netOfTax * (taxRate / 100);
   const extPrice = netOfTax + taxAmount;
-  const wtaxAmount = l.is_withhold ? netOfTax * (Number(wtaxRate || 0) / 100) : 0;
+  // A typed withholding (wtax_typed) stands; otherwise Net x the bill's rate.
+  const wtTyped = l.wtax_typed !== undefined && l.wtax_typed !== '' && Number.isFinite(Number(l.wtax_typed));
+  const wtaxAmount = l.is_withhold ? (wtTyped ? Number(l.wtax_typed) : netOfTax * (Number(wtaxRate || 0) / 100)) : 0;
   return { disc_amount: discAmount, net_of_tax: netOfTax, tax_amount: taxAmount, ext_price: extPrice, wtax_amount: wtaxAmount, amount_due: extPrice - wtaxAmount };
 }
 
@@ -112,6 +114,8 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
       if ('qty' in patch || 'unit_price' in patch || 'disc_percent' in patch) {
         if (!('amount' in patch)) delete next.amount;
       }
+      // A new amount puts the withholding back on Net x rate.
+      if (('amount' in patch || 'qty' in patch || 'unit_price' in patch || 'disc_percent' in patch) && !('wtax_typed' in patch)) delete next.wtax_typed;
       if ('amount' in patch) {
         const q = Number(next.qty) || 0;
         const d = Number(next.disc_percent) || 0;
@@ -145,6 +149,8 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
           amount: l.amount !== undefined && l.amount !== '' ? Number(l.amount) : undefined,
           disc_percent: l.disc_percent,
           is_withhold: l.is_withhold,
+          // Sent only when typed; the server then keeps it (lineWtax).
+          wtax_amount: l.is_withhold && l.wtax_typed !== undefined && l.wtax_typed !== '' ? Number(l.wtax_typed) : undefined,
           department_id: l.department_id || null,
         })),
       });
@@ -289,7 +295,13 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
                           onChange={(e) => updateLine(l.purchase_order_line_id, { is_withhold: e.target.checked })}
                         />
                       </td>
-                      <td>{money(l.wtax_amount)}</td>
+                      <td>
+                        {l.is_withhold ? (
+                          <input type="number" step="0.01" min="0" style={{ width: 90 }} title="Withholding for this line -- Net x rate unless typed"
+                            value={l.wtax_typed !== undefined ? l.wtax_typed : Number(l.wtax_amount.toFixed(2))}
+                            onChange={(e) => updateLine(l.purchase_order_line_id, { wtax_typed: e.target.value })} />
+                        ) : money(l.wtax_amount)}
+                      </td>
                       <td>{money(l.amount_due)}</td>
                     </tr>
                   ))}

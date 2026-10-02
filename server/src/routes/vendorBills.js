@@ -49,6 +49,15 @@ function computeLineFromAmount({ amount, discPercent, taxRate, qty }) {
     ext_price: Number((netOfTax + taxAmount).toFixed(2)), unit_price: unitPrice };
 }
 const hasAmount = (l) => l && l.amount !== undefined && l.amount !== null && l.amount !== '' && Number.isFinite(Number(l.amount));
+// A line's withholding: the amount typed for it when one was sent (the supplier's own figure, asked
+// for 2026-10-02), else Net of Tax x the bill's withholding rate. Only on a line ticked to withhold;
+// never negative, never more than the line's net.
+function lineWtax(l, netOfTax, wtaxRate) {
+  const typed = l && l.wtax_amount !== undefined && l.wtax_amount !== null && l.wtax_amount !== '' && Number.isFinite(Number(l.wtax_amount));
+  if (!l?.is_withhold || (!typed && !(wtaxRate > 0))) return { is_withhold: false, wtax_amount: 0 };
+  const amount = typed ? Number(l.wtax_amount) : netOfTax * wtaxRate / 100;
+  return { is_withhold: true, wtax_amount: Number(Math.min(Math.max(amount, 0), Math.max(netOfTax, 0)).toFixed(2)) };
+}
 
 // GL Impact computation lives in server/src/lib/glImpact.js (computeVendorBillGl),
 // shared with the Reports engine so the reports can never drift from what this tab shows.
@@ -327,8 +336,9 @@ async function createStandaloneBill(req, res, conn) {
     const unitPrice = Number(l.unit_price);
     if (!Number.isFinite(unitPrice) || unitPrice < 0) return res.status(400).json({ error: `Enter an amount on line ${idx + 1}.` });
     const amounts = computeLineAmounts({ unitPrice, discPercent: l.disc_percent, taxRate: taxRate.get(Number(l.tax_code_id)) || 0, qty });
-    const isWithhold = !!l.is_withhold && wtaxRate > 0;
-    const lineWtaxAmount = isWithhold ? Number((amounts.net_of_tax * wtaxRate / 100).toFixed(2)) : 0;
+    const w = lineWtax(l, amounts.net_of_tax, wtaxRate);
+    const isWithhold = w.is_withhold;
+    const lineWtaxAmount = w.wtax_amount;
     computedLines.push({
       account_id: Number(l.account_id), description: String(l.description || '').trim().slice(0, 500) || null,
       department_id: Number(l.department_id), location_id: Number(l.location_id) || null, qty, rate: unitPrice, unit_price: unitPrice,
@@ -438,12 +448,13 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       const fromAmount = hasAmount(s) ? computeLineFromAmount({ amount: s.amount, discPercent, taxRate: poLine.tax_rate, qty }) : null;
       const unitPrice = fromAmount ? fromAmount.unit_price : (s.unit_price !== undefined ? Number(s.unit_price) : Number(poLine.rate));
       const amounts = fromAmount || computeLineAmounts({ unitPrice, discPercent, taxRate: poLine.tax_rate, qty });
-      const lineWtaxAmount = isWithhold ? Number((amounts.net_of_tax * wtaxRate / 100).toFixed(2)) : 0;
+      const w = lineWtax({ ...s, is_withhold: isWithhold }, amounts.net_of_tax, wtaxRate);
+      const lineWtaxAmount = w.wtax_amount;
       computedLines.push({
         purchase_order_line_id: poLine.id, item_id: poLine.item_id, location_id: poLine.location_id,
         // The PO line's department, or -- where the PO never had one -- the one chosen on the bill.
         department_id: poLine.department_id || Number(s.department_id) || null, qty, rate: poLine.rate, unit_price: unitPrice, disc_percent: discPercent,
-        tax_code_id: poLine.tax_code_id, is_withhold: isWithhold, wtax_amount: lineWtaxAmount,
+        tax_code_id: poLine.tax_code_id, is_withhold: w.is_withhold, wtax_amount: lineWtaxAmount,
         amount_due: Number((amounts.ext_price - lineWtaxAmount).toFixed(2)), ...amounts,
       });
     }
@@ -608,9 +619,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         const amounts = hasAmount(l)
           ? computeLineFromAmount({ amount: l.amount, discPercent: l.disc_percent, taxRate: rate, qty })
           : { ...computeLineAmounts({ unitPrice, discPercent: l.disc_percent, taxRate: rate, qty }), unit_price: unitPrice };
-        const isWithhold = !!l.is_withhold && wtaxRate > 0;
-        const wtaxAmount = isWithhold ? Number((amounts.net_of_tax * wtaxRate / 100).toFixed(2)) : 0;
-        return { ...amounts, is_withhold: isWithhold, wtax_amount: wtaxAmount, amount_due: Number((amounts.ext_price - wtaxAmount).toFixed(2)) };
+        const w = lineWtax(l, amounts.net_of_tax, wtaxRate);
+        return { ...amounts, ...w, amount_due: Number((amounts.ext_price - w.wtax_amount).toFixed(2)) };
       };
 
       const [existing] = await conn.query('SELECT * FROM vendor_bill_lines WHERE vendor_bill_id = ? ORDER BY id', [vb.id]);

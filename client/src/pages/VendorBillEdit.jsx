@@ -21,7 +21,9 @@ function lineAmounts(l, taxRate, wtaxRate) {
   const net = round2(Number(l.amount || 0));
   const tax = round2(net * (Number(taxRate || 0) / 100));
   const gross = round2(net + tax);
-  const wtax = l.is_withhold ? round2(net * (Number(wtaxRate || 0) / 100)) : 0;
+  // A typed withholding (wtax_typed) stands; otherwise Net x the bill's rate.
+  const typed = l.wtax_typed !== undefined && l.wtax_typed !== '';
+  const wtax = l.is_withhold ? (typed ? round2(Number(l.wtax_typed)) : round2(net * (Number(wtaxRate || 0) / 100))) : 0;
   return { net, tax, gross, wtax, due: round2(gross - wtax) };
 }
 const newKey = () => Math.random().toString(36).slice(2);
@@ -76,6 +78,11 @@ export default function VendorBillEdit() {
         if (w) wtaxGuess = String(w.id);
       }
       setWtaxId(wtaxGuess);
+      // A stored withholding that is not Net x rate (typed earlier, or the source's own) opens as typed,
+      // so saving does not quietly recompute it.
+      const guessRate = Number(m.data.wtaxes.find((w) => String(w.id) === wtaxGuess)?.rate || 0);
+      const keepWtax = (l) => (l.is_withhold && Math.abs(Number(l.wtax_amount || 0) - round2(Number(l.net_of_tax || 0) * guessRate / 100)) > 0.01
+        ? String(Number(l.wtax_amount || 0)) : undefined);
       const acctById = new Map(m.data.accounts.map((a) => [a.id, a]));
       setLines(bill.lines.map((l) => ({
         key: newKey(), id: l.id, item_code: l.item_code, item_name: l.item_name,
@@ -84,7 +91,7 @@ export default function VendorBillEdit() {
         qty: Number(l.qty), unit_price: Number(l.unit_price), disc_percent: Number(l.disc_percent || 0), amount: Number(l.net_of_tax || 0),
         tax_code_id: l.tax_code_id ? String(l.tax_code_id)
           : (Number(l.tax_amount) > 0 ? String(taxForRate(rateOf(l.tax_amount, l.net_of_tax))?.id || '') : ''),
-        is_withhold: !!l.is_withhold,
+        is_withhold: !!l.is_withhold, wtax_typed: keepWtax(l),
       })));
     }).catch((err) => setError(err.response?.data?.error || 'Could not load this Vendor Bill.'));
   }, [id]);
@@ -109,6 +116,8 @@ export default function VendorBillEdit() {
     } else if ('qty' in patch || 'unit_price' in patch || 'disc_percent' in patch) {
       next.amount = amountOf(next);
     }
+    // A new amount puts the withholding back on Net x rate; a typed one is for the figure as it was.
+    if (('amount' in patch || 'qty' in patch || 'unit_price' in patch || 'disc_percent' in patch) && !('wtax_typed' in patch)) next.wtax_typed = undefined;
     return next;
   }));
 
@@ -132,6 +141,7 @@ export default function VendorBillEdit() {
           id: l.id, account_id: l.account?.id || null, description: l.description, department_id: Number(l.department_id) || null,
           qty: Number(l.qty), unit_price: Number(l.unit_price || 0), disc_percent: Number(l.disc_percent || 0),
           tax_code_id: l.tax_code_id || null, is_withhold: l.is_withhold, amount: Number(l.amount || 0),
+          wtax_amount: l.is_withhold && l.wtax_typed !== undefined && l.wtax_typed !== '' ? Number(l.wtax_typed) : undefined,
         })),
       });
     }
@@ -212,7 +222,7 @@ export default function VendorBillEdit() {
             <div className="field"><label>Term</label><input value={header.term} onChange={(e) => setH({ term: e.target.value })} /></div>
             <div className="field">
               <label>Withholding Tax</label>
-              <select value={wtaxId} disabled={ro} onChange={(e) => setWtaxId(e.target.value)}>
+              <select value={wtaxId} disabled={ro} onChange={(e) => { setWtaxId(e.target.value); setLines((ls) => ls.map((x) => ({ ...x, wtax_typed: undefined }))); }}>
                 <option value="">None</option>
                 {meta.wtaxes.map((w) => <option key={w.id} value={w.id}>{w.code} — {Number(w.rate)}% — {w.name}</option>)}
               </select>
@@ -282,7 +292,12 @@ export default function VendorBillEdit() {
                   <td style={{ textAlign: 'right' }}>{money(l.amt.tax)}</td>
                   <td style={{ textAlign: 'right' }}>{money(l.amt.gross)}</td>
                   <td style={{ textAlign: 'center' }}><input type="checkbox" disabled={ro} checked={l.is_withhold} onChange={(e) => setLine(l.key, { is_withhold: e.target.checked })} /></td>
-                  <td style={{ textAlign: 'right' }}>{money(l.amt.wtax)}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    {ro || !l.is_withhold ? money(l.amt.wtax) : (
+                      <input type="number" step="0.01" min="0" style={{ width: 100 }} title="Withholding for this line -- Net x rate unless typed"
+                        value={l.wtax_typed !== undefined ? l.wtax_typed : l.amt.wtax} onChange={(e) => setLine(l.key, { wtax_typed: e.target.value })} />
+                    )}
+                  </td>
                   <td style={{ textAlign: 'right' }}>{money(l.amt.due)}</td>
                   {!isItemBill && !ro && (
                     <td>{lines.length > 1 && <button type="button" className="btn btn-sm btn-danger" onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}>Delete</button>}</td>
