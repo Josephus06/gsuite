@@ -180,13 +180,13 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const params = [];
     if (status) { where.push('vb.status = ?'); params.push(status); }
     if (search) {
-      where.push('(vb.bill_no LIKE ? OR po.po_no LIKE ? OR s.name LIKE ?)');
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      where.push('(vb.bill_no LIKE ? OR po.po_no LIKE ? OR s.name LIKE ? OR vb.reference_no LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const [rows] = await pool.query(
-      `SELECT vb.id, vb.bill_no, vb.date_created, vb.date_due, vb.term, vb.memo, vb.gross_amount, vb.amount_due, vb.status,
+      `SELECT vb.id, vb.bill_no, vb.reference_no, vb.date_created, vb.date_due, vb.term, vb.memo, vb.gross_amount, vb.amount_due, vb.status,
               po.po_no, s.name AS supplier_name, loc.location_name AS office_location_name
        FROM vendor_bills vb
        LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id

@@ -71,7 +71,7 @@ export default function VendorBills() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Bill # or PO No..." />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Bill #, PO No, Reference # or Vendor..." />
           </div>
           <div className="field">
             <label>Status</label>
@@ -94,6 +94,7 @@ export default function VendorBills() {
                 <tr>
                   <th>Bill #</th>
                   <th>PO #</th>
+                  <th>Reference #</th>
                   <th>Date Created</th>
                   <th>Date Due</th>
                   <th>Office Location</th>
@@ -108,12 +109,13 @@ export default function VendorBills() {
               </thead>
               <tbody>
                 {rows.length === 0 && (
-                  <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: 20 }}>No bills found.</td></tr>
+                  <tr><td colSpan={13} className="muted" style={{ textAlign: 'center', padding: 20 }}>No bills found.</td></tr>
                 )}
                 {pageRows.map((row) => (
                   <tr key={row.id}>
                     <td data-label="Bill #">{row.bill_no}</td>
                     <td data-label="PO #">{row.po_no || <span className="muted">No PO</span>}</td>
+                    <td data-label="Reference #">{row.reference_no || ''}</td>
                     <td data-label="Date Created">{formatDate(row.date_created)}</td>
                     <td data-label="Date Due">{formatDate(row.date_due)}</td>
                     <td data-label="Office Location">{row.office_location_name}</td>
