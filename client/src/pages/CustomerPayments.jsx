@@ -97,7 +97,8 @@ export default function CustomerPayments() {
   // Only for the Add picker, and only when the button is there to use it.
   useEffect(() => {
     if (!can('/customer-payments', 'can_add')) return;
-    api.get('/customers').then(({ data }) => setCustomers(Array.isArray(data) ? data : (data?.rows || []))).catch(() => {});
+    // The slim list (id, code, name) -- see /customer-payments/meta/customers.
+    api.get('/customer-payments/meta/customers').then(({ data }) => setCustomers(Array.isArray(data) ? data : [])).catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasFilters = Object.values(applied).some(Boolean) || Object.values(form).some(Boolean);

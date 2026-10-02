@@ -253,6 +253,17 @@ router.get('/meta/issuers', requireAuth, requirePermission(ROUTE, 'can_view'), a
   } catch (err) { next(err); }
 });
 
+// The Add Customer Payment button's customer picker. It used to load /customers -- every column of
+// all 35,000 customers, 24 MB over the wire, so the picker sat on "No results" while it arrived --
+// and that route also wants View on the Customers master list, which a cashier need not have. This
+// is the three fields the picker shows, about 2 MB, under this page's own permission.
+router.get('/meta/customers', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query('SELECT id, customer_code, name FROM customers ORDER BY name');
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
 router.get('/for-customer/:customerId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[customer]] = await pool.query(
