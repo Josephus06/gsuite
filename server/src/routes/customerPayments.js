@@ -655,7 +655,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
           deposit_account_id, receipt_type, or_no, payment_type, issued_by_user_id, payment_method_id,
           payment_amount, applied_amount, unapplied_amount, memo, created_by_user_id,
           reference_no, bank_name, cheque_no, cheque_date, si_bs_no)
-       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         dateCreated || new Date().toISOString().slice(0, 10), customerId, departmentId || null,
         locationId, arAccountId || null, depositAccountId || null, receiptType || null,
