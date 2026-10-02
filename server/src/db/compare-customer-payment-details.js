@@ -58,7 +58,9 @@ const status = (v) => txt(v).replace(/\s+/g, '_');
     amount: (s, t) => [money(s.TotalAmount_TransH), money(t.payment_amount)],
     applied: (s, t) => [money(s.AppliedPayments_TransH), money(t.applied_amount)],
     unapplied: (s, t) => [money(s.UnappliedPayments_TransH), money(t.unapplied_amount)],
-    or_no: (s, t) => [txt(s.ORNo_TransH), txt(t.or_no)],
+    // A Collection / Provisional Receipt's number sits in PONo_TransH at the source (ORNo blank);
+    // T1S keeps every receipt number in or_no (lib/paymentHeader.js).
+    or_no: (s, t) => [txt(s.ORNo_TransH || s.PONo_TransH), txt(t.or_no)],
     receipt_type: (s, t) => [receipt(s.OrderConfirmation_TransH), receipt(t.receipt_type)],
     payment_method: (s, t) => [txt(s.PaymentMethod_TransH), txt(t.method)],
     payment_type: (s, t) => [ptype(s.Type_TransH), ptype(t.payment_type)],
