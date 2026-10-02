@@ -18,9 +18,9 @@ const CHEQUE = {
   // Printed PORTRAIT on A4 (the user's rule, 2026-10-01), the cheque at the sheet's top-left plus this
   // offset -- move the whole cheque here if it sits off on the paper; move single fields below.
   sheet: { width: 210, height: 297, left: 0, top: 0 },
-  date: { x: 146, y: 12, digitGap: 4.5, groupGap: 3.4 }, // M M  D D  Y Y Y Y
-  payee: { x: -2, y: 21, w: 120 },
-  amount: { x: 145, y: 19, w: 45 },
+  date: { x: 147, y: 12, digitGap: 4.5, groupGap: 3.4 }, // M M  D D  Y Y Y Y
+  payee: { x: 25, y: 21, w: 120 },
+  amount: { x: 142, y: 21, w: 45 },
   words: { x: 22, y: 30, w: 135 },
 };
 
