@@ -51,6 +51,65 @@ async function departmentLedger({ coa, department, deptPk, from, to }) {
   } finally { clearTimeout(timer); }
 }
 
+// The source's chart of accounts and locations, read once and kept for an hour: the Balance Sheet
+// drill-down needs any account's source key (source_coa_keys holds only the income-statement ones)
+// and the list of locations to ask about.
+let coaCache = null; let locCache = null; let cacheAt = 0;
+async function sourceLookups() {
+  if (coaCache && Date.now() - cacheAt < 60 * 60 * 1000) return { coa: coaCache, locations: locCache };
+  const token = await sourceLogin();
+  const post = async (ep, body) => {
+    const r = await fetch(`${SITE}/api/${ep}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body), signal: AbortSignal.timeout(300000) });
+    const j = await r.json();
+    return Array.isArray(j?.data?.[0]) ? j.data[0] : (Array.isArray(j?.data) ? j.data : []);
+  };
+  const coa = new Map();
+  for (let off = 0; off < 5000; off += 200) {
+    const rows = await post('get_chart_of_accounts', { searchKey: '', limit: 200, offset: off });
+    for (const c of rows) if (c.UserPK_COA) coa.set(String(c.UserPK_COA), { coa_pk: c.SysPK_COA, title: c.Title_COA });
+    if (rows.length < 200) break;
+  }
+  const locations = (await post('get_locations', { searchKey: '', limit: 500, offset: 0 }))
+    .map((l) => ({ pk: l.SysPK_Loc, name: l.Name_Loc }));
+  coaCache = coa; locCache = locations; cacheAt = Date.now();
+  return { coa, locations };
+}
+
+// One account's WHOLE ledger over [from, to], every location. Asked location by location, plus
+// lines carrying none: the source will not scan an account unfiltered (it times out after five
+// minutes), but one location at a time answers in about a second. side: 'DEBIT' | 'CREDIT'.
+// -> [{ date, document, memo, name, debit, credit, amount, location }]
+async function accountLedger({ accountCode, side, from, to }) {
+  const { coa, locations } = await sourceLookups();
+  const key = coa.get(String(accountCode));
+  if (!key) return [];
+  const out = [];
+  await pool4([...locations, { pk: null, name: null }], async (loc) => {
+    const token = await sourceLogin();
+    const body = {
+      coa_pk: key.coa_pk, coa_code: String(accountCode), coa_title: key.title, side,
+      locdept: { type: 'Location', name: loc.name, pk: loc.pk }, dateFilter: [from, to],
+    };
+    const r = await fetch(`${SITE}/api/get_transaction_ledgers`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body), signal: AbortSignal.timeout(120000),
+    });
+    const j = await r.json();
+    if (!j?.success) throw new Error(j?.message || 'the old system returned no ledger');
+    for (const t of (j.data?.[0] || [])) {
+      const dr = Number(t.DRAmount_LdgrEntries) || 0; const cr = Number(t.CRAmount_LdgrEntries) || 0;
+      if (!dr && !cr) continue;
+      out.push({
+        date: t.DateCreated_TransH, document: t.UserPK_TransH, memo: t.Memo_TransH,
+        name: t.Name_Cust || t.Name_Accnt || t.Name_Empl || t.name || null,
+        debit: round2(dr), credit: round2(cr), amount: round2(dr - cr), location: loc.name,
+      });
+    }
+  });
+  return out;
+}
+
 // Runs fn over items, `width` at a time.
 async function pool4(items, fn, width = 4) {
   const queue = [...items];
@@ -59,4 +118,4 @@ async function pool4(items, fn, width = 4) {
   }));
 }
 
-module.exports = { SITE, sourceLogin, departmentLedger, pool4 };
+module.exports = { SITE, sourceLogin, departmentLedger, accountLedger, pool4 };

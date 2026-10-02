@@ -4,6 +4,7 @@ import LoadingSpinner from '../../components/LoadingSpinner';
 import { REPORT_TIMING } from '../../utils/reportTiming';
 import MonthYearPicker from '../../components/MonthYearPicker';
 import CoaTreeRows, { money } from './CoaTreeRows';
+import AccountTransactionsModal from './AccountTransactionsModal';
 
 // The balance sheet is "as of" the last day of the selected month.
 function endOfMonth({ year, month }) {
@@ -24,6 +25,8 @@ export default function BalanceSheet() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [exporting, setExporting] = useState(false);
+  // The account whose amount was clicked -- its transactions open in a popup, as on the source.
+  const [drill, setDrill] = useState(null);
 
   async function generate() {
     if (!monthYear) { setError('Select a month first.'); return; }
@@ -123,7 +126,7 @@ export default function BalanceSheet() {
                           <td colSpan={4} style={{ fontStyle: 'italic', paddingLeft: 12 }}>{sub.sub_type}</td>
                         </tr>
                         {sub.account_ledgers.map((node) => (
-                          <CoaTreeRows key={node.account_code} node={node} normal={typeGroup.normal} />
+                          <CoaTreeRows key={node.account_code} node={node} normal={typeGroup.normal} onDrill={setDrill} />
                         ))}
                       </Fragment>
                     ))}
@@ -134,6 +137,8 @@ export default function BalanceSheet() {
           </div>
         </div>
       )}
+
+      {drill && report && <AccountTransactionsModal account={drill} asOf={report.as_of} onClose={() => setDrill(null)} />}
     </div>
   );
 }

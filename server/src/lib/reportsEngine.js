@@ -1,7 +1,7 @@
 const pool = require('../db');
 const { getPostedGlLines } = require('./glImpact');
-const { splitSourceLinesByDepartment } = require('./openingBalances');
-const { departmentLedger, pool4 } = require('./sourceLedger');
+const { splitSourceLinesByDepartment, booksStart } = require('./openingBalances');
+const { departmentLedger, accountLedger, pool4 } = require('./sourceLedger');
 const { linkFor, linksForNumbers } = require('./docLinks');
 const { displayMonth } = require('./dates');
 
@@ -500,6 +500,89 @@ async function buildGlTransactions({ accountCode, breakdown = 'total', columnKey
   };
 }
 
+// Drill-down behind one Balance Sheet amount: every transaction that makes up the account's
+// balance as of the date -- the account and all its sub-accounts, from the first entry, as the
+// source's own Balance Sheet lists it (10001 Change Fund: JRNL-1 17,000 / JRNL-1059 -2,500 /
+// CHK-5965 2,000 = 16,500).
+//
+// Up to the cut-over T1S holds the source's balances, not its documents (lib/openingBalances.js),
+// so that part is read live from the source's ledger, location by location (lib/sourceLedger.js
+// accountLedger). After it, T1S's own posted lines. The source's documents are checked against
+// T1S's own balance at the cut-over; any gap is shown as one "Difference" line, and if the source
+// cannot be reached the balance stands as one line -- so the list always totals to the report.
+async function buildBalanceSheetTransactions({ accountCode, asOfDate, limit = 1000 }) {
+  const coaRows = await loadCoa();
+  const target = coaRows.find((c) => c.account_code === accountCode);
+  const childrenByParent = new Map();
+  for (const c of coaRows) { if (c.parent_account_id != null) { if (!childrenByParent.has(c.parent_account_id)) childrenByParent.set(c.parent_account_id, []); childrenByParent.get(c.parent_account_id).push(c); } }
+  const accounts = new Map([[accountCode, target]]);
+  if (target) { const q = [target.id]; while (q.length) { for (const ch of childrenByParent.get(q.shift()) || []) { accounts.set(ch.account_code, ch); q.push(ch.id); } } }
+  const codes = new Set(accounts.keys());
+
+  const books = await booksStart();
+  const cutover = books ? books.asOf : null; // last day the source's figures cover
+  const sourceTo = cutover && asOfDate > cutover ? cutover : asOfDate;
+  const rows = [];
+
+  if (cutover) {
+    // T1S's own balance for these accounts at the end of the source period -- what the source's
+    // documents have to add up to.
+    const upTo = await getPostedGlLines({ toDate: sourceTo });
+    const expected = round2(upTo.filter((l) => codes.has(l.account_code)).reduce((s, l) => s + (Number(l.debit) || 0) - (Number(l.credit) || 0), 0));
+    let listed = 0;
+    try {
+      // Leaf accounts only: a summary account's own code carries no postings.
+      for (const [code, acct] of accounts) {
+        if (acct && acct.is_summary) continue;
+        const docs = await accountLedger({ accountCode: code, side: acct?.normal_balance === 'CREDIT' ? 'CREDIT' : 'DEBIT', from: '2000-01-01', to: sourceTo });
+        for (const t of docs) {
+          listed += t.amount;
+          rows.push({ source_no: t.document, source_type: 'source_ledger', entry_date: t.date,
+            name: t.name || t.memo || '', debit: t.debit, credit: t.credit, account_code: code });
+        }
+      }
+      const gap = round2(expected - listed);
+      if (Math.abs(gap) >= 0.01) {
+        rows.push({ source_no: '', source_type: 'difference', entry_date: sourceTo,
+          name: `Difference: the old system's documents vs its balance as of ${sourceTo}`,
+          debit: gap > 0 ? gap : 0, credit: gap < 0 ? -gap : 0 });
+      }
+    } catch (e) {
+      rows.length = 0;
+      rows.push({ source_no: '', source_type: 'opening_balance', entry_date: sourceTo,
+        name: `Balance as of ${sourceTo} from the old system (could not list its documents: ${e.message})`,
+        debit: expected > 0 ? expected : 0, credit: expected < 0 ? -expected : 0 });
+    }
+  }
+
+  // T1S's own transactions: after the cut-over, or everything when there is no source period.
+  if (!cutover || asOfDate > cutover) {
+    const own = await buildGlTransactions({ accountCode, asOfDate, fromDate: cutover ? books.start : '2000-01-01' });
+    rows.push(...own.rows);
+  }
+
+  const byNo = await linksForNumbers(rows.filter((r) => r.source_type === 'source_ledger').map((r) => r.source_no));
+  for (const r of rows) if (r.source_type === 'source_ledger') r.link = byNo.get(String(r.source_no)) || null;
+  rows.sort((a, b) => new Date(a.entry_date) - new Date(b.entry_date) || String(a.source_no).localeCompare(String(b.source_no)));
+  const totalDebit = round2(rows.reduce((s, r) => s + (Number(r.debit) || 0), 0));
+  const totalCredit = round2(rows.reduce((s, r) => s + (Number(r.credit) || 0), 0));
+  // A busy account runs to tens of thousands of lines (Cash on Hand 124k, AP 50k), more than a
+  // browser can list. Keep the latest `limit`; carry everything older as one opening line, so the
+  // list still totals to the report. limit 0 = every line.
+  const totalCount = rows.length;
+  let shown = rows;
+  if (limit > 0 && rows.length > limit) {
+    const older = rows.slice(0, rows.length - limit);
+    const net = round2(older.reduce((s, r) => s + (Number(r.debit) || 0) - (Number(r.credit) || 0), 0));
+    shown = [{ source_no: '', source_type: 'brought_forward', entry_date: older[older.length - 1].entry_date,
+      name: `Balance brought forward: ${older.length.toLocaleString('en-US')} earlier transaction(s)`,
+      debit: net > 0 ? net : 0, credit: net < 0 ? -net : 0 }, ...rows.slice(rows.length - limit)];
+  }
+  return { account_code: accountCode, as_of: asOfDate, rows: shown, total_count: totalCount, shown_count: Math.min(totalCount, limit > 0 ? limit : totalCount),
+    total_debit: round2(shown.reduce((s2, r) => s2 + (Number(r.debit) || 0), 0)), total_credit: round2(shown.reduce((s2, r) => s2 + (Number(r.credit) || 0), 0)),
+    balance: round2(totalDebit - totalCredit) };
+}
+
 // A source month's per-department line -> the documents behind it, read live from the source
 // (lib/sourceLedger). The source's own figure stays the authority: if its ledger does not add up
 // to the line, the difference is shown as one line saying so, and if the source cannot be reached
@@ -546,4 +629,4 @@ async function itemiseSourceLines(lines) {
   return out;
 }
 
-module.exports = { buildTrialBalance, buildBalanceSheet, buildIncomeStatement, buildGeneralLedger, buildGlTransactions };
+module.exports = { buildTrialBalance, buildBalanceSheet, buildIncomeStatement, buildGeneralLedger, buildGlTransactions, buildBalanceSheetTransactions };

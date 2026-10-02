@@ -1,7 +1,7 @@
 const express = require('express');
 const ExcelJS = require('exceljs');
 const { requireAuth, requirePermission } = require('../middleware/auth');
-const { buildTrialBalance, buildBalanceSheet, buildIncomeStatement, buildGeneralLedger, buildGlTransactions } = require('../lib/reportsEngine');
+const { buildTrialBalance, buildBalanceSheet, buildIncomeStatement, buildGeneralLedger, buildGlTransactions, buildBalanceSheetTransactions } = require('../lib/reportsEngine');
 const {
   buildArAging, buildArAgingCustomerDetails, buildArAgingCustomerLedger,
   buildArAgingDetails, buildArAgingDetailsCsv, searchArCustomers,
@@ -92,6 +92,18 @@ router.get('/income-statement', requireAuth, requirePermission('/reports/income-
     const breakdown = VALID_BREAKDOWNS.includes(req.query.breakdown) ? req.query.breakdown : 'total';
     res.json(await buildIncomeStatement(req.query.asOf || today(), req.query.from || null, breakdown));
   } catch (err) {
+    next(err);
+  }
+});
+
+// Drill-down behind a Balance Sheet amount: every transaction making up the account's balance as of
+// the date (lib/reportsEngine.js buildBalanceSheetTransactions).
+router.get('/balance-sheet/transactions', requireAuth, requirePermission('/reports/balance-sheet', 'can_view'), async (req, res, next) => {
+  try {
+    if (!req.query.accountCode) return res.status(400).json({ error: 'accountCode is required.' });
+    res.json(await buildBalanceSheetTransactions({ accountCode: String(req.query.accountCode), asOfDate: req.query.asOf || today(), limit: req.query.all === '1' ? 0 : 1000 }));
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
     next(err);
   }
 });
