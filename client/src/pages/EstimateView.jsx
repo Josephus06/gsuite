@@ -239,8 +239,14 @@ export default function EstimateView() {
   // Approve Sales Estimate flag from the user's Account Type settings (Step 4 of the
   // user wizard) -- without it the Approve button doesn't even show at that stage.
   // Once it's moved to pending_customer_approval, any editor can advance it further.
+  // The supervisor of the estimate's sales rep (GET /:id is_rep_supervisor, from Users >
+  // Supervisors) approves their team's estimates and records the customer's answer on them,
+  // without the account-wide flag or Edit on Estimates -- the server checks the same thing.
+  const isRepSupervisor = !!estimate.is_rep_supervisor;
+  const supervisorCanAct = isRepSupervisor
+    && ['pending_supervisor_approval', 'pending_customer_approval'].includes(estimate.status);
   const canShowApprove = estimate.status === 'pending_supervisor_approval'
-    ? !!user?.can_approve_sales_estimate
+    ? (!!user?.can_approve_sales_estimate || isRepSupervisor)
     : true;
   // Reaching the customer stage takes Edit away from everyone but a System Admin, yet somebody
   // still has to record what the customer said -- and recording an answer advances the estimate
@@ -265,7 +271,7 @@ export default function EstimateView() {
   const isRep = !!user?.employee_id && estimate.sales_rep_id != null && Number(estimate.sales_rep_id) === Number(user.employee_id);
   const mayActAsOwner = isCreator || isRep || user?.is_head_office === false;
   const canRecordCustomerAnswer = estimate.status === 'pending_customer_approval'
-    && mayActAsOwner && can('/estimates', 'can_update');
+    && ((mayActAsOwner && can('/estimates', 'can_update')) || isRepSupervisor);
   // The real system only shows Print once an estimate has cleared supervisor
   // approval -- printing a still-pending quotation isn't meaningful yet.
   const canShowPrint = estimate.status === 'pending_customer_approval' || estimate.status === 'approved';
@@ -283,11 +289,11 @@ export default function EstimateView() {
           <button className="btn btn-sm" onClick={() => navigate('/estimates')}>Back</button>
           {canEditContent && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/estimates/${id}/edit`)}>Edit</button>}
           {canShowPrint && <button className="btn btn-sm btn-primary" onClick={() => window.open(`/estimates/${id}/print`, '_blank')}>Print</button>}
-          {(canEdit || canRecordCustomerAnswer) && isPending && canShowApprove && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>{approveLabel}</button>}
+          {(canEdit || canRecordCustomerAnswer || supervisorCanAct) && isPending && canShowApprove && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>{approveLabel}</button>}
           {/* The customer saying no is as much their answer as saying yes, so it opens to the same
               people -- at the customer stage only. canRecordCustomerAnswer is false at the
               supervisor stage, where this still asks for canEdit exactly as before. */}
-          {(canEdit || canRecordCustomerAnswer) && isPending && <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setStatus('disapproved')}>Disapprove</button>}
+          {(canEdit || canRecordCustomerAnswer || supervisorCanAct) && isPending && <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setStatus('disapproved')}>Disapprove</button>}
           {/* Only while the estimate is actually waiting on the customer -- sending one that is
               already approved or cancelled would confuse the person receiving it. */}
           {(canEdit || canRecordCustomerAnswer) && estimate.status === 'pending_customer_approval' && (

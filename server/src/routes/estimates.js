@@ -438,7 +438,9 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // (recording the customer's answer) without also handing them the Edit form.
     const createdByUserId = await getCreatorUserId(pool, req.params.id);
 
-    res.json({ ...estimate, created_by_user_id: createdByUserId, shippingAddresses, jobOrders });
+    // Whether the viewer supervises this estimate's rep, for the page's Approve / customer buttons.
+    const isRepSup = await isRepSupervisor(req.user.id, estimate.id);
+    res.json({ ...estimate, created_by_user_id: createdByUserId, is_rep_supervisor: isRepSup, shippingAddresses, jobOrders });
   } catch (err) {
     next(err);
   }
@@ -656,7 +658,20 @@ router.get('/:id/approval-lines', requireAuth, requirePermission(ROUTE, 'can_vie
 // line, so for them the creator is unknown -- and a Head Office rep (Arjie, EST-109619) lost the
 // customer-answer buttons on every estimate of his that came over, while keeping them on the ones
 // he had raised in T1S. The sales rep named on the estimate is who it belongs to either way.
+// A supervisor of the estimate's sales rep -- the same Users > Supervisors list that decides which
+// transactions a supervisor sees (lib/salesVisibility.js). A sales supervisor approves their team's
+// estimates and records the customer's answer on them, as the rep would (asked for 2026-10-02).
+async function isRepSupervisor(userId, estimateId) {
+  const [[row]] = await pool.query(
+    `SELECT 1 AS yes FROM estimates e
+       JOIN users ru ON ru.employee_id = e.sales_rep_id
+       JOIN user_supervisors us ON us.user_id = ru.id AND us.supervisor_id = ?
+      WHERE e.id = ? LIMIT 1`, [userId, estimateId]);
+  return !!row;
+}
+
 async function mayActAsOwner(userId, estimateId) {
+  if (await isRepSupervisor(userId, estimateId)) return true;
   const creatorId = await getCreatorUserId(pool, estimateId);
   if (creatorId != null && Number(creatorId) === Number(userId)) return true;
   const [[rep]] = await pool.query(
@@ -700,6 +715,12 @@ async function requireStatusChange(req, res, next) {
   try {
     if (await isOutOfScope(req.user.id, req.params.id)) return res.status(404).json({ error: 'Not found' });
     if (await userCan(req.user.id, ROUTE, 'can_edit')) return next();
+    // Their rep's supervisor: approve / disapprove out of the supervisor stage, and record the
+    // customer's answer -- without needing Edit on Estimates for it.
+    if (['pending_customer_approval', ...CUSTOMER_ANSWERS].includes(req.body.status) && await isRepSupervisor(req.user.id, req.params.id)) {
+      const [[cur]] = await pool.query('SELECT status FROM estimates WHERE id = ?', [req.params.id]);
+      if (['pending_supervisor_approval', 'pending_customer_approval'].includes(cur?.status)) return next();
+    }
     if (CUSTOMER_ANSWERS.includes(req.body.status) && await userCan(req.user.id, ROUTE, 'can_update')) {
       const [[row]] = await pool.query('SELECT status FROM estimates WHERE id = ?', [req.params.id]);
       if (row?.status === 'pending_customer_approval' && await mayActAsOwner(req.user.id, req.params.id)) {
@@ -780,7 +801,8 @@ router.put('/:id/status', requireAuth, requireStatusChange, async (req, res, nex
     // after the token was issued.
     if (oldRow.status === 'pending_supervisor_approval' && req.body.status === 'pending_customer_approval') {
       const [[approver]] = await conn.query('SELECT can_approve_sales_estimate FROM users WHERE id = ?', [req.user.id]);
-      if (!approver?.can_approve_sales_estimate) {
+      // ...or the supervisor of this estimate's sales rep, who approves their own team's work.
+      if (!approver?.can_approve_sales_estimate && !(await isRepSupervisor(req.user.id, req.params.id))) {
         await conn.rollback();
         return res.status(403).json({ error: 'You are not allowed to approve estimates' });
       }
