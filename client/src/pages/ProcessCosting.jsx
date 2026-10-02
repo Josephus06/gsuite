@@ -16,7 +16,7 @@ const EMPTY_BRACKET = {
   costing_allowance_pct: 0, markup_cogs_pct: 0, opex_admin_pct: 0, markup_opex_admin_pct: 0,
   opex_selling_pct: 0, markup_opex_selling_pct: 0,
   disc_ceiling_pct: 0, disc_supervisor_pct: 0, disc_manager_pct: 0, disc_gm_pct: 0,
-  selling_price_override: '', costing_reference: '', is_active: true,
+  costing_reference: '', is_active: true,
 };
 
 const BRACKET_FIELDS = Object.keys(EMPTY_BRACKET);
@@ -59,7 +59,8 @@ const COLUMNS = [
   { calc: 'markupSubCon', label: 'Mark-Up Sub Con' },
   { calc: 'totalSubCon', label: 'Total Sub Con', strong: true },
   { calc: 'priceUnrounded', label: 'Total Price', strong: true },
-  { key: 'selling_price_override', label: 'Selling Price', placeholderCalc: 'pricePerUnit' },
+  // A formula, not an input: Total Price rounded up to the peso (shared/costing.js).
+  { calc: 'pricePerUnit', label: 'Selling Price', strong: true },
   { key: 'costing_reference', label: 'Costing Reference', text: true },
   { key: 'disc_ceiling_pct', label: 'DC Account Officer %' },
   { calc: 'discCeiling', label: 'DC Account Officer' },

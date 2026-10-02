@@ -12,8 +12,10 @@ const FIELDS = [
   'costing_allowance_pct', 'markup_cogs_pct', 'opex_admin_pct', 'markup_opex_admin_pct',
   'opex_selling_pct', 'markup_opex_selling_pct',
   'disc_ceiling_pct', 'disc_supervisor_pct', 'disc_manager_pct', 'disc_gm_pct',
-  'selling_price_override', 'costing_reference', 'is_active',
+  'costing_reference', 'is_active',
 ];
+// selling_price_override is no longer written: Selling Price is always Total Price rounded up
+// (shared/costing.js, 2026-10-02). The column stays only for the old values' history.
 
 // ---------------------------------------------------------------- System Info
 //

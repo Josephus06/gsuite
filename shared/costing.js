@@ -66,9 +66,10 @@ export function selectBracket(brackets, qty) {
 
 // Per-unit process cost/price for a given bracket -- the costing team's workbook
 // (costing.xlsx, 2026-09-30), cell for cell. Letters are its columns:
-//   N  SubTotal              = Click Charge + INK + DL + the five MOH   (SUM(F:L, D) --
-//                              Other Charges (M) and New INK Cost (E) are NOT in it, by the
-//                              costing team's decision)
+//   N  SubTotal              = Click Charge + INK + DL + the five MOH + Other Charges. Other
+//                              Charges were left out at first (the workbook's SUM(F:L, D)), but
+//                              the source counts them and on 2026-10-02 the user chose to match
+//                              the source (BR-ASSY: 7.875, not 2.625). New INK Cost is not in it.
 //   P  Costing Allowance     = N x O%          Q  SubTotal (COGS) = N + P
 //   S  Mark-Up (COGS)        = Q x R%          T  Total (COGS)    = Q + S
 //   V  OPEX(Admin)           = Q x U%          X  Mark-Up OPEX(Admin)   = V x W%
@@ -77,9 +78,11 @@ export function selectBracket(brackets, qty) {
 //   AC Total OPEX            = V + X + Z + AB
 //   AD Sub Con               AF Mark-Up Sub Con = AD x AE%     AG Total Sub Con = AD + AF
 //   AH Total Price           = T + AC + AG
-//   AI Selling Price         = the bracket's stored price (selling_price_override -- every
-//                              imported bracket carries the old system's) else AH rounded UP to
-//                              the peso, as the old system did (5.47 -> 6.00)
+//   AI Selling Price         = AH rounded UP to the peso (5.47 -> 6.00), ALWAYS. Since 2026-10-02
+//                              there is no stored per-bracket price any more: the imported
+//                              brackets each carried the old system's price, which had drifted
+//                              from its own Total Price (120.2 -> 118), and the user asked that
+//                              every Selling Price be the Total Price rounded up.
 //   AL/AN/AP/AR  the discount ceilings as amounts = AI x each level's %
 // costPerUnit = T (COGS before OPEX). costBasis = SubTotal + Sub Con -- the true production
 // cost with no markup or OPEX layered in, used for GP-rate reporting.
@@ -88,7 +91,7 @@ export function computeProcessCosting(bracket) {
   const pct = (v, p) => v * num(p) / 100;
   const subtotalMoh = num(bracket.click_charge) + num(bracket.ink_cost) + num(bracket.direct_labor)
     + num(bracket.moh_power_equipment) + num(bracket.moh_depreciation) + num(bracket.moh_repairs_maintenance)
-    + num(bracket.moh_indirect_materials) + num(bracket.moh_indirect_labor);
+    + num(bracket.moh_indirect_materials) + num(bracket.moh_indirect_labor) + num(bracket.other_charges);
   const subCon = num(bracket.sub_con);
   const costBasis = subtotalMoh + subCon;
   const costingAllowance = pct(subtotalMoh, bracket.costing_allowance_pct);
@@ -103,9 +106,8 @@ export function computeProcessCosting(bracket) {
   const markupSubCon = pct(subCon, bracket.markup_sub_con_pct);
   const totalSubCon = subCon + markupSubCon;
   const priceUnrounded = costPerUnit + totalOpex + totalSubCon; // Total Price
-  const pricePerUnit = bracket.selling_price_override != null && bracket.selling_price_override !== ''
-    ? num(bracket.selling_price_override)
-    : Math.ceil(Number(priceUnrounded.toFixed(6)));
+  // toFixed(6) first so float noise (99.0000000001) does not round a whole peso up by one.
+  const pricePerUnit = Math.ceil(Number(priceUnrounded.toFixed(6)));
   return {
     subtotalMoh, subCon, costBasis, costingAllowance, subtotalAllowance, markupCogs, costPerUnit,
     opexAdmin, markupOpexAdmin, opexSelling, markupOpexSelling, totalOpex, markupSubCon, totalSubCon,

@@ -17,7 +17,8 @@
 //   CostingAllowancePrcnt_CstngL     costing_allowance_pct MarkUpCOGSPrcnt_CstngL markup_cogs_pct
 //   OPEXAdminPrcnt / OPEXSellingPrcnt opex_admin_pct / opex_selling_pct
 //   CostingRef_CstngL                costing_reference     DiscCeilingPer/DCSS/DCSM/DCGM  disc_*_pct
-//   SellingPrice_CstngL              selling_price_override (the source's price, kept as a record)
+//   SellingPrice_CstngL              NOT copied -- Selling Price is always Total Price rounded up;
+//                                    it is only compared, to report where ours and the source's differ
 //
 // A source bracket T1S lacks is added; a T1S bracket the source lacks is reported, not touched.
 // Each changed field is written to the process's System Info ("1-269 · DL (from source)"), and a
@@ -50,7 +51,7 @@ const MAP = {
   markup_opex_admin_pct: 'MarkUpOPEXAdminPrcnt_CstngL', markup_opex_selling_pct: 'MarkUpOPEXSellingPrcnt_CstngL',
   disc_ceiling_pct: 'DiscCeilingPer_CstngL', disc_supervisor_pct: 'DCSSPercent_CstngL',
   disc_manager_pct: 'DCSMPercent_CstngL', disc_gm_pct: 'DCGMPercent_CstngL',
-  selling_price_override: 'SellingPrice_CstngL',
+  // Selling Price is not copied: it is always Total Price rounded up (shared/costing.js).
 };
 const LABELS = {
   click_charge: 'Click Charge', ink_cost: 'INK', direct_labor: 'DL', moh_power_equipment: 'MOH (P/E)',
@@ -134,6 +135,20 @@ async function main() {
   }));
 
   for (const u of updates) for (const c of u.changes) out.byField[c] = (out.byField[c] || 0) + 1;
+  // How DL moves: source / ours. ~1.0 = rounding only; ~0.926 = the source lacks the +8% T1S has.
+  const dl = updates.filter((u) => u.changes.includes('direct_labor') && num(u.cur.direct_labor));
+  if (dl.length) {
+    const buckets = {};
+    for (const u of dl) {
+      const r = num(u.want.direct_labor) / num(u.cur.direct_labor);
+      const k = Math.abs(r - 1) < 0.001 ? 'same (rounding)' : Math.abs(r - 1 / 1.08) < 0.002 ? 'source = ours / 1.08 (no +8% there)' : Math.abs(r - 1.08) < 0.002 ? 'source = ours x 1.08' : 'other';
+      buckets[k] = (buckets[k] || 0) + 1;
+    }
+    console.log(`DL changes by kind: ${JSON.stringify(buckets)}`);
+    for (const u of dl.filter((x) => Math.abs(num(x.want.direct_labor) / num(x.cur.direct_labor) - 1) >= 0.001).slice(0, 6)) {
+      console.log(`   process ${u.cur.process_id} ${bracketName(u.cur)}: T1S ${display(u.cur.direct_labor)} -> source ${display(u.want.direct_labor)}`);
+    }
+  }
   console.log(`brackets to update: ${updates.length} (${updates.reduce((s, u) => s + u.changes.length, 0)} field changes); to add: ${inserts.length}; in T1S only: ${out.onlyInT1S}`);
   console.log(`changes by field: ${JSON.stringify(out.byField)}`);
   console.log(`no T1S process for: ${out.noProcess.length}${out.noProcess.length ? ` e.g. ${out.noProcess.slice(0, 5).join(', ')}` : ''}; failed: ${out.failed.length}`);
