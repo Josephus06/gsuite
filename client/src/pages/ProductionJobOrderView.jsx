@@ -15,6 +15,7 @@ import SalesRevisionModal from '../components/SalesRevisionModal';
 import RevisionNotice from '../components/RevisionNotice';
 import { maySalesRevise, awaitingDateDecision } from '../utils/salesRevision';
 import { displayDateTime } from '../utils/dates';
+import ButtonMenu from '../components/ButtonMenu';
 
 // Mirrors the real system's "Production > Production" detail screen -- same underlying
 // Job Order as JobOrderView.jsx, but reached once the JO is Released and viewed for
@@ -627,7 +628,17 @@ export default function ProductionJobOrderView() {
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/production')}>Back to Lists</button>
           {canEdit && !advanceCopy && jo.status !== 'Cancelled' && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/job-orders/${id}/edit`, { state: { from: 'production' } })}>Edit</button>}
-          <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
+          {/* The same two prints as the Job Order screen; the server still decides whether the
+              Job Order print is allowed (an assigned artist), the PAR needs only can_print. */}
+          {can('/job-orders', 'can_print') && (
+            <ButtonMenu
+              label="Print"
+              options={[
+                { label: 'Job Order', hint: 'Production copy', onClick: () => window.open(`/job-orders/${id}/print`, '_blank') },
+                { label: 'PAR', hint: 'Project Accomplishment Report', onClick: () => window.open(`/job-orders/${id}/par`, '_blank') },
+              ]}
+            />
+          )}
           {canSendForRevision && (
             <button className="btn btn-sm btn-warning" disabled={busy}
               title="Send this Job Order back to Sales to be corrected. It returns here for acknowledgement."
