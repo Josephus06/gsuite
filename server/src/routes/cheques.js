@@ -50,11 +50,44 @@ const PAYEE_ACCOUNT_NAME_SQL = `CASE
     WHEN c.payee_type IN ('EMPLOYEE', 'employee') THEN (SELECT CONCAT(e.first_name, ' ', e.last_name) FROM employees e WHERE e.id = c.payee_id)
   END`;
 
+// Payee codes as stored: the form writes VENDOR / CUSTOMER / EMPLOYEE, migrated rows carried the
+// lower-case names. One canonical code per kind for the list's Payee filter.
+const PAYEE_KIND_SQL = `CASE
+    WHEN c.payee_type IN ('VENDOR', 'supplier') THEN 'VENDOR'
+    WHEN c.payee_type IN ('EMPLOYEE', 'employee') THEN 'EMPLOYEE'
+    WHEN c.payee_type IN ('CUSTOMER', 'customer') THEN 'CUSTOMER'
+  END`;
+const PAYEE_KIND_ALIASES = { VENDOR: ['VENDOR', 'supplier'], EMPLOYEE: ['EMPLOYEE', 'employee'], CUSTOMER: ['CUSTOMER', 'customer'] };
+
+// The list's Payee filter: every supplier / employee / customer that has at least one cheque --
+// inactive ones included (a former employee's cheques still need finding), each with its count.
+router.get('/payees', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT ${PAYEE_KIND_SQL} AS payee_type, c.payee_id, MAX(${PAYEE_ACCOUNT_NAME_SQL}) AS name, COUNT(*) AS cheques
+         FROM cheques c
+        WHERE c.payee_id IS NOT NULL AND ${PAYEE_KIND_SQL} IS NOT NULL
+        GROUP BY payee_type, c.payee_id
+        ORDER BY name`);
+    res.json(rows.filter((r) => r.name));
+  } catch (err) { next(err); }
+});
+
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const { search, status, as_of: asOf, date_from: dateFrom } = req.query;
     const where = [];
     const params = [];
+    // Payee: one supplier / employee / customer (payee_type VENDOR|EMPLOYEE|CUSTOMER + payee_id).
+    const kind = PAYEE_KIND_ALIASES[String(req.query.payee_type || '').toUpperCase()];
+    if (kind && Number(req.query.payee_id)) {
+      where.push('c.payee_type IN (?) AND c.payee_id = ?'); params.push(kind, Number(req.query.payee_id));
+    } else if (kind) {
+      where.push('c.payee_type IN (?)'); params.push(kind);
+    }
+    // Released = the cheque has gone out (Date Released set); not released = still in hand.
+    if (req.query.released === 'released') where.push('c.date_released IS NOT NULL');
+    if (req.query.released === 'not_released') where.push('c.date_released IS NULL');
     if (status) { where.push('c.status = ?'); params.push(status); }
     // Period From / As of Date: inclusive bounds on Date Created.
     if (dateFrom) { where.push('c.date_created >= ?'); params.push(String(dateFrom).slice(0, 10)); }
@@ -62,7 +95,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     if (search) { where.push('(c.cheque_no LIKE ? OR c.payee_name LIKE ? OR c.cheque_number LIKE ? OR c.memo LIKE ?)'); params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(
-      `SELECT c.id, c.cheque_no, c.date_created, c.cheque_date, c.cheque_number, c.payee_name, c.total_amount, c.status, c.memo,
+      `SELECT c.id, c.cheque_no, c.date_created, c.cheque_date, c.cheque_number, c.payee_name, c.total_amount, c.status, c.memo, c.date_released,
               coa.account_name, ${PAYEE_ACCOUNT_NAME_SQL} AS payee_account_name
        FROM cheques c LEFT JOIN chart_of_accounts coa ON coa.id = c.account_id
        ${whereSql} ORDER BY c.id DESC`,
