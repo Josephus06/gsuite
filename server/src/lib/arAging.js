@@ -448,6 +448,11 @@ async function buildArAgingDetailsCsv(asOf, filters = {}) {
   return { csv: out.join('\n'), customers: groups.length, items: items.length };
 }
 
+// The Details report's customer groups, whole (no paging) -- for its Excel extract.
+async function buildArAgingDetailsGroups(asOf, filters = {}) {
+  return groupItemsByCustomer(await collectOpenItems(asOf, filters), asOf);
+}
+
 // Typeahead for the Details report's Customer filter. Capped, and limited to customers that
 // have AR history at all -- /customers returns all 21,562 rows and a receivables filter has no
 // use for a customer who has never been billed.
@@ -644,5 +649,5 @@ async function buildArAgingCustomerDetails(customerId, asOf) {
 
 module.exports = {
   buildArAging, buildArAgingCustomerDetails, buildArAgingCustomerLedger, collectOpenItems,
-  buildArAgingDetails, buildArAgingDetailsCsv, searchArCustomers,
+  buildArAgingDetails, buildArAgingDetailsCsv, buildArAgingDetailsGroups, searchArCustomers,
 };

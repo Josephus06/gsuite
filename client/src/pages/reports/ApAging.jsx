@@ -5,6 +5,7 @@ import LoadingSpinner from '../../components/LoadingSpinner';
 import Modal from '../../components/Modal';
 import { money } from './CoaTreeRows';
 import { displayDate } from '../../utils/dates';
+import { downloadFile } from '../../utils/downloadFile';
 
 // Accounting > Reports > AP Aging -- the payables mirror of AR Aging, vendor by vendor, in the
 // same five buckets and the same layout so the two read as a pair. DETAILS opens the bills,
@@ -45,6 +46,21 @@ export default function ApAging() {
     if (nameStarts) params.nameStarts = nameStarts;
     if (includeUnevidenced) params.includeUnevidenced = true;
     return params;
+  }
+
+  // Extract: the summary, or AP Aging Details -- every open bill behind it, by vendor -- as Excel,
+  // under the filters on screen.
+  const [extracting, setExtracting] = useState('');
+  async function extract(kind) {
+    setExtracting(kind);
+    try {
+      if (kind === 'details') await downloadFile('/reports/ap-aging/details', queryParams(), `ap-aging-details-${asOf}.xlsx`);
+      else await downloadFile('/reports/ap-aging', { ...queryParams(), format: 'xlsx' }, `ap-aging-${asOf}.xlsx`);
+    } catch {
+      setError('Could not extract the report.');
+    } finally {
+      setExtracting('');
+    }
   }
 
   async function generate() {
@@ -123,6 +139,12 @@ export default function ApAging() {
         </div>
         <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={generate} disabled={loading}>
           {loading ? 'Generating...' : 'Generate'}
+        </button>
+        <button className="btn" style={{ marginTop: 12, marginLeft: 8 }} onClick={() => extract('summary')} disabled={!!extracting}>
+          {extracting === 'summary' ? 'Extracting...' : 'Extract'}
+        </button>
+        <button className="btn" style={{ marginTop: 12, marginLeft: 8 }} onClick={() => extract('details')} disabled={!!extracting}>
+          {extracting === 'details' ? 'Extracting...' : 'Extract Details'}
         </button>
       </div>
 

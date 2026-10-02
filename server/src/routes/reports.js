@@ -5,8 +5,12 @@ const { buildTrialBalance, buildBalanceSheet, buildIncomeStatement, buildGeneral
 const {
   buildArAging, buildArAgingCustomerDetails, buildArAgingCustomerLedger,
   buildArAgingDetails, buildArAgingDetailsCsv, searchArCustomers,
+  buildArAgingDetailsGroups,
 } = require('../lib/arAging');
-const { buildApAging, buildApAgingSupplierDetails } = require('../lib/apAging');
+const { buildApAging, buildApAgingSupplierDetails, collectOpenApItems } = require('../lib/apAging');
+const {
+  arAgingWorkbook, apAgingWorkbook, arAgingDetailsWorkbook, apAgingDetailsWorkbook, sendWorkbook,
+} = require('../lib/agingWorkbook');
 const { parkedReport } = require('../lib/parkedBankItems');
 const { buildCommissionReport, buildCommissionJoDetail, getTeamEmployeeIds, getSbuDivisionIds } = require('../lib/commissionReport');
 const {
@@ -209,7 +213,10 @@ router.get('/ar-aging', requireAuth, requirePermission(AR_AGING_ROUTE, 'can_view
       noLocation: req.query.noLocation === 'true' || req.query.noLocation === '1',
       nameStarts: req.query.nameStarts || null,
     };
-    res.json(await buildArAging(req.query.asOf || today(), filters));
+    const data = await buildArAging(req.query.asOf || today(), filters);
+    // ?format=xlsx -- the Extract button: the same rows and totals as a workbook.
+    if (req.query.format === 'xlsx') return sendWorkbook(res, arAgingWorkbook(data), `ar-aging-${data.as_of}.xlsx`);
+    res.json(data);
   } catch (err) {
     next(err);
   }
@@ -253,9 +260,25 @@ function apAgingFilters(query) {
 
 router.get('/ap-aging', requireAuth, requirePermission(AP_AGING_ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    res.json(await buildApAging(req.query.asOf || today(), apAgingFilters(req.query)));
+    const data = await buildApAging(req.query.asOf || today(), apAgingFilters(req.query));
+    if (req.query.format === 'xlsx') return sendWorkbook(res, apAgingWorkbook(data), `ap-aging-${data.as_of}.xlsx`);
+    res.json(data);
   } catch (err) {
     next(err);
+  }
+});
+
+// AP Aging Details extract: every open payables item behind AP Aging under the same filters,
+// grouped by vendor -- the vendors' Details drill-downs in one workbook.
+router.get('/ap-aging/details', requireAuth, requirePermission(AP_AGING_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const asOf = String(req.query.asOf || today()).slice(0, 10);
+    const { items } = await collectOpenApItems(asOf, apAgingFilters(req.query));
+    const asOfMs = Date.parse(`${asOf}T00:00:00Z`);
+    const daysOverdue = (i) => Math.max(Math.floor((asOfMs - Date.parse(`${String(i.aging_date || i.due_date || i.date).slice(0, 10)}T00:00:00Z`)) / 86400000), 0) || 0;
+    return sendWorkbook(res, apAgingDetailsWorkbook(items, asOf, daysOverdue), `ap-aging-details-${asOf}.xlsx`);
+  } catch (err) {
+    return next(err);
   }
 });
 
@@ -293,6 +316,9 @@ router.get('/ar-aging-details', requireAuth, requirePermission(AR_AGING_DETAILS_
   try {
     const asOf = req.query.asOf || today();
     const filters = arAgingDetailsFilters(req.query);
+    if (req.query.format === 'xlsx') {
+      return sendWorkbook(res, arAgingDetailsWorkbook(await buildArAgingDetailsGroups(asOf, filters), asOf), `ar-aging-details-${asOf}.xlsx`);
+    }
     if (req.query.format === 'csv') {
       const { csv } = await buildArAgingDetailsCsv(asOf, filters);
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');

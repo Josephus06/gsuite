@@ -8,6 +8,7 @@ import { money } from './CoaTreeRows';
 import { displayDate } from '../../utils/dates';
 
 function today() { return new Date().toISOString().slice(0, 10); }
+import { downloadFile } from '../../utils/downloadFile';
 function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 // Mirrors the real system's Accounting > Reports > AR Aging: a Location / Name Starts /
@@ -31,15 +32,32 @@ export default function ArAging() {
     api.get('/lookups/locations').then(({ data }) => setLocations(data)).catch(() => {});
   }, []);
 
+  function queryParams() {
+    const params = { asOf };
+    if (noLocation) params.noLocation = true;
+    else if (locationId) params.locationId = locationId;
+    if (nameStarts) params.nameStarts = nameStarts;
+    return params;
+  }
+
+  // Extract: the same report, as an Excel workbook, under the filters on screen.
+  const [extracting, setExtracting] = useState(false);
+  async function extract() {
+    setExtracting(true);
+    try {
+      await downloadFile('/reports/ar-aging', { ...queryParams(), format: 'xlsx' }, `ar-aging-${asOf}.xlsx`);
+    } catch {
+      setError('Could not extract the report.');
+    } finally {
+      setExtracting(false);
+    }
+  }
+
   async function generate() {
     setLoading(true);
     setError('');
     try {
-      const params = { asOf };
-      if (noLocation) params.noLocation = true;
-      else if (locationId) params.locationId = locationId;
-      if (nameStarts) params.nameStarts = nameStarts;
-      const { data } = await api.get('/reports/ar-aging', { params });
+      const { data } = await api.get('/reports/ar-aging', { params: queryParams() });
       setReport(data);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to generate report');
@@ -91,6 +109,9 @@ export default function ArAging() {
         </div>
         <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={generate} disabled={loading}>
           {loading ? 'Generating...' : 'Generate'}
+        </button>
+        <button className="btn" style={{ marginTop: 12, marginLeft: 8 }} onClick={extract} disabled={extracting}>
+          {extracting ? 'Extracting...' : 'Extract'}
         </button>
       </div>
 

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import { REPORT_TIMING } from '../../utils/reportTiming';
+import { downloadFile } from '../../utils/downloadFile';
 
 // Accounting > Reports > AR Aging Details -- the documents behind AR Aging, grouped by customer:
 // every invoice still carrying a balance, every credit memo not yet used up, every payment with
@@ -123,6 +124,20 @@ export default function ArAgingDetails() {
     }
   }
 
+  // Extract: every customer's documents (not just this page of them) as an Excel workbook.
+  const [extracting, setExtracting] = useState(false);
+  async function extract() {
+    setExtracting(true);
+    try {
+      const f = applied || filters;
+      await downloadFile('/reports/ar-aging-details', paramsOf(f, { format: 'xlsx' }), `ar-aging-details-${f.asOf}.xlsx`);
+    } catch {
+      setError('Could not extract the report.');
+    } finally {
+      setExtracting(false);
+    }
+  }
+
   const activeLocation = locations.find((l) => String(l.id) === String((applied || filters).locationId));
   const rows = report?.rows || [];
 
@@ -135,7 +150,10 @@ export default function ArAgingDetails() {
           </span>
           <span>AR Aging Details</span>
         </h1>
-        <button className="btn btn-sm" disabled={!report || loading} onClick={download}>Download CSV</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-sm btn-primary" disabled={extracting} onClick={extract}>{extracting ? 'Extracting...' : 'Extract'}</button>
+          <button className="btn btn-sm" disabled={!report || loading} onClick={download}>Download CSV</button>
+        </div>
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
