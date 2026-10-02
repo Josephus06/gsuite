@@ -98,7 +98,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       `SELECT c.id, c.cheque_no, c.date_created, c.cheque_date, c.cheque_number, c.payee_name, c.total_amount, c.status, c.memo, c.date_released,
               coa.account_name, ${PAYEE_ACCOUNT_NAME_SQL} AS payee_account_name
        FROM cheques c LEFT JOIN chart_of_accounts coa ON coa.id = c.account_id
-       ${whereSql} ORDER BY c.id DESC`,
+       ${whereSql} ORDER BY c.date_created DESC, c.id DESC`, // newest Date first (asked 2026-10-02); id breaks ties
       params
     );
     res.json(rows);
