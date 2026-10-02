@@ -203,9 +203,10 @@ export default function SalesInvoiceView() {
       <div className="estimate-footer card" style={{ marginTop: 20 }}>
         <div><span className="muted">Net of Tax</span><div className="hi-lg">{money(si.net_of_tax)}</div></div>
         <div><span className="muted">Discount</span><div className="hi-lg">{money(si.discount_amount)}</div></div>
-        <div><span className="muted">EWT</span><div className="hi-lg">{money(si.ewt_amount)}</div></div>
+        {/* In the order the amounts build up: Gross = Net + Tax, Amount Due = Gross - EWT (as printed). */}
         <div><span className="muted">Tax</span><div className="hi-lg">{money(si.tax_amount)}</div></div>
         <div><span className="muted">Gross</span><div className="hi-lg">{money(si.gross_amount)}</div></div>
+        <div><span className="muted">EWT</span><div className="hi-lg">{money(si.ewt_amount)}</div></div>
         <div><span className="muted">Amount Due</span><div className="hi-lg">{money(si.amount_due)}</div></div>
       </div>
 
