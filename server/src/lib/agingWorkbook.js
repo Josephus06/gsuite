@@ -59,36 +59,43 @@ function apAgingWorkbook(data) {
   return summaryWorkbook({ title: 'AP Aging', partyHeader: 'Vendor Name', partyKey: 'supplier_name', data });
 }
 
-// AR Aging Details: the documents behind AR Aging, grouped by customer with a total under each --
-// the same columns and order as the page's Download CSV.
-function arAgingDetailsWorkbook(groups, asOf) {
+// AR Aging Details, laid out as the source's own extract (asked 2026-10-02): the customer's name on
+// a row of its own, its documents under it with the Customer column left blank, "Total - <name>"
+// beneath them, and one "Total" at the end. Sales Rep sits between Open Balance and Location, and
+// dates read as the source writes them (10/4/2022) -- still text, for the reason at the top.
+const mdy = (v) => { const d = day(v); return d ? `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}/${d.slice(0, 4)}` : ''; };
+function arAgingDetailsWorkbook(groups) {
   const wb = new ExcelJS.Workbook();
   const ws = sheet(wb, 'AR Aging Details', [
-    { header: 'Customer', key: 'customer', width: 40 },
-    { header: 'Trans Date', key: 'trans_date', width: 12 },
-    { header: 'Trans #', key: 'trans_no', width: 16 },
-    { header: 'BS #', key: 'bs_no', width: 14 },
-    { header: 'Memo', key: 'memo', width: 40 },
-    { header: 'PO #', key: 'po_no', width: 16 },
-    { header: 'Date Due', key: 'date_due', width: 12 },
-    { header: 'Age', key: 'age', width: 8 },
-    { header: 'Open Balance', key: 'open_balance', width: 16 },
-    { header: 'Location', key: 'location', width: 20 },
+    { header: 'Customer', key: 'customer', width: 34 },
+    { header: 'Trans. Date', key: 'trans_date', width: 11 },
+    { header: 'Trans. #', key: 'trans_no', width: 12 },
+    { header: 'BS #', key: 'bs_no', width: 9 },
+    { header: 'Memo', key: 'memo', width: 36 },
+    { header: 'PO #', key: 'po_no', width: 22 },
+    { header: 'Date Due', key: 'date_due', width: 11 },
+    { header: 'Age', key: 'age', width: 7 },
+    { header: 'Open Balance', key: 'open_balance', width: 15 },
+    { header: 'Sales Rep', key: 'sales_rep', width: 26 },
+    { header: 'Location', key: 'location', width: 16 },
   ]);
+  ws.getRow(1).alignment = { horizontal: 'center' };
+  ['customer', 'memo'].forEach((k) => { ws.getColumn(k).alignment = { wrapText: true, vertical: 'top' }; });
   let grand = 0;
   for (const g of groups) {
+    ws.addRow({ customer: g.customer_name });
     for (const it of g.items) {
       ws.addRow({
-        customer: g.customer_name, trans_date: day(it.trans_date), trans_no: it.trans_no || '', bs_no: it.bs_no || '',
-        memo: it.memo || '', po_no: it.po_no || '', date_due: day(it.date_due), age: num(it.age),
-        open_balance: num(it.open_balance), location: it.location_name || '',
+        trans_date: mdy(it.trans_date), trans_no: it.trans_no || '', bs_no: it.bs_no || '',
+        memo: it.memo || '', po_no: it.po_no || '', date_due: mdy(it.date_due), age: num(it.age),
+        open_balance: num(it.open_balance), sales_rep: it.sales_rep || '', location: it.location_name || '',
       });
     }
-    ws.addRow({ customer: `${g.customer_name} -- total`, open_balance: num(g.total_balance) }).font = { bold: true };
+    ws.addRow({ customer: `Total - ${g.customer_name}`, open_balance: Math.round(num(g.total_balance) * 100) / 100 });
     grand += num(g.total_balance);
   }
-  ws.addRow({ customer: `GRAND TOTAL (as of ${day(asOf)})`, open_balance: Math.round(grand * 100) / 100 }).font = { bold: true };
-  finish(ws, ['open_balance'], 'J');
+  ws.addRow({ customer: 'Total', open_balance: Math.round(grand * 100) / 100 });
+  finish(ws, ['open_balance'], 'K');
   return wb;
 }
 

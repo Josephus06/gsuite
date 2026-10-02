@@ -135,13 +135,14 @@ async function collectOpenItemsFromDocs(asOf, filters = {}) {
   const [invoices] = await pool.query(
     `SELECT si.id, c.id AS customer_id, c.name AS customer_name, si.date_created, si.date_due, si.gross_amount,
             si.status, si.amount_due, si.invoice_no, si.bs_si_no, si.po_no, si.memo,
-            loc.location_name
+            loc.location_name, CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep
      FROM sales_invoices si
      LEFT JOIN sales_orders so ON so.id = si.sales_order_id
      LEFT JOIN estimates e ON e.id = si.estimate_id
      LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
      JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
      LEFT JOIN locations loc ON loc.id = si.office_location_id
+     LEFT JOIN employees sr ON sr.id = si.sales_rep_id
      WHERE si.status != 'cancelled' AND si.date_created <= ?${invLoc.sql}${nameClause}${custClause}`,
     [asOf, ...invLoc.params, ...nameParam, ...custParam]
   );
@@ -235,7 +236,7 @@ async function collectOpenItemsFromDocs(asOf, filters = {}) {
       date: inv.date_created, due_date: inv.date_due, aging_date: inv.date_due || inv.date_created,
       original_amount: round2(inv.gross_amount), balance: round2(remaining),
       bs_no: inv.bs_si_no || null, po_no: inv.po_no || null, memo: inv.memo || null,
-      location_name: inv.location_name || null,
+      location_name: inv.location_name || null, sales_rep: inv.sales_rep || null,
       // The invoice header insists it is settled and nothing in the data agrees. Carried on the
       // item so the customer row can show how much of its balance rests on that disagreement.
       marked_paid_unevidenced: isMarkedPaid(inv) && settled < 0.005,
@@ -361,6 +362,7 @@ function groupItemsByCustomer(items, asOf) {
       age: daysBetween(item.aging_date, asOf),
       open_balance: item.balance,
       location_name: item.location_name,
+      sales_rep: item.sales_rep || null,
       marked_paid_unevidenced: item.marked_paid_unevidenced,
     });
     group.total_balance += item.balance;
@@ -623,7 +625,9 @@ async function collectOpenItems(asOf, filters = {}) {
   const invIds = opening.filter((o) => o.type === 'Invoice' && o.id).map((o) => o.id);
   const invById = new Map();
   if (invIds.length) {
-    const [inv] = await pool.query('SELECT id, bs_si_no, po_no, memo FROM sales_invoices WHERE id IN (?)', [invIds]);
+    const [inv] = await pool.query(
+      `SELECT si.id, si.bs_si_no, si.po_no, si.memo, CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep
+         FROM sales_invoices si LEFT JOIN employees sr ON sr.id = si.sales_rep_id WHERE si.id IN (?)`, [invIds]);
     inv.forEach((r) => invById.set(r.id, r));
   }
   return [
@@ -631,8 +635,12 @@ async function collectOpenItems(asOf, filters = {}) {
       customer_id: o.party_id, customer_name: o.party_name, type: o.type, reference: o.reference, id: o.id,
       date: o.date, due_date: o.due_date, aging_date: o.due_date || o.date,
       original_amount: o.original_amount, balance: o.balance,
-      bs_no: invById.get(o.id)?.bs_si_no || null, po_no: invById.get(o.id)?.po_no || null,
-      memo: invById.get(o.id)?.memo || 'Opening balance from the source system', location_name: o.location_name || null,
+      // The source's own details for the document (as its AR Aging Details shows them), else the
+      // linked T1S invoice's. The placeholder only where neither has ever been loaded.
+      bs_no: o.bs_no || invById.get(o.id)?.bs_si_no || null, po_no: o.po_no || invById.get(o.id)?.po_no || null,
+      memo: o.memo || invById.get(o.id)?.memo || (o.src_location === undefined ? 'Opening balance from the source system' : null),
+      location_name: o.location_name || o.src_location || null,
+      sales_rep: o.sales_rep || invById.get(o.id)?.sales_rep || null,
       marked_paid_unevidenced: false, opening: true,
     })),
     ...items.filter((i) => String(i.date).slice(0, 10) >= books.start),

@@ -232,6 +232,10 @@ async function openingItems(side, asOf, books, { partyId, nameStarts, locationId
       due_date: r.due_date ? String(r.due_date).slice(0, 10) : null,
       original_amount: round2(r.original_amount), balance,
       location_name: r.location_name || null,
+      // The source document's own details, where add-opening-ar-item-details.js has loaded them
+      // (undefined before that column exists, which the AR report reads as "not loaded").
+      memo: r.memo ?? null, po_no: r.po_no ?? null, bs_no: r.bs_no ?? null,
+      src_location: r.src_location, sales_rep: r.sales_rep ?? null,
       opening: true,
     });
   }
