@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { PO_TERM_SELECT, PO_TERM_JOINS, termDays } = require('../lib/poTerm');
 const mailer = require('../lib/mailer');
 const { buildPurchaseOrderPdf, purchaseOrderPdfFilename } = require('../lib/purchaseOrderPdf');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
@@ -152,11 +153,11 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
   try {
     const [[po]] = await pool.query(
       `SELECT po.*, s.name AS supplier_name, s.supplier_code, u.display_name AS created_by_name,
-              pt.term_name, parent.po_no AS parent_po_no
+              ${PO_TERM_SELECT}, parent.po_no AS parent_po_no
        FROM purchase_orders po
        LEFT JOIN suppliers s ON s.id = po.supplier_id
        LEFT JOIN users u ON u.id = po.created_by_user_id
-       LEFT JOIN payment_terms pt ON pt.id = po.term_id
+       ${PO_TERM_JOINS}
        LEFT JOIN purchase_orders parent ON parent.id = po.parent_purchase_order_id
        WHERE po.id = ?`,
       [req.params.id]

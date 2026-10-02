@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { PO_TERM_SELECT, PO_TERM_JOINS, termDays } = require('../lib/poTerm');
 const { insertNumbered } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
@@ -84,14 +85,17 @@ async function recomputePoBillStatus(conn, poId) {
 router.get('/for-purchase-order/:poId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[po]] = await pool.query(
-      `SELECT po.id, po.po_no, po.memo, pt.term_name, pt.no_of_days, s.name AS supplier_name
+      `SELECT po.id, po.po_no, po.memo, s.name AS supplier_name, ${PO_TERM_SELECT}
        FROM purchase_orders po
        LEFT JOIN suppliers s ON s.id = po.supplier_id
-       LEFT JOIN payment_terms pt ON pt.id = po.term_id
+       ${PO_TERM_JOINS}
        WHERE po.id = ?`,
       [req.params.poId]
     );
     if (!po) return res.status(404).json({ error: 'Not found' });
+    // The PO's term, else its supplier's (lib/poTerm.js) -- the bill's Term and Date Due follow it.
+    po.no_of_days = termDays(po);
+    delete po.term_days_known;
 
     const [lines] = await pool.query(
       `SELECT pol.id AS purchase_order_line_id, pol.item_id, i.item_code, i.display_name AS item_name,
