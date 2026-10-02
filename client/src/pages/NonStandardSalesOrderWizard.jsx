@@ -71,13 +71,16 @@ export default function NonStandardSalesOrderWizard() {
     })().catch((e) => { setError(e.response?.data?.error || 'Failed to load.'); setLoading(false); });
   }, [id]);
 
-  // Load nestable Sales Orders when the type calls for them.
-  useEffect(() => {
-    if (nestsToSalesOrder(header.type)) {
-      api.get('/non-standard-sales-orders/nestable-sales-orders', { params: { type: header.type } })
-        .then(({ data }) => setNestableSos(data)).catch(() => setNestableSos([]));
-    }
-  }, [header.type]);
+  // Load nestable Sales Orders when the type calls for them. The server returns at most 300, newest
+  // first, so the picker searches the server as you type (SO-72404 was older than the newest 300
+  // and could not be found). include_id keeps the chosen SO in the list so its number still shows.
+  function loadNestableSos(search) {
+    if (!nestsToSalesOrder(header.type)) return;
+    api.get('/non-standard-sales-orders/nestable-sales-orders', {
+      params: { type: header.type, search: search || undefined, include_id: header.nested_sales_order_id || undefined },
+    }).then(({ data }) => setNestableSos(data)).catch(() => setNestableSos([]));
+  }
+  useEffect(() => { loadNestableSos(''); }, [header.type]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // On entering step 2 for an SO-nested type, load the nested SO's job orders.
   useEffect(() => {
@@ -343,7 +346,7 @@ export default function NonStandardSalesOrderWizard() {
                     <label>Sales Order #</label>
                     <EntityPicker label="Sales Order" items={nestableSos} value={header.nested_sales_order_id} getLabel={(s) => s.sales_order_no}
                       columns={[{ key: 'sales_order_no', label: 'SO #' }, { key: 'customer_name', label: 'Customer' }, { key: 'status', label: 'Status' }]}
-                      searchKeys={['sales_order_no', 'customer_name']} placeholder="--Select--" onSelect={onSalesOrderSelect} />
+                      searchKeys={['sales_order_no', 'customer_name']} placeholder="--Select--" onSelect={onSalesOrderSelect} onSearch={loadNestableSos} />
                   </div>
                 )}
                 {isSample && (

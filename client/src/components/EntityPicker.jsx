@@ -8,6 +8,9 @@ const PAGE_SIZE = 10;
 // field is genuinely allowed to be empty. Wiring it into every picker would invite someone to
 // blank a required reference and only find out at save time.
 //
+// onSearch is optional: for a list too big to load whole, the caller is told what was typed
+// (debounced) and replaces `items` with the server's matches. The local filter still runs over them.
+//
 // tabs is optional too: [{ key, label, items, columns, searchKeys }] for a picker choosing across
 // several kinds of record at once (Employees / Vendor / Customer). Each tab brings its own list and
 // columns; the top-level items/columns/searchKeys are then unused. Ids must be unique across the
@@ -15,7 +18,7 @@ const PAGE_SIZE = 10;
 export default function EntityPicker({
   label, items: plainItems, value, getLabel, columns: plainColumns, searchKeys: plainSearchKeys, onSelect,
   placeholder, required, disabled, triggerLabel, triggerClassName, isSelectable, headerExtra, onClear,
-  onVisibleItems, tabs,
+  onVisibleItems, tabs, onSearch,
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -61,6 +64,13 @@ export default function EntityPicker({
     if (open && onVisibleItems) onVisibleItems(pageItems);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleKey, open]);
+
+  useEffect(() => {
+    if (!open || !onSearch) return undefined;
+    const t = setTimeout(() => onSearch(search.trim()), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, open]);
 
   function openPicker() {
     if (disabled) return;

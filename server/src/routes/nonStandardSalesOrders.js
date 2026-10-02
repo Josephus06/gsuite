@@ -114,13 +114,16 @@ router.get('/nestable-sales-orders', requireAuth, requirePermission(ROUTE, 'can_
     }
     if (search) { where.push('(so.sales_order_no LIKE ? OR c.name LIKE ?)'); params.push(search, search); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const [rows] = await pool.query(
-      `SELECT so.id, so.sales_order_no, so.date_created, so.status, so.total_amount,
+    const cols = `SELECT so.id, so.sales_order_no, so.date_created, so.status, so.total_amount,
               c.name AS customer_name, so.customer_id
-       FROM sales_orders so LEFT JOIN customers c ON c.id = so.customer_id
-       ${whereSql} ORDER BY so.id DESC LIMIT 300`,
-      params
-    );
+       FROM sales_orders so LEFT JOIN customers c ON c.id = so.customer_id`;
+    const [rows] = await pool.query(`${cols} ${whereSql} ORDER BY so.id DESC LIMIT 300`, params);
+    // The SO an NSSO already nests to stays in the list whatever the search, so the picker can name it.
+    const includeId = Number(req.query.include_id) || null;
+    if (includeId && !rows.some((r) => r.id === includeId)) {
+      const [[cur]] = await pool.query(`${cols} WHERE so.id = ?`, [includeId]);
+      if (cur) rows.push(cur);
+    }
     res.json(rows);
   } catch (err) { next(err); }
 });
