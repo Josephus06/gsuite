@@ -371,6 +371,7 @@ function App() {
         <Route path="/credit-memos" element={<CreditMemos />} />
         <Route path="/credit-memos/new" element={<CreditMemoForm />} />
         <Route path="/credit-memos/:id" element={<CreditMemoView />} />
+        <Route path="/credit-memos/:id/edit" element={<CreditMemoForm />} />
         <Route path="/customer-refunds" element={<CustomerRefunds />} />
         <Route path="/customer-refunds/new" element={<CustomerRefundEdit />} />
         <Route path="/customer-refunds/:id" element={<CustomerRefundView />} />

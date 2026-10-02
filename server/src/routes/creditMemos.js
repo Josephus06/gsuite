@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeCreditMemoGl } = require('../lib/glImpact');
 const ExcelJS = require('exceljs');
@@ -40,6 +40,84 @@ function computeLineAmounts({ quantity, pricePerUnit, discPercent, taxRate }) {
     subtotal, disc_amount: discAmount, disc_per_unit: discPerUnit, disc_price_per_unit: discPricePerUnit,
     net_of_tax: netOfTax, tax_amount: taxAmount, gross_amount: grossAmount,
   };
+}
+
+// The submitted ITEMS lines priced the way both Create and Edit store them.
+async function prepareLines(conn, lines) {
+  const submitted = (Array.isArray(lines) ? lines : []).filter((l) => Number(l.quantity) > 0);
+  const taxCodes = [...new Set(submitted.map((l) => l.tax_code).filter(Boolean))];
+  const taxByCode = new Map();
+  if (taxCodes.length) {
+    const [rows] = await conn.query('SELECT code, rate FROM taxes WHERE code IN (?)', [taxCodes]);
+    rows.forEach((r) => taxByCode.set(r.code, Number(r.rate)));
+  }
+  const prepared = submitted.map((l, idx) => {
+    const quantity = Number(l.quantity);
+    const pricePerUnit = Number(l.price_per_unit || 0);
+    const discPercent = Number(l.disc_percent || 0);
+    return {
+      line_no: idx + 1,
+      sales_invoice_line_id: l.sales_invoice_line_id || null,
+      job_order_id: l.job_order_id || null,
+      item_id: l.item_id || null,
+      item_name: l.item_name || null,
+      description: l.description || null,
+      department_id: l.department_id || null,
+      quantity,
+      units: l.units || null,
+      price_per_unit: pricePerUnit,
+      disc_percent: discPercent,
+      tax_code: l.tax_code || null,
+      ...computeLineAmounts({ quantity, pricePerUnit, discPercent, taxRate: taxByCode.get(l.tax_code) || 0 }),
+    };
+  });
+  const sum = (key) => Number(prepared.reduce((acc, l) => acc + Number(l[key] || 0), 0).toFixed(2));
+  return {
+    prepared,
+    totals: { subtotal: sum('subtotal'), discountAmount: sum('disc_amount'), netOfTax: sum('net_of_tax'), taxAmount: sum('tax_amount'), grossAmount: sum('gross_amount') },
+  };
+}
+
+async function insertLines(conn, memoId, prepared) {
+  for (const l of prepared) {
+    await conn.query(
+      `INSERT INTO credit_memo_lines
+         (credit_memo_id, line_no, sales_invoice_line_id, job_order_id, item_id, item_name, description,
+          department_id, quantity, units, price_per_unit, subtotal, disc_percent, disc_per_unit, disc_amount,
+          disc_price_per_unit, net_of_tax, tax_code, tax_amount, gross_amount)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        memoId, l.line_no, l.sales_invoice_line_id, l.job_order_id, l.item_id, l.item_name, l.description,
+        l.department_id, l.quantity, l.units, l.price_per_unit, l.subtotal, l.disc_percent, l.disc_per_unit,
+        l.disc_amount, l.disc_price_per_unit, l.net_of_tax, l.tax_code, l.tax_amount, l.gross_amount,
+      ]
+    );
+  }
+}
+
+// Every invoice a memo is applied to must be that customer's.
+async function assertInvoicesBelongTo(conn, applyLines, customerId) {
+  for (const l of applyLines) {
+    const [[a]] = await conn.query(
+      `SELECT COALESCE(so.customer_id, e.customer_id, ns.customer_id, s2.customer_id) AS customer_id
+         FROM sales_invoices s2 LEFT JOIN sales_orders so ON so.id = s2.sales_order_id
+         LEFT JOIN estimates e ON e.id = s2.estimate_id LEFT JOIN non_standard_sales_orders ns ON ns.id = s2.nsso_id
+        WHERE s2.id = ?`, [l.sales_invoice_id]);
+    if (!a || Number(a.customer_id) !== Number(customerId)) {
+      throw Object.assign(new Error('One of the invoices to apply to belongs to a different customer.'), { status: 400 });
+    }
+  }
+}
+
+// Undo one application: the money goes back on the invoice (same as Void).
+async function unapplyFromInvoice(conn, invoiceId, amount) {
+  const [[si]] = await conn.query('SELECT amount_due FROM sales_invoices WHERE id = ?', [invoiceId]);
+  if (!si) return;
+  const newDue = Number((Number(si.amount_due) + Number(amount)).toFixed(2));
+  await conn.query(
+    "UPDATE sales_invoices SET amount_due = ?, status = IF(status = 'paid_in_full' AND ? > 0.005, 'saved', status) WHERE id = ?",
+    [newDue, newDue, invoiceId]
+  );
 }
 
 async function applyToInvoice(conn, invoiceId, amount) {
@@ -117,8 +195,22 @@ router.get('/for-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can
 // The standalone "Create Credit Memo" page (client/src/pages/CreditMemoForm.jsx): no source invoice,
 // just a customer -- the old system's credit_memo_crud screen. Gives the customer's open invoices
 // for APPLY, the default A/R account, and the rep the memo will be filed under.
-router.get('/for-customer/:customerId', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
+router.get('/for-customer/:customerId', requireAuth, async (req, res, next) => {
   try {
+    if (!(await userCan(req.user.id, ROUTE, 'can_add')) && !(await userCan(req.user.id, ROUTE, 'can_edit'))) {
+      return res.status(403).json({ error: 'You do not have permission to perform this action' });
+    }
+    // Editing a memo (?credit_memo_id=): the invoices it already settles are listed too, with what
+    // it applied added back to Amount Due -- that is what is available to it once the edit replaces
+    // its applications. Without this an invoice the memo paid off in full would vanish from APPLY.
+    const editingId = Number(req.query.credit_memo_id) || null;
+    const mine = new Map();
+    if (editingId) {
+      const [apps] = await pool.query(
+        'SELECT sales_invoice_id, SUM(applied_amount) AS amt FROM credit_memo_applications WHERE credit_memo_id = ? AND sales_invoice_id IS NOT NULL GROUP BY sales_invoice_id',
+        [editingId]);
+      apps.forEach((a) => mine.set(a.sales_invoice_id, Number(a.amt)));
+    }
     const [[c]] = await pool.query('SELECT id, name, default_sales_rep_id FROM customers WHERE id = ?', [req.params.customerId]);
     if (!c) return res.status(404).json({ error: 'Customer not found.' });
     const [[arAcct]] = await pool.query("SELECT id, account_code, account_name FROM chart_of_accounts WHERE account_code = '12100'");
@@ -129,8 +221,9 @@ router.get('/for-customer/:customerId', requireAuth, requirePermission(ROUTE, 'c
          LEFT JOIN estimates e ON e.id = si.estimate_id
          LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
         WHERE COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) = ?
-          AND si.status <> 'cancelled' AND si.amount_due > 0.005
-        ORDER BY si.date_created DESC, si.id DESC`, [c.id]);
+          AND si.status <> 'cancelled' AND (si.amount_due > 0.005 OR si.id IN (?))
+        ORDER BY si.date_created DESC, si.id DESC`, [c.id, mine.size ? [...mine.keys()] : [0]]);
+    applyLines.forEach((l) => { l.amount_due = Number((Number(l.amount_due) + (mine.get(l.sales_invoice_id) || 0)).toFixed(2)); });
     res.json({
       customer_id: c.id, customer_name: c.name,
       ar_account_id: arAcct?.id || null, ar_account_code: arAcct?.account_code || null, ar_account_name: arAcct?.account_name || null,
@@ -347,43 +440,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       si = { id: null, customer_id: cust.id, sales_rep_id: cust.default_sales_rep_id || null };
     }
 
-    const submitted = (Array.isArray(lines) ? lines : []).filter((l) => Number(l.quantity) > 0);
-    if (!submitted.length) return res.status(400).json({ error: 'Add at least one item to credit.' });
-
-    const taxCodes = [...new Set(submitted.map((l) => l.tax_code).filter(Boolean))];
-    const taxByCode = new Map();
-    if (taxCodes.length) {
-      const [rows] = await conn.query('SELECT code, rate FROM taxes WHERE code IN (?)', [taxCodes]);
-      rows.forEach((r) => taxByCode.set(r.code, Number(r.rate)));
-    }
-
-    const prepared = submitted.map((l, idx) => {
-      const quantity = Number(l.quantity);
-      const pricePerUnit = Number(l.price_per_unit || 0);
-      const discPercent = Number(l.disc_percent || 0);
-      return {
-        line_no: idx + 1,
-        sales_invoice_line_id: l.sales_invoice_line_id || null,
-        job_order_id: l.job_order_id || null,
-        item_id: l.item_id || null,
-        item_name: l.item_name || null,
-        description: l.description || null,
-        department_id: l.department_id || null,
-        quantity,
-        units: l.units || null,
-        price_per_unit: pricePerUnit,
-        disc_percent: discPercent,
-        tax_code: l.tax_code || null,
-        ...computeLineAmounts({ quantity, pricePerUnit, discPercent, taxRate: taxByCode.get(l.tax_code) || 0 }),
-      };
-    });
-
-    const sum = (key) => Number(prepared.reduce((s, l) => s + Number(l[key] || 0), 0).toFixed(2));
-    const subtotal = sum('subtotal');
-    const discountAmount = sum('disc_amount');
-    const netOfTax = sum('net_of_tax');
-    const taxAmount = sum('tax_amount');
-    const grossAmount = sum('gross_amount');
+    const { prepared, totals: { subtotal, discountAmount, netOfTax, taxAmount, grossAmount } } = await prepareLines(conn, lines);
+    if (!prepared.length) return res.status(400).json({ error: 'Add at least one item to credit.' });
 
     // The memo can only offset as much as it's actually worth. The real system lets you
     // apply the source invoice's full total regardless of what ITEMS adds up to and saves
@@ -398,17 +456,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     }
     await assertPeriodOpen(dateCreated, 'ar', conn);
 
-    // Every applied invoice must be this customer's.
-    for (const l of submittedApply) {
-      const [[a]] = await conn.query(
-        `SELECT COALESCE(so.customer_id, e.customer_id, ns.customer_id, s2.customer_id) AS customer_id
-           FROM sales_invoices s2 LEFT JOIN sales_orders so ON so.id = s2.sales_order_id
-           LEFT JOIN estimates e ON e.id = s2.estimate_id LEFT JOIN non_standard_sales_orders ns ON ns.id = s2.nsso_id
-          WHERE s2.id = ?`, [l.sales_invoice_id]);
-      if (!a || Number(a.customer_id) !== Number(si.customer_id)) {
-        return res.status(400).json({ error: 'One of the invoices to apply to belongs to a different customer.' });
-      }
-    }
+    await assertInvoicesBelongTo(conn, submittedApply, si.customer_id);
 
     await conn.beginTransaction();
     const [result] = await conn.query(
@@ -425,20 +473,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const memoId = result.insertId;
     const memoNo = await assignDocNo(conn, { table: 'credit_memos', column: 'credit_memo_no', prefix: 'CM-', id: memoId });
 
-    for (const l of prepared) {
-      await conn.query(
-        `INSERT INTO credit_memo_lines
-           (credit_memo_id, line_no, sales_invoice_line_id, job_order_id, item_id, item_name, description,
-            department_id, quantity, units, price_per_unit, subtotal, disc_percent, disc_per_unit, disc_amount,
-            disc_price_per_unit, net_of_tax, tax_code, tax_amount, gross_amount)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          memoId, l.line_no, l.sales_invoice_line_id, l.job_order_id, l.item_id, l.item_name, l.description,
-          l.department_id, l.quantity, l.units, l.price_per_unit, l.subtotal, l.disc_percent, l.disc_per_unit,
-          l.disc_amount, l.disc_price_per_unit, l.net_of_tax, l.tax_code, l.tax_amount, l.gross_amount,
-        ]
-      );
-    }
+    await insertLines(conn, memoId, prepared);
 
     for (const l of submittedApply) {
       await applyToInvoice(conn, l.sales_invoice_id, Number(l.applied_amount));
@@ -453,6 +488,94 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
     const [[row]] = await pool.query('SELECT * FROM credit_memos WHERE id = ?', [memoId]);
     res.status(201).json(row);
+  } catch (err) {
+    await conn.rollback();
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// Edit a saved Credit Memo: header (date, office location, memo), its ITEMS and its APPLY lines.
+// The customer and source invoice stay as created. Its old invoice applications are reversed and the
+// new ones applied in one transaction, so every invoice's Amount Due ends where the edited memo
+// leaves it. Whatever Customer Payments have drawn on the memo stays drawn, and the new total must
+// still cover it. The GL is derived from the memo as it stands, so there is nothing to re-post.
+router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[cm]] = await conn.query('SELECT * FROM credit_memos WHERE id = ?', [req.params.id]);
+    if (!cm) return res.status(404).json({ error: 'Not found' });
+    if (cm.status === 'voided') return res.status(409).json({ error: 'A voided Credit Memo cannot be edited.' });
+
+    const { date_created: dateCreated, office_location_id: officeLocationId, memo, lines, apply_lines: applyLines } = req.body;
+    await assertPeriodOpen(cm.date_created, 'ar', conn);
+    if (dateCreated) await assertPeriodOpen(dateCreated, 'ar', conn);
+
+    const { prepared, totals } = await prepareLines(conn, lines);
+    if (!prepared.length) return res.status(400).json({ error: 'Add at least one item to credit.' });
+
+    const submittedApply = (Array.isArray(applyLines) ? applyLines : []).filter((l) => l.sales_invoice_id && Number(l.applied_amount) > 0);
+    const appliedToInvoices = Number(submittedApply.reduce((acc, l) => acc + Number(l.applied_amount), 0).toFixed(2));
+    // Drawn on by Customer Payments, and applications to invoices this database does not hold:
+    // neither is touched by an edit, but both still use up the memo.
+    const [[drawn]] = await conn.query(
+      `SELECT COALESCE(SUM(cpl.applied_amount), 0) AS amt FROM customer_payment_lines cpl
+         JOIN customer_payments cp ON cp.id = cpl.customer_payment_id
+        WHERE cpl.credit_memo_id = ? AND cp.status != 'voided'`, [cm.id]);
+    const [[orphan]] = await conn.query(
+      'SELECT COALESCE(SUM(applied_amount), 0) AS amt FROM credit_memo_applications WHERE credit_memo_id = ? AND sales_invoice_id IS NULL', [cm.id]);
+    const keptApplied = Number((Number(drawn.amt) + Number(orphan.amt)).toFixed(2));
+    const appliedTotal = Number((appliedToInvoices + keptApplied).toFixed(2));
+    if (appliedTotal > totals.grossAmount + 1e-9) {
+      return res.status(409).json({
+        error: keptApplied > 0
+          ? `Applied Amount (${appliedTotal}, of which ${keptApplied} is drawn by Customer Payments) exceeds this Credit Memo's new total (${totals.grossAmount}).`
+          : `Applied Amount (${appliedTotal}) exceeds this Credit Memo's own total (${totals.grossAmount}).`,
+      });
+    }
+    await assertInvoicesBelongTo(conn, submittedApply, cm.customer_id);
+
+    const [oldApps] = await conn.query(
+      'SELECT sales_invoice_id, applied_amount FROM credit_memo_applications WHERE credit_memo_id = ? AND sales_invoice_id IS NOT NULL', [cm.id]);
+
+    await conn.beginTransaction();
+    // Undo first, so the new applications are checked against each invoice as if this memo had
+    // never touched it.
+    for (const a of oldApps) await unapplyFromInvoice(conn, a.sales_invoice_id, a.applied_amount);
+    await conn.query('DELETE FROM credit_memo_applications WHERE credit_memo_id = ? AND sales_invoice_id IS NOT NULL', [cm.id]);
+    await conn.query('DELETE FROM credit_memo_lines WHERE credit_memo_id = ?', [cm.id]);
+    await insertLines(conn, cm.id, prepared);
+    for (const l of submittedApply) {
+      await applyToInvoice(conn, l.sales_invoice_id, Number(l.applied_amount));
+      await conn.query(
+        'INSERT INTO credit_memo_applications (credit_memo_id, sales_invoice_id, applied_amount) VALUES (?, ?, ?)',
+        [cm.id, l.sales_invoice_id, l.applied_amount]
+      );
+    }
+    await conn.query(
+      `UPDATE credit_memos SET date_created = ?, office_location_id = ?, memo = ?,
+         subtotal = ?, discount_amount = ?, net_of_tax = ?, tax_amount = ?, gross_amount = ?, applied_amount = ?
+       WHERE id = ?`,
+      [dateCreated || cm.date_created, officeLocationId === undefined ? cm.office_location_id : (officeLocationId || null), memo ?? null,
+        totals.subtotal, totals.discountAmount, totals.netOfTax, totals.taxAmount, totals.grossAmount, appliedTotal, cm.id]
+    );
+    const day = (v) => (v ? String(v instanceof Date ? v.toISOString() : v).slice(0, 10) : null);
+    const changes = [
+      ['date_created', day(cm.date_created), day(dateCreated || cm.date_created)],
+      ['memo', cm.memo || null, memo || null],
+      ['gross_amount', Number(cm.gross_amount), totals.grossAmount],
+      ['applied_amount', Number(cm.applied_amount), appliedTotal],
+    ].filter(([, a, b]) => String(a ?? '') !== String(b ?? ''));
+    if (!changes.length) changes.push(['lines', null, 'edited']);
+    for (const [field, oldValue, newValue] of changes) {
+      await logAudit(conn, { memoId: cm.id, userId: req.user.id, eventType: 'Updated', fieldName: field, oldValue, newValue });
+    }
+    await conn.commit();
+
+    const [[row]] = await pool.query('SELECT * FROM credit_memos WHERE id = ?', [cm.id]);
+    res.json(row);
   } catch (err) {
     await conn.rollback();
     if (err.status) return res.status(err.status).json({ error: err.message });
@@ -492,13 +615,7 @@ router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async
 
     await conn.beginTransaction();
     for (const a of applications) {
-      const [[si]] = await conn.query('SELECT amount_due FROM sales_invoices WHERE id = ?', [a.sales_invoice_id]);
-      if (!si) continue;
-      const newDue = Number((Number(si.amount_due) + Number(a.applied_amount)).toFixed(2));
-      await conn.query(
-        "UPDATE sales_invoices SET amount_due = ?, status = IF(status = 'paid_in_full' AND ? > 0.005, 'saved', status) WHERE id = ?",
-        [newDue, newDue, a.sales_invoice_id]
-      );
+      if (a.sales_invoice_id) await unapplyFromInvoice(conn, a.sales_invoice_id, a.applied_amount);
     }
     await conn.query("UPDATE credit_memos SET status = 'voided', voided_by_user_id = ?, voided_at = NOW() WHERE id = ?", [req.user.id, req.params.id]);
     await logAudit(conn, { memoId: req.params.id, userId: req.user.id, eventType: 'Cancelled', fieldName: 'status', oldValue: 'open', newValue: 'voided' });

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -10,6 +10,10 @@ import { displayDate } from '../utils/dates';
 // Applied / Unapplied), the totals panel, and two tabs: ITEMS (Add Item opens the Materials list)
 // and APPLY (the customer's open invoices). The same server route as the invoice's Credit Memo
 // button saves it; the line arithmetic mirrors computeLineAmounts there.
+//
+// /credit-memos/:id/edit opens the same form on a saved memo (PUT /credit-memos/:id). The customer
+// stays as created. APPLY lists the invoices it already settles, with that amount counted back into
+// Amount Due; whatever Customer Payments have drawn on it is shown in Applied and cannot be undone here.
 const money = (v) => Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const today = () => new Date().toLocaleDateString('en-CA');
 
@@ -27,6 +31,12 @@ function lineAmounts(l) {
 
 export default function CreditMemoForm() {
   const navigate = useNavigate();
+  const { id: editId } = useParams();
+  const isEdit = !!editId;
+  const [memoNo, setMemoNo] = useState('');
+  // Drawn by Customer Payments (or applied to invoices this database lacks): kept as it is by an edit.
+  const [keptApplied, setKeptApplied] = useState(0);
+  const [loadedApply, setLoadedApply] = useState(null);
   const [lookups, setLookups] = useState(null);
   const [customer, setCustomer] = useState(null);
   const [source, setSource] = useState(null); // for-customer: open invoices, A/R account
@@ -51,14 +61,43 @@ export default function CreditMemoForm() {
         customers: Array.isArray(c.data) ? c.data : (c.data?.rows || []), locations, departments: d.data,
         items: Array.isArray(i.data) ? i.data : (i.data?.rows || []), taxes: t.data,
       });
-      setLocation(locations.find((x) => /head office/i.test(x.location_name)) || null);
+      if (!editId) setLocation(locations.find((x) => /head office/i.test(x.location_name)) || null);
+      if (editId) {
+        return api.get(`/credit-memos/${editId}`).then(({ data: cm }) => {
+          if (cm.status === 'voided') { setError('A voided Credit Memo cannot be edited.'); return; }
+          const taxes = t.data;
+          setMemoNo(cm.credit_memo_no);
+          setDateCreated(String(cm.date_created).slice(0, 10));
+          setMemo(cm.memo || '');
+          setLocation(locations.find((x) => x.id === cm.office_location_id) || null);
+          setRows((cm.lines || []).map((l, idx) => ({
+            key: `e${l.id || idx}`, item_id: l.item_id, item_name: l.item_name, item_code: '',
+            description: l.description || '', department_id: l.department_id || null,
+            quantity: Number(l.quantity), units: l.units || '', price_per_unit: Number(l.price_per_unit),
+            disc_percent: Number(l.disc_percent || 0), tax_code: l.tax_code || null,
+            tax_rate: Number(taxes.find((x) => x.code === l.tax_code)?.rate) || 0,
+            job_order_id: l.job_order_id || null, job_order_no: l.job_order_no || null, sales_invoice_line_id: l.sales_invoice_line_id || null,
+          })));
+          const apps = {};
+          let toInvoices = 0;
+          (cm.applications || []).filter((a) => a.sales_invoice_id).forEach((a) => {
+            apps[a.sales_invoice_id] = String((Number(apps[a.sales_invoice_id] || 0) + Number(a.applied_amount)).toFixed(2));
+            toInvoices += Number(a.applied_amount);
+          });
+          setLoadedApply(apps);
+          setKeptApplied(Math.max(Number((Number(cm.applied_amount || 0) - toInvoices).toFixed(2)), 0));
+          setCustomer({ id: cm.customer_id, name: cm.customer_name });
+        });
+      }
+      return null;
     }).catch((e) => setError(e.response?.data?.error || 'Could not load the form.'));
-  }, []);
+  }, [editId]);
 
   useEffect(() => {
     if (!customer) { setSource(null); return; }
-    setApplyAmounts({});
-    api.get(`/credit-memos/for-customer/${customer.id}`).then((r) => setSource(r.data))
+    // Editing: start from what the memo already applies, not from nothing.
+    setApplyAmounts(isEdit && loadedApply ? loadedApply : {});
+    api.get(`/credit-memos/for-customer/${customer.id}`, { params: isEdit ? { credit_memo_id: editId } : {} }).then((r) => setSource(r.data))
       .catch((e) => setError(e.response?.data?.error || 'Could not load the customer’s invoices.'));
   }, [customer]);
 
@@ -69,10 +108,10 @@ export default function CreditMemoForm() {
       taxAmount: acc.taxAmount + a.taxAmount, grossAmount: acc.grossAmount + a.grossAmount,
     };
   }, { subtotal: 0, discountAmount: 0, netOfTax: 0, taxAmount: 0, grossAmount: 0 }), [rows]);
-  const applied = Object.values(applyAmounts).reduce((s, v) => s + (Number(v) || 0), 0);
+  const applied = Object.values(applyAmounts).reduce((s, v) => s + (Number(v) || 0), 0) + keptApplied;
   const unapplied = totals.grossAmount - applied;
 
-  if (!lookups) return error ? <div className="error-banner">{error}</div> : <LoadingSpinner />;
+  if (!lookups || (isEdit && !customer)) return error ? <div className="error-banner">{error}</div> : <LoadingSpinner />;
   const defaultTax = lookups.taxes.find((t) => /VAT/i.test(t.code)) || lookups.taxes[0];
 
   const updateRow = (key, patch) => setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
@@ -93,15 +132,17 @@ export default function CreditMemoForm() {
     if (applied > totals.grossAmount + 0.005) { setError(`Applied (${money(applied)}) exceeds this Credit Memo's total (${money(totals.grossAmount)}).`); return; }
     setSaving(true);
     try {
-      const { data } = await api.post('/credit-memos', {
+      const body = {
         customer_id: customer.id, date_created: dateCreated, office_location_id: location?.id || null,
         ar_account_id: source?.ar_account_id || null, memo,
         lines: lines.map((r) => ({
           item_id: r.item_id, item_name: r.item_name, description: r.description, department_id: r.department_id,
           quantity: r.quantity, units: r.units, price_per_unit: r.price_per_unit, disc_percent: r.disc_percent, tax_code: r.tax_code,
+          job_order_id: r.job_order_id || null, sales_invoice_line_id: r.sales_invoice_line_id || null,
         })),
         apply_lines: Object.entries(applyAmounts).filter(([, v]) => Number(v) > 0).map(([id, v]) => ({ sales_invoice_id: Number(id), applied_amount: Number(v) })),
-      });
+      };
+      const { data } = isEdit ? await api.put(`/credit-memos/${editId}`, body) : await api.post('/credit-memos', body);
       navigate(`/credit-memos/${data.id}`);
     } catch (e) {
       setError(e.response?.data?.error || 'Save failed.');
@@ -118,9 +159,9 @@ export default function CreditMemoForm() {
   return (
     <div>
       <div className="page-header">
-        <div style={{ fontWeight: 600 }}>CREDIT MEMO <span className="muted">/ Create</span></div>
+        <div style={{ fontWeight: 600 }}>CREDIT MEMO <span className="muted">/ {isEdit ? `Edit ${memoNo}` : 'Create'}</span></div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/credit-memos')}>Back to Lists</button>
+          <button className="btn btn-sm" onClick={() => navigate(isEdit ? `/credit-memos/${editId}` : '/credit-memos')}>{isEdit ? 'Cancel' : 'Back to Lists'}</button>
           <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'SAVE'}</button>
         </div>
       </div>
@@ -134,7 +175,7 @@ export default function CreditMemoForm() {
               <label>Customer :</label>
               <EntityPicker label="Customer" items={lookups.customers} value={customer?.id || ''} getLabel={(c) => c?.name}
                 columns={[{ key: 'name', label: 'Name' }, { key: 'customer_code', label: 'Code' }]} searchKeys={['name', 'customer_code']}
-                placeholder="--Select--" onSelect={setCustomer} />
+                placeholder="--Select--" onSelect={setCustomer} disabled={isEdit} />
             </div>
             <div className="field">
               <label>Office Location :</label>
@@ -146,6 +187,11 @@ export default function CreditMemoForm() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div className="field"><label>Applied</label><input readOnly value={money(applied)} /></div>
             <div className="field"><label>Unapplied</label><input readOnly value={money(unapplied)} /></div>
+            {keptApplied > 0 && (
+              <div className="muted" style={{ gridColumn: '1 / -1', fontSize: 12 }}>
+                Applied includes {money(keptApplied)} drawn by Customer Payments, which an edit leaves as it is.
+              </div>
+            )}
           </div>
           <div style={{ background: 'var(--surface-2, #f3f4f6)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 18px' }}>
             <Total label="Sub Total" value={totals.subtotal} />
@@ -179,7 +225,7 @@ export default function CreditMemoForm() {
                     return (
                       <tr key={r.key}>
                         <td>{idx + 1}</td>
-                        <td>—</td>
+                        <td>{r.job_order_no || '—'}</td>
                         <td style={{ whiteSpace: 'nowrap' }} title={r.item_code}>{r.item_name}</td>
                         <td><input style={{ width: 170 }} value={r.description ?? ''} onChange={(e) => updateRow(r.key, { description: e.target.value })} /></td>
                         <td>
