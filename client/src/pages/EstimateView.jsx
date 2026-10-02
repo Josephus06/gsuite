@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
+import GpComputations from '../components/GpComputations';
 import EstimateApprovalModal from '../components/EstimateApprovalModal';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -405,42 +406,16 @@ export default function EstimateView() {
         </div>
       )}
 
+      {/* GP Computations -- laid out as the working: each line's Net of Tax, the cost taken off it,
+          the GP that leaves and its rate against the job type's passing rate, then the same sums
+          for the estimate, which is the footer's Est. GP Rate. Lines and footer use one basis
+          (lineGp above), so the table always adds up to the footer.
+          Cost basis: a line carries the GP it was saved with. Where that differs from what its
+          process lines add up to -- a migrated estimate, or a replica of one, whose process cost
+          fields are the old system's rates -- the saved GP is used and the process figure shown
+          beside it, so the difference is visible rather than silently mixed in. */}
       {tab === 'gp' && (
-        <div className="card">
-          <DataTable
-            columns={[
-              { key: 'job_type_name', label: 'Job Type' },
-              { key: 'description', label: 'Description' },
-              { key: 'quantity', label: 'Qty' },
-              { key: 'subtotal', label: 'Subtotal', render: (r) => money(r.subtotal) },
-              { key: 'total_cost', label: 'Total Cost', render: (r) => money((r.processes || []).reduce((s, p) => s + num(p.total_cost), 0)) },
-              // Net of Tax = Subtotal - Disc Amt (mirrors the footer's formula) rather than
-              // the row's own net_of_tax column, which isn't auto-derived at the job-order
-              // level yet and would otherwise read as 0 here.
-              { key: 'net_of_tax', label: 'Net of Tax', render: (r) => money(num(r.subtotal) - num(r.disc_amount)) },
-              {
-                key: 'gp_amount',
-                label: 'GP Amount',
-                render: (r) => {
-                  const cost = (r.processes || []).reduce((s, p) => s + num(p.total_cost), 0);
-                  const net = num(r.subtotal) - num(r.disc_amount);
-                  return money(net - cost);
-                },
-              },
-              {
-                key: 'gp_rate',
-                label: 'GP Rate',
-                render: (r) => {
-                  const cost = (r.processes || []).reduce((s, p) => s + num(p.total_cost), 0);
-                  const net = num(r.subtotal) - num(r.disc_amount);
-                  return net ? `${(((net - cost) / net) * 100).toFixed(2)}%` : '';
-                },
-              },
-            ]}
-            rows={jobOrders}
-            emptyLabel="No job orders."
-          />
-        </div>
+        <GpComputations jobOrders={jobOrders} lineGp={lineGp} lineCost={lineCost} money={money} num={num} />
       )}
 
       {tab === 'system' && (

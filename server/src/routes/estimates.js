@@ -393,7 +393,8 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
 
     const [shippingAddresses] = await pool.query('SELECT * FROM estimate_shipping_addresses WHERE estimate_id = ? ORDER BY id', [req.params.id]);
     const [jobOrders] = await pool.query(
-      `SELECT jo.*, jt.display_name AS job_type_name, loc.location_name AS job_location_name, t.code AS tax_code, t.rate AS tax_rate
+      `SELECT jo.*, jt.display_name AS job_type_name, jt.gp_rate_head AS passing_gp_rate,
+              loc.location_name AS job_location_name, t.code AS tax_code, t.rate AS tax_rate
        FROM estimate_job_orders jo
        LEFT JOIN job_types jt ON jt.id = jo.job_type_id
        LEFT JOIN locations loc ON loc.id = jo.job_location_id
