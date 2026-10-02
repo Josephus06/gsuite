@@ -25,7 +25,12 @@ const SELECT_SQL = `
   SELECT 'Cheque' AS source, c.date_released, c.payee_name AS payee, c.date_created,
          c.cheque_number AS cheque_no, c.memo,
          coa.account_code, coa.account_name,
-         c.total_amount AS amount, c.cheque_no AS doc_no
+         c.total_amount AS amount, c.cheque_no AS doc_no,
+         -- Who was paid, for the Supplier / Employee filter: a cheque names its payee's kind.
+         CASE WHEN c.payee_type IN ('VENDOR', 'supplier') THEN 'supplier'
+              WHEN c.payee_type = 'EMPLOYEE' THEN 'employee'
+              WHEN c.payee_type = 'CUSTOMER' THEN 'customer' END AS payee_kind,
+         c.payee_id
     FROM cheques c
     LEFT JOIN chart_of_accounts coa ON coa.id = c.account_id
    WHERE c.date_released IS NOT NULL AND c.status <> 'void'
@@ -38,7 +43,9 @@ const SELECT_SQL = `
   SELECT 'Bill Payment', bp.date_released, bp.payee_name, bp.date_created,
          bp.check_no, bp.memo,
          coa2.account_code, coa2.account_name,
-         bp.total_amount, bp.bill_payment_no
+         bp.total_amount, bp.bill_payment_no,
+         -- A bill payment always settles a supplier's bills.
+         'supplier', bp.supplier_id
     FROM bill_payments bp
     LEFT JOIN chart_of_accounts coa2 ON coa2.id = bp.bank_account_id
    WHERE bp.date_released IS NOT NULL AND bp.status <> 'voided'
@@ -54,10 +61,25 @@ function range(query) {
   return from <= to ? { from, to } : { from: to, to: from };
 }
 
-async function fetchRows({ from, to }) {
+// Supplier / Employee filter (asked 2026-10-02): payee_type narrows to one kind, payee_id to one
+// supplier or employee within it. 115 employee cheques carry only a typed payee name and no
+// employee id, so they show under Employee but never under one chosen employee.
+const PAYEE_KINDS = ['supplier', 'employee', 'customer'];
+function payeeFilter(query) {
+  const kind = PAYEE_KINDS.includes(String(query.payee_type)) ? String(query.payee_type) : null;
+  const id = kind && Number(query.payee_id) > 0 ? Number(query.payee_id) : null;
+  return { kind, id };
+}
+
+async function fetchRows({ from, to }, { kind, id } = {}) {
+  const where = [];
+  const params = [from, to, from, to];
+  if (kind) { where.push('d.payee_kind = ?'); params.push(kind); }
+  if (id) { where.push('d.payee_id = ?'); params.push(id); }
   const [rows] = await pool.query(
-    `SELECT * FROM (${SELECT_SQL}) d ORDER BY d.date_released, d.payee, d.cheque_no`,
-    [from, to, from, to],
+    `SELECT * FROM (${SELECT_SQL}) d ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY d.date_released, d.payee, d.cheque_no`,
+    params,
   );
   return rows;
 }
@@ -72,10 +94,37 @@ async function pendingCount() {
   return Number(r.n) || 0;
 }
 
+// The Payee picker: only suppliers / employees who have actually been paid by cheque or bill
+// payment, so the list is short and nothing in it returns an empty report. Under the report's own
+// permission -- a treasurer reading this need not hold the Suppliers or Employees master lists.
+router.get('/payees', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const kind = String(req.query.type);
+    let rows;
+    if (kind === 'supplier') {
+      [rows] = await pool.query(
+        `SELECT s.id, s.name FROM suppliers s
+          WHERE s.id IN (SELECT payee_id FROM cheques WHERE payee_type IN ('VENDOR', 'supplier') AND payee_id IS NOT NULL)
+             OR s.id IN (SELECT supplier_id FROM bill_payments WHERE supplier_id IS NOT NULL)
+          ORDER BY s.name`);
+    } else if (kind === 'employee') {
+      [rows] = await pool.query(
+        `SELECT e.id, TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))) AS name FROM employees e
+          WHERE e.id IN (SELECT payee_id FROM cheques WHERE payee_type = 'EMPLOYEE' AND payee_id IS NOT NULL)
+          ORDER BY e.first_name, e.last_name`);
+    } else {
+      return res.status(400).json({ error: 'type must be supplier or employee' });
+    }
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const { from, to } = range(req.query);
-    const rows = await fetchRows({ from, to });
+    const rows = await fetchRows({ from, to }, payeeFilter(req.query));
     res.json({
       from,
       to,
@@ -97,7 +146,7 @@ const day = (v) => (v ? String(v).slice(0, 10) : '');
 router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const { from, to } = range(req.query);
-    const rows = await fetchRows({ from, to });
+    const rows = await fetchRows({ from, to }, payeeFilter(req.query));
 
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Disbursement');
