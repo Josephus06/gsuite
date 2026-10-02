@@ -38,6 +38,7 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
   const [department, setDepartment] = useState(null);
   const [receiptType, setReceiptType] = useState('');
   const [orNo, setOrNo] = useState('');
+  const [siBsNo, setSiBsNo] = useState('');
   const [paymentType, setPaymentType] = useState('');
   const [issuedBy, setIssuedBy] = useState(null);
   const [paymentAmount, setPaymentAmount] = useState('');
@@ -112,6 +113,7 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
         setDateCreated(String(p.date_created).slice(0, 10));
         setReceiptType(p.receipt_type || '');
         setOrNo(p.or_no || '');
+        setSiBsNo(p.si_bs_no || '');
         setPaymentType(p.payment_type || '');
         setMemo(p.memo || '');
         setPaymentAmount(String(Number(p.payment_amount).toFixed(2)));
@@ -222,6 +224,7 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
         deposit_account_id: depositAccount?.id || null,
         receipt_type: receiptType,
         or_no: orNo,
+        si_bs_no: siBsNo.trim() || null,
         payment_type: paymentType,
         issued_by_user_id: issuedBy?.id || null,
         payment_method_id: paymentMethod?.id || null,
@@ -283,6 +286,7 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
                 </select>
               </div>
               <div className="field"><label>OR # <span className="req">*</span></label><input value={orNo} onChange={(e) => setOrNo(e.target.value)} /></div>
+              <div className="field"><label>SI# / BS#</label><input value={siBsNo} onChange={(e) => setSiBsNo(e.target.value)} placeholder="Sales Invoice / Billing Statement no." /></div>
               <div className="field">
                 <label>Payment Type <span className="req">*</span></label>
                 <select value={paymentType} onChange={(e) => setPaymentType(e.target.value)}>

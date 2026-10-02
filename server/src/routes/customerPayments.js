@@ -401,8 +401,8 @@ function listFilter(query) {
     if (dateFrom) { where.push('cp.date_created >= ?'); params.push(dateFrom); }
     if (dateTo) { where.push('cp.date_created <= ?'); params.push(dateTo); }
     if (search) {
-      where.push('(cp.customer_payment_no LIKE ? OR cp.or_no LIKE ? OR c.name LIKE ?)');
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      where.push('(cp.customer_payment_no LIKE ? OR cp.or_no LIKE ? OR cp.si_bs_no LIKE ? OR c.name LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
   }
   return { search, where, params };
@@ -604,7 +604,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const {
       customer_id: customerId, date_created: dateCreated, department_id: departmentId,
       office_location_id: officeLocationId, ar_account_id: arAccountId, deposit_account_id: depositAccountId,
-      receipt_type: receiptType, or_no: orNo, payment_type: paymentType, issued_by_user_id: issuedByUserId,
+      receipt_type: receiptType, or_no: orNo, si_bs_no: siBsNo, payment_type: paymentType, issued_by_user_id: issuedByUserId,
       payment_method_id: paymentMethodId, payment_amount: paymentAmount, memo,
       // How the money actually arrived. Which of these the form collects depends on the method:
       // a reference for GCASH/Maya/Card/Online Deposit, the cheque trio for CHECK, neither for
@@ -643,14 +643,14 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
          (customer_payment_no, date_created, customer_id, department_id, office_location_id, ar_account_id,
           deposit_account_id, receipt_type, or_no, payment_type, issued_by_user_id, payment_method_id,
           payment_amount, applied_amount, unapplied_amount, memo, created_by_user_id,
-          reference_no, bank_name, cheque_no, cheque_date)
-       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          reference_no, bank_name, cheque_no, cheque_date, si_bs_no)
+       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         dateCreated || new Date().toISOString().slice(0, 10), customerId, departmentId || null,
         locationId, arAccountId || null, depositAccountId || null, receiptType || null,
         orNo || null, paymentType || null, issuedByUserId || req.user.id, paymentMethodId || null,
         received, appliedTotal, unapplied, memo || null, req.user.id,
-        referenceNo || null, bankName || null, chequeNo || null, chequeDate || null,
+        referenceNo || null, bankName || null, chequeNo || null, chequeDate || null, siBsNo || null,
       ]
     );
     const paymentId = result.insertId;
@@ -752,7 +752,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     const {
       date_created: dateCreated, department_id: departmentId, office_location_id: officeLocationId,
       ar_account_id: arAccountId, deposit_account_id: depositAccountId, receipt_type: receiptType,
-      or_no: orNo, payment_type: paymentType, issued_by_user_id: issuedByUserId,
+      or_no: orNo, si_bs_no: siBsNo, payment_type: paymentType, issued_by_user_id: issuedByUserId,
       payment_method_id: paymentMethodId, payment_amount: paymentAmount, memo,
       reference_no: referenceNo, bank_name: bankName, cheque_no: chequeNo, cheque_date: chequeDate,
       apply_lines: applyLines, credit_lines: creditLines,
@@ -812,14 +812,14 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
          office_location_id = COALESCE(?, office_location_id), ar_account_id = ?,
          deposit_account_id = ?, receipt_type = ?, or_no = ?, payment_type = ?,
          issued_by_user_id = ?, payment_method_id = ?, payment_amount = ?, applied_amount = ?,
-         unapplied_amount = ?, memo = ?, reference_no = ?, bank_name = ?, cheque_no = ?, cheque_date = ?
+         unapplied_amount = ?, memo = ?, reference_no = ?, bank_name = ?, cheque_no = ?, cheque_date = ?, si_bs_no = ?
        WHERE id = ?`,
       [
         dateCreated || cp.date_created, departmentId || null, officeLocationId || null,
         arAccountId || null, depositAccountId || null, receiptType || null, orNo || null,
         paymentType || null, issuedByUserId || req.user.id, paymentMethodId || null,
         received, appliedTotal, unapplied, memo || null,
-        referenceNo || null, bankName || null, chequeNo || null, chequeDate || null,
+        referenceNo || null, bankName || null, chequeNo || null, chequeDate || null, siBsNo || null,
         req.params.id,
       ],
     );

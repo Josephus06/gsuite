@@ -114,6 +114,7 @@ export default function CustomerPaymentView() {
           <div>
             <div>Receipt : <span className="hi">{cp.receipt_type || '—'}</span></div>
             <div>{cp.receipt_type === 'Provisional Receipt' ? 'PR #' : 'OR/CR #'} : <span className="hi">{cp.or_no || '—'}</span></div>
+            <div>SI# / BS# : <span className="hi">{cp.si_bs_no || '—'}</span></div>
             <div>Payment Type : <span className="hi">{cp.payment_type || '—'}</span></div>
             <div>Payment Method : <span className="hi">{cp.payment_method_name || '—'}</span></div>
             <div>Reference # : <span className="hi">{cp.reference_no || '—'}</span></div>
