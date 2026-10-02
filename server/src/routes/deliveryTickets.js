@@ -252,6 +252,82 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
 // the sale is recognised, but nothing has been billed yet, so the SO's lines must stay
 // eligible for the invoice that follows. See the DT's own Bill button in the real system,
 // which is what actually bills it (not modelled here yet).
+// The lines of a Delivery Ticket, priced and identified -- shared by create and edit so an edited
+// ticket is built exactly as a new one is. SO-backed lines take their identity and tax from the
+// order line, never from the request; ad-hoc lines carry only what the form collected.
+async function prepareTicketLines(conn, salesOrderId, lines) {
+  const submitted = (Array.isArray(lines) ? lines : []).filter((l) => Number(l.quantity) > 0);
+  if (!submitted.length) throw Object.assign(new Error('Include at least one item.'), { status: 400 });
+
+  // A line either comes from an SO line or was added ad-hoc via "Add Item". SO-backed
+  // lines have their identifying fields taken from the order rather than the request,
+  // so a tampered payload can't re-point a line at another order's JO. Ad-hoc lines
+  // carry only what the form collected.
+  const soLineIds = submitted.map((l) => Number(l.sales_order_line_id)).filter(Boolean);
+  const soLineById = new Map();
+  if (soLineIds.length) {
+    const [rows] = await conn.query(
+      `SELECT sol.id, sol.job_order_id, sol.description, sol.job_location_id, sol.units, sol.uom,
+              sol.tax_code_id, jt.display_name AS item_name, t.code AS tax_code, t.rate AS tax_rate
+       FROM sales_order_lines sol
+       LEFT JOIN job_types jt ON jt.id = sol.job_type_id
+       LEFT JOIN taxes t ON t.id = sol.tax_code_id
+       WHERE sol.sales_order_id = ? AND sol.id IN (?)`,
+      [salesOrderId, soLineIds]
+    );
+    rows.forEach((r) => soLineById.set(r.id, r));
+    if (rows.length !== new Set(soLineIds).size) {
+      throw Object.assign(new Error('One of the selected items no longer belongs to this Sales Order.'), { status: 400 });
+    }
+  }
+
+  // An ad-hoc line names its own tax code; resolve its rate the same way rather than
+  // assuming the order's.
+  // Every code a line names, ad-hoc or not: an order line with no tax code of its own falls back to
+  // the line's (see below).
+  const adhocTaxCodes = [...new Set(submitted.filter((l) => l.tax_code).map((l) => l.tax_code))];
+  const taxByCode = new Map();
+  if (adhocTaxCodes.length) {
+    const [rows] = await conn.query('SELECT code, rate FROM taxes WHERE code IN (?)', [adhocTaxCodes]);
+    rows.forEach((r) => taxByCode.set(r.code, r));
+  }
+
+  const prepared = submitted.map((l, idx) => {
+    const src = l.sales_order_line_id ? soLineById.get(Number(l.sales_order_line_id)) : null;
+    // The order line's tax when it has one. Many migrated order lines have none, and their tickets
+    // carry the source's own codes (VAT_PH:VATIN-12) that the taxes table does not hold -- re-pricing
+    // DT-6299 dropped its 12% VAT. So: the line's code, its rate from the table, else the rate the
+    // form sent (read off the code or the stored VAT / net), else 0.
+    const sentRate = Number(l.tax_rate);
+    const fallbackRate = taxByCode.get(l.tax_code)?.rate ?? (Number.isFinite(sentRate) && sentRate >= 0 && sentRate <= 100 ? sentRate : 0);
+    const taxCode = src && src.tax_code ? src.tax_code : (l.tax_code || null);
+    const taxRate = src && src.tax_code ? src.tax_rate : fallbackRate;
+    const pricePerUnit = Number(l.price_per_unit || 0);
+    const discPercent = Number(l.disc_percent || 0);
+    const quantity = Number(l.quantity);
+    return {
+      line_no: idx + 1,
+      sales_order_line_id: src ? src.id : null,
+      job_order_id: src ? src.job_order_id : null,
+      item_id: l.item_id || null,
+      item_name: src ? src.item_name : (l.item_name || null),
+      // Description stays editable even on an SO-backed line -- the real form lets you
+      // retype it (that is how "DELIVERY FEE" ends up on a MOBILIZATION line).
+      description: l.description ?? (src ? src.description : null),
+      location_id: l.location_id || (src ? src.job_location_id : null),
+      quantity,
+      units: l.units ?? (src ? src.units : null),
+      unit_title: l.unit_title ?? (src ? src.uom : null),
+      price_per_unit: pricePerUnit,
+      disc_percent: discPercent,
+      tax_code: taxCode,
+      ...computeLineAmounts({ quantity, pricePerUnit, discPercent, taxRate }),
+    };
+  });
+
+  return prepared;
+}
+
 router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
@@ -265,67 +341,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
     const [[so]] = await conn.query('SELECT id FROM sales_orders WHERE id = ?', [salesOrderId]);
     if (!so) return res.status(404).json({ error: 'Sales Order not found.' });
 
-    const submitted = (Array.isArray(lines) ? lines : []).filter((l) => Number(l.quantity) > 0);
-    if (!submitted.length) return res.status(400).json({ error: 'Include at least one item.' });
-
-    // A line either comes from an SO line or was added ad-hoc via "Add Item". SO-backed
-    // lines have their identifying fields taken from the order rather than the request,
-    // so a tampered payload can't re-point a line at another order's JO. Ad-hoc lines
-    // carry only what the form collected.
-    const soLineIds = submitted.map((l) => Number(l.sales_order_line_id)).filter(Boolean);
-    const soLineById = new Map();
-    if (soLineIds.length) {
-      const [rows] = await conn.query(
-        `SELECT sol.id, sol.job_order_id, sol.description, sol.job_location_id, sol.units, sol.uom,
-                sol.tax_code_id, jt.display_name AS item_name, t.code AS tax_code, t.rate AS tax_rate
-         FROM sales_order_lines sol
-         LEFT JOIN job_types jt ON jt.id = sol.job_type_id
-         LEFT JOIN taxes t ON t.id = sol.tax_code_id
-         WHERE sol.sales_order_id = ? AND sol.id IN (?)`,
-        [salesOrderId, soLineIds]
-      );
-      rows.forEach((r) => soLineById.set(r.id, r));
-      if (rows.length !== new Set(soLineIds).size) {
-        return res.status(400).json({ error: 'One of the selected items no longer belongs to this Sales Order.' });
-      }
-    }
-
-    // An ad-hoc line names its own tax code; resolve its rate the same way rather than
-    // assuming the order's.
-    const adhocTaxCodes = [...new Set(submitted.filter((l) => !l.sales_order_line_id && l.tax_code).map((l) => l.tax_code))];
-    const taxByCode = new Map();
-    if (adhocTaxCodes.length) {
-      const [rows] = await conn.query('SELECT code, rate FROM taxes WHERE code IN (?)', [adhocTaxCodes]);
-      rows.forEach((r) => taxByCode.set(r.code, r));
-    }
-
-    const prepared = submitted.map((l, idx) => {
-      const src = l.sales_order_line_id ? soLineById.get(Number(l.sales_order_line_id)) : null;
-      const taxCode = src ? src.tax_code : (l.tax_code || null);
-      const taxRate = src ? src.tax_rate : (taxByCode.get(l.tax_code)?.rate || 0);
-      const pricePerUnit = Number(l.price_per_unit || 0);
-      const discPercent = Number(l.disc_percent || 0);
-      const quantity = Number(l.quantity);
-      return {
-        line_no: idx + 1,
-        sales_order_line_id: src ? src.id : null,
-        job_order_id: src ? src.job_order_id : null,
-        item_id: l.item_id || null,
-        item_name: src ? src.item_name : (l.item_name || null),
-        // Description stays editable even on an SO-backed line -- the real form lets you
-        // retype it (that is how "DELIVERY FEE" ends up on a MOBILIZATION line).
-        description: l.description ?? (src ? src.description : null),
-        location_id: l.location_id || (src ? src.job_location_id : null),
-        quantity,
-        units: l.units ?? (src ? src.units : null),
-        unit_title: l.unit_title ?? (src ? src.uom : null),
-        price_per_unit: pricePerUnit,
-        disc_percent: discPercent,
-        tax_code: taxCode,
-        ...computeLineAmounts({ quantity, pricePerUnit, discPercent, taxRate }),
-      };
-    });
-
+    const prepared = await prepareTicketLines(conn, salesOrderId, lines);
     const sum = (key) => Number(prepared.reduce((s, l) => s + Number(l[key] || 0), 0).toFixed(2));
     const subtotal = sum('subtotal');
     const discountAmount = sum('disc_amount');
@@ -375,6 +391,78 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
     res.status(201).json(row);
   } catch (err) {
     await conn.rollback();
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// Edit a saved Delivery Ticket -- header and lines, the same form as create. Only while it is OPEN:
+// a converted one has been superseded by the Sales Invoice raised from it (that invoice is what posts
+// now, and is edited instead), and a void one is final. Nothing else hangs off a ticket's lines --
+// saving never advanced the Sales Order's quantities and its GL entry is derived from the ticket --
+// so the lines are rebuilt wholesale, priced exactly as on create. Both the old and the new date
+// must be in an open A/R period. Changed header figures are audit-logged.
+const TICKET_HEADER = ['date_created', 'date_due', 'term', 'po_no', 'sales_rep_id', 'office_location_id', 'department_id', 'memo',
+  'subtotal', 'discount_amount', 'net_of_tax', 'tax_amount', 'gross_amount'];
+router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[dt]] = await conn.query('SELECT * FROM delivery_tickets WHERE id = ?', [req.params.id]);
+    if (!dt) return res.status(404).json({ error: 'Not found' });
+    if (dt.status !== 'open') {
+      return res.status(409).json({ error: dt.status === 'converted'
+        ? 'This Delivery Ticket has been converted to a Sales Invoice -- edit the invoice instead.'
+        : 'This Delivery Ticket is void and cannot be edited.' });
+    }
+    const b = req.body || {};
+    const day = (v) => (v ? String(v).slice(0, 10) : null);
+    const oldDate = day(dt.date_created instanceof Date ? dt.date_created.toISOString() : dt.date_created);
+    const newDate = day(b.date_created) || oldDate;
+    await assertPeriodOpen(oldDate, 'ar', conn);
+    if (newDate !== oldDate) await assertPeriodOpen(newDate, 'ar', conn);
+
+    const prepared = await prepareTicketLines(conn, dt.sales_order_id, b.lines);
+    const sum = (key) => Number(prepared.reduce((s2, l) => s2 + Number(l[key] || 0), 0).toFixed(2));
+    const next = {
+      date_created: newDate, date_due: day(b.date_due), term: b.term || null, po_no: b.po_no || null,
+      sales_rep_id: Number(b.sales_rep_id) || null, office_location_id: Number(b.office_location_id) || null,
+      department_id: Number(b.department_id) || null, memo: b.memo || null,
+      subtotal: sum('subtotal'), discount_amount: sum('disc_amount'), net_of_tax: sum('net_of_tax'),
+      tax_amount: sum('tax_amount'), gross_amount: sum('gross_amount'),
+    };
+
+    await conn.beginTransaction();
+    await conn.query(
+      `UPDATE delivery_tickets SET ${TICKET_HEADER.map((k) => `${k} = ?`).join(', ')}, amount_due = ? WHERE id = ? AND status = 'open'`,
+      [...TICKET_HEADER.map((k) => next[k]), next.gross_amount, dt.id]);
+    await conn.query('DELETE FROM delivery_ticket_lines WHERE delivery_ticket_id = ?', [dt.id]);
+    for (const l of prepared) {
+      await conn.query(
+        `INSERT INTO delivery_ticket_lines
+           (delivery_ticket_id, line_no, sales_order_line_id, job_order_id, item_id, item_name, description,
+            location_id, quantity, units, unit_title, price_per_unit, subtotal, disc_percent, disc_per_unit,
+            disc_amount, disc_price_per_unit, net_of_tax, tax_code, tax_amount, gross_amount)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [dt.id, l.line_no, l.sales_order_line_id, l.job_order_id, l.item_id, l.item_name, l.description,
+          l.location_id, l.quantity, l.units, l.unit_title, l.price_per_unit, l.subtotal, l.disc_percent,
+          l.disc_per_unit, l.disc_amount, l.disc_price_per_unit, l.net_of_tax, l.tax_code, l.tax_amount, l.gross_amount]);
+    }
+    const show = (v) => (v instanceof Date ? v.toISOString().slice(0, 10) : v);
+    for (const k of TICKET_HEADER) {
+      const before = show(dt[k]); const after = next[k];
+      const same = (before == null && after == null) || String(before ?? '') === String(after ?? '')
+        || (typeof after === 'number' && Math.abs(Number(before) - after) < 0.005);
+      if (!same) await logAudit(conn, { ticketId: dt.id, userId: req.user.id, eventType: 'Updated', fieldName: k, oldValue: before, newValue: after });
+    }
+    await logAudit(conn, { ticketId: dt.id, userId: req.user.id, eventType: 'Updated', fieldName: 'lines', newValue: `${prepared.length} line(s)` });
+    await conn.commit();
+    const [[row]] = await pool.query('SELECT * FROM delivery_tickets WHERE id = ?', [dt.id]);
+    res.json(row);
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    if (err.status) return res.status(err.status).json({ error: err.message });
     next(err);
   } finally {
     conn.release();

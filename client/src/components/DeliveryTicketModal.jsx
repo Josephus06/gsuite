@@ -31,7 +31,10 @@ function lineAmounts(l) {
 // via DT. Unlike Create SI -- which only lets you delete a line, never edit one -- this
 // form is genuinely editable per row (Description/Location/Qty/Price/Unit/Disc.%) and has
 // an Add Item button for charges that aren't on the order at all, like a delivery fee.
-export default function DeliveryTicketModal({ salesOrderId, onClose, onSaved }) {
+//
+// Also the EDIT form for a saved, still-open ticket: pass `ticket` (GET /delivery-tickets/:id) and it
+// opens pre-filled and saves with PUT -- the server rebuilds the lines exactly as on create.
+export default function DeliveryTicketModal({ salesOrderId, ticket = null, onClose, onSaved }) {
   const [data, setData] = useState(null);
   const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
   const [dateDue, setDateDue] = useState('');
@@ -57,7 +60,8 @@ export default function DeliveryTicketModal({ salesOrderId, onClose, onSaved }) 
       api.get('/lookups/locations'),
       api.get('/lookups/departments'),
       api.get('/inventory'),
-    ]).then(([soRes, empRes, locRes, deptRes, itemRes]) => {
+      api.get('/lookups/taxes').catch(() => ({ data: [] })),
+    ]).then(([soRes, empRes, locRes, deptRes, itemRes, taxRes]) => {
       const d = soRes.data;
       setData(d);
       setEmployees(empRes.data);
@@ -75,12 +79,36 @@ export default function DeliveryTicketModal({ salesOrderId, onClose, onSaved }) 
       if (d.office_location_id) setOfficeLocation({ id: d.office_location_id, location_name: d.office_location_name });
       setDateDue(addDays(new Date().toISOString().slice(0, 10), 30));
       setRows(d.lines.map((l, idx) => ({ ...l, key: `so-${l.sales_order_line_id ?? idx}` })));
+      if (ticket) {
+        // Editing: the saved ticket's own header and lines, not the order's prefill. A line's tax
+        // rate comes from its code, or -- for a code not in the table -- from its stored tax / net.
+        const rateByCode = new Map((taxRes.data || []).map((t) => [t.code, Number(t.rate)]));
+        const day = (v) => (v ? String(v).slice(0, 10) : '');
+        setDateCreated(day(ticket.date_created));
+        setDateDue(day(ticket.date_due));
+        setTerm(ticket.term || '');
+        setPoNo(ticket.po_no || '');
+        setMemo(ticket.memo || '');
+        setSalesRep(ticket.sales_rep_id ? {
+          id: ticket.sales_rep_id,
+          first_name: ticket.sales_rep_name?.split(' ')[0], last_name: ticket.sales_rep_name?.split(' ').slice(1).join(' '),
+        } : null);
+        setOfficeLocation(ticket.office_location_id ? { id: ticket.office_location_id, location_name: ticket.office_location_name } : null);
+        setDepartment(ticket.department_id ? { id: ticket.department_id, name: ticket.department_name } : null);
+        setRows(ticket.lines.map((l) => ({
+          ...l,
+          key: `dt-${l.id}`,
+          tax_rate: rateByCode.has(l.tax_code) ? rateByCode.get(l.tax_code)
+            : (Number(l.net_of_tax) > 0 ? Math.round((Number(l.tax_amount) / Number(l.net_of_tax)) * 10000) / 100 : 0),
+        })));
+      }
       setLoading(false);
     }).catch((err) => {
       setError(err.response?.data?.error || 'Could not load this Sales Order.');
       setLoading(false);
     });
-  }, [salesOrderId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [salesOrderId, ticket?.id]);
 
   function updateRow(key, patch) {
     setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
@@ -124,7 +152,8 @@ export default function DeliveryTicketModal({ salesOrderId, onClose, onSaved }) 
     if (!payload.length) { setError('Include at least one item with a quantity.'); return; }
     setSaving(true);
     try {
-      const { data: dt } = await api.post('/delivery-tickets', {
+      const save = ticket ? (body) => api.put(`/delivery-tickets/${ticket.id}`, body) : (body) => api.post('/delivery-tickets', body);
+      const { data: dt } = await save({
         sales_order_id: salesOrderId,
         date_created: dateCreated,
         date_due: dateDue,
@@ -146,6 +175,8 @@ export default function DeliveryTicketModal({ salesOrderId, onClose, onSaved }) 
           price_per_unit: r.price_per_unit,
           disc_percent: r.disc_percent,
           tax_code: r.tax_code,
+          // Used only when the order line has no tax code of its own (the server prefers the order's).
+          tax_rate: r.tax_rate,
         })),
       });
       onSaved(dt);
@@ -160,7 +191,7 @@ export default function DeliveryTicketModal({ salesOrderId, onClose, onSaved }) 
     <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal modal-xl" style={{ padding: 0, overflow: 'hidden' }}>
         <div className="estimate-banner" style={{ borderRadius: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <h2 style={{ margin: 0, color: '#fff' }}>Delivery Ticket</h2>
+          <h2 style={{ margin: 0, color: '#fff' }}>{ticket ? `Delivery Ticket — Edit ${ticket.dt_no}` : 'Delivery Ticket'}</h2>
           <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 24, lineHeight: 1, cursor: 'pointer' }}>×</button>
         </div>
 

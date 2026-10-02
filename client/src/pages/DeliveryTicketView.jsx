@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import SalesInvoiceModal from '../components/SalesInvoiceModal';
+import DeliveryTicketModal from '../components/DeliveryTicketModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate, displayDateTime } from '../utils/dates';
 
@@ -36,6 +37,7 @@ export default function DeliveryTicketView() {
   const [showSIModal, setShowSIModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [error, setError] = useState('');
 
   function load() {
@@ -102,6 +104,7 @@ export default function DeliveryTicketView() {
               )}
             </div>
           )}
+          {canEdit && isOpen && <button className="btn btn-sm" onClick={() => setEditing(true)}>Edit</button>}
           {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
@@ -289,6 +292,16 @@ export default function DeliveryTicketView() {
             emptyLabel="No audit history yet."
           />
         </div>
+      )}
+
+      {/* Edit: the create form, pre-filled from this ticket (only while it is open). */}
+      {editing && (
+        <DeliveryTicketModal
+          salesOrderId={dt.sales_order_id}
+          ticket={dt}
+          onClose={() => setEditing(false)}
+          onSaved={async () => { setEditing(false); await load(); }}
+        />
       )}
 
       {showSIModal && (
