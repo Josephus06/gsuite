@@ -77,8 +77,9 @@ async function listFilter(query, userId) {
   const salesScope = await getSalesRepEmployeeScope(userId);
   if (salesScope) { where.push('si.sales_rep_id IN (?)'); params.push(salesScope); }
   if (search) {
-    where.push('(si.invoice_no LIKE ? OR so.sales_order_no LIKE ? OR e.estimate_no LIKE ? OR ns.nsso_no LIKE ? OR c.name LIKE ?)');
-    params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    // BS/SI # is the number printed on the paper the customer holds -- the one most often quoted.
+    where.push('(si.invoice_no LIKE ? OR si.bs_si_no LIKE ? OR si.po_no LIKE ? OR so.sales_order_no LIKE ? OR e.estimate_no LIKE ? OR ns.nsso_no LIKE ? OR c.name LIKE ?)');
+    params.push(...Array(7).fill(`%${search}%`));
   }
   return { where, params };
 }

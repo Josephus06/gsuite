@@ -163,7 +163,7 @@ export default function SalesInvoices() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Invoice # or SO No..." />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Invoice #, BS/SI #, PO #, SO # or Customer..." />
           </div>
           <div className="field">
             <label>Type</label>
