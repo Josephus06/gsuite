@@ -651,9 +651,18 @@ router.get('/:id/approval-lines', requireAuth, requirePermission(ROUTE, 'can_vie
 // Not the office_location_id stamped on the document -- that column reads Head Office on all but
 // a handful of rows, the 29,081 estimates belonging to the branch accounts included, so it would
 // refuse a branch user their own branch's work.
+//
+// AND THE ESTIMATE'S OWN SALES REP. Estimates migrated from the source carry no "Created" audit
+// line, so for them the creator is unknown -- and a Head Office rep (Arjie, EST-109619) lost the
+// customer-answer buttons on every estimate of his that came over, while keeping them on the ones
+// he had raised in T1S. The sales rep named on the estimate is who it belongs to either way.
 async function mayActAsOwner(userId, estimateId) {
   const creatorId = await getCreatorUserId(pool, estimateId);
   if (creatorId != null && Number(creatorId) === Number(userId)) return true;
+  const [[rep]] = await pool.query(
+    'SELECT 1 AS yes FROM estimates e JOIN users u ON u.id = ? WHERE e.id = ? AND u.employee_id IS NOT NULL AND e.sales_rep_id = u.employee_id',
+    [userId, estimateId]);
+  if (rep) return true;
   return !(await isHeadOfficeUser(userId));
 }
 

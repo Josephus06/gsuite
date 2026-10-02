@@ -260,7 +260,10 @@ export default function EstimateView() {
   // moves out of this one stage. Edit stays where it was: changing agreed figures is not a
   // workflow step, and past supervisor approval it belongs to a System Admin alone.
   const isCreator = estimate.created_by_user_id != null && Number(estimate.created_by_user_id) === Number(user?.id);
-  const mayActAsOwner = isCreator || user?.is_head_office === false;
+  // Or the estimate's own sales rep -- an estimate migrated from the source has no recorded
+  // creator, so without this its rep lost these buttons (EST-109619).
+  const isRep = !!user?.employee_id && estimate.sales_rep_id != null && Number(estimate.sales_rep_id) === Number(user.employee_id);
+  const mayActAsOwner = isCreator || isRep || user?.is_head_office === false;
   const canRecordCustomerAnswer = estimate.status === 'pending_customer_approval'
     && mayActAsOwner && can('/estimates', 'can_update');
   // The real system only shows Print once an estimate has cleared supervisor
