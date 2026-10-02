@@ -14,6 +14,10 @@ const ROUTE = '/treasury/collection-forecast';
 // putting those on a collection worklist would have Treasury chasing invoices their own screen
 // calls Paid In Full. See lib/arAging.js for why that report is right to differ.
 const OPEN_INVOICE = 'si.amount_due > 0 AND si.cancelled_at IS NULL';
+// What is still to be COLLECTED, on the gross (VAT-inclusive) amount the customer pays: the stored
+// amount_due is Gross - EWT less payments, so the EWT is added back (asked 2026-10-02; the Invoice
+// screen's Amount Due reads the same way).
+const DUE_GROSS = '(si.amount_due + COALESCE(si.ewt_amount, 0))';
 
 // A RECEIPT, as opposed to a bookkeeping reconstruction.
 //
@@ -66,14 +70,14 @@ router.get('/open', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
     const whereSql = `WHERE ${where.join(' AND ')}`;
 
     const [[totals]] = await pool.query(
-      `SELECT COUNT(*) AS total, COALESCE(SUM(si.amount_due), 0) AS outstanding ${baseFrom} ${whereSql}`,
+      `SELECT COUNT(*) AS total, COALESCE(SUM(${DUE_GROSS}), 0) AS outstanding ${baseFrom} ${whereSql}`,
       params,
     );
     const page = clampPage(req.query.page);
     const limit = clampLimit(req.query.limit);
     const [rows] = await pool.query(
       `SELECT si.id, si.invoice_no, si.bs_si_no, si.date_created, si.date_due, si.po_no,
-              si.gross_amount, si.amount_due, si.status,
+              si.gross_amount, ${DUE_GROSS} AS amount_due, si.status,
               si.collection_forecast_date, si.collection_forecast_set_at,
               fu.display_name AS collection_forecast_set_by,
               c.id AS customer_id, c.name AS customer_name
@@ -99,7 +103,7 @@ router.get('/open', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
 router.get('/customers', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT c.id, c.name, COUNT(*) AS open_invoices, COALESCE(SUM(si.amount_due), 0) AS outstanding
+      `SELECT c.id, c.name, COUNT(*) AS open_invoices, COALESCE(SUM(${DUE_GROSS}), 0) AS outstanding
          FROM sales_invoices si
          LEFT JOIN sales_orders so ON so.id = si.sales_order_id
          LEFT JOIN estimates e ON e.id = si.estimate_id
@@ -177,7 +181,7 @@ router.get('/calendar', requireAuth, requirePermission(ROUTE, 'can_view'), async
     if (customerId) { where.push('c.id = ?'); params.push(customerId); }
 
     const [rows] = await pool.query(
-      `SELECT si.id, si.invoice_no, si.date_created, si.date_due, si.amount_due,
+      `SELECT si.id, si.invoice_no, si.date_created, si.date_due, ${DUE_GROSS} AS amount_due,
               si.collection_forecast_date, c.id AS customer_id, c.name AS customer_name
          FROM sales_invoices si
          LEFT JOIN sales_orders so ON so.id = si.sales_order_id

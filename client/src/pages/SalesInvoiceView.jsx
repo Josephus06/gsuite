@@ -203,11 +203,14 @@ export default function SalesInvoiceView() {
       <div className="estimate-footer card" style={{ marginTop: 20 }}>
         <div><span className="muted">Net of Tax</span><div className="hi-lg">{money(si.net_of_tax)}</div></div>
         <div><span className="muted">Discount</span><div className="hi-lg">{money(si.discount_amount)}</div></div>
-        {/* In the order the amounts build up: Gross = Net + Tax, Amount Due = Gross - EWT (as printed). */}
+        {/* In the order the amounts build up: Gross = Net + Tax, Amount = Gross - EWT (as printed),
+            Amount Due = what the customer still owes on the GROSS -- the stored balance (Gross - EWT
+            less payments) with the EWT added back while the invoice is open; 0 once it is settled. */}
         <div><span className="muted">Tax</span><div className="hi-lg">{money(si.tax_amount)}</div></div>
         <div><span className="muted">Gross</span><div className="hi-lg">{money(si.gross_amount)}</div></div>
         <div><span className="muted">EWT</span><div className="hi-lg">{money(si.ewt_amount)}</div></div>
-        <div><span className="muted">Amount Due</span><div className="hi-lg">{money(si.amount_due)}</div></div>
+        <div><span className="muted">Amount</span><div className="hi-lg">{money(Number(si.gross_amount || 0) - Number(si.ewt_amount || 0))}</div></div>
+        <div><span className="muted">Amount Due</span><div className="hi-lg">{money(Number(si.amount_due) > 0.005 ? Number(si.amount_due) + Number(si.ewt_amount || 0) : 0)}</div></div>
       </div>
 
       <div className="status-tabs" style={{ marginTop: 20 }}>
