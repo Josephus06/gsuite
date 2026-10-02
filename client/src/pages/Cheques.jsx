@@ -34,8 +34,7 @@ export default function Cheques() {
 
   useEffect(() => { api.get('/cheques/payees').then(({ data }) => setPayees(data)).catch(() => setPayees([])); }, []);
 
-  async function load() {
-    setLoading(true);
+  function listParams() {
     const params = {};
     if (search) params.search = search;
     if (status) params.status = status;
@@ -44,6 +43,31 @@ export default function Cheques() {
     if (payeeType) params.payee_type = payeeType;
     if (payee) { params.payee_type = payee.payee_type; params.payee_id = payee.payee_id; }
     if (released) params.released = released;
+    return params;
+  }
+
+  // Extract: every row under the filters above, as a workbook (same params as the list).
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  async function runExport() {
+    setExporting(true); setExportError('');
+    try {
+      const { data } = await api.get('/cheques/export', { params: listParams(), responseType: 'blob' });
+      const url = URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'cheques.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setExportError('Could not extract the cheques.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function load() {
+    setLoading(true);
+    const params = listParams();
     const { data } = await api.get('/cheques', { params });
     setRows(data);
     setLoading(false);
@@ -119,7 +143,13 @@ export default function Cheques() {
             <input type="date" value={asOf} min={dateFrom || undefined} onChange={(e) => setAsOf(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} />
           </div>
         </div>
-        <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>
+        <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn btn-primary" onClick={runSearch}>Search</button>
+          <button className="btn" disabled={exporting} onClick={runExport} title="Download every cheque under the filters above">
+            {exporting ? 'Extracting...' : 'Extract'}
+          </button>
+          {exportError && <span style={{ color: 'var(--danger)' }}>{exportError}</span>}
+        </div>
       </div>
 
       {!loading && (

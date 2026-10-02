@@ -6,6 +6,7 @@ const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../m
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeBillPaymentGl } = require('../lib/glImpact');
 const { postReversalJournal } = require('../lib/reversalJournal');
+const { sendXlsx, day } = require('../lib/xlsxExport');
 
 const router = express.Router();
 // Reached from an Open Vendor Bill's "Bill Payment" button, confirmed against the real
@@ -100,8 +101,10 @@ router.get('/payees', requireAuth, requirePermission(ROUTE, 'can_view'), async (
 // The same filters and columns as the Cheque list (asked 2026-10-02): Vendor, Released / Not
 // Released (Date Released set or not), Period From / As of Date on the payment date, search across
 // number, vendor, payee name, check #, reference and memo; sorted by Date, newest first.
-router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
-  try {
+// The list and its Excel extract share one query, so the file holds exactly what the list shows.
+async function listBillPayments(query) {
+  const req = { query };
+  {
     const { search, status, as_of: asOf, date_from: dateFrom } = req.query;
     const where = [];
     const params = [];
@@ -128,8 +131,48 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        ORDER BY bp.date_created DESC, bp.id DESC`,
       params
     );
-    res.json(rows);
+    return rows;
+  }
+}
+
+router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    res.json(await listBillPayments(req.query));
   } catch (err) {
+    next(err);
+  }
+});
+
+// Extract: the list under its current filters, as a workbook. Registered before /:id.
+router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const rows = await listBillPayments(req.query);
+    const STATUS = { open: 'Open', voided: 'Voided' };
+    await sendXlsx(res, {
+      filename: 'bill-payments.xlsx',
+      sheet: 'Bill Payments',
+      columns: [
+        { header: 'Payment #', key: 'no', width: 16 },
+        { header: 'Date', key: 'date', width: 12 },
+        { header: 'Check #', key: 'check_no', width: 14 },
+        { header: 'Vendor', key: 'vendor', width: 38 },
+        { header: 'Payee Name', key: 'payee', width: 30 },
+        { header: 'Account', key: 'account', width: 28 },
+        { header: 'Payment Method', key: 'method', width: 16 },
+        { header: 'Total Amount', key: 'total', width: 16, money: true },
+        { header: 'Date Released', key: 'released', width: 14 },
+        { header: 'Status', key: 'status', width: 10 },
+        { header: 'Memo', key: 'memo', width: 50 },
+      ],
+      rows: rows.map((r) => ({
+        no: r.bill_payment_no, date: day(r.date_created), check_no: r.check_no || '', vendor: r.supplier_name || '',
+        payee: r.payee_name || '', account: r.bank_account_name || '', method: r.payment_method_name || '',
+        total: Number(r.total_amount || 0), released: day(r.date_released) || 'Not released',
+        status: STATUS[r.status] || r.status, memo: r.memo || '',
+      })),
+    });
+  } catch (err) {
+    if (res.headersSent) { res.destroy(err); return; }
     next(err);
   }
 });

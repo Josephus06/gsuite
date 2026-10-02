@@ -33,8 +33,7 @@ export default function BillPayments() {
 
   useEffect(() => { api.get('/bill-payments/payees').then(({ data }) => setVendors(data)).catch(() => setVendors([])); }, []);
 
-  async function load() {
-    setLoading(true);
+  function listParams() {
     const params = {};
     if (status) params.status = status;
     if (search) params.search = search;
@@ -42,6 +41,31 @@ export default function BillPayments() {
     if (released) params.released = released;
     if (dateFrom) params.date_from = dateFrom;
     if (asOf) params.as_of = asOf;
+    return params;
+  }
+
+  // Extract: every row under the filters above, as a workbook (same params as the list).
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  async function runExport() {
+    setExporting(true); setExportError('');
+    try {
+      const { data } = await api.get('/bill-payments/export', { params: listParams(), responseType: 'blob' });
+      const url = URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'bill-payments.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setExportError('Could not extract the bill payments.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function load() {
+    setLoading(true);
+    const params = listParams();
     const { data } = await api.get('/bill-payments', { params });
     setRows(data);
     setLoading(false);
@@ -108,7 +132,13 @@ export default function BillPayments() {
             <input type="date" value={asOf} min={dateFrom || undefined} onChange={(e) => setAsOf(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} />
           </div>
         </div>
-        <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>
+        <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn btn-primary" onClick={runSearch}>Search</button>
+          <button className="btn" disabled={exporting} onClick={runExport} title="Download every bill payment under the filters above">
+            {exporting ? 'Extracting...' : 'Extract'}
+          </button>
+          {exportError && <span style={{ color: 'var(--danger)' }}>{exportError}</span>}
+        </div>
       </div>
 
       {!loading && (

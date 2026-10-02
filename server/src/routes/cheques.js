@@ -7,6 +7,7 @@ const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../m
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeChequeGl, chequeCreditsByCheque } = require('../lib/glImpact');
 const { postReversalJournal } = require('../lib/reversalJournal');
+const { sendXlsx, day } = require('../lib/xlsxExport');
 
 const router = express.Router();
 // Cheque (CHK-####): pays a payee for expense lines, drawn against a bank account. GL: DR each
@@ -73,8 +74,10 @@ router.get('/payees', requireAuth, requirePermission(ROUTE, 'can_view'), async (
   } catch (err) { next(err); }
 });
 
-router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
-  try {
+// The list and its Excel extract share one query, so the file holds exactly what the list shows.
+async function listCheques(query) {
+  const req = { query };
+  {
     const { search, status, as_of: asOf, date_from: dateFrom } = req.query;
     const where = [];
     const params = [];
@@ -101,8 +104,46 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        ${whereSql} ORDER BY c.date_created DESC, c.id DESC`, // newest Date first (asked 2026-10-02); id breaks ties
       params
     );
-    res.json(rows);
+    return rows;
+  }
+}
+
+router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    res.json(await listCheques(req.query));
   } catch (err) { next(err); }
+});
+
+// Extract: the list under its current filters, as a workbook. Registered before /:id.
+router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const rows = await listCheques(req.query);
+    const STATUS = { open: 'Open', fully_applied: 'Fully Applied', void: 'Void' };
+    await sendXlsx(res, {
+      filename: 'cheques.xlsx',
+      sheet: 'Cheques',
+      columns: [
+        { header: 'Cheque No', key: 'no', width: 16 },
+        { header: 'Date', key: 'date', width: 12 },
+        { header: 'Cheque Date', key: 'cheque_date', width: 12 },
+        { header: 'Cheque #', key: 'cheque_number', width: 14 },
+        { header: 'Payee', key: 'payee', width: 38 },
+        { header: 'Account', key: 'account', width: 28 },
+        { header: 'Total', key: 'total', width: 16, money: true },
+        { header: 'Date Released', key: 'released', width: 14 },
+        { header: 'Status', key: 'status', width: 13 },
+        { header: 'Memo', key: 'memo', width: 50 },
+      ],
+      rows: rows.map((r) => ({
+        no: r.cheque_no, date: day(r.date_created), cheque_date: day(r.cheque_date), cheque_number: r.cheque_number || '',
+        payee: r.payee_account_name || r.payee_name || '', account: r.account_name || '', total: Number(r.total_amount || 0),
+        released: day(r.date_released) || 'Not released', status: STATUS[r.status] || r.status, memo: r.memo || '',
+      })),
+    });
+  } catch (err) {
+    if (res.headersSent) { res.destroy(err); return; }
+    next(err);
+  }
 });
 
 // ---------------------------------------------------------------- bill credits on a cheque
