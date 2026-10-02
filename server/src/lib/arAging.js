@@ -618,12 +618,21 @@ async function collectOpenItems(asOf, filters = {}) {
   const opening = await openingItems('ar', asOf, books, {
     partyId: filters.customerId, nameStarts: filters.nameStarts, locationId: filters.locationId, noLocation: filters.noLocation,
   });
+  // An opening item that links to a T1S invoice shows that invoice's BS/SI #, PO # and memo, the
+  // way an invoice dated after the start does -- the opening balance itself carries none of them.
+  const invIds = opening.filter((o) => o.type === 'Invoice' && o.id).map((o) => o.id);
+  const invById = new Map();
+  if (invIds.length) {
+    const [inv] = await pool.query('SELECT id, bs_si_no, po_no, memo FROM sales_invoices WHERE id IN (?)', [invIds]);
+    inv.forEach((r) => invById.set(r.id, r));
+  }
   return [
     ...opening.map((o) => ({
       customer_id: o.party_id, customer_name: o.party_name, type: o.type, reference: o.reference, id: o.id,
       date: o.date, due_date: o.due_date, aging_date: o.due_date || o.date,
       original_amount: o.original_amount, balance: o.balance,
-      bs_no: null, po_no: null, memo: 'Opening balance from the source system', location_name: o.location_name || null,
+      bs_no: invById.get(o.id)?.bs_si_no || null, po_no: invById.get(o.id)?.po_no || null,
+      memo: invById.get(o.id)?.memo || 'Opening balance from the source system', location_name: o.location_name || null,
       marked_paid_unevidenced: false, opening: true,
     })),
     ...items.filter((i) => String(i.date).slice(0, 10) >= books.start),
