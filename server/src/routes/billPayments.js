@@ -85,25 +85,47 @@ router.get('/for-vendor-bill/:vbId', requireAuth, requirePermission(ROUTE, 'can_
   }
 });
 
+// The list's Vendor filter: every supplier with at least one Bill Payment -- inactive ones included --
+// with its count, as the Cheque list's Payee filter (routes/cheques.js /payees).
+router.get('/payees', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT bp.supplier_id AS id, s.name, COUNT(*) AS payments
+         FROM bill_payments bp JOIN suppliers s ON s.id = bp.supplier_id
+        GROUP BY bp.supplier_id, s.name ORDER BY s.name`);
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+// The same filters and columns as the Cheque list (asked 2026-10-02): Vendor, Released / Not
+// Released (Date Released set or not), Period From / As of Date on the payment date, search across
+// number, vendor, payee name, check #, reference and memo; sorted by Date, newest first.
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { search, status } = req.query;
+    const { search, status, as_of: asOf, date_from: dateFrom } = req.query;
     const where = [];
     const params = [];
     if (status) { where.push('bp.status = ?'); params.push(status); }
+    if (Number(req.query.supplier_id)) { where.push('bp.supplier_id = ?'); params.push(Number(req.query.supplier_id)); }
+    if (req.query.released === 'released') where.push('bp.date_released IS NOT NULL');
+    if (req.query.released === 'not_released') where.push('bp.date_released IS NULL');
+    if (dateFrom) { where.push('bp.date_created >= ?'); params.push(String(dateFrom).slice(0, 10)); }
+    if (asOf) { where.push('bp.date_created <= ?'); params.push(String(asOf).slice(0, 10)); }
     if (search) {
-      where.push('(bp.bill_payment_no LIKE ? OR s.name LIKE ?)');
-      params.push(`%${search}%`, `%${search}%`);
+      where.push('(bp.bill_payment_no LIKE ? OR s.name LIKE ? OR bp.payee_name LIKE ? OR bp.check_no LIKE ? OR bp.reference_no LIKE ? OR bp.memo LIKE ?)');
+      params.push(...Array(6).fill(`%${search}%`));
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(
       `SELECT bp.id, bp.bill_payment_no, bp.date_created, bp.payment_method_id, pm.name AS payment_method_name,
-              bp.total_amount, bp.status, s.name AS supplier_name
+              bp.total_amount, bp.status, bp.memo, bp.check_no, bp.payee_name, bp.date_released,
+              s.name AS supplier_name, coa.account_name AS bank_account_name
        FROM bill_payments bp
        LEFT JOIN suppliers s ON s.id = bp.supplier_id
        LEFT JOIN payment_methods pm ON pm.id = bp.payment_method_id
+       LEFT JOIN chart_of_accounts coa ON coa.id = bp.bank_account_id
        ${whereSql}
-       ORDER BY bp.id DESC`,
+       ORDER BY bp.date_created DESC, bp.id DESC`,
       params
     );
     res.json(rows);
