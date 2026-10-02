@@ -6,7 +6,7 @@ const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeDeliveryTicketGl } = require('../lib/glImpact');
 
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
-const { postReversalJournal } = require('../lib/reversalJournal');
+const { postReversalJournal, listReversalJournals } = require('../lib/reversalJournal');
 
 const router = express.Router();
 // Like Sales Invoices (and unlike Item Fulfillment/Receipt, which borrow their parent's
@@ -226,7 +226,8 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     );
 
     const glImpact = await computeDeliveryTicketGl(dt, lines);
-    res.json({ ...dt, lines, gl_impact: glImpact });
+    const reversalJournals = await listReversalJournals(pool, 'delivery_ticket', dt.id);
+    res.json({ ...dt, lines, gl_impact: glImpact, reversal_journals: reversalJournals });
   } catch (err) {
     next(err);
   }

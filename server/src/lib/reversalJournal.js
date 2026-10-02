@@ -119,4 +119,15 @@ async function postReversalJournal(conn, {
   return { journalId: res.insertId, journalNo };
 }
 
-module.exports = { postReversalJournal, mirror, reversalDate, REVERSAL_STATUS };
+// The reversal journal(s) a voided document wrote, for its Related Records tab -- found by the same
+// source_type/source_id link postReversalJournal sets. Takes any connection or the pool.
+async function listReversalJournals(db, sourceType, sourceId) {
+  const [rows] = await db.query(
+    `SELECT id, journal_no, date_created, total_debit, status FROM journals
+      WHERE source_type = ? AND source_id = ? ORDER BY id`,
+    [sourceType, sourceId],
+  );
+  return rows;
+}
+
+module.exports = { postReversalJournal, mirror, reversalDate, REVERSAL_STATUS, listReversalJournals };

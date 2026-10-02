@@ -11,7 +11,7 @@ const { computeSalesInvoiceGl } = require('../lib/glImpact');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { whyNotBillable } = require('../lib/estimateBilling');
 const { isHeadOfficeUser } = require('../lib/userLocation');
-const { postReversalJournal, mirror } = require('../lib/reversalJournal');
+const { postReversalJournal, mirror, listReversalJournals } = require('../lib/reversalJournal');
 
 const router = express.Router();
 // Unlike Item Fulfillment/Receipt/Quality Inspection/Item Delivery (all reached only by
@@ -704,8 +704,10 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // whyNotEditable. `not_editable_reason` is what the disabled button says, so the reason a
     // user is given is the reason the server would give.
     const notEditable = await whyNotEditable(pool, si);
+    const reversalJournals = si.status === 'cancelled' ? await listReversalJournals(pool, 'sales_invoice', si.id) : [];
     res.json({
       ...si, lines, gl_impact: glImpact, editable: !notEditable, not_editable_reason: notEditable,
+      reversal_journals: reversalJournals,
     });
   } catch (err) {
     next(err);

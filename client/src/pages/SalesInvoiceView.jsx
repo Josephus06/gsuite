@@ -301,9 +301,20 @@ export default function SalesInvoiceView() {
             <table>
               <thead><tr><th>Type</th><th>Reference</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead>
               <tbody>
-                {payments.length === 0 && creditMemos.length === 0 && (
+                {payments.length === 0 && creditMemos.length === 0 && !(si.reversal_journals || []).length && (
                   <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>No payments or credits against this invoice yet.</td></tr>
                 )}
+                {/* Voiding writes a reversal journal (lib/reversalJournal.js); it is listed here so
+                    the void's GL entry can be reached from the invoice itself. */}
+                {(si.reversal_journals || []).map((j) => (
+                  <tr key={`j${j.id}`}>
+                    <td>Reversal Journal</td>
+                    <td><button type="button" className="link-btn" onClick={() => navigate(`/journals/${j.id}`)}>{j.journal_no}</button></td>
+                    <td>{formatDate(j.date_created)}</td>
+                    <td>{money(j.total_debit)}</td>
+                    <td>{j.status === 'REVERSAL' ? 'Reversal' : j.status}</td>
+                  </tr>
+                ))}
                 {payments.map((p) => (
                   <tr key={`p${p.id}`}>
                     <td>Customer Payment</td>

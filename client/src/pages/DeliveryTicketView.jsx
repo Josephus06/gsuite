@@ -278,6 +278,13 @@ export default function DeliveryTicketView() {
                     <td>{formatDate(si.date_created)}</td>
                   </tr>
                 ))}
+                {(dt.reversal_journals || []).map((j) => (
+                  <tr key={`j${j.id}`}>
+                    <td>Reversal Journal</td>
+                    <td><button type="button" className="link-btn" onClick={() => navigate(`/journals/${j.id}`)}>{j.journal_no}</button></td>
+                    <td>{formatDate(j.date_created)}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
