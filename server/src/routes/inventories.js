@@ -31,10 +31,16 @@ async function logAudit(conn, { inventoryId, userId, eventType, fieldName = null
 // once, so it can appear under BOTH the "For Approval Costing" and "For Approval
 // Accounting" tabs simultaneously. Each tab's WHERE clause below reflects that (not a
 // simple equality on a single status column).
+//
+// Only STOCK items go through these approvals, as on the source: its Non-Inventory items live in a
+// separate NONINVTY module, carry Costing 0 / Accounting 0 and are simply Approved, and its approval
+// tabs list none of them. Applying the approvals to every type put all 2,091 Non-Inventory items
+// (plus Service, Discount and Landed Cost) into both "For Approval" tabs, where the source has none.
+const NON_STOCK_SQL = "i.item_type IN ('Non-Inventory', 'Service', 'Discount', 'Landed Cost')";
 const STATUS_FILTERS = {
-  approved: 'i.is_active = 1 AND i.is_costing_approved = 1 AND i.is_accounting_approved = 1',
-  for_approval_costing: 'i.is_active = 1 AND i.is_costing_approved = 0',
-  for_approval_accounting: 'i.is_active = 1 AND i.is_accounting_approved = 0',
+  approved: `i.is_active = 1 AND (${NON_STOCK_SQL} OR (i.is_costing_approved = 1 AND i.is_accounting_approved = 1))`,
+  for_approval_costing: `i.is_active = 1 AND NOT ${NON_STOCK_SQL} AND i.is_costing_approved = 0`,
+  for_approval_accounting: `i.is_active = 1 AND NOT ${NON_STOCK_SQL} AND i.is_accounting_approved = 0`,
   inactive: 'i.is_active = 0',
 };
 

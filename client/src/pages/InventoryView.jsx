@@ -132,9 +132,15 @@ export default function InventoryView() {
 
   const costingReady = Number(item.selling_price) > 0;
   const accountingReady = !!(item.asset_account_id && item.cogs_account_id && item.income_account_id);
-  const showApproveCosting = canApprove && item.is_active && !item.is_costing_approved && costingReady;
-  const showApproveAccounting = canApprove && item.is_active && !item.is_accounting_approved && accountingReady;
-  const fullyApproved = item.is_costing_approved && item.is_accounting_approved;
+  // Only stock items go through Costing / Accounting approval, as on the source (and the list's
+  // tabs, routes/inventories.js NON_STOCK_SQL); a Non-Inventory, Service, Discount or Landed Cost
+  // item is simply approved.
+  const nonStock = ['Non-Inventory', 'Service', 'Discount', 'Landed Cost'].includes(item.item_type);
+  const costingPending = !nonStock && !item.is_costing_approved;
+  const accountingPending = !nonStock && !item.is_accounting_approved;
+  const showApproveCosting = canApprove && item.is_active && costingPending && costingReady;
+  const showApproveAccounting = canApprove && item.is_active && accountingPending && accountingReady;
+  const fullyApproved = !costingPending && !accountingPending;
 
   return (
     <div>
@@ -159,8 +165,8 @@ export default function InventoryView() {
         <div className="estimate-status">
           {!item.is_active ? 'Inactive' : fullyApproved ? 'Approved' : (
             <>
-              {!item.is_costing_approved && <span className="estimate-so-link" style={{ background: 'rgba(245, 159, 0, 0.35)' }}>For Approval Costing</span>}
-              {!item.is_accounting_approved && <span className="estimate-so-link" style={{ background: 'rgba(245, 159, 0, 0.35)' }}>For Approval Accounting</span>}
+              {costingPending && <span className="estimate-so-link" style={{ background: 'rgba(245, 159, 0, 0.35)' }}>For Approval Costing</span>}
+              {accountingPending && <span className="estimate-so-link" style={{ background: 'rgba(245, 159, 0, 0.35)' }}>For Approval Accounting</span>}
             </>
           )}
         </div>
@@ -243,7 +249,7 @@ export default function InventoryView() {
 
       {tab === 'pricing' && (
         <div className="card">
-          {item.is_costing_approved ? (
+          {!costingPending ? (
             <p className="muted" style={{ marginTop: 0 }}>Costing approved by <strong>{item.costing_approved_by_name}</strong> on {item.costing_approved_at ? displayDateTime(item.costing_approved_at) : ''}.</p>
           ) : (
             <p className="muted" style={{ marginTop: 0 }}>Costing pending approval{!costingReady ? ' — Selling Price must be filled in before it can be approved.' : '.'}</p>
@@ -274,7 +280,7 @@ export default function InventoryView() {
 
       {tab === 'accounting' && (
         <div className="card">
-          {item.is_accounting_approved ? (
+          {!accountingPending ? (
             <p className="muted" style={{ marginTop: 0 }}>Accounting approved by <strong>{item.accounting_approved_by_name}</strong> on {item.accounting_approved_at ? displayDateTime(item.accounting_approved_at) : ''}.</p>
           ) : (
             <p className="muted" style={{ marginTop: 0 }}>Accounting pending approval{!accountingReady ? ' — Asset, COGS, and Income accounts must all be set before it can be approved.' : '.'}</p>

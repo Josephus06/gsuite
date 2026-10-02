@@ -53,14 +53,19 @@ async function main() {
 
   const token = await login();
   const costing = []; const accounting = []; let read = 0; let matched = 0;
-  // Advance by what came back, until a page is empty: the source caps the page below PAGE, and
-  // reading a short page as the last one stopped the first run after 50 matches.
+  const seen = new Set();
+  // Sorted by the source's own id and advanced by what came back, until a page is empty. Unsorted,
+  // the source's pages overlapped and the first runs saw only a fraction of the catalogue (50 of
+  // 2,252 matched); `seen` both de-duplicates and shows how much was actually read.
   for (let off = 0; off < 200000;) {
-    const page = listRows(await api(token, 'get_inventories', { where: { Module_Invty: 'INVTY' }, limit: PAGE, offset: off }));
+    const page = listRows(await api(token, 'get_inventories', { where: { Module_Invty: 'INVTY' }, order: [['ID_Invty', 'ASC']], limit: PAGE, offset: off }));
     if (!page.length) break;
     for (const s of page) {
       read += 1;
-      const it = byCode.get(key(s.UserPK_Invty));
+      const code = key(s.UserPK_Invty);
+      if (!code || seen.has(code)) continue;
+      seen.add(code);
+      const it = byCode.get(code);
       if (!it) continue;
       matched += 1;
       if (!it.is_costing_approved && yes(s.IsApproveCosting_Invty)) costing.push(it);
@@ -69,7 +74,7 @@ async function main() {
     process.stdout.write(`\r  read ${read} source items`);
     off += page.length;
   }
-  console.log(`\nMatched ${matched} of the ${pending.length} by item code.`);
+  console.log(`\nRead ${read} source rows, ${seen.size} distinct items. Matched ${matched} of the ${pending.length} by item code.`);
   console.log(`Approved on the source -> to approve here: Costing ${costing.length}, Accounting ${accounting.length}`);
   console.log(`Still pending after this (not approved on the source, or T1S-only): Costing ${pending.filter((i) => !i.is_costing_approved).length - costing.length}, Accounting ${pending.filter((i) => !i.is_accounting_approved).length - accounting.length}`);
   console.log(`e.g. ${costing.slice(0, 5).map((i) => i.item_code).join(' | ')}`);
