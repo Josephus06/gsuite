@@ -425,7 +425,10 @@ async function buildArAgingDetailsCsv(asOf, filters = {}) {
   const items = await collectOpenItems(asOf, filters);
   const groups = groupItemsByCustomer(items, asOf);
 
-  const header = ['Customer', 'Trans Date', 'Trans #', 'BS #', 'Memo', 'PO #', 'Date Due', 'Age', 'Open Balance', 'Location'];
+  // The source's own extract layout (asked 2026-10-02), as the Excel one (lib/agingWorkbook.js): the
+  // customer on a row of its own, its documents with the Customer column blank, "Total - <name>",
+  // a final "Total"; Sales Rep before Location; dates as the source writes them (10/4/2022).
+  const header = ['Customer', 'Trans. Date', 'Trans. #', 'BS #', 'Memo', 'PO #', 'Date Due', 'Age', 'Open Balance', 'Sales Rep', 'Location'];
   const cell = (v) => {
     if (v === null || v === undefined) return '';
     const s = String(v);
@@ -435,18 +438,22 @@ async function buildArAgingDetailsCsv(asOf, filters = {}) {
     return /[",\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
   };
   const money = (v) => Number(v).toFixed(2);
-  const day = (v) => (v ? String(v).slice(0, 10) : '');
+  const day = (v) => { const d = v ? String(v).slice(0, 10) : ''; return d ? `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}/${d.slice(0, 4)}` : ''; };
 
   const out = [header.join(',')];
+  let grand = 0;
   for (const g of groups) {
+    out.push([cell(g.customer_name), '', '', '', '', '', '', '', '', '', ''].join(','));
     for (const it of g.items) {
       out.push([
-        cell(g.customer_name), day(it.trans_date), cell(it.trans_no), cell(it.bs_no), cell(it.memo),
-        cell(it.po_no), day(it.date_due), it.age, money(it.open_balance), cell(it.location_name),
+        '', day(it.trans_date), cell(it.trans_no), cell(it.bs_no), cell(it.memo),
+        cell(it.po_no), day(it.date_due), it.age, money(it.open_balance), cell(it.sales_rep), cell(it.location_name),
       ].join(','));
     }
-    out.push([cell(`${g.customer_name} -- total`), '', '', '', '', '', '', '', money(g.total_balance), ''].join(','));
+    out.push([cell(`Total - ${g.customer_name}`), '', '', '', '', '', '', '', money(g.total_balance), '', ''].join(','));
+    grand += Number(g.total_balance) || 0;
   }
+  out.push(['Total', '', '', '', '', '', '', '', money(grand), '', ''].join(','));
   return { csv: out.join('\n'), customers: groups.length, items: items.length };
 }
 
