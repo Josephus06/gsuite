@@ -538,6 +538,31 @@ export default function EstimateWizard() {
     setJobOrders((prev) => prev.filter((_, i) => i !== idx));
   }
 
+  // Copy a line, processes and all, as the next line. A saved line is copied on the server and the
+  // copy read back in the shape the estimate loads with; a draft never saved is copied as a draft.
+  const [copyingJo, setCopyingJo] = useState(null);
+  async function duplicateJobOrderRow(idx) {
+    const row = jobOrdersRef.current[idx];
+    if (!row.id) {
+      setJobOrders((prev) => [...prev, {
+        ...row, _tempId: `draft-${Date.now()}`, id: null, line_no: null,
+        processes: (row.processes || []).map((p, i) => ({ ...p, id: null, _tempId: `draft-${Date.now()}-${i}` })),
+      }]);
+      return;
+    }
+    setCopyingJo(idx);
+    try {
+      const { data: created } = await api.post(`/estimates/${estimateId}/job-orders/${row.id}/duplicate`);
+      const { data } = await api.get(`/estimates/${estimateId}`);
+      const copy = (data.jobOrders || []).find((jo) => jo.id === created.id);
+      if (copy) setJobOrders((prev) => [...prev, { ...copy, processes: copy.processes || [] }]);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not copy the line.');
+    } finally {
+      setCopyingJo(null);
+    }
+  }
+
   // --- Process row helpers ---
 
   function addProcessRow(joIdx) {
@@ -1388,6 +1413,8 @@ export default function EstimateWizard() {
                         <td>
                           <div className="spreadsheet-row-actions">
                             <button type="button" className="btn btn-sm btn-danger" onClick={() => deleteJobOrderRow(idx)}>✕</button>
+                            <button type="button" className="btn btn-sm" title="Copy this line, with its processes, as a new line"
+                              disabled={copyingJo !== null} onClick={() => duplicateJobOrderRow(idx)}>{copyingJo === idx ? '…' : 'Copy'}</button>
                           </div>
                         </td>
                         {JOB_ORDER_COLUMNS.map((col) => <td key={col.key}>{jobOrderCell(col, jo, idx)}</td>)}

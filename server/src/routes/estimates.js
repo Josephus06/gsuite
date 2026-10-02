@@ -976,6 +976,48 @@ router.put('/:id/job-orders/:joId', requireAuth, requirePermission(ROUTE, 'can_e
   }
 });
 
+// Copy a job line, with every one of its processes, as the next line of the same estimate -- the
+// "Copy" button beside a line, for an estimate whose items differ only slightly.
+router.post('/:id/job-orders/:joId/duplicate', requireAuth, requirePermission(ROUTE, 'can_edit'), requireEditableEstimate, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[jo]] = await conn.query('SELECT * FROM estimate_job_orders WHERE id = ? AND estimate_id = ?', [req.params.joId, req.params.id]);
+    if (!jo) {
+      await conn.rollback();
+      return res.status(404).json({ error: 'Not found' });
+    }
+    const [[{ nextLine }]] = await conn.query(
+      'SELECT COALESCE(MAX(line_no), 0) + 1 AS nextLine FROM estimate_job_orders WHERE estimate_id = ?',
+      [req.params.id]
+    );
+    const [result] = await conn.query(
+      `INSERT INTO estimate_job_orders (estimate_id, line_no, ${JOB_ORDER_FIELDS.join(', ')})
+       VALUES (?, ?, ${JOB_ORDER_FIELDS.map(() => '?').join(', ')})`,
+      [req.params.id, nextLine, ...JOB_ORDER_FIELDS.map((f) => jo[f])]
+    );
+    const [processes] = await conn.query('SELECT * FROM estimate_job_order_processes WHERE estimate_job_order_id = ? ORDER BY line_no', [jo.id]);
+    for (const proc of processes) {
+      await conn.query(
+        `INSERT INTO estimate_job_order_processes (estimate_job_order_id, line_no, ${PROCESS_FIELDS.join(', ')})
+         VALUES (?, ?, ${PROCESS_FIELDS.map(() => '?').join(', ')})`,
+        [result.insertId, proc.line_no, ...PROCESS_FIELDS.map((f) => proc[f])]
+      );
+    }
+    await logAudit(conn, {
+      estimateId: req.params.id, userId: req.user.id, eventType: 'Created',
+      fieldName: `job_order[${nextLine}]`, newValue: `copied from line ${jo.line_no}`,
+    });
+    await conn.commit();
+    res.status(201).json({ id: result.insertId, line_no: nextLine });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
 router.delete('/:id/job-orders/:joId', requireAuth, requirePermission(ROUTE, 'can_edit'), requireEditableEstimate, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
