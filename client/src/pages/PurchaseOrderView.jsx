@@ -198,12 +198,17 @@ export default function PurchaseOrderView() {
   );
   // Receivable when approved by EITHER route and not already settled by the source. Requiring the
   // literal code 'approved' hid this button on every imported purchase order.
-  const showReceive = canEdit && po.type !== 'PO2' && isApprovedPo(po.status)
+  // Receiving and billing are other people's jobs (warehouse, accounting): either right on the PO,
+  // or the document's own Add right (Receiving Reports / Vendor Bills), opens them. PO Edit alone
+  // hid Bill from accounting staff granted Vendor Bills but not Purchase Orders.
+  const canReceive = canEdit || can('/receiving-reports', 'can_add');
+  const canBill = canEdit || can('/vendor-bills', 'can_add');
+  const showReceive = canReceive && po.type !== 'PO2' && isApprovedPo(po.status)
     && !isSettledPo(po.status) && po.receipt_status !== 'fully_received';
   const showVendorReturn = canEdit && po.type !== 'PO2' && po.receipt_status !== 'not_received';
   // "Bill" only makes sense once at least one line has been received but not yet
   // (fully) billed -- mirrors the Create Vendor Bill form's own eligibility filter.
-  const hasBillableLine = canEdit && po.lines.some((l) => Number(l.received_qty || 0) > Number(l.billed_qty || 0));
+  const hasBillableLine = canBill && po.lines.some((l) => Number(l.received_qty || 0) > Number(l.billed_qty || 0));
 
   return (
     <div>

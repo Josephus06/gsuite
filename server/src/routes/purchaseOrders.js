@@ -2,7 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const mailer = require('../lib/mailer');
 const { buildPurchaseOrderPdf, purchaseOrderPdfFilename } = require('../lib/purchaseOrderPdf');
-const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { insertNumbered } = require('../lib/docNumber');
 const { isApproved, normalisePoStatus } = require('../lib/poStatus');
@@ -903,7 +903,15 @@ router.get('/receipts/:receiptId', requireAuth, requirePermission(ROUTE, 'can_vi
 // Approved -- mirrors the real system, where "Receive" only appears post-approval.
 // Rate/Discount%/Tax Code are re-entered per receipt line (invoice price can differ from
 // the PO's) rather than just copied from the PO line, matching the real form.
-router.post('/:id/receipts', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+// Receiving is the warehouse's job: PO Edit, or Add on Receiving Reports, as the PO page offers it.
+async function requireReceiveRight(req, res, next) {
+  try {
+    if (await userCan(req.user.id, ROUTE, 'can_edit') || await userCan(req.user.id, '/receiving-reports', 'can_add')) return next();
+    return res.status(403).json({ error: 'You do not have permission to receive this Purchase Order.' });
+  } catch (err) { return next(err); }
+}
+
+router.post('/:id/receipts', requireAuth, requireReceiveRight, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[po]] = await conn.query('SELECT id, status, receipt_status FROM purchase_orders WHERE id = ?', [req.params.id]);
