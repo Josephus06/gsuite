@@ -34,6 +34,22 @@ function computeLineAmounts({ unitPrice, discPercent, taxRate, qty }) {
   return { subtotal, disc_amount: discAmount, net_of_tax: netOfTax, tax_amount: taxAmount, ext_price: extPrice };
 }
 
+// A line priced from the Amount the user typed (net of VAT, after discount) rather than from
+// qty x unit price: the Amount is kept exactly and Unit Price follows (Amount / Qty, before the
+// discount), so a 4-decimal unit price cannot drift the line by centavos. A line with no quantity
+// (some imported ones carry 0) takes the Amount as its unit price.
+function computeLineFromAmount({ amount, discPercent, taxRate, qty }) {
+  const netOfTax = Number(Number(amount || 0).toFixed(2));
+  const d = Number(discPercent || 0);
+  const subtotal = d > 0 && d < 100 ? Number((netOfTax / (1 - d / 100)).toFixed(2)) : netOfTax;
+  const discAmount = Number((subtotal - netOfTax).toFixed(2));
+  const taxAmount = Number((netOfTax * (Number(taxRate || 0) / 100)).toFixed(2));
+  const unitPrice = Number(qty) > 0 ? Number((subtotal / Number(qty)).toFixed(4)) : subtotal;
+  return { subtotal, disc_amount: discAmount, net_of_tax: netOfTax, tax_amount: taxAmount,
+    ext_price: Number((netOfTax + taxAmount).toFixed(2)), unit_price: unitPrice };
+}
+const hasAmount = (l) => l && l.amount !== undefined && l.amount !== null && l.amount !== '' && Number.isFinite(Number(l.amount));
+
 // GL Impact computation lives in server/src/lib/glImpact.js (computeVendorBillGl),
 // shared with the Reports engine so the reports can never drift from what this tab shows.
 const computeGlImpact = computeVendorBillGl;
@@ -416,10 +432,12 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       if (qty > remaining + 1e-9) {
         return res.status(409).json({ error: `Qty to Bill (${qty}) exceeds the remaining billable qty (${remaining}) for this line.` });
       }
-      const unitPrice = s.unit_price !== undefined ? Number(s.unit_price) : Number(poLine.rate);
       const discPercent = Number(s.disc_percent || 0);
       const isWithhold = !!s.is_withhold;
-      const amounts = computeLineAmounts({ unitPrice, discPercent, taxRate: poLine.tax_rate, qty });
+      // A typed Amount wins; Unit Price follows it (computeLineFromAmount).
+      const fromAmount = hasAmount(s) ? computeLineFromAmount({ amount: s.amount, discPercent, taxRate: poLine.tax_rate, qty }) : null;
+      const unitPrice = fromAmount ? fromAmount.unit_price : (s.unit_price !== undefined ? Number(s.unit_price) : Number(poLine.rate));
+      const amounts = fromAmount || computeLineAmounts({ unitPrice, discPercent, taxRate: poLine.tax_rate, qty });
       const lineWtaxAmount = isWithhold ? Number((amounts.net_of_tax * wtaxRate / 100).toFixed(2)) : 0;
       computedLines.push({
         purchase_order_line_id: poLine.id, item_id: poLine.item_id, location_id: poLine.location_id,
@@ -503,36 +521,26 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   }
 });
 
-// Why a saved bill's MONEY (lines, amounts, withholding, supplier) may not change, or null when it
-// may. The details -- dates, term, reference, location, memo -- are always editable.
-//   - Anything applied against it: amount_due is the remaining balance, decremented by each Bill
-//     Payment and Bill Credit, so re-pricing under an application would leave the payment
-//     settling a figure the bill no longer carries. The balance test also catches migrated bills
-//     settled with no payment row behind them.
-//   - Imported from the old system: those post the old system's own GL entries (live_gl_entries,
-//     see glImpact.js), not entries derived from the lines, so a re-priced line would change the
-//     page and leave the books on the old figures.
-async function moneyLockReason(conn, vb) {
-  if (vb.status === 'paid' || vb.status === 'paid_in_full') return 'it is paid';
-  const [[pay]] = await conn.query(
-    `SELECT 1 AS x FROM bill_payment_lines bpl JOIN bill_payments bp ON bp.id = bpl.bill_payment_id
-      WHERE bpl.vendor_bill_id = ? AND bp.status NOT IN ('voided', 'void', 'cancelled') LIMIT 1`, [vb.id]);
-  if (pay) return 'a Bill Payment is applied to it';
-  const [[credit]] = await conn.query(
-    `SELECT 1 AS x FROM bill_credit_applications bca JOIN bill_credits bc ON bc.id = bca.bill_credit_id
-      WHERE bca.vendor_bill_id = ? AND bc.status NOT IN ('voided', 'void', 'cancelled') LIMIT 1`, [vb.id]);
-  if (credit) return 'a Bill Credit is applied to it';
-  if (Math.abs(Number(vb.amount_due) - (Number(vb.gross_amount) - Number(vb.wtax_amount || 0))) > 0.005) return 'part of it is already settled';
+// What already stands against a saved bill's money. Nothing here LOCKS it any more -- the amount is
+// editable (asked for 2026-10-02) -- and the PUT below keeps each of these straight instead:
+//   applied   what Bill Payments / Bill Credits have already settled: (gross - wtax) - amount_due.
+//             The new total may not fall below it, and Amount Due becomes new total - applied.
+//   oldGl     a bill brought over from the old system posts the old system's own GL entries
+//             (live_gl_entries, see glImpact.js). When its amount changes those are replaced by the
+//             entries computed from the edited lines -- after carrying its expense account onto the
+//             bill, which those entries held and the imported header did not.
+async function moneyContext(conn, vb) {
+  const applied = Math.max(0, Number((Number(vb.gross_amount) - Number(vb.wtax_amount || 0) - Number(vb.amount_due)).toFixed(2)));
   const [[gl]] = await conn.query("SELECT 1 AS x FROM live_gl_entries WHERE source_type = 'vendor_bill' AND source_id = ? LIMIT 1", [vb.id])
     .catch((e) => { if (e.code === 'ER_NO_SUCH_TABLE') return [[null]]; throw e; });
-  if (gl) return 'it was brought over from the old system, and its GL entries are the old system\'s';
-  // Re-pricing recomputes every line from qty x unit price. Where that does not give back what the
-  // line stores -- imported bills whose quantity never came over (VB-10622: qty 0, net 36) -- a
-  // save would zero the bill, so its money stays as imported.
-  const [lines] = await conn.query('SELECT qty, unit_price, disc_percent, net_of_tax FROM vendor_bill_lines WHERE vendor_bill_id = ?', [vb.id]);
-  const off = lines.some((l) => Math.abs(computeLineAmounts({ unitPrice: l.unit_price, discPercent: l.disc_percent, taxRate: 0, qty: Number(l.qty) }).net_of_tax - Number(l.net_of_tax)) > 0.01);
-  if (off) return 'its lines\' quantities and prices do not add up to its stored amounts (it was brought over from the old system)';
-  return null;
+  // 14 imported bills have lines that do not add up to their own total (VB-5: one 1,000.00 line on
+  // a 6,937.50 bill). Re-pricing rebuilds the total from the lines, so it would silently cut such a
+  // bill to its lines -- those stay as imported, and say why.
+  const [[sum]] = await conn.query('SELECT COALESCE(SUM(net_of_tax), 0) AS s FROM vendor_bill_lines WHERE vendor_bill_id = ?', [vb.id]);
+  const linesMismatch = Math.abs(Number(sum.s) - Number(vb.net_of_tax)) > 0.05
+    ? `its lines add up to ${Number(sum.s).toFixed(2)} but its total is ${Number(vb.net_of_tax).toFixed(2)} (it came from the old system without all its lines)`
+    : null;
+  return { applied, oldGl: !!gl, linesMismatch };
 }
 
 // Tells the edit page up front which parts it may change, so it can lock them instead of letting
@@ -541,17 +549,18 @@ router.get('/:id/edit-meta', requireAuth, requirePermission(ROUTE, 'can_edit'), 
   try {
     const [[vb]] = await pool.query('SELECT * FROM vendor_bills WHERE id = ?', [req.params.id]);
     if (!vb) return res.status(404).json({ error: 'Not found' });
-    res.json({ money_lock_reason: await moneyLockReason(pool, vb) });
+    const ctx = await moneyContext(pool, vb);
+    res.json({ money_lock_reason: ctx.linesMismatch, applied_amount: ctx.applied, old_system_gl: ctx.oldGl });
   } catch (err) { next(err); }
 });
 
-// Edit a saved bill. Details always; money only while moneyLockReason() is null, and then:
+// Edit a saved bill -- details and money (see moneyContext for what keeps the money straight):
 //   - a PO bill's lines keep their item and quantity (billed_qty on the PO line was moved by
-//     exactly that qty and stays in step); unit price, discount, tax code, department and the
-//     withholding flag may change.
+//     exactly that qty and stays in step); the Amount (or unit price), discount, tax code,
+//     department and the withholding flag may change.
 //   - a standalone expense bill's lines are replaced wholesale, like the create form.
-// Every figure is recomputed here, as on create; amount_due resets to the new total, which is
-// only correct because nothing has been applied yet. Each changed header field is audit-logged.
+// Every figure is recomputed here, as on create; amount_due = new total less what is already
+// applied. Each changed header field is audit-logged.
 const VB_DETAIL_FIELDS = ['date_created', 'date_due', 'term', 'reference_no', 'office_location_id', 'memo'];
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
@@ -577,9 +586,9 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     };
 
     const wantsMoney = Array.isArray(b.lines);
-    const lockReason = wantsMoney ? await moneyLockReason(conn, vb) : null;
-    if (wantsMoney && lockReason) {
-      return res.status(409).json({ error: `The amounts on this bill cannot be changed because ${lockReason}. Its details (dates, term, reference, location, memo) can still be edited.` });
+    const ctx = wantsMoney ? await moneyContext(conn, vb) : null;
+    if (ctx?.linesMismatch) {
+      return res.status(409).json({ error: `The amount of this bill cannot be changed: ${ctx.linesMismatch}. Its dates, term, reference, location and memo can still be edited.` });
     }
 
     let money = null;
@@ -595,7 +604,10 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         wtaxRate = Number(wt.rate) || 0; wtaxDescription = wt.name || null;
       }
       const price = (l, qty, unitPrice) => {
-        const amounts = computeLineAmounts({ unitPrice, discPercent: l.disc_percent, taxRate: taxRate.get(Number(l.tax_code_id)) || 0, qty });
+        const rate = taxRate.get(Number(l.tax_code_id)) || 0;
+        const amounts = hasAmount(l)
+          ? computeLineFromAmount({ amount: l.amount, discPercent: l.disc_percent, taxRate: rate, qty })
+          : { ...computeLineAmounts({ unitPrice, discPercent: l.disc_percent, taxRate: rate, qty }), unit_price: unitPrice };
         const isWithhold = !!l.is_withhold && wtaxRate > 0;
         const wtaxAmount = isWithhold ? Number((amounts.net_of_tax * wtaxRate / 100).toFixed(2)) : 0;
         return { ...amounts, is_withhold: isWithhold, wtax_amount: wtaxAmount, amount_due: Number((amounts.ext_price - wtaxAmount).toFixed(2)) };
@@ -613,17 +625,18 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         for (const [idx, old] of existing.entries()) {
           const l = byId.get(old.id);
           const unitPrice = Number(l.unit_price);
-          if (!Number.isFinite(unitPrice) || unitPrice < 0) return res.status(400).json({ error: `Enter a unit price on line ${idx + 1}.` });
+          if (!hasAmount(l) && (!Number.isFinite(unitPrice) || unitPrice < 0)) return res.status(400).json({ error: `Enter a unit price on line ${idx + 1}.` });
           const departmentId = Number(l.department_id) || null;
           if (!departmentId) return res.status(400).json({ error: `Choose a Department on line ${idx + 1}. It is required so department budgets can be tracked.` });
           newLines.push({
             id: old.id, account_id: old.account_id, description: old.description, department_id: departmentId,
-            qty: Number(old.qty), rate: old.rate, unit_price: unitPrice, disc_percent: Number(l.disc_percent || 0),
+            qty: Number(old.qty), rate: old.rate, disc_percent: Number(l.disc_percent || 0),
             tax_code_id: Number(l.tax_code_id) || null, ...price(l, Number(old.qty), unitPrice),
           });
         }
       } else {
-        const submitted = b.lines.filter((l) => Number(l.qty) > 0);
+        // A line with an Amount counts even at qty 0 -- some imported lines carry none.
+        const submitted = b.lines.filter((l) => Number(l.qty) > 0 || (hasAmount(l) && Number(l.amount) !== 0));
         if (!submitted.length) return res.status(400).json({ error: 'Add at least one line with an amount.' });
         const accountIds = [...new Set(submitted.map((l) => Number(l.account_id)).filter(Boolean))];
         const [accts] = accountIds.length ? await conn.query('SELECT id FROM chart_of_accounts WHERE id IN (?)', [accountIds]) : [[]];
@@ -631,13 +644,14 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         for (const [idx, l] of submitted.entries()) {
           if (!knownAcct.has(Number(l.account_id))) return res.status(400).json({ error: `Choose an account on line ${idx + 1}.` });
           if (!Number(l.department_id)) return res.status(400).json({ error: `Choose a Department on line ${idx + 1}. It is required so department budgets can be tracked.` });
-          const qty = Number(l.qty);
+          const qty = Number(l.qty) || 0;
           const unitPrice = Number(l.unit_price);
-          if (!Number.isFinite(unitPrice) || unitPrice < 0) return res.status(400).json({ error: `Enter an amount on line ${idx + 1}.` });
+          if (!hasAmount(l) && (!Number.isFinite(unitPrice) || unitPrice < 0)) return res.status(400).json({ error: `Enter an amount on line ${idx + 1}.` });
+          const priced = price(l, qty, unitPrice);
           newLines.push({
             id: null, account_id: Number(l.account_id), description: String(l.description || '').trim().slice(0, 500) || null,
-            department_id: Number(l.department_id), location_id: Number(l.location_id) || null, qty, rate: unitPrice, unit_price: unitPrice,
-            disc_percent: Number(l.disc_percent || 0), tax_code_id: Number(l.tax_code_id) || null, ...price(l, qty, unitPrice),
+            department_id: Number(l.department_id), location_id: Number(l.location_id) || null, qty, rate: priced.unit_price,
+            disc_percent: Number(l.disc_percent || 0), tax_code_id: Number(l.tax_code_id) || null, ...priced,
           });
         }
       }
@@ -648,8 +662,15 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       money = {
         subtotal: sum('subtotal'), discount_amount: sum('disc_amount'), net_of_tax: sum('net_of_tax'), tax_amount: sum('tax_amount'),
         gross_amount: gross, wtax_id: wtaxId, wtax_description: wtaxDescription, wtax_amount: wtaxAmount,
-        amount_due: Number((gross - wtaxAmount).toFixed(2)),
+        // What Bill Payments / Credits already settled stays settled: Amount Due is the new total
+        // less it, and the new total may not go below it.
+        amount_due: Number((gross - wtaxAmount - ctx.applied).toFixed(2)),
       };
+      if (money.amount_due < -0.005) {
+        return res.status(409).json({ error: `${ctx.applied.toFixed(2)} of this bill is already paid or credited, so its total (net of withholding) cannot go below that.` });
+      }
+      money.amount_due = Math.max(0, money.amount_due);
+      if (['open', 'paid', 'paid_in_full'].includes(vb.status)) money.status = money.amount_due <= 0.005 ? 'paid_in_full' : 'open';
       // A standalone bill may also change its supplier and the payable it credits.
       if (!hasItemLines) {
         const [[supplier]] = await conn.query('SELECT id FROM suppliers WHERE id = ?', [b.supplier_id]);
@@ -663,8 +684,30 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       }
     }
 
+    const moneyChanged = !!money && (Math.abs(Number(vb.gross_amount) - money.gross_amount) > 0.005
+      || Math.abs(Number(vb.net_of_tax) - money.net_of_tax) > 0.005 || Math.abs(Number(vb.tax_amount) - money.tax_amount) > 0.005);
+    let oldGlRows = null;
+    if (moneyChanged && ctx.oldGl) {
+      [oldGlRows] = await conn.query(
+        "SELECT account_code, debit, credit FROM live_gl_entries WHERE source_type = 'vendor_bill' AND source_id = ?", [vb.id]);
+      // The imported header has no debit account (19,162 of 19,164 bills); the old entry's largest
+      // debit that is not input VAT is it. Without this the computed entry would drop its debit leg.
+      if (!money.account_id && !vb.account_id && vb.purchase_order_id) {
+        const debit = oldGlRows.filter((r) => Number(r.debit) > 0 && String(r.account_code) !== '14300')
+          .sort((x, y) => Number(y.debit) - Number(x.debit))[0];
+        if (debit) {
+          const [[acct]] = await conn.query('SELECT id FROM chart_of_accounts WHERE account_code = ?', [debit.account_code]);
+          if (acct) money.account_id = acct.id;
+        }
+      }
+    }
     const update = { ...details, ...(money || {}) };
     await conn.beginTransaction();
+    if (oldGlRows) {
+      await conn.query("DELETE FROM live_gl_entries WHERE source_type = 'vendor_bill' AND source_id = ?", [vb.id]);
+      await logAudit(conn, { billId: vb.id, userId: req.user.id, eventType: 'Updated', fieldName: 'old_system_gl_replaced',
+        oldValue: JSON.stringify(oldGlRows).slice(0, 60000), newValue: 'computed from the edited lines' });
+    }
     await conn.query(`UPDATE vendor_bills SET ${Object.keys(update).map((k) => `${k} = ?`).join(', ')} WHERE id = ?`,
       [...Object.values(update), vb.id]);
 

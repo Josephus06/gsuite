@@ -28,9 +28,10 @@ function computeLine(l, wtaxRate) {
   const unitPrice = Number(l.unit_price) || 0;
   const discPercent = Number(l.disc_percent) || 0;
   const taxRate = Number(l.tax_rate) || 0;
-  const subtotal = q * unitPrice;
-  const discAmount = subtotal * (discPercent / 100);
-  const netOfTax = subtotal - discAmount;
+  // A typed Amount (net of VAT) stands as typed; otherwise it is qty x unit price less discount.
+  const typed = l.amount !== undefined && l.amount !== '' && Number.isFinite(Number(l.amount));
+  const netOfTax = typed ? Number(l.amount) : q * unitPrice * (1 - discPercent / 100);
+  const discAmount = typed ? (discPercent > 0 && discPercent < 100 ? netOfTax / (1 - discPercent / 100) - netOfTax : 0) : q * unitPrice * (discPercent / 100);
   const taxAmount = netOfTax * (taxRate / 100);
   const extPrice = netOfTax + taxAmount;
   const wtaxAmount = l.is_withhold ? netOfTax * (Number(wtaxRate || 0) / 100) : 0;
@@ -94,7 +95,7 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
     );
   }
 
-  const subtotal = computedLines.reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.unit_price) || 0), 0);
+  const subtotal = computedLines.reduce((s, l) => s + l.net_of_tax + l.disc_amount, 0);
   const discountAmount = computedLines.reduce((s, l) => s + l.disc_amount, 0);
   const netOfTax = computedLines.reduce((s, l) => s + l.net_of_tax, 0);
   const taxAmount = computedLines.reduce((s, l) => s + l.tax_amount, 0);
@@ -102,8 +103,23 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
   const wtaxAmount = computedLines.reduce((s, l) => s + l.wtax_amount, 0);
   const amountDue = grossAmount - wtaxAmount;
 
+  // Editing Qty, Unit Price or Discount drops a typed Amount (it is recomputed from them again);
+  // typing an Amount sets Unit Price = Amount / Qty (before discount), shown to 4 decimals.
   function updateLine(purchaseOrderLineId, patch) {
-    setLines((prev) => prev.map((l) => (l.purchase_order_line_id === purchaseOrderLineId ? { ...l, ...patch } : l)));
+    setLines((prev) => prev.map((l) => {
+      if (l.purchase_order_line_id !== purchaseOrderLineId) return l;
+      const next = { ...l, ...patch };
+      if ('qty' in patch || 'unit_price' in patch || 'disc_percent' in patch) {
+        if (!('amount' in patch)) delete next.amount;
+      }
+      if ('amount' in patch) {
+        const q = Number(next.qty) || 0;
+        const d = Number(next.disc_percent) || 0;
+        const sub = d > 0 && d < 100 ? Number(patch.amount || 0) / (1 - d / 100) : Number(patch.amount || 0);
+        if (q > 0) next.unit_price = Number((sub / q).toFixed(4));
+      }
+      return next;
+    }));
   }
 
   async function handleSave() {
@@ -125,6 +141,8 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
           purchase_order_line_id: l.purchase_order_line_id,
           qty: l.qty,
           unit_price: l.unit_price,
+          // Sent only when typed; the server then keeps it exactly and derives Unit Price.
+          amount: l.amount !== undefined && l.amount !== '' ? Number(l.amount) : undefined,
           disc_percent: l.disc_percent,
           is_withhold: l.is_withhold,
           department_id: l.department_id || null,
@@ -254,7 +272,14 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
                         />
                       </td>
                       <td>{money(l.disc_amount)}</td>
-                      <td>{money(l.net_of_tax)}</td>
+                      <td>
+                        <input
+                          type="number" step="0.01" style={{ width: 110 }}
+                          value={l.amount !== undefined ? l.amount : Number(l.net_of_tax.toFixed(2))}
+                          onChange={(e) => updateLine(l.purchase_order_line_id, { amount: e.target.value })}
+                          title="Type the Amount (net of VAT); Unit Price follows"
+                        />
+                      </td>
                       <td>{l.tax_code}</td>
                       <td>{money(l.tax_amount)}</td>
                       <td>{money(l.ext_price)}</td>

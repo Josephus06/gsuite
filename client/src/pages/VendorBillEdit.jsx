@@ -10,10 +10,15 @@ function money(v) {
 }
 const round2 = (n) => Math.round(n * 100) / 100;
 const day = (v) => (v ? String(v).slice(0, 10) : '');
-// The same arithmetic as the server's computeLineAmounts -- a preview only; the save recomputes.
+// Preview of the server's arithmetic. Each line carries its Amount (net of VAT): it starts at the
+// stored figure, follows Qty / Unit Price / Discount when those are edited, and can be typed --
+// Unit Price then follows it. The server keeps a sent Amount exactly.
+function amountOf(l) {
+  const sub = Number(l.qty || 0) * Number(l.unit_price || 0);
+  return round2(sub - sub * (Number(l.disc_percent || 0) / 100));
+}
 function lineAmounts(l, taxRate, wtaxRate) {
-  const sub = round2(Number(l.qty || 0) * Number(l.unit_price || 0));
-  const net = round2(sub - round2(sub * (Number(l.disc_percent || 0) / 100)));
+  const net = round2(Number(l.amount || 0));
   const tax = round2(net * (Number(taxRate || 0) / 100));
   const gross = round2(net + tax);
   const wtax = l.is_withhold ? round2(net * (Number(wtaxRate || 0) / 100)) : 0;
@@ -36,7 +41,7 @@ export default function VendorBillEdit() {
   const [vb, setVb] = useState(null);
   const [meta, setMeta] = useState(null);
   const [locations, setLocations] = useState([]);
-  const [lockReason, setLockReason] = useState(null);
+  const [moneyInfo, setMoneyInfo] = useState({ applied: 0, oldGl: false, lockReason: null });
   const [header, setHeader] = useState(null);
   const [supplier, setSupplier] = useState(null);
   const [apAccount, setApAccount] = useState(null);
@@ -51,21 +56,35 @@ export default function VendorBillEdit() {
       api.get('/vendor-bills/standalone-meta'), api.get('/lookups/locations'),
     ]).then(([b, em, m, loc]) => {
       const bill = b.data;
-      setVb(bill); setMeta(m.data); setLocations(loc.data || []); setLockReason(em.data.money_lock_reason);
+      setVb(bill); setMeta(m.data); setLocations(loc.data || []); setMoneyInfo({ applied: Number(em.data.applied_amount || 0), oldGl: !!em.data.old_system_gl, lockReason: em.data.money_lock_reason || null });
       setHeader({
         date_created: day(bill.date_created), date_due: day(bill.date_due), term: bill.term || '',
         reference_no: bill.reference_no || '', office_location_id: bill.office_location_id || '', memo: bill.memo || '',
       });
       setSupplier(m.data.suppliers.find((s) => s.id === bill.supplier_id) || (bill.supplier_id ? { id: bill.supplier_id, name: bill.supplier_name } : null));
       setApAccount(m.data.accounts.find((a) => a.id === bill.account_id) || null);
-      setWtaxId(bill.wtax_id ? String(bill.wtax_id) : '');
+      // Bills from the old system often carry VAT and withholding as AMOUNTS with no code (22,026
+      // lines, 12,849 bills). Re-pricing from a blank code would drop them, so the code is read back
+      // off the amounts -- 5.36 on 44.64 is 12% (VAT12), 0.45 is 1% (WC 158) -- and shown, changeable.
+      const rateOf = (part, whole) => (Number(whole) > 0 ? Math.round((Number(part) / Number(whole)) * 10000) / 100 : 0);
+      const taxForRate = (r) => m.data.taxes.find((t) => Math.abs(Number(t.rate) - r) < 0.05);
+      let wtaxGuess = bill.wtax_id ? String(bill.wtax_id) : '';
+      if (!wtaxGuess && Number(bill.wtax_amount) > 0) {
+        const base = bill.lines.filter((l) => l.is_withhold).reduce((s2, l) => s2 + Number(l.net_of_tax || 0), 0) || Number(bill.net_of_tax);
+        const r = rateOf(bill.wtax_amount, base);
+        const w = m.data.wtaxes.find((x) => Math.abs(Number(x.rate) - r) < 0.05);
+        if (w) wtaxGuess = String(w.id);
+      }
+      setWtaxId(wtaxGuess);
       const acctById = new Map(m.data.accounts.map((a) => [a.id, a]));
       setLines(bill.lines.map((l) => ({
         key: newKey(), id: l.id, item_code: l.item_code, item_name: l.item_name,
         account: l.account_id ? (acctById.get(l.account_id) || { id: l.account_id, account_code: l.line_account_code, account_name: l.line_account_name }) : null,
         description: l.description || '', department_id: l.department_id ? String(l.department_id) : '',
-        qty: Number(l.qty), unit_price: Number(l.unit_price), disc_percent: Number(l.disc_percent || 0),
-        tax_code_id: l.tax_code_id ? String(l.tax_code_id) : '', is_withhold: !!l.is_withhold,
+        qty: Number(l.qty), unit_price: Number(l.unit_price), disc_percent: Number(l.disc_percent || 0), amount: Number(l.net_of_tax || 0),
+        tax_code_id: l.tax_code_id ? String(l.tax_code_id)
+          : (Number(l.tax_amount) > 0 ? String(taxForRate(rateOf(l.tax_amount, l.net_of_tax))?.id || '') : ''),
+        is_withhold: !!l.is_withhold,
       })));
     }).catch((err) => setError(err.response?.data?.error || 'Could not load this Vendor Bill.'));
   }, [id]);
@@ -73,13 +92,25 @@ export default function VendorBillEdit() {
   if (!vb || !meta || !header) return error ? <div className="error-banner">{error}</div> : <LoadingSpinner />;
 
   const isItemBill = !!vb.purchase_order_id || vb.lines.some((l) => l.purchase_order_line_id || l.item_id);
-  const moneyLocked = !!lockReason;
+  const moneyLocked = !!moneyInfo.lockReason;
   const taxRate = (tid) => Number((meta.taxes.find((t) => String(t.id) === String(tid)) || {}).rate || 0);
   const wtax = meta.wtaxes.find((w) => String(w.id) === String(wtaxId));
   const priced = lines.map((l) => ({ ...l, amt: lineAmounts(l, taxRate(l.tax_code_id), Number(wtax?.rate || 0)) }));
   const sum = (k) => priced.reduce((s, l) => s + l.amt[k], 0);
   const setH = (patch) => setHeader((h) => ({ ...h, ...patch }));
-  const setLine = (key, patch) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  // Qty / Unit Price / Discount move the Amount; a typed Amount moves Unit Price (Amount / Qty).
+  const setLine = (key, patch) => setLines((ls) => ls.map((l) => {
+    if (l.key !== key) return l;
+    const next = { ...l, ...patch };
+    if ('amount' in patch) {
+      const q = Number(next.qty) || 0; const d = Number(next.disc_percent) || 0;
+      const sub = d > 0 && d < 100 ? Number(patch.amount || 0) / (1 - d / 100) : Number(patch.amount || 0);
+      next.unit_price = q > 0 ? Number((sub / q).toFixed(4)) : sub;
+    } else if ('qty' in patch || 'unit_price' in patch || 'disc_percent' in patch) {
+      next.amount = amountOf(next);
+    }
+    return next;
+  }));
 
   async function handleSave() {
     setError('');
@@ -100,7 +131,7 @@ export default function VendorBillEdit() {
         lines: lines.map((l) => ({
           id: l.id, account_id: l.account?.id || null, description: l.description, department_id: Number(l.department_id) || null,
           qty: Number(l.qty), unit_price: Number(l.unit_price || 0), disc_percent: Number(l.disc_percent || 0),
-          tax_code_id: l.tax_code_id || null, is_withhold: l.is_withhold,
+          tax_code_id: l.tax_code_id || null, is_withhold: l.is_withhold, amount: Number(l.amount || 0),
         })),
       });
     }
@@ -127,9 +158,11 @@ export default function VendorBillEdit() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
-      {moneyLocked && (
+      {(moneyInfo.applied > 0 || moneyInfo.oldGl || moneyInfo.lockReason) && (
         <div className="error-banner" style={{ background: '#fff7e6', color: '#8a5a00', borderColor: '#f5d38a' }}>
-          The amounts on this bill can't be changed because {lockReason}. Its dates, term, reference, location and memo can still be edited.
+          {moneyInfo.lockReason && <div><b>The amount of this bill cannot be changed:</b> {moneyInfo.lockReason}. Its dates, term, reference, location and memo can still be edited.</div>}
+          {!moneyInfo.lockReason && moneyInfo.applied > 0 && <div>{money(moneyInfo.applied)} of this bill is already paid or credited -- the new total (net of withholding) cannot go below it; Amount Due becomes the new total less it.</div>}
+          {moneyInfo.oldGl && <div>This bill came from the old system. If its amount changes, its old-system GL entries are replaced by entries computed from these lines.</div>}
         </div>
       )}
 
@@ -204,7 +237,7 @@ export default function VendorBillEdit() {
             <thead>
               <tr>
                 {isItemBill ? <><th>Item</th><th>Description</th></> : <><th style={{ minWidth: 150 }}>Account</th><th>Account Title</th><th style={{ minWidth: 180 }}>Description</th></>}
-                <th>Department</th><th>Qty</th><th>Unit Price</th>{isItemBill && <th>Disc %</th>}<th>Tax Code</th>
+                <th>Department</th><th>Qty</th><th>Unit Price</th>{isItemBill && <th>Disc %</th>}<th>Amount</th><th>Tax Code</th>
                 <th style={{ textAlign: 'right' }}>Tax</th><th style={{ textAlign: 'right' }}>Gross</th><th>WTax</th>
                 <th style={{ textAlign: 'right' }}>WTax Amt</th><th style={{ textAlign: 'right' }}>Amount Due</th>{!isItemBill && !ro && <th></th>}
               </tr>
@@ -239,6 +272,7 @@ export default function VendorBillEdit() {
                   <td>{isItemBill || ro ? l.qty : <input type="number" min="0" step="any" style={{ width: 70 }} value={l.qty} onChange={(e) => setLine(l.key, { qty: e.target.value })} />}</td>
                   <td>{ro ? money(l.unit_price) : <input type="number" min="0" step="any" style={{ width: 110 }} value={l.unit_price} onChange={(e) => setLine(l.key, { unit_price: e.target.value })} />}</td>
                   {isItemBill && <td>{ro ? l.disc_percent : <input type="number" min="0" max="100" step="any" style={{ width: 60 }} value={l.disc_percent} onChange={(e) => setLine(l.key, { disc_percent: e.target.value })} />}</td>}
+                  <td><input type="number" step="0.01" style={{ width: 120 }} disabled={ro} value={l.amount} title="Amount net of VAT; Unit Price follows" onChange={(e) => setLine(l.key, { amount: e.target.value })} /></td>
                   <td>
                     <select value={l.tax_code_id} disabled={ro} onChange={(e) => setLine(l.key, { tax_code_id: e.target.value })}>
                       <option value="">Select Tax</option>
@@ -260,7 +294,7 @@ export default function VendorBillEdit() {
         </div>
         {!isItemBill && !ro && (
           <button type="button" className="btn btn-primary btn-sm" style={{ marginTop: 8 }}
-            onClick={() => setLines((ls) => [...ls, { key: newKey(), id: null, account: null, description: '', department_id: '', qty: 1, unit_price: '', disc_percent: 0, tax_code_id: '', is_withhold: false }])}>
+            onClick={() => setLines((ls) => [...ls, { key: newKey(), id: null, account: null, description: '', department_id: '', qty: 1, unit_price: '', disc_percent: 0, amount: 0, tax_code_id: '', is_withhold: false }])}>
             Add Expense
           </button>
         )}

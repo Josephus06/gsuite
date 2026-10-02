@@ -731,7 +731,16 @@ async function computeVendorBillGl(vb, lines) {
   // A standalone bill's header Account is the payable it credits (default AP - Trade); on a PO bill
   // the header account is the debit offset and AP - Trade is always the credit.
   const creditAcct = !vb.purchase_order_id && vb.account_code ? { account_code: vb.account_code, account_name: vb.account_name } : apAcct;
-  if (grossAmount) rows.push({ account_code: creditAcct.account_code, account_name: creditAcct.account_name, debit: 0, credit: grossAmount });
+  // Withholding is credited to 21402 and the payable net of it, as the source posts a bill
+  // (VB-23778: CR 20100 49.55 / CR 21402 0.45 on a 50.00 bill). Crediting the payable the full gross
+  // overstated AP by the tax withheld on every bill that withholds.
+  const wtax = Number(Number(vb.wtax_amount || 0).toFixed(2));
+  const ewtAcct = wtax > 0 ? await coaByCode('21402') : null;
+  if (grossAmount) {
+    const payable = ewtAcct ? Number((grossAmount - wtax).toFixed(2)) : grossAmount;
+    rows.push({ account_code: creditAcct.account_code, account_name: creditAcct.account_name, debit: 0, credit: payable });
+    if (ewtAcct) rows.push({ account_code: ewtAcct.account_code, account_name: ewtAcct.account_name, debit: 0, credit: wtax });
+  }
   // A standalone (expense) bill's lines each name the account they debit; a PO bill debits its one
   // header account for the whole net, as it always has.
   const acctLines = lines.filter((l) => l.account_id && Number(l.net_of_tax));
