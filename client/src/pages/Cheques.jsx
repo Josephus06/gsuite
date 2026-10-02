@@ -11,8 +11,6 @@ const PAGE_SIZE = 15;
 const STATUS_LABELS = { open: 'Open', fully_applied: 'Fully Applied', void: 'Void' };
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'; }
 function formatDate(v) { return v ? displayDate(v) : ''; }
-// Cheque dates keep the bank's format (e.g. Sep 18, 2026), not the app-wide 18 Sept 2026 -- as asked.
-function formatChequeDate(v) { return v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }) : ''; }
 
 export default function Cheques() {
   const { can } = useAuth();
@@ -70,7 +68,7 @@ export default function Cheques() {
           <div className="table-wrap">
             <table className="responsive-cards">
               <thead>
-                <tr><th>Cheque No</th><th>Date</th><th>Cheque Date</th><th>Cheque #</th><th>Payee</th><th>Account</th><th style={{ textAlign: 'right' }}>Total</th><th>Status</th><th></th></tr>
+                <tr><th>Cheque No</th><th>Date</th><th>Memo</th><th>Cheque #</th><th>Payee</th><th>Account</th><th style={{ textAlign: 'right' }}>Total</th><th>Status</th><th></th></tr>
               </thead>
               <tbody>
                 {rows.length === 0 && <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 20 }}>No cheques found.</td></tr>}
@@ -78,7 +76,8 @@ export default function Cheques() {
                   <tr key={row.id}>
                     <td data-label="Cheque No">{row.cheque_no}</td>
                     <td data-label="Date">{formatDate(row.date_created)}</td>
-                    <td data-label="Cheque Date">{formatChequeDate(row.cheque_date)}</td>
+                    {/* Memo in the Cheque Date column's place (asked 2026-10-02); the cheque date is on the cheque itself. */}
+                    <td data-label="Memo" style={{ whiteSpace: 'normal', maxWidth: 320 }}>{row.memo || ''}</td>
                     <td data-label="Cheque #">{row.cheque_number}</td>
                     <td data-label="Payee">{row.payee_account_name || row.payee_name}</td>
                     <td data-label="Account">{row.account_name}</td>
