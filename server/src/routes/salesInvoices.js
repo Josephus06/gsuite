@@ -120,7 +120,11 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     const [rows] = await pool.query(
       `SELECT si.id, si.invoice_no, si.date_created, si.date_due, si.net_of_tax, si.tax_amount,
-              si.gross_amount, si.amount_due, si.bs_si_no, si.term, si.status, si.memo, si.invoice_type,
+              si.gross_amount,
+              -- Amount Due on gross, as the invoice view shows it: the stored balance (Gross - EWT -
+              -- payments) plus EWT while open, 0 once settled.
+              CASE WHEN si.amount_due > 0.005 THEN si.amount_due + COALESCE(si.ewt_amount, 0) ELSE 0 END AS amount_due,
+              si.bs_si_no, si.term, si.status, si.memo, si.invoice_type,
               COALESCE(so.sales_order_no, ns.nsso_no) AS sales_order_no, e.estimate_no, c.name AS customer_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               loc.location_name AS office_location_name, d.name AS department_name
@@ -152,7 +156,11 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(
       `SELECT si.invoice_no, si.date_created, si.date_due, si.net_of_tax, si.tax_amount,
-              si.gross_amount, si.amount_due, si.bs_si_no, si.term, si.status, si.memo, si.invoice_type,
+              si.gross_amount,
+              -- Amount Due on gross, as the invoice view shows it: the stored balance (Gross - EWT -
+              -- payments) plus EWT while open, 0 once settled.
+              CASE WHEN si.amount_due > 0.005 THEN si.amount_due + COALESCE(si.ewt_amount, 0) ELSE 0 END AS amount_due,
+              si.bs_si_no, si.term, si.status, si.memo, si.invoice_type,
               COALESCE(so.sales_order_no, ns.nsso_no) AS sales_order_no, e.estimate_no, c.name AS customer_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               loc.location_name AS office_location_name, d.name AS department_name
