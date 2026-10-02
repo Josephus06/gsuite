@@ -101,13 +101,14 @@ export default function VendorBills() {
                   <th>Gross Amount</th>
                   <th>Amount Due</th>
                   <th>Term</th>
+                  <th>Memo</th>
                   <th>Status</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && (
-                  <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: 20 }}>No bills found.</td></tr>
+                  <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: 20 }}>No bills found.</td></tr>
                 )}
                 {pageRows.map((row) => (
                   <tr key={row.id}>
@@ -120,6 +121,7 @@ export default function VendorBills() {
                     <td data-label="Gross Amount">{money(row.gross_amount)}</td>
                     <td data-label="Amount Due">{money(row.amount_due)}</td>
                     <td data-label="Term">{row.term}</td>
+                    <td data-label="Memo" style={{ whiteSpace: 'normal', maxWidth: 280 }}>{row.memo || ''}</td>
                     <td data-label="Status">{STATUS_LABELS[row.status] || row.status}</td>
                     <td><Link className="btn btn-sm btn-primary" to={`/vendor-bills/${row.id}`}>View</Link></td>
                   </tr>

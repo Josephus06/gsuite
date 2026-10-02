@@ -186,7 +186,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const [rows] = await pool.query(
-      `SELECT vb.id, vb.bill_no, vb.date_created, vb.date_due, vb.term, vb.gross_amount, vb.amount_due, vb.status,
+      `SELECT vb.id, vb.bill_no, vb.date_created, vb.date_due, vb.term, vb.memo, vb.gross_amount, vb.amount_due, vb.status,
               po.po_no, s.name AS supplier_name, loc.location_name AS office_location_name
        FROM vendor_bills vb
        LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
