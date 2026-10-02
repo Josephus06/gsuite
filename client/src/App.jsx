@@ -203,6 +203,7 @@ import WarrantyCertificateView from './pages/WarrantyCertificateView';
 import WarrantyCertificatePrint from './pages/WarrantyCertificatePrint';
 import SalesInvoicePrint from './pages/SalesInvoicePrint';
 import DeliveryTicketPrint from './pages/DeliveryTicketPrint';
+import JobOrderPar from './pages/JobOrderPar';
 import JobOrderPrint from './pages/JobOrderPrint';
 import PurchaseOrderPrint from './pages/PurchaseOrderPrint';
 import Forms from './pages/Forms';
@@ -232,6 +233,7 @@ function App() {
       <Route path="/delivery-tickets/:id/print" element={<ProtectedRoute><DeliveryTicketPrint /></ProtectedRoute>} />
       {/* Printable production sheet. Standalone so the app chrome never lands on the page. */}
       <Route path="/job-orders/:id/print" element={<ProtectedRoute><JobOrderPrint /></ProtectedRoute>} />
+      <Route path="/job-orders/:id/par" element={<ProtectedRoute><JobOrderPar /></ProtectedRoute>} />
       <Route path="/purchase-orders/:id/print" element={<ProtectedRoute><PurchaseOrderPrint /></ProtectedRoute>} />
       <Route path="/bill-payments/:id/print" element={<ProtectedRoute><BillPaymentPrint /></ProtectedRoute>} />
       <Route path="/cheques/:id/print" element={<ProtectedRoute><BillPaymentPrint kind="cheque" /></ProtectedRoute>} />

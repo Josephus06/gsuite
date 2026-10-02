@@ -12,6 +12,7 @@ import { maySalesRevise, mayReworkJobOrder, mayEditOwnJobOrder, awaitingDateDeci
 import { isAdvanceCopy, canForwardAdvanceCopy } from '../utils/advanceCopy';
 
 import { displayDateTime } from '../utils/dates';
+import ButtonMenu from '../components/ButtonMenu';
 
 // Deliberately minimal Job Order detail -- mirrors the real system's layout (banner +
 // grouped info fields + Processes/RWIP JO/Sub Con/Related Records/System Info tabs +
@@ -347,7 +348,13 @@ export default function JobOrderView() {
               time; everyone else needs an assigned artist), so the button only checks that
               the user holds the print permission at all. */}
           {can('/job-orders', 'can_print') && (
-            <button className="btn btn-sm" onClick={() => window.open(`/job-orders/${id}/print`, '_blank')}>Print</button>
+            <ButtonMenu
+              label="Print"
+              options={[
+                { label: 'Job Order', hint: 'Production copy', onClick: () => window.open(`/job-orders/${id}/print`, '_blank') },
+                { label: 'PAR', hint: 'Project Accomplishment Report', onClick: () => window.open(`/job-orders/${id}/par`, '_blank') },
+              ]}
+            />
           )}
           {(canEdit || canRework || canEditOwn) && jo.status !== 'Cancelled' && (
             <button className="btn btn-sm btn-primary"

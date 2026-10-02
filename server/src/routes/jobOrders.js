@@ -1289,4 +1289,41 @@ router.get('/:id/print', requireAuth, async (req, res, next) => {
   }
 });
 
+// The PAR -- Project Accomplishment Report -- the installation sign-off the customer signs. Its
+// header is the order's (client, order no, contract description, contact person) and its
+// Installation Scope row is this Job Order. Works for a JO from a Sales Order or from a
+// Non-Standard SO (which has no sales_order_id, so the JO print above cannot load it).
+// Needs can_print like the JO print, but NOT an assigned artist: it is printed after the work
+// is installed, not to start it.
+router.get('/:id/par', requireAuth, async (req, res, next) => {
+  try {
+    const [[jo]] = await pool.query(
+      `SELECT jo.id, jo.job_order_no, jo.description, jo.quantity, jo.units,
+              jt.display_name AS job_type_name, loc.location_name AS site_location,
+              COALESCE(so.sales_order_no, ns.nsso_no) AS order_no,
+              COALESCE(so.contract_description, ns.contract_description) AS contract_description,
+              c.name AS customer_name, cc.contact_name
+         FROM job_orders jo
+         LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
+         LEFT JOIN non_standard_sales_orders ns ON ns.id = jo.nsso_id
+         LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, ns.customer_id)
+         LEFT JOIN customer_contacts cc ON cc.id = COALESCE(so.contact_person_id, ns.contact_person_id)
+         LEFT JOIN job_types jt ON jt.id = jo.job_type_id
+         LEFT JOIN locations loc ON loc.id = jo.job_location_id
+        WHERE jo.id = ?`,
+      [req.params.id]
+    );
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!(await isSystemAdmin(req.user.id))) {
+      const [[perm]] = await pool.query(
+        `SELECT upp.can_print FROM user_page_permissions upp JOIN pages p ON p.id = upp.page_id
+          WHERE upp.user_id = ? AND p.route = ?`, [req.user.id, ROUTE]);
+      if (!perm || !perm.can_print) return res.status(403).json({ error: 'You do not have permission to print a Job Order' });
+    }
+    res.json(jo);
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
