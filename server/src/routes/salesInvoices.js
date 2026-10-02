@@ -246,6 +246,27 @@ function computeBillableLineAmounts({ pricePerUnit, discPercent, taxRate, billab
   return { subtotal, disc_amount: discAmount, net_of_tax: netOfTax, tax_amount: taxAmount, gross_amount: grossAmount };
 }
 
+// ...except when the invoice bills the WHOLE order line in one go (nothing invoiced on it yet, the
+// full ordered qty billable now). Then the order line's own stored amounts are billed, as on the
+// order. Those need not equal price x disc%: SO-72396 lines carry a 439.00 discount typed onto the
+// order against the 438.99 the formula gives, so re-pricing billed 8,470.05 on an 8,470.01 order.
+// Gross is Net + Tax, as everywhere else on an invoice.
+function soLineBillableAmounts(line, orderedQty, billableQty) {
+  const whole = Number(line.quantity_invoiced || 0) === 0
+    && Math.abs(Number(orderedQty) - billableQty) < 1e-9
+    && line.net_of_tax != null && line.subtotal != null;
+  if (!whole) {
+    return computeBillableLineAmounts({
+      pricePerUnit: line.price_per_unit, discPercent: line.disc_percent, taxRate: line.tax_rate, billableQty,
+    });
+  }
+  const net = Number(line.net_of_tax); const tax = Number(line.tax_amount || 0);
+  return {
+    subtotal: Number(line.subtotal), disc_amount: Number(line.disc_amount || 0), net_of_tax: net,
+    tax_amount: tax, gross_amount: Number((net + tax).toFixed(2)),
+  };
+}
+
 // The Create SI form lets the biller change a line's Price/Unit before saving (requested
 // 2026-10-01). It sends `price_overrides: { <source line id>: price }` for the lines it changed;
 // every other figure on the line is then recomputed from that price by the helper above, so the
@@ -309,6 +330,7 @@ router.get('/for-sales-order/:salesOrderId', requireAuth, requirePermission(ROUT
               sol.description, sol.job_location_id, loc.location_name AS job_location_name,
               sol.quantity AS ordered_quantity, sol.units, sol.price_per_unit, sol.disc_percent,
               sol.disc_price_per_unit, t.code AS tax_code, t.rate AS tax_rate,
+              sol.subtotal, sol.disc_amount, sol.net_of_tax, sol.tax_amount,
               jo.quantity_delivered, jo.quantity_invoiced
        FROM sales_order_lines sol
        JOIN job_orders jo ON jo.id = sol.job_order_id
@@ -325,9 +347,7 @@ router.get('/for-sales-order/:salesOrderId', requireAuth, requirePermission(ROUT
       return {
         ...l,
         quantity: billableQty,
-        ...computeBillableLineAmounts({
-          pricePerUnit: l.price_per_unit, discPercent: l.disc_percent, taxRate: l.tax_rate, billableQty,
-        }),
+        ...soLineBillableAmounts(l, l.ordered_quantity, billableQty),
       };
     });
 
@@ -1276,14 +1296,11 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
     const lines = rawLines.map((l) => {
       const invoicedNow = Number(l.quantity_delivered) - Number(l.quantity_invoiced);
       const price = priceOverrideFor(req.body, l.id);
+      if (price === null) return { ...l, invoicedNow, ...soLineBillableAmounts(l, l.quantity, invoicedNow) };
       const amounts = computeBillableLineAmounts({
-        pricePerUnit: price ?? l.price_per_unit, discPercent: l.disc_percent, taxRate: l.tax_rate, billableQty: invoicedNow,
+        pricePerUnit: price, discPercent: l.disc_percent, taxRate: l.tax_rate, billableQty: invoicedNow,
       });
-      return {
-        ...l,
-        invoicedNow,
-        ...(price === null ? amounts : repricedLine(l, price, amounts, invoicedNow)),
-      };
+      return { ...l, invoicedNow, ...repricedLine(l, price, amounts, invoicedNow) };
     });
 
     const subtotal = lines.reduce((s, l) => s + Number(l.subtotal || 0), 0);
