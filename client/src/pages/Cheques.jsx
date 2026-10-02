@@ -18,6 +18,9 @@ export default function Cheques() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
+  // Period From / As of Date: inclusive bounds on Date Created, applied on Search.
+  const [dateFrom, setDateFrom] = useState('');
+  const [asOf, setAsOf] = useState('');
   const [page, setPage] = useState(1);
 
   async function load() {
@@ -25,6 +28,8 @@ export default function Cheques() {
     const params = {};
     if (search) params.search = search;
     if (status) params.status = status;
+    if (dateFrom) params.date_from = dateFrom;
+    if (asOf) params.as_of = asOf;
     const { data } = await api.get('/cheques', { params });
     setRows(data);
     setLoading(false);
@@ -58,6 +63,14 @@ export default function Cheques() {
               <option value="fully_applied">Fully Applied</option>
               <option value="void">Void</option>
             </select>
+          </div>
+          <div className="field">
+            <label>Period From</label>
+            <input type="date" value={dateFrom} max={asOf || undefined} onChange={(e) => setDateFrom(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} />
+          </div>
+          <div className="field">
+            <label>As of Date</label>
+            <input type="date" value={asOf} min={dateFrom || undefined} onChange={(e) => setAsOf(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} />
           </div>
         </div>
         <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>

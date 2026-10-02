@@ -52,11 +52,13 @@ const PAYEE_ACCOUNT_NAME_SQL = `CASE
 
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { search, status, as_of: asOf } = req.query;
+    const { search, status, as_of: asOf, date_from: dateFrom } = req.query;
     const where = [];
     const params = [];
     if (status) { where.push('c.status = ?'); params.push(status); }
-    if (asOf) { where.push('c.date_created <= ?'); params.push(asOf); }
+    // Period From / As of Date: inclusive bounds on Date Created.
+    if (dateFrom) { where.push('c.date_created >= ?'); params.push(String(dateFrom).slice(0, 10)); }
+    if (asOf) { where.push('c.date_created <= ?'); params.push(String(asOf).slice(0, 10)); }
     if (search) { where.push('(c.cheque_no LIKE ? OR c.payee_name LIKE ? OR c.cheque_number LIKE ? OR c.memo LIKE ?)'); params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(
