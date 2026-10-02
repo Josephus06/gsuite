@@ -89,7 +89,15 @@ export default function DeliveryTicketView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(`/sales-orders/${dt.sales_order_id}`)}>Back</button>
-          {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Delivery Ticket isn't implemented in this build">Edit</button>}
+          {/* Edit sits here, next to Back. Only an open ticket can be edited -- a converted one has
+              become its invoice, a void one is final -- so those show it greyed with the reason. */}
+          {canEdit && isOpen && <button className="btn btn-sm" onClick={() => setEditing(true)}>Edit</button>}
+          {canEdit && !isOpen && (
+            <button className="btn btn-sm" disabled
+              title={dt.status === 'converted' ? 'This ticket has been converted to an invoice and can no longer be edited.' : 'This ticket is void and cannot be edited.'}>
+              Edit
+            </button>
+          )}
           <button className="btn btn-sm" onClick={() => window.open(`/delivery-tickets/${id}/print`, '_blank')}>Print</button>
           <button className="btn btn-sm" disabled title="Credit Memos aren't implemented in this build">Credit Memo</button>
           {/* Bill on a Delivery Ticket raises the official Sales Invoice from it and
@@ -104,7 +112,6 @@ export default function DeliveryTicketView() {
               )}
             </div>
           )}
-          {canEdit && isOpen && <button className="btn btn-sm" onClick={() => setEditing(true)}>Edit</button>}
           {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
