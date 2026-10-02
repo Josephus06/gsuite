@@ -25,13 +25,24 @@ export default function CreditMemos() {
   const [status, setStatus] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
+  // Period From / As of Date: inclusive bounds on Date Created, applied on Search like the others.
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
 
-  async function load() {
-    setLoading(true);
+  function filterParams() {
     const params = {};
     if (status) params.status = status;
     if (search) params.search = search;
-    const { data } = await api.get('/credit-memos', { params });
+    if (dateFrom) params.date_from = dateFrom;
+    if (dateTo) params.date_to = dateTo;
+    return params;
+  }
+
+  async function load() {
+    setLoading(true);
+    const { data } = await api.get('/credit-memos', { params: filterParams() });
     setRows(data);
     setLoading(false);
   }
@@ -43,6 +54,24 @@ export default function CreditMemos() {
     load();
   }
   useAutoSearch(search, runSearch);
+
+  // Extract: every credit memo under the filters above, as a workbook.
+  async function runExport() {
+    setExporting(true); setExportError('');
+    try {
+      const { data } = await api.get('/credit-memos/export', { params: filterParams(), responseType: 'blob' });
+      const range = dateFrom || dateTo ? `-${dateFrom || 'start'}-to-${dateTo || 'today'}` : '';
+      const url = URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = url; a.download = `credit-memos${range}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setExportError('Could not extract the credit memos.');
+    } finally {
+      setExporting(false);
+    }
+  }
 
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const pageRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -72,8 +101,22 @@ export default function CreditMemos() {
               <option value="voided">Void</option>
             </select>
           </div>
+          <div className="field">
+            <label>Period From</label>
+            <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} />
+          </div>
+          <div className="field">
+            <label>As of Date</label>
+            <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} />
+          </div>
         </div>
-        <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>
+        <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn btn-primary" onClick={runSearch}>Search</button>
+          <button className="btn" disabled={exporting} onClick={runExport} title="Download every credit memo under the filters above">
+            {exporting ? 'Extracting...' : 'Extract'}
+          </button>
+          {exportError && <span style={{ color: 'var(--danger)' }}>{exportError}</span>}
+        </div>
       </div>
 
       <div className="card">

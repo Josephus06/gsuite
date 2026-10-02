@@ -4,6 +4,7 @@ const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeCreditMemoGl } = require('../lib/glImpact');
+const ExcelJS = require('exceljs');
 
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 
@@ -153,22 +154,30 @@ router.get('/by-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can_
   }
 });
 
+// The list and its Excel extract read the same filters, so the file always holds what the table shows.
+// Period From / As of Date bound date_created, both ends inclusive.
+async function listFilter(req) {
+  const { search, status, date_from: dateFrom, date_to: dateTo } = req.query;
+  const where = [];
+  const params = [];
+  if (status) { where.push('cm.status = ?'); params.push(status); }
+  if (dateFrom) { where.push('cm.date_created >= ?'); params.push(dateFrom); }
+  if (dateTo) { where.push('cm.date_created <= ?'); params.push(dateTo); }
+  // An Account Officer sees only their own credit memos; a Supervisor sees theirs plus their
+  // reports'. Same rule Estimates and Sales Orders already apply -- see lib/salesVisibility.js,
+  // which returns null (and so changes nothing) for every account that is neither.
+  const salesScope = await getSalesRepEmployeeScope(req.user.id);
+  if (salesScope) { where.push('cm.sales_rep_id IN (?)'); params.push(salesScope); }
+  if (search) {
+    where.push('(cm.credit_memo_no LIKE ? OR c.name LIKE ? OR si.invoice_no LIKE ?)');
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+  }
+  return { whereSql: where.length ? `WHERE ${where.join(' AND ')}` : '', params };
+}
+
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { search, status } = req.query;
-    const where = [];
-    const params = [];
-    if (status) { where.push('cm.status = ?'); params.push(status); }
-    // An Account Officer sees only their own credit memos; a Supervisor sees theirs plus their
-    // reports'. Same rule Estimates and Sales Orders already apply -- see lib/salesVisibility.js,
-    // which returns null (and so changes nothing) for every account that is neither.
-    const salesScope = await getSalesRepEmployeeScope(req.user.id);
-    if (salesScope) { where.push('cm.sales_rep_id IN (?)'); params.push(salesScope); }
-    if (search) {
-      where.push('(cm.credit_memo_no LIKE ? OR c.name LIKE ? OR si.invoice_no LIKE ?)');
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
-    }
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const { whereSql, params } = await listFilter(req);
     const [rows] = await pool.query(
       `SELECT cm.id, cm.credit_memo_no, cm.date_created, cm.gross_amount, cm.applied_amount, cm.status,
               c.name AS customer_name, si.invoice_no
@@ -181,6 +190,62 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     );
     res.json(rows);
   } catch (err) {
+    next(err);
+  }
+});
+
+// Registered before /:id, which would otherwise take "export" as a credit memo id.
+router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const { whereSql, params } = await listFilter(req);
+    const [rows] = await pool.query(
+      `SELECT cm.credit_memo_no, cm.date_created, cm.gross_amount, cm.applied_amount, cm.status, cm.memo,
+              c.name AS customer_name, si.invoice_no
+       FROM credit_memos cm
+       LEFT JOIN customers c ON c.id = cm.customer_id
+       LEFT JOIN sales_invoices si ON si.id = cm.sales_invoice_id
+       ${whereSql}
+       ORDER BY cm.date_created DESC, cm.id DESC`,
+      params
+    );
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="credit-memos.xlsx"');
+    const wb = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: res, useStyles: true });
+    const ws = wb.addWorksheet('Credit Memos', { views: [{ state: 'frozen', ySplit: 1 }] });
+    const money = { numFmt: '#,##0.00' };
+    // The list's columns, in its order, plus Memo.
+    ws.columns = [
+      { header: 'Credit Memo #', key: 'no', width: 18 },
+      { header: 'Date Created', key: 'date', width: 13 },
+      { header: 'Customer', key: 'customer', width: 38 },
+      { header: 'Invoice #', key: 'invoice', width: 16 },
+      { header: 'Gross Amount', key: 'gross', width: 16, style: money },
+      { header: 'Applied', key: 'applied', width: 16, style: money },
+      { header: 'Remaining', key: 'remaining', width: 16, style: money },
+      { header: 'Status', key: 'status', width: 10 },
+      { header: 'Memo', key: 'memo', width: 40 },
+    ];
+    ws.autoFilter = 'A1:I1';
+    ws.getRow(1).font = { bold: true };
+    ws.getRow(1).commit();
+
+    const STATUS = { open: 'Open', voided: 'Void' };
+    const day = (v) => (v ? String(v instanceof Date ? v.toISOString() : v).slice(0, 10) : '');
+    for (const r of rows) {
+      const gross = Number(r.gross_amount || 0); const applied = Number(r.applied_amount || 0);
+      ws.addRow({
+        no: r.credit_memo_no, date: day(r.date_created), customer: r.customer_name || '',
+        invoice: r.invoice_no || '', gross, applied, remaining: gross - applied,
+        status: STATUS[r.status] || r.status, memo: r.memo || '',
+      }).commit();
+    }
+    ws.commit();
+    await wb.commit();
+  } catch (err) {
+    // Once streaming has begun the status line is gone; cut the download short so a partial
+    // file cannot pass for a complete one.
+    if (res.headersSent) { res.destroy(err); return; }
     next(err);
   }
 });
