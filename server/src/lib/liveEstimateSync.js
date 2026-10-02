@@ -260,12 +260,11 @@ async function processIdByCode(code) {
 
 // ---- main import ----
 
-async function importOneEstimate(cache, token, stub) {
-  const [[already]] = await pool.query('SELECT id FROM estimates WHERE estimate_no = ?', [stub.est_upk]);
-  if (already) return { outcome: 'skipped', estimateNo: stub.est_upk };
-
+// One source estimate with everything an import needs: its job lines, their processes/materials,
+// and the header's customer / contact / rep.
+async function fetchEstimateDetail(token, sysPk) {
   const resp = await apiCall(token, 'get_transaction', {
-    where: { Module_TransH: 'ESTIMATES', SysPK_TransH: stub.est_pk },
+    where: { Module_TransH: 'ESTIMATES', SysPK_TransH: sysPk },
     include: [
       ['transaction_transactionledgerjobs', ['transactionledgerjob_transactionledgerinvtys', 'transactionledgerinvty_process', 'transactionledgerinvty_invty'], 'transactionledgerjob_location', 'transactionledgerjob_job', 'transactionledgerjob_shippingaddress', 'transactionledgerjob_transactionnstdjo'],
       'transaction_customer', 'transaction_contactperson', 'transaction_department', 'transaction_shippingaddress', 'transaction_location', 'transaction_employee',
@@ -273,7 +272,14 @@ async function importOneEstimate(cache, token, stub) {
     ],
     order: [[{}, 'ID_LdgrJob', 'ASC'], [{}, 'ID_LdgrInvty', 'ASC']],
   });
-  const t = resp?.data?.[0];
+  return resp?.data?.[0] || null;
+}
+
+async function importOneEstimate(cache, token, stub) {
+  const [[already]] = await pool.query('SELECT id FROM estimates WHERE estimate_no = ?', [stub.est_upk]);
+  if (already) return { outcome: 'skipped', estimateNo: stub.est_upk };
+
+  const t = await fetchEstimateDetail(token, stub.est_pk);
   if (!t) return { outcome: 'error', estimateNo: stub.est_upk, message: 'No detail returned from live site' };
 
   const customerId = await ensureCustomer(cache, t.transaction_customer);
@@ -308,7 +314,13 @@ async function importOneEstimate(cache, token, stub) {
     ]
   );
   const estimateId = headerResult.insertId;
+  const jobs = await insertEstimateJobs(cache, estimateId, t);
+  return { outcome: 'imported', estimateNo: stub.est_upk, jobOrders: jobs };
+}
 
+// The source estimate's job lines (with their processes/materials) under an estimate already in
+// T1S, and its Est. GP from them. Returns the number of job lines written.
+async function insertEstimateJobs(cache, estimateId, t) {
   const jobs = t.transaction_transactionledgerjobs || [];
   let totalGpAmount = 0;
   for (let jIdx = 0; jIdx < jobs.length; jIdx++) {
@@ -375,8 +387,7 @@ async function importOneEstimate(cache, token, stub) {
   const netOfTaxTotal = num(t.SubTotalVatEx_TransH);
   const estGpRate = netOfTaxTotal > 0 ? Number((totalGpAmount / netOfTaxTotal * 100).toFixed(2)) : 0;
   await pool.query('UPDATE estimates SET est_gp_rate = ?, est_gp_amount = ? WHERE id = ?', [estGpRate, Number(totalGpAmount.toFixed(2)), estimateId]);
-
-  return { outcome: 'imported', estimateNo: stub.est_upk, jobOrders: jobs.length };
+  return jobs.length;
 }
 
 // lookbackDays: how far back from today to search the live site's estimate list for
@@ -428,4 +439,4 @@ async function syncNewEstimates({ lookbackDays = 90 } = {}) {
 // Exported beyond syncNewEstimates so a one-off script can import a single, specific
 // estimate by SysPK (e.g. one pasted from a URL) without duplicating all the
 // master-data-resolution logic above.
-module.exports = { syncNewEstimates, login, apiCall, importOneEstimate, freshCache };
+module.exports = { syncNewEstimates, login, apiCall, importOneEstimate, freshCache, fetchEstimateDetail, insertEstimateJobs };
