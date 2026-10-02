@@ -44,7 +44,7 @@ const normaliseInvoiceType = (v) => (String(v || '').trim().toUpperCase() === 'D
 async function listFilter(query, userId) {
   const {
     search, status, customer_id: customerId, sales_rep_id: salesRepId,
-    from, to, department_id: departmentId, type,
+    from, to, department_id: departmentId, type, location_id: locationId,
   } = query;
   const where = [];
   const params = [];
@@ -71,6 +71,8 @@ async function listFilter(query, userId) {
   // is correct -- they are unassigned, not assigned to everyone -- and they are all still there
   // under --ALL--.
   if (departmentId) { where.push('si.department_id = ?'); params.push(departmentId); }
+  // The invoice's Office Location -- the column the list shows -- so a branch's invoices read off together.
+  if (locationId) { where.push('si.office_location_id = ?'); params.push(locationId); }
   // An Account Officer sees only their own invoices; a Supervisor sees theirs plus their
   // reports'. Same rule Estimates and Sales Orders already apply -- see lib/salesVisibility.js,
   // which returns null (and so changes nothing) for every account that is neither.
@@ -600,7 +602,8 @@ router.get('/standalone-meta', requireAuth, requirePermission(ROUTE, 'can_view')
 router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [departments] = await pool.query('SELECT id, name FROM departments ORDER BY name');
-    res.json({ departments });
+    const [locations] = await pool.query('SELECT id, location_name AS name FROM locations ORDER BY location_name');
+    res.json({ departments, locations });
   } catch (err) {
     next(err);
   }

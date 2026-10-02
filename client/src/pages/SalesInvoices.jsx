@@ -46,6 +46,8 @@ export default function SalesInvoices() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [departmentId, setDepartmentId] = useState('');
+  const [locationId, setLocationId] = useState('');
+  const [locations, setLocations] = useState([]);
   const [invoiceType, setInvoiceType] = useState(''); // '' = all, 'SI' or 'DR'
   const [departments, setDepartments] = useState([]);
   const [page, setPage] = useState(1);
@@ -55,8 +57,8 @@ export default function SalesInvoices() {
   // sign of why. See the /meta route in routes/salesInvoices.js.
   useEffect(() => {
     api.get('/sales-invoices/meta')
-      .then(({ data }) => setDepartments(data.departments || []))
-      .catch(() => setDepartments([]));
+      .then(({ data }) => { setDepartments(data.departments || []); setLocations(data.locations || []); })
+      .catch(() => { setDepartments([]); setLocations([]); });
   }, []);
 
   // Asks the server for ONE page. This used to fetch every row and slice it here, which meant
@@ -70,6 +72,7 @@ export default function SalesInvoices() {
     if (from) params.from = from;
     if (to) params.to = to;
     if (departmentId) params.department_id = departmentId;
+    if (locationId) params.location_id = locationId;
     if (invoiceType) params.type = invoiceType;
     try {
       const { data } = await api.get('/sales-invoices', { params });
@@ -85,7 +88,7 @@ export default function SalesInvoices() {
   // The two dropdowns apply themselves; the dates and the search box wait for Search. A <select>
   // is one deliberate act, but a date input fires onChange on the way to a complete date, so
   // refetching on it would run a query per keystroke against half-typed years.
-  useEffect(() => { setPage(1); load(1); }, [status, departmentId, invoiceType]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); load(1); }, [status, departmentId, locationId, invoiceType]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(page); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function runSearch() {
@@ -99,7 +102,7 @@ export default function SalesInvoices() {
   // a filter bar. The fetch is issued with the cleared values directly -- setState has not landed
   // yet when load() reads them.
   function clearFilters() {
-    setStatus(''); setSearch(''); setFrom(''); setTo(''); setDepartmentId(''); setInvoiceType('');
+    setStatus(''); setSearch(''); setFrom(''); setTo(''); setDepartmentId(''); setLocationId(''); setInvoiceType('');
     setPage(1);
     setLoading(true);
     api.get('/sales-invoices', { params: { page: 1, limit: PAGE_SIZE } })
@@ -120,6 +123,7 @@ export default function SalesInvoices() {
     if (from) params.from = from;
     if (to) params.to = to;
     if (departmentId) params.department_id = departmentId;
+    if (locationId) params.location_id = locationId;
     if (invoiceType) params.type = invoiceType;
     try {
       const { data } = await api.get('/sales-invoices/export', { params, responseType: 'blob' });
@@ -186,6 +190,13 @@ export default function SalesInvoices() {
             <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
               <option value="">--ALL--</option>
               {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label>Location</label>
+            <select value={locationId} onChange={(e) => setLocationId(e.target.value)}>
+              <option value="">--ALL--</option>
+              {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
             </select>
           </div>
           <div className="field">
