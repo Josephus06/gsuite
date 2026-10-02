@@ -3,6 +3,7 @@ const mailer = require('../lib/mailer');
 const { buildEstimateEmail } = require('../lib/estimateEmail');
 const { buildEstimatePdf, estimatePdfFilename } = require('../lib/estimatePdf');
 const pool = require('../db');
+const { recalcEstimateGp } = require('../lib/estimateGp');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { isHeadOfficeUser } = require('../lib/userLocation');
@@ -583,6 +584,11 @@ async function replicateEstimate(userId, sourceId) {
         );
       }
     }
+
+    // The copied lines' GP is recalculated from the copied processes rather than carried over:
+    // a migrated source's lines hold the old system's GP, on a different cost basis, so a replica
+    // would otherwise "pass" on numbers T1S never produced. See lib/estimateGp.js.
+    await recalcEstimateGp(conn, newEstimateId);
 
     await logAudit(conn, {
       estimateId: newEstimateId, userId, eventType: 'Created',
