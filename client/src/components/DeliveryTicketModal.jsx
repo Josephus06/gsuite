@@ -24,7 +24,8 @@ function lineAmounts(l) {
   const qty = Number(l.quantity || 0);
   const price = Number(l.price_per_unit || 0);
   const pct = Number(l.disc_percent || 0);
-  const o = l.saved;
+  // A saved line (edit) or a whole Sales Order line (create, `so_amounts` from the server).
+  const o = l.saved || l.so_amounts;
   if (o && Number(o.quantity) === qty && Number(o.price_per_unit) === price && Number(o.disc_percent) === pct) {
     return {
       subtotal: Number(o.subtotal), discAmount: Number(o.disc_amount), netOfTax: Number(o.net_of_tax),

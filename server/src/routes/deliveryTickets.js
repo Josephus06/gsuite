@@ -45,6 +45,24 @@ function computeLineAmounts({ quantity, pricePerUnit, discPercent, taxRate }) {
   };
 }
 
+// A WHOLE Sales Order line (its full ordered qty, nothing invoiced on it yet) at the order's own
+// price and discount is ticketed at the order line's stored amounts, not re-priced: those need not
+// equal price x disc% (SO-72396's lines carry a typed 439.00 discount against the formula's
+// 438.99, so re-pricing made its ticket 8,470.05 on an 8,470.01 order). Gross is Net + Tax.
+// Returns null when the line is partial or changed, and the formula applies.
+function wholeSoLineAmounts(sol, quantity, pricePerUnit, discPercent) {
+  if (!sol || sol.net_of_tax == null || sol.subtotal == null) return null;
+  if (Number(sol.quantity_invoiced || 0) !== 0) return null;
+  if (Math.abs(Number(sol.quantity) - Number(quantity)) > 1e-9) return null;
+  if (Math.abs(Number(sol.price_per_unit) - Number(pricePerUnit)) > 1e-9) return null;
+  if (Math.abs(Number(sol.disc_percent || 0) - Number(discPercent || 0)) > 1e-9) return null;
+  const net = Number(sol.net_of_tax); const tax = Number(sol.tax_amount || 0);
+  return {
+    subtotal: Number(sol.subtotal), disc_amount: Number(sol.disc_amount || 0),
+    net_of_tax: net, tax_amount: tax, gross_amount: Number((net + tax).toFixed(2)),
+  };
+}
+
 // Powers the Create DT form. Same eligibility as Create SI -- SO lines whose JO has been
 // delivered but not yet fully invoiced -- so the DT button opens onto the same rows the
 // Bill dropdown already gates on, each prefilled with its still-unbilled qty.
@@ -73,6 +91,7 @@ router.get('/for-sales-order/:salesOrderId', requireAuth, requirePermission(ROUT
               sol.job_location_id AS location_id, loc.location_name,
               sol.units, sol.uom AS unit_title, sol.price_per_unit, sol.disc_percent,
               sol.tax_code_id, t.code AS tax_code, t.rate AS tax_rate,
+              sol.quantity AS ordered_quantity, sol.subtotal, sol.disc_amount, sol.net_of_tax, sol.tax_amount,
               jo.quantity_delivered, jo.quantity_invoiced
        FROM sales_order_lines sol
        JOIN job_orders jo ON jo.id = sol.job_order_id
@@ -86,12 +105,17 @@ router.get('/for-sales-order/:salesOrderId', requireAuth, requirePermission(ROUT
 
     const prefilled = lines.map((l) => {
       const quantity = Number(l.quantity_delivered) - Number(l.quantity_invoiced);
+      const formula = computeLineAmounts({
+        quantity, pricePerUnit: l.price_per_unit, discPercent: l.disc_percent, taxRate: l.tax_rate,
+      });
+      const whole = wholeSoLineAmounts({ ...l, quantity: l.ordered_quantity }, quantity, l.price_per_unit, l.disc_percent);
       return {
         ...l,
         quantity,
-        ...computeLineAmounts({
-          quantity, pricePerUnit: l.price_per_unit, discPercent: l.disc_percent, taxRate: l.tax_rate,
-        }),
+        ...formula,
+        ...(whole || {}),
+        // What the form shows while Qty / Price / Disc.% stay as prefilled (see lineAmounts there).
+        so_amounts: whole ? { quantity, price_per_unit: l.price_per_unit, disc_percent: l.disc_percent, ...whole } : null,
       };
     });
 
@@ -275,8 +299,11 @@ async function prepareTicketLines(conn, salesOrderId, lines, existing = []) {
   if (soLineIds.length) {
     const [rows] = await conn.query(
       `SELECT sol.id, sol.job_order_id, sol.description, sol.job_location_id, sol.units, sol.uom,
-              sol.tax_code_id, jt.display_name AS item_name, t.code AS tax_code, t.rate AS tax_rate
+              sol.tax_code_id, jt.display_name AS item_name, t.code AS tax_code, t.rate AS tax_rate,
+              sol.quantity, sol.price_per_unit, sol.disc_percent, sol.subtotal, sol.disc_amount,
+              sol.net_of_tax, sol.tax_amount, jo.quantity_invoiced
        FROM sales_order_lines sol
+       LEFT JOIN job_orders jo ON jo.id = sol.job_order_id
        LEFT JOIN job_types jt ON jt.id = sol.job_type_id
        LEFT JOIN taxes t ON t.id = sol.tax_code_id
        WHERE sol.sales_order_id = ? AND sol.id IN (?)`,
@@ -324,7 +351,11 @@ async function prepareTicketLines(conn, salesOrderId, lines, existing = []) {
         disc_price_per_unit: Number(saved.disc_price_per_unit), net_of_tax: Number(saved.net_of_tax),
         tax_amount: Number(saved.tax_amount), gross_amount: Number(saved.gross_amount),
       }
-      : computeLineAmounts({ quantity, pricePerUnit, discPercent, taxRate });
+      : (() => {
+        const formula = computeLineAmounts({ quantity, pricePerUnit, discPercent, taxRate });
+        const whole = src ? wholeSoLineAmounts(src, quantity, pricePerUnit, discPercent) : null;
+        return whole ? { ...formula, ...whole } : formula;
+      })();
     return {
       line_no: idx + 1,
       sales_order_line_id: src ? src.id : null,
