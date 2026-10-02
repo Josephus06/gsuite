@@ -38,7 +38,10 @@ const contactValues = (c) => CONTACT_FIELDS.map((f) => (CONTACT_FLAGS.includes(f
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT c.*, bs.name AS business_style_name, pt.term_name AS payment_term_name, sd.name AS sales_division_name
+      // address: the customer's default address (else its first), else the address on the customer
+      // itself, else its bill-to address -- the Delivery Ticket and invoice screens' pick, plus bill-to.
+      `SELECT c.*, bs.name AS business_style_name, pt.term_name AS payment_term_name, sd.name AS sales_division_name,
+              COALESCE((SELECT ca.address_line FROM customer_addresses ca WHERE ca.customer_id = c.id ORDER BY ca.is_default DESC, ca.id LIMIT 1), NULLIF(c.address, ''), NULLIF(c.bill_to_address, '')) AS list_address
        FROM customers c
        LEFT JOIN business_styles bs ON bs.id = c.business_style_id
        LEFT JOIN payment_terms pt ON pt.id = c.payment_term_id

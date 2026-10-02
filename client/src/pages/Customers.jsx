@@ -39,7 +39,7 @@ export default function Customers() {
   // a customer up. Every term must match somewhere, so "ACME 123" narrows rather than widens.
   const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const visibleRows = terms.length === 0 ? rows : rows.filter((r) => {
-    const hay = [r.customer_code, r.name, r.company_name, r.tin].map((v) => String(v || '').toLowerCase()).join(' ');
+    const hay = [r.customer_code, r.name, r.company_name, r.tin, r.list_address].map((v) => String(v || '').toLowerCase()).join(' ');
     return terms.every((t) => hay.includes(t));
   });
 
@@ -47,6 +47,7 @@ export default function Customers() {
     { key: 'customer_code', label: 'Code' },
     { key: 'name', label: 'Name' },
     { key: 'company_name', label: 'Company' },
+    { key: 'list_address', label: 'Address', render: (r) => <span style={{ whiteSpace: 'normal', display: 'inline-block', maxWidth: 320 }}>{r.list_address || ''}</span> },
     { key: 'payment_term_name', label: 'Payment Term' },
     { key: 'credit_limit', label: 'Credit Limit' },
     { key: 'is_active', label: 'Status', render: (r) => (r.is_active ? <span className="badge badge-success">Active</span> : <span className="badge badge-muted">Inactive</span>) },
@@ -65,7 +66,7 @@ export default function Customers() {
               <label>General Searching</label>
               <input
                 value={search} onChange={(e) => setSearch(e.target.value)}
-                placeholder="Code, Name, Company or TIN..."
+                placeholder="Code, Name, Company, TIN or Address..."
               />
             </div>
           </div>
