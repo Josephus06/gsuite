@@ -824,7 +824,18 @@ router.put('/:id/status', requireAuth, requireStatusChange, async (req, res, nex
     // Low-GP override: only an Admin or General Manager may approve individual below-GP job lines
     // so they still count toward commission. The checked estimate-line ids arrive as
     // approved_low_gp_line_ids; anyone else sending them is rejected outright.
-    const lowGpIds = [...new Set((Array.isArray(req.body.approved_low_gp_line_ids) ? req.body.approved_low_gp_line_ids : []).map(Number).filter(Boolean))];
+    // Only at the SUPERVISOR stage (2026-10-03): recording the customer's answer is the owner's
+    // act, and a low-GP estimate must not stop them -- the GP was already the supervisor's call.
+    // The form also re-sent the lines already approved then, which refused every non-Admin owner.
+    let lowGpIds = oldRow.status !== 'pending_supervisor_approval' ? []
+      : [...new Set((Array.isArray(req.body.approved_low_gp_line_ids) ? req.body.approved_low_gp_line_ids : []).map(Number).filter(Boolean))];
+    if (lowGpIds.length) {
+      // Lines approved earlier are no new decision; only the rest need an Admin / GM.
+      const [done] = await conn.query(
+        'SELECT id FROM estimate_job_orders WHERE estimate_id = ? AND id IN (?) AND is_approved_low_gp = 1', [req.params.id, lowGpIds]);
+      const doneIds = new Set(done.map((r) => Number(r.id)));
+      lowGpIds = lowGpIds.filter((x) => !doneIds.has(x));
+    }
     if (lowGpIds.length) {
       const [[u]] = await conn.query('SELECT account_type FROM users WHERE id = ?', [req.user.id]);
       if (!['System Admin', 'General Manager'].includes(u?.account_type)) {
