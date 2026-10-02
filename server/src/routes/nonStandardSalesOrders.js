@@ -3,6 +3,8 @@ const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
+const { DESIGN_QUEUE_STATUS } = require('../lib/designSupervisorVisibility');
+const { notifyDesignSupervisors } = require('../lib/designNotifications');
 
 const router = express.Router();
 // Non-Standard Sales Order (NSSO-<TYPE>-####): a sales-order-like document raised outside the
@@ -558,10 +560,15 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
     if (line.source_job_order_id && !src) return res.status(409).json({ error: 'This item has no source job order to base the JO on.' });
 
     const { reason_code_id: reasonCodeId, reason, action_to_be_taken: actionTaken, processes } = req.body;
-    // Every type except Internal creates its JO through the RMA flow ("Pending RMA Approval" ->
+    // RMA / RMA-Installation create their JO through the RMA flow ("Pending RMA Approval" ->
     // Approve RMA -> Forward to Production); Internal is the only plain "Pending Approval".
-    const rmaLike = nsso.type !== 'internal';
-    const initialStatus = rmaLike ? 'Pending RMA Approval' : 'Pending Approval';
+    // SAMPLE is not a rework, so it has no RMA approval: the NSSO's own approval was the
+    // supervisor's, and the JO goes straight to the Design Supervisor's queue to be assigned an
+    // artist, then on through layout and Sales Approval like a standard JO (2026-10-02).
+    const isSample = nsso.type === 'sample';
+    const rmaLike = nsso.type !== 'internal' && !isSample;
+    const initialStatus = isSample ? DESIGN_QUEUE_STATUS : rmaLike ? 'Pending RMA Approval' : 'Pending Approval';
+    const initialSubStatus = isSample ? 'For Design Supervisor' : null;
 
     await conn.beginTransaction();
     // Number: NSJO-<TYPE>-<nssoNum>-<seq>-<total>. TYPE + nssoNum come from the NSSO doc no.
@@ -574,14 +581,15 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
     const salesRepId = nsso.sales_rep_id || src?.sales_rep_id || null;
     const [r] = await conn.query(
       // Starts pending approval (production_stage NULL so the banner shows the status verbatim) --
-      // only an NSSO-approver can release it into the normal production flow.
+      // only an NSSO-approver can release it into the normal production flow. A Sample starts in
+      // the Design Supervisor's queue instead (see initialStatus above).
       `INSERT INTO job_orders (job_order_no, sales_order_line_id, sales_order_id, nsso_id, nsso_line_id, sales_rep_id,
          job_type_id, job_location_id, description, quantity, units, length, width, height,
          reason_code_id, reason, action_to_be_taken, production_stage, sub_status, status)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?)`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)`,
       [jobOrderNo, src?.sales_order_line_id || null, src?.sales_order_id || null, nsso.id, line.id, salesRepId,
        line.job_type_id, line.job_location_id, line.description, num(line.quantity), line.units, line.length, line.width, line.height,
-       reasonCodeId || null, trunc(reason, 500), trunc(actionTaken, 500), initialStatus]
+       reasonCodeId || null, trunc(reason, 500), trunc(actionTaken, 500), initialSubStatus, initialStatus]
     );
     const joId = r.insertId;
 
@@ -610,6 +618,15 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
     await conn.query('UPDATE non_standard_sales_order_lines SET created_job_order_id = ? WHERE id = ?', [joId, line.id]);
     if (nsso.status === 'pending_for_jo') await conn.query("UPDATE non_standard_sales_orders SET status = 'jo_in_process' WHERE id = ?", [nsso.id]);
     await logAudit(conn, { id: nsso.id, userId: req.user.id, eventType: 'Updated', fieldName: 'created_job_order', newValue: jobOrderNo });
+    // A Sample lands in the design queue with no artist on it -- tell the supervisors, the same
+    // hand-off as a standard JO's Forward to Design Supervisor.
+    if (isSample) {
+      await notifyDesignSupervisors(conn, {
+        title: `${jobOrderNo} needs an artist assigned`,
+        message: line.description ? String(line.description).slice(0, 500) : null,
+        relatedType: 'JobOrder', relatedId: joId, excludeUserId: req.user.id,
+      });
+    }
     await conn.commit();
     res.status(201).json({ job_order_id: joId, job_order_no: jobOrderNo });
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }

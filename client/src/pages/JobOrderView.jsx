@@ -269,6 +269,10 @@ export default function JobOrderView() {
   // Pending RMA Approval -> Approve RMA -> Planned - Pending for BOM -> Forward to Production ->
   // Released / Approved. Both actions need the NSSO "Can Approve" right.
   const isNsjo = !!jo.nsso_id;
+  // ...except a SAMPLE, which is new work rather than a rework: no RMA approval, and it goes
+  // through the standard Design Supervisor -> Artist -> Sales Approval chain. Only Samples created
+  // since 2026-10-02 start there; an older one still parked on Pending RMA keeps the RMA buttons.
+  const isSampleDesign = isNsjo && /-SAM-/.test(jo.job_order_no || '') && !jo.rma_approved_at && jo.status !== 'Pending RMA Approval';
   // An RWIP (rework) job order is raised off a mother JO in production; it carries the same rework
   // context (Cause of Error / Action) and "Pending RMA Approval" state, but its own approval is
   // governed by the Production page's can_approve, and once approved it's completed (not forwarded).
@@ -277,8 +281,8 @@ export default function JobOrderView() {
   // RMA / RMA-Installation / Sample / RWIP / RFQC all show rework context; only Internal (INT) is plain.
   const isRmaType = isRwip || /-(RMA|INST|SAM)-/.test(jo.nsso_no || jo.job_order_no || '');
   const canApproveRma = can('/non-standard-sales-orders', 'can_approve');
-  const isPendingRma = isNsjo && !jo.rma_approved_at;
-  const canForwardProduction = isNsjo && !!jo.rma_approved_at && jo.status !== 'Released' && jo.status !== 'Cancelled';
+  const isPendingRma = isNsjo && !isSampleDesign && !jo.rma_approved_at;
+  const canForwardProduction = isNsjo && !isSampleDesign && !!jo.rma_approved_at && jo.status !== 'Released' && jo.status !== 'Cancelled';
   // Whose button it is: this job order's own sales rep (maySalesRevise already states that --
   // System Admin, the named rep, or another Sales account with can_edit covering for them).
   const canForwardAdvance = canForwardAdvanceCopy(jo) && maySalesRevise(user, jo, canEdit);
@@ -304,7 +308,7 @@ export default function JobOrderView() {
   // it already has its artist + PMS job type), and NSJO/RWIP job orders skip the design chain
   // entirely. Gating on production_stage is also case-safe, unlike a `status !== 'Released'` check
   // (migrated JOs store status lowercase 'released'), which was leaking these buttons through.
-  const isSpecialJo = isNsjo || isRwip;
+  const isSpecialJo = (isNsjo && !isSampleDesign) || isRwip;
   // Production handed this job order back for Sales to correct (see the Sales revision loop in
   // server/src/routes/production.js). Both actions the stage exists for -- moving the delivery
   // date and returning the job -- belong to Sales, and to the rep who owns this job order above
