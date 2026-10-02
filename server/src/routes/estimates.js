@@ -3,7 +3,6 @@ const mailer = require('../lib/mailer');
 const { buildEstimateEmail } = require('../lib/estimateEmail');
 const { buildEstimatePdf, estimatePdfFilename } = require('../lib/estimatePdf');
 const pool = require('../db');
-const { recalcEstimateGp } = require('../lib/estimateGp');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { isHeadOfficeUser } = require('../lib/userLocation');
@@ -105,14 +104,17 @@ async function generateSalesOrderFromEstimate(conn, estimateId) {
   const taxTotal = jobOrders.reduce((s, jo) => s + (n(jo.subtotal) - n(jo.disc_amount)) * (n(jo.tax_rate) / 100), 0);
   const totalAmount = netOfTax + taxTotal;
 
-  const [[{ totalCost }]] = await conn.query(
-    `SELECT COALESCE(SUM(p.total_cost), 0) AS totalCost
-     FROM estimate_job_order_processes p
-     JOIN estimate_job_orders jo ON jo.id = p.estimate_job_order_id
-     WHERE jo.estimate_id = ?`,
+  // GP is the SUM of the lines' own GP, as the Sales Order screen totals it. Not Net of Tax less
+  // every process's Total Cost: a migrated estimate's process cost fields are the source's rates,
+  // not costs, so that gave a margin no line shows (EST-203231: lines 62-74%, "overall" 48%). A
+  // line with no stored GP still counts as its Net of Tax less its processes' cost.
+  const [lineGp] = await conn.query(
+    `SELECT jo.gp_amount, jo.subtotal, jo.disc_amount,
+            (SELECT COALESCE(SUM(p.total_cost), 0) FROM estimate_job_order_processes p WHERE p.estimate_job_order_id = jo.id) AS cost
+       FROM estimate_job_orders jo WHERE jo.estimate_id = ?`,
     [estimateId]
   );
-  const gpAmount = netOfTax - n(totalCost);
+  const gpAmount = lineGp.reduce((s, l) => s + (l.gp_amount != null ? n(l.gp_amount) : n(l.subtotal) - n(l.disc_amount) - n(l.cost)), 0);
   const gpRate = netOfTax ? (gpAmount / netOfTax) * 100 : 0;
 
   const computedTotals = {
@@ -584,11 +586,6 @@ async function replicateEstimate(userId, sourceId) {
         );
       }
     }
-
-    // The copied lines' GP is recalculated from the copied processes rather than carried over:
-    // a migrated source's lines hold the old system's GP, on a different cost basis, so a replica
-    // would otherwise "pass" on numbers T1S never produced. See lib/estimateGp.js.
-    await recalcEstimateGp(conn, newEstimateId);
 
     await logAudit(conn, {
       estimateId: newEstimateId, userId, eventType: 'Created',

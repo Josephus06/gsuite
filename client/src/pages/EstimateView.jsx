@@ -206,11 +206,20 @@ export default function EstimateView() {
   const netOfTax = hasLines ? subtotal - discountTotal : num(estimate.net_of_tax);
   const taxTotal = hasLines ? jobOrders.reduce((s, jo) => s + num(jo.tax_amount), 0) : num(estimate.tax_total);
   const totalAmount = hasLines ? netOfTax + taxTotal : num(estimate.total_amount);
-  const totalCost = jobOrders.reduce((s, jo) => s + (jo.processes || []).reduce((ps, p) => ps + num(p.total_cost), 0), 0);
+  // Overall GP is the SUM of the lines' own GP -- the figures each line is judged on -- as the
+  // Sales Order screen totals it. It used to be Net of Tax less every process's Total Cost, which
+  // on a migrated estimate (or a replica of one) disagrees with its lines: those process cost
+  // fields hold the source's rates, not costs (EST-203231: every line 62-74%, "overall" 48%).
+  // A line with no stored GP counts as its Net of Tax less its processes' cost.
+  const lineCost = (jo) => (jo.processes || []).reduce((ps, p) => ps + num(p.total_cost), 0);
+  const lineGp = (jo) => (jo.gp_amount != null && jo.gp_amount !== ''
+    ? num(jo.gp_amount) : num(jo.subtotal) - num(jo.disc_amount) - lineCost(jo));
   // Same fallback, and it matters more here: with no lines there are no processes either, so the
-  // cost reduces to 0 and the margin would read as a flat 100% -- a confident, entirely invented
-  // number. The stored figures are used instead.
-  const gpAmount = hasLines ? netOfTax - totalCost : num(estimate.est_gp_amount);
+  // margin would read as a flat 100% -- a confident, entirely invented number. The stored figures
+  // are used instead.
+  const gpAmount = hasLines ? jobOrders.reduce((s, jo) => s + lineGp(jo), 0) : num(estimate.est_gp_amount);
+  // Shown beside it, and kept consistent with it: what the lines' GP leaves of their Net of Tax.
+  const totalCost = hasLines ? netOfTax - gpAmount : 0;
   const gpRate = hasLines
     ? (netOfTax ? (gpAmount / netOfTax) * 100 : 0)
     : num(estimate.est_gp_rate);
