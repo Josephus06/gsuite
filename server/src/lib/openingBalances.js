@@ -179,18 +179,36 @@ async function agingAnchor(side, asOf) {
   }
 }
 
-async function openingItems(side, asOf, books, { partyId, nameStarts, locationId } = {}) {
+// Whether the opening item tables carry location_id yet (db/add-opening-item-location.js). Read
+// once per table: an install deployed ahead of the migration keeps the old behaviour.
+const hasLocation = new Map();
+async function openingHasLocation(table) {
+  if (!hasLocation.has(table)) {
+    const [c] = await pool.query(`SHOW COLUMNS FROM ${table} LIKE 'location_id'`);
+    if (c.length) hasLocation.set(table, true); else return false; // re-checked until the migration lands
+  }
+  return true;
+}
+
+async function openingItems(side, asOf, books, { partyId, nameStarts, locationId, noLocation } = {}) {
   const s = SIDES[side];
-  // Opening items carry no office location; a report narrowed to one location has none of them.
-  if (locationId) return [];
+  const withLoc = await openingHasLocation(s.table);
+  // Each opening item carries the office location the source gave its document (AR from the
+  // source's aging, AP from the linked bill), so a report narrowed to a location keeps its own.
+  // Before that column exists every item is location-less: a location filter has none of them,
+  // "No Location" has all of them.
+  if (locationId && !withLoc) return [];
   const where = ['o.as_of = ?'];
   const params = [books.asOf];
+  if (withLoc && locationId) { where.push('o.location_id = ?'); params.push(locationId); }
+  if (withLoc && noLocation) where.push('o.location_id IS NULL');
   if (partyId) { where.push(`o.${s.party} = ?`); params.push(partyId); }
   if (nameStarts) { where.push('COALESCE(p.name, o.' + (side === 'ar' ? 'customer_name' : 'supplier_name') + ') LIKE ?'); params.push(`${nameStarts}%`); }
   const nameCol = side === 'ar' ? 'customer_name' : 'supplier_name';
   const [rows] = await pool.query(
-    `SELECT o.*, COALESCE(p.name, o.${nameCol}) AS party_name
+    `SELECT o.*, COALESCE(p.name, o.${nameCol}) AS party_name${withLoc ? ', loc.location_name' : ''}
        FROM ${s.table} o LEFT JOIN ${s.partyTable} p ON p.id = o.${s.party}
+       ${withLoc ? 'LEFT JOIN locations loc ON loc.id = o.location_id' : ''}
       WHERE ${where.join(' AND ')}`, params,
   );
   const linked = rows.map((r) => r[s.link]).filter(Boolean);
@@ -213,6 +231,7 @@ async function openingItems(side, asOf, books, { partyId, nameStarts, locationId
       date: r.doc_date ? String(r.doc_date).slice(0, 10) : books.asOf,
       due_date: r.due_date ? String(r.due_date).slice(0, 10) : null,
       original_amount: round2(r.original_amount), balance,
+      location_name: r.location_name || null,
       opening: true,
     });
   }

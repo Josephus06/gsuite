@@ -611,14 +611,14 @@ async function collectOpenItems(asOf, filters = {}) {
   const books = await agingAnchor('ar', asOf);
   if (!books) return items;
   const opening = await openingItems('ar', asOf, books, {
-    partyId: filters.customerId, nameStarts: filters.nameStarts, locationId: filters.locationId,
+    partyId: filters.customerId, nameStarts: filters.nameStarts, locationId: filters.locationId, noLocation: filters.noLocation,
   });
   return [
     ...opening.map((o) => ({
       customer_id: o.party_id, customer_name: o.party_name, type: o.type, reference: o.reference, id: o.id,
       date: o.date, due_date: o.due_date, aging_date: o.due_date || o.date,
       original_amount: o.original_amount, balance: o.balance,
-      bs_no: null, po_no: null, memo: 'Opening balance from the source system', location_name: null,
+      bs_no: null, po_no: null, memo: 'Opening balance from the source system', location_name: o.location_name || null,
       marked_paid_unevidenced: false, opening: true,
     })),
     ...items.filter((i) => String(i.date).slice(0, 10) >= books.start),

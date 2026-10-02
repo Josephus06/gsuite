@@ -307,7 +307,7 @@ async function collectOpenApItems(asOf, filters = {}) {
   const books = await agingAnchor('ap', asOf);
   if (!books) return res;
   const opening = await openingItems('ap', asOf, books, {
-    partyId: filters.supplierId, nameStarts: filters.nameStarts, locationId: filters.locationId,
+    partyId: filters.supplierId, nameStarts: filters.nameStarts, locationId: filters.locationId, noLocation: filters.noLocation,
   });
   const items = [
     ...opening.map((o) => ({
@@ -315,7 +315,7 @@ async function collectOpenApItems(asOf, filters = {}) {
       type: o.type === 'Bill' ? 'Vendor Bill' : o.type, reference: o.reference, id: o.id,
       date: o.date, due_date: o.due_date, aging_date: o.due_date || o.date,
       original_amount: o.original_amount, balance: o.balance,
-      po_no: null, ref_no: null, memo: 'Opening balance from the source system', location_name: null,
+      po_no: null, ref_no: null, memo: 'Opening balance from the source system', location_name: o.location_name || null,
       marked_paid_unevidenced: false, opening: true,
     })),
     ...res.items.filter((i) => String(i.date).slice(0, 10) >= books.start),
