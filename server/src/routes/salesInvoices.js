@@ -520,7 +520,9 @@ router.get('/for-delivery-ticket/:deliveryTicketId', requireAuth, requirePermiss
       `SELECT dtl.id AS delivery_ticket_line_id, dtl.sales_order_line_id, dtl.job_order_id, jo.job_order_no,
               dtl.item_name, dtl.description, dtl.location_id AS job_location_id, loc.location_name AS job_location_name,
               dtl.quantity, dtl.units, dtl.price_per_unit, dtl.subtotal, dtl.disc_percent, dtl.disc_amount,
-              dtl.disc_price_per_unit, dtl.net_of_tax, dtl.tax_code, dtl.tax_amount, dtl.gross_amount,
+              dtl.disc_price_per_unit, dtl.net_of_tax, dtl.tax_code, dtl.tax_amount,
+              -- Net + Tax, as billDeliveryTicket saves it (see the note there).
+              ROUND(dtl.net_of_tax + dtl.tax_amount, 2) AS gross_amount,
               (SELECT t.rate FROM taxes t WHERE t.code = dtl.tax_code LIMIT 1) AS tax_rate
        FROM delivery_ticket_lines dtl
        LEFT JOIN job_orders jo ON jo.id = dtl.job_order_id
@@ -766,9 +768,12 @@ async function billDeliveryTicket(req, res, conn) {
   if (!storedLines.length) return res.status(400).json({ error: 'This Delivery Ticket has no items to bill.' });
   // The ticket's lines are billed as stored, except any whose Price/Unit the biller changed on the
   // form -- those are recomputed from the new price (see priceOverrideFor).
+  // A line's Gross is billed as its Net + Tax. Tickets carried over from the source store a Gross
+  // worked from the unrounded net (DT-6504 line 1: 5,854.95 + 702.59 stored as 6,557.55), so
+  // adding those up made the invoice a centavo off the ticket's own total, which is Net + Tax.
   const lines = storedLines.map((l) => {
     const price = priceOverrideFor(req.body, l.id);
-    if (price === null) return l;
+    if (price === null) return { ...l, gross_amount: Number((Number(l.net_of_tax || 0) + Number(l.tax_amount || 0)).toFixed(2)) };
     const amounts = computeBillableLineAmounts({
       pricePerUnit: price, discPercent: l.disc_percent, taxRate: l.tax_rate, billableQty: Number(l.quantity) || 0,
     });
