@@ -1305,6 +1305,13 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .estimate-detail-grid > div > div { margin-bottom: 4px; opacity: 0.85; }
 .estimate-detail-grid .hi { font-weight: 600; opacity: 1; }
 .estimate-detail-grid span.hi { font-weight: 600; opacity: 1; }
+/* Header values (not the field names) in golden brown so they stand out on the banner;
+   linked values too, underlined so they still read as links. Print keeps them black. */
+@media screen {
+  .estimate-detail-grid .hi,
+  .estimate-detail-grid .link-btn { color: #e8b04b; }
+  .estimate-detail-grid .link-btn { text-decoration: underline; }
+}
 
 /* Commission Payable summary box: the boxed figures (Quota / Weighted Sales / ...) shown on the
    view banner and again on the create form after computing. */
