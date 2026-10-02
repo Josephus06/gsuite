@@ -279,7 +279,7 @@ router.get('/for-customer/:customerId', requireAuth, requirePermission(ROUTE, 'c
       // invoices this payment settled are therefore included regardless of their balance, and
       // each row carries what this payment already draws from it, so the form can work out how
       // much is really available: amount_due plus its own existing application.
-      `SELECT si.id AS sales_invoice_id, si.invoice_no, si.date_created, si.gross_amount, si.amount_due,
+      `SELECT si.id AS sales_invoice_id, si.invoice_no, si.bs_si_no, si.date_created, si.gross_amount, si.amount_due,
               c.name AS customer_name,
               COALESCE(mine.applied_amount, 0) AS applied_by_this_payment
          FROM sales_invoices si

@@ -162,6 +162,7 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
   const applyQuery = applyFilter.trim().toLowerCase();
   const visibleApplyLines = !applyQuery ? (data?.apply_lines || []) : (data?.apply_lines || []).filter(
     (l) => applyAmounts[l.sales_invoice_id] !== undefined || String(l.invoice_no || '').toLowerCase().includes(applyQuery)
+      || String(l.bs_si_no || '').toLowerCase().includes(applyQuery)
   );
   const received = Number(paymentAmount) || 0;
   const tickedToInvoices = Object.values(applyAmounts).reduce((s, v) => s + (Number(v) || 0), 0);
@@ -286,7 +287,6 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
                 </select>
               </div>
               <div className="field"><label>OR # <span className="req">*</span></label><input value={orNo} onChange={(e) => setOrNo(e.target.value)} /></div>
-              <div className="field"><label>SI# / BS#</label><input value={siBsNo} onChange={(e) => setSiBsNo(e.target.value)} placeholder="Sales Invoice / Billing Statement no." /></div>
               <div className="field">
                 <label>Payment Type <span className="req">*</span></label>
                 <select value={paymentType} onChange={(e) => setPaymentType(e.target.value)}>
@@ -375,14 +375,14 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
               <div className="table-wrap" style={{ maxHeight: 380, overflowY: 'auto' }}>
               <table>
                 <thead>
-                  <tr><th></th><th>Invoice #</th><th>Customer</th><th>Date Created</th><th>Original Amount</th><th>Amount Due</th><th>Applied Amount</th></tr>
+                  <tr><th></th><th>Invoice #</th><th>Customer</th><th>SI# / BS#</th><th>Date Created</th><th>Original Amount</th><th>Amount Due</th><th>Applied Amount</th></tr>
                 </thead>
                 <tbody>
                   {data.apply_lines.length === 0 && (
-                    <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>This customer has no open invoices.</td></tr>
+                    <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>This customer has no open invoices.</td></tr>
                   )}
                   {data.apply_lines.length > 0 && visibleApplyLines.length === 0 && (
-                    <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>No invoice matches "{applyFilter}".</td></tr>
+                    <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>No invoice matches "{applyFilter}".</td></tr>
                   )}
                   {visibleApplyLines.map((l) => {
                     const checked = applyAmounts[l.sales_invoice_id] !== undefined;
@@ -407,6 +407,9 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
                         </td>
                         <td>{l.invoice_no}</td>
                         <td>{l.customer_name}</td>
+                        {/* Each invoice's own SI# / BS# (the printed form number), in place of the one
+                            header field the payment used to carry for all of them. */}
+                        <td>{l.bs_si_no || ''}</td>
                         <td>{formatDate(l.date_created)}</td>
                         <td>{money(l.gross_amount)}</td>
                         <td>{money(l.amount_due)}</td>
