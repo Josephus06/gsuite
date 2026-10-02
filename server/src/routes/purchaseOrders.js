@@ -1187,10 +1187,9 @@ router.post('/:id/returns', requireAuth, requirePermission(ROUTE, 'can_edit'), a
 // once a PO is approved it may already have Receiving Reports / Vendor Bills built on
 // top of its lines, and this build has no undo path for that (same reasoning as
 // Inventory Adjustment/Sales Invoice/Vendor Bill only supporting Cancel post-save, never
-// Edit). Qty changes are only accepted for lines with no Purchase Requisition link and
-// zero received/billed activity -- PR-sourced (PO1) quantities stay fixed to avoid
-// desyncing purchase_requisition_lines.po_qty, which Create/Cancel both maintain with
-// their own reconciliation logic this route deliberately doesn't duplicate; everything
+// Edit). Qty changes are only accepted for lines with zero received/billed activity; on a
+// PR-sourced (PO1) line the PR line's po_qty moves by the same difference, so Cancel's
+// po_qty - qty still nets back to what it was before this PO; everything
 // else (rate, discount, tax code, description, location, department) is always
 // editable, and lines can be added/removed as long as nothing's been received/billed
 // against them yet.
@@ -1238,12 +1237,10 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       if (!existing) return res.status(400).json({ error: 'One of the submitted lines does not belong to this Purchase Order.' });
       const hasActivity = Number(existing.received_qty) > 0 || Number(existing.billed_qty) > 0;
       const qtyChanged = Number(l.qty) !== Number(existing.qty);
-      if (qtyChanged && (existing.purchase_requisition_line_id || hasActivity)) {
-        return res.status(409).json({
-          error: existing.purchase_requisition_line_id
-            ? 'Qty on a line sourced from a Purchase Requisition cannot be changed here.'
-            : 'Qty cannot be changed on a line that already has Received or Billed activity.',
-        });
+      // A PR-sourced line's qty may change (the PR asks for 0.0533 ROLL, the supplier sells whole
+      // rolls); its PR line's po_qty moves by the same difference below, the way Cancel undoes it.
+      if (qtyChanged && hasActivity) {
+        return res.status(409).json({ error: 'Qty cannot be changed on a line that already has Received or Billed activity.' });
       }
     }
     for (const l of submitted) {
@@ -1286,6 +1283,12 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 
     for (const l of computed) {
       if (l.id) {
+        const existing = existingById.get(Number(l.id));
+        const delta = Number(l.qty) - Number(existing.qty);
+        if (existing.purchase_requisition_line_id && delta !== 0) {
+          await conn.query('UPDATE purchase_requisition_lines SET po_qty = GREATEST(po_qty + ?, 0) WHERE id = ?', [delta, existing.purchase_requisition_line_id]);
+          await logAudit(conn, { poId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: `qty (line ${existing.id})`, oldValue: existing.qty, newValue: l.qty });
+        }
         await conn.query(
           `UPDATE purchase_order_lines SET
              purchase_description = ?, location_id = ?, department_id = ?, qty = ?, purchase_unit = ?, unit_title = ?,

@@ -12,8 +12,8 @@ function money(v) {
 // Mirrors the real system's PO "Edit" screen (confirmed against the sandbox: reuses
 // the same header/line fields as Create, reached from the detail view's Edit button --
 // only shown there while the PO is still Pending Approval, matching the backend's own
-// PUT /:id guard). Existing lines that are sourced from a Purchase Requisition, or
-// already have Received/Billed activity, have their Qty locked and can't be removed --
+// PUT /:id guard). Existing lines that
+// already have Received/Billed activity have their Qty locked and can't be removed --
 // everything else (rate, discount, tax, description, location, department) stays
 // editable, and brand-new lines can be added/removed freely, same restrictions the
 // backend enforces server-side regardless of what this form allows client-side.
@@ -78,7 +78,7 @@ export default function PurchaseOrderEdit() {
         job_order_id: l.job_order_id || '', pr_no: l.pr_no,
         qty: l.qty, purchase_unit: l.purchase_unit, unit_title: l.unit_title,
         rate: l.rate, disc_percent: l.disc_percent, tax_code_id: l.tax_code_id || '',
-        locked: !!l.purchase_requisition_line_id || Number(l.received_qty || 0) > 0 || Number(l.billed_qty || 0) > 0,
+        locked: Number(l.received_qty || 0) > 0 || Number(l.billed_qty || 0) > 0,
         purchase_requisition_line_id: l.purchase_requisition_line_id || null,
       })));
       setLoading(false);
@@ -251,7 +251,7 @@ export default function PurchaseOrderEdit() {
                     </td>
                     <td>
                       {l.locked
-                        ? <span title="Qty is locked: sourced from a Purchase Requisition, or already Received/Billed">{l.qty}</span>
+                        ? <span title="Qty is locked: already Received/Billed">{l.qty}</span>
                         : <input type="number" step="0.0001" style={{ width: 80 }} value={l.qty} onChange={(e) => updateLine(l._key, { qty: e.target.value })} />}
                     </td>
                     <td>{l.purchase_unit}</td>
