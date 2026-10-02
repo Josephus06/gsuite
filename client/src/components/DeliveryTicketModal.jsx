@@ -16,15 +16,26 @@ function addDays(dateStr, days) {
 // Every figure is recomputed from the four editable inputs rather than trusted from the
 // prefill -- this mirrors computeLineAmounts in routes/deliveryTickets.js exactly, so the
 // preview here and the record the server writes can never disagree.
+// That includes rounding each step to the centavo, and -- on an edit -- keeping a saved line's
+// stored amounts while its Qty, Price/Unit and Disc.% are as they were (see prepareTicketLines):
+// those came from the Sales Order and need not equal price x disc% (DT-6506).
+const r2 = (n) => Math.round(n * 100) / 100;
 function lineAmounts(l) {
   const qty = Number(l.quantity || 0);
   const price = Number(l.price_per_unit || 0);
   const pct = Number(l.disc_percent || 0);
-  const subtotal = price * qty;
-  const discAmount = subtotal * (pct / 100);
-  const netOfTax = subtotal - discAmount;
-  const taxAmount = netOfTax * (Number(l.tax_rate || 0) / 100);
-  return { subtotal, discAmount, netOfTax, taxAmount, grossAmount: netOfTax + taxAmount };
+  const o = l.saved;
+  if (o && Number(o.quantity) === qty && Number(o.price_per_unit) === price && Number(o.disc_percent) === pct) {
+    return {
+      subtotal: Number(o.subtotal), discAmount: Number(o.disc_amount), netOfTax: Number(o.net_of_tax),
+      taxAmount: Number(o.tax_amount), grossAmount: Number(o.gross_amount),
+    };
+  }
+  const subtotal = r2(price * qty);
+  const discAmount = r2(subtotal * (pct / 100));
+  const netOfTax = r2(subtotal - discAmount);
+  const taxAmount = r2(netOfTax * (Number(l.tax_rate || 0) / 100));
+  return { subtotal, discAmount, netOfTax, taxAmount, grossAmount: r2(netOfTax + taxAmount) };
 }
 
 // Mirrors the real "Delivery Ticket" popup, reached from a Sales Order's Bill dropdown
@@ -98,6 +109,7 @@ export default function DeliveryTicketModal({ salesOrderId, ticket = null, onClo
         setRows(ticket.lines.map((l) => ({
           ...l,
           key: `dt-${l.id}`,
+          saved: l,
           tax_rate: rateByCode.has(l.tax_code) ? rateByCode.get(l.tax_code)
             : (Number(l.net_of_tax) > 0 ? Math.round((Number(l.tax_amount) / Number(l.net_of_tax)) * 10000) / 100 : 0),
         })));
@@ -164,6 +176,8 @@ export default function DeliveryTicketModal({ salesOrderId, ticket = null, onClo
         department_id: department?.id || null,
         memo,
         lines: payload.map((r) => ({
+          // The saved line this row is (edit only), so the server can keep its amounts if untouched.
+          id: r.saved ? r.saved.id : undefined,
           sales_order_line_id: r.sales_order_line_id,
           item_id: r.item_id,
           item_name: r.item_name,

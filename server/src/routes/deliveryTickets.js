@@ -256,7 +256,13 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
 // The lines of a Delivery Ticket, priced and identified -- shared by create and edit so an edited
 // ticket is built exactly as a new one is. SO-backed lines take their identity and tax from the
 // order line, never from the request; ad-hoc lines carry only what the form collected.
-async function prepareTicketLines(conn, salesOrderId, lines) {
+// `existing` (edit only): the ticket's saved lines. A submitted line that names one of them by
+// `id` and leaves its Qty, Price/Unit, Disc.% and tax code as they were keeps its stored amounts
+// rather than being re-priced. Those amounts came from the Sales Order, which spreads a discount
+// so each line nets to a round unit price (DT-6506: 439.01 off 1,814.00 at 24.2%, not 438.99);
+// re-pricing every line on an edit moved the ticket's total by centavos nobody had touched.
+async function prepareTicketLines(conn, salesOrderId, lines, existing = []) {
+  const savedById = new Map(existing.map((l) => [Number(l.id), l]));
   const submitted = (Array.isArray(lines) ? lines : []).filter((l) => Number(l.quantity) > 0);
   if (!submitted.length) throw Object.assign(new Error('Include at least one item.'), { status: 400 });
 
@@ -306,6 +312,19 @@ async function prepareTicketLines(conn, salesOrderId, lines) {
     const pricePerUnit = Number(l.price_per_unit || 0);
     const discPercent = Number(l.disc_percent || 0);
     const quantity = Number(l.quantity);
+    const saved = l.id ? savedById.get(Number(l.id)) : null;
+    const unchanged = saved
+      && Math.abs(Number(saved.quantity) - quantity) < 1e-9
+      && Math.abs(Number(saved.price_per_unit) - pricePerUnit) < 1e-9
+      && Math.abs(Number(saved.disc_percent) - discPercent) < 1e-9
+      && (saved.tax_code || null) === (l.tax_code || null);
+    const amounts = unchanged
+      ? {
+        subtotal: Number(saved.subtotal), disc_amount: Number(saved.disc_amount), disc_per_unit: Number(saved.disc_per_unit),
+        disc_price_per_unit: Number(saved.disc_price_per_unit), net_of_tax: Number(saved.net_of_tax),
+        tax_amount: Number(saved.tax_amount), gross_amount: Number(saved.gross_amount),
+      }
+      : computeLineAmounts({ quantity, pricePerUnit, discPercent, taxRate });
     return {
       line_no: idx + 1,
       sales_order_line_id: src ? src.id : null,
@@ -322,7 +341,7 @@ async function prepareTicketLines(conn, salesOrderId, lines) {
       price_per_unit: pricePerUnit,
       disc_percent: discPercent,
       tax_code: taxCode,
-      ...computeLineAmounts({ quantity, pricePerUnit, discPercent, taxRate }),
+      ...amounts,
     };
   });
 
@@ -403,7 +422,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
 // a converted one has been superseded by the Sales Invoice raised from it (that invoice is what posts
 // now, and is edited instead), and a void one is final. Nothing else hangs off a ticket's lines --
 // saving never advanced the Sales Order's quantities and its GL entry is derived from the ticket --
-// so the lines are rebuilt wholesale, priced exactly as on create. Both the old and the new date
+// so the lines are rebuilt wholesale: a changed line priced exactly as on create, an untouched one
+// keeping its stored amounts (see prepareTicketLines). Both the old and the new date
 // must be in an open A/R period. Changed header figures are audit-logged.
 const TICKET_HEADER = ['date_created', 'date_due', 'term', 'po_no', 'sales_rep_id', 'office_location_id', 'department_id', 'memo',
   'subtotal', 'discount_amount', 'net_of_tax', 'tax_amount', 'gross_amount'];
@@ -424,7 +444,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     await assertPeriodOpen(oldDate, 'ar', conn);
     if (newDate !== oldDate) await assertPeriodOpen(newDate, 'ar', conn);
 
-    const prepared = await prepareTicketLines(conn, dt.sales_order_id, b.lines);
+    const [savedLines] = await conn.query('SELECT * FROM delivery_ticket_lines WHERE delivery_ticket_id = ?', [dt.id]);
+    const prepared = await prepareTicketLines(conn, dt.sales_order_id, b.lines, savedLines);
     const sum = (key) => Number(prepared.reduce((s2, l) => s2 + Number(l[key] || 0), 0).toFixed(2));
     const next = {
       date_created: newDate, date_due: day(b.date_due), term: b.term || null, po_no: b.po_no || null,
