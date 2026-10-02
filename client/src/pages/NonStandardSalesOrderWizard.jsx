@@ -207,6 +207,7 @@ export default function NonStandardSalesOrderWizard() {
     try {
       await saveHeader();
       if (header.type === 'internal' && step === 2) await saveInternalLines();
+      await addTickedOnLeave();
       navigate(`/non-standard-sales-orders/${nssoId}`);
     } catch (e) { setError(e.response?.data?.error || 'Save failed.'); }
     finally { setBusy(false); }
@@ -224,9 +225,47 @@ export default function NonStandardSalesOrderWizard() {
     finally { setBusy(false); }
   }
 
+  // Lines ticked on step 2 but never put on the NSSO with "Add Selected" are added on the way out
+  // of the step. NSSO-SAM-2438 was saved and approved with no lines at all: its estimate's four job
+  // lines were ticked (or meant to be), the Next button moved on, and nothing had been added.
+  // Returns the NSSO's lines as they stand afterwards.
+  async function addTickedOnLeave() {
+    if (step !== 2 || !nssoId) return lines;
+    const pick = (src, sel) => src.filter((j) => sel[j.id]).map((j) => j.id);
+    const same = (ids, field) => ids.length === lines.length && ids.every((id) => lines.some((l) => Number(l[field]) === Number(id)));
+    if (nestsToEstimate(header.type)) {
+      const ids = pick(sourceEjos, selectedEjos);
+      if (ids.length && !same(ids, 'source_estimate_job_order_id')) {
+        const { data } = await api.post(`/non-standard-sales-orders/${nssoId}/lines/from-estimate`, { estimate_job_order_ids: ids });
+        setLines(data); return data;
+      }
+    } else if (nestsToSalesOrder(header.type)) {
+      const ids = pick(sourceJos, selectedJos);
+      if (ids.length && !same(ids, 'source_job_order_id')) {
+        const { data } = await api.post(`/non-standard-sales-orders/${nssoId}/lines/from-source`, { source_job_order_ids: ids });
+        setLines(data); return data;
+      }
+    }
+    return lines;
+  }
+
   async function saveHeaderAndGoTo(n) {
     setBusy(true); setError('');
-    try { await saveHeader(); if (header.type === 'internal' && step === 2) await saveInternalLines(); setStep(n); }
+    try {
+      await saveHeader();
+      if (header.type === 'internal' && step === 2) await saveInternalLines();
+      // Going forward from the job-lines step needs at least one line on the NSSO.
+      if (step === 2 && n > 2 && header.type !== 'internal') {
+        const now = await addTickedOnLeave();
+        if (!now.length) {
+          setError(nestsToEstimate(header.type)
+            ? 'Tick the estimate job orders this sample is for, then continue -- the NSSO has no lines yet.'
+            : 'Tick the job orders this NSSO is for, then continue -- the NSSO has no lines yet.');
+          return;
+        }
+      }
+      setStep(n);
+    }
     catch (e) { setError(e.response?.data?.error || 'Save failed.'); }
     finally { setBusy(false); }
   }

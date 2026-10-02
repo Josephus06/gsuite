@@ -479,6 +479,10 @@ router.put('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve'),
     if (!n) return res.status(404).json({ error: 'Not found' });
     if (n.status === 'cancelled') return res.status(409).json({ error: 'This NSSO is cancelled.' });
     if (n.status !== 'pending_approval') return res.status(409).json({ error: 'This NSSO is not pending approval.' });
+    // An NSSO with nothing on it is not ready to approve (NSSO-SAM-2438 went through with no lines,
+    // and Production then has no job order to make).
+    const [[cnt]] = await conn.query('SELECT COUNT(*) AS n FROM non_standard_sales_order_lines WHERE nsso_id = ?', [req.params.id]);
+    if (!Number(cnt.n)) return res.status(409).json({ error: 'This NSSO has no lines yet. Add its job lines before approving it.' });
     const [[u]] = await conn.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
     await conn.beginTransaction();
     // Approved but no JOs created yet -> Pending for JO. It flips to JO In-Process once JOs are made.
