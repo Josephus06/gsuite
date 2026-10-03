@@ -32,7 +32,7 @@ export default function EstimatePrint() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.get(`/estimates/${id}`).then(({ data }) => { setEstimate(data); setLoading(false); });
+    api.get(`/estimates/${id}`, { params: { signatures: 1 } }).then(({ data }) => { setEstimate(data); setLoading(false); });
   }, [id]);
 
   if (loading || !estimate) return <LoadingSpinner />;
@@ -167,12 +167,14 @@ export default function EstimatePrint() {
 
         <div className="print-signatures">
           <div>
-            <div className="print-sig-label">Prepared By:</div>
+            <div className="print-sig-label" style={estimate.prepared_signature ? { marginBottom: 0 } : undefined}>Prepared By:</div>
+            {estimate.prepared_signature && <img src={estimate.prepared_signature} alt="" style={{ display: 'block', height: 32, maxWidth: '100%', objectFit: 'contain' }} />}
             <div className="print-sig-name">{estimate.prepared_by_name}</div>
             <div className="print-sig-line">___________________</div>
           </div>
           <div>
-            <div className="print-sig-label">Approved By:</div>
+            <div className="print-sig-label" style={estimate.approved_signature ? { marginBottom: 0 } : undefined}>Approved By:</div>
+            {estimate.approved_signature && <img src={estimate.approved_signature} alt="" style={{ display: 'block', height: 32, maxWidth: '100%', objectFit: 'contain' }} />}
             <div className="print-sig-name">{estimate.approved_by_name}</div>
             <div className="print-sig-line">___________________</div>
           </div>

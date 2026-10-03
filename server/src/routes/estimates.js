@@ -444,7 +444,23 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
 
     // Whether the viewer supervises this estimate's rep, for the page's Approve / customer buttons.
     const isRepSup = await isRepSupervisor(req.user.id, estimate.id);
-    res.json({ ...estimate, created_by_user_id: createdByUserId, is_rep_supervisor: isRepSup, shippingAddresses, jobOrders });
+
+    // ?signatures=1 (the print page only): the drawn signatures of the Prepared By and Approved By
+    // employees, through their user accounts -- the same rule as the PO print: the people the
+    // estimate records, never whoever prints it; no signature on file leaves the line to sign by hand.
+    const sig = {};
+    if (req.query.signatures) {
+      const empIds = [estimate.prepared_by_id, estimate.approved_by_id].filter(Boolean);
+      if (empIds.length) {
+        const [sigs] = await pool.query(
+          'SELECT employee_id, signature_data FROM users WHERE employee_id IN (?) AND signature_data IS NOT NULL ORDER BY is_active DESC, id', [empIds]);
+        const byEmp = new Map();
+        for (const s of sigs) if (!byEmp.has(String(s.employee_id))) byEmp.set(String(s.employee_id), s.signature_data);
+        sig.prepared_signature = byEmp.get(String(estimate.prepared_by_id)) || null;
+        sig.approved_signature = byEmp.get(String(estimate.approved_by_id)) || null;
+      }
+    }
+    res.json({ ...estimate, ...sig, created_by_user_id: createdByUserId, is_rep_supervisor: isRepSup, shippingAddresses, jobOrders });
   } catch (err) {
     next(err);
   }
