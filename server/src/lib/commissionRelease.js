@@ -194,7 +194,12 @@ async function releaseByMonthForEmployee(employeeId, year) {
     releasedByMonth[m] = round2(grossByMonth[m] - rawDeductedByMonth[m] + refundedByMonth[m] - paybackByMonth[m]);
     deductedByMonth[m] = round2(Math.max(rawDeductedByMonth[m] - refundedByMonth[m], 0));
   }
-  return { releasedByMonth, deductedByMonth, refundedByMonth, paybackByMonth };
+  // grossReleasedByMonth: what the vouchers paid against each month BEFORE any deduction, less a
+  // payback aimed at that month -- the source system's "Released Commission" (2026-10-03: Nina's
+  // January is 6,248.53 there, the sum of her five voucher lines, not 3,008.57 after the waterfall).
+  const grossReleasedByMonth = new Array(13).fill(0);
+  for (let m = 1; m <= 12; m += 1) grossReleasedByMonth[m] = round2(grossByMonth[m] - paybackByMonth[m]);
+  return { releasedByMonth, deductedByMonth, refundedByMonth, paybackByMonth, grossReleasedByMonth };
 }
 
 // Net released / deducted / refunded allocated to a single payable across every voucher that pays

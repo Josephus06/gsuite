@@ -223,7 +223,7 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
   // Released commission + voucher expense adjustments, sourced from this employee's Commission
   // Vouchers via the shared waterfall allocation (deductions from the earliest month, refunds
   // added, net = the voucher's total). See lib/commissionRelease.js.
-  const { releasedByMonth, deductedByMonth, refundedByMonth } = await releaseByMonthForEmployee(employeeId, year);
+  const { grossReleasedByMonth, deductedByMonth, refundedByMonth } = await releaseByMonthForEmployee(employeeId, year);
 
   const rows = months.map((r) => {
     const weighted = round2(r.weighted_sales);
@@ -232,12 +232,15 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
     const estimated = round2(lookupCommission(brackets, weighted));
     const expected = round2(lookupCommission(brackets, passingTotal));
     const confirmed = passingTotal > 0 ? round2((paid / passingTotal) * expected) : 0;
-    const released = round2(releasedByMonth[r.month]);
+    // Released and Unpaid as the source system reads them (asked 2026-10-03, "released commission
+    // not matched"): Released is everything the vouchers paid against the month, before the
+    // voucher's deductions; Unpaid = Confirmed - Released, so an over-release shows negative
+    // (Nina, January: -543.52 in both). Deducted / Refunded stay as their own columns, for
+    // information -- they no longer reduce Released.
+    const released = round2(grossReleasedByMonth[r.month]);
     const deducted = round2(deductedByMonth[r.month]);
     const refunded = round2(refundedByMonth[r.month]);
-    // Unpaid = Confirmed − (Released + Deducted): the deduction lowers what's still owed, and a
-    // later refund that cancels the deduction restores it (released goes up, deducted goes to 0).
-    const unpaid = round2(confirmed - (released + deducted));
+    const unpaid = round2(confirmed - released);
     const pct = r.quota > 0 ? round2((weighted / r.quota) * 100) : 0;
     return {
       month: r.month, month_name: r.month_name, quota: round2(r.quota),
