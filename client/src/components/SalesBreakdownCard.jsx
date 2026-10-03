@@ -88,7 +88,7 @@ export default function SalesBreakdownCard({ title = 'Sales Performance per Grou
           ))}
           {data.otherGroups.length > 0 && (
             <div>
-              <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 8 }}>Other sales groups</div>
+              {!data.flat && <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 8 }}>Other sales groups</div>}
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                 {data.otherGroups.map((g) => <GroupColumn key={g.id} g={g} />)}
               </div>

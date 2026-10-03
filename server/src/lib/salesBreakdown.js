@@ -118,6 +118,15 @@ async function buildSalesBreakdown(userId, ym) {
   }
   const groups = new Map([...byDivision.entries()].map(([id, d]) => [id, buildGroup(id, d.name, d.reps, people)]));
 
+  // A supervisor or account officer sees only their own people: no SBU heading, no SBU total --
+  // just the group(s) their team sold in. The SBU level is for SBU heads and admins.
+  if (scope.kind === 'supervisor' || scope.kind === 'own' || scope.kind === 'none') {
+    return {
+      month, scope: scope.kind, total: round2(rows.reduce((t, r) => t + r.amount, 0)),
+      sbus: [], otherGroups: [...groups.values()].sort((a, b) => b.total - a.total), flat: true,
+    };
+  }
+
   // SBUs own groups by name (their ownership is recorded against departments; see lib/sbuGroups.js).
   const sbuDefs = await getSbuGroups();
   const used = new Set();
