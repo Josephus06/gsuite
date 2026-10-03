@@ -567,9 +567,13 @@ async function replicateEstimate(userId, sourceId) {
       err.status = 404;
       throw err;
     }
+    // Prepared By is whoever made THIS estimate -- the person replicating, not the source's author
+    // (asked 2026-10-03). Kept from the source only when the replicating account has no employee.
+    const [[replicator]] = await conn.query('SELECT employee_id FROM users WHERE id = ?', [userId]);
     const headerValues = HEADER_FIELDS.map((f) => {
       if (f === 'date_created') return new Date().toISOString().slice(0, 10);
       if (f === 'status') return 'pending_supervisor_approval';
+      if (f === 'prepared_by_id') return replicator?.employee_id || source.prepared_by_id;
       // Approved By is the supervisor who signed THIS estimate off out of pending_supervisor_
       // approval. A replica has not been approved by anyone -- it starts back at the beginning of
       // the flow -- so carrying the source's approver across would put a supervisor's name on an
