@@ -67,6 +67,7 @@ import DeliverySummary from './pages/reports/DeliverySummary';
 import PendingBilling from './pages/reports/PendingBilling';
 import DisbursementReport from './pages/reports/DisbursementReport';
 import ForecastReport from './pages/reports/ForecastReport';
+import WeightedSalesReport from './pages/reports/WeightedSalesReport';
 import ParkedBankItems from './pages/reports/ParkedBankItems';
 import Itineraries from './pages/Itineraries';
 import ItineraryView from './pages/ItineraryView';
@@ -450,6 +451,7 @@ function App() {
         <Route path="/reports/pending-billing" element={<PendingBilling />} />
         <Route path="/reports/disbursement" element={<DisbursementReport />} />
         <Route path="/reports/forecast" element={<ForecastReport />} />
+        <Route path="/reports/weighted-sales" element={<WeightedSalesReport />} />
         <Route path="/reports/parked-bank-items" element={<ParkedBankItems />} />
         {/* Assets Monitoring. /new is declared before /:id so "new" is not read as a record id. */}
         <Route path="/asset-items" element={<AssetItems />} />

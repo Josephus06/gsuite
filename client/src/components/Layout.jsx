@@ -157,6 +157,7 @@ const NAV_STRUCTURE = [
       { route: '/warranty-certificates', label: 'Warranty Certificate' },
       { route: '/job-orders', label: 'Job Orders' },
       { route: '/reports/pending-billing', label: 'Pending Billing' },
+      { route: '/reports/weighted-sales', label: 'Weighted Sales per Month' },
     ],
   },
   {
