@@ -2,7 +2,7 @@ const express = require('express');
 const ExcelJS = require('exceljs');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
-const { getTeamEmployeeIds, getSbuDivisionIds } = require('../lib/commissionReport');
+const { salesScope, scopeWhere } = require('../lib/salesReportScope');
 
 // Sales > Weighted Sales per Month (asked 2026-10-03): every Sales Order line created in a month,
 // with its Net of Tax -- which is what Weighted Sales is (lib/commissionReport.js: the net of tax
@@ -16,35 +16,6 @@ const { getTeamEmployeeIds, getSbuDivisionIds } = require('../lib/commissionRepo
 // The same rollup the commission report uses, so a rep's total here is their Weighted Sales there.
 const router = express.Router();
 const ROUTE = '/reports/weighted-sales';
-
-async function salesScope(userId) {
-  const [[u]] = await pool.query(
-    `SELECT id, account_type, employee_id, is_sales_business_unit, is_supervisor, is_account_officer
-       FROM users WHERE id = ?`, [userId]);
-  if (!u || u.account_type === 'System Admin') return { kind: 'all' };
-  if (u.is_sales_business_unit) {
-    const divisions = await getSbuDivisionIds(u.id);
-    const team = u.employee_id ? await getTeamEmployeeIds(u.employee_id, u.id) : [];
-    if (divisions.length || team.length) return { kind: 'sbu', divisions, team };
-  }
-  if (!u.employee_id && (u.is_supervisor || u.is_account_officer)) return { kind: 'none' };
-  if (u.is_supervisor) return { kind: 'supervisor', team: await getTeamEmployeeIds(u.employee_id, u.id) };
-  if (u.is_account_officer) return { kind: 'own', team: [u.employee_id] };
-  return { kind: 'all' };
-}
-
-function scopeWhere(scope, where, params) {
-  if (scope.kind === 'none') { where.push('1 = 0'); return; }
-  if (scope.kind === 'all') return;
-  if (scope.kind === 'sbu') {
-    const parts = [];
-    if (scope.divisions.length) { parts.push('so.sales_division_id IN (?)'); params.push(scope.divisions); }
-    if (scope.team.length) { parts.push('so.sales_rep_id IN (?)'); params.push(scope.team); }
-    where.push(`(${parts.join(' OR ')})`);
-    return;
-  }
-  where.push('so.sales_rep_id IN (?)'); params.push(scope.team);
-}
 
 const FROM_SQL = `FROM sales_order_lines sol
   JOIN sales_orders so ON so.id = sol.sales_order_id

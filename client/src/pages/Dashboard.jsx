@@ -10,6 +10,7 @@ import { parseUtc } from '../utils/datetime';
 import { isPlanner } from '../utils/plannerRoles';
 import CollectionForecastCalendar from '../components/CollectionForecastCalendar';
 import SystemHealthCard from '../components/SystemHealthCard';
+import SalesBreakdownCard from '../components/SalesBreakdownCard';
 import Feed from './Feed';
 import '../styles/feed.css';
 
@@ -392,15 +393,6 @@ function AdminDashboard({ data, user, navigate }) {
         </div>
 
         <div className="holo-card">
-          <h3>Sales Performance per Department</h3>
-          <BarList
-            color="var(--dash-blue)"
-            data={data.salesByDepartment.map((d) => ({ label: d.name, value: d.amount, color: '#4f8cf7' }))}
-            formatValue={(v) => `₱${money(v)}`}
-          />
-        </div>
-
-        <div className="holo-card">
           <h3>Recent Estimates</h3>
           {data.recentEstimates.length ? (
             <div className="holo-activity">
@@ -420,6 +412,10 @@ function AdminDashboard({ data, user, navigate }) {
           ) : <p className="holo-empty">No estimates yet.</p>}
         </div>
       </div>
+
+      {/* Weighted Sales for a month by SBU -> sales group -> supervisor -> rep (replaces the
+          all-time "per Department" bars). */}
+      <SalesBreakdownCard />
     </>
   );
 }
@@ -527,6 +523,10 @@ function SalesDashboard({ data, user, navigate }) {
           ) : <p className="holo-empty">No estimates yet.</p>}
         </div>
       </div>
+
+      {/* The same breakdown the admin sees, limited by the server to this person's SBU group,
+          team, or own sales. */}
+      <SalesBreakdownCard title={role === 'account_officer' ? 'My Sales per Month' : 'Sales per Group'} />
 
       {role !== 'account_officer' && (
         <div className="holo-card">

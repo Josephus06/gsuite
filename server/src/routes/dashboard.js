@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { buildSalesBreakdown } = require('../lib/salesBreakdown');
 const { requireAuth } = require('../middleware/auth');
 const { DESIGN_QUEUE_STATUS } = require('../lib/designSupervisorVisibility');
 const { isPlannerUser } = require('../lib/plannerRoles');
@@ -256,9 +257,15 @@ async function adminMetrics() {
   );
 
   const monthStart = monthRange();
+  // Weighted Sales, as everywhere else it is quoted (Sales > Weighted Sales per Month, the
+  // commission report, the breakdown card below): net of tax of every non-cancelled Sales Order
+  // line, by the order's date. It used to be the orders' gross totals, cancelled ones included.
+  const thisMonth = monthBounds(null);
   const [[salesThisMonth]] = await pool.query(
-    `SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS amount FROM sales_orders WHERE date_created >= ?`,
-    [monthStart]
+    `SELECT COUNT(DISTINCT so.id) AS count, COALESCE(SUM(sol.net_of_tax), 0) AS amount
+       FROM sales_order_lines sol JOIN sales_orders so ON so.id = sol.sales_order_id
+      WHERE so.date_created >= ? AND so.date_created < ? AND (so.status IS NULL OR so.status <> 'cancelled')`,
+    [thisMonth.start, thisMonth.end]
   );
   const [[orderPaidThisMonth]] = await pool.query(
     `SELECT COUNT(*) AS count, SUM(status = ?) AS paid FROM sales_orders WHERE date_created >= ?`,
@@ -864,6 +871,15 @@ router.get('/', requireAuth, async (req, res, next) => {
 // Lets the artist dashboard's calendar page to another month without refetching the whole
 // dashboard. Scoped to the caller's own employee record -- an artist only ever sees their own
 // schedule, and there is no artist_id parameter to point somewhere else.
+// The sales breakdown card: one month's Weighted Sales by SBU -> sales group -> supervisor (with
+// their team) -> rep. Who sees which part is lib/salesReportScope.js -- the same rule as
+// Sales > Weighted Sales per Month -- so it needs no permission of its own beyond being logged in.
+router.get('/sales-breakdown', requireAuth, async (req, res, next) => {
+  try {
+    res.json(await buildSalesBreakdown(req.user.id, req.query.month));
+  } catch (err) { next(err); }
+});
+
 router.get('/artist-calendar', requireAuth, async (req, res, next) => {
   try {
     const scope = await resolveScope(req.user.id);
