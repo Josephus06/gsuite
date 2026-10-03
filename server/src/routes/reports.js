@@ -452,6 +452,37 @@ router.get('/commission', requireAuth, requirePermission(COMMISSION_ROUTE, 'can_
   }
 });
 
+// The vouchers behind one month's Released Commission (asked 2026-10-03: click the amount, see the
+// vouchers). Released is what the vouchers paid against that month's payable(s), before deductions
+// (lib/commissionRelease.js grossReleasedByMonth), so this lists exactly those voucher lines, with
+// each voucher's own deductions alongside for information. Same scope rule as the report.
+router.get('/commission/released-detail', requireAuth, requirePermission(COMMISSION_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const employeeId = Number(req.query.employeeId);
+    if (!employeeId) return res.status(400).json({ error: 'A Sales Rep is required.' });
+    const scope = await getCommissionScope(req.user.id);
+    if (!scope.all && !scope.allowedIds.has(employeeId)) {
+      return res.status(403).json({ error: 'You can only generate commission reports for yourself or your team.' });
+    }
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const month = Number(req.query.month);
+    if (!(month >= 1 && month <= 12)) return res.status(400).json({ error: 'Month must be 1-12.' });
+    const [lines] = await pool.query(
+      `SELECT cv.id AS voucher_id, cv.voucher_no, cv.date_created, cv.total_payments, cv.status,
+              cp.id AS payable_id, cp.commission_payable_no, cvl.released_amount,
+              (SELECT COALESCE(SUM(-x.amount), 0) FROM commission_voucher_expenses x
+                WHERE x.commission_voucher_id = cv.id AND x.amount < 0) AS voucher_deductions
+         FROM commission_voucher_lines cvl
+         JOIN commission_vouchers cv ON cv.id = cvl.commission_voucher_id
+         JOIN commission_payables cp ON cp.id = cvl.commission_payable_id
+        WHERE cp.employee_id = ? AND YEAR(cp.period_from) = ? AND MONTH(cp.period_from) = ? AND cv.status <> 'void'
+        ORDER BY cv.date_created, cv.id`,
+      [employeeId, year, month]);
+    const rows = lines.map((l) => ({ ...l, released_amount: Number(l.released_amount), total_payments: Number(l.total_payments), voucher_deductions: Number(l.voucher_deductions) }));
+    res.json({ month, year, total: Number(rows.reduce((t, l) => t + l.released_amount, 0).toFixed(2)), rows });
+  } catch (err) { next(err); }
+});
+
 // Per-JO detail for one rep + month: JO#, GP rate, net of tax, paid invoice, split into
 // passing-GP and below-GP.
 router.get('/commission/jo-detail', requireAuth, requirePermission(COMMISSION_ROUTE, 'can_view'), async (req, res, next) => {
