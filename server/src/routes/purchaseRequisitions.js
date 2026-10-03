@@ -58,11 +58,25 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       params
     );
 
-    for (const r of rows) {
-      const [lines] = await pool.query('SELECT qty, po_qty, received_qty FROM purchase_requisition_lines WHERE purchase_requisition_id = ?', [r.id]);
-      r.item_status = aggregateItemStatus(lines);
+    // Item Status for every PR from ONE grouped query, by the same rules as lineItemStatus /
+    // aggregateItemStatus. It used to run a query per PR -- thousands of round trips, which is
+    // what made the Placing Order Form's "Select Purchase Requisitions" take so long (2026-10-03).
+    const byPr = new Map();
+    if (rows.length) {
+      const [agg] = await pool.query(
+        `SELECT purchase_requisition_id AS id, COUNT(*) AS n,
+                SUM(qty > 0 AND received_qty >= qty) AS rec,
+                SUM(qty > 0 AND (received_qty >= qty OR po_qty >= qty)) AS ord
+           FROM purchase_requisition_lines GROUP BY purchase_requisition_id`);
+      agg.forEach((a) => byPr.set(a.id, a));
     }
-    res.json(rows);
+    for (const r of rows) {
+      const a = byPr.get(r.id);
+      const n = Number(a?.n || 0);
+      r.item_status = !n ? 'OPEN' : Number(a.rec) === n ? 'FULLY RECEIVED' : Number(a.ord) === n ? 'FULLY ORDERED' : 'OPEN';
+    }
+    // open_only: what the Placing Order Form can still order from -- not cancelled, not fully ordered.
+    res.json(req.query.open_only ? rows.filter((r) => r.status !== 'cancelled' && r.item_status !== 'FULLY ORDERED') : rows);
   } catch (err) {
     next(err);
   }

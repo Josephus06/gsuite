@@ -52,7 +52,7 @@ export default function PlaceOrderForm() {
 
   async function openPicker() {
     setShowPicker(true);
-    const { data } = await api.get('/purchase-requisitions', { params: {} });
+    const { data } = await api.get('/purchase-requisitions', { params: { open_only: 1 } });
     setOpenPRs(data.filter((pr) => pr.item_status !== 'FULLY ORDERED' && pr.status !== 'cancelled'));
   }
 
