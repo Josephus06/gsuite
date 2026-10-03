@@ -225,6 +225,20 @@ export default function NonStandardSalesOrderWizard() {
     finally { setBusy(false); }
   }
 
+  // A sample line's Qty / Amount (its Net of Tax), saved when the field is left if it changed. The
+  // server re-derives price, tax and gross from them (PUT .../lines/:lineId/sample).
+  async function saveSampleLine(line, field, value) {
+    const v = Number(value);
+    const current = field === 'quantity' ? Number(line.sample_qty) : Number(line.sample_amount);
+    if (value === '' || !Number.isFinite(v) || Math.abs(v - current) < 0.005) return;
+    setError(''); setBusy(true);
+    try {
+      const { data } = await api.put(`/non-standard-sales-orders/${nssoId}/lines/${line.id}/sample`, { [field]: v });
+      setLines((ls) => ls.map((x) => (x.id === line.id ? { ...x, ...data } : x)));
+    } catch (e) { setError(e.response?.data?.error || 'Could not save the sample line.'); }
+    finally { setBusy(false); }
+  }
+
   // Lines ticked on step 2 but never put on the NSSO with "Add Selected" are added on the way out
   // of the step. NSSO-SAM-2438 was saved and approved with no lines at all: its estimate's four job
   // lines were ticked (or meant to be), the Next button moved on, and nothing had been added.
@@ -487,8 +501,11 @@ export default function NonStandardSalesOrderWizard() {
                       {lines.map((l, i) => {
                         const jt = meta.jobTypes.find((x) => String(x.id) === String(l.job_type_id));
                         return (<tr key={l.id}><td>{i + 1}</td><td>{jt?.display_name || ''}</td><td>{l.description}</td>
-                          <td style={{ textAlign: 'right' }}>{Number(l.sample_qty)}</td>
-                          <td style={{ textAlign: 'right' }}>{money(l.sample_amount)}</td>
+                          <td style={{ textAlign: 'right' }}>{l.created_job_order_id ? Number(l.sample_qty)
+                            : <input key={`q-${l.id}-${l.sample_qty}`} type="number" min="0" step="any" defaultValue={Number(l.sample_qty)} disabled={busy}
+                                style={{ width: 80, textAlign: 'right' }} onBlur={(e) => saveSampleLine(l, 'quantity', e.target.value)} />}</td>
+                          <td style={{ textAlign: 'right' }}><input key={`a-${l.id}-${l.sample_amount}`} type="number" min="0" step="0.01" defaultValue={Number(l.sample_amount)} disabled={busy}
+                            style={{ width: 110, textAlign: 'right' }} onBlur={(e) => saveSampleLine(l, 'amount', e.target.value)} /></td>
                           <td style={{ textAlign: 'right' }}>{money(l.allowance_amount)}</td></tr>);
                       })}
                     </tbody>

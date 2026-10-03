@@ -470,6 +470,56 @@ router.put('/:id/lines', requireAuth, requireEditOrOwnDraft, async (req, res, ne
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
+// A Sample line's Qty and Amount (asked 2026-10-03). A sample is copied from its Estimate line at
+// the estimate's full quantity and value, but the customer is usually sampled one piece at a
+// fraction of the price. Amount is the line's Net of Tax; the price per unit, tax and gross follow
+// from it (at the line's own tax rate) so the NSSO total, the Create-JO quantity and the invoice
+// all read the edited figures. Qty is locked once the line's Job Order exists -- the JO carries it.
+router.put('/:id/lines/:lineId/sample', requireAuth, requireEditOrOwnDraft, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[n]] = await conn.query('SELECT type, status FROM non_standard_sales_orders WHERE id = ?', [req.params.id]);
+    if (!n) return res.status(404).json({ error: 'Not found' });
+    if (n.type !== 'sample') return res.status(409).json({ error: 'Only a Sample NSSO line has a sample quantity and amount.' });
+    if (n.status === 'cancelled') return res.status(409).json({ error: 'This NSSO is cancelled.' });
+    const [[line]] = await conn.query(
+      `SELECT l.*, t.rate AS tax_rate FROM non_standard_sales_order_lines l LEFT JOIN taxes t ON t.id = l.tax_code_id
+        WHERE l.id = ? AND l.nsso_id = ?`, [req.params.lineId, req.params.id]);
+    if (!line) return res.status(404).json({ error: 'Line not found' });
+
+    const qty = req.body.quantity === undefined ? num(line.quantity) : Number(req.body.quantity);
+    const amount = req.body.amount === undefined ? num(line.sample_amount) : Number(req.body.amount);
+    if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: 'Qty must be more than zero.' });
+    if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ error: 'Amount must be zero or more.' });
+    if (line.created_job_order_id && Math.abs(qty - num(line.quantity)) > 1e-9) {
+      return res.status(409).json({ error: 'This line already has its Job Order, which carries the quantity. Only the amount can be changed.' });
+    }
+
+    // The line's own tax rate: its code's, else what it was carrying (tax / net).
+    const rate = line.tax_rate != null ? num(line.tax_rate)
+      : (num(line.net_of_tax) > 0 ? (num(line.tax_amount) / num(line.net_of_tax)) * 100 : 0);
+    const net = round2(amount);
+    const tax = round2(net * rate / 100);
+    await conn.beginTransaction();
+    await conn.query(
+      `UPDATE non_standard_sales_order_lines
+          SET quantity = ?, sample_qty = ?, sample_amount = ?, price_per_unit = ?, subtotal = ?, disc_percent = 0,
+              disc_amount = 0, net_of_tax = ?, tax_amount = ?, gross_amount = ?
+        WHERE id = ?`,
+      [qty, qty, net, Number((net / qty).toFixed(4)), net, net, tax, round2(net + tax), line.id]);
+    await recomputeTotals(conn, req.params.id);
+    if (Math.abs(qty - num(line.quantity)) > 1e-9) {
+      await logAudit(conn, { id: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: `line ${line.line_no} sample qty`, oldValue: num(line.quantity), newValue: qty });
+    }
+    if (Math.abs(net - num(line.sample_amount)) > 0.005) {
+      await logAudit(conn, { id: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: `line ${line.line_no} sample amount`, oldValue: round2(line.sample_amount), newValue: net });
+    }
+    await conn.commit();
+    const [[row]] = await pool.query('SELECT * FROM non_standard_sales_order_lines WHERE id = ?', [line.id]);
+    res.json(row);
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
 // Approve an NSSO. Governed purely by the NSSO page's can_approve permission -- any user granted
 // "NSSO Can Approve" may approve, moving it from Pending / Needs Approval to JO In-Process.
 router.put('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
