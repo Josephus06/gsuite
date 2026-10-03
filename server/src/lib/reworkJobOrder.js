@@ -7,7 +7,7 @@ const { nextDocNo } = require('./docNumber');
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const trunc = (s, n) => (s == null ? null : String(s).slice(0, n));
 
-// Through lib/docNumber.js, so the office box's numbers carry -O and can never repeat the droplet's.
+// Through lib/docNumber.js (odd on the droplet, even on the office box), so the two never repeat.
 async function nextReworkNo(conn, prefix) {
   return nextDocNo('job_orders', 'job_order_no', `${prefix}-`, conn);
 }

@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
-const { docNoSuffix, docNoPattern } = require('../lib/docNumber');
+const { docNoParity, nextOnThisBox, docNoPattern } = require('../lib/docNumber');
 
 const router = express.Router();
 
@@ -92,11 +92,12 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
 
 // item_code is generated when the form leaves it blank, so nobody has to invent a coding scheme
 // before they can register their first UPS. A supplied code is respected as-is.
-// -O on the office box, as every other number (lib/docNumber.js), so the two boxes never clash.
+// Odd on the droplet, even on the office box, as every other number (lib/docNumber.js), so the
+// two boxes never clash.
 async function nextItemCode(conn) {
-  const suffix = await docNoSuffix();
-  const [[row]] = await conn.query('SELECT MAX(CAST(SUBSTRING(item_code, 5) AS UNSIGNED)) AS n FROM asset_items WHERE item_code REGEXP ?', [docNoPattern('AST-', suffix)]);
-  return `AST-${String((row?.n || 0) + 1).padStart(4, '0')}${suffix}`;
+  const parity = await docNoParity();
+  const [[row]] = await conn.query('SELECT MAX(CAST(SUBSTRING(item_code, 5) AS UNSIGNED)) AS n FROM asset_items WHERE item_code REGEXP ?', [docNoPattern('AST-')]);
+  return `AST-${String(nextOnThisBox(row?.n || 0, parity)).padStart(4, '0')}`;
 }
 
 router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {

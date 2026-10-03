@@ -1048,8 +1048,8 @@ router.post('/:id/rwip', requireAuth, requirePermission(ROUTE, 'can_edit'), asyn
     }
     const { reason_code_id: reasonCodeId, reason, action_to_be_taken: actionTaken, delivery_date: deliveryDate, delivery_time: deliveryTime, processes } = req.body;
     await conn.beginTransaction();
-    // RWIP-### -- next number after the highest existing RWIP (-O on the office box: see
-    // lib/docNumber.js, which also keeps the two boxes from issuing the same one).
+    // RWIP-### -- next number after the highest existing RWIP, odd on the droplet and even on the
+    // office box (lib/docNumber.js), so the two boxes never issue the same one.
     const jobOrderNo = await nextDocNo('job_orders', 'job_order_no', 'RWIP-', conn);
     const [r] = await conn.query(
       `INSERT INTO job_orders (job_order_no, parent_job_order_id, sales_order_id, sales_order_line_id, job_type_id, job_location_id,
