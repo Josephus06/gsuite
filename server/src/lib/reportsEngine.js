@@ -1,6 +1,6 @@
 const pool = require('../db');
 const { getPostedGlLines } = require('./glImpact');
-const { splitSourceLinesByDepartment, splitSourceLinesByLocation, booksStart } = require('./openingBalances');
+const { splitSourceLinesByDepartment, booksStart } = require('./openingBalances');
 const { departmentLedger, accountLedger, pool4 } = require('./sourceLedger');
 const { linkFor, linksForNumbers } = require('./docLinks');
 const { displayMonth } = require('./dates');
@@ -347,10 +347,9 @@ async function buildIncomeStatement(asOfDate, fromDateOverride, breakdown = 'tot
     loadCoa(),
     getPostedGlLines({ toDate: asOfDate, fromDate }),
   ]);
-  // Months before the cut-over are the source's trial balance; by department / location they are
-  // split by the source's own department / location income statement.
-  const glLines = breakdown === 'department' ? await splitSourceLinesByDepartment(posted)
-    : breakdown === 'location' ? await splitSourceLinesByLocation(posted) : posted;
+  // Months before the cut-over are the source's trial balance; by department they are split by
+  // the source's own department income statement.
+  const glLines = breakdown === 'department' ? await splitSourceLinesByDepartment(posted) : posted;
 
   let partitions = partitionGlLines(glLines, breakdown, fromDate, asOfDate);
   if (breakdown === 'location' || breakdown === 'department') {
@@ -464,9 +463,8 @@ async function resolveGlLineNames(lines) {
 async function buildGlTransactions({ accountCode, breakdown = 'total', columnKey = 'total', asOfDate, fromDate }) {
   const from = fromDate || yearStart(asOfDate);
   const [coaRows, posted] = await Promise.all([loadCoa(), getPostedGlLines({ toDate: asOfDate, fromDate: from })]);
-  // Split in every mode but Location: a source month split by department is what lets its documents
-  // be listed. By location the source's months are split by location and listed one line per month.
-  const glLines = breakdown === 'location' ? await splitSourceLinesByLocation(posted) : await splitSourceLinesByDepartment(posted);
+  // Split in every mode: a source month split by department is what lets its documents be listed.
+  const glLines = await splitSourceLinesByDepartment(posted);
   const monthKey = (d) => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`; };
 
   // A clicked account may be a summary; its transactions post to descendant leaf accounts, so
