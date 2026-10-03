@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { buildSalesBreakdown } = require('../lib/salesBreakdown');
+const { buildSalesBreakdown, scopedMonthSales } = require('../lib/salesBreakdown');
 const { requireAuth } = require('../middleware/auth');
 const { DESIGN_QUEUE_STATUS } = require('../lib/designSupervisorVisibility');
 const { isPlannerUser } = require('../lib/plannerRoles');
@@ -225,7 +225,7 @@ async function repMetrics(employeeIds) {
   };
 }
 
-async function adminMetrics() {
+async function adminMetrics(userId) {
   const [[activeUsers]] = await pool.query('SELECT COUNT(*) AS count FROM users WHERE is_active = TRUE');
   const [[userTotals]] = await pool.query('SELECT COUNT(*) AS total FROM users');
   const [[estRingTotals]] = await pool.query(`SELECT COUNT(*) AS total, SUM(status = 'approved') AS approved FROM estimates`);
@@ -259,14 +259,9 @@ async function adminMetrics() {
   const monthStart = monthRange();
   // Weighted Sales, as everywhere else it is quoted (Sales > Weighted Sales per Month, the
   // commission report, the breakdown card below): net of tax of every non-cancelled Sales Order
-  // line, by the order's date. It used to be the orders' gross totals, cancelled ones included.
-  const thisMonth = monthBounds(null);
-  const [[salesThisMonth]] = await pool.query(
-    `SELECT COUNT(DISTINCT so.id) AS count, COALESCE(SUM(sol.net_of_tax), 0) AS amount
-       FROM sales_order_lines sol JOIN sales_orders so ON so.id = sol.sales_order_id
-      WHERE so.date_created >= ? AND so.date_created < ? AND (so.status IS NULL OR so.status <> 'cancelled')`,
-    [thisMonth.start, thisMonth.end]
-  );
+  // line, by the order's date -- and for THIS viewer's scope, so an SBU head's card shows their
+  // SBU and agrees with the breakdown under it. An admin's scope is everything.
+  const salesThisMonth = await scopedMonthSales(userId, null);
   const [[orderPaidThisMonth]] = await pool.query(
     `SELECT COUNT(*) AS count, SUM(status = ?) AS paid FROM sales_orders WHERE date_created >= ?`,
     [PAID_STATUS, monthStart]
@@ -831,7 +826,7 @@ router.get('/', requireAuth, async (req, res, next) => {
     const scope = await resolveScope(req.user.id);
 
     if (scope.role === 'admin') {
-      const [metrics, gm] = await Promise.all([adminMetrics(), isGeneralManager(req.user.id)]);
+      const [metrics, gm] = await Promise.all([adminMetrics(req.user.id), isGeneralManager(req.user.id)]);
       const gmCards = gm ? await generalManagerCards() : null;
       return res.json({ role: 'admin', ...metrics, gmCards });
     }

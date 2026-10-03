@@ -137,4 +137,20 @@ async function buildSalesBreakdown(userId, ym) {
   };
 }
 
-module.exports = { buildSalesBreakdown, monthBounds };
+// The viewer's Weighted Sales for a month and how many orders it came from -- the dashboard's
+// "Sales This Month" card. Same scope and figure as the breakdown, so the card and the
+// breakdown's total always agree (an SBU head's card is their SBU's, not the company's).
+async function scopedMonthSales(userId, ym) {
+  const { start, end } = monthBounds(ym);
+  const scope = await salesScope(userId);
+  const where = ["(so.status IS NULL OR so.status <> 'cancelled')", 'so.date_created >= ? AND so.date_created < ?'];
+  const params = [start, end];
+  scopeWhere(scope, where, params);
+  const [[r]] = await pool.query(
+    `SELECT COUNT(DISTINCT so.id) AS count, COALESCE(SUM(sol.net_of_tax), 0) AS amount
+       FROM sales_order_lines sol JOIN sales_orders so ON so.id = sol.sales_order_id
+      WHERE ${where.join(' AND ')}`, params);
+  return { count: Number(r.count), amount: round2(r.amount) };
+}
+
+module.exports = { buildSalesBreakdown, scopedMonthSales, monthBounds };
