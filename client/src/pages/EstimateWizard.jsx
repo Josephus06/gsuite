@@ -1132,6 +1132,20 @@ export default function EstimateWizard() {
     if (col.readOnly) {
       return <input value={val} readOnly tabIndex={-1} />;
     }
+    // Length / Width only mean something for an item priced by size (Inventory > Priced by Length /
+    // by Width; see computeAutoPricing's sizeFactor). For a "no conversion" item the price ignores
+    // them, so typing one in looked like it changed something and did not (asked 2026-10-03).
+    // Disabled rather than cleared, so a value already on the line stays visible.
+    if (col.key === 'length' || col.key === 'width') {
+      const item = row.item_id ? inventoryItems.find((i) => i.id === Number(row.item_id)) : null;
+      const usable = !item || (col.key === 'length' ? !!item.is_length_based : !!(item.is_length_based && item.is_width_based));
+      if (!usable) {
+        return (
+          <input value={val} disabled tabIndex={-1}
+            title={col.key === 'length' ? 'This item is not priced by length' : 'This item is not priced by width'} />
+        );
+      }
+    }
     const isPricingInput = col.key === 'qty' || col.key === 'length' || col.key === 'width'
       || col.key === 'process_qty' || col.key === 'process_disc_amount' || col.key === 'material_disc_amount'
       || col.key === 'process_disc_percent' || col.key === 'material_disc_percent';
