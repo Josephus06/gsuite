@@ -1245,19 +1245,21 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
       bill_to_address: billToAddress, memo, withholding_tax_pct: withholdingTaxPct, sales_order_line_ids: lineIds,
     } = req.body;
 
+    // Each path below is AWAITED: a bare `return billX()` let its errors (a closed period) escape
+    // the catch and crash the whole server, and released the connection while it was still in use.
     // Raising an invoice against an Estimate is its own path: no Sales Order, no Job Orders, and
     // so nothing to net off or to advance a status on. Checked before the Sales Order guard below,
     // which would otherwise reject it for the very thing that makes it what it is.
     if (req.body.estimate_id) {
-      return billEstimate(req, res, conn);
+      return await billEstimate(req, res, conn);
     }
     // A Non-Standard Sales Order bills like a Sales Order, from its own lines and Job Orders.
     if (req.body.nsso_id) {
-      return billNsso(req, res, conn);
+      return await billNsso(req, res, conn);
     }
     // No order at all: a customer and item lines (monthly rent, one-off charges).
     if (isStandalone(req.body)) {
-      return billStandalone(req, res, conn);
+      return await billStandalone(req, res, conn);
     }
 
     if (!salesOrderId) return res.status(400).json({ error: 'Sales Order is required.' });
@@ -1267,7 +1269,7 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
     // delivered-but-unbilled gap. Handled in its own function to keep the two flows from
     // growing into each other.
     if (req.body.delivery_ticket_id) {
-      return billDeliveryTicket(req, res, conn);
+      return await billDeliveryTicket(req, res, conn);
     }
 
     const submittedIds = (Array.isArray(lineIds) ? lineIds : []).map(Number);

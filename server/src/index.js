@@ -442,6 +442,14 @@ app.use((err, req, res, next) => {
   res.status(status).json({ error: err.sqlMessage || err.message || 'Internal server error' });
 });
 
+// A promise rejected with nobody awaiting it (a route that `return`s a helper without `await`)
+// used to end the whole process: one Vendor Bill dated in a closed period took the droplet down
+// for every user (2026-10-03). Log it loudly and keep serving instead -- the request that caused
+// it is the only one affected.
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection (server kept running):', reason);
+});
+
 const PORT = process.env.PORT || 4000;
 
 async function startServer() {

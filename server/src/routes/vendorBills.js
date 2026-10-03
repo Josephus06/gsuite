@@ -413,7 +413,9 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       wtax_id: wtaxId, lines: submittedLines,
     } = req.body;
     // No PO: a standalone expense bill -- supplier + account lines.
-    if (!purchaseOrderId && req.body.supplier_id) return createStandaloneBill(req, res, conn);
+    // Awaited, so its errors (a closed period) reach the catch below and the connection is not
+    // released under it. A bare `return` let them escape and crashed the server (2026-10-03).
+    if (!purchaseOrderId && req.body.supplier_id) return await createStandaloneBill(req, res, conn);
     if (!purchaseOrderId) return res.status(400).json({ error: 'Purchase Order is required.' });
 
     const submitted = (Array.isArray(submittedLines) ? submittedLines : [])
