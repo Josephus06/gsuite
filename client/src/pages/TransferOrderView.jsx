@@ -114,7 +114,7 @@ export default function TransferOrderView() {
           {mayFulfill && canStillFulfill && lines.length > 0 && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfillModal(true)}>Fulfill</button>}
           {mayReceive && canReceive && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfillmentsPicker(true)}>Receive</button>}
           {can('/transfer-orders', 'can_edit') && canCancel && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
-          <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
+          <button className="btn btn-sm" onClick={() => window.open(`/transfer-orders/${id}/print`, '_blank')}>Print</button>
         </div>
       </div>
 

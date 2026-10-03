@@ -153,6 +153,7 @@ import BillPayments from './pages/BillPayments';
 import BillPaymentView from './pages/BillPaymentView';
 import BillPaymentPrint from './pages/BillPaymentPrint';
 import FundTransferPrint from './pages/FundTransferPrint';
+import TransferOrderPrint from './pages/TransferOrderPrint';
 import BillCredits from './pages/BillCredits';
 import BillCreditView from './pages/BillCreditView';
 import ChartOfAccountTypes from './pages/ChartOfAccountTypes';
@@ -239,6 +240,7 @@ function App() {
       <Route path="/bill-payments/:id/print" element={<ProtectedRoute><BillPaymentPrint /></ProtectedRoute>} />
       <Route path="/cheques/:id/print" element={<ProtectedRoute><BillPaymentPrint kind="cheque" /></ProtectedRoute>} />
       <Route path="/fund-transfers/:id/print" element={<ProtectedRoute><FundTransferPrint /></ProtectedRoute>} />
+      <Route path="/transfer-orders/:id/print" element={<ProtectedRoute><TransferOrderPrint /></ProtectedRoute>} />
       {/* The four request forms, printed on their own sheet -- standalone for the same reason. */}
       <Route path="/forms/:id/print" element={<ProtectedRoute><FormPrint /></ProtectedRoute>} />
       <Route
