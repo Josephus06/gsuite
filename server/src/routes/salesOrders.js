@@ -88,10 +88,21 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   }
 });
 
+// The reasons a Sales Order may be cancelled for: Master Lists > Reasons of type "Cancellation".
+router.get('/cancel-reasons', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await isSystemAdmin(req.user.id))) return res.status(403).json({ error: 'Only a System Admin can cancel a Sales Order.' });
+    const [rows] = await pool.query(
+      "SELECT id, name FROM reasons WHERE reason_type = 'Cancellation' AND is_active = TRUE ORDER BY name");
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[so]] = await pool.query(
       `SELECT so.*, e.estimate_no, c.name AS customer_name, cc.contact_name,
+              cr.name AS cancel_reason_name, cu.display_name AS cancelled_by_name,
               sd.name AS sales_division_name, loc.location_name AS office_location_name,
               bp.po_number AS blanket_po_no,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
@@ -107,6 +118,8 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
        LEFT JOIN employees sr ON sr.id = so.sales_rep_id
        LEFT JOIN employees pb ON pb.id = so.prepared_by_id
        LEFT JOIN employees ap ON ap.id = so.approved_by_id
+       LEFT JOIN reasons cr ON cr.id = so.cancel_reason_id
+       LEFT JOIN users cu ON cu.id = so.cancelled_by_user_id
        WHERE so.id = ?`,
       [req.params.id]
     );
@@ -164,6 +177,67 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
         WHERE a.auditable_type = 'SalesOrder' AND a.auditable_id = ? ORDER BY a.set_at DESC, a.id DESC`, [req.params.id]);
     res.json(rows);
   } catch (err) { next(err); }
+});
+
+// Cancel a Sales Order (System Admin only), with a reason from Master Lists > Reasons ("Cancellation").
+// Refused once anything has been billed or delivered against it -- void those first -- since a
+// cancelled order with a live invoice or delivery behind it would leave AR and stock pointing at
+// an order that no longer exists. Its job orders that are not already Completed are cancelled
+// with it, so Production stops working on them.
+router.put('/:id/cancel', requireAuth, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!(await isSystemAdmin(req.user.id))) return res.status(403).json({ error: 'Only a System Admin can cancel a Sales Order.' });
+    const reasonId = Number(req.body?.reason_id) || null;
+    const remarks = String(req.body?.remarks || '').trim().slice(0, 500) || null;
+    const [[so]] = await conn.query('SELECT id, sales_order_no, status FROM sales_orders WHERE id = ?', [req.params.id]);
+    if (!so) return res.status(404).json({ error: 'Not found' });
+    if (so.status === 'cancelled') return res.status(409).json({ error: 'This Sales Order is already cancelled.' });
+    const [[reason]] = reasonId
+      ? await conn.query("SELECT id, name FROM reasons WHERE id = ? AND reason_type = 'Cancellation'", [reasonId])
+      : [[null]];
+    if (!reason) return res.status(400).json({ error: 'Choose a cancellation reason.' });
+
+    const [invoices] = await conn.query(
+      "SELECT invoice_no FROM sales_invoices WHERE sales_order_id = ? AND status <> 'cancelled'", [so.id]);
+    const [tickets] = await conn.query(
+      "SELECT dt_no FROM delivery_tickets WHERE sales_order_id = ? AND status = 'open'", [so.id]);
+    const [deliveries] = await conn.query(
+      "SELECT id FROM item_deliveries WHERE sales_order_id = ? AND (status IS NULL OR status <> 'cancelled')", [so.id]);
+    const blockers = [
+      ...invoices.map((r) => r.invoice_no),
+      ...tickets.map((r) => r.dt_no),
+      ...(deliveries.length ? [`${deliveries.length} item deliver${deliveries.length === 1 ? 'y' : 'ies'}`] : []),
+    ];
+    if (blockers.length) {
+      return res.status(409).json({ error: `This Sales Order has been billed or delivered (${blockers.slice(0, 6).join(', ')}${blockers.length > 6 ? ', ...' : ''}). Void those first.` });
+    }
+
+    await conn.beginTransaction();
+    await conn.query(
+      "UPDATE sales_orders SET status = 'cancelled', cancel_reason_id = ?, cancel_remarks = ?, cancelled_at = NOW(), cancelled_by_user_id = ? WHERE id = ?",
+      [reason.id, remarks, req.user.id, so.id]);
+    const [jos] = await conn.query(
+      "SELECT id, job_order_no, status FROM job_orders WHERE sales_order_id = ? AND status NOT IN ('Cancelled', 'Completed')", [so.id]);
+    for (const jo of jos) {
+      await conn.query("UPDATE job_orders SET status = 'Cancelled', updated_at = NOW() WHERE id = ?", [jo.id]);
+      await conn.query(
+        `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+         VALUES ('JobOrder', ?, 'Cancelled', 'status', ?, 'Cancelled', ?)`,
+        [jo.id, jo.status, req.user.id]);
+    }
+    await conn.query(
+      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+       VALUES ('SalesOrder', ?, 'Cancelled', 'status', ?, ?, ?)`,
+      [so.id, so.status, `cancelled -- ${reason.name}${remarks ? `: ${remarks}` : ''}`.slice(0, 2000), req.user.id]);
+    await conn.commit();
+    res.json({ ok: true, cancelled_job_orders: jos.map((j) => j.job_order_no) });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
 });
 
 router.put('/:id', requireAuth, async (req, res, next) => {

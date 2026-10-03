@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import SalesInvoiceModal from '../components/SalesInvoiceModal';
 import DeliveryTicketModal from '../components/DeliveryTicketModal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import Modal from '../components/Modal';
 import { displayDateTime } from '../utils/dates';
 
 // Read-only Sales Order detail -- mirrors EstimateView.jsx's layout (banner + 4-column
@@ -91,6 +92,31 @@ export default function SalesOrderView() {
   const [loading, setLoading] = useState(true);
   const [creatingLineId, setCreatingLineId] = useState(null);
   const [showBillMenu, setShowBillMenu] = useState(false);
+  // Cancel (System Admin): a reason from Master Lists > Reasons ("Cancellation") and optional remarks.
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReasons, setCancelReasons] = useState([]);
+  const [cancelReasonId, setCancelReasonId] = useState('');
+  const [cancelRemarks, setCancelRemarks] = useState('');
+  const [cancelError, setCancelError] = useState('');
+  const [cancelling, setCancelling] = useState(false);
+  function openCancel() {
+    setCancelError(''); setCancelReasonId(''); setCancelRemarks(''); setCancelOpen(true);
+    api.get('/sales-orders/cancel-reasons').then(({ data }) => setCancelReasons(data))
+      .catch((e) => setCancelError(e.response?.data?.error || 'Could not load the cancellation reasons.'));
+  }
+  async function confirmCancel() {
+    if (!cancelReasonId) { setCancelError('Choose a reason.'); return; }
+    setCancelling(true); setCancelError('');
+    try {
+      await api.put(`/sales-orders/${id}/cancel`, { reason_id: Number(cancelReasonId), remarks: cancelRemarks });
+      setCancelOpen(false);
+      load();
+    } catch (e) {
+      setCancelError(e.response?.data?.error || 'Cancel failed.');
+    } finally {
+      setCancelling(false);
+    }
+  }
   const [showSIModal, setShowSIModal] = useState(false);
   // SI or DR: both are raised through the same Create form and differ only in type.
   const [billType, setBillType] = useState('SI');
@@ -244,6 +270,25 @@ export default function SalesOrderView() {
 
   return (
     <div>
+      {cancelOpen && (
+        <Modal title={`Cancel ${so.sales_order_no}`} onClose={() => !cancelling && setCancelOpen(false)}>
+          {cancelError && <div className="error-banner">{cancelError}</div>}
+          <div className="field">
+            <label>Reason <span className="req">*</span></label>
+            <select value={cancelReasonId} onChange={(e) => setCancelReasonId(e.target.value)}>
+              <option value="">--Select--</option>
+              {cancelReasons.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>From Master Lists &gt; Reasons, type Cancellation.</div>
+          </div>
+          <div className="field"><label>Remarks</label><textarea rows={3} value={cancelRemarks} onChange={(e) => setCancelRemarks(e.target.value)} /></div>
+          <p className="muted" style={{ fontSize: 13 }}>Its job orders that are not yet Completed are cancelled too. An order already billed or delivered cannot be cancelled.</p>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <button className="btn" disabled={cancelling} onClick={() => setCancelOpen(false)}>Back</button>
+            <button className="btn btn-danger" disabled={cancelling} onClick={confirmCancel}>{cancelling ? 'Cancelling...' : 'Cancel Sales Order'}</button>
+          </div>
+        </Modal>
+      )}
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
@@ -251,6 +296,9 @@ export default function SalesOrderView() {
           {/* System Admin only (the server enforces it too). */}
           {user?.account_type === 'System Admin' && !String(so.status || '').toLowerCase().includes('cancel') && (
             <button className="btn btn-sm" onClick={() => navigate(`/sales-orders/${id}/edit`)}>Edit</button>
+          )}
+          {user?.account_type === 'System Admin' && so.status !== 'cancelled' && (
+            <button className="btn btn-sm btn-danger" onClick={openCancel}>Cancel</button>
           )}
           {hasDeliverableLine && canRaiseDelivery && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/sales-orders/${id}/item-delivery/new`)}>Item Delivery</button>}
           {hasInvoiceableLine && (canBillSI || canBillDT) && (
@@ -276,6 +324,11 @@ export default function SalesOrderView() {
         </div>
         <div className="estimate-status">
           {STATUS_LABELS[so.status] || so.status}
+          {so.status === 'cancelled' && so.cancel_reason_name && (
+            <span style={{ marginLeft: 8, fontSize: '0.85em' }}>
+              — {so.cancel_reason_name}{so.cancel_remarks ? `: ${so.cancel_remarks}` : ''}{so.cancelled_by_name ? ` (by ${so.cancelled_by_name})` : ''}
+            </span>
+          )}
           <button type="button" className="estimate-so-link" onClick={() => navigate(`/estimates/${so.estimate_id}`)}>
             {so.estimate_no}
           </button>
