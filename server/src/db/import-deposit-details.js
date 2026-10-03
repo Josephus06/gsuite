@@ -133,6 +133,8 @@ async function main() {
     for (const e of (t.transaction_transactionledgerentries || []).filter((x) => x.Module_LdgrEntries === 'X')) {
       const kind = e.ModuleTrans_LdgrEntries === 'Other Deposit' ? 'other' : e.ModuleTrans_LdgrEntries === 'Cash Back' ? 'cashback' : null;
       if (!kind) { bad = `unknown line kind ${e.ModuleTrans_LdgrEntries}`; break; }
+      // The source keeps empty starter rows (0.00, sometimes no account): nothing to carry over.
+      if (!r2(Number(e.CRAmount_LdgrEntries) - Number(e.DRAmount_LdgrEntries))) continue;
       const code = String(e.transactionledgerentry_coa?.UserPK_COA || '').trim();
       if (!acctId.has(code)) { bad = `account ${code || '?'} not in T1S`; break; }
       const amount = r2(kind === 'other' ? Number(e.CRAmount_LdgrEntries) - Number(e.DRAmount_LdgrEntries) : Number(e.DRAmount_LdgrEntries) - Number(e.CRAmount_LdgrEntries));
