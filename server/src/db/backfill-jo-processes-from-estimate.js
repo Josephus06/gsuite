@@ -17,6 +17,9 @@
 require('dotenv').config();
 const pool = require('../db');
 const L = require('./lib/liveWindow');
+// `total` is a QUANTITY (item used, in its unit). On an ESTIMATE line TotalAmountOut is the PRICE,
+// so the quantity is worked out as T1S does for estimate lines (Qty x size). Fixed 2026-10-03.
+const { computeLineTotal } = require('../lib/liveEstimateSync');
 
 const APPLY = process.argv.includes('--apply');
 const ONE = (process.argv.find((a) => a.startsWith('--so=')) || '').split('=')[1] || null;
@@ -77,7 +80,7 @@ const norm = (s) => (s == null ? '' : String(s).trim().toLowerCase().replace(/\s
           x.Category_LdgrInvty || null, x.Parts_LdgrInvty || null,
           invBy.get(norm(it.UserPK_Invty)) ?? invBy.get(norm(it.SalesDescription_Invty)) ?? null, null,
           x.ArtistRemarks_LdgrInvty || null, num(x.Length_LdgrInvty), num(x.Width_LdgrInvty),
-          x.UnitOfMeasure_LdgrInvty || null, num(x.Qty_LdgrInvty), num(x.TotalAmountOut_LdgrInvty) ?? num(x.SubTotalAmountOut_LdgrInvty),
+          x.UnitOfMeasure_LdgrInvty || null, num(x.Qty_LdgrInvty), computeLineTotal(x),
           x.Unit_LdgrInvty || null, x.SalesRemarks_LdgrInvty || null, x.Particulars_LdgrInvty || null,
           num(x.ProcessCost_LdgrInvty), num(x.MaterialCost_LdgrInvty),
           (num(x.MaterialTransCost_LdgrInvty) || 0) + (num(x.ProcessTransCost_LdgrInvty) || 0), num(x.Cost_LdgrInvty),

@@ -439,4 +439,4 @@ async function syncNewEstimates({ lookbackDays = 90 } = {}) {
 // Exported beyond syncNewEstimates so a one-off script can import a single, specific
 // estimate by SysPK (e.g. one pasted from a URL) without duplicating all the
 // master-data-resolution logic above.
-module.exports = { syncNewEstimates, login, apiCall, importOneEstimate, freshCache, fetchEstimateDetail, insertEstimateJobs };
+module.exports = { syncNewEstimates, login, apiCall, importOneEstimate, freshCache, fetchEstimateDetail, insertEstimateJobs, computeLineTotal };

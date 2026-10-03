@@ -268,7 +268,10 @@ async function main() {
         t.joId, i + 1, procId, num(L.ProcessQty_LdgrInvty), L.UOM_Proc || null,
         L.Category_LdgrInvty || null, L.Parts_LdgrInvty || null, itemId, locId,
         L.ArtistRemarks_LdgrInvty || null, num(L.Length_LdgrInvty), num(L.Width_LdgrInvty),
-        L.UnitOfMeasure_LdgrInvty || null, num(L.Qty_LdgrInvty), num(L.TotalAmountOut_LdgrInvty) ?? num(L.SubTotalAmountOut_LdgrInvty),
+        // `total` is a QUANTITY (the item used, in its unit) -- QtyOutTemp. TotalAmountOut is the
+        // line's peso AMOUNT; copying it put money in the quantity column (fixed 2026-10-03, see
+        // repair-backfilled-jo-totals.js).
+        L.UnitOfMeasure_LdgrInvty || null, num(L.Qty_LdgrInvty), num(L.QtyOutTemp_LdgrInvty) ?? num(L.Qty_LdgrInvty),
         L.Unit_LdgrInvty || null, L.SalesRemarks_LdgrInvty || null, L.Particulars_LdgrInvty || null,
         num(L.ProcessCost_LdgrInvty), num(L.MaterialCost_LdgrInvty),
         (num(L.MaterialTransCost_LdgrInvty) || 0) + (num(L.ProcessTransCost_LdgrInvty) || 0),
