@@ -2,7 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { assignDocNo, nextDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
-const { isHeadOfficeUser } = require('../lib/userLocation');
+const { isHeadOfficeUser, resolveDefaultLocation, isHeadOfficeName } = require('../lib/userLocation');
 const { isNonStockItem } = require('../lib/itemTypes');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
@@ -79,6 +79,21 @@ async function assertJobOrderInScope(req, res) {
   return false;
 }
 
+// A branch's floor is often run by its sales staff: at SM, Dexter and Cindy carry the Production
+// Supervisor tag and build and schedule the branch's jobs. As sales accounts they only ever saw
+// their own team's job orders here, so a branch job sold by a Head Office rep (SO-72385, Jocel)
+// was invisible to the people meant to build it (2026-10-03). For a sales account that is a
+// production supervisor or planner logging in at a branch, this returns that branch's location:
+// they also see every job order FILED there. Null for everyone else -- nothing else changes.
+async function branchFloorLocationId(userId) {
+  const [[u]] = await pool.query(
+    `SELECT ${PLANNER_COLUMNS}, is_production_supervisor, is_account_officer, is_supervisor FROM users WHERE id = ?`, [userId]);
+  if (!u || !(u.is_account_officer || u.is_supervisor)) return null;
+  if (!(u.is_production_supervisor || isPlanner(u))) return null;
+  const loc = await resolveDefaultLocation(userId);
+  return loc && !isHeadOfficeName(loc.location_name) ? loc.id : null;
+}
+
 router.get('/', requireAuth, requireProductionView, async (req, res, next) => {
   try {
     const {
@@ -132,7 +147,12 @@ router.get('/', requireAuth, requireProductionView, async (req, res, next) => {
     // is for. Scoped on the job order's own rep for the same reason the Job Orders list is:
     // an NSJO or RWIP has no sales order to reach through.
     const salesScope = await getSalesRepEmployeeScope(req.user.id);
-    if (salesScope) { commonWhere.push('jo.sales_rep_id IN (?)'); commonParams.push(salesScope); }
+    if (salesScope) {
+      const floorLoc = await branchFloorLocationId(req.user.id);
+      if (floorLoc) {
+        commonWhere.push('(jo.sales_rep_id IN (?) OR jo.job_location_id = ?)'); commonParams.push(salesScope, floorLoc);
+      } else { commonWhere.push('jo.sales_rep_id IN (?)'); commonParams.push(salesScope); }
+    }
 
     if (salesRepId) { commonWhere.push('so.sales_rep_id = ?'); commonParams.push(salesRepId); }
     if (jobLocationId) { commonWhere.push('jo.job_location_id = ?'); commonParams.push(jobLocationId); }
@@ -259,7 +279,8 @@ router.get('/:id', requireAuth, requireProductionView, async (req, res, next) =>
     // Same 404 the list's filter implies: hiding a job order from the list while still serving
     // it to anyone who types its id is decoration, not a restriction.
     const salesScope = await getSalesRepEmployeeScope(req.user.id);
-    if (salesScope && !salesScope.map(String).includes(String(jo.sales_rep_id))) {
+    if (salesScope && !salesScope.map(String).includes(String(jo.sales_rep_id))
+        && Number(jo.job_location_id) !== Number(await branchFloorLocationId(req.user.id))) {
       return res.status(404).json({ error: 'Not found' });
     }
 
