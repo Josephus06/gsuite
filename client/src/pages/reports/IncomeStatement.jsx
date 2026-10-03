@@ -130,6 +130,26 @@ export default function IncomeStatement() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [drill, setDrill] = useState(null);
+  // Extract: the report on screen, as a workbook -- the same dates and breakdown it was generated with.
+  const [exporting, setExporting] = useState(false);
+  async function extract() {
+    if (!report) return;
+    setExporting(true); setError('');
+    try {
+      const params = { asOf: report.as_of, breakdown: report.breakdown };
+      if (report.from_date && filterType === 'period_from') params.from = report.from_date;
+      const { data } = await api.get('/reports/income-statement/export', { params, responseType: 'blob' });
+      const url = URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = url; a.download = `income-statement-${report.from_date}-to-${report.as_of}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError('Could not extract the Income Statement.');
+    } finally {
+      setExporting(false);
+    }
+  }
 
   function handleDrill(account, column) {
     const params = { accountCode: account.account_code, breakdown: report.breakdown, columnKey: column.key, asOf: report.as_of };
@@ -216,7 +236,8 @@ export default function IncomeStatement() {
 
       {!loading && report && (
         <div className="card">
-          <div style={{ marginBottom: 12 }}>
+          <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <button className="btn" disabled={exporting} onClick={extract} title="Download this report as Excel">{exporting ? 'Extracting...' : 'Extract'}</button>
             <strong>{report.from_date} to {report.as_of}</strong>
             {report.breakdown !== 'total' && <span style={{ marginLeft: 12, color: 'var(--muted, #888)' }}>Breakdown: {BREAKDOWN_OPTIONS.find((o) => o.value === report.breakdown)?.label}</span>}
           </div>

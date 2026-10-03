@@ -96,6 +96,62 @@ router.get('/income-statement', requireAuth, requirePermission('/reports/income-
   }
 });
 
+// Extract: the Income Statement exactly as the screen shows it (same builder, same filters and
+// breakdown), as a workbook -- sections, accounts with their child accounts indented, subtotals,
+// totals and Net Income; one amount column per breakdown column, kept as numbers.
+router.get('/income-statement/export', requireAuth, requirePermission('/reports/income-statement', 'can_view'), async (req, res, next) => {
+  try {
+    const breakdown = VALID_BREAKDOWNS.includes(req.query.breakdown) ? req.query.breakdown : 'total';
+    const r = await buildIncomeStatement(req.query.asOf || today(), req.query.from || null, breakdown);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Income Statement', { views: [{ state: 'frozen', ySplit: 4 }] });
+    const n = r.columns.length;
+    ws.columns = [{ width: 12 }, { width: 46 }, ...r.columns.map(() => ({ width: 18 }))];
+    ws.addRow(['Income Statement']).font = { bold: true, size: 14 };
+    ws.addRow([`${r.from_date} to ${r.as_of}`]);
+    ws.addRow([]);
+    const head = ws.addRow(['Account', '', ...r.columns.map((c) => c.label)]);
+    head.font = { bold: true };
+    const moneyFmt = '#,##0.00;(#,##0.00);-';
+    const amountRow = (values, label, code = '', opts = {}) => {
+      const row = ws.addRow([code, label, ...values.map((v) => Number(v) || 0)]);
+      for (let i = 0; i < n; i += 1) row.getCell(3 + i).numFmt = moneyFmt;
+      if (opts.bold) row.font = { bold: true };
+      if (opts.indent) row.getCell(2).alignment = { indent: opts.indent };
+      return row;
+    };
+    const section = (title) => { const row = ws.addRow([title]); row.font = { bold: true }; row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } }; };
+    const writeSections = (sections) => {
+      for (const s of sections) {
+        const sub = ws.addRow([s.sub_type]); sub.font = { italic: true };
+        const account = (a, depth) => {
+          amountRow(a.amounts, a.account_name, a.account_code, { indent: depth + 1, bold: depth === 0 && (a.children || []).length > 0 });
+          for (const c of (a.children || [])) account(c, depth + 1);
+        };
+        for (const a of s.accounts) account(a, 0);
+        amountRow(s.subtotals, `Total ${s.sub_type}`, '', { bold: true });
+      }
+    };
+    section('REVENUES');
+    writeSections(r.revenue_sections);
+    amountRow(r.revenue_totals, 'TOTAL REVENUES', '', { bold: true });
+    ws.addRow([]);
+    section('COST OF GOODS SOLD & EXPENSES');
+    writeSections(r.expense_sections);
+    amountRow(r.expense_totals, 'TOTAL EXPENSES', '', { bold: true });
+    ws.addRow([]);
+    amountRow(r.net_income, 'NET INCOME', '', { bold: true });
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="income-statement-${r.from_date}-to-${r.as_of}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    if (res.headersSent) { res.destroy(err); return; }
+    next(err);
+  }
+});
+
 // Drill-down behind a Balance Sheet amount: every transaction making up the account's balance as of
 // the date (lib/reportsEngine.js buildBalanceSheetTransactions).
 router.get('/balance-sheet/transactions', requireAuth, requirePermission('/reports/balance-sheet', 'can_view'), async (req, res, next) => {
