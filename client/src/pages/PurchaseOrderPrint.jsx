@@ -125,7 +125,7 @@ export default function PurchaseOrderPrint() {
         .po-totals .po-row { justify-content: space-between; }
         .po-totals .po-lbl { min-width: 0; }
         .po-grand { border-top: 1px solid #cbd5e1; margin-top: 6px; padding-top: 6px; font-weight: 600; }
-        .po-sign { display: flex; justify-content: space-between; gap: 20px; margin-top: 16mm; break-inside: avoid; }
+        .po-sign { display: flex; justify-content: space-between; gap: 14px; margin-top: 16mm; break-inside: avoid; }
         .po-sig { flex: 1; min-width: 0; }
         /* Room for a drawn signature, kept even when there is none so the three lines stay level. */
         .po-sig-ink { height: 16mm; display: flex; align-items: flex-end; justify-content: center; }
@@ -232,7 +232,8 @@ export default function PurchaseOrderPrint() {
         <div className="po-sign">
           <Signature image={po.prepared_signature} name={po.created_by_name} role="Prepared by" />
           <Signature image={po.approved_signature} name={approver}
-            role={`Approved by${approvedAt ? ` — ${fmtDate(approvedAt)}` : ''}`} />
+            role={`Pre-Approved by${approvedAt ? ` — ${fmtDate(approvedAt)}` : ''}`} />
+          <Signature image={po.final_approver_signature} name={po.final_approver_name} role="Approved by" />
           <Signature name="" role="Received by (Supplier)" />
         </div>
       </div>

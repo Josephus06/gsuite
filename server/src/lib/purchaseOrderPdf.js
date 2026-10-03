@@ -120,7 +120,7 @@ function sigBuffer(dataUrl) {
 
 function signatures(doc, po) {
   const left = doc.page.margins.left; const width = doc.page.width - left - doc.page.margins.right;
-  const gap = 20; const colW = (width - gap * 2) / 3; const inkH = 45;
+  const gap = 14; const colW = (width - gap * 3) / 4; const inkH = 45;
   if (doc.y + inkH + 50 > limit(doc)) doc.addPage();
   doc.y += 30;
   const top = doc.y;
@@ -128,7 +128,8 @@ function signatures(doc, po) {
   const approvedAt = po.approved_by_gm_at || po.approved_by_supervisor_at;
   const cols = [
     { img: sigBuffer(po.prepared_signature), name: po.created_by_name, role: 'Prepared by' },
-    { img: sigBuffer(po.approved_signature), name: approver, role: `Approved by${approvedAt ? ` - ${date(approvedAt)}` : ''}` },
+    { img: sigBuffer(po.approved_signature), name: approver, role: `Pre-Approved by${approvedAt ? ` - ${date(approvedAt)}` : ''}` },
+    { img: sigBuffer(po.final_approver_signature), name: po.final_approver_name, role: 'Approved by' },
     { img: null, name: '', role: 'Received by (Supplier)' },
   ];
   cols.forEach((c, i) => {

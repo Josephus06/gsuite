@@ -253,7 +253,17 @@ async function loadPrintablePo(id) {
       approvedSignature = approverId ? byId.get(String(approverId)) || null : null;
     }
 
-    return { ...po, lines, prepared_signature: preparedSignature, approved_signature: approvedSignature };
+    // "Approved by" (asked 2026-10-03): always Jimmy Wu, name and signature, on every printed PO --
+    // the recorded approver above prints as "Pre-Approved by". PO_FINAL_APPROVER_USERNAME overrides.
+    const [[finalApprover]] = await pool.query(
+      'SELECT display_name, signature_data FROM users WHERE username = ? LIMIT 1',
+      [process.env.PO_FINAL_APPROVER_USERNAME || 'jwu@graphicstar.com.ph']);
+
+    return {
+      ...po, lines, prepared_signature: preparedSignature, approved_signature: approvedSignature,
+      final_approver_name: finalApprover?.display_name || 'JIMMY WU',
+      final_approver_signature: finalApprover?.signature_data || null,
+    };
 }
 
 // Who may print -- and so email -- a PO: can_print on the page, and the PO approved. A System
