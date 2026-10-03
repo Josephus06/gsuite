@@ -28,11 +28,19 @@ export const DATE_CHANGE_REASON_LABELS = {
 };
 export const DATE_CHANGE_REASONS = Object.keys(DATE_CHANGE_REASON_LABELS);
 
+// The job order's own rep, or that rep's supervisor (/auth/me report_employee_ids) -- the same
+// rule as the server's isRepOrSupervisorOf.
+export function isRepOrSupervisorOf(user, salesRepId) {
+  if (!user || !salesRepId) return false;
+  if (user.employee_id && String(salesRepId) === String(user.employee_id)) return true;
+  return (user.report_employee_ids || []).some((id) => String(id) === String(salesRepId));
+}
+
 // `canEditJobOrders` is the caller's can('/job-orders', 'can_edit').
 export function maySalesRevise(user, jo, canEditJobOrders) {
   if (!user) return false;
   if (user.account_type === 'System Admin') return true;
-  if (user.employee_id && String(jo?.sales_rep_id) === String(user.employee_id)) return true;
+  if (isRepOrSupervisorOf(user, jo?.sales_rep_id)) return true;
   return user.account_type === 'Sales' && !!canEditJobOrders;
 }
 
@@ -42,7 +50,7 @@ export function mayReworkJobOrder(user, jo) {
   if (!user || !jo) return false;
   if (jo.production_stage !== 'for_revision' || jo.revision_reason !== REVISION_MATERIAL_PROCESS) return false;
   if (jo.status === 'Cancelled') return false;
-  return !!user.employee_id && String(jo.sales_rep_id) === String(user.employee_id);
+  return isRepOrSupervisorOf(user, jo.sales_rep_id);
 }
 
 // The job order's own sales rep may edit it in full until Production has it: no production stage
@@ -50,7 +58,7 @@ export function mayReworkJobOrder(user, jo) {
 export function mayEditOwnJobOrder(user, jo) {
   if (!user || !jo) return false;
   if (jo.production_stage || jo.advance_copy_at || jo.status === 'Cancelled' || jo.status === 'Completed') return false;
-  return !!user.employee_id && String(jo.sales_rep_id) === String(user.employee_id);
+  return isRepOrSupervisorOf(user, jo.sales_rep_id);
 }
 
 // Is Sales still being asked to answer a suggested delivery date?

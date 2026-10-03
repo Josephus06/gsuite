@@ -190,6 +190,8 @@ router.get('/me', requireAuth, async (req, res, next) => {
     user.is_design_supervisor = !!user.is_design_supervisor;
     user.is_account_officer = !!user.is_account_officer;
     user.is_supervisor = !!user.is_supervisor;
+    // Whose job orders this user may act on as their supervisor (lib/salesVisibility.js).
+    user.report_employee_ids = await require('../lib/salesVisibility').reportEmployeeIds(user.id);
     user.is_sales_manager = !!user.is_sales_manager;
     user.is_sales_marketing_director = !!user.is_sales_marketing_director;
     user.is_sales_business_unit = !!user.is_sales_business_unit;

@@ -8,7 +8,7 @@ import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import JobOrderAttachments, { ARTIST_KINDS } from '../components/JobOrderAttachments';
 import RevisionNotice from '../components/RevisionNotice';
-import { maySalesRevise, mayReworkJobOrder, mayEditOwnJobOrder, awaitingDateDecision } from '../utils/salesRevision';
+import { isRepOrSupervisorOf, maySalesRevise, mayReworkJobOrder, mayEditOwnJobOrder, awaitingDateDecision } from '../utils/salesRevision';
 import { isAdvanceCopy, canForwardAdvanceCopy } from '../utils/advanceCopy';
 
 import { displayDateTime } from '../utils/dates';
@@ -302,7 +302,8 @@ export default function JobOrderView() {
   // ownership, not by the generic can_edit permission (which now only gates the actual
   // "Edit" button above). can_edit still works as a fallback override for admins/
   // managers, matching the backend's own dual-check on these two routes.
-  const isOwningSalesRep = !!user?.employee_id && jo.sales_rep_id === user.employee_id;
+  // The JO's rep, or that rep's supervisor.
+  const isOwningSalesRep = isRepOrSupervisorOf(user, jo.sales_rep_id);
   // "May I pick who draws this?" -- its own permission row, not the design-supervisor flag and
   // not generic can_edit on Job Orders. Same check the server makes (lib/artistAssignment.js).
   const canAssignArtist = can('/job-orders/assign-artist', 'can_edit');

@@ -63,6 +63,8 @@ async function maySalesReviseJobOrder(userId, jo) {
   // The rep named on the job order. Checked before the account type deliberately: whoever the
   // job order says owns it is the person the revision came back to.
   if (me.employee_id && String(jo?.sales_rep_id) === String(me.employee_id)) return true;
+  // ...or that rep's supervisor.
+  if (await require('./salesVisibility').isRepOrSupervisorOf(userId, jo?.sales_rep_id)) return true;
   if (me.account_type !== SALES_ACCOUNT_TYPE) return false;
 
   const [[page]] = await pool.query('SELECT id FROM pages WHERE route = ?', ['/job-orders']);

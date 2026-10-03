@@ -92,8 +92,8 @@ async function jobOrderEditGrant(userId, jobOrderId) {
     [jobOrderId]
   );
   if (!jo) return null;
-  const [[me]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [userId]);
-  const isRep = !!me?.employee_id && String(jo.sales_rep_id) === String(me.employee_id);
+  // The rep, or the rep's supervisor.
+  const isRep = await require('../lib/salesVisibility').isRepOrSupervisorOf(userId, jo.sales_rep_id);
   if (!isRep) return null;
   if (isBeforeProduction(jo)) return 'owner';
   if (isOpenForSalesRework(jo)) return 'rework';
@@ -621,8 +621,8 @@ router.put('/:id/forward-to-design', requireAuth, async (req, res, next) => {
     const [[jo]] = await conn.query('SELECT job_order_no, description, sub_status, sales_rep_id FROM job_orders WHERE id = ?', [req.params.id]);
     if (!jo) { await conn.rollback(); return res.status(404).json({ error: 'Not found' }); }
 
-    const [[me]] = await conn.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
-    const isOwningSalesRep = !!me?.employee_id && jo.sales_rep_id === me.employee_id;
+    // The JO's own rep, or that rep's supervisor.
+    const isOwningSalesRep = await require('../lib/salesVisibility').isRepOrSupervisorOf(req.user.id, jo.sales_rep_id);
     if (!isOwningSalesRep) {
       const [[page]] = await conn.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
       const [[perm]] = await conn.query('SELECT can_edit AS allowed FROM user_page_permissions WHERE user_id = ? AND page_id = ?', [req.user.id, page?.id]);

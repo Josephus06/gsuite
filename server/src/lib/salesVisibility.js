@@ -91,4 +91,30 @@ async function getSalesRepEmployeeScope(userId) {
   return [...new Set(ids)];
 }
 
-module.exports = { getSalesRepEmployeeScope };
+// Is this user the given sales rep, or one of that rep's supervisors (user_supervisors)? A
+// supervisor may act on a report's job order as the rep could -- Forward to Design Supervisor,
+// edit it before Production, answer a revision (asked 2026-10-03: Ronel Parenno for Jocelyn Ybanez).
+async function isRepOrSupervisorOf(userId, salesRepEmployeeId) {
+  if (!salesRepEmployeeId) return false;
+  const [[me]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [userId]);
+  if (me?.employee_id && String(me.employee_id) === String(salesRepEmployeeId)) return true;
+  const [[sup]] = await pool.query(
+    `SELECT 1 AS ok FROM user_supervisors us JOIN users u ON u.id = us.user_id
+      WHERE us.supervisor_id = ? AND u.employee_id = ? LIMIT 1`,
+    [userId, salesRepEmployeeId],
+  );
+  return !!sup;
+}
+
+// The employee ids of everyone who reports to this user -- sent on /auth/me so the pages can draw
+// the same buttons isRepOrSupervisorOf allows.
+async function reportEmployeeIds(userId) {
+  const [rows] = await pool.query(
+    `SELECT DISTINCT u.employee_id FROM user_supervisors us JOIN users u ON u.id = us.user_id
+      WHERE us.supervisor_id = ? AND u.employee_id IS NOT NULL`,
+    [userId],
+  );
+  return rows.map((r) => r.employee_id);
+}
+
+module.exports = { getSalesRepEmployeeScope, isRepOrSupervisorOf, reportEmployeeIds };
