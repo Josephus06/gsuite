@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import CustomerPaymentModal from '../components/CustomerPaymentModal';
+import ApplyPaymentModal from '../components/ApplyPaymentModal';
 
 import { displayDate, displayDateTime } from '../utils/dates';
 
@@ -32,6 +33,7 @@ export default function CustomerPaymentView() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [error, setError] = useState('');
 
   function load() {
@@ -84,6 +86,10 @@ export default function CustomerPaymentView() {
           )}
           {canEdit && cp.status === 'deposited' && (
             <button className="btn btn-sm" disabled title="This payment has been deposited. Void it and re-enter if it is wrong.">Edit</button>
+          )}
+          {/* Apply the unapplied balance to invoices -- also after deposit, when Edit is locked. */}
+          {canEdit && isOpen && Number(cp.unapplied_amount) > 0.005 && (
+            <button className="btn btn-sm btn-primary" onClick={() => setApplying(true)}>Apply to Invoice</button>
           )}
           {can('/deposits', 'can_add') && cp.status === 'not_deposited' && (
             <button className="btn btn-sm btn-primary" onClick={() => navigate('/deposits/new', { state: { preselectPaymentId: cp.id } })}>Deposit</button>
@@ -234,6 +240,10 @@ export default function CustomerPaymentView() {
       {/* Same form as taking the payment, opened on what was saved. Reloaded afterwards rather
           than patched locally: the edit moves balances on the invoices it settles, and the GL
           impact shown below is derived on read. */}
+      {applying && (
+        <ApplyPaymentModal payment={cp} onClose={() => setApplying(false)} onApplied={() => { setApplying(false); load(); }} />
+      )}
+
       {editing && (
         <CustomerPaymentModal
           paymentId={cp.id}

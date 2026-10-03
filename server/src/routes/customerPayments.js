@@ -729,6 +729,74 @@ router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async
   }
 });
 
+// Apply to Invoice (asked 2026-10-03): put a payment's UNAPPLIED balance against the customer's
+// open invoices -- also once it is deposited, which locks Edit. It only ADDS applications; nothing
+// on the payment itself changes (date, amount, OR #, Department, Issued By...). Applying through
+// the full Edit form re-saved every header field and cleared the Department and Issued By that a
+// migrated payment carries only as source names.
+//
+// Ledger: a payment made in T1S posts its unapplied part to 23000 Customer Deposits on its own
+// date, and applying moves that to Accounts Receivable on the SAME date -- so when the payment
+// posts at all, its period must be open. A migrated payment's unapplied part posts nothing here.
+router.put('/:id/apply', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[cp]] = await conn.query(
+      'SELECT id, customer_id, status, date_created, unapplied_amount, applied_amount, deposit_account_id, created_by_user_id FROM customer_payments WHERE id = ?',
+      [req.params.id]);
+    if (!cp) return res.status(404).json({ error: 'Not found' });
+    if (cp.status === 'voided') return res.status(409).json({ error: 'A voided Customer Payment cannot be applied.' });
+
+    const lines = (Array.isArray(req.body?.lines) ? req.body.lines : [])
+      .map((l) => ({ sales_invoice_id: Number(l.sales_invoice_id), amount: Number(Number(l.applied_amount).toFixed(2)) }))
+      .filter((l) => l.sales_invoice_id && l.amount > 0);
+    if (!lines.length) return res.status(400).json({ error: 'Enter an amount to apply on at least one invoice.' });
+    const total = Number(lines.reduce((t, l) => t + l.amount, 0).toFixed(2));
+    const unapplied = Number(cp.unapplied_amount || 0);
+    if (total > unapplied + 0.005) {
+      return res.status(409).json({ error: `Applying ${total.toFixed(2)} is more than this payment's unapplied ${unapplied.toFixed(2)}.` });
+    }
+    if (cp.created_by_user_id || cp.deposit_account_id) await assertPeriodOpen(cp.date_created, 'ar', conn);
+
+    // Only this customer's invoices.
+    const [owned] = await conn.query(
+      `SELECT si.id FROM sales_invoices si
+         LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+         LEFT JOIN estimates e ON e.id = si.estimate_id
+         LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
+        WHERE si.id IN (?) AND COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) = ?`,
+      [lines.map((l) => l.sales_invoice_id), cp.customer_id]);
+    if (owned.length !== new Set(lines.map((l) => l.sales_invoice_id)).size) {
+      return res.status(400).json({ error: 'Every invoice must belong to this payment’s customer.' });
+    }
+
+    await conn.beginTransaction();
+    for (const l of lines) {
+      await applyToInvoice(conn, l.sales_invoice_id, l.amount);
+      const [[mine]] = await conn.query(
+        'SELECT id FROM customer_payment_lines WHERE customer_payment_id = ? AND sales_invoice_id = ? LIMIT 1', [cp.id, l.sales_invoice_id]);
+      if (mine) await conn.query('UPDATE customer_payment_lines SET applied_amount = applied_amount + ? WHERE id = ?', [l.amount, mine.id]);
+      else await conn.query('INSERT INTO customer_payment_lines (customer_payment_id, sales_invoice_id, applied_amount) VALUES (?, ?, ?)', [cp.id, l.sales_invoice_id, l.amount]);
+    }
+    await conn.query(
+      'UPDATE customer_payments SET applied_amount = applied_amount + ?, unapplied_amount = GREATEST(unapplied_amount - ?, 0) WHERE id = ?',
+      [total, total, cp.id]);
+    await logAudit(conn, {
+      paymentId: cp.id, userId: req.user.id, eventType: 'Updated', fieldName: 'applied to invoice',
+      oldValue: unapplied.toFixed(2), newValue: `applied ${total.toFixed(2)} to ${lines.length} invoice(s)`,
+    });
+    await conn.commit();
+    const [[row]] = await pool.query('SELECT * FROM customer_payments WHERE id = ?', [cp.id]);
+    res.json(row);
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
 // Editing a payment that has not been deposited yet.
 //
 // WHY ONLY UNTIL IT IS DEPOSITED. A deposit sweeps the receipt into the bank and becomes the
@@ -817,18 +885,20 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 
     await conn.query(
       `UPDATE customer_payments SET
-         date_created = ?, department_id = ?,
+         -- Department and Issued By keep what the payment has when the form sends none, as Office
+         -- Location does below: an apply-only save must not clear them (2026-10-03).
+         date_created = ?, department_id = COALESCE(?, department_id),
          -- Kept when the form sends none: it is where the payment was taken, fixed at creation.
          -- Writing the null through wiped it on every edit opened from the customer list.
          office_location_id = COALESCE(?, office_location_id), ar_account_id = ?,
          deposit_account_id = ?, receipt_type = ?, or_no = ?, payment_type = ?,
-         issued_by_user_id = ?, payment_method_id = ?, payment_amount = ?, applied_amount = ?,
+         issued_by_user_id = COALESCE(?, issued_by_user_id), payment_method_id = ?, payment_amount = ?, applied_amount = ?,
          unapplied_amount = ?, memo = ?, reference_no = ?, bank_name = ?, cheque_no = ?, cheque_date = ?, si_bs_no = ?
        WHERE id = ?`,
       [
         dateCreated || cp.date_created, departmentId || null, officeLocationId || null,
         arAccountId || null, depositAccountId || null, receiptType || null, orNo || null,
-        paymentType || null, issuedByUserId || req.user.id, paymentMethodId || null,
+        paymentType || null, issuedByUserId || null, paymentMethodId || null,
         received, appliedTotal, unapplied, memo || null,
         referenceNo || null, bankName || null, chequeNo || null, chequeDate || null, siBsNo || null,
         req.params.id,
