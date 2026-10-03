@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import Pagination from '../components/Pagination';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
@@ -22,6 +23,9 @@ export default function PlaceOrderForm() {
   const [showPicker, setShowPicker] = useState(false);
   const [openPRs, setOpenPRs] = useState([]);
   const [pickerSearch, setPickerSearch] = useState('');
+  // The PR picker shows five at a time (asked 2026-10-03).
+  const [pickerPage, setPickerPage] = useState(1);
+  const PICKER_PAGE_SIZE = 5;
   const [selectedPrIds, setSelectedPrIds] = useState(new Set());
   const [rows, setRows] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
@@ -51,6 +55,7 @@ export default function PlaceOrderForm() {
   const defaultDepartmentId = idByName(departments, 'name', 'Supply Chain');
 
   async function openPicker() {
+    setPickerPage(1);
     setShowPicker(true);
     const { data } = await api.get('/purchase-requisitions', { params: { open_only: 1 } });
     setOpenPRs(data.filter((pr) => pr.item_status !== 'FULLY ORDERED' && pr.status !== 'cancelled'));
@@ -141,6 +146,11 @@ export default function PlaceOrderForm() {
       setSaving(false);
     }
   }
+
+  // The picker's list after the search; paged five at a time below.
+  const q = pickerSearch.trim().toLowerCase();
+  const pickerRows = openPRs.filter((pr) => !q || [pr.pr_no, pr.requestor_name, pr.department_name]
+    .some((v) => String(v || '').toLowerCase().includes(q)));
 
   return (
     <div>
@@ -256,13 +266,12 @@ export default function PlaceOrderForm() {
               <button type="button" onClick={() => setShowPicker(false)} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 24, lineHeight: 1, cursor: 'pointer' }}>×</button>
             </div>
             <div style={{ padding: 24 }}>
-              <input placeholder="Search" value={pickerSearch} onChange={(e) => setPickerSearch(e.target.value)} style={{ marginBottom: 16, maxWidth: 320 }} />
+              <input placeholder="Search PR #, requestor or department" value={pickerSearch} onChange={(e) => { setPickerSearch(e.target.value); setPickerPage(1); }} style={{ marginBottom: 16, maxWidth: 320 }} />
               <div className="table-wrap">
                 <table>
                   <thead><tr><th></th><th>PR #</th><th>Date Created</th><th>Requested From</th><th>Requestor</th><th>Status</th><th>Item Status</th></tr></thead>
                   <tbody>
-                    {openPRs
-                      .filter((pr) => !pickerSearch || pr.pr_no.toLowerCase().includes(pickerSearch.toLowerCase()))
+                    {pickerRows.slice((pickerPage - 1) * PICKER_PAGE_SIZE, pickerPage * PICKER_PAGE_SIZE)
                       .map((pr) => (
                         <tr key={pr.id} className="picker-row" style={{ cursor: 'pointer' }} onClick={() => togglePr(pr.id)}>
                           <td><input type="checkbox" checked={selectedPrIds.has(pr.id)} readOnly /></td>
@@ -274,11 +283,15 @@ export default function PlaceOrderForm() {
                           <td>{pr.item_status}</td>
                         </tr>
                       ))}
-                    {openPRs.length === 0 && (
-                      <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>No open Purchase Requisitions.</td></tr>
+                    {pickerRows.length === 0 && (
+                      <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>{openPRs.length ? 'No Purchase Requisition matches the search.' : 'No open Purchase Requisitions.'}</td></tr>
                     )}
                   </tbody>
                 </table>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, flexWrap: 'wrap', gap: 8 }}>
+                <span className="muted">{pickerRows.length} PR(s){selectedPrIds.size ? ` · ${selectedPrIds.size} selected` : ''}</span>
+                <Pagination page={pickerPage} totalPages={Math.max(1, Math.ceil(pickerRows.length / PICKER_PAGE_SIZE))} onChange={setPickerPage} />
               </div>
               <div className="modal-actions">
                 <button className="btn btn-primary" onClick={handleDone}>Done</button>
