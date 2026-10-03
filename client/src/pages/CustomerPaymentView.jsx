@@ -33,6 +33,20 @@ export default function CustomerPaymentView() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
+  // Office Location on its own, also after deposit (asked 2026-10-03): it moves no money.
+  const [locEdit, setLocEdit] = useState(false);
+  const [locations, setLocations] = useState([]);
+  const [locId, setLocId] = useState('');
+  async function openLocEdit() {
+    setLocId(cp.office_location_id ? String(cp.office_location_id) : '');
+    setLocEdit(true);
+    if (!locations.length) { try { const { data } = await api.get('/customer-payments/meta/locations'); setLocations(data); } catch { setLocations([]); } }
+  }
+  async function saveLoc() {
+    setError('');
+    try { await api.put(`/customer-payments/${id}/office-location`, { office_location_id: locId || null }); setLocEdit(false); await load(); }
+    catch (err) { setError(err.response?.data?.error || 'Could not save the Office Location.'); }
+  }
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState('');
 
@@ -114,7 +128,21 @@ export default function CustomerPaymentView() {
             <div>Customer : <span className="hi">{cp.customer_name}</span></div>
             <div>Date : <span className="hi">{formatDate(cp.date_created)}</span></div>
             <div>Department : <span className="hi">{cp.department_name || '—'}</span></div>
-            <div>Office Location : <span className="hi">{cp.office_location_name || '—'}</span></div>
+            <div>Office Location : {locEdit ? (
+              <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                <select value={locId} onChange={(e) => setLocId(e.target.value)} style={{ maxWidth: 220 }}>
+                  <option value="">--None--</option>
+                  {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
+                </select>
+                <button type="button" className="btn btn-sm btn-primary" onClick={saveLoc}>Save</button>
+                <button type="button" className="btn btn-sm" onClick={() => setLocEdit(false)}>Cancel</button>
+              </span>
+            ) : (
+              <>
+                <span className="hi">{cp.office_location_name || '—'}</span>
+                {canEdit && cp.status !== 'voided' && <button type="button" className="link-btn" style={{ marginLeft: 8 }} onClick={openLocEdit}>Edit</button>}
+              </>
+            )}</div>
             <div>Memo : <span className="hi">{cp.memo || ''}</span></div>
           </div>
           <div>

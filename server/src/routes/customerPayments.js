@@ -694,6 +694,44 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   }
 });
 
+// Office Location, editable on its own (asked 2026-10-03) -- also once the payment is deposited,
+// when the full Edit is locked: where a receipt was taken moves no money on any invoice, deposit
+// or account, so correcting it needs no void-and-re-key. Voided payments stay as they are.
+router.get('/meta/locations', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query('SELECT id, location_name FROM locations WHERE is_active = 1 ORDER BY location_name');
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+router.put('/:id/office-location', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const locationId = Number(req.body.office_location_id) || null;
+    const [[cp]] = await conn.query(
+      `SELECT cp.id, cp.status, cp.office_location_id, l.location_name FROM customer_payments cp
+         LEFT JOIN locations l ON l.id = cp.office_location_id WHERE cp.id = ?`, [req.params.id]);
+    if (!cp) return res.status(404).json({ error: 'Not found' });
+    if (cp.status === 'voided') return res.status(409).json({ error: 'A voided Customer Payment cannot be edited.' });
+    let newName = null;
+    if (locationId) {
+      const [[loc]] = await conn.query('SELECT location_name FROM locations WHERE id = ?', [locationId]);
+      if (!loc) return res.status(400).json({ error: 'Choose a valid Office Location.' });
+      newName = loc.location_name;
+    }
+    await conn.beginTransaction();
+    await conn.query('UPDATE customer_payments SET office_location_id = ? WHERE id = ?', [locationId, cp.id]);
+    await logAudit(conn, { paymentId: cp.id, userId: req.user.id, eventType: 'Updated', fieldName: 'office_location', oldValue: cp.location_name, newValue: newName });
+    await conn.commit();
+    res.json({ office_location_id: locationId, office_location_name: newName });
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
 router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {

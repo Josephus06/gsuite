@@ -53,6 +53,7 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
   // Where the payment is taken: the creating user's default location, falling back to the
   // invoice's when the user has none. An edit keeps the location saved on the payment.
   const [officeLocation, setOfficeLocation] = useState(null);
+  const [locations, setLocations] = useState([]);
   const [tab, setTab] = useState('apply');
   const [applyAmounts, setApplyAmounts] = useState({});   // sales_invoice_id -> string
   // Entered from the customer end the list is every open invoice they have -- hundreds, for a
@@ -86,7 +87,9 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
       api.get('/customer-payments/meta/issuers'),
       api.get('/lookups/payment-methods'),
       api.get('/lookups/chart-of-accounts'),
-    ]).then(([srcRes, payRes, deptRes, userRes, methodRes, acctRes]) => {
+      api.get('/customer-payments/meta/locations').catch(() => ({ data: [] })),
+    ]).then(([srcRes, payRes, deptRes, userRes, methodRes, acctRes, locRes]) => {
+      setLocations(locRes.data || []);
       const d = srcRes.data;
       setData(d);
       setDepartments(deptRes.data);
@@ -275,7 +278,14 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
                   columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']} onSelect={setDepartment}
                 />
               </div>
-              <div>Office Location : <span className="hi">{officeLocation?.location_name || '—'}</span></div>
+              <div className="field">
+                <label>Office Location</label>
+                <EntityPicker
+                  label="Office Location" items={locations} value={officeLocation?.id || ''} getLabel={(l) => l.location_name}
+                  columns={[{ key: 'location_name', label: 'Name' }]} searchKeys={['location_name']}
+                  onSelect={setOfficeLocation} onClear={() => setOfficeLocation(null)}
+                />
+              </div>
               <div className="field"><label>Memo <span className="req">*</span></label><textarea rows={5} value={memo} onChange={(e) => setMemo(e.target.value)} /></div>
             </div>
             <div>
