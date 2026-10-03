@@ -9,13 +9,19 @@
 // vs local "Sales - 4"/"Maketing" spelling mismatch). Office location is fuzzy-matched, else Head
 // Office. Idempotent: skips a CP-# already present.
 //
-//   node src/db/import-commission-payables.js --dry-run
-//   node src/db/import-commission-payables.js
+// --refresh (2026-10-03) ALSO brings payables already here up to the source: header figures,
+// status, amount paid and the monthly lines -- a payable migrated in July has been paid down in the
+// source since, and T1S still showed it at its July figures, so "released" never matched. Every
+// changed payable is printed with old -> new, and a rollback file of the old rows is written first.
+//
+//   node src/db/import-commission-payables.js --dry-run [--refresh]
+//   node src/db/import-commission-payables.js [--refresh]
 const pool = require('../db');
 require('dotenv').config();
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
 const DRY_RUN = process.argv.includes('--dry-run');
+const REFRESH = process.argv.includes('--refresh');
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const money = (v) => Number(num(v).toFixed(2));
 const day = (v) => (v || '').toString().slice(0, 10);
@@ -66,6 +72,7 @@ async function main() {
   const [[pay]] = await pool.query("SELECT id FROM chart_of_accounts WHERE account_code = '24200'");
   const [have] = await pool.query('SELECT commission_payable_no FROM commission_payables');
   const haveNo = new Set(have.map((r) => r.commission_payable_no));
+  const haveBefore = new Set(haveNo);
 
   const token = await login();
   const all = [];
@@ -137,6 +144,86 @@ async function main() {
   }
 
   console.log(`\nDone. ${created} payable(s), ${lineCount} line(s). Employee-missing skips: ${empMissing}. Failures: ${failed}.`);
+  // Payables that were already here before this run (not the ones just created).
+  if (REFRESH) await refreshExisting(token, all.filter((r) => haveBefore.has(r.UserPK_TransH)));
   await pool.end();
+}
+
+// The source's current figures for one payable (same reading as the import above).
+async function sourceFigures(token, h) {
+  const detail = listRows(await api(token, 'get_commission_payable', { pk: h.SysPK_TransH }))[0];
+  const lines = (detail?.transaction_commissionpayables || []).map((l) => ({
+    line_month: monthStart(l.Date_ComPay), quota: money(l.Quota_ComPay), weighted: money(l.Weighted_ComPay),
+    passing_jos: money(l.PassingJos_ComPay), expected: money(l.Expected_ComPay), confirmed: money(l.Confirmed_ComPay),
+    released: money(l.Released_ComPay), commission: money(l.Commission_ComPay),
+  })).sort((a, b) => a.line_month.localeCompare(b.line_month));
+  let amountPaid = 0;
+  for (const g of (detail?.transaction_transactionledgerentries || [])) {
+    if (g.transactionledgerentry_coa?.UserPK_COA === '24200' || num(g.CRAmount_LdgrEntries) > 0) amountPaid += num(g.PaidAmount_LdgrEntries);
+  }
+  return {
+    header: {
+      quota: money(h.SubTotal_TransH), weighted_sales: money(h.AppliedPayments_TransH), passing_jos: money(h.UnappliedPayments_TransH),
+      expected_commission: money(h.TotalAmount_TransH), commissionable_amount: money(h.AmountDueFixed_TransH),
+      status: mapStatus(h.Status_TransH), amount_paid: money(amountPaid),
+    },
+    lines,
+  };
+}
+
+async function refreshExisting(token, sources) {
+  const fs = require('fs');
+  console.log(`\nRefreshing ${sources.length} payable(s) already in T1S from the source${DRY_RUN ? ' (dry run)' : ''}...`);
+  const backup = []; let changed = 0; let same = 0; let failed = 0;
+  for (const h of sources) {
+    const [[local]] = await pool.query('SELECT * FROM commission_payables WHERE commission_payable_no = ?', [h.UserPK_TransH]);
+    if (!local) continue;
+    let src;
+    try { src = await sourceFigures(token, h); } catch (e) { console.error(`  [error] ${h.UserPK_TransH}: ${e.message}`); failed += 1; continue; }
+    const [localLines] = await pool.query(
+      'SELECT line_month, quota, weighted, passing_jos, expected, confirmed, released, commission FROM commission_payable_lines WHERE commission_payable_id = ? ORDER BY line_month', [local.id]);
+    const diffs = [];
+    for (const [k, v] of Object.entries(src.header)) {
+      const lv = k === 'status' ? local[k] : money(local[k]);
+      if (String(lv) !== String(v)) diffs.push(`${k} ${lv} -> ${v}`);
+    }
+    const day10 = (d) => (d instanceof Date ? d.toISOString() : String(d)).slice(0, 10);
+    const key = (l) => [day10(l.line_month), money(l.quota), money(l.weighted), money(l.passing_jos), money(l.expected), money(l.confirmed), money(l.released), money(l.commission)].join('|');
+    const linesDiffer = localLines.map(key).join(';') !== src.lines.map(key).join(';');
+    if (linesDiffer) {
+      const rel = (ls) => ls.reduce((t, l) => t + money(l.released), 0).toFixed(2);
+      diffs.push(`lines ${localLines.length} -> ${src.lines.length} (released ${rel(localLines)} -> ${rel(src.lines)})`);
+    }
+    if (!diffs.length) { same += 1; continue; }
+    changed += 1;
+    console.log(`  ${h.UserPK_TransH} (${h.Name_Empl}): ${diffs.join('; ')}`);
+    if (DRY_RUN) continue;
+    backup.push({ payable: local, lines: localLines });
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.query(
+        `UPDATE commission_payables SET quota = ?, weighted_sales = ?, passing_jos = ?, expected_commission = ?, commissionable_amount = ?,
+            status = ?, amount_paid = ?, updated_at = NOW() WHERE id = ?`,
+        [src.header.quota, src.header.weighted_sales, src.header.passing_jos, src.header.expected_commission, src.header.commissionable_amount,
+          src.header.status, src.header.amount_paid, local.id]);
+      if (linesDiffer) {
+        await conn.query('DELETE FROM commission_payable_lines WHERE commission_payable_id = ?', [local.id]);
+        for (const l of src.lines) {
+          await conn.query(
+            `INSERT INTO commission_payable_lines (commission_payable_id, line_month, quota, weighted, passing_jos, expected, confirmed, released, commission)
+             VALUES (?,?,?,?,?,?,?,?,?)`, [local.id, l.line_month, l.quota, l.weighted, l.passing_jos, l.expected, l.confirmed, l.released, l.commission]);
+        }
+      }
+      await conn.commit();
+    } catch (e) { await conn.rollback(); console.error(`  [error] ${h.UserPK_TransH}: ${e.message}`); failed += 1; }
+    finally { conn.release(); }
+  }
+  if (!DRY_RUN && backup.length) {
+    const f = `${process.platform === 'win32' ? '' : '/root/'}commission-payables-before-refresh-${Date.now()}.json`;
+    fs.writeFileSync(f, JSON.stringify(backup));
+    console.log(`Old rows saved to ${f}`);
+  }
+  console.log(`Refresh: ${changed} changed, ${same} already matching, ${failed} failed.`);
 }
 main().catch((err) => { console.error('Failed:', err.message); process.exit(1); });
