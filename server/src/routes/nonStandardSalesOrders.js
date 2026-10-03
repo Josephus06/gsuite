@@ -470,6 +470,49 @@ router.put('/:id/lines', requireAuth, requireEditOrOwnDraft, async (req, res, ne
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
+// One line's Description and Job Location (asked 2026-10-03), for the RMA / RMA-Installation / Sample
+// lines, which are copied from a source JO or estimate line and were otherwise read-only. If the
+// line's Job Order already exists it carries the same two fields, so it is updated with it -- the
+// JO's Job Location is what decides which production warehouse sees it.
+router.put('/:id/lines/:lineId/details', requireAuth, requireEditOrOwnDraft, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[line]] = await conn.query('SELECT * FROM non_standard_sales_order_lines WHERE id = ? AND nsso_id = ?', [req.params.lineId, req.params.id]);
+    if (!line) return res.status(404).json({ error: 'Line not found' });
+    const [[n]] = await conn.query('SELECT status FROM non_standard_sales_orders WHERE id = ?', [req.params.id]);
+    if (n?.status === 'cancelled') return res.status(409).json({ error: 'This NSSO is cancelled.' });
+    const b = req.body || {};
+    const description = b.description !== undefined ? trunc(String(b.description).trim(), 500) : line.description;
+    let jobLocationId = line.job_location_id;
+    if (b.job_location_id !== undefined) {
+      jobLocationId = Number(b.job_location_id) || null;
+      if (jobLocationId) {
+        const [[loc]] = await conn.query('SELECT id FROM locations WHERE id = ?', [jobLocationId]);
+        if (!loc) return res.status(400).json({ error: 'Choose a valid Job Location.' });
+      }
+    }
+    await conn.beginTransaction();
+    await conn.query('UPDATE non_standard_sales_order_lines SET description = ?, job_location_id = ? WHERE id = ?', [description, jobLocationId, line.id]);
+    if (line.created_job_order_id) {
+      await conn.query('UPDATE job_orders SET description = ?, job_location_id = ?, updated_at = NOW() WHERE id = ?', [description, jobLocationId, line.created_job_order_id]);
+    }
+    if (String(description || '') !== String(line.description || '')) {
+      await logAudit(conn, { id: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: `line ${line.line_no} description`, oldValue: line.description, newValue: description });
+    }
+    if (String(jobLocationId || '') !== String(line.job_location_id || '')) {
+      await logAudit(conn, { id: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: `line ${line.line_no} job_location_id`, oldValue: line.job_location_id, newValue: jobLocationId });
+    }
+    await conn.commit();
+    const [[row]] = await pool.query(
+      `SELECT l.*, jt.display_name AS job_type_name, jl.location_name AS job_location_name
+         FROM non_standard_sales_order_lines l
+         LEFT JOIN job_types jt ON jt.id = l.job_type_id
+         LEFT JOIN locations jl ON jl.id = l.job_location_id
+        WHERE l.id = ?`, [line.id]);
+    res.json(row);
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
 // A Sample line's Qty and Amount (asked 2026-10-03). A sample is copied from its Estimate line at
 // the estimate's full quantity and value, but the customer is usually sampled one piece at a
 // fraction of the price. Amount is the line's Net of Tax; the price per unit, tax and gross follow

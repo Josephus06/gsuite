@@ -293,6 +293,27 @@ export default function NonStandardSalesOrderWizard() {
   const divName = (id) => nameOf(meta.divisions, id, (d) => d.name);
   const locName = (id) => nameOf(meta.locations, id, (l) => l.location_name);
   const jtName = (id) => nameOf(meta.jobTypes, id, (j) => j.display_name);
+  // Description and Job Location of a copied (RMA / INST / Sample) line, saved on their own
+  // (PUT .../lines/:lineId/details). The line's Job Order, if created, follows.
+  async function saveLineDetails(l, patch) {
+    setError('');
+    try {
+      const { data } = await api.put(`/non-standard-sales-orders/${nssoId}/lines/${l.id}/details`, patch);
+      setLines((prev) => prev.map((x) => (x.id === l.id ? { ...x, ...data } : x)));
+    } catch (e) {
+      setError(e.response?.data?.error || 'Could not save the line.');
+    }
+  }
+  const lineDescriptionCell = (l) => (
+    <input key={`d-${l.id}-${l.description}`} defaultValue={l.description || ''} disabled={busy} style={{ width: 240 }}
+      onBlur={(e) => { if (e.target.value !== (l.description || '')) saveLineDetails(l, { description: e.target.value }); }} />
+  );
+  const lineLocationCell = (l) => (
+    <EntityPicker label="Job Location" items={meta.locations} value={l.job_location_id || ''} getLabel={(x) => x.location_name}
+      columns={[{ key: 'location_name', label: 'Name' }]} searchKeys={['location_name']} placeholder="--Select--"
+      onSelect={(x) => saveLineDetails(l, { job_location_id: x?.id || null })} />
+  );
+
   const isSoNested = nestsToSalesOrder(header.type);
   const isSample = header.type === 'sample';
   const isInternal = header.type === 'internal';
@@ -457,12 +478,13 @@ export default function NonStandardSalesOrderWizard() {
                 <h4 style={{ marginTop: 20 }}>NSSO Job Orders</h4>
                 <div className="table-wrap">
                   <table>
-                    <thead><tr><th>#</th><th>Job Type</th><th>Description</th><th style={{ textAlign: 'right' }}>Qty</th><th>Units</th></tr></thead>
+                    <thead><tr><th>#</th><th>Job Type</th><th>Job Location</th><th>Description</th><th style={{ textAlign: 'right' }}>Qty</th><th>Units</th></tr></thead>
                     <tbody>
-                      {lines.length === 0 && <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 16 }}>No job orders added yet.</td></tr>}
+                      {lines.length === 0 && <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>No job orders added yet.</td></tr>}
                       {lines.map((l, i) => {
                         const jt = meta.jobTypes.find((x) => String(x.id) === String(l.job_type_id));
-                        return (<tr key={l.id}><td>{i + 1}</td><td>{jt?.display_name || ''}</td><td>{l.description}</td>
+                        return (<tr key={l.id}><td>{i + 1}</td><td>{jt?.display_name || ''}</td>
+                          <td>{lineLocationCell(l)}</td><td>{lineDescriptionCell(l)}</td>
                           <td style={{ textAlign: 'right' }}>{Number(l.quantity)}</td><td>{l.units}</td></tr>);
                       })}
                     </tbody>
@@ -494,13 +516,14 @@ export default function NonStandardSalesOrderWizard() {
                 <h4 style={{ marginTop: 20 }}>NSSO Samples</h4>
                 <div className="table-wrap">
                   <table>
-                    <thead><tr><th>#</th><th>Job Type</th><th>Description</th><th style={{ textAlign: 'right' }}>Sample Qty</th>
+                    <thead><tr><th>#</th><th>Job Type</th><th>Job Location</th><th>Description</th><th style={{ textAlign: 'right' }}>Sample Qty</th>
                       <th style={{ textAlign: 'right' }}>Sample Amt</th><th style={{ textAlign: 'right' }}>Allowance</th></tr></thead>
                     <tbody>
-                      {lines.length === 0 && <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>No samples added yet.</td></tr>}
+                      {lines.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 16 }}>No samples added yet.</td></tr>}
                       {lines.map((l, i) => {
                         const jt = meta.jobTypes.find((x) => String(x.id) === String(l.job_type_id));
-                        return (<tr key={l.id}><td>{i + 1}</td><td>{jt?.display_name || ''}</td><td>{l.description}</td>
+                        return (<tr key={l.id}><td>{i + 1}</td><td>{jt?.display_name || ''}</td>
+                          <td>{lineLocationCell(l)}</td><td>{lineDescriptionCell(l)}</td>
                           <td style={{ textAlign: 'right' }}>{l.created_job_order_id ? Number(l.sample_qty)
                             : <input key={`q-${l.id}-${l.sample_qty}`} type="number" min="0" step="any" defaultValue={Number(l.sample_qty)} disabled={busy}
                                 style={{ width: 80, textAlign: 'right' }} onBlur={(e) => saveSampleLine(l, 'quantity', e.target.value)} />}</td>
