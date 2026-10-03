@@ -1564,6 +1564,38 @@ async function computePostedGlLines({ toDate, fromDate }) {
 // that. Documents before the cut-over stay in T1S as records to look up and act on, but do not
 // feed balances -- migrated with known gaps, and T1S's posting rules did not reproduce the
 // source's for production/inventory/purchasing. With nothing loaded nothing changes at all.
+// Journals keyed in T1S itself (through the Journal screen -- the only path that writes a
+// 'Created' audit row; migrated journals have none) but DATED before the books start: a late
+// adjustment to a period the source closed, entered here rather than there (JRNL-6236, a
+// September payroll entry made 2026-10-03). Asked 2026-10-03 to count them in T1S on top of the
+// source's figures, so T1S's books for that period knowingly differ from the source by exactly
+// these entries. Reversal journals (source_type set) are left out -- they belong to their document.
+async function preStartT1sJournalLines(books, to, from) {
+  const upTo = to < books.start ? to : (() => { const d = new Date(`${books.start}T00:00:00Z`); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); })();
+  const params = [upTo, books.first]; let fromSql = '';
+  if (from) { fromSql = ' AND j.date_created >= ?'; params.push(from); }
+  const [headers] = await pool.query(
+    `SELECT j.* FROM journals j
+      WHERE j.status <> 'void' AND j.source_type IS NULL AND j.date_created <= ? AND j.date_created > ?${fromSql}
+        AND EXISTS (SELECT 1 FROM audit_logs a WHERE a.auditable_type = 'Journal' AND a.auditable_id = j.id AND a.event_type = 'Created')`,
+    params,
+  );
+  if (!headers.length) return [];
+  const [lines] = await pool.query(
+    `SELECT jl.journal_id, jl.debit, jl.credit, jl.department_id, coa.account_code, coa.account_name
+       FROM journal_lines jl LEFT JOIN chart_of_accounts coa ON coa.id = jl.account_id
+      WHERE jl.journal_id IN (?) ORDER BY jl.journal_id, jl.line_no`, [headers.map((h) => h.id)]);
+  const byId = new Map(headers.map((h) => [h.id, h]));
+  return lines.filter((l) => Number(l.debit) || Number(l.credit)).map((l) => {
+    const j = byId.get(l.journal_id);
+    return {
+      account_code: l.account_code, account_name: l.account_name, debit: Number(l.debit) || 0, credit: Number(l.credit) || 0,
+      department_id: l.department_id || null, entry_date: j.date_created, source_type: 'journal', source_no: j.journal_no,
+      source_id: j.id, memo: j.memo || null, location_id: j.location_id || null,
+    };
+  });
+}
+
 async function getPostedGlLines({ toDate, fromDate }) {
   const books = await booksStart();
   const to = String(toDate).slice(0, 10);
@@ -1571,13 +1603,14 @@ async function getPostedGlLines({ toDate, fromDate }) {
   // Before the first source figure (2025-12-31): history, exactly as before.
   if (!books || to < books.first) return computePostedGlLines({ toDate, fromDate });
   // The source's own figures -- the 2025-12-31 balances and each month's activity -- dated inside
-  // the window. A report ending before the books start reads ONLY these: up to the cut-over the
-  // source is the book of record (month-end granularity).
+  // the window. A report ending before the books start reads ONLY these (plus any journal keyed
+  // in T1S for that period, above): up to the cut-over the source is the book of record.
   const source = await openingGlLines(to, from);
-  if (to < books.start) return source;
+  const late = (!from || from < books.start) ? await preStartT1sJournalLines(books, to, from) : [];
+  if (to < books.start) return [...source, ...late];
   // After the last source date, T1S's own ledger from its documents.
   const computed = await computePostedGlLines({ toDate, fromDate: from && from > books.start ? from : books.start });
-  return [...source, ...computed];
+  return [...source, ...late, ...computed];
 }
 
 module.exports = {
