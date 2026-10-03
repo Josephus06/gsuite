@@ -3,6 +3,11 @@
 // customer not in T1S), and amount/status differences. Writes the missing list to a JSON file
 // for import-customer-payments.js to act on. Changes nothing.
 //
+// Also, per office location (branch) at the source: how many are there and how many are missing;
+// and for every payment present, whether its applied-invoice lines came across -- the source's
+// Applied amount against the sum of T1S's customer_payment_lines (applications to a refund are not
+// lines in T1S, so a small shortfall there is expected and named).
+//
 //   node src/db/compare-customer-payments.js --from=2026-01-01 --to=2026-12-31 [--refresh] [--out=missing.json]
 require('dotenv').config();
 const fs = require('fs');
@@ -23,7 +28,11 @@ const clean = (s) => (s || '').toString().trim().replace(/\s+/g, ' ');
   const rows = await fetchWindow(token, { endpoint: 'get_customer_payments', from: FROM, to: TO, keyField: 'cp_pk',
     refresh: process.argv.includes('--refresh'), onProgress: (m) => console.log(m) });
 
-  const [mine] = await pool.query('SELECT customer_payment_no no, payment_amount amt, status FROM customer_payments WHERE customer_payment_no LIKE \'PAY-%\'');
+  const [mine] = await pool.query(
+    `SELECT cp.customer_payment_no no, cp.payment_amount amt, cp.status,
+            (SELECT COALESCE(SUM(cpl.applied_amount), 0) FROM customer_payment_lines cpl WHERE cpl.customer_payment_id = cp.id) lines_amt,
+            (SELECT COUNT(*) FROM customer_payment_lines cpl WHERE cpl.customer_payment_id = cp.id) lines_n
+       FROM customer_payments cp WHERE cp.customer_payment_no LIKE 'PAY-%'`);
   const local = new Map(mine.map((r) => [r.no, r]));
   const [custs] = await pool.query('SELECT LOWER(name) n FROM customers');
   const custSet = new Set(custs.map((c) => clean(c.n)));
@@ -31,21 +40,29 @@ const clean = (s) => (s || '').toString().trim().replace(/\s+/g, ' ');
   const seen = new Set();
   const stats = { source: 0, void: 0, present: 0, missing: 0, missingCustomerNowExists: 0, missingNoCustomer: 0, amountDiff: 0 };
   const missing = []; const diffs = [];
+  const byLoc = {}; const loc = (n) => { const k = clean(n) || '(none)'; byLoc[k] = byLoc[k] || { source: 0, void: 0, present: 0, missing: 0, missing_amt: 0, no_lines: 0, lines_short: 0 }; return byLoc[k]; };
+  const lineGaps = [];
   for (const p of rows) {
     if (!p.cp_pk || seen.has(p.cp_pk)) continue;
     seen.add(p.cp_pk);
     stats.source += 1;
-    if (isVoidOrCancelled(p.Status_TransH)) { stats.void += 1; continue; }
+    const L = loc(p.Name_Loc); L.source += 1;
+    if (isVoidOrCancelled(p.Status_TransH)) { stats.void += 1; L.void += 1; continue; }
     const t = local.get(p.cp_pk);
     if (t) {
-      stats.present += 1;
+      stats.present += 1; L.present += 1;
+      const applied = num(p.AppliedPayments_TransH);
+      if (applied > 0.005 && Math.abs(num(t.lines_amt) - applied) > 0.005) {
+        if (!Number(t.lines_n)) L.no_lines += 1; else L.lines_short += 1;
+        lineGaps.push({ no: p.cp_pk, location: clean(p.Name_Loc), source_applied: applied, t1s_lines: num(t.lines_amt), t1s_line_count: Number(t.lines_n) });
+      }
       if (Math.abs(num(t.amt) - num(p.TotalAmount_TransH)) > 0.005) { stats.amountDiff += 1; diffs.push([p.cp_pk, num(p.TotalAmount_TransH), num(t.amt)]); }
       continue;
     }
-    stats.missing += 1;
+    stats.missing += 1; L.missing += 1; L.missing_amt += num(p.TotalAmount_TransH);
     const hasCust = custSet.has(clean(p.Name_Cust).toLowerCase());
     if (hasCust) stats.missingCustomerNowExists += 1; else stats.missingNoCustomer += 1;
-    missing.push({ no: p.cp_pk, date: String(p.DateCreated_TransH).slice(0, 10), customer: clean(p.Name_Cust), amount: num(p.TotalAmount_TransH), customerInT1S: hasCust });
+    missing.push({ no: p.cp_pk, location: clean(p.Name_Loc), date: String(p.DateCreated_TransH).slice(0, 10), customer: clean(p.Name_Cust), amount: num(p.TotalAmount_TransH), customerInT1S: hasCust });
   }
   const sum = (a) => a.reduce((s, x) => s + x.amount, 0).toFixed(2);
   console.log(`\n${FROM}..${TO}`, JSON.stringify(stats));
@@ -55,6 +72,12 @@ const clean = (s) => (s || '').toString().trim().replace(/\s+/g, ' ');
   console.log('missing by month', JSON.stringify(byMonth));
   if (diffs.length) console.log('amount diffs (first 10)', JSON.stringify(diffs.slice(0, 10)));
   console.log('examples', JSON.stringify(missing.slice(0, 5)));
-  if (arg('out')) fs.writeFileSync(arg('out'), JSON.stringify(missing));
+  console.log('\nBy office location (source):');
+  for (const [k, v] of Object.entries(byLoc).sort((a, b) => b[1].source - a[1].source)) {
+    console.log(`  ${k.padEnd(28)} source ${String(v.source).padStart(6)}  void ${String(v.void).padStart(4)}  in T1S ${String(v.present).padStart(6)}  MISSING ${String(v.missing).padStart(4)} (${v.missing_amt.toFixed(2)})  applied-lines: none ${v.no_lines}, short ${v.lines_short}`);
+  }
+  console.log(`\nApplied invoices not (fully) brought across: ${lineGaps.length} payment(s), ${lineGaps.reduce((a, g) => a + g.source_applied - g.t1s_lines, 0).toFixed(2)}`);
+  if (lineGaps.length) console.log('examples', JSON.stringify(lineGaps.slice(0, 8)));
+  if (arg('out')) fs.writeFileSync(arg('out'), JSON.stringify({ missing, lineGaps }));
   await pool.end();
 })().catch(async (e) => { console.error('FAILED', e.message); process.exit(1); });
