@@ -27,9 +27,15 @@ const pool = require('../db');
 //             job location mapped). Callers must not filter at all in this case.
 //   number -> the locations.id whose job orders this user may see.
 async function getJobLocationScope(userId) {
-  const [[user]] = await pool.query('SELECT account_type FROM users WHERE id = ?', [userId]);
+  const [[user]] = await pool.query('SELECT account_type, is_account_officer, is_supervisor FROM users WHERE id = ?', [userId]);
   if (!user) return null;
   if (user.account_type === 'System Admin') return null;
+  // Sales accounts are scoped by WHOSE job order it is (lib/salesVisibility.js), never by where it
+  // is built. A branch rep's job is often made at a Head Office warehouse -- about a fifth of the
+  // branch reps' 2026 job orders -- so once a branch department got its own warehouse (2026-10-03,
+  // so branch production sees branch work), a warehouse filter would have hidden those from the
+  // rep who sold them.
+  if (user.is_account_officer || user.is_supervisor) return null;
 
   const [[branch]] = await pool.query(
     `SELECT d.job_location_id
