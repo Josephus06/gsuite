@@ -217,6 +217,30 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
   }
 });
 
+// Related Records (asked 2026-10-03), as on the Cheque page: the Vendor Bills and Bill Credits
+// this payment settles, and every journal raised against it -- the REVERSAL journal of a void.
+router.get('/:id/related', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [bills] = await pool.query(
+      `SELECT vb.id, vb.bill_no AS doc_no, vb.date_created, vb.status, SUM(bpl.applied_amount) AS amount
+         FROM bill_payment_lines bpl JOIN vendor_bills vb ON vb.id = bpl.vendor_bill_id
+        WHERE bpl.bill_payment_id = ? GROUP BY vb.id ORDER BY vb.date_created, vb.id`, [req.params.id]);
+    const [credits] = await pool.query(
+      `SELECT bc.id, bc.bill_credit_no AS doc_no, bc.date_created, bc.status, SUM(bpl.applied_amount) AS amount
+         FROM bill_payment_lines bpl JOIN bill_credits bc ON bc.id = bpl.bill_credit_id
+        WHERE bpl.bill_payment_id = ? GROUP BY bc.id ORDER BY bc.date_created, bc.id`, [req.params.id]);
+    const [journals] = await pool.query(
+      `SELECT j.id, j.journal_no AS doc_no, j.date_created, j.status, j.total_debit AS amount
+         FROM journals j WHERE j.source_type = 'bill_payment' AND j.source_id = ?
+        ORDER BY j.date_created DESC, j.id DESC`, [req.params.id]);
+    res.json([
+      ...bills.map((r) => ({ ...r, kind: 'Vendor Bill', path: `/vendor-bills/${r.id}` })),
+      ...credits.map((r) => ({ ...r, kind: 'Bill Credit', path: `/bill-credits/${r.id}` })),
+      ...journals.map((r) => ({ ...r, kind: 'Journal', path: `/journals/${r.id}` })),
+    ]);
+  } catch (err) { next(err); }
+});
+
 router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [rows] = await pool.query(

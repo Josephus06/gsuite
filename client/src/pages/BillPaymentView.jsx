@@ -26,6 +26,7 @@ export default function BillPaymentView() {
   const [bp, setBp] = useState(null);
   const [tab, setTab] = useState('apply');
   const [auditLogs, setAuditLogs] = useState([]);
+  const [related, setRelated] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -53,6 +54,8 @@ export default function BillPaymentView() {
   }
 
   useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Related Records: the bills and credits it settles, and its journals (the reversal of a void).
+  useEffect(() => { api.get(`/bill-payments/${id}/related`).then(({ data }) => setRelated(data)).catch(() => setRelated([])); }, [id, bp?.status]);
 
   useEffect(() => {
     if (tab === 'system') {
@@ -168,8 +171,35 @@ export default function BillPaymentView() {
         <button className={`status-tab ${tab === 'apply' ? 'active' : ''}`} onClick={() => setTab('apply')}>Apply</button>
         <button className={`status-tab ${tab === 'debits' ? 'active' : ''}`} onClick={() => setTab('debits')}>Debits</button>
         <button className={`status-tab ${tab === 'gl' ? 'active' : ''}`} onClick={() => setTab('gl')}>GL Impact</button>
+        <button className={`status-tab ${tab === 'related' ? 'active' : ''}`} onClick={() => setTab('related')}>
+          Related Records{related.length ? ` (${related.length})` : ''}
+        </button>
         <button className={`status-tab ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}>System Info</button>
       </div>
+
+      {tab === 'related' && (
+        <div className="card">
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Type</th><th>Date</th><th>Transaction #</th><th style={{ textAlign: 'right' }}>Amount</th><th>Status</th></tr></thead>
+              <tbody>
+                {related.length === 0 && (
+                  <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>No related records.</td></tr>
+                )}
+                {related.map((r) => (
+                  <tr key={`${r.kind}-${r.id}`}>
+                    <td>{r.kind}</td>
+                    <td>{formatDate(r.date_created)}</td>
+                    <td><button type="button" className="link-btn" onClick={() => navigate(r.path)}>{r.doc_no}</button></td>
+                    <td style={{ textAlign: 'right' }}>{money(r.amount)}</td>
+                    <td>{r.status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {tab === 'apply' && (
         <div className="card">
