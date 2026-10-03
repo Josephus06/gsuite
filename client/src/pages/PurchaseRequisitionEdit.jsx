@@ -45,7 +45,7 @@ export default function PurchaseRequisitionEdit() {
     Promise.all([
       api.get('/lookups/locations'),
       api.get('/lookups/departments'),
-      api.get('/employees'),
+      api.get('/purchase-requisitions/requestors'),
       api.get('/inventory'),
       isNew ? Promise.resolve(null) : api.get(`/purchase-requisitions/${id}`),
     ]).then(([locRes, deptRes, empRes, invRes, prRes]) => {

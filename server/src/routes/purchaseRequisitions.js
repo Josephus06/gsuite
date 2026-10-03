@@ -82,6 +82,17 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   }
 });
 
+// The Requestor picker's list: names and positions only, for anyone who may use PRs. The form
+// used to load /employees, which needs the Employees page -- a PR maker without it (Randill,
+// 2026-10-03) got a create page that never finished loading.
+router.get('/requestors', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT id, first_name, last_name, position_title FROM employees ORDER BY first_name, last_name');
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[pr]] = await pool.query(
