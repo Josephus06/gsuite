@@ -11,7 +11,7 @@ function money(v) {
 }
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const PAGE_SIZE = 25;
-const EMPTY = { month: thisMonth(), sales_rep_id: '', search: '' };
+const EMPTY = { month: thisMonth(), sales_division_id: '', sales_rep_id: '', search: '' };
 
 // Sales > Weighted Sales per Month: every Sales Order line created in the month, its Net of Tax
 // being its weighted sales, totalled per rep. Whose orders appear is decided by the server --
@@ -28,7 +28,7 @@ export default function WeightedSalesReport() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.get('/reports/weighted-sales/meta').then(({ data: m }) => setMeta(m)).catch(() => setMeta({ reps: [] }));
+    api.get('/reports/weighted-sales/meta').then(({ data: m }) => setMeta(m)).catch(() => setMeta({ reps: [], divisions: [] }));
   }, []);
 
   const params = useCallback((f) => Object.fromEntries(Object.entries(f).filter(([, v]) => v !== '' && v != null)), []);
@@ -51,7 +51,8 @@ export default function WeightedSalesReport() {
       const res = await api.get('/reports/weighted-sales/export', { params: params(applied), responseType: 'blob' });
       const url = URL.createObjectURL(res.data);
       const a = document.createElement('a');
-      a.href = url; a.download = `weighted-sales-${applied.month}.xlsx`;
+      const group = (meta?.divisions || []).find((d) => String(d.id) === String(applied.sales_division_id));
+      a.href = url; a.download = `weighted-sales-${applied.month}${group ? `-${group.name.replace(/[^w-]+/g, '')}` : ''}.xlsx`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch { setError('Extract failed.'); } finally { setDownloading(false); }
@@ -69,6 +70,11 @@ export default function WeightedSalesReport() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="filter-grid">
           <div className="field"><label>Month</label><input type="month" value={filters.month} onChange={set('month')} /></div>
+          <div className="field"><label>Sales Group</label>
+            <select value={filters.sales_division_id} onChange={set('sales_division_id')}>
+              <option value="">All sales groups</option>
+              {(meta?.divisions || []).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select></div>
           <div className="field"><label>Sales Rep</label>
             <select value={filters.sales_rep_id} onChange={set('sales_rep_id')}>
               <option value="">{meta?.scope_label || 'All'}</option>

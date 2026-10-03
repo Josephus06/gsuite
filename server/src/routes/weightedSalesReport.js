@@ -67,6 +67,9 @@ async function buildFilter(q, userId) {
   where.push('so.date_created >= ? AND so.date_created < ?'); params.push(from, to);
   scopeWhere(scope, where, params);
   if (q.sales_rep_id) { where.push('so.sales_rep_id = ?'); params.push(Number(q.sales_rep_id)); }
+  // Sales group = the order's sales division (Sales - 1 ... Sales - 4, branches). Narrows within the
+  // scope like the rep filter -- an SBU head picks one of their own groups, never someone else's.
+  if (q.sales_division_id) { where.push('so.sales_division_id = ?'); params.push(Number(q.sales_division_id)); }
   if (q.search) {
     const s = `%${String(q.search).trim()}%`;
     where.push('(so.sales_order_no LIKE ? OR c.name LIKE ? OR jo.job_order_no LIKE ? OR sol.description LIKE ?)');
@@ -105,8 +108,13 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
       `SELECT DISTINCT sr.id, CONCAT(sr.first_name, ' ', sr.last_name) AS name
          FROM sales_orders so JOIN employees sr ON sr.id = so.sales_rep_id
         WHERE ${where.join(' AND ')} ORDER BY name`, params);
+    // The sales groups this user may pick: those with orders inside their scope.
+    const [divisions] = await pool.query(
+      `SELECT DISTINCT sd.id, sd.name
+         FROM sales_orders so JOIN sales_divisions sd ON sd.id = so.sales_division_id
+        WHERE ${where.join(' AND ')} ORDER BY sd.name`, params);
     const LABEL = { all: 'All sales reps', sbu: 'Your SBU group', supervisor: 'You and your team', own: 'Your own sales orders', none: 'No sales rep is linked to your account' };
-    res.json({ reps, scope: scope.kind, scope_label: LABEL[scope.kind] });
+    res.json({ reps, divisions, scope: scope.kind, scope_label: LABEL[scope.kind] });
   } catch (err) { next(err); }
 });
 
