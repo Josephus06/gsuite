@@ -1226,11 +1226,18 @@ router.delete('/:id/attachments/:attachmentId', requireAuth, async (req, res, ne
 // its sheet would send work to the floor that nobody has been made responsible for. Admins
 // are exempt because they need to be able to reprint anything, including historical JOs from
 // before assignment was tracked.
+// Prints a Job Order from a Sales Order AND an NSJO (RMA / INST / Sample / Internal, asked
+// 2026-10-03): the order block reads the NSSO's header where the JO has one -- an Internal NSJO has
+// no sales order at all, and an RMA one reuses its source SO only to satisfy the old schema.
 router.get('/:id/print', requireAuth, async (req, res, next) => {
   try {
     const [[jo]] = await pool.query(
-      `SELECT jo.*, so.sales_order_no, so.contract_description, so.credit_term, so.date_created AS so_date,
-              so.shipping_address AS so_shipping_address, so.memo AS so_memo,
+      `SELECT jo.*,
+              COALESCE(ns.nsso_no, so.sales_order_no) AS sales_order_no,
+              COALESCE(ns.contract_description, so.contract_description) AS contract_description,
+              so.credit_term, COALESCE(ns.date_created, so.date_created) AS so_date,
+              COALESCE(ns.shipping_address, so.shipping_address) AS so_shipping_address,
+              COALESCE(ns.memo, so.memo) AS so_memo,
               c.name AS customer_name,
               jt.display_name AS job_type_name,
               sd.name AS sales_division_name,
@@ -1238,13 +1245,14 @@ router.get('/:id/print', requireAuth, async (req, res, next) => {
               CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name,
               cc.contact_name
          FROM job_orders jo
-         JOIN sales_orders so ON so.id = jo.sales_order_id
-         LEFT JOIN customers c ON c.id = so.customer_id
+         LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
+         LEFT JOIN non_standard_sales_orders ns ON ns.id = jo.nsso_id
+         LEFT JOIN customers c ON c.id = COALESCE(ns.customer_id, so.customer_id)
          LEFT JOIN job_types jt ON jt.id = jo.job_type_id
-         LEFT JOIN sales_divisions sd ON sd.id = so.sales_division_id
-         LEFT JOIN employees sr ON sr.id = so.sales_rep_id
+         LEFT JOIN sales_divisions sd ON sd.id = COALESCE(ns.sales_division_id, so.sales_division_id)
+         LEFT JOIN employees sr ON sr.id = COALESCE(jo.sales_rep_id, ns.sales_rep_id, so.sales_rep_id)
          LEFT JOIN employees ar ON ar.id = jo.artist_id
-         LEFT JOIN customer_contacts cc ON cc.id = so.contact_person_id
+         LEFT JOIN customer_contacts cc ON cc.id = COALESCE(ns.contact_person_id, so.contact_person_id)
         WHERE jo.id = ?`,
       [req.params.id]
     );
@@ -1262,7 +1270,9 @@ router.get('/:id/print', requireAuth, async (req, res, next) => {
       }
       // Reported separately from the permission failure: "ask your admin for access" and
       // "assign an artist first" are different problems with different fixes.
-      if (!jo.artist_id) {
+      // An NSJO never goes through artist assignment (RMA / INST / Internal redo or raise the
+      // work directly), so it is printable without one.
+      if (!jo.artist_id && !jo.nsso_id) {
         return res.status(403).json({
           error: 'This Job Order has no artist assigned yet, so it cannot be printed.',
           reason: 'no_artist',
