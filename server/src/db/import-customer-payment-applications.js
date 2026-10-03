@@ -70,7 +70,10 @@ async function pullSource() {
     const rows = Array.isArray(res?.data?.[0]) ? res.data[0] : (res?.data || []);
     if (!rows.length) break;
     const keep = rows.filter((r) => String(r.DateCreated_TransH).slice(0, 4) === YEAR);
-    dry = keep.length ? 0 : dry + 1;
+    // Pages of NEWER payments (2026 when running 2025) are paged through, not counted as dry --
+    // only pages wholly older than YEAR mean the year is behind us.
+    const allOlder = rows.every((r) => String(r.DateCreated_TransH).slice(0, 4) < YEAR);
+    dry = keep.length ? 0 : (allOlder ? dry + 1 : 0);
     for (const r of keep) {
       out.push({
         no: r.UserPK_TransH, date: String(r.DateCreated_TransH).slice(0, 10), status: r.Status_TransH, applied: r.AppliedPayments_TransH,
