@@ -381,6 +381,7 @@ function App() {
         <Route path="/journals" element={<Journals />} />
         <Route path="/journals/new" element={<JournalForm />} />
         <Route path="/journals/:id" element={<JournalView />} />
+        <Route path="/journals/:id/edit" element={<JournalForm />} />
         <Route path="/deposits" element={<Deposits />} />
         <Route path="/deposits/new" element={<DepositForm />} />
         <Route path="/deposits/:id" element={<DepositView />} />

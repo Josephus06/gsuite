@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -17,7 +17,9 @@ export default function JournalForm() {
   // ?replicate=<id>: start from a copy of that journal -- its location, currency, memo and every line --
   // dated today. Nothing is saved until SAVE, so it is a new journal with its own number.
   const [searchParams] = useSearchParams();
-  const replicateId = searchParams.get('replicate');
+  // /journals/:id/edit: the same form on a saved journal, keeping its own date; SAVE updates it.
+  const { id: editId } = useParams();
+  const replicateId = editId || searchParams.get('replicate');
   const [replicatedFrom, setReplicatedFrom] = useState('');
   const [meta, setMeta] = useState(null);
   const [header, setHeader] = useState({ date_created: today(), location_id: '', currency: '', conversion: 1, memo: '' });
@@ -32,6 +34,7 @@ export default function JournalForm() {
       setReplicatedFrom(j.journal_no);
       setHeader((h) => ({
         ...h, location_id: j.location_id || '', currency: j.currency || '', conversion: j.conversion || 1, memo: j.memo || '',
+        ...(editId ? { date_created: String(j.date_created).slice(0, 10) } : {}),
       }));
       const copied = (j.lines || []).map((l) => ({
         ...EMPTY_LINE, account_id: l.account_id || '', account_label: l.account_code ? `${l.account_code} — ${l.account_name}` : '',
@@ -75,7 +78,9 @@ export default function JournalForm() {
     if (!balanced) { setError(`Journal is out of balance: debit ${money(totalDebit)} vs credit ${money(totalCredit)}.`); return; }
     setSaving(true);
     try {
-      const { data } = await api.post('/journals', { ...header, lines: payload });
+      const { data } = editId
+        ? await api.put(`/journals/${editId}`, { ...header, lines: payload })
+        : await api.post('/journals', { ...header, lines: payload });
       navigate(`/journals/${data.id}`);
     } catch (e) { setError(e.response?.data?.error || 'Save failed.'); setSaving(false); }
   }
@@ -85,9 +90,9 @@ export default function JournalForm() {
   return (
     <div>
       <div className="page-header">
-        <h1>New Journal{replicatedFrom && <span className="muted" style={{ fontSize: "0.6em", marginLeft: 10 }}>replicated from {replicatedFrom}</span>}</h1>
+        <h1>{editId ? `Edit ${replicatedFrom || 'Journal'}` : 'New Journal'}{!editId && replicatedFrom && <span className="muted" style={{ fontSize: "0.6em", marginLeft: 10 }}>replicated from {replicatedFrom}</span>}</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/journals')}>Back</button>
+          <button className="btn btn-sm" onClick={() => navigate(editId ? `/journals/${editId}` : '/journals')}>{editId ? 'Cancel' : 'Back'}</button>
           <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
         </div>
       </div>

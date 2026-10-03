@@ -136,6 +136,64 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
+// Edit a saved journal: header (date, location, currency, memo) and its lines, replaced as a set.
+// The GL is derived from the journal as it stands (lib/glImpact.js), so nothing needs re-posting.
+// Not for a void journal, nor for a REVERSAL a void wrote (it mirrors its document's GL and must
+// keep cancelling it exactly). Both the old and the new date must be in an open period.
+router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[j]] = await conn.query('SELECT * FROM journals WHERE id = ?', [req.params.id]);
+    if (!j) return res.status(404).json({ error: 'Not found' });
+    if (String(j.status).toLowerCase() === 'void') return res.status(409).json({ error: 'A voided journal cannot be edited.' });
+    if (j.source_type || String(j.status).toUpperCase() === 'REVERSAL') {
+      return res.status(409).json({ error: 'This journal was written by the system when a document was voided; edit or restore that document instead.' });
+    }
+    const { date_created: dateCreated, location_id: locationId, currency, conversion, memo, lines } = req.body;
+    const rows = (Array.isArray(lines) ? lines : [])
+      .filter((l) => l.account_id && (num(l.debit) > 0 || num(l.credit) > 0));
+    if (rows.length < 2) return res.status(400).json({ error: 'A journal needs at least two lines with an account and a debit or credit.' });
+    const totalDebit = round2(rows.reduce((s, l) => s + num(l.debit), 0));
+    const totalCredit = round2(rows.reduce((s, l) => s + num(l.credit), 0));
+    if (totalDebit !== totalCredit) return res.status(400).json({ error: `Journal is out of balance: debit ${totalDebit} vs credit ${totalCredit}.` });
+    if (totalDebit === 0) return res.status(400).json({ error: 'Enter debit/credit amounts.' });
+    const deptError = await missingDepartmentError(rows);
+    if (deptError) return res.status(400).json({ error: deptError });
+    await assertPeriodOpen(j.date_created, 'other_gl', conn);
+    if (dateCreated) await assertPeriodOpen(dateCreated, 'other_gl', conn);
+
+    await conn.beginTransaction();
+    await conn.query(
+      `UPDATE journals SET date_created = ?, location_id = ?, currency = ?, conversion = ?, memo = ?, total_debit = ?, total_credit = ?
+        WHERE id = ?`,
+      [dateCreated || j.date_created, locationId || null, trunc(currency, 10), num(conversion) || 1, trunc(memo, 1000), totalDebit, totalCredit, j.id]
+    );
+    await conn.query('DELETE FROM journal_lines WHERE journal_id = ?', [j.id]);
+    let lineNo = 0;
+    for (const l of rows) {
+      lineNo += 1;
+      await conn.query(
+        `INSERT INTO journal_lines (journal_id, line_no, account_id, department_id, party_type, party_id, party_name, debit, credit, memo)
+         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+        [j.id, lineNo, l.account_id, l.department_id || null, trunc(l.party_type, 20), l.party_id || null, trunc(l.party_name, 255),
+         round2(l.debit), round2(l.credit), trunc(l.memo, 500)]
+      );
+    }
+    const day = (v) => (v ? String(v instanceof Date ? v.toISOString() : v).slice(0, 10) : null);
+    const changes = [
+      ['date_created', day(j.date_created), day(dateCreated || j.date_created)],
+      ['memo', j.memo || null, memo || null],
+      ['total_debit', Number(j.total_debit), totalDebit],
+    ].filter(([, a, b]) => String(a ?? '') !== String(b ?? ''));
+    if (!changes.length) changes.push(['lines', null, 'edited']);
+    for (const [fieldName, oldValue, newValue] of changes) {
+      await logAudit(conn, { journalId: j.id, userId: req.user.id, eventType: 'Updated', fieldName, oldValue, newValue });
+    }
+    await conn.commit();
+    res.json({ id: j.id, journal_no: j.journal_no });
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
 router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {

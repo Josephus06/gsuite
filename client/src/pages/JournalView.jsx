@@ -83,7 +83,9 @@ export default function JournalView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/journals')}>Back to Lists</button>
-          {can('/journals', 'can_edit') && j.status !== 'void' && <button className="btn btn-sm" disabled title="Editing a posted Journal isn't implemented in this build -- void and re-enter instead">Edit</button>}
+          {/* Not on a void journal, nor on a reversal a void wrote (the server refuses both too). */}
+          {can('/journals', 'can_edit') && j.status !== 'void' && !j.source_type && String(j.status).toUpperCase() !== 'REVERSAL'
+            && <button className="btn btn-sm" onClick={() => navigate(`/journals/${j.id}/edit`)}>Edit</button>}
           {can('/journals', 'can_add') && <button className="btn btn-sm" title="Start a new journal with this one's lines" onClick={() => navigate(`/journals/new?replicate=${j.id}`)}>Replicate</button>}
           {can('/journals', 'can_void') && j.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
