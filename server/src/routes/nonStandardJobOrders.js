@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } = require('../lib/designSupervisorVisibility');
 const { mayAssignArtist } = require('../lib/artistAssignment');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
@@ -210,11 +210,14 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const { search = '', page = 1, limit = 10, tab = '' } = req.query;
     const params = [];
     const conditions = [];
+    // NSTDJO "Can View All" (asked 2026-10-03): every non-standard job order, whoever raised it --
+    // none of the warehouse / design-queue / SBU / sales-rep / artist scopes below apply.
+    const viewAll = await userCan(req.user.id, ROUTE, 'can_view_all');
     // A production department only sees its own warehouse's orders. Unlike the design-queue and
     // SBU rules below, this one does not replace the others -- it is a ceiling that stacks on top
     // of whichever scope applies, and it sits in `conditions` so the tab counts inherit it too.
     // non_standard_job_orders carries job_location_id itself, so no join is needed for it.
-    const scopeLocationId = await getJobLocationScope(req.user.id);
+    const scopeLocationId = viewAll ? null : await getJobLocationScope(req.user.id);
     if (scopeLocationId) { conditions.push('n.job_location_id = ?'); params.push(scopeLocationId); }
     if (search) {
       conditions.push('(n.nstdjo_no LIKE ? OR n.description LIKE ? OR c.name LIKE ?)');
@@ -226,7 +229,10 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     // view of this module, so it replaces the sales-rep scope rather than stacking with
     // it; otherwise a supervisor who is also an account officer would see neither set.
     const sbuScope = await getSbuScope(req.user.id, { withMarketing: true });
-    if (await isScopedToDesignQueue(req.user.id)) {
+    if (viewAll) {
+      // An SBU with View All still gets its SBU 1 / SBU 2 tab narrowing when it picks a tab.
+      if (sbuScope && req.query.sbu) { conditions.push('n.sales_division_id IN (?)'); params.push(departmentIdsForTab(sbuScope, req.query.sbu)); }
+    } else if (await isScopedToDesignQueue(req.user.id)) {
       conditions.push('n.status = ? AND n.sub_status IN (?)');
       params.push(DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES);
     } else if (sbuScope) {
@@ -348,13 +354,16 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.user.id, req.user.id, req.user.id, req.params.id],
     );
     if (!row) return res.status(404).json({ error: 'Non-standard job order not found.' });
+    const viewAll = await userCan(req.user.id, ROUTE, 'can_view_all');
     // Same defense in depth as the design-queue/sales checks below, for the department's warehouse.
-    if (!isJobLocationVisible(row, await getJobLocationScope(req.user.id))) {
+    if (!viewAll && !isJobLocationVisible(row, await getJobLocationScope(req.user.id))) {
       return res.status(404).json({ error: 'Non-standard job order not found.' });
     }
     // Defense in depth -- neither a Design Supervisor nor a sales user can open an order
     // outside their scope by pasting its URL, even though the list already filters it out.
-    if (await isScopedToDesignQueue(req.user.id)) {
+    if (viewAll) {
+      // can see every order
+    } else if (await isScopedToDesignQueue(req.user.id)) {
       if (row.status !== DESIGN_QUEUE_STATUS || !DESIGN_QUEUE_SUB_STATUSES.includes(row.sub_status)) {
         return res.status(404).json({ error: 'Non-standard job order not found.' });
       }
