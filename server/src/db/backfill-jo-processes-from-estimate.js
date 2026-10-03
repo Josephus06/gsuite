@@ -45,6 +45,8 @@ const norm = (s) => (s == null ? '' : String(s).trim().toLowerCase().replace(/\s
   const invBy = new Map();
   for (const it of invs) for (const k of [it.item_code, it.display_name, it.sales_description]) if (k && !invBy.has(norm(k))) invBy.set(norm(k), it.id);
 
+  // Audit rows need a user: recorded under the System Admin who ran it (first one, by id).
+  const [[admin]] = await pool.query("SELECT id FROM users WHERE account_type = 'System Admin' AND display_name LIKE 'Josephus%' ORDER BY id LIMIT 1");
   const t = await L.login();
   const plan = [];
   for (const [soId, jos] of bySo) {
@@ -106,8 +108,8 @@ const norm = (s) => (s == null ? '' : String(s).trim().toLowerCase().replace(/\s
          VALUES ?`, [rows]);
       await conn.query(
         `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
-         VALUES ('JobOrder', ?, 'Updated', 'processes', NULL, ?, NULL)`,
-        [jo.id, `${rows.length} process line(s) backfilled from the source estimate`]);
+         VALUES ('JobOrder', ?, 'Updated', 'processes', NULL, ?, ?)`,
+        [jo.id, `${rows.length} process line(s) backfilled from the source estimate`, admin?.id || 1]);
       await conn.commit();
     } catch (e) { await conn.rollback(); console.error(`  ${jo.job_order_no}: ${e.message}`); } finally { conn.release(); }
   }
