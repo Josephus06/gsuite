@@ -704,21 +704,27 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       }
       if (ctx.applied > 0.005) money.amount_due = Math.max(0, money.amount_due);
       if (['open', 'paid', 'paid_in_full'].includes(vb.status)) money.status = Math.abs(money.amount_due) <= 0.005 ? 'paid_in_full' : 'open';
-      // A standalone bill may also change its supplier and the payable it credits.
+      // A standalone bill may also change its supplier.
       if (!hasItemLines) {
         const [[supplier]] = await conn.query('SELECT id FROM suppliers WHERE id = ?', [b.supplier_id]);
         if (!supplier) return res.status(400).json({ error: 'Choose a supplier.' });
         money.supplier_id = supplier.id;
-        if (b.account_id) {
-          const [[acct]] = await conn.query('SELECT id FROM chart_of_accounts WHERE id = ?', [b.account_id]);
-          if (!acct) return res.status(400).json({ error: 'Choose a valid Account.' });
-          money.account_id = acct.id;
-        }
+      }
+      // The header Account, on either kind of bill (PO bills too, asked 2026-10-03): on an expense
+      // bill it is the payable credited, on a PO bill the debit offset (e.g. 20300 Inventory
+      // Received Not Billed) -- see computeVendorBillGl.
+      if (b.account_id) {
+        const [[acct]] = await conn.query('SELECT id FROM chart_of_accounts WHERE id = ?', [b.account_id]);
+        if (!acct) return res.status(400).json({ error: 'Choose a valid Account.' });
+        money.account_id = acct.id;
       }
     }
 
+    // A changed Account counts too: an imported bill posts from its source GL entry until edited,
+    // so the new account would otherwise never reach the GL.
     const moneyChanged = !!money && (Math.abs(Number(vb.gross_amount) - money.gross_amount) > 0.005
-      || Math.abs(Number(vb.net_of_tax) - money.net_of_tax) > 0.005 || Math.abs(Number(vb.tax_amount) - money.tax_amount) > 0.005);
+      || Math.abs(Number(vb.net_of_tax) - money.net_of_tax) > 0.005 || Math.abs(Number(vb.tax_amount) - money.tax_amount) > 0.005
+      || (money.account_id && Number(money.account_id) !== Number(vb.account_id)));
     let oldGlRows = null;
     if (moneyChanged && ctx.oldGl) {
       [oldGlRows] = await conn.query(

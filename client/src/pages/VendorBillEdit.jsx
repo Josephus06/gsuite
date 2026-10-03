@@ -205,14 +205,15 @@ export default function VendorBillEdit() {
                   />
                 )}
             </div>
-            {!isItemBill && (
+            {/* Both kinds of bill: the payable credited on an expense bill, the debit offset on a PO bill. */}
+            {(
               <div className="field">
                 <label>Account</label>
                 {ro
                   ? <input value={vb.account_name || ''} disabled />
                   : (
                     <EntityPicker
-                      label="Account" items={meta.accounts} value={apAccount?.id || ''} getLabel={(a) => a.account_name}
+                      label="Account" items={meta.accounts} value={apAccount?.id || ''} getLabel={(a) => `${a.account_code} — ${a.account_name}`}
                       columns={[{ key: 'account_code', label: 'Code' }, { key: 'account_name', label: 'Account' }, { key: 'account_type', label: 'Type' }]}
                       searchKeys={['account_code', 'account_name']} onSelect={setApAccount}
                     />
