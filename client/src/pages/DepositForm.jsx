@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -17,8 +17,13 @@ const EMPTY_CASHBACK = { amount: '', account_id: '', department_id: '', location
 // Create a Bank Deposit: pick a bank account + date, then tick the not-deposited customer payments to
 // sweep in. Other Deposit lines (money in that no payment explains) are ADDED to the total; Cash Back
 // lines (cash kept back instead of banked) are DEDUCTED from it. Save posts them to a new BD-####.
+//
+// Also the EDIT form (/deposits/:id/edit, 2026-10-03): opened on the saved deposit -- its payments
+// ticked, its lines filled -- and saved with PUT /deposits/:id.
 export default function DepositForm() {
   const navigate = useNavigate();
+  const { id: editId } = useParams();
+  const [bdNo, setBdNo] = useState('');
   const location = useLocation();
   const preselectId = location.state?.preselectPaymentId;
   const [meta, setMeta] = useState(null);
@@ -35,13 +40,38 @@ export default function DepositForm() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.get('/deposits/meta').then(({ data }) => {
+    Promise.all([
+      api.get('/deposits/meta', { params: editId ? { deposit_id: editId } : {} }),
+      editId ? api.get(`/deposits/${editId}`) : Promise.resolve(null),
+    ]).then(([{ data }, dep]) => {
       setMeta(data);
       // Deposit reached from a single Customer Payment's "Deposit" button: pre-tick that payment.
       if (preselectId && (data.payments || []).some((p) => p.id === preselectId)) setChecked({ [preselectId]: true });
+      if (dep) {
+        const d = dep.data;
+        if (d.status === 'void') setError('This deposit is void and cannot be edited.');
+        else if (d.reconciled) setError('This deposit is cleared in a Bank Reconciliation and can no longer be edited.');
+        setBdNo(d.bd_no);
+        setDate(String(d.date_created).slice(0, 10));
+        setAccountId(d.account_id || '');
+        setMemo(d.memo || '');
+        setChecked(Object.fromEntries((d.payments || []).map((p) => [p.id, true])));
+        const str = (v) => (v == null ? '' : String(v));
+        const o = (d.lines || []).filter((l) => l.line_type === 'other').map((l) => ({
+          party_key: l.party_type && l.party_id ? `${l.party_type}:${l.party_id}` : '', amount: str(l.amount),
+          account_id: str(l.account_id), payment_method_id: str(l.payment_method_id), department_id: str(l.department_id),
+          location_id: str(l.location_id), memo: l.memo || '',
+        }));
+        const c = (d.lines || []).filter((l) => l.line_type === 'cashback').map((l) => ({
+          amount: str(l.amount), account_id: str(l.account_id), department_id: str(l.department_id),
+          location_id: str(l.location_id), memo: l.memo || '',
+        }));
+        setOthers(o.length ? o : [{ ...EMPTY_OTHER }]);
+        setCashBacks(c.length ? c : [{ ...EMPTY_CASHBACK }]);
+      }
       setLoading(false);
     }).catch((e) => { setError(e.response?.data?.error || 'Failed to load.'); setLoading(false); });
-  }, [preselectId]);
+  }, [preselectId, editId]);
 
   const setF = (patch) => setFilters((f) => ({ ...f, ...patch }));
 
@@ -121,14 +151,15 @@ export default function DepositForm() {
     if (!(total > 0)) { setError('Cash Back cannot be as much as the payments and Other Deposits together.'); return; }
     setSaving(true);
     try {
-      const { data } = await api.post('/deposits', {
+      const body = {
         date_created: date, account_id: accountId, memo, payment_ids: selectedIds,
         other_deposits: others.map(({ party_key: key, ...l }) => {
           const [type, pid] = key ? key.split(':') : [null, null];
           return { ...l, party_type: type, party_id: pid };
         }),
         cash_backs: cashBacks,
-      });
+      };
+      const { data } = editId ? await api.put(`/deposits/${editId}`, body) : await api.post('/deposits', body);
       navigate(`/deposits/${data.id}`);
     } catch (e) { setError(e.response?.data?.error || 'Save failed.'); setSaving(false); }
   }
@@ -140,9 +171,9 @@ export default function DepositForm() {
   return (
     <div>
       <div className="page-header">
-        <div style={{ fontWeight: 600 }}>Deposit <span className="muted">/ Create</span></div>
+        <div style={{ fontWeight: 600 }}>Deposit <span className="muted">/ {editId ? `Edit ${bdNo}` : 'Create'}</span></div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/deposits')}>Back to Lists</button>
+          <button className="btn btn-sm" onClick={() => navigate(editId ? `/deposits/${editId}` : '/deposits')}>{editId ? 'Cancel' : 'Back to Lists'}</button>
           <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
         </div>
       </div>

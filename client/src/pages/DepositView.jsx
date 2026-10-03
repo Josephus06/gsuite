@@ -50,7 +50,9 @@ export default function DepositView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/deposits')}>Back to Lists</button>
-          {can('/deposits', 'can_edit') && d.status !== 'void' && <button className="btn btn-sm" disabled title="Editing a posted Deposit isn't implemented in this build -- void and re-enter instead">Edit</button>}
+          {can('/deposits', 'can_edit') && d.status !== 'void' && (d.reconciled
+            ? <button className="btn btn-sm" disabled title="Cleared in a Bank Reconciliation -- it can no longer be edited">Edit</button>
+            : <button className="btn btn-sm" onClick={() => navigate(`/deposits/${d.id}/edit`)}>Edit</button>)}
           {can('/deposits', 'can_void') && d.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>

@@ -384,6 +384,7 @@ function App() {
         <Route path="/journals/:id/edit" element={<JournalForm />} />
         <Route path="/deposits" element={<Deposits />} />
         <Route path="/deposits/new" element={<DepositForm />} />
+        <Route path="/deposits/:id/edit" element={<DepositForm />} />
         <Route path="/deposits/:id" element={<DepositView />} />
         <Route path="/cheques" element={<Cheques />} />
         <Route path="/cheques/new" element={<ChequeForm />} />

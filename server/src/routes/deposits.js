@@ -112,7 +112,10 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
        LEFT JOIN customers c ON c.id = cp.customer_id
        LEFT JOIN locations loc ON loc.id = cp.office_location_id
        LEFT JOIN payment_methods pm ON pm.id = cp.payment_method_id
-       WHERE cp.status = 'not_deposited' AND cp.deposit_id IS NULL ORDER BY cp.id DESC LIMIT 1000`
+       WHERE (cp.status = 'not_deposited' AND cp.deposit_id IS NULL) OR (? > 0 AND cp.deposit_id = ?)
+       ORDER BY cp.id DESC LIMIT 1000`,
+      // Editing a deposit (?deposit_id=): its own payments are offered too, ticked by the form.
+      [Number(req.query.deposit_id) || 0, Number(req.query.deposit_id) || 0]
     );
     res.json({ accounts, payments, lineAccounts, paymentMethods, departments, locations, vendors, customers, employees });
   } catch (err) { next(err); }
@@ -166,7 +169,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
     const [[uf]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '10006'");
-    res.json({ ...d, payments, lines, gl: depositGlRows(d, lines, uf) });
+    res.json({ ...d, payments, lines, gl: depositGlRows(d, lines, uf), reconciled: await isReconciled(pool, d.id) });
   } catch (err) { next(err); }
 });
 
@@ -240,6 +243,98 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     await conn.commit();
     res.status(201).json({ id: depositId, bd_no: bdNo });
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
+// Cleared in a Bank Reconciliation? Then the bank statement is matched to this exact deposit and
+// it must not change under the reconciliation. Guarded for installs without the module.
+async function isReconciled(db, depositId) {
+  const [t] = await db.query("SHOW TABLES LIKE 'bank_reconciliation_matches'");
+  if (!t.length) return false;
+  const [[m]] = await db.query("SELECT 1 AS x FROM bank_reconciliation_matches WHERE source_kind = 'deposit' AND source_id = ? LIMIT 1", [depositId]);
+  return !!m;
+}
+
+// Edit a Bank Deposit (asked 2026-10-03): the same form as creating one, opened on what was saved --
+// date, bank account, memo, which payments it sweeps in, and the Other Deposit / Cash Back lines.
+// The deposit's current payments are released back to Not Deposited first and the ticked ones
+// taken, all in one transaction. Refused once void, once reconciled against the bank, or when the
+// old or the new date falls in a closed period. Its GL is derived on read (lib/depositGl.js), so
+// there is nothing to unpost.
+router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[d]] = await conn.query('SELECT * FROM bank_deposits WHERE id = ?', [req.params.id]);
+    if (!d) return res.status(404).json({ error: 'Not found' });
+    if (d.status === 'void') return res.status(409).json({ error: 'A voided deposit cannot be edited.' });
+    if (await isReconciled(conn, d.id)) {
+      return res.status(409).json({ error: 'This deposit is cleared in a Bank Reconciliation and can no longer be edited.' });
+    }
+    const { date_created: dateCreated, account_id: accountId, memo, payment_ids: paymentIds } = req.body;
+    if (!accountId) return res.status(400).json({ error: 'Select a bank account to deposit into.' });
+    const ids = [...new Set((Array.isArray(paymentIds) ? paymentIds : []).map(Number).filter(Boolean))];
+    const lines = await normaliseLines(conn, req.body.other_deposits, req.body.cash_backs);
+    if (lines.error) return res.status(400).json({ error: lines.error });
+    if (!ids.length && !lines.some((l) => l.line_type === 'other')) {
+      return res.status(400).json({ error: 'Select at least one payment or add an Other Deposit.' });
+    }
+    let pays = [];
+    if (ids.length) {
+      [pays] = await conn.query('SELECT id, payment_amount, status, deposit_id FROM customer_payments WHERE id IN (?)', [ids]);
+    }
+    if (pays.length !== ids.length) return res.status(400).json({ error: 'One or more payments are no longer valid.' });
+    for (const p of pays) {
+      if (p.status === 'voided') return res.status(409).json({ error: 'A voided payment cannot be deposited.' });
+      if (p.deposit_id && Number(p.deposit_id) !== Number(d.id)) return res.status(409).json({ error: 'One or more payments are already in another deposit.' });
+    }
+    const paymentsTotal = pays.reduce((t, p) => t + num(p.payment_amount), 0);
+    const otherTotal = lines.filter((l) => l.line_type === 'other').reduce((t, l) => t + l.amount, 0);
+    const cashBackTotal = lines.filter((l) => l.line_type === 'cashback').reduce((t, l) => t + l.amount, 0);
+    const total = round2(paymentsTotal + otherTotal - cashBackTotal);
+    if (total <= 0) {
+      return res.status(400).json({ error: 'Cash Back cannot be as much as the payments and Other Deposits together -- the deposit total must be above zero.' });
+    }
+    const day = (v) => (v instanceof Date ? v.toISOString() : String(v || '')).slice(0, 10);
+    const oldDate = day(d.date_created);
+    const newDate = day(dateCreated) || oldDate;
+    await assertPeriodOpen(oldDate, 'ar', conn);
+    if (newDate !== oldDate) await assertPeriodOpen(newDate, 'ar', conn);
+
+    const [oldPays] = await conn.query('SELECT customer_payment_no FROM customer_payments WHERE deposit_id = ? ORDER BY id', [d.id]);
+    await conn.beginTransaction();
+    await conn.query("UPDATE customer_payments SET deposit_id = NULL, status = 'not_deposited' WHERE deposit_id = ?", [d.id]);
+    if (ids.length) await conn.query("UPDATE customer_payments SET deposit_id = ?, status = 'deposited' WHERE id IN (?)", [d.id, ids]);
+    await conn.query('DELETE FROM bank_deposit_lines WHERE deposit_id = ?', [d.id]);
+    for (const l of lines) {
+      await conn.query(
+        `INSERT INTO bank_deposit_lines (deposit_id, line_type, line_no, party_type, party_id, party_name, amount,
+                                         account_id, payment_method_id, department_id, location_id, memo)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [d.id, l.line_type, l.line_no, l.party_type, l.party_id, l.party_name, l.amount,
+          l.account_id, l.payment_method_id, l.department_id, l.location_id, l.memo]
+      );
+    }
+    await conn.query('UPDATE bank_deposits SET date_created = ?, account_id = ?, memo = ?, total_amount = ? WHERE id = ?',
+      [newDate, accountId, trunc(memo, 1000), total, d.id]);
+
+    const changes = [];
+    if (newDate !== oldDate) changes.push(['date_created', oldDate, newDate]);
+    if (Number(accountId) !== Number(d.account_id)) changes.push(['account_id', d.account_id, accountId]);
+    if ((memo || '') !== (d.memo || '')) changes.push(['memo', d.memo, memo]);
+    if (round2(d.total_amount) !== total) changes.push(['total_amount', round2(d.total_amount), total]);
+    const [newPays] = await conn.query('SELECT customer_payment_no FROM customer_payments WHERE deposit_id = ? ORDER BY id', [d.id]);
+    const list = (r) => r.map((x) => x.customer_payment_no).join(', ');
+    if (list(oldPays) !== list(newPays)) changes.push(['payments', list(oldPays), list(newPays)]);
+    for (const [f, o, n] of changes) {
+      await logAudit(conn, { depositId: d.id, userId: req.user.id, eventType: 'Updated', fieldName: f, oldValue: o, newValue: n });
+    }
+    if (!changes.length) await logAudit(conn, { depositId: d.id, userId: req.user.id, eventType: 'Updated', fieldName: 'lines', newValue: `${lines.length} line(s)` });
+    await conn.commit();
+    res.json({ id: d.id, bd_no: d.bd_no });
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  } finally { conn.release(); }
 });
 
 router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
