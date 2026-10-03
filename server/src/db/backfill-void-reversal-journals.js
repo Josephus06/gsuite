@@ -3,6 +3,7 @@
 //
 //   node src/db/backfill-void-reversal-journals.js --dry-run
 //   node src/db/backfill-void-reversal-journals.js
+//   node src/db/backfill-void-reversal-journals.js --only=BPAY-13714 [--dry-run]   (one document)
 //
 // WHY IT IS REQUIRED, not optional. lib/glImpact.js used to model a void by dropping the document
 // out of the ledger walk. It no longer does -- a voided document keeps posting and its REVERSAL
@@ -29,6 +30,8 @@ const { booksStart } = require('../lib/openingBalances');
 require('dotenv').config();
 
 const DRY_RUN = process.argv.includes('--dry-run');
+// --only=<document no>: just that one (e.g. a payment voided before its kind posted reversals).
+const ONLY = ((process.argv.find((a) => a.startsWith('--only=')) || '').split('=')[1] || '').trim().toUpperCase();
 
 // Each kind: how to find the voided documents missing a reversal, how to read one's lines, and
 // how to compute the entry being reversed.
@@ -104,7 +107,9 @@ async function main() {
   let grandAmount = 0;
 
   for (const kind of KINDS) {
-    const [docs] = await pool.query(kind.headers, kind.params ? await kind.params() : []);
+    const [found] = await pool.query(kind.headers, kind.params ? await kind.params() : []);
+    const docs = ONLY ? found.filter((d) => String(kind.no(d) || '').trim().toUpperCase() === ONLY) : found;
+    if (ONLY && !docs.length) continue;
     console.log(`${kind.label}: ${docs.length} needing a reversal`);
 
     let written = 0;
@@ -158,6 +163,12 @@ async function main() {
   }
 
   console.log(`${DRY_RUN ? 'Would write' : 'Wrote'} ${grandTotal} reversal journals, ${grandAmount.toFixed(2)} total.`);
+  if (ONLY && !grandTotal) {
+    // Say why: not voided, already reversed, or dated before the books' start (posts nothing).
+    const [bp] = await pool.query('SELECT id, bill_payment_no, status, date_created FROM bill_payments WHERE UPPER(bill_payment_no) = ?', [ONLY]);
+    const [jr] = bp.length ? await pool.query("SELECT journal_no, status FROM journals WHERE source_type = 'bill_payment' AND source_id = ?", [bp[0].id]) : [[]];
+    console.log(`\n${ONLY}:`, bp[0] || 'not found as a bill payment', '| journals against it:', jr, '| books start:', (await booksStart())?.start);
+  }
   await pool.end();
 }
 
