@@ -51,6 +51,9 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
   const [referenceNo, setReferenceNo] = useState('');
   const [account, setAccount] = useState(null);
   const [officeLocation, setOfficeLocation] = useState(null);
+  // Term defaults to the PO's and can be changed to any Payment Term; Date Due follows its days.
+  const [paymentTerms, setPaymentTerms] = useState([]);
+  const [term, setTerm] = useState({ name: '', days: 0 });
   const [memo, setMemo] = useState('');
   const [lines, setLines] = useState([]);
   const [tab, setTab] = useState('items');
@@ -70,7 +73,9 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
       api.get('/lookups/chart-of-accounts'),
       api.get('/lookups/locations'),
       api.get('/lookups/withholding-taxes'),
-    ]).then(([poRes, acctRes, locRes, wtaxRes]) => {
+      api.get('/lookups/payment-terms').catch(() => ({ data: [] })),
+    ]).then(([poRes, acctRes, locRes, wtaxRes, ptRes]) => {
+      setPaymentTerms((ptRes.data || []).filter((t) => t.is_active !== 0 && t.is_active !== false));
       setDepartments(poRes.data.departments || []);
       const d = poRes.data;
       setData(d);
@@ -79,13 +84,16 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
       setWithholdingTaxes(wtaxRes.data);
       setMemo(d.memo || '');
       if (d.default_account) setAccount(d.default_account);
+      // The PO's own term and the location its lines use (asked 2026-10-03).
+      setTerm({ name: d.term_name || '', days: Number(d.no_of_days) || 0 });
+      if (d.default_office_location) setOfficeLocation(d.default_office_location);
       setLines(d.lines.map((l) => ({ ...l, is_withhold: false })));
       setLoading(false);
     });
   }, [purchaseOrderId]);
 
   const wtaxRate = wtax ? Number(wtax.rate) : 0;
-  const dateDue = data ? addDays(dateCreated, data.no_of_days) : '';
+  const dateDue = data ? addDays(dateCreated, term.days) : '';
 
   const computedLines = useMemo(() => lines.map((l) => ({ ...l, ...computeLine(l, wtaxRate) })), [lines, wtaxRate]);
 
@@ -135,7 +143,7 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
         purchase_order_id: purchaseOrderId,
         date_created: dateCreated,
         date_due: dateDue,
-        term: data.term_name,
+        term: term.name || null,
         reference_no: referenceNo,
         account_id: account?.id || null,
         office_location_id: officeLocation?.id || null,
@@ -202,7 +210,18 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
                   onSelect={setOfficeLocation}
                 />
               </div>
-              <div className="field"><label>Term</label><input readOnly tabIndex={-1} value={data.term_name || ''} /></div>
+              <div className="field">
+                <label>Term</label>
+                <EntityPicker
+                  label="Term" items={paymentTerms}
+                  value={paymentTerms.find((t) => String(t.term_name).trim().toLowerCase() === String(term.name).trim().toLowerCase())?.id || ''}
+                  getLabel={(t) => t.term_name}
+                  columns={[{ key: 'term_name', label: 'Term' }, { key: 'no_of_days', label: 'Days', render: (t) => Number(t.no_of_days || 0) }]}
+                  searchKeys={['term_name']} placeholder={term.name || 'Select Term...'}
+                  onSelect={(t) => setTerm(t ? { name: t.term_name, days: Number(t.no_of_days) || 0 } : { name: '', days: 0 })}
+                  onClear={() => setTerm({ name: '', days: 0 })}
+                />
+              </div>
               <div className="field"><label>Memo</label><textarea rows={3} value={memo} onChange={(e) => setMemo(e.target.value)} /></div>
             </div>
             <div className="card" style={{ background: 'var(--surface-2, #f3f4f6)' }}>

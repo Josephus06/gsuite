@@ -741,7 +741,15 @@ async function computeVendorBillGl(vb, lines) {
   const taxAmount = Number(vb.tax_amount) || 0;
   // A standalone bill's header Account is the payable it credits (default AP - Trade); on a PO bill
   // the header account is the debit offset and AP - Trade is always the credit.
-  const creditAcct = !vb.purchase_order_id && vb.account_code ? { account_code: vb.account_code, account_name: vb.account_name } : apAcct;
+  // From 2026-10-03 a PO bill's header account defaults to AP - Trade, as at the source (whose PO
+  // bills credit 20100 and debit 20300 Inventory Received Not Billed, or the line's expense). So a
+  // PO bill whose header account IS a payable (20100 / 20200) credits it and debits 20300 below;
+  // older PO bills holding 20300 (or any other) as their header keep posting exactly as before.
+  const PAYABLE = ['20100', '20200'];
+  const poHeaderIsPayable = !!vb.purchase_order_id && PAYABLE.includes(String(vb.account_code || ''));
+  const creditAcct = (!vb.purchase_order_id || poHeaderIsPayable) && vb.account_code
+    ? { account_code: vb.account_code, account_name: vb.account_name } : apAcct;
+  const irnbAcct = poHeaderIsPayable ? await coaByCode('20300') : null;
   // Withholding is credited to 21402 and the payable net of it, as the source posts a bill
   // (VB-23778: CR 20100 49.55 / CR 21402 0.45 on a 50.00 bill). Crediting the payable the full gross
   // overstated AP by the tax withheld on every bill that withholds.
@@ -762,6 +770,8 @@ async function computeVendorBillGl(vb, lines) {
       const amt = Number(byAcct.get(acct.id).toFixed(2));
       if (amt) rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: amt, credit: 0 });
     }
+  } else if (netOfTax && poHeaderIsPayable && irnbAcct) {
+    rows.push({ account_code: irnbAcct.account_code, account_name: irnbAcct.account_name, debit: netOfTax, credit: 0 });
   } else if (netOfTax && vb.account_code) {
     rows.push({ account_code: vb.account_code, account_name: vb.account_name, debit: netOfTax, credit: 0 });
   }

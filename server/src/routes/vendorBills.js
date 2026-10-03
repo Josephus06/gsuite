@@ -121,8 +121,19 @@ router.get('/for-purchase-order/:poId', requireAuth, requirePermission(ROUTE, 'c
     // both sides unless someone thought to change it). "Inventory Received Not Billed"
     // is the real system's actual default for a PO-linked bill -- the 3-way-match
     // clearing account credited when the goods were received, debited back out here.
+    //
+    // Changed 2026-10-03: the source's own PO bills carry Accounts Payable - Trade as their Account
+    // (its ledger credits 20100 and debits 20300 on every one), so that is the default now, and
+    // lib/glImpact.js posts a PO bill with a payable header as CR it / DR 20300.
     const [[defaultAccount]] = await pool.query(
-      "SELECT id, account_code, account_name FROM chart_of_accounts WHERE account_code = '20300' LIMIT 1"
+      "SELECT id, account_code, account_name, account_type FROM chart_of_accounts WHERE account_code = '20100' LIMIT 1"
+    );
+    // The PO has no header office location, only one per line: the bill defaults to the location
+    // its lines use (the most common one when they differ).
+    const [[defaultLocation]] = await pool.query(
+      `SELECT loc.id, loc.location_name FROM purchase_order_lines pol JOIN locations loc ON loc.id = pol.location_id
+        WHERE pol.purchase_order_id = ? GROUP BY loc.id, loc.location_name ORDER BY COUNT(*) DESC, loc.id LIMIT 1`,
+      [req.params.poId]
     );
 
     const billableLines = lines.map((l) => {
@@ -143,6 +154,7 @@ router.get('/for-purchase-order/:poId', requireAuth, requirePermission(ROUTE, 'c
     res.json({
       ...po,
       default_account: defaultAccount || null,
+      default_office_location: defaultLocation || null,
       lines: billableLines,
       departments,
     });
