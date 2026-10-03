@@ -64,16 +64,27 @@ async function openingGlLines(toDate, fromDate = null) {
 // Quality Assurance). Whatever the split does not cover -- the source's "No Department", a month
 // not loaded, a balance-sheet account -- stays on the original line, unassigned, so every account's
 // total is exactly what it was.
+//
+// By LOCATION it is the same, from the source's location income statement (source_loc_account_
+// actuals, load-source-dept-actuals.js --by=location): "No Location" stays unassigned, and a source
+// location T1S has none of (e.g. Damaged) is keyed `src:<name>`.
 const normName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-async function splitSourceLinesByDepartment(lines) {
+const SPLITS = {
+  department: { table: 'source_dept_account_actuals', col: 'source_department', none: 'No Department', t1s: 'SELECT id, name FROM departments', field: 'department_id' },
+  location: { table: 'source_loc_account_actuals', col: 'source_location', none: 'No Location', t1s: 'SELECT id, location_name AS name FROM locations', field: 'location_id' },
+};
+const splitSourceLinesByDepartment = (lines) => splitSourceLines(lines, 'department');
+const splitSourceLinesByLocation = (lines) => splitSourceLines(lines, 'location');
+async function splitSourceLines(lines, by) {
+  const cfg = SPLITS[by];
   const months = new Set();
   for (const l of lines) if (l.source_type === 'opening_balance') months.add(String(l.entry_date).slice(0, 7));
   if (!months.size) return lines;
   let parts = []; let sides = []; let deps = [];
   try {
     [parts] = await pool.query(
-      `SELECT year, month, source_department, account_code, SUM(amount) AS amount FROM source_dept_account_actuals
-        WHERE CONCAT(year, '-', LPAD(month, 2, '0')) IN (?) GROUP BY year, month, source_department, account_code`,
+      `SELECT year, month, ${cfg.col} AS name, account_code, SUM(amount) AS amount FROM ${cfg.table}
+        WHERE CONCAT(year, '-', LPAD(month, 2, '0')) IN (?) GROUP BY year, month, ${cfg.col}, account_code`,
       [[...months]],
     );
     [sides] = await pool.query('SELECT account_code, side FROM source_coa_keys');
@@ -82,17 +93,17 @@ async function splitSourceLinesByDepartment(lines) {
     throw e;
   }
   if (!parts.length) return lines;
-  [deps] = await pool.query('SELECT id, name FROM departments');
+  [deps] = await pool.query(cfg.t1s);
   const deptId = new Map(deps.map((d) => [normName(d.name), Number(d.id)]));
   const credit = new Set(sides.filter((s) => String(s.side).toUpperCase() === 'CREDIT').map((s) => s.account_code));
   const byKey = new Map(); // "YYYY-MM|code" -> [{ dept, net }]
   for (const p of parts) {
-    if (p.source_department === 'Total' || p.source_department === 'No Department') continue;
+    if (p.name === 'Total' || p.name === cfg.none) continue;
     const k = `${p.year}-${String(p.month).padStart(2, '0')}|${p.account_code}`;
     // The source states each amount on the account's normal side; as debit - credit:
     const net = credit.has(p.account_code) ? -Number(p.amount) : Number(p.amount);
     if (!byKey.has(k)) byKey.set(k, []);
-    byKey.get(k).push({ dept: p.source_department, net });
+    byKey.get(k).push({ dept: p.name, net });
   }
   // A department reclass inside one month (e.g. 30802: Human Resource +18,909.50, Production-SIGNAGE
   // -18,909.50) nets the account's month to zero, so the loader writes no line for it and there is
@@ -121,8 +132,9 @@ async function splitSourceLinesByDepartment(lines) {
       rest -= s.net;
       out.push({
         ...l, debit: s.net > 0 ? round2(s.net) : 0, credit: s.net < 0 ? round2(-s.net) : 0,
-        department_id: deptId.get(normName(s.dept)) || `src:${s.dept}`,
-        source_department: s.dept, // what lib/sourceLedger is asked by, to list the documents
+        [cfg.field]: deptId.get(normName(s.dept)) || `src:${s.dept}`,
+        // what lib/sourceLedger is asked by, to list the documents (by department only)
+        ...(by === 'department' ? { source_department: s.dept } : { source_location: s.dept }),
         memo: `${l.memo} -- ${s.dept}`,
       });
     }
@@ -260,4 +272,4 @@ async function openingItems(side, asOf, books, { partyId, nameStarts, locationId
   return out;
 }
 
-module.exports = { booksStart, openingGlLines, splitSourceLinesByDepartment, sourceBalance, openingItems, agingAnchor };
+module.exports = { booksStart, openingGlLines, splitSourceLinesByDepartment, splitSourceLinesByLocation, sourceBalance, openingItems, agingAnchor };

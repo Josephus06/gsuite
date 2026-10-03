@@ -12,6 +12,9 @@
 //
 //   node src/db/load-source-dept-actuals.js --from=2025-01 --to=2026-09 [--save=<raw.json>]   fetch + load
 //   node src/db/load-source-dept-actuals.js --raw=<raw.json> --year=2025                   load saved raw responses
+// --by=location loads the source's income statement BY LOCATION instead (generate_location_income_
+// statement, same shape) into source_loc_account_actuals (db/create-source-loc-actuals.js) -- what
+// the Income Statement's Location breakdown splits the source's months by.
 // A raw file is { "<month>": <the source's response> } for one year. Replaces the months it
 // loads. Droplet and office replicate: load ONE of them. Railway: its own.
 const fs = require('fs');
@@ -27,6 +30,7 @@ const SECTIONS = {
   REVENUES: 'revenue', 'OTHER INCOME': 'other_income',
   'OPERATING EXPENSES': 'opex', 'OTHER EXPENSES': 'other_expense', 'COST OF GOODS SOLD': 'cogs',
 };
+const BY = arg('by') === 'location' ? 'location' : 'department';
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 function leaves(node, out) {
@@ -41,8 +45,9 @@ const coaKeys = new Map(); const deptKeys = new Map();
 // One month's department income statement -> { totals, accounts } rows.
 function parseMonth(j, year, month) {
   const [dates, sections] = j.data;
-  const names = dates[0];
-  names.forEach((n, i) => { if (n !== 'Total' && dates[1]) deptKeys.set(n, dates[1][i] || null); });
+  // The source's location names carry stray line breaks (Branch - SM + CRLF).
+  const names = BY === 'location' ? dates[0].map((n) => String(n).trim()) : dates[0];
+  if (BY === 'department') names.forEach((n, i) => { if (n !== 'Total' && dates[1]) deptKeys.set(n, dates[1][i] || null); });
   const totals = []; const accounts = [];
   for (const sec of sections) {
     const key = SECTIONS[sec.type]; if (!key) continue;
@@ -80,7 +85,7 @@ async function fetchMonth(token, year, month) {
   };
   for (let attempt = 0; ; attempt += 1) {
     try {
-      const r = await fetch(`${SITE}/api/generate_department_income_statement`, {
+      const r = await fetch(`${SITE}/api/generate_${BY}_income_statement`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body),
       });
       const j = await r.json();
@@ -99,7 +104,11 @@ async function main() {
     const year = Number(arg('year'));
     if (!year) throw new Error('--raw needs --year=YYYY.');
     const raw = JSON.parse(fs.readFileSync(arg('raw'), 'utf8'));
-    for (const [m, j] of Object.entries(raw)) parsed.push({ year, month: Number(m), ...parseMonth(j, year, Number(m)) });
+    // Keys are "<month>" or, as --save writes them, "<year>-<month>" (only --year's months load).
+    for (const [k, j] of Object.entries(raw)) {
+      const [y, m] = k.includes('-') ? k.split('-').map(Number) : [year, Number(k)];
+      if (y === year) parsed.push({ year, month: m, ...parseMonth(j, year, m) });
+    }
   } else {
     const [fy, fm] = String(arg('from') || '').split('-').map(Number);
     const [ty, tm] = String(arg('to') || '').split('-').map(Number);
@@ -119,12 +128,20 @@ async function main() {
     }
   }
 
-  console.log(`DB: ${process.env.DB_NAME} on ${process.env.DB_HOST}`);
+  console.log(`DB: ${process.env.DB_NAME} on ${process.env.DB_HOST} -- by ${BY}`);
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
     let nt = 0; let na = 0;
-    for (const p of parsed) {
+    for (const p of parsed.filter(() => BY === 'location')) {
+      await conn.query('DELETE FROM source_loc_account_actuals WHERE year = ? AND month = ?', [p.year, p.month]);
+      for (let i = 0; i < p.accounts.length; i += 500) {
+        await conn.query('INSERT INTO source_loc_account_actuals (year, month, source_location, section, account_code, amount) VALUES ?',
+          [p.accounts.slice(i, i + 500).map((r) => [r.year, r.month, r.source_department, r.section, r.account_code, r.amount])]);
+      }
+      na += p.accounts.length;
+    }
+    for (const p of parsed.filter(() => BY === 'department')) {
       await conn.query('DELETE FROM source_dept_actuals WHERE year = ? AND month = ?', [p.year, p.month]);
       await conn.query('DELETE FROM source_dept_account_actuals WHERE year = ? AND month = ?', [p.year, p.month]);
       if (p.totals.length) {
