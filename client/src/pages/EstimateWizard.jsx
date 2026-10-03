@@ -282,7 +282,10 @@ export default function EstimateWizard() {
         overrides.office_location_id = user.default_branch.location_id;
       }
       if (user?.default_branch?.department_name) {
-        const match = sd.data.find((s) => s.name.toLowerCase() === user.default_branch.department_name.toLowerCase());
+        // Matched ignoring spaces, dashes and underscores: the department is "Sales - 1" and the
+        // sales division "Sales-1", so an exact match never filled it for Sales-1 / Sales-3 users.
+        const key = (v) => String(v || '').toLowerCase().replace(/[s_-]+/g, '');
+        const match = sd.data.find((s) => key(s.name) === key(user.default_branch.department_name));
         if (match) overrides.sales_division_id = match.id;
       }
       if (Object.keys(overrides).length) setHeader((h) => ({ ...h, ...overrides }));

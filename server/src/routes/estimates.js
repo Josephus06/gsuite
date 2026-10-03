@@ -745,7 +745,7 @@ router.put('/:id/status', requireAuth, requireStatusChange, async (req, res, nex
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [[oldRow]] = await conn.query('SELECT status, sales_order_id, credit_term FROM estimates WHERE id = ?', [req.params.id]);
+    const [[oldRow]] = await conn.query('SELECT status, sales_order_id, credit_term, sales_division_id FROM estimates WHERE id = ?', [req.params.id]);
     if (!oldRow) {
       await conn.rollback();
       return res.status(404).json({ error: 'Not found' });
@@ -770,6 +770,14 @@ router.put('/:id/status', requireAuth, requireStatusChange, async (req, res, nex
     if (NEEDS_CREDIT_TERM.includes(req.body.status) && !String(oldRow.credit_term || '').trim()) {
       await conn.rollback();
       return res.status(400).json({ error: 'Credit Term is required before this estimate can be approved.' });
+    }
+    // Same for the Sales Division (sales group): its Sales Order copies it, and every sales report,
+    // the dashboard breakdown and SBU scoping read it. Eleven estimates went through without one in
+    // the first days after go-live and their orders showed as "(no group)".
+    // Asked when it leaves Pending Supervisor Approval -- the last stage the rep can still edit it.
+    if (req.body.status === 'pending_customer_approval' && !oldRow.sales_division_id) {
+      await conn.rollback();
+      return res.status(400).json({ error: 'Sales Division is required before this estimate can be approved. Edit the estimate and pick its sales group.' });
     }
     // EVERY JOB LINE NEEDS A DELIVERY DATE AND TIME before the estimate can be approved. They are
     // what the customer is being promised, and everything downstream is built on them: the Sales
