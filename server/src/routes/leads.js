@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { findCustomerByName, duplicateMessage } = require('../lib/customerDuplicates');
 const { upperCustomerName } = require('../lib/customerName');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 
@@ -109,6 +110,8 @@ router.post('/:id/convert', requireAuth, requirePermission(ROUTE, 'can_edit'), a
     const [[lead]] = await conn.query('SELECT * FROM leads WHERE id = ?', [req.params.id]);
     if (!lead) return res.status(404).json({ error: 'Not found' });
     if (lead.status === 'converted') return res.status(409).json({ error: 'This lead has already been converted.' });
+    const dup = await findCustomerByName(conn, lead.contact_name || lead.company_name);
+    if (dup) return res.status(409).json({ error: duplicateMessage(dup), existing_customer_id: dup.id });
 
     await conn.beginTransaction();
     const [result] = await conn.query(

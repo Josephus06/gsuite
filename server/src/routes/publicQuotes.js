@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { findCustomerByName } = require('../lib/customerDuplicates');
 const { upperCustomerName } = require('../lib/customerName');
 const { costing } = require('../lib/costing');
 
@@ -230,6 +231,9 @@ router.post('/quotes', async (req, res, next) => {
         WHERE cc.email = ? ORDER BY c.id LIMIT 1`, [email]
     );
     let customerId = existing?.id || null;
+    // No contact with that email: the company may still be on file under its name -- reuse it
+    // rather than add a duplicate customer (lib/customerDuplicates.js).
+    if (!customerId) customerId = (await findCustomerByName(conn, company || name))?.id || null;
     if (!customerId) {
       const [ins] = await conn.query(
         `INSERT INTO customers (name, company_name, sales_division_id, is_active, source)

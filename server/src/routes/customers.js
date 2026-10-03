@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { findCustomerByName, duplicateMessage, nameKey } = require('../lib/customerDuplicates');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { upperCustomerName, CUSTOMER_NAME_FIELDS } = require('../lib/customerName');
 
@@ -128,6 +129,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   const conn = await pool.getConnection();
   try {
     if (!String(req.body.name || '').trim()) return res.status(400).json({ error: 'Name is required.' });
+    const dup = await findCustomerByName(conn, req.body.name);
+    if (dup) return res.status(409).json({ error: duplicateMessage(dup), existing_customer_id: dup.id });
     await conn.beginTransaction();
     const [result] = await conn.query(
       `INSERT INTO customers (${FIELDS.join(', ')}) VALUES (${FIELDS.map(() => '?').join(', ')})`,
@@ -157,6 +160,13 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     // this route cannot blank the rest.
     const merged = { ...req.body };
     for (const f of FIELDS) if (merged[f] === undefined) merged[f] = current[f];
+    // Renaming onto another customer's name is a duplicate too. Only checked when the name
+    // actually changes, so a customer already sharing a name (from before this rule) can still
+    // be edited.
+    if (nameKey(merged.name) !== nameKey(current.name)) {
+      const dup = await findCustomerByName(conn, merged.name, current.id);
+      if (dup) return res.status(409).json({ error: duplicateMessage(dup), existing_customer_id: dup.id });
+    }
     await conn.beginTransaction();
     await conn.query(
       `UPDATE customers SET ${FIELDS.map((f) => `${f} = ?`).join(', ')}, updated_at = NOW() WHERE id = ?`,

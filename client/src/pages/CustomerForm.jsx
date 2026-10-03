@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
@@ -42,6 +42,9 @@ export default function CustomerForm() {
   const [lookups, setLookups] = useState({ styles: [], terms: [], taxes: [], reps: [] });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Set at once on the first click, before React re-renders the button disabled -- a fast double
+  // click otherwise sent two creates.
+  const inFlight = useRef(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [tab, setTab] = useState('contacts');
@@ -79,6 +82,8 @@ export default function CustomerForm() {
   async function save() {
     setError(''); setNotice('');
     if (!form.name.trim()) { setError('Name is required.'); return; }
+    if (inFlight.current) return;
+    inFlight.current = true;
     setSaving(true);
     const payload = {
       ...form,
@@ -107,6 +112,7 @@ export default function CustomerForm() {
     } catch (e) {
       setError(e.response?.data?.error || 'Save failed.');
     } finally {
+      inFlight.current = false;
       setSaving(false);
     }
   }
