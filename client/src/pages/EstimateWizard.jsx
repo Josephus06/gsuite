@@ -1648,6 +1648,30 @@ export default function EstimateWizard() {
         )}
       </div>
 
+      {/* The estimate's overall totals, live as lines are added and edited (asked 2026-10-03) --
+          the same figures and the same arithmetic as the View page's footer (EstimateView.jsx):
+          GP is the sum of the lines' own GP, Total Cost what that leaves of Net of Tax. */}
+      {(() => {
+        const n = (v) => Number(v) || 0;
+        const lineCost = (jo) => (jo.processes || []).reduce((s, p) => s + n(p.total_cost), 0);
+        const lineGp = (jo) => (jo.gp_amount != null && jo.gp_amount !== '' ? n(jo.gp_amount) : n(jo.subtotal) - n(jo.disc_amount) - lineCost(jo));
+        const discount = jobOrders.reduce((s, jo) => s + n(jo.disc_amount), 0);
+        const net = jobOrders.reduce((s, jo) => s + n(jo.subtotal), 0) - discount;
+        const tax = jobOrders.reduce((s, jo) => s + n(jo.tax_amount), 0);
+        const gp = jobOrders.reduce((s, jo) => s + lineGp(jo), 0);
+        return (
+          <div className="estimate-footer card" style={{ marginTop: 16 }}>
+            <div><span className="muted">Est. GP Rate</span><div className="hi-lg">{(net ? (gp / net) * 100 : 0).toFixed(2)}%</div></div>
+            <div><span className="muted">Est. GP Amount</span><div className="hi-lg">{money(gp)}</div></div>
+            <div><span className="muted">Total Cost</span><div className="hi-lg">{money(net - gp)}</div></div>
+            <div><span className="muted">Net of Tax</span><div className="hi-lg">{money(net)}</div></div>
+            <div><span className="muted">Discount</span><div className="hi-lg">{money(discount)}</div></div>
+            <div><span className="muted">Tax</span><div className="hi-lg">{money(tax)}</div></div>
+            <div><span className="muted">Total Amount</span><div className="hi-lg">{money(net + tax)}</div></div>
+          </div>
+        );
+      })()}
+
       {processPicker && (
         <Modal title="Processes for this Job Type" onClose={() => setProcessPicker(null)} large>
           {processPicker.loading ? <LoadingSpinner /> : (
