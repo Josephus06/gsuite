@@ -11,7 +11,7 @@ function money(v) {
 }
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const PAGE_SIZE = 25;
-const EMPTY = { month: thisMonth(), sales_division_id: '', sales_rep_id: '', search: '' };
+const EMPTY = { month: thisMonth(), office_location_id: '', sales_division_id: '', sales_rep_id: '', search: '' };
 
 // Sales > Weighted Sales per Month: every Sales Order line created in the month, its Net of Tax
 // being its weighted sales, totalled per rep. Whose orders appear is decided by the server --
@@ -19,8 +19,11 @@ const EMPTY = { month: thisMonth(), sales_division_id: '', sales_rep_id: '', sea
 export default function WeightedSalesReport() {
   const navigate = useNavigate();
   const [meta, setMeta] = useState(null);
+  // The page opens on Head Office (asked 2026-10-03), so nothing loads until /meta says which
+  // location that is; Clear goes back to it too.
+  const [initial, setInitial] = useState(EMPTY);
   const [filters, setFilters] = useState(EMPTY);
-  const [applied, setApplied] = useState(EMPTY);
+  const [applied, setApplied] = useState(null);
   const [data, setData] = useState(null);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -28,12 +31,19 @@ export default function WeightedSalesReport() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.get('/reports/weighted-sales/meta').then(({ data: m }) => setMeta(m)).catch(() => setMeta({ reps: [], divisions: [] }));
+    api.get('/reports/weighted-sales/meta')
+      .then(({ data: m }) => {
+        setMeta(m);
+        const start = { ...EMPTY, office_location_id: m.default_office_location_id ? String(m.default_office_location_id) : '' };
+        setInitial(start); setFilters(start); setApplied(start);
+      })
+      .catch(() => { setMeta({ reps: [], divisions: [], offices: [] }); setApplied(EMPTY); });
   }, []);
 
   const params = useCallback((f) => Object.fromEntries(Object.entries(f).filter(([, v]) => v !== '' && v != null)), []);
 
   useEffect(() => {
+    if (!applied) return;
     setLoading(true); setError('');
     api.get('/reports/weighted-sales', { params: { ...params(applied), page, limit: PAGE_SIZE } })
       .then(({ data: r }) => setData(r))
@@ -43,7 +53,7 @@ export default function WeightedSalesReport() {
 
   const set = (k) => (e) => setFilters((f) => ({ ...f, [k]: e.target.value }));
   function search() { setPage(1); setApplied(filters); }
-  function clear() { setFilters(EMPTY); setPage(1); setApplied(EMPTY); }
+  function clear() { setFilters(initial); setPage(1); setApplied(initial); }
 
   async function extract() {
     setDownloading(true);
@@ -70,6 +80,11 @@ export default function WeightedSalesReport() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="filter-grid">
           <div className="field"><label>Month</label><input type="month" value={filters.month} onChange={set('month')} /></div>
+          <div className="field"><label>Office Location</label>
+            <select value={filters.office_location_id} onChange={set('office_location_id')}>
+              <option value="">All office locations</option>
+              {(meta?.offices || []).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </select></div>
           <div className="field"><label>Sales Group</label>
             <select value={filters.sales_division_id} onChange={set('sales_division_id')}>
               <option value="">All sales groups</option>

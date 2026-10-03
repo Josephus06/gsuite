@@ -41,6 +41,8 @@ async function buildFilter(q, userId) {
   // Sales group = the order's sales division (Sales - 1 ... Sales - 4, branches). Narrows within the
   // scope like the rep filter -- an SBU head picks one of their own groups, never someone else's.
   if (q.sales_division_id) { where.push('so.sales_division_id = ?'); params.push(Number(q.sales_division_id)); }
+  // Office location = the order's office (asked 2026-10-03; the page opens on Head Office).
+  if (q.office_location_id) { where.push('so.office_location_id = ?'); params.push(Number(q.office_location_id)); }
   if (q.search) {
     const s = `%${String(q.search).trim()}%`;
     where.push('(so.sales_order_no LIKE ? OR c.name LIKE ? OR jo.job_order_no LIKE ? OR sol.description LIKE ?)');
@@ -84,8 +86,14 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
       `SELECT DISTINCT sd.id, sd.name
          FROM sales_orders so JOIN sales_divisions sd ON sd.id = so.sales_division_id
         WHERE ${where.join(' AND ')} ORDER BY sd.name`, params);
+    // The office locations this user may pick: those with orders inside their scope.
+    const [offices] = await pool.query(
+      `SELECT DISTINCT ol.id, ol.location_name AS name
+         FROM sales_orders so JOIN locations ol ON ol.id = so.office_location_id
+        WHERE ${where.join(' AND ')} ORDER BY ol.location_name`, params);
+    const headOffice = offices.find((o) => /^head\s*office$/i.test(String(o.name).trim()));
     const LABEL = { all: 'All sales reps', sbu: 'Your SBU group', supervisor: 'You and your team', own: 'Your own sales orders', none: 'No sales rep is linked to your account' };
-    res.json({ reps, divisions, scope: scope.kind, scope_label: LABEL[scope.kind] });
+    res.json({ reps, divisions, offices, default_office_location_id: headOffice ? headOffice.id : null, scope: scope.kind, scope_label: LABEL[scope.kind] });
   } catch (err) { next(err); }
 });
 
