@@ -137,7 +137,10 @@ async function main() {
     for (const a of invApps) { const id = invByNo.get(key(a.doc)); byInv.set(id, (byInv.get(id) || 0) + cents(a.amount)); }
     const lines = [...byInv].map(([id, c]) => ({ sales_invoice_id: id, applied_amount: c / 100 }));
     const sum = lines.reduce((s, l) => s + cents(l.applied_amount), 0);
-    if (sum !== cents(t.applied_amount)) report.sum_off_header.push(`${sp.no} lines ${sum / 100} vs header applied ${t.applied_amount}`);
+    // Lines that do not add up to the payment's own Applied are left out, not imported: either
+    // staff re-applied it in T1S after go-live (PAY-60717) or the source disagrees with itself
+    // (PAY-53761, 1,800 of lines on 18,000 applied) -- named in the report for a person to settle.
+    if (sum !== cents(t.applied_amount)) { report.sum_off_header.push(`${sp.no} lines ${sum / 100} vs header applied ${t.applied_amount}`); continue; }
     plan.push({ payment_id: t.id, no: sp.no, lines });
   }
 
