@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -14,12 +14,33 @@ const EMPTY_LINE = { account_id: '', account_label: '', department_id: '', party
 // credit. Total debit must equal total credit before it can be saved.
 export default function JournalForm() {
   const navigate = useNavigate();
+  // ?replicate=<id>: start from a copy of that journal -- its location, currency, memo and every line --
+  // dated today. Nothing is saved until SAVE, so it is a new journal with its own number.
+  const [searchParams] = useSearchParams();
+  const replicateId = searchParams.get('replicate');
+  const [replicatedFrom, setReplicatedFrom] = useState('');
   const [meta, setMeta] = useState(null);
   const [header, setHeader] = useState({ date_created: today(), location_id: '', currency: '', conversion: 1, memo: '' });
   const [lines, setLines] = useState([{ ...EMPTY_LINE }, { ...EMPTY_LINE }]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!replicateId) return;
+    api.get(`/journals/${replicateId}`).then(({ data: j }) => {
+      setReplicatedFrom(j.journal_no);
+      setHeader((h) => ({
+        ...h, location_id: j.location_id || '', currency: j.currency || '', conversion: j.conversion || 1, memo: j.memo || '',
+      }));
+      const copied = (j.lines || []).map((l) => ({
+        ...EMPTY_LINE, account_id: l.account_id || '', account_label: l.account_code ? `${l.account_code} — ${l.account_name}` : '',
+        department_id: l.department_id || '', party_type: l.party_type || '', party_id: l.party_id || '', party_name: l.party_name || '',
+        debit: Number(l.debit) ? String(l.debit) : '', credit: Number(l.credit) ? String(l.credit) : '', memo: l.memo || '',
+      }));
+      if (copied.length) setLines(copied);
+    }).catch((e) => setError(e.response?.data?.error || 'Could not load the journal to replicate.'));
+  }, [replicateId]);
 
   useEffect(() => {
     api.get('/journals/meta').then(({ data }) => { setMeta(data); setLoading(false); }).catch((e) => { setError(e.response?.data?.error || 'Failed to load.'); setLoading(false); });
@@ -64,7 +85,7 @@ export default function JournalForm() {
   return (
     <div>
       <div className="page-header">
-        <h1>New Journal</h1>
+        <h1>New Journal{replicatedFrom && <span className="muted" style={{ fontSize: "0.6em", marginLeft: 10 }}>replicated from {replicatedFrom}</span>}</h1>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/journals')}>Back</button>
           <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
