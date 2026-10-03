@@ -25,8 +25,15 @@ const L = require('./lib/liveWindow');
 const APPLY = process.argv.includes('--apply');
 const LIMIT = Number((process.argv.find((a) => a.startsWith('--limit=')) || '').split('=')[1]) || 0;
 const ROLLBACK = (process.argv.find((a) => a.startsWith('--rollback=')) || '').split('=')[1];
+// --only=<file>: just the JO numbers listed in it (text before the first ':' on each line, as in a
+// -skipped.txt this script wrote).
+const ONLY = (process.argv.find((a) => a.startsWith('--only=')) || '').split('=')[1];
 const OPEN = ['pending_for_scheduling', 'in_process', 'in_process_with_revision', 'for_qi', 'partially_completed', 'for_revision'];
-const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+// The DPOD ink-coverage processes are named differently in the two systems for the same thing:
+// "DPOD - Printing Liquid - A3 - Ink Cov (1-5%)" here, "... - Sht - Ink Coverage - 1-5%" in the
+// source. Both normalise to "dpod - printing liquid - ink 1-5".
+const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ')
+  .replace(/- a3 - ink cov \((\d+-\d+)%\)/, '- ink $1').replace(/- sht - ink coverage - (\d+-\d+)%/, '- ink $1');
 const n4 = (v) => Number(Number(v || 0).toFixed(4));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -51,7 +58,9 @@ async function sourceLines(token, joNo) {
   const [jos] = await pool.query(
     `SELECT DISTINCT jo.id, jo.job_order_no FROM job_orders jo JOIN job_order_processes jop ON jop.job_order_id = jo.id
       WHERE jo.production_stage IN (?) AND jo.nsso_id IS NULL AND jo.parent_job_order_id IS NULL AND jop.total > 0
-      ORDER BY jo.id ${LIMIT ? 'LIMIT ' + LIMIT : ''}`, [OPEN]);
+        ${ONLY ? 'AND jo.job_order_no IN (?)' : ''}
+      ORDER BY jo.id ${LIMIT ? 'LIMIT ' + LIMIT : ''}`,
+    ONLY ? [OPEN, fs.readFileSync(ONLY, 'utf8').split('\n').map((l) => l.split(':')[0].trim()).filter(Boolean)] : [OPEN]);
   console.log(`Open JOs to check: ${jos.length}`);
   let token = await L.login();
   const fix = []; const skipped = []; let same = 0; let done = 0;
