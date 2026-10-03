@@ -2,6 +2,7 @@ require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
+const compression = require('compression');
 const cors = require('cors');
 
 const authRoutes = require('./routes/auth');
@@ -117,6 +118,11 @@ const { msUntilBusinessTime } = require('./lib/crmCadence');
 const { startSampling } = require('./lib/systemHealth');
 
 const app = express();
+// Compress every response the browser can take compressed. Until 2026-10-03 nothing but the HTML
+// was: the 2.8 MB app bundle went out raw (nginx's gzip_types is commented out), which over the
+// office's ~220 KB/s line was 12+ seconds every time the app loaded. Excel/PDF downloads are
+// already compressed formats and are skipped by compression's own type filter.
+app.use(compression());
 
 // CORS was wide open, which was defensible while every route demanded a bearer token -- a
 // cross-origin request without one got nothing. /api/public changed that: it is unauthenticated
@@ -428,8 +434,14 @@ if (crmAttentionJobEnabled()) {
 // client's relative baseURL('/api') keeps working with no config.
 const clientDist = path.join(__dirname, '../../client/dist');
 if (fs.existsSync(clientDist)) {
-  app.use(express.static(clientDist));
-  app.get('*', (req, res) => res.sendFile(path.join(clientDist, 'index.html')));
+  // /assets files carry a content hash in their name (index-CJWqKKad.js), so a new deploy is a new
+  // name: the browser may keep them for a year and never ask again. index.html must always be
+  // re-checked, or a browser would keep loading the previous deploy's bundle.
+  app.use('/assets', express.static(path.join(clientDist, 'assets'), { maxAge: '365d', immutable: true }));
+  app.use(express.static(clientDist, {
+    setHeaders: (res, filePath) => { if (filePath.endsWith('index.html')) res.setHeader('Cache-Control', 'no-cache'); },
+  }));
+  app.get('*', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(clientDist, 'index.html')); });
 }
 
 // eslint-disable-next-line no-unused-vars
