@@ -10,6 +10,9 @@ function money(v) {
 }
 const round2 = (n) => Math.round(n * 100) / 100;
 const day = (v) => (v ? String(v).slice(0, 10) : '');
+// Date Due = Date + the term's days, on the calendar date (UTC arithmetic, so no timezone shift).
+const addDays = (d, n) => { if (!d) return ''; const t = new Date(`${d}T00:00:00Z`); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
+const termKey = (s) => String(s || '').trim().toLowerCase().replace(/s+/g, ' ');
 // Preview of the server's arithmetic. Each line carries its Amount (net of VAT): it starts at the
 // stored figure, follows Qty / Unit Price / Discount when those are edited, and can be typed --
 // Unit Price then follows it. The server keeps a sent Amount exactly.
@@ -43,6 +46,8 @@ export default function VendorBillEdit() {
   const [vb, setVb] = useState(null);
   const [meta, setMeta] = useState(null);
   const [locations, setLocations] = useState([]);
+  // Term is picked from Master Lists > Payment Terms (asked 2026-10-03); Date Due follows its days.
+  const [paymentTerms, setPaymentTerms] = useState([]);
   const [moneyInfo, setMoneyInfo] = useState({ applied: 0, oldGl: false, lockReason: null });
   const [header, setHeader] = useState(null);
   const [supplier, setSupplier] = useState(null);
@@ -56,7 +61,9 @@ export default function VendorBillEdit() {
     Promise.all([
       api.get(`/vendor-bills/${id}`), api.get(`/vendor-bills/${id}/edit-meta`),
       api.get('/vendor-bills/standalone-meta'), api.get('/lookups/locations'),
-    ]).then(([b, em, m, loc]) => {
+      api.get('/lookups/payment-terms').catch(() => ({ data: [] })),
+    ]).then(([b, em, m, loc, pt]) => {
+      setPaymentTerms((pt.data || []).filter((t) => t.is_active !== 0 && t.is_active !== false));
       const bill = b.data;
       setVb(bill); setMeta(m.data); setLocations(loc.data || []); setMoneyInfo({ applied: Number(em.data.applied_amount || 0), oldGl: !!em.data.old_system_gl, lockReason: em.data.money_lock_reason || null });
       setHeader({
@@ -180,7 +187,10 @@ export default function VendorBillEdit() {
         <div className="review-grid" style={{ gridTemplateColumns: '1fr 1fr 280px' }}>
           <div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <div className="field"><label>Date</label><input type="date" value={header.date_created} onChange={(e) => setH({ date_created: e.target.value })} /></div>
+              <div className="field"><label>Date</label><input type="date" value={header.date_created} onChange={(e) => {
+                const t = paymentTerms.find((x) => termKey(x.term_name) === termKey(header.term));
+                setH(t && e.target.value ? { date_created: e.target.value, date_due: addDays(e.target.value, Number(t.no_of_days) || 0) } : { date_created: e.target.value });
+              }} /></div>
               <div className="field"><label>Date Due</label><input type="date" value={header.date_due} onChange={(e) => setH({ date_due: e.target.value })} /></div>
             </div>
             <div className="field">
@@ -219,7 +229,18 @@ export default function VendorBillEdit() {
                 {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
               </select>
             </div>
-            <div className="field"><label>Term</label><input value={header.term} onChange={(e) => setH({ term: e.target.value })} /></div>
+            <div className="field">
+              <label>Term</label>
+              <EntityPicker
+                label="Term" items={paymentTerms}
+                value={paymentTerms.find((t) => termKey(t.term_name) === termKey(header.term))?.id || ''}
+                getLabel={(t) => t.term_name}
+                columns={[{ key: 'term_name', label: 'Term' }, { key: 'no_of_days', label: 'Days', render: (t) => Number(t.no_of_days || 0) }]}
+                searchKeys={['term_name']} placeholder={header.term || 'Select Term...'}
+                onSelect={(t) => setH(t ? { term: t.term_name, date_due: addDays(header.date_created, Number(t.no_of_days) || 0) } : { term: '' })}
+                onClear={() => setH({ term: '' })}
+              />
+            </div>
             <div className="field">
               <label>Withholding Tax</label>
               <select value={wtaxId} disabled={ro} onChange={(e) => { setWtaxId(e.target.value); setLines((ls) => ls.map((x) => ({ ...x, wtax_typed: undefined }))); }}>
