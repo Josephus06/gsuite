@@ -168,10 +168,15 @@ async function repMetrics(employeeIds) {
   const [
     [[weighted]], [[estTotals]], [[paid]], [[unpaid]], [[allTime]], [pipeline], trend,
   ] = await Promise.all([
+    // Weighted Sales: net of tax of the month's non-cancelled Sales Order lines -- as the Weighted
+    // Sales report, the commission report and the breakdown card read it. It was the orders' gross
+    // totals, VAT and cancelled orders included, so this card read high.
     pool.query(
-      `SELECT COUNT(*) AS count, COALESCE(SUM(total_amount), 0) AS amount
-       FROM sales_orders WHERE sales_rep_id IN (${placeholders}) AND date_created >= ?`,
-      [...employeeIds, monthStart]
+      `SELECT COUNT(DISTINCT so.id) AS count, COALESCE(SUM(sol.net_of_tax), 0) AS amount
+       FROM sales_order_lines sol JOIN sales_orders so ON so.id = sol.sales_order_id
+       WHERE so.sales_rep_id IN (${placeholders}) AND so.date_created >= ? AND so.date_created < ?
+         AND (so.status IS NULL OR so.status <> 'cancelled')`,
+      [...employeeIds, monthBounds(null).start, monthBounds(null).end]
     ),
     pool.query(
       `SELECT COUNT(*) AS created, SUM(status = 'approved') AS approved
@@ -842,6 +847,9 @@ router.get('/', requireAuth, async (req, res, next) => {
     }
 
     const summary = await repMetrics(scope.employeeIds);
+    // The headline card is the viewer's whole scope (a supervisor's full reporting tree), the same
+    // figure as the breakdown card's total below it.
+    summary.weightedSales = await scopedMonthSales(req.user.id, null);
 
     let byRep = [];
     if (scope.role !== 'account_officer') {
