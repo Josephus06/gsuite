@@ -94,6 +94,24 @@ async function splitSourceLinesByDepartment(lines) {
     if (!byKey.has(k)) byKey.set(k, []);
     byKey.get(k).push({ dept: p.source_department, net });
   }
+  // A department reclass inside one month (e.g. 30802: Human Resource +18,909.50, Production-SIGNAGE
+  // -18,909.50) nets the account's month to zero, so the loader writes no line for it and there is
+  // nothing to split. Give each such month/account a zero line here so its departments still show;
+  // the remainder line below keeps the account total unchanged.
+  const lineKeys = new Set(lines.filter((l) => l.source_type === 'opening_balance').map((l) => `${String(l.entry_date).slice(0, 7)}|${l.account_code}`));
+  const missing = [...byKey.keys()].filter((k) => months.has(k.slice(0, 7)) && !lineKeys.has(k));
+  if (missing.length) {
+    const [coa] = await pool.query('SELECT account_code, account_name FROM chart_of_accounts WHERE account_code IN (?)', [[...new Set(missing.map((k) => k.slice(8)))]]);
+    const nameOf = new Map(coa.map((c) => [String(c.account_code), c.account_name]));
+    const monthLine = new Map();
+    for (const l of lines) if (l.source_type === 'opening_balance') monthLine.set(String(l.entry_date).slice(0, 7), l);
+    for (const k of missing) {
+      const code = k.slice(8);
+      if (!nameOf.has(code)) continue; // not in the T1S chart: nothing to report it under
+      const m = monthLine.get(k.slice(0, 7));
+      lines = [...lines, { ...m, account_code: code, account_name: nameOf.get(code), debit: 0, credit: 0, memo: `Source system activity for ${k.slice(0, 7)}` }];
+    }
+  }
   const out = [];
   for (const l of lines) {
     const split = l.source_type === 'opening_balance' && byKey.get(`${String(l.entry_date).slice(0, 7)}|${l.account_code}`);
