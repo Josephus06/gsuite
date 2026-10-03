@@ -3,15 +3,13 @@
 // their mother via parent_job_order_id, numbered <PREFIX>-<n>, starting "Pending RMA Approval",
 // copying the mother's header + processes. They then go through the same approve -> build -> QI
 // lifecycle as any production JO.
+const { nextDocNo } = require('./docNumber');
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const trunc = (s, n) => (s == null ? null : String(s).slice(0, n));
 
+// Through lib/docNumber.js, so the office box's numbers carry -O and can never repeat the droplet's.
 async function nextReworkNo(conn, prefix) {
-  const [[mx]] = await conn.query(
-    'SELECT COALESCE(MAX(CAST(SUBSTRING(job_order_no, ?) AS UNSIGNED)), 0) AS n FROM job_orders WHERE job_order_no LIKE ?',
-    [prefix.length + 2, `${prefix}-%`] // +2 = skip "<PREFIX>-"
-  );
-  return `${prefix}-${mx.n + 1}`;
+  return nextDocNo('job_orders', 'job_order_no', `${prefix}-`, conn);
 }
 
 async function createReworkJobOrder(conn, { mother, prefix, quantity, reason = null, action = null, reasonCodeId = null, deliveryDate = null, deliveryTime = null, userId, processes = null }) {

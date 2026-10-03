@@ -33,9 +33,17 @@ const pool = require('../db');
 //
 // So: the pool answers "what has everyone else committed", the caller's connection answers "what
 // have I taken already", and the next number has to clear both.
+//
+// TWO BOXES, ONE NUMBER SPACE (2026-10-03). The droplet and the office box replicate both ways and
+// both take new documents, so "highest + 1" on each could hand out the same number twice -- and a
+// duplicate on a UNIQUE column stops replication dead (CPAY-37 and PO-20644 did, 2026-10-02/03).
+// So the office box marks its numbers: CPAY-62-O. The droplet keeps the plain series with no gaps
+// and never counts the -O numbers; the office counts both, so its next number follows the latest
+// document wherever it was made. Two boxes can then never write the same string.
 async function nextDocNo(table, column, prefix, conn = null) {
+  const suffix = await docNoSuffix();
   const sql = 'SELECT COALESCE(MAX(CAST(SUBSTRING(??, ?) AS UNSIGNED)), 0) AS n FROM ?? WHERE ?? REGEXP ?';
-  const params = [column, prefix.length + 1, table, column, `^${prefix}[0-9]+$`];
+  const params = [column, prefix.length + 1, table, column, docNoPattern(prefix, suffix)];
 
   const [[committed]] = await pool.query(sql, params);
   let highest = Number(committed.n);
@@ -44,7 +52,28 @@ async function nextDocNo(table, column, prefix, conn = null) {
     const [[mine]] = await conn.query(sql, params);
     highest = Math.max(highest, Number(mine.n));
   }
-  return `${prefix}${highest + 1}`;
+  return `${prefix}${highest + 1}${suffix}`;
+}
+
+// '-O' on the office box, '' everywhere else. The box is told apart by MySQL's own
+// auto_increment_offset -- 1 on the droplet, 2 on the office (see REPLICATION-RECOVERY.md) -- so
+// no per-box setting has to be remembered on a redeploy. DOC_NO_SUFFIX in .env overrides it.
+// Read once; the offset never changes while the server runs.
+let suffixPromise = null;
+function docNoSuffix() {
+  if (process.env.DOC_NO_SUFFIX !== undefined) return Promise.resolve(process.env.DOC_NO_SUFFIX);
+  if (!suffixPromise) {
+    suffixPromise = pool.query('SELECT @@auto_increment_offset AS o')
+      .then(([[r]]) => (Number(r.o) === 2 ? '-O' : ''))
+      .catch((err) => { suffixPromise = null; throw err; });
+  }
+  return suffixPromise;
+}
+
+// The numbers a box counts when finding the next one: plain ones everywhere, and on the office box
+// its own suffixed ones too. CAST('62-O' AS UNSIGNED) reads 62, so MAX works over both.
+function docNoPattern(prefix, suffix) {
+  return suffix ? `^${prefix}[0-9]+(${suffix})?$` : `^${prefix}[0-9]+$`;
 }
 
 // Insert a row whose document number has to be unique, writing that number in the INSERT itself.
@@ -87,4 +116,4 @@ async function assignDocNo(conn, { table, column, prefix, id }) {
   }
 }
 
-module.exports = { nextDocNo, insertNumbered, assignDocNo };
+module.exports = { nextDocNo, insertNumbered, assignDocNo, docNoSuffix, docNoPattern };

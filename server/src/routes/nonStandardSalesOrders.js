@@ -577,7 +577,10 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
 
     await conn.beginTransaction();
     // Number: NSJO-<TYPE>-<nssoNum>-<seq>-<total>. TYPE + nssoNum come from the NSSO doc no.
-    const [, abbr, nssoNum] = (nsso.nsso_no || '').split('-'); // NSSO-RMA-177 -> ['NSSO','RMA','177']
+    // NSSO-RMA-177 -> RMA, 177. Everything after the type is the number, so an office-box
+    // NSSO-RMA-178-O keeps its -O (NSJO-RMA-178-O-1-1) and cannot repeat the droplet's NSJO-RMA-178-1-1.
+    const [, abbr, ...numParts] = (nsso.nsso_no || '').split('-');
+    const nssoNum = numParts.join('-');
     const [[cnt]] = await conn.query('SELECT COUNT(*) AS n FROM non_standard_sales_order_lines WHERE nsso_id = ?', [nsso.id]);
     const jobOrderNo = `NSJO-${abbr}-${nssoNum}-${line.line_no}-${cnt.n}`;
     // The JO carries the NSSO's Sales Rep (else the source JO's). Sales users only see job orders
