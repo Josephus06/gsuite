@@ -656,6 +656,17 @@ async function computeCommissionVoucherGl(cv, lines, expenses) {
 // `credits`: the vendor's Bill Credits used up on the cheque (cheque_bill_credits), each with its
 // credit's AP account. A bill credit left the vendor's AP with a debit balance; using it here
 // clears that (CR AP) and the bank pays that much less -- total_amount is already net of them.
+// A negative leg (a reversal cheque or bill, allowed 2026-10-03) posts on the opposite side as a
+// positive amount -- a "-4,555 debit" becomes a 4,555 credit. Debit minus credit is unchanged.
+function sideNegatives(rows) {
+  return rows.map((r) => {
+    const d = Number(r.debit) || 0; const c = Number(r.credit) || 0;
+    if (d >= 0 && c >= 0) return r;
+    const net = d - c;
+    return { ...r, debit: net > 0 ? net : 0, credit: net < 0 ? -net : 0 };
+  });
+}
+
 async function computeChequeGl(c, lines, credits = []) {
   const rows = (lines || []).filter((l) => Number(l.amount)).map((l) => ({
     account_code: l.account_code, account_name: l.account_name, debit: Number(l.amount) || 0, credit: 0, department_id: l.department_id || null,
@@ -670,7 +681,7 @@ async function computeChequeGl(c, lines, credits = []) {
     if (amt && cr.ap_account_code) rows.push({ account_code: cr.ap_account_code, account_name: cr.ap_account_name, debit: 0, credit: amt });
   }
   if (total && c.bank_code) rows.push({ account_code: c.bank_code, account_name: c.bank_name, debit: 0, credit: total });
-  return rows;
+  return sideNegatives(rows);
 }
 
 async function computeDeliveryTicketGl(dt, lines) {
@@ -755,7 +766,7 @@ async function computeVendorBillGl(vb, lines) {
     rows.push({ account_code: vb.account_code, account_name: vb.account_name, debit: netOfTax, credit: 0 });
   }
   if (taxAmount && vatAcct) rows.push({ account_code: vatAcct.account_code, account_name: vatAcct.account_name, debit: taxAmount, credit: 0 });
-  return rows;
+  return sideNegatives(rows);
 }
 
 // GL Impact: the adjustment-account leg (credited on an increase, debited on a

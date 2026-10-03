@@ -280,7 +280,7 @@ export default function VendorBillEdit() {
                     </select>
                   </td>
                   <td>{isItemBill || ro ? l.qty : <input type="number" min="0" step="any" style={{ width: 70 }} value={l.qty} onChange={(e) => setLine(l.key, { qty: e.target.value })} />}</td>
-                  <td>{ro ? money(l.unit_price) : <input type="number" min="0" step="any" style={{ width: 110 }} value={l.unit_price} onChange={(e) => setLine(l.key, { unit_price: e.target.value })} />}</td>
+                  <td>{ro ? money(l.unit_price) : <input type="number" step="any" style={{ width: 110 }} value={l.unit_price} onChange={(e) => setLine(l.key, { unit_price: e.target.value })} />}</td>
                   {isItemBill && <td>{ro ? l.disc_percent : <input type="number" min="0" max="100" step="any" style={{ width: 60 }} value={l.disc_percent} onChange={(e) => setLine(l.key, { disc_percent: e.target.value })} />}</td>}
                   <td><input type="number" step="0.01" style={{ width: 120 }} disabled={ro} value={l.amount} title="Amount net of VAT; Unit Price follows" onChange={(e) => setLine(l.key, { amount: e.target.value })} /></td>
                   <td>
@@ -294,7 +294,7 @@ export default function VendorBillEdit() {
                   <td style={{ textAlign: 'center' }}><input type="checkbox" disabled={ro} checked={l.is_withhold} onChange={(e) => setLine(l.key, { is_withhold: e.target.checked })} /></td>
                   <td style={{ textAlign: 'right' }}>
                     {ro || !l.is_withhold ? money(l.amt.wtax) : (
-                      <input type="number" step="0.01" min="0" style={{ width: 100 }} title="Withholding for this line -- Net x rate unless typed"
+                      <input type="number" step="0.01" style={{ width: 100 }} title="Withholding for this line -- Net x rate unless typed"
                         value={l.wtax_typed !== undefined ? l.wtax_typed : l.amt.wtax} onChange={(e) => setLine(l.key, { wtax_typed: e.target.value })} />
                     )}
                   </td>

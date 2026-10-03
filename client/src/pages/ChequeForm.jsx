@@ -106,7 +106,8 @@ export default function ChequeForm() {
     if (!header.account_id) { setError('Select the bank Account to draw the cheque against.'); return; }
     const payload = lines
       .map((l, i) => ({ ...l, tax_amount: computed[i].tax, withholding_tax_amount: Number(l.withholding_tax_amount) || 0 }))
-      .filter((l) => l.account_id && Number(l.amount) > 0)
+      // Negative lines are allowed: a reversal (asked 2026-10-03).
+      .filter((l) => l.account_id && Number(l.amount) !== 0)
       .map((l) => ({
         account_id: l.account_id, department_id: l.department_id || null, description: l.description,
         amount: Number(l.amount), tax_code_id: l.tax_code_id || null, tax_amount: l.tax_amount,

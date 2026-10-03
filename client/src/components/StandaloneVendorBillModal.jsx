@@ -234,7 +234,7 @@ export default function StandaloneVendorBillModal({ onClose, onSaved }) {
                             {meta.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                           </select>
                         </td>
-                        <td><input type="number" min="0" step="any" style={{ width: 120 }} value={l.amount} onChange={(e) => setLine(l.key, { amount: e.target.value })} /></td>
+                        <td><input type="number" step="any" style={{ width: 120 }} value={l.amount} onChange={(e) => setLine(l.key, { amount: e.target.value })} /></td>
                         <td>
                           <select value={l.tax_code_id} onChange={(e) => setLine(l.key, { tax_code_id: e.target.value })}>
                             <option value="">Select Tax</option>

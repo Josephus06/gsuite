@@ -52,12 +52,14 @@ function computeLineFromAmount({ amount, discPercent, taxRate, qty }) {
 const hasAmount = (l) => l && l.amount !== undefined && l.amount !== null && l.amount !== '' && Number.isFinite(Number(l.amount));
 // A line's withholding: the amount typed for it when one was sent (the supplier's own figure, asked
 // for 2026-10-02), else Net of Tax x the bill's withholding rate. Only on a line ticked to withhold;
-// never negative, never more than the line's net.
+// never more than the line's net. A NEGATIVE line (a reversal, allowed 2026-10-03) withholds a
+// negative amount the same way, so the reversal undoes the withholding too.
 function lineWtax(l, netOfTax, wtaxRate) {
   const typed = l && l.wtax_amount !== undefined && l.wtax_amount !== null && l.wtax_amount !== '' && Number.isFinite(Number(l.wtax_amount));
   if (!l?.is_withhold || (!typed && !(wtaxRate > 0))) return { is_withhold: false, wtax_amount: 0 };
-  const amount = typed ? Number(l.wtax_amount) : netOfTax * wtaxRate / 100;
-  return { is_withhold: true, wtax_amount: Number(Math.min(Math.max(amount, 0), Math.max(netOfTax, 0)).toFixed(2)) };
+  const sign = netOfTax < 0 ? -1 : 1;
+  const amount = typed ? Math.abs(Number(l.wtax_amount)) : Math.abs(netOfTax) * wtaxRate / 100;
+  return { is_withhold: true, wtax_amount: Number((sign * Math.min(amount, Math.abs(netOfTax))).toFixed(2)) };
 }
 
 // GL Impact computation lives in server/src/lib/glImpact.js (computeVendorBillGl),
@@ -338,7 +340,8 @@ async function createStandaloneBill(req, res, conn) {
     if (!Number(l.department_id)) return res.status(400).json({ error: `Choose a Department on line ${idx + 1}. It is required so department budgets can be tracked.` });
     const qty = Number(l.qty);
     const unitPrice = Number(l.unit_price);
-    if (!Number.isFinite(unitPrice) || unitPrice < 0) return res.status(400).json({ error: `Enter an amount on line ${idx + 1}.` });
+    // Negative is allowed: a reversal bill (asked 2026-10-03).
+    if (!Number.isFinite(unitPrice)) return res.status(400).json({ error: `Enter an amount on line ${idx + 1}.` });
     const amounts = computeLineAmounts({ unitPrice, discPercent: l.disc_percent, taxRate: taxRate.get(Number(l.tax_code_id)) || 0, qty });
     const w = lineWtax(l, amounts.net_of_tax, wtaxRate);
     const isWithhold = w.is_withhold;
@@ -660,7 +663,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
           if (!Number(l.department_id)) return res.status(400).json({ error: `Choose a Department on line ${idx + 1}. It is required so department budgets can be tracked.` });
           const qty = Number(l.qty) || 0;
           const unitPrice = Number(l.unit_price);
-          if (!hasAmount(l) && (!Number.isFinite(unitPrice) || unitPrice < 0)) return res.status(400).json({ error: `Enter an amount on line ${idx + 1}.` });
+          if (!hasAmount(l) && !Number.isFinite(unitPrice)) return res.status(400).json({ error: `Enter an amount on line ${idx + 1}.` });
           const priced = price(l, qty, unitPrice);
           newLines.push({
             id: null, account_id: Number(l.account_id), description: String(l.description || '').trim().slice(0, 500) || null,
@@ -680,11 +683,13 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         // less it, and the new total may not go below it.
         amount_due: Number((gross - wtaxAmount - ctx.applied).toFixed(2)),
       };
-      if (money.amount_due < -0.005) {
+      // Only a bill something has settled is held at what was settled; with nothing applied the
+      // total may be negative (a reversal bill, allowed 2026-10-03) and stays open.
+      if (ctx.applied > 0.005 && money.amount_due < -0.005) {
         return res.status(409).json({ error: `${ctx.applied.toFixed(2)} of this bill is already paid or credited, so its total (net of withholding) cannot go below that.` });
       }
-      money.amount_due = Math.max(0, money.amount_due);
-      if (['open', 'paid', 'paid_in_full'].includes(vb.status)) money.status = money.amount_due <= 0.005 ? 'paid_in_full' : 'open';
+      if (ctx.applied > 0.005) money.amount_due = Math.max(0, money.amount_due);
+      if (['open', 'paid', 'paid_in_full'].includes(vb.status)) money.status = Math.abs(money.amount_due) <= 0.005 ? 'paid_in_full' : 'open';
       // A standalone bill may also change its supplier and the payable it credits.
       if (!hasItemLines) {
         const [[supplier]] = await conn.query('SELECT id FROM suppliers WHERE id = ?', [b.supplier_id]);
