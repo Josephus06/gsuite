@@ -30,7 +30,19 @@ const blankLine = () => ({ key: Math.random().toString(36).slice(2), account: nu
 // header, an Expenses tab of account lines, and a Withholding Tax tab. Each line debits its
 // account; the bill credits the header Account (Accounts Payable - Trade unless changed) and is
 // paid through Bill Payment like any other.
-export default function StandaloneVendorBillModal({ onClose, onSaved }) {
+// `replicateFrom` is a vendor bill id to start from -- Replicate on the Vendor Bill view, the same
+// move the Journal screen has had. Everything that describes the EXPENSE is copied (vendor, A/P
+// account, term, office location, withholding tax, memo and every line); everything that belongs
+// to the original document is not. It is dated today, it takes its own VB- number on save, and
+// Reference # starts empty because that is the SUPPLIER's own bill number -- copying it would file
+// two of ours against one of theirs.
+//
+// Prepared By needs no handling here, which is the point: nothing in this modal sets it. The bill
+// is created through the ordinary POST /vendor-bills, which stamps created_by_user_id from the
+// session, so a replica is prepared by whoever replicated it rather than by whoever raised the
+// original.
+export default function StandaloneVendorBillModal({ onClose, onSaved, replicateFrom }) {
+  const [replicatedFrom, setReplicatedFrom] = useState('');
   const [meta, setMeta] = useState(null);
   const [locations, setLocations] = useState([]);
   const [paymentTerms, setPaymentTerms] = useState([]);
@@ -56,9 +68,48 @@ export default function StandaloneVendorBillModal({ onClose, onSaved }) {
         setLocations(loc.data);
         setPaymentTerms(terms.data || []);
         if (m.data.ap_account) setApAccount(m.data.ap_account);
+        if (replicateFrom) prefillFrom(m.data, loc.data, terms.data || []);
       })
       .catch((err) => setError(err.response?.data?.error || 'Could not load the form.'));
-  }, []);
+  }, [replicateFrom]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Run only once the lookups are in hand: the pickers hold whole records, not ids, so each one
+  // has to be found in the list it is chosen from.
+  async function prefillFrom(metaData, locs, terms) {
+    try {
+      const { data: vb } = await api.get(`/vendor-bills/${replicateFrom}`);
+      setReplicatedFrom(vb.bill_no);
+      setSupplier((metaData.suppliers || []).find((x) => String(x.id) === String(vb.supplier_id)) || null);
+      if (vb.account_id) {
+        setApAccount((metaData.accounts || []).find((a) => String(a.id) === String(vb.account_id))
+          || { id: vb.account_id, account_code: vb.account_code, account_name: vb.account_name });
+      }
+      setOfficeLocation(locs.find((l) => String(l.id) === String(vb.office_location_id)) || null);
+      const t = terms.find((x) => x.term_name === vb.term) || null;
+      setPaymentTerm(t);
+      setTerm(vb.term || '');
+      // Today's date with the ORIGINAL's term: a 30-day bill replicated today falls due in 30
+      // days' time, not on the date the first one did.
+      if (t) setDateDue(addDays(new Date().toISOString().slice(0, 10), Number(t.no_of_days) || 0));
+      setMemo(vb.memo || '');
+      setWtaxId(vb.wtax_id || '');
+      const copied = (vb.lines || []).map((l) => ({
+        ...blankLine(),
+        account: (metaData.accounts || []).find((a) => String(a.id) === String(l.account_id))
+          || (l.account_id ? { id: l.account_id, account_code: l.line_account_code, account_name: l.line_account_name } : null),
+        description: l.description || '',
+        department_id: l.department_id || '',
+        // net_of_tax is the figure this form calls Amount -- tax is added on top of it, so taking
+        // the gross back would inflate the replica by one VAT every time it was copied.
+        amount: Number(l.net_of_tax) ? String(Number(l.net_of_tax)) : '',
+        tax_code_id: l.tax_code_id || '',
+        is_withhold: !!l.is_withhold,
+      }));
+      if (copied.length) setLines(copied);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not load the bill to replicate.');
+    }
+  }
 
   if (!meta) {
     return (
@@ -126,7 +177,10 @@ export default function StandaloneVendorBillModal({ onClose, onSaved }) {
     <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal modal-xl" style={{ padding: 0, overflow: 'hidden' }}>
         <div className="estimate-banner" style={{ borderRadius: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <h2 style={{ margin: 0, color: '#fff' }}>Vendor Bill — Create</h2>
+          <h2 style={{ margin: 0, color: '#fff' }}>
+            Vendor Bill — Create
+            {replicatedFrom && <span style={{ fontSize: '0.6em', opacity: 0.85, marginLeft: 10 }}>replicated from {replicatedFrom}</span>}
+          </h2>
           <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 24, lineHeight: 1, cursor: 'pointer' }}>×</button>
         </div>
 

@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import BillPaymentModal from '../components/BillPaymentModal';
 import BillCreditModal from '../components/BillCreditModal';
+import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate, displayDateTime } from '../utils/dates';
 
@@ -37,6 +38,7 @@ export default function VendorBillView() {
   const [error, setError] = useState('');
   const [showBillPaymentModal, setShowBillPaymentModal] = useState(false);
   const [showBillCreditModal, setShowBillCreditModal] = useState(false);
+  const [showReplicate, setShowReplicate] = useState(false);
 
   function load() {
     return api.get(`/vendor-bills/${id}`).then(({ data }) => { setVb(data); setLoading(false); });
@@ -72,6 +74,12 @@ export default function VendorBillView() {
   const canEdit = can('/vendor-bills', 'can_edit');
   const canVoid = can('/vendor-bills', 'can_void');
   const isOpen = vb.status === 'open';
+  // Replicate, as the Journal screen has: start a new bill from this one's vendor, account, term
+  // and lines. Only a STANDALONE bill can be: a PO-backed one's lines are quantities billed
+  // against purchase order lines, and copying them into an expense bill would raise a second bill
+  // for goods already billed without moving the PO's billed qty an inch. Those are raised from the
+  // Purchase Order's own Bill button, which is what the disabled tooltip says.
+  const canReplicate = can('/vendor-bills', 'can_add');
 
   return (
     <div>
@@ -82,6 +90,12 @@ export default function VendorBillView() {
           {canEdit && vb.status !== 'cancelled' && <button className="btn btn-sm" onClick={() => navigate(`/vendor-bills/${vb.id}/edit`)}>Edit</button>}
           {isOpen && <button className="btn btn-sm btn-primary" onClick={() => setShowBillPaymentModal(true)}>Bill Payment</button>}
           {isOpen && <button className="btn btn-sm btn-primary" onClick={() => setShowBillCreditModal(true)}>Bill Credit</button>}
+          {canReplicate && !vb.purchase_order_id && (
+            <button className="btn btn-sm" title="Start a new bill from this one's vendor, account and lines" onClick={() => setShowReplicate(true)}>Replicate</button>
+          )}
+          {canReplicate && !!vb.purchase_order_id && (
+            <button className="btn btn-sm" disabled title={`Raised from ${vb.po_no || 'a Purchase Order'} -- bill that order again from the Purchase Order's Bill button, so its billed qty keeps up`}>Replicate</button>
+          )}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
         </div>
@@ -279,6 +293,13 @@ export default function VendorBillView() {
           vendorBillId={id}
           onClose={() => setShowBillCreditModal(false)}
           onSaved={(bc) => { setShowBillCreditModal(false); navigate(`/bill-credits/${bc.id}`); }}
+        />
+      )}
+      {showReplicate && (
+        <StandaloneVendorBillModal
+          replicateFrom={id}
+          onClose={() => setShowReplicate(false)}
+          onSaved={(nb) => { setShowReplicate(false); navigate(`/vendor-bills/${nb.id}`); }}
         />
       )}
     </div>
