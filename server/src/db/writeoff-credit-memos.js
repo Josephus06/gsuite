@@ -55,7 +55,8 @@ async function main() {
   console.log(`Created by: ${user.display_name} (#${user.id}), dated ${DATE_CREATED}\n`);
 
   const [rows] = await pool.query(
-    `SELECT si.id, si.invoice_no, si.date_created, si.status, si.gross_amount, c.id AS customer_id, c.name AS customer,
+    `SELECT si.id, si.invoice_no, si.date_created, si.status, si.gross_amount, si.amount_due,
+            c.id AS customer_id, c.name AS customer,
             COALESCE((SELECT SUM(cpl.applied_amount) FROM customer_payment_lines cpl
                        JOIN customer_payments cp ON cp.id = cpl.customer_payment_id
                       WHERE cpl.sales_invoice_id = si.id AND cp.status <> 'voided'), 0)
@@ -77,7 +78,16 @@ async function main() {
     if (!r) { skipped.push([no, 'not on this install']); continue; }
     if (r.status === 'cancelled') { skipped.push([no, 'void invoice']); continue; }
     if (!r.customer_id) { skipped.push([no, 'no customer on the invoice']); continue; }
-    const open = Number((Number(r.gross_amount) - Number(r.settled)).toFixed(2));
+    // The LOWER of what this install can account for and what the invoice itself says is still
+    // owed. They part company on a migrated invoice the source had partly collected against with
+    // no payment record here: INV-1656 reads gross 5,022.00 with amount_due 4,278.95, and offering
+    // the gross made the server refuse the whole memo -- applyToInvoice will not apply more than
+    // an invoice's remaining Amount Due, which is the correct rule and cost three of the first
+    // nineteen memos.
+    const open = Number(Math.min(
+      Number(r.gross_amount) - Number(r.settled),
+      Number(r.amount_due),
+    ).toFixed(2));
     if (open <= 0.005) { skipped.push([no, `already settled (${r.status}, ${Number(r.settled).toFixed(2)} of ${r.gross_amount})`]); continue; }
     eligible.push({ ...r, open });
   }
