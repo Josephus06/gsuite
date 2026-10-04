@@ -332,7 +332,9 @@ export default function SalesInvoiceView() {
                     <td>Credit Memo</td>
                     <td><button type="button" className="link-btn" onClick={() => navigate(`/credit-memos/${c.id}`)}>{c.credit_memo_no}</button></td>
                     <td>{formatDate(c.date_created)}</td>
-                    <td>{money(c.gross_amount)}</td>
+                    {/* What this memo put against THIS invoice, like the payment rows above it.
+                        Its own gross only where it is linked to the invoice but applied elsewhere. */}
+                    <td>{money(Number(c.applied_amount) > 0 ? c.applied_amount : c.gross_amount)}</td>
                     <td>{RELATED_STATUS_LABELS[c.status] || c.status}</td>
                   </tr>
                 ))}

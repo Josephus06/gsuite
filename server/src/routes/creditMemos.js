@@ -236,10 +236,25 @@ router.get('/for-customer/:customerId', requireAuth, async (req, res, next) => {
 
 router.get('/by-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
+    // RAISED FROM the invoice, or APPLIED TO it. Only the first was asked for, and the second is
+    // how most credits actually reach an invoice: a memo raised from Credit Memos > Add carries no
+    // sales_invoice_id at all and does its work through credit_memo_applications. The invoice then
+    // read "Paid In Full" with "No payments or credits against this invoice yet" underneath --
+    // INV-1703, credited 78.00 by CM-5491, was the report of it.
+    //
+    // applied_amount is what this memo put against THIS invoice, not the memo's whole applied
+    // total: CM-5490 covers three SHEMBERG invoices at 9,722.31, and each of them should show its
+    // own share rather than the lot.
     const [rows] = await pool.query(
-      `SELECT id, credit_memo_no, date_created, gross_amount, applied_amount, status
-       FROM credit_memos WHERE sales_invoice_id = ? ORDER BY id DESC`,
-      [req.params.invoiceId]
+      `SELECT cm.id, cm.credit_memo_no, cm.date_created, cm.gross_amount, cm.status,
+              COALESCE(a.applied_here, 0) AS applied_amount
+         FROM credit_memos cm
+         LEFT JOIN (SELECT credit_memo_id, SUM(applied_amount) AS applied_here
+                      FROM credit_memo_applications WHERE sales_invoice_id = ?
+                     GROUP BY credit_memo_id) a ON a.credit_memo_id = cm.id
+        WHERE cm.sales_invoice_id = ? OR a.credit_memo_id IS NOT NULL
+        ORDER BY cm.id DESC`,
+      [req.params.invoiceId, req.params.invoiceId]
     );
     res.json(rows);
   } catch (err) {
