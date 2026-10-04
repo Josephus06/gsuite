@@ -17,6 +17,7 @@
 //   node src/db/import-delivery-tickets.js --preset=sales2 --from=2026-01-01 --to=2026-07-31 --dry-run
 //   node src/db/import-delivery-tickets.js --preset=sales2 --from=2026-01-01 --to=2026-07-31
 //   node src/db/import-delivery-tickets.js --preset=all --from=2021-01-01 --to=2021-12-31
+//   node src/db/import-delivery-tickets.js --preset=all --from=2021-01-01 --to=2026-12-31 //        --only-file=missing-dts.txt      (gap fill: only these tickets, nothing else touched)
 //
 // VOID tickets are skipped outright (they used to import with status 'void').
 const pool = require('../db');
@@ -38,6 +39,19 @@ const REP_PRESETS = {
   marketing: ['Jocelyn Ybañez', 'Ronel Parreño'],
   branches: ['ROSELYN P. TUNDAG', 'EUNICE EDAÑO GEYROZAGA', 'Cindy Marie Deniay_AYALA', 'Cindy Marie Deniay_SM', 'Dexter Bantilan', 'Alessa Pacinio', 'Precious Artista'],
 };
+// --only=DT-5555,DT-5581 (or --only-file=<path>, one number per line): import JUST these tickets
+// and leave every other ticket in the window alone.
+//
+// This exists because the import below REPLACES a ticket it already holds -- deletes the row and
+// inserts a fresh one, which hands it a new id. 5,800 sales_invoices on the droplet carry a
+// delivery_ticket_id, so a window-wide re-run to pick up a handful of missing tickets would
+// re-point every ticket it touched and leave those invoices referring to rows that no longer
+// exist. Naming the tickets wanted keeps a gap-filling run from disturbing anything else.
+const ONLY_FILE = argVal('only-file', '');
+const ONLY = new Set([
+  ...argVal('only', '').split(','),
+  ...(ONLY_FILE ? require('fs').readFileSync(ONLY_FILE, 'utf8').split(/[\s,]+/) : []),
+].map((x) => x.trim()).filter(Boolean));
 const PRESET = argVal('preset', 'sales2');
 const ALL_REPS = PRESET === 'all'; // scope to every locally-imported SO, not one division's
 const REPS = ALL_REPS ? [] : (REP_PRESETS[PRESET] || REP_PRESETS.sales2);
@@ -132,12 +146,13 @@ async function main() {
     // Scope is the SO set (already rep+window filtered when it was imported). The DT's own
     // Name_Empl can differ from the order's sales rep, so don't filter on it -- that would
     // drop legitimate tickets for these SOs.
+    if (ONLY.size && !ONLY.has(dt.dt_pk)) continue;
     if (!soByNo.has(dt.sl_pk)) { noSo += 1; continue; }
     if (seenDt.has(dt.dt_pk)) continue; // one local ticket per DT number
     seenDt.add(dt.dt_pk);
     tickets.push(dt);
   }
-  console.log(`Matched ${tickets.length} delivery ticket(s) in window ` +
+  console.log(`Matched ${tickets.length} delivery ticket(s)${ONLY.size ? ` of the ${ONLY.size} asked for` : ''} in window ` +
     `(${voidSkipped} void/cancelled skipped, ${noSo} whose sales order isn't local).`);
 
   if (DRY_RUN) {
