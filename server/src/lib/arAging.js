@@ -473,10 +473,20 @@ async function searchArCustomers(term) {
       WHERE c.name LIKE ?
         AND (EXISTS (SELECT 1 FROM sales_orders so JOIN sales_invoices si ON si.sales_order_id = so.id
                       WHERE so.customer_id = c.id)
+          -- An invoice raised against the customer directly, with no order behind it. Every one of
+          -- the 187 open 2017-2020 invoices is of that shape, and without this their customers
+          -- could not be picked at all -- the report would list them and the filter could not
+          -- find them.
+          OR EXISTS (SELECT 1 FROM sales_invoices si WHERE si.customer_id = c.id)
+          -- And the customer whose whole balance is an opening item: real in this report, and
+          -- previously invisible to its own filter unless they also had a payment or a credit.
+          OR EXISTS (SELECT 1 FROM opening_ar_items o WHERE o.customer_id = c.id)
           OR EXISTS (SELECT 1 FROM customer_payments cp WHERE cp.customer_id = c.id)
           OR EXISTS (SELECT 1 FROM credit_memos cm WHERE cm.customer_id = c.id))
       ORDER BY c.name
-      LIMIT 25`,
+      -- The picker paginates ten at a time, so 25 was a page and a half. 50 fills it without
+      -- turning a keystroke into a scan of 35,000 customers.
+      LIMIT 50`,
     [q],
   );
   return rows;

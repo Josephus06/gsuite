@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
+import EntityPicker from '../../components/EntityPicker';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import { REPORT_TIMING } from '../../utils/reportTiming';
 import { downloadFile } from '../../utils/downloadFile';
@@ -56,9 +57,7 @@ export default function ArAgingDetails() {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [customerText, setCustomerText] = useState('');
   const [customerOptions, setCustomerOptions] = useState([]);
-  const customerTimer = useRef(null);
 
   useEffect(() => {
     api.get('/lookups/locations').then(({ data }) => setLocations(data)).catch(() => {});
@@ -101,17 +100,20 @@ export default function ArAgingDetails() {
     setApplied({ ...filters });
   }
 
-  function onCustomerType(text) {
-    setCustomerText(text);
-    const exact = customerOptions.find((c) => c.name.toLowerCase() === text.trim().toLowerCase());
-    setFilters((f) => ({ ...f, customer: exact || null }));
-    if (customerTimer.current) clearTimeout(customerTimer.current);
-    if (text.trim().length < 2) { setCustomerOptions([]); return; }
-    customerTimer.current = setTimeout(() => {
-      api.get('/reports/ar-aging-details/customers', { params: { q: text.trim() } })
-        .then(({ data }) => setCustomerOptions(data))
-        .catch(() => setCustomerOptions([]));
-    }, 300);
+  // What the picker's own search box types, handed to the server. EntityPicker debounces it and
+  // filters locally over whatever comes back; a blank term loads the first page of the list so the
+  // modal is never empty on opening. A failed lookup leaves the list alone rather than clearing a
+  // selection the user can still see.
+  function searchCustomers(text) {
+    api.get('/reports/ar-aging-details/customers', { params: { q: (text || '').trim() } })
+      .then(({ data }) => setCustomerOptions(() => {
+        // The current selection is kept in the list whatever the search returns -- EntityPicker
+        // renders its trigger from the item matching `value`, so dropping it would blank a filter
+        // that is still in force.
+        const sel = filters.customer;
+        return sel && !data.some((c) => String(c.id) === String(sel.id)) ? [sel, ...data] : data;
+      }))
+      .catch(() => {});
   }
 
   async function download() {
@@ -167,29 +169,23 @@ export default function ArAgingDetails() {
         <div className="filter-grid">
           <div className="field">
             <label>Customer</label>
-            <div style={{ display: 'flex', gap: 4, alignItems: 'stretch' }}>
-              <input
-                list="ar-aging-details-customers"
-                value={customerText}
-                placeholder="Customer"
-                onChange={(e) => onCustomerType(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') generate(); }}
-                style={{ flex: 1, minWidth: 0 }}
-              />
-              <datalist id="ar-aging-details-customers">
-                {customerOptions.map((c) => <option key={c.id} value={c.name} />)}
-              </datalist>
-              <button
-                type="button" className="btn" title="Clear Customer" aria-label="Clear Customer"
-                disabled={!customerText} style={{ padding: '7px 10px' }}
-                onClick={() => { setCustomerText(''); setCustomerOptions([]); setFilters({ ...filters, customer: null }); }}
-              >
-                ✕
-              </button>
-            </div>
-            {customerText.trim() && !filters.customer && (
-              <span className="muted" style={{ fontSize: 12 }}>Pick a name from the list to filter by it.</span>
-            )}
+            {/* A picker, not a type-ahead. The datalist that stood here only filtered once a name
+                was typed EXACTLY as stored, and said so in a hint underneath -- on 35,000 customers
+                whose names carry commas and INC. in whichever spelling the source used, that is a
+                guessing game. The modal searches the server and the row that is clicked IS the
+                selection, so there is nothing left to get subtly wrong. */}
+            <EntityPicker
+              label="Customer"
+              items={customerOptions}
+              value={filters.customer?.id ?? ''}
+              getLabel={(c) => c.name}
+              columns={[{ key: 'name', label: 'Customer' }]}
+              searchKeys={['name']}
+              placeholder="--ALL--"
+              onSearch={searchCustomers}
+              onSelect={(c) => setFilters((f) => ({ ...f, customer: c || null }))}
+              onClear={() => setFilters((f) => ({ ...f, customer: null }))}
+            />
           </div>
           <div className="field">
             <label>Location</label>
