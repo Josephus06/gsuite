@@ -40,10 +40,6 @@ export default function BinCardReport() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [page, setPage] = useState(1);
-  // Off by default: the anchored view is the one that answers "what is on the shelf". Full
-  // history replays every movement this database holds from zero, which is what the migration
-  // actually brought over and disagrees with the source system on 55% of item+location pairs.
-  const [fullHistory, setFullHistory] = useState(false);
   const [meta, setMeta] = useState(null);
 
   useEffect(() => {
@@ -70,7 +66,6 @@ export default function BinCardReport() {
     const params = { item_id: item.id };
     if (location) params.location_id = location.id;
     if (period === 'as_of') params.as_of = date;
-    if (fullHistory) params.full = 1;
     try {
       const { data } = await api.get('/bin-card-reports', { params });
       setRows(data.rows);
@@ -167,27 +162,33 @@ export default function BinCardReport() {
               </div>
             )}
           </div>
-          <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 16 }}>
+          {/* The "Full history" switch that used to sit here is gone. It replayed this database's
+              own movements from zero, ignoring the opening balance -- which on an item whose stock
+              predates the migration runs the card NEGATIVE while the source system shows a healthy
+              bin (SINTRABOARD WHITE 3MM read -17 SHT against the source's 11, a constant 28-sheet
+              offset through every row). Both numbers were honest answers to different questions,
+              but only one of them is the question a bin card is opened to ask, and the other was a
+              switch away. Reconciling the migration itself is src/db/compare-stock-asof.js. */}
+          <div style={{ marginTop: 12 }}>
             <button className="btn btn-primary" onClick={generate} disabled={loading}>
               Generate
             </button>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, margin: 0, fontWeight: 400 }}>
-              <input type="checkbox" checked={fullHistory} onChange={(e) => setFullHistory(e.target.checked)} />
-              Full history (every movement from zero, does not reconcile with stock on hand)
-            </label>
           </div>
         </div>
       )}
 
       {error && <div className="error-banner">{error}</div>}
 
-      {/* Which of the two ledgers this is. Without saying so, the anchored view looks like
-          history has gone missing, and the full view looks like the stock figure is wrong. */}
+      {/* Which of the two ledgers this is. The anchored view is the only one that can be ASKED
+          for now, but it is not always available: an install with no imported Beginning Balance,
+          or a date earlier than the one that balance was struck for, still falls back to replaying
+          what this database holds -- and that has to say so, or it looks like the stock figure is
+          simply wrong. */}
       {meta && (
         <div className="muted" style={{ marginBottom: 8, fontSize: 13 }}>
           {meta.reconciled
             ? `Opened from the source system's Beginning Balance as at ${meta.opening_at || meta.window_from}; movements before that date are not replayed.`
-            : 'Full history — every movement this database holds, run from zero. This does not reconcile with stock on hand.'}
+            : 'No Beginning Balance covers this date, so this is every movement this database holds, run from zero. It does not reconcile with stock on hand.'}
         </div>
       )}
 

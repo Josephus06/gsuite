@@ -36,16 +36,25 @@ const UNION_SQL = movementsSql();
 // imported for -- so the report opens from that figure and replays only the movements inside the
 // window, instead of replaying an incomplete decade from zero.
 //
-// ?full=1 gives the old behaviour, every movement from zero. It is the honest view of what this
-// database actually holds, which is worth keeping for anyone reconciling the migration itself --
-// but it is not the view to hand someone asking what is on the shelf.
+// THERE IS NO LONGER A WAY TO ASK FOR THE UNANCHORED VIEW. `?full=1` used to give one: every
+// movement from zero, the honest picture of what this database actually holds. It is a real
+// question, but not the one a bin card is opened to ask, and the answers diverge alarmingly --
+// SINTRABOARD WHITE 3MM at Warehouse - Central read -17 SHT from zero against the source
+// system's 11, a constant 28-sheet offset running through every row of the card, because the
+// sheets already on that shelf predate the migrated history. A negative balance that no warehouse
+// can hold was one checkbox away from the figure people act on. Reconciling the migration itself
+// belongs in src/db/compare-stock-asof.js, which answers it against the source rather than
+// leaving the reader to tell two views apart.
+//
+// The fallback below is NOT that view returning by another name -- it is what is left when there
+// is nothing to anchor to, and it says so (`reconciled: false`).
 //
 // A ledger imported before window_from existed cannot be anchored (the Beginning Qty is real but
 // nothing records which date it belongs to), so those fall back to the full view and say so via
 // `reconciled: false` rather than quietly anchoring to a date that was guessed.
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { item_id: itemId, location_id: locationId, as_of: asOf, full } = req.query;
+    const { item_id: itemId, location_id: locationId, as_of: asOf } = req.query;
     if (!itemId) return res.status(400).json({ error: 'item_id is required' });
 
     // Every qty this build actually writes to inventory_locations.qty_on_hand is in the
@@ -78,21 +87,19 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     // should fall back to the view it already had, not stop working, so any failure to read the
     // anchor means there is no anchor.
     let opening = null;
-    if (full !== '1') {
-      try {
-        [[opening]] = await pool.query(
-          `SELECT SUM(beg_qty) AS beg_stock, MIN(window_from) AS window_from, MAX(window_to) AS window_to
-             FROM live_stock_ledger
-            WHERE inventory_id = ?${locationId ? ' AND location_id = ?' : ''}`,
-          locationId ? [itemId, locationId] : [itemId]
-        );
-      } catch (err) {
-        opening = null;
-      }
+    try {
+      [[opening]] = await pool.query(
+        `SELECT SUM(beg_qty) AS beg_stock, MIN(window_from) AS window_from, MAX(window_to) AS window_to
+           FROM live_stock_ledger
+          WHERE inventory_id = ?${locationId ? ' AND location_id = ?' : ''}`,
+        locationId ? [itemId, locationId] : [itemId]
+      );
+    } catch (err) {
+      opening = null;
     }
     // No row for this item/location, but the install has a snapshot: the source held none here when
     // it was struck, so the card opens at zero on that date -- not on the full, unreconciled history.
-    if (full !== '1' && opening && !opening.window_from) {
+    if (opening && !opening.window_from) {
       try {
         const [[g]] = await pool.query('SELECT MIN(window_from) AS window_from FROM live_stock_ledger');
         if (g && g.window_from) opening = { beg_stock: 0, window_from: g.window_from, window_to: null };
@@ -116,7 +123,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     // than the question. Answer from full history instead, and say so, rather than heading the
     // report with a Beginning Balance dated after the date asked for.
     const asOfBeforeWindow = !!(asOf && anchorCloses && String(asOf).slice(0, 10) < anchorCloses);
-    const reconciled = !!windowFrom && full !== '1' && !asOfBeforeWindow;
+    const reconciled = !!windowFrom && !asOfBeforeWindow;
     // The date the opening balance is being quoted AT: the window's own start, or the day it
     // closes when that is the day asked about. A report headed "as at 01 Oct" for a 30 Sept
     // question reads as a bug even when the number is right.
