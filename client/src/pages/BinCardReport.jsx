@@ -81,6 +81,7 @@ export default function BinCardReport() {
       });
       setMeta({
         reconciled: data.reconciled,
+        opening_at: data.opening_at,
         window_from: data.window_from,
         opening_balance_base: data.opening_balance_base,
         opening_balance_stock: data.opening_balance_stock,
@@ -185,7 +186,7 @@ export default function BinCardReport() {
       {meta && (
         <div className="muted" style={{ marginBottom: 8, fontSize: 13 }}>
           {meta.reconciled
-            ? `Opened from the source system's Beginning Balance as at ${meta.window_from}; movements before that date are not replayed.`
+            ? `Opened from the source system's Beginning Balance as at ${meta.opening_at || meta.window_from}; movements before that date are not replayed.`
             : 'Full history — every movement this database holds, run from zero. This does not reconcile with stock on hand.'}
         </div>
       )}

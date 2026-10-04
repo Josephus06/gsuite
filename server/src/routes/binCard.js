@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { movementsSql, unitIsBase, unitIsConvertible, toDocQty } = require('../lib/stockLedger');
+const { dayBefore } = require('../lib/stockMovements');
 
 const router = express.Router();
 const ROUTE = '/bin-card-reports';
@@ -98,11 +99,28 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       } catch (err) { /* no snapshot column: keep the full-history view */ }
     }
     const windowFrom = opening?.window_from ? String(opening.window_from).slice(0, 10) : null;
-    // Asked "as of" a date before the opening balance was struck, the anchor is no help -- it
-    // describes a later moment than the question. Answer from full history instead, and say so,
-    // rather than heading the report with a Beginning Balance dated after the date asked for.
-    const asOfBeforeWindow = !!(asOf && windowFrom && String(asOf).slice(0, 10) < windowFrom);
+    // THE DAY THE ANCHOR CLOSES IS ANSWERABLE TOO.
+    //
+    // The opening balance is struck at the START of window_from, which makes it equally the
+    // CLOSING balance of the day before -- so a report asked for that day is answered by the
+    // anchor alone, with no movements inside the window yet to replay. Against the source's own
+    // Stock Ledger for 2026-09-30, the day before this install's 2026-10-01 snapshot, that figure
+    // agreed on all 8,496 item/location pairs; the full-history fallback this used to take instead
+    // disagreed on 4,604 of them and ran 904 of the stock ones negative, which no bin can be.
+    //
+    // ONE day, not any earlier date: Sept 29 would need the movements of Sept 30 subtracted back
+    // off the anchor, and the migrated history this database holds is exactly what cannot be
+    // trusted to do that -- which is why the anchor exists at all.
+    const anchorCloses = windowFrom ? dayBefore(windowFrom) : null;
+    // Asked "as of" a date before even that, the anchor is no help -- it describes a later moment
+    // than the question. Answer from full history instead, and say so, rather than heading the
+    // report with a Beginning Balance dated after the date asked for.
+    const asOfBeforeWindow = !!(asOf && anchorCloses && String(asOf).slice(0, 10) < anchorCloses);
     const reconciled = !!windowFrom && full !== '1' && !asOfBeforeWindow;
+    // The date the opening balance is being quoted AT: the window's own start, or the day it
+    // closes when that is the day asked about. A report headed "as at 01 Oct" for a 30 Sept
+    // question reads as a bug even when the number is right.
+    const openingAt = reconciled && asOf && String(asOf).slice(0, 10) < windowFrom ? anchorCloses : windowFrom;
     const openingBase = reconciled ? Number(opening.beg_stock || 0) * conversionFactor : 0;
 
     const where = ['item_id = ?'];
@@ -170,7 +188,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     // their head. It sorts oldest, which after the reverse below puts it at the very end.
     if (reconciled) {
       withBalance.unshift({
-        trans_date: windowFrom,
+        trans_date: openingAt,
         trans_no: null,
         trans_type: 'Beginning Balance',
         ref_no: null,
@@ -212,6 +230,9 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       // anchored to live's own opening balance, and from when.
       reconciled,
       window_from: reconciled ? windowFrom : null,
+      // What the Beginning Balance row is dated -- window_from, or the day it closes when the
+      // report was asked for that day.
+      opening_at: reconciled ? openingAt : null,
       window_to: opening?.window_to ? String(opening.window_to).slice(0, 10) : null,
       opening_balance_base: reconciled ? openingBase : null,
       opening_balance_stock: reconciled ? openingBase / conversionFactor : null,

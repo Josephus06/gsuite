@@ -258,5 +258,6 @@ function shapeLedgerRow(r) {
 }
 
 module.exports = {
-  movementsQuery, ledgerQuery, shapeLedgerRow, SOURCES, SNAPSHOT_FROM, snapshotFrom, NON_STOCK_TYPES, today,
+  movementsQuery, ledgerQuery, shapeLedgerRow, SOURCES, SNAPSHOT_FROM, snapshotFrom, NON_STOCK_TYPES,
+  today, dayBefore,
 };
