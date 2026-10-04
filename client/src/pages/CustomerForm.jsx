@@ -47,6 +47,10 @@ export default function CustomerForm() {
   const inFlight = useRef(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  // The customer this name would duplicate, if any -- looked up when the Name field is left, and
+  // again from the server's own refusal on Save. Held as a record rather than a message so the
+  // form can offer to OPEN that customer, which is what the person typing actually wants.
+  const [duplicate, setDuplicate] = useState(null);
   const [tab, setTab] = useState('contacts');
   const canSave = isNew ? can('/customers', 'can_add') : can('/customers', 'can_edit');
 
@@ -82,6 +86,7 @@ export default function CustomerForm() {
   async function save() {
     setError(''); setNotice('');
     if (!form.name.trim()) { setError('Name is required.'); return; }
+    setDuplicate(null);
     if (inFlight.current) return;
     inFlight.current = true;
     setSaving(true);
@@ -111,6 +116,10 @@ export default function CustomerForm() {
       }
     } catch (e) {
       setError(e.response?.data?.error || 'Save failed.');
+      // The server refuses a duplicate name whatever the form believed. Re-asking rather than
+      // building a record out of the typed name means the banner names the customer ON FILE,
+      // spelled its way -- which is the one to open, and often not spelled quite as typed.
+      if (e.response?.data?.existing_customer_id) checkName(form.name);
     } finally {
       inFlight.current = false;
       setSaving(false);
@@ -120,6 +129,19 @@ export default function CustomerForm() {
   if (loading) return <LoadingSpinner />;
 
   const input = (k, props = {}) => <input value={form[k] ?? ''} onChange={(e) => set(k, e.target.value)} {...props} />;
+
+  // Asked on blur, not on every keystroke: the answer is only useful once a whole name is typed,
+  // and 35,000 customers is not a list to re-scan per character. A failed check never blocks the
+  // form -- the Save is checked by the server regardless, which is where the rule actually lives.
+  async function checkName(name) {
+    if (!String(name || '').trim()) { setDuplicate(null); return; }
+    try {
+      const { data } = await api.get('/customers/check-name', { params: { name, exclude_id: id || undefined } });
+      setDuplicate(data.duplicate ? data.existing : null);
+    } catch {
+      setDuplicate(null);
+    }
+  }
 
   return (
     <div>
@@ -134,7 +156,19 @@ export default function CustomerForm() {
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '0 24px' }}>
           <div>
-            <div className="field"><label>Name</label>{input('name', { required: true })}</div>
+            <div className="field">
+              <label>Name</label>
+              {input('name', { required: true, onBlur: (e) => checkName(e.target.value) })}
+              {duplicate && (
+                <div className="error-banner" style={{ marginTop: 6 }}>
+                  <strong>{duplicate.name}</strong>{duplicate.customer_code ? ` (${duplicate.customer_code})` : ''} is
+                  already on file. Use that customer rather than saving another.{' '}
+                  <button type="button" className="link-btn" onClick={() => navigate(`/customers/${duplicate.id}/edit`)}>
+                    Open it
+                  </button>
+                </div>
+              )}
+            </div>
             <div className="field"><label>Address</label><textarea rows={4} value={form.address ?? ''} onChange={(e) => set('address', e.target.value)} /></div>
             <div className="field">
               <label>Tax Code</label>

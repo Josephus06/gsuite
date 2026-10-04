@@ -55,6 +55,18 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   }
 });
 
+// Does this name already belong to somebody? The form asks as soon as the Name field is left, so
+// the answer arrives before the rest of the form is filled in rather than on the Save that is
+// refused at the end of it. Registered ahead of GET /:id, which would otherwise swallow it.
+router.get('/check-name', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const existing = await findCustomerByName(pool, req.query.name, Number(req.query.exclude_id) || null);
+    res.json({ duplicate: !!existing, existing: existing || null, message: existing ? duplicateMessage(existing) : null });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[customer]] = await pool.query(

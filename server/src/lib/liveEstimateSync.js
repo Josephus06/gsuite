@@ -12,6 +12,7 @@
 // Express request handler with no browser/Chromium install needed on the host.
 const pool = require('../db');
 const { upperCustomerName } = require('./customerName');
+const { findCustomerByName } = require('./customerDuplicates');
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
 const TARGET_SALES_REPS = ['Arjie Bayagna', 'Catherine Jane  Langajed', 'Jocel Ann Berina'];
@@ -112,7 +113,12 @@ async function ensureCustomer(cache, liveCust) {
   const name = clean(liveCust.Name_Cust || liveCust.Company_Cust);
   if (!name) return null;
   if (cache.customer.has(name)) return cache.customer.get(name);
-  const [[existing]] = await pool.query('SELECT id FROM customers WHERE LOWER(name) = LOWER(?)', [name]);
+  // Matched the way the Customers screen matches -- case, spaces AND punctuation ignored
+  // (lib/customerDuplicates.js). LOWER(name) alone used to stand here, and it is how most of the
+  // duplicate customers on file got there: 144 of the 153 duplicated names on the droplet differ
+  // only by a comma or a space ("ADR GLOBAL TRANSPORT INC." against "ADR GLOBAL TRANSPORT, INC."),
+  // which an exact match cannot see, so each spelling the source sent became another customer.
+  const existing = await findCustomerByName(pool, name);
   if (existing) { cache.customer.set(name, existing.id); return existing.id; }
   const code = `LIVE-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
   const [result] = await pool.query(
