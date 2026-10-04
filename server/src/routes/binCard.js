@@ -140,11 +140,11 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       where.push('trans_date <= ?');
       params.push(asOf);
     }
-    // Anchored view: only the movements the opening balance does not already account for.
-    if (reconciled) {
-      where.push('trans_date >= ?');
-      params.push(windowFrom);
-    }
+    // EVERY movement up to the as-of date, anchored or not. The anchored view used to ask only
+    // for those from windowFrom on -- correct arithmetic, but it left the card with the two rows
+    // October has so far and no sign of the dozen transfers that emptied the bin in September.
+    // A bin card with the movements taken out of it is not a bin card. They are all read, and the
+    // opening balance decides which DIRECTION each one is accumulated in; see below.
 
     // sort_id is only meaningful as a tie-breaker *within* one transaction type (it's an
     // auto-increment id from a different table per branch of the UNION, so comparing it
@@ -154,15 +154,38 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       params
     );
 
+    // THE BALANCE RUNS BOTH WAYS OUT OF THE OPENING BALANCE.
+    //
+    // Forwards is the obvious half: each movement after the anchor adds to it. Backwards is the
+    // half that was missing, and it is just as exact -- the anchor is the balance at that instant
+    // and every movement before it is known, so the balance before any of them is the anchor with
+    // those movements taken back off. Running backwards out of 11 SHT reproduces the source
+    // system's own September column for SINTRABOARD WHITE 3MM to the sheet: 12 before the
+    // adjustment that took 4, 16 before that, 17, 19, 20 ... and the card reads like the source's
+    // instead of starting from zero and going negative.
+    //
+    // Where this database's history for a period is incomplete the derived balances drift from
+    // the source by exactly what is missing -- the same drift the figures always had, now visible
+    // against a true anchor rather than against zero.
+    const firstPost = reconciled ? rows.findIndex((r) => String(r.trans_date).slice(0, 10) >= windowFrom) : 0;
+    // No movement falls inside the window: every row read belongs before the anchor.
+    const splitAt = firstPost === -1 ? rows.length : firstPost;
+    const delta = (r) => Number(r.qty_in) - Number(r.qty_out);
+    const balances = new Array(rows.length);
     let balanceBase = openingBase;
+    for (let i = splitAt; i < rows.length; i += 1) { balanceBase += delta(rows[i]); balances[i] = balanceBase; }
+    // The last movement before the window closes ON the opening balance, by definition.
+    let back = openingBase;
+    for (let i = splitAt - 1; i >= 0; i -= 1) { balances[i] = back; back -= delta(rows[i]); }
+
     // uom_convertible is decided HERE, by the same helper the ledger's own conversion uses, rather
     // than by the browser comparing strings. The report was previously flagging any unit whose
     // spelling differed from the base CODE -- so "Square Foot" against a base of SQFT, and the
     // MM/IN that job-order lines carry as their length/width unit, were all marked unreliable
     // even though the ledger converts them correctly. A warning that contradicts the number
     // beside it is worse than no warning.
-    const withBalance = rows.map((r) => {
-      balanceBase += Number(r.qty_in) - Number(r.qty_out);
+    const withBalance = rows.map((r, i) => {
+      const rowBalance = balances[i];
       // Qty In/Out are reported in the unit the SOURCE DOCUMENT used, while the balances stay in
       // Base Unit -- an adjustment of 2 SHT reads "2 SHT" and moves the balance 64 SQFT, which is
       // the row the warehouse can actually check against the paperwork. qty_in/qty_out keep the
@@ -182,8 +205,12 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
         doc_uom: docUom,
         doc_qty_in: toDoc(r.qty_in),
         doc_qty_out: toDoc(r.qty_out),
-        balance_base: balanceBase,
-        balance_stock: balanceBase / conversionFactor,
+        balance_base: rowBalance,
+        balance_stock: rowBalance / conversionFactor,
+        // Before the anchor the balance is derived by running back out of it rather than
+        // accumulated up to it -- same arithmetic, opposite direction, and worth being able to
+        // tell apart when a figure is being checked against the paperwork.
+        balance_derived: reconciled && i < splitAt,
         uom_convertible: unitIsConvertible(
           r.uom, unitInfo.base_unit_code, unitInfo.base_unit_title, unitInfo.conversion_factor,
         ),
@@ -192,9 +219,11 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     // The opening balance is itself a row of the ledger -- the one every other balance is
     // measured from -- so it is sent as one rather than as a number the reader has to hold in
-    // their head. It sorts oldest, which after the reverse below puts it at the very end.
+    // their head. It sits at the boundary it describes, between the movements derived back out of
+    // it and the ones accumulated forward from it; it used to be unshifted to the very oldest
+    // position, which was the same place when nothing older than the anchor was listed.
     if (reconciled) {
-      withBalance.unshift({
+      withBalance.splice(splitAt, 0, {
         trans_date: openingAt,
         trans_no: null,
         trans_type: 'Beginning Balance',

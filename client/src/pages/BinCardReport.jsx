@@ -187,7 +187,7 @@ export default function BinCardReport() {
       {meta && (
         <div className="muted" style={{ marginBottom: 8, fontSize: 13 }}>
           {meta.reconciled
-            ? `Opened from the source system's Beginning Balance as at ${meta.opening_at || meta.window_from}; movements before that date are not replayed.`
+            ? `Opened from the source system's Beginning Balance as at ${meta.opening_at || meta.window_from}. Movements after that date are added to it; balances before it are derived by running back out of it.`
             : 'No Beginning Balance covers this date, so this is every movement this database holds, run from zero. It does not reconcile with stock on hand.'}
         </div>
       )}
