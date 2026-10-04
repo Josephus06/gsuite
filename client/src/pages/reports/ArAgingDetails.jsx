@@ -30,11 +30,18 @@ function today() {
 
 // Where a row links to. A Trans # that is not a link is a dead end on a report whose whole job is
 // to send someone to the document.
-const LINK_BY_TYPE = {
-  Invoice: (it) => `/sales-invoices/${it.id}`,
-  'Credit Memo': (it) => `/credit-memos/${it.id}`,
-  'Unapplied Payment': (it) => `/customer-payments/${it.id}`,
+// A row only gets a link when there is a document to open. Opening-balance rows carry the source
+// system's aging rather than a T1S document: an opening Unapplied Payment or Credit Memo has no id
+// at all (opening_ar_items can only link to an invoice), and an opening Invoice has one only once
+// that invoice exists here. Building the path regardless produced "/sales-invoices/null", which
+// renders as a page about nothing -- INV-1692 on BE HOTEL AND RESORTS (MACTAN) was the report of
+// it. 3,065 of the 4,989 rows on the droplet were in that state.
+const PATH_BY_TYPE = {
+  Invoice: 'sales-invoices',
+  'Credit Memo': 'credit-memos',
+  'Unapplied Payment': 'customer-payments',
 };
+const linkFor = (it) => (it.id == null ? null : `/${PATH_BY_TYPE[it.type]}/${it.id}`);
 
 const PAGE_SIZES = [25, 50, 100, 200];
 
@@ -286,7 +293,7 @@ export default function ArAgingDetails() {
                     <td></td>
                   </tr>,
                   ...g.items.map((it) => {
-                    const href = LINK_BY_TYPE[it.type]?.(it);
+                    const href = PATH_BY_TYPE[it.type] ? linkFor(it) : null;
                     return (
                       <tr key={`${it.type}-${it.id}`}>
                         <td></td>
