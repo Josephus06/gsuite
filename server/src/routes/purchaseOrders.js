@@ -6,7 +6,7 @@ const { buildPurchaseOrderPdf, purchaseOrderPdfFilename } = require('../lib/purc
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { insertNumbered } = require('../lib/docNumber');
-const { isApproved, normalisePoStatus } = require('../lib/poStatus');
+const { isApproved, normalisePoStatus, statusNormSql } = require('../lib/poStatus');
 
 const router = express.Router();
 const ROUTE = '/purchase-orders';
@@ -441,6 +441,144 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
       [req.params.id]
     );
     res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// "Compare" on a Purchase Order line -- what this item has cost before, so the rate being
+// approved can be judged against what was actually paid for it elsewhere.
+//
+// Two tables, from one body of purchases (PURCHASES_SQL below):
+//
+//   suppliers  one row per supplier, its MOST RECENT price -- the comparison itself, and what
+//              the live system's own "Supplier Prices" popup shows. Computed over EVERY purchase,
+//              not over the listed page of history: a supplier last used in 2022 still belongs in
+//              a price comparison, and on a busy item it would fall off any sensible LIMIT.
+//   history    the individual purchases behind it, newest first, capped -- a long-running item
+//              has hundreds and nobody reads past the recent ones.
+//
+// A purchase is counted once, from the document that holds the price actually paid: the Receiving
+// Report where the item has been received (its rate is the invoice price, which can differ from
+// the PO's), the Purchase Order itself where it has not. Cancelled POs are not purchases.
+// `exclude_po` keeps the order being looked at out of its own history.
+//
+// inventory_supplier_prices is folded in last, for suppliers this install holds no document for.
+// That table is empty on the droplet today, but the Inventory screen maintains it by hand and the
+// source system's own popup reads from a list like it -- a hand-entered quotation for a supplier
+// never yet bought from is exactly what a comparison wants. Those rows carry their ref_no as text,
+// not a link: the document they name may not be in this database.
+const PURCHASES_SQL = `
+  SELECT 'RR' AS doc_type, rl.id AS line_id, rr.id AS doc_id, rr.receipt_no AS doc_no,
+         rr.date_created AS doc_date, po.id AS purchase_order_id, po.po_no,
+         po.supplier_id, s.name AS supplier_name,
+         rl.qty_received AS qty, rl.rate, rl.disc_percent,
+         COALESCE(pol.purchase_unit, pol.unit_title) AS unit
+    FROM purchase_order_receipt_lines rl
+    JOIN purchase_order_receipts rr ON rr.id = rl.purchase_order_receipt_id
+    JOIN purchase_order_lines pol ON pol.id = rl.purchase_order_line_id
+    JOIN purchase_orders po ON po.id = rr.purchase_order_id
+    JOIN suppliers s ON s.id = po.supplier_id
+   WHERE rl.item_id = ? AND po.id <> ?
+  UNION ALL
+  SELECT 'PO', pol.id, po.id, po.po_no,
+         po.date_created, po.id, po.po_no,
+         po.supplier_id, s.name,
+         pol.qty, pol.rate, pol.disc_percent,
+         COALESCE(pol.purchase_unit, pol.unit_title)
+    FROM purchase_order_lines pol
+    JOIN purchase_orders po ON po.id = pol.purchase_order_id
+    JOIN suppliers s ON s.id = po.supplier_id
+   WHERE pol.item_id = ? AND po.id <> ?
+     AND ${statusNormSql('po.status')} NOT IN ('cancelled', 'canceled')
+     AND NOT EXISTS (
+       SELECT 1 FROM purchase_order_receipt_lines rl2 WHERE rl2.purchase_order_line_id = pol.id
+     )`;
+
+const PRICE_HISTORY_LIMIT = 50;
+
+router.get('/item-price-history/:itemId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const itemId = Number(req.params.itemId);
+    if (!itemId) return res.status(400).json({ error: 'itemId is required' });
+    // 0 matches no purchase order, so "no exclusion" needs no second version of the query.
+    const excludePo = Number(req.query.exclude_po) || 0;
+    const args = [itemId, excludePo, itemId, excludePo];
+
+    const [[item]] = await pool.query(
+      'SELECT id, item_code, display_name FROM inventories WHERE id = ?',
+      [itemId]
+    );
+    if (!item) return res.status(404).json({ error: 'Not found' });
+
+    const [history] = await pool.query(
+      `SELECT * FROM (${PURCHASES_SQL}) h
+        ORDER BY h.doc_date DESC, h.doc_id DESC
+        LIMIT ${PRICE_HISTORY_LIMIT}`,
+      args
+    );
+
+    // One row per supplier: its newest purchase, by the same ordering the history reads in.
+    const [latest] = await pool.query(
+      `SELECT r.* FROM (
+         SELECT h.*, ROW_NUMBER() OVER (
+                  PARTITION BY h.supplier_id ORDER BY h.doc_date DESC, h.doc_id DESC
+                ) AS rn
+           FROM (${PURCHASES_SQL}) h
+       ) r
+       WHERE r.rn = 1
+       ORDER BY r.doc_date DESC`,
+      args
+    );
+
+    const [priceList] = await pool.query(
+      `SELECT isp.supplier_id, s.name AS supplier_name, isp.price AS rate,
+              isp.last_purchase_date, isp.ref_no
+         FROM inventory_supplier_prices isp
+         JOIN suppliers s ON s.id = isp.supplier_id
+        WHERE isp.inventory_id = ?
+        ORDER BY isp.last_purchase_date DESC, isp.id DESC`,
+      [itemId]
+    );
+
+    const bySupplier = new Map();
+    for (const h of latest) {
+      bySupplier.set(h.supplier_id, {
+        supplier_id: h.supplier_id,
+        supplier_name: h.supplier_name,
+        rate: h.rate,
+        unit: h.unit,
+        last_purchase_date: h.doc_date,
+        ref_no: h.doc_no,
+        doc_type: h.doc_type,
+        doc_id: h.doc_id,
+        source: 'document',
+      });
+    }
+    for (const p of priceList) {
+      // Price list ordered newest-first, so the first row for a supplier is the one to keep.
+      if (bySupplier.has(p.supplier_id)) continue;
+      bySupplier.set(p.supplier_id, {
+        supplier_id: p.supplier_id,
+        supplier_name: p.supplier_name,
+        rate: p.rate,
+        unit: null,
+        last_purchase_date: p.last_purchase_date,
+        ref_no: p.ref_no,
+        doc_type: null,
+        doc_id: null,
+        source: 'price_list',
+      });
+    }
+
+    // Newest first, undated price-list rows last -- the same order the popup reads in.
+    const suppliers = [...bySupplier.values()].sort((a, b) => {
+      const da = a.last_purchase_date ? new Date(a.last_purchase_date).getTime() : -Infinity;
+      const db = b.last_purchase_date ? new Date(b.last_purchase_date).getTime() : -Infinity;
+      return db - da;
+    });
+
+    res.json({ item, suppliers, history, history_limit: PRICE_HISTORY_LIMIT });
   } catch (err) {
     next(err);
   }

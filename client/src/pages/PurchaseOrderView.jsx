@@ -83,6 +83,26 @@ export default function PurchaseOrderView() {
   const [emailError, setEmailError] = useState('');
   const [emailResult, setEmailResult] = useState(null);
 
+  // "Compare" on an item line: what this item has cost before, per supplier.
+  const [compareLine, setCompareLine] = useState(null);
+  const [compareData, setCompareData] = useState(null);
+  const [compareError, setCompareError] = useState('');
+
+  async function openCompare(line) {
+    setCompareLine(line);
+    setCompareData(null);
+    setCompareError('');
+    try {
+      // exclude_po: this order is the thing being compared, not one of its own precedents.
+      const { data } = await api.get(`/purchase-orders/item-price-history/${line.item_id}`, {
+        params: { exclude_po: id },
+      });
+      setCompareData(data);
+    } catch (err) {
+      setCompareError(err.response?.data?.error || 'Could not load this item’s price history.');
+    }
+  }
+
   async function openEmail() {
     setEmailError('');
     setEmailResult(null);
@@ -283,6 +303,7 @@ export default function PurchaseOrderView() {
             <table>
               <thead>
                 <tr>
+                  <th />
                   <th>Item</th>
                   {po.type === 'PO1' && <th>PR #</th>}
                   {/* Every PO type carries these now, Landed Cost included -- it used to be
@@ -297,6 +318,11 @@ export default function PurchaseOrderView() {
               <tbody>
                 {po.lines.map((l, idx) => (
                   <tr key={l.id}>
+                    <td>
+                      {l.item_id && (
+                        <button type="button" className="btn btn-sm" onClick={() => openCompare(l)}>Compare</button>
+                      )}
+                    </td>
                     <td>
                       <span style={{ color: '#db2777', fontWeight: 600, marginRight: 8 }}>{idx + 1}</span>
                       <button type="button" className="link-btn" onClick={() => navigate(`/inventory/${l.item_id}`)}>
@@ -434,6 +460,125 @@ export default function PurchaseOrderView() {
           onClose={() => setShowBillModal(false)}
           onSaved={(vb) => { setShowBillModal(false); navigate(`/vendor-bills/${vb.id}`); }}
         />
+      )}
+
+      {compareLine && (
+        <Modal
+          title="Supplier Prices"
+          large
+          onClose={() => { setCompareLine(null); setCompareData(null); setCompareError(''); }}
+        >
+          <div className="estimate-detail-grid" style={{ marginBottom: 16 }}>
+            <div>
+              <div>Item : <span className="hi">{compareLine.item_code}{compareLine.item_name ? ` — ${compareLine.item_name}` : ''}</span></div>
+              <div>Rate on this PO : <span className="hi">{money(compareLine.rate)}</span> {compareLine.purchase_unit || compareLine.unit_title || ''}</div>
+            </div>
+            <div>
+              <div>Supplier : <span className="hi">{po.supplier_name}</span></div>
+              <div>Qty : <span className="hi">{qty(compareLine.qty)}</span></div>
+            </div>
+          </div>
+
+          {compareError && <div className="error-banner">{compareError}</div>}
+          {!compareData && !compareError && <LoadingSpinner />}
+
+          {compareData && (
+            <>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Supplier</th><th>Rate</th><th>vs this PO</th><th>Unit</th>
+                      <th>Last Purchase Date</th><th>Ref #</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {compareData.suppliers.length === 0 && (
+                      <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                        Nothing on record — this item has not been bought before.
+                      </td></tr>
+                    )}
+                    {compareData.suppliers.map((sp) => {
+                      const poRate = Number(compareLine.rate) || 0;
+                      const rate = Number(sp.rate);
+                      // Only a meaningful comparison when both sides are real numbers.
+                      const diff = poRate > 0 && Number.isFinite(rate) ? ((rate - poRate) / poRate) * 100 : null;
+                      const isThisSupplier = sp.supplier_id === po.supplier_id;
+                      return (
+                        <tr key={`${sp.source}-${sp.supplier_id}`} style={isThisSupplier ? { fontWeight: 600 } : undefined}>
+                          <td>
+                            {sp.supplier_name}
+                            {isThisSupplier && <span className="muted"> · this PO’s supplier</span>}
+                          </td>
+                          <td>{money(sp.rate)}</td>
+                          <td style={{ color: diff === null || Math.abs(diff) < 0.005 ? undefined : diff < 0 ? '#16a34a' : '#dc2626' }}>
+                            {diff === null ? '—' : Math.abs(diff) < 0.005 ? 'same' : `${diff > 0 ? '+' : ''}${diff.toFixed(1)}%`}
+                          </td>
+                          <td>{sp.unit || '—'}</td>
+                          <td>{formatDate(sp.last_purchase_date)}</td>
+                          <td>
+                            {sp.doc_type === 'RR' && (
+                              <button type="button" className="link-btn" onClick={() => navigate(`/purchase-orders/receipts/${sp.doc_id}`)}>{sp.ref_no}</button>
+                            )}
+                            {sp.doc_type === 'PO' && (
+                              <button type="button" className="link-btn" onClick={() => navigate(`/purchase-orders/${sp.doc_id}`)}>{sp.ref_no}</button>
+                            )}
+                            {/* Price-list rows name a document this install may not hold, so no link. */}
+                            {!sp.doc_type && <span>{sp.ref_no || '—'} <span className="muted">· price list</span></span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <h3 style={{ marginTop: 20, marginBottom: 8 }}>Purchase History</h3>
+              <p className="muted" style={{ marginTop: 0 }}>
+                {compareData.history.length >= compareData.history_limit
+                  ? `The ${compareData.history_limit} most recent purchases of this item`
+                  : 'Every purchase of this item'}, newest first — priced off the Receiving Report
+                where it has been received, off the Purchase Order where it has not. This order is
+                not listed. The table above reads the whole history, not just this page of it.
+              </p>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Date</th><th>Document</th><th>Supplier</th><th>Qty</th><th>Unit</th><th>Rate</th><th>Disc %</th></tr>
+                  </thead>
+                  <tbody>
+                    {compareData.history.length === 0 && (
+                      <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                        No purchase documents for this item yet.
+                      </td></tr>
+                    )}
+                    {/* Keyed on the LINE, not the document: a Receiving Report can hold the same
+                        item on more than one line, and two rows sharing a key is a React bug. */}
+                    {compareData.history.map((h) => (
+                      <tr key={`${h.doc_type}-${h.line_id}`}>
+                        <td>{formatDate(h.doc_date)}</td>
+                        <td>
+                          <button
+                            type="button" className="link-btn"
+                            onClick={() => navigate(h.doc_type === 'RR' ? `/purchase-orders/receipts/${h.doc_id}` : `/purchase-orders/${h.doc_id}`)}
+                          >
+                            {h.doc_no}
+                          </button>
+                          {h.doc_type === 'RR' && h.po_no && <span className="muted"> · {h.po_no}</span>}
+                        </td>
+                        <td>{h.supplier_name}</td>
+                        <td>{qty(h.qty)}</td>
+                        <td>{h.unit || '—'}</td>
+                        <td>{money(h.rate)}</td>
+                        <td>{h.disc_percent}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </Modal>
       )}
 
       {emailOpen && (
