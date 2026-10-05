@@ -261,7 +261,16 @@ router.get('/', requireAuth, requireProductionView, async (req, res, next) => {
 router.get('/:id', requireAuth, requireProductionView, async (req, res, next) => {
   try {
     const [[jo]] = await pool.query(
-      `SELECT jo.*, so.sales_order_no, so.status AS sales_order_status, so.office_location_id, so.sales_division_id,
+      `SELECT jo.*, so.sales_order_no, so.status AS sales_order_status,
+              -- From the NSSO where the job order was raised from one (no sales order) -- see
+              -- routes/jobOrders.js GET /:id.
+              COALESCE(so.office_location_id, nsso.office_location_id) AS office_location_id,
+              COALESCE(so.sales_division_id, nsso.sales_division_id) AS sales_division_id,
+              COALESCE(NULLIF(jo.contact_email, ''), nsso.contact_email) AS contact_email,
+              COALESCE(NULLIF(jo.contact_title, ''), nsso.contact_title) AS contact_title,
+              COALESCE(NULLIF(jo.contact_phone, ''), nsso.contact_phone) AS contact_phone,
+              COALESCE(NULLIF(jo.shipping_address, ''), nsso.shipping_address) AS shipping_address,
+              nsso.nsso_no,
               sol.subtotal AS line_subtotal, sol.disc_amount AS line_disc_amount,
               c.name AS customer_name, cc.contact_name,
               jt.display_name AS job_type_name, loc.location_name AS job_location_name,
@@ -272,13 +281,14 @@ router.get('/:id', requireAuth, requireProductionView, async (req, res, next) =>
               rqu.display_name AS revision_requested_by_name
        FROM job_orders jo
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
+       LEFT JOIN non_standard_sales_orders nsso ON nsso.id = jo.nsso_id
        LEFT JOIN sales_order_lines sol ON sol.id = jo.sales_order_line_id
-       LEFT JOIN customers c ON c.id = so.customer_id
-       LEFT JOIN customer_contacts cc ON cc.id = so.contact_person_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, nsso.customer_id)
+       LEFT JOIN customer_contacts cc ON cc.id = COALESCE(so.contact_person_id, nsso.contact_person_id)
        LEFT JOIN job_types jt ON jt.id = jo.job_type_id
        LEFT JOIN locations loc ON loc.id = jo.job_location_id
-       LEFT JOIN locations oloc ON oloc.id = so.office_location_id
-       LEFT JOIN sales_divisions sd ON sd.id = so.sales_division_id
+       LEFT JOIN locations oloc ON oloc.id = COALESCE(so.office_location_id, nsso.office_location_id)
+       LEFT JOIN sales_divisions sd ON sd.id = COALESCE(so.sales_division_id, nsso.sales_division_id)
        LEFT JOIN employees sr ON sr.id = jo.sales_rep_id
        LEFT JOIN employees ar ON ar.id = jo.artist_id
        LEFT JOIN pms_job_types ljt ON ljt.id = jo.layout_job_type_id

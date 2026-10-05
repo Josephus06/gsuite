@@ -645,7 +645,7 @@ router.get('/:id/lines/:lineId/jo-draft', requireAuth, requirePermission(ROUTE, 
 router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[nsso]] = await conn.query('SELECT id, nsso_no, type, status, sales_rep_id FROM non_standard_sales_orders WHERE id = ?', [req.params.id]);
+    const [[nsso]] = await conn.query('SELECT id, nsso_no, type, status, sales_rep_id, contact_email, contact_title, contact_phone, shipping_address FROM non_standard_sales_orders WHERE id = ?', [req.params.id]);
     if (!nsso) return res.status(404).json({ error: 'Not found' });
     if (nsso.status === 'pending_approval') return res.status(409).json({ error: 'Approve the NSSO before creating job orders.' });
     if (nsso.status === 'cancelled') return res.status(409).json({ error: 'This NSSO is cancelled.' });
@@ -684,11 +684,14 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
       // production_stage NULL until Sales Approval releases it, as for a standard JO.
       `INSERT INTO job_orders (job_order_no, sales_order_line_id, sales_order_id, nsso_id, nsso_line_id, sales_rep_id,
          job_type_id, job_location_id, description, quantity, units, length, width, height,
-         reason_code_id, reason, action_to_be_taken, production_stage, sub_status, status)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)`,
+         reason_code_id, reason, action_to_be_taken, production_stage, sub_status, status,
+         contact_email, contact_title, contact_phone, shipping_address)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?,?,?)`,
       [jobOrderNo, src?.sales_order_line_id || null, src?.sales_order_id || null, nsso.id, line.id, salesRepId,
        line.job_type_id, line.job_location_id, line.description, num(line.quantity), line.units, line.length, line.width, line.height,
-       reasonCodeId || null, trunc(reason, 500), trunc(actionTaken, 500), initialSubStatus, initialStatus]
+       reasonCodeId || null, trunc(reason, 500), trunc(actionTaken, 500), initialSubStatus, initialStatus,
+       // The NSSO's contact and shipping address, as a sales order's job order carries its SO's.
+       nsso.contact_email || null, nsso.contact_title || null, nsso.contact_phone || null, nsso.shipping_address || null]
     );
     const joId = r.insertId;
 
