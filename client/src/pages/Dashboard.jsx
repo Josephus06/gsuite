@@ -775,11 +775,12 @@ function assignJoColours(jobs) {
   return byId;
 }
 
+// In the GM's order (asked 2026-10-05); the card opens on the first.
 const GM_CALENDARS = [
-  { key: 'production', label: 'Production' },
-  { key: 'collection', label: 'Collection Forecast' },
   { key: 'sales', label: 'Weighted Sales' },
+  { key: 'production', label: 'Production' },
   { key: 'invoices', label: 'Invoice' },
+  { key: 'collection', label: 'Collection Forecast' },
 ];
 
 // The General Manager's calendar card: one calendar, switched between the four views. Opens on
@@ -790,12 +791,12 @@ function GmCalendarCard({ navigate, canSeeCollections }) {
   const tabs = GM_CALENDARS.filter((t) => t.key !== 'collection' || canSeeCollections);
   const [view, setView] = useState(() => {
     let saved = null;
-    try { saved = localStorage.getItem('gm-calendar-view'); } catch { /* storage unavailable */ }
-    return tabs.some((t) => t.key === saved) ? saved : (canSeeCollections ? 'collection' : 'production');
+    try { saved = localStorage.getItem('gm-calendar-view-v2'); } catch { /* storage unavailable */ }
+    return tabs.some((t) => t.key === saved) ? saved : tabs[0].key;
   });
   const choose = (key) => {
     setView(key);
-    try { localStorage.setItem('gm-calendar-view', key); } catch { /* storage unavailable */ }
+    try { localStorage.setItem('gm-calendar-view-v2', key); } catch { /* storage unavailable */ }
   };
 
   return (

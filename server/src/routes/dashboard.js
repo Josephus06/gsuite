@@ -970,17 +970,17 @@ const GM_CALENDARS = {
                LEFT JOIN estimates e ON e.id = si.estimate_id
                LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
                LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
-              WHERE si.date_created >= ? AND si.date_created < ? AND si.cancelled_at IS NULL`,
+               LEFT JOIN delivery_tickets dt ON dt.id = si.delivery_ticket_id
+              WHERE si.date_created >= ? AND si.date_created < ? AND si.cancelled_at IS NULL
+                -- An invoice converted from a Delivery Ticket raised in an earlier month is left out
+                -- (asked 2026-10-05): that sale was already delivered last month.
+                AND (dt.id IS NULL OR dt.date_created >= ?)`,
 };
-// Open Delivery Tickets ride along on the Invoice calendar: goods already delivered and still to
-// be billed, by the day the ticket was raised, at its gross amount. Kept apart from the invoices
-// (own count, total and chips) so the invoiced figure stays the invoiced figure.
-const GM_OPEN_DT_SQL = `SELECT dt.id, dt.dt_no AS doc_no, DATE_FORMAT(dt.date_created, '%Y-%m-%d') AS day,
-                               c.id AS customer_id, c.name AS customer_name, COALESCE(dt.gross_amount, 0) AS amount
-                          FROM delivery_tickets dt
-                          LEFT JOIN sales_orders so ON so.id = dt.sales_order_id
-                          LEFT JOIN customers c ON c.id = so.customer_id
-                         WHERE dt.date_created >= ? AND dt.date_created < ? AND dt.status = 'open'`;
+// Params for each calendar's SQL, from the month's bounds.
+const GM_CALENDAR_PARAMS = {
+  sales: (b) => [b.start, b.end],
+  invoices: (b) => [b.start, b.end, b.start],
+};
 
 // Rows -> { day -> { count, total, customers: [{ customerName, count, total, docs }] } }.
 function groupByDayAndCustomer(rows) {
@@ -1008,31 +1008,20 @@ router.get('/gm-calendar', requireAuth, async (req, res, next) => {
     const sql = GM_CALENDARS[req.query.type];
     if (!sql) return res.status(400).json({ error: 'type must be sales or invoices' });
     const bounds = monthBounds(req.query.month);
-    const withDts = req.query.type === 'invoices';
-    const [[rows], [dtRows]] = await Promise.all([
-      pool.query(`${sql} ORDER BY day, customer_name, doc_no`, [bounds.start, bounds.end]),
-      withDts ? pool.query(`${GM_OPEN_DT_SQL} ORDER BY day, customer_name, doc_no`, [bounds.start, bounds.end]) : [[]],
-    ]);
+    // Open Delivery Tickets no longer ride along on the Invoice calendar (asked 2026-10-05): it shows
+    // invoices only.
+    const [rows] = await pool.query(`${sql} ORDER BY day, customer_name, doc_no`, GM_CALENDAR_PARAMS[req.query.type](bounds));
 
     const docs = groupByDayAndCustomer(rows);
-    const dts = groupByDayAndCustomer(dtRows);
-    const empty = { count: 0, total: 0, customers: [] };
-    const calendar = [...new Set([...docs.keys(), ...dts.keys()])].sort().map((day) => {
-      const d = docs.get(day) || empty;
-      const t = dts.get(day) || empty;
-      return {
-        day, count: d.count, total: d.total, customers: d.customers,
-        dtCount: t.count, dtTotal: t.total, dtCustomers: t.customers,
-      };
+    const calendar = [...docs.keys()].sort().map((day) => {
+      const d = docs.get(day);
+      return { day, count: d.count, total: d.total, customers: d.customers };
     });
-    const sum = (list) => list.reduce((s, r) => s + Number(r.amount), 0);
     res.json({
       month: bounds.month,
       calendar,
       count: rows.length,
-      total: sum(rows),
-      dtCount: dtRows.length,
-      dtTotal: sum(dtRows),
+      total: rows.reduce((s, r) => s + Number(r.amount), 0),
     });
   } catch (err) { next(err); }
 });

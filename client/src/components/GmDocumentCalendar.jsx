@@ -8,9 +8,8 @@ import Modal from './Modal';
 // like CollectionForecastCalendar so the switch between them reads as one calendar.
 // GET /dashboard/gm-calendar decides which rows count (the same as the Weighted Sales card).
 //
-// The Invoice calendar also carries OPEN Delivery Tickets -- delivered, not yet billed -- in their
-// own colour (.cal-dt), with their own count and total, so the invoiced figure is never mixed
-// with what is still waiting to be invoiced.
+// The Invoice calendar shows invoices only (asked 2026-10-05): open Delivery Tickets no longer
+// ride along, and an invoice converted from a ticket raised in an earlier month is left out.
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 const WEEKDAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -18,7 +17,6 @@ const TYPES = {
   sales: { noun: 'sales order', plural: 'Sales Orders', docLabel: 'Sales Order No', amountLabel: 'Net of Tax', path: (id) => `/sales-orders/${id}` },
   invoices: { noun: 'invoice', plural: 'Invoices', docLabel: 'Invoice No', amountLabel: 'Amount', path: (id) => `/sales-invoices/${id}` },
 };
-const DT = { noun: 'open delivery ticket', plural: 'Open Delivery Tickets', docLabel: 'DT No', amountLabel: 'Amount', path: (id) => `/delivery-tickets/${id}` };
 
 function money(v) {
   const n = Number(v);
@@ -26,7 +24,7 @@ function money(v) {
 }
 const pad = (n) => String(n).padStart(2, '0');
 const plural = (n, noun) => `${n} ${noun}${n === 1 ? '' : 's'}`;
-const EMPTY = { calendar: [], count: 0, total: 0, dtCount: 0, dtTotal: 0 };
+const EMPTY = { calendar: [], count: 0, total: 0 };
 
 export default function GmDocumentCalendar({ type }) {
   const cfg = TYPES[type];
@@ -60,7 +58,6 @@ export default function GmDocumentCalendar({ type }) {
     setMonth(`${base.getFullYear()}-${pad(base.getMonth() + 1)}`);
   };
   const openEntry = openDay ? byDay.get(openDay) : null;
-  const showDts = type === 'invoices';
 
   return (
     <div className="artist-calendar">
@@ -69,14 +66,7 @@ export default function GmDocumentCalendar({ type }) {
         <strong>{MONTH_NAMES[monthNo - 1]} {year}</strong>
         <button type="button" className="btn btn-sm" onClick={() => shift(1)} disabled={loading}>&rsaquo;</button>
         <span className="muted artist-calendar-count">
-          {loading ? 'Loading...' : (
-            <>
-              {`${plural(data.count, cfg.noun)} · ${money(data.total)}`}
-              {showDts && (
-                <span className="cal-dt">{` · ${plural(data.dtCount || 0, DT.noun)} · ${money(data.dtTotal || 0)}`}</span>
-              )}
-            </>
-          )}
+          {loading ? 'Loading...' : `${plural(data.count, cfg.noun)} · ${money(data.total)}`}
         </span>
       </div>
 
@@ -86,15 +76,10 @@ export default function GmDocumentCalendar({ type }) {
           if (!key) return <div key={`pad-${i}`} className="artist-calendar-day is-empty" />;
           const entry = byDay.get(key);
           const customers = entry?.customers || [];
-          const dtCustomers = showDts ? (entry?.dtCustomers || []) : [];
-          // Three chips a day in all, invoices first; the rest fold into "+n more".
-          const chips = [
-            ...customers.map((c) => ({ ...c, dt: false })),
-            ...dtCustomers.map((c) => ({ ...c, dt: true })),
-          ];
+          // Three chips a day; the rest fold into "+n more".
+          const chips = customers;
           const titleParts = [];
           if (entry?.count) titleParts.push(`${plural(entry.count, cfg.noun)}, ${money(entry.total)}`);
-          if (entry?.dtCount) titleParts.push(`${plural(entry.dtCount, DT.noun)}, ${money(entry.dtTotal)}`);
           return (
             <div
               key={key}
@@ -106,19 +91,16 @@ export default function GmDocumentCalendar({ type }) {
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenDay(key); } }}
             >
               <span className="artist-calendar-daynum">{Number(key.slice(8, 10))}</span>
-              {(entry?.total > 0 || entry?.dtTotal > 0) && (
+              {entry?.total > 0 && (
                 <div className="cal-tally">
-                  {entry.total > 0 && <span className="cal-tally-item">{money(entry.total)}</span>}
-                  {showDts && entry.dtTotal > 0 && (
-                    <span className="cal-tally-item cal-dt" title={`Open delivery tickets: ${money(entry.dtTotal)}`}>{money(entry.dtTotal)}</span>
-                  )}
+                  <span className="cal-tally-item">{money(entry.total)}</span>
                 </div>
               )}
               {chips.slice(0, 3).map((c) => (
                 <span
-                  key={`${c.dt ? 'dt' : 'doc'}-${c.customerId}`}
-                  className={`artist-calendar-chip${c.dt ? ' cal-dt' : ''}`}
-                  title={`${c.customerName} · ${plural(c.count, c.dt ? DT.noun : cfg.noun)} · ${money(c.total)}`}
+                  key={c.customerId}
+                  className="artist-calendar-chip"
+                  title={`${c.customerName} · ${plural(c.count, cfg.noun)} · ${money(c.total)}`}
                 >
                   {c.customerName}
                 </span>
@@ -138,15 +120,7 @@ export default function GmDocumentCalendar({ type }) {
           {!openEntry ? (
             <div className="muted" style={{ padding: 20, textAlign: 'center' }}>Nothing on this day.</div>
           ) : (
-            <>
-              {openEntry.count > 0 && <CustomerTable cfg={cfg} customers={openEntry.customers} count={openEntry.count} total={openEntry.total} />}
-              {showDts && openEntry.dtCount > 0 && (
-                <div className="cal-dt" style={{ marginTop: openEntry.count > 0 ? 20 : 0 }}>
-                  <h4 style={{ margin: '0 0 8px' }}>{DT.plural}</h4>
-                  <CustomerTable cfg={DT} customers={openEntry.dtCustomers} count={openEntry.dtCount} total={openEntry.dtTotal} />
-                </div>
-              )}
-            </>
+            <CustomerTable cfg={cfg} customers={openEntry.customers} count={openEntry.count} total={openEntry.total} />
           )}
         </Modal>
       )}
