@@ -27,7 +27,16 @@ const blankLine = () => ({ key: Math.random().toString(36).slice(2), item: null,
 // Create New on the invoice list: an invoice billed straight to a customer, with item lines and no
 // order behind it -- how monthly rent is billed (RENTAL, 1 LOT x 15,000, withholding deducted).
 // Nothing is delivered against it and no Job Order moves; the lines are what is typed here.
-export default function StandaloneInvoiceModal({ onClose, onSaved }) {
+//
+// `replicateFrom` is an invoice id to start from -- Replicate on the invoice view (asked 2026-10-05),
+// as the Vendor Bill and Journal screens have it. What describes the SALE is copied: customer, type,
+// term, PO #, sales rep, office location, department, bill-to address, memo, withholding and every
+// line. What belongs to the original document is not: it is dated today (due by the original's term
+// from today), it takes its own number on save, and BS/SI # starts empty -- that is the serial of the
+// printed form, and two invoices cannot share one. Only an invoice with no order behind it is
+// offered this (see SalesInvoiceView).
+export default function StandaloneInvoiceModal({ onClose, onSaved, replicateFrom }) {
+  const [replicatedFrom, setReplicatedFrom] = useState('');
   const [meta, setMeta] = useState(null);
   const [employees, setEmployees] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -58,14 +67,64 @@ export default function StandaloneInvoiceModal({ onClose, onSaved }) {
       api.get('/lookups/locations'),
       api.get('/lookups/departments'),
       api.get('/lookups/payment-terms'),
-    ]).then(([m, emp, loc, dept, terms]) => {
+    ]).then(async ([m, emp, loc, dept, terms]) => {
+      if (replicateFrom) await prefillFrom(m.data, emp.data, loc.data, dept.data, terms.data || []);
       setMeta(m.data);
       setEmployees(emp.data);
       setLocations(loc.data);
       setDepartments(dept.data);
       setPaymentTerms(terms.data || []);
     }).catch((err) => setError(err.response?.data?.error || 'Could not load the form.'));
-  }, []);
+  }, [replicateFrom]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Run with the lookups in hand: the pickers hold whole records, so each is found in its own list.
+  async function prefillFrom(m, emps, locs, depts, terms) {
+    try {
+      const { data: si } = await api.get(`/sales-invoices/${replicateFrom}`);
+      setReplicatedFrom(si.invoice_no);
+      const same = (a, b) => a != null && String(a) === String(b);
+      setCustomer((m.customers || []).find((c) => same(c.id, si.customer_id)) || null);
+      setInvoiceType(si.invoice_type === 'DR' ? 'DR' : 'SI');
+      const t = terms.find((x) => x.term_name === si.term) || null;
+      setPaymentTerm(t);
+      setTerm(si.term || '');
+      // Today's date with the original's term: a 30-day invoice replicated today falls due in 30
+      // days' time, not on the date the first one did.
+      if (t) setDateDue(addDays(new Date().toISOString().slice(0, 10), Number(t.no_of_days) || 0));
+      setPoNo(si.po_no || '');
+      setSalesRep(emps.find((e) => same(e.id, si.sales_rep_id)) || null);
+      setOfficeLocation(locs.find((l) => same(l.id, si.office_location_id)) || null);
+      setDepartment(depts.find((d) => same(d.id, si.department_id)) || null);
+      setBillToAddress(si.bill_to_address || '');
+      setMemo(si.memo || '');
+      setWithholdingPct(Number(si.withholding_tax_pct || 0));
+      // A line's tax is stored as its code. Match it to a tax by code, else by the rate the line was
+      // actually billed at (tax / net) -- migrated lines carry codes (VAT_PH:VATIN-12) the list lacks.
+      const taxes = m.taxes || [];
+      const taxFor = (l) => {
+        const byCode = taxes.find((x) => x.code === l.tax_code);
+        if (byCode) return byCode.id;
+        const net = Number(l.net_of_tax || 0);
+        if (!net || !Number(l.tax_amount)) return '';
+        const rate = (Number(l.tax_amount) / net) * 100;
+        const byRate = taxes.find((x) => Math.abs(Number(x.rate) - rate) < 0.05);
+        return byRate ? byRate.id : '';
+      };
+      const copied = (si.lines || []).map((l) => ({
+        ...blankLine(),
+        item: (m.items || []).find((i) => same(i.id, l.item_id)) || null,
+        description: l.description || '',
+        quantity: Number(l.quantity) || 1,
+        units: l.units || '',
+        price_per_unit: l.price_per_unit != null ? String(Number(l.price_per_unit)) : '',
+        disc_percent: Number(l.disc_percent || 0),
+        tax_code_id: taxFor(l),
+      }));
+      if (copied.length) setLines(copied);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not load the invoice to replicate.');
+    }
+  }
 
   if (!meta) {
     return (
@@ -139,7 +198,10 @@ export default function StandaloneInvoiceModal({ onClose, onSaved }) {
     <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal modal-xl" style={{ padding: 0, overflow: 'hidden' }}>
         <div className="estimate-banner" style={{ borderRadius: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <h2 style={{ margin: 0, color: '#fff' }}>Create Invoice</h2>
+          <h2 style={{ margin: 0, color: '#fff' }}>
+            Create Invoice
+            {replicatedFrom && <span style={{ fontSize: '0.6em', opacity: 0.85, marginLeft: 10 }}>replicated from {replicatedFrom}</span>}
+          </h2>
           <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 24, lineHeight: 1, cursor: 'pointer' }}>×</button>
         </div>
 

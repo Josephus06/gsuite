@@ -9,6 +9,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import ButtonMenu from '../components/ButtonMenu';
 import ReversalJournalModal from '../components/ReversalJournalModal';
 import SalesInvoiceEditModal from '../components/SalesInvoiceEditModal';
+import StandaloneInvoiceModal from '../components/StandaloneInvoiceModal';
 
 import { displayDate, displayDateTime } from '../utils/dates';
 import { billingAddress } from '../utils/invoicePrint';
@@ -47,6 +48,7 @@ export default function SalesInvoiceView() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showCreditMemoModal, setShowCreditMemoModal] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [replicating, setReplicating] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -107,6 +109,13 @@ export default function SalesInvoiceView() {
 
   const canEdit = can('/sales-invoices', 'can_edit');
   const canVoid = can('/sales-invoices', 'can_void');
+  // Replicate starts a new invoice from this one's customer, terms and lines. Only an invoice billed
+  // straight to a customer can be: one raised from a Sales Order, Delivery Ticket, Estimate or NSSO
+  // bills quantities against that document, and a copy would bill them a second time without the
+  // order knowing. Those are billed again from their own Bill button, as the tooltip says.
+  const canReplicate = can('/sales-invoices', 'can_add');
+  const replicateSource = si.dt_no || si.sales_order_no || si.estimate_no || si.nsso_no
+    || (si.sales_order_id || si.delivery_ticket_id || si.estimate_id || si.nsso_id ? 'an order' : null);
   const isSaved = si.status === 'saved';
   // Both actions settle or reduce what's owed, so they only make sense while something is
   // still owed and the invoice hasn't been voided.
@@ -136,6 +145,12 @@ export default function SalesInvoiceView() {
           )}
           {canEdit && si.editable === false && (
             <button className="btn btn-sm" disabled title={si.not_editable_reason || 'This Invoice cannot be edited.'}>Edit</button>
+          )}
+          {canReplicate && !replicateSource && (
+            <button className="btn btn-sm" title="Start a new invoice from this one's customer, terms and lines" onClick={() => setReplicating(true)}>Replicate</button>
+          )}
+          {canReplicate && replicateSource && (
+            <button className="btn btn-sm" disabled title={`Raised from ${replicateSource} -- bill it again from that document's Bill button, so what it has billed keeps up`}>Replicate</button>
           )}
           <ButtonMenu
             label="Print"
@@ -387,6 +402,13 @@ export default function SalesInvoiceView() {
 
       {/* Reloaded rather than patched from the response: the save recomputes EWT and Amount Due,
           and GL Impact and the audit trail are derived from them. */}
+      {replicating && (
+        <StandaloneInvoiceModal
+          replicateFrom={id}
+          onClose={() => setReplicating(false)}
+          onSaved={(ns) => { setReplicating(false); navigate(`/sales-invoices/${ns.id}`); }}
+        />
+      )}
       {editing && (
         <SalesInvoiceEditModal
           invoice={si}
