@@ -71,12 +71,12 @@ export const FORM = {
   // VAT-Exempt (E) / Zero Rated (Z) / VAT (12%); right block is Total Sales /
   // Less: Withholding Tax / TOTAL AMOUNT DUE.
   totals: {
-    vatableSales: { x: 138, w: 22, y: 95, right: true },
-    vatExempt: { x: 138, w: 22, y: 100, right: true },
-    zeroRated: { x: 138, w: 22, y: 102, right: true },
-    vat: { x: 138, w: 26, y: 106, right: true },
+    vatableSales: { x: 138, w: 22, y: 95, right: true, bold: true },
+    vatExempt: { x: 138, w: 22, y: 100, right: true, bold: true },
+    zeroRated: { x: 138, w: 22, y: 102, right: true, bold: true },
+    vat: { x: 138, w: 26, y: 106, right: true, bold: true },
     totalSales: { x: 201, w: 28, y: 96, right: true, bold: true },
-    lessWithholding: { x: 201, w: 28, y: 101, right: true },
+    lessWithholding: { x: 201, w: 28, y: 101, right: true, bold: true },
     amountDue: { x: 201, w: 28, y: 105, right: true, bold: true },
   },
 };
