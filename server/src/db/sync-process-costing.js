@@ -64,7 +64,24 @@ const LABELS = {
   costing_reference: 'Costing Reference',
 };
 const COLS = [...Object.keys(MAP), 'costing_reference'];
-const range = (s) => { const [a, b] = String(s || '').trim().split('-'); return { min: Number(a), max: Number(b) }; };
+// Source brackets whose Range is not "min-max" -- typed in wrong on the source, so the parser
+// below skipped them and the process was left with no price in T1S (found 2026-10-05: Wall Mural
+// Installation SqFt 151-200 had a bracket on the source, none here). Each is mapped to what its
+// siblings show it meant. Any other unreadable range is reported, never silently skipped.
+const RANGE_FIXES = {
+  'SUBCON-WALLMURAL-INST-SQFT-151-200|0': { min: 151, max: 200 }, // its siblings are 101-150, 201-250
+  'SUBCON-INSTL-BLDUP-LGHTD-HIGH|.00 1-50': { min: 0.001, max: 50 }, // the tier before its 51-60
+  'SUBCON-STKR-INST-LOWEL-SQFT-601-900|.00.1-1000000': { min: 0.001, max: 1000000 }, // as its 301-600 sibling
+  'DPOD-SUBCON|': { min: 0.001, max: 1000000 }, // no range at all: its one bracket covers any quantity
+};
+const range = (s, code) => {
+  const fix = RANGE_FIXES[`${code}|${String(s ?? '').trim()}`];
+  if (fix) return fix;
+  const [a, b] = String(s || '').trim().split('-'); return { min: Number(a), max: Number(b) };
+};
+// --add-only: insert the brackets T1S lacks and change nothing else. The full sync also rewrites
+// existing brackets, DL among them -- which takes off the +8% T1S adds (adjust-process-costing-dl.js).
+const ADD_ONLY = process.argv.includes('--add-only');
 const bracketName = (r) => `${display(r.qty_min) ?? '?'}-${display(r.qty_max) ?? '?'}`;
 
 async function main() {
@@ -86,7 +103,7 @@ async function main() {
   }
   console.log(`source costings: ${stubs.length}; T1S brackets: ${ours.length} on ${oursByProc.size} process(es)`);
 
-  const out = { noProcess: [], updated: 0, fieldsChanged: 0, added: 0, onlyInT1S: 0, failed: [], unknownKeys: new Map(),
+  const out = { noProcess: [], badRange: [], updated: 0, fieldsChanged: 0, added: 0, onlyInT1S: 0, failed: [], unknownKeys: new Map(),
     byField: {}, priceCheck: { ok: 0, off: [], pesoOk: 0, pesoOff: [] } };
   const updates = []; const inserts = [];
   let cursor = 0;
@@ -105,8 +122,8 @@ async function main() {
           if (!/_Cstng(L)?$|_CostingL$/.test(k) || /^Sys|Description|Range|Unrounded|Amount|SubTotal|Total|MarkUpCOGS_|MarkUp_|OPEXAdmin_|OPEXSelling_|CostingAllowance_|DiscCeiling_/.test(k)) continue;
           if (num(v) && !Object.values(MAP).includes(k) && k !== 'CostingRef_CstngL') out.unknownKeys.set(k, (out.unknownKeys.get(k) || 0) + 1);
         }
-        const { min, max } = range(b.Range_CstngL);
-        if (!Number.isFinite(min) || !Number.isFinite(max)) continue;
+        const { min, max } = range(b.Range_CstngL, stub.UserPK_Proc);
+        if (!Number.isFinite(min) || !Number.isFinite(max)) { out.badRange.push(`${stub.UserPK_Proc} ${JSON.stringify(b.Range_CstngL)}`); continue; }
         const want = Object.fromEntries(Object.entries(MAP).map(([col, k]) => [col, b[k] == null || b[k] === '' ? (col === 'selling_price_override' ? null : 0) : num(b[k])]));
         want.costing_reference = b.CostingRef_CstngL == null ? null : String(Number(b.CostingRef_CstngL));
         // Our formula against the source's own unrounded price, on the source's inputs.
@@ -159,12 +176,18 @@ async function main() {
   console.log(`selling price in pesos (ours = Total Price rounded up) vs source: ${out.priceCheck.pesoOk} same, ${po.length} differ`
     + ` (${withOther} of them carry Other Charges, which our SubTotal leaves out by the workbook's rule)`);
   for (const x of po.filter((y) => !y.other).slice(0, 8)) console.log(`   ${x.code} ${x.range}: ours ${x.ours} vs source ${x.source}`);
+  console.log(`unreadable source ranges (skipped): ${out.badRange.length}${out.badRange.length ? ` -- ${out.badRange.join(', ')}` : ''}`);
+  for (const r of inserts) console.log(`   add: process ${r.process_id} ${bracketName(r)} sub_con ${display(r.sub_con)} DL ${display(r.direct_labor)}`);
+  if (ADD_ONLY) { updates.length = 0; console.log('--add-only: existing brackets left as they are.'); }
   if (DRY) { await pool.end(); return; }
 
-  const name = 'process-costing-before-sync-2026-10-02.json';
-  const file = process.platform === 'win32' ? name : `/root/${name}`;
-  fs.writeFileSync(file, JSON.stringify(updates.map((u) => u.cur)));
-  console.log(`Rollback file (prior values of every updated bracket): ${file}`);
+  // Dated per run, so a later run never overwrites an earlier run's rollback.
+  if (updates.length) {
+    const name = `process-costing-before-sync-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+    const file = process.platform === 'win32' ? name : `/root/${name}`;
+    fs.writeFileSync(file, JSON.stringify(updates.map((u) => u.cur)));
+    console.log(`Rollback file (prior values of every updated bracket): ${file}`);
+  }
 
   const conn = await pool.getConnection();
   try {
