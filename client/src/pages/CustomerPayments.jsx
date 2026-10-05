@@ -174,6 +174,8 @@ export default function CustomerPayments() {
               <option value="not_deposited">Not Deposited</option>
               <option value="deposited">Deposited</option>
               <option value="voided">Void</option>
+              <option value="unapplied">Unapplied</option>
+              <option value="applied">Applied</option>
             </select>
           </div>
           <div className="field">

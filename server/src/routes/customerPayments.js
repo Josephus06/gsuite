@@ -399,7 +399,12 @@ function listFilter(query) {
   const where = [];
   const params = [];
   {
-    if (status) { where.push('cp.status = ?'); params.push(status); }
+    // Unapplied / Applied (asked 2026-10-05) filter on how much of the payment is still unapplied,
+    // not on its deposit status: Unapplied has money not yet put against an invoice, Applied has
+    // all of it applied. A voided payment is neither.
+    if (status === 'unapplied') where.push('cp.unapplied_amount > 0.005', "cp.status <> 'voided'");
+    else if (status === 'applied') where.push('COALESCE(cp.unapplied_amount, 0) <= 0.005', "cp.status <> 'voided'");
+    else if (status) { where.push('cp.status = ?'); params.push(status); }
     if (departmentId) { where.push('cp.department_id = ?'); params.push(departmentId); }
     // Location, not just department. Every one of the 130,000 imported payments carries an office
     // location and all but two carry no department at all, so department alone would be a filter
