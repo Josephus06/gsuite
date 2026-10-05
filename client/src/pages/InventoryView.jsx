@@ -136,6 +136,8 @@ export default function InventoryView() {
   // tabs, routes/inventories.js NON_STOCK_SQL); a Non-Inventory, Service, Discount or Landed Cost
   // item is simply approved.
   const nonStock = ['Non-Inventory', 'Service', 'Discount', 'Landed Cost'].includes(item.item_type);
+  // Non-Inventory items have their own create/edit screen (NonInventoryEdit.jsx).
+  const isNonInventory = item.item_type === 'Non-Inventory';
   const costingPending = !nonStock && !item.is_costing_approved;
   const accountingPending = !nonStock && !item.is_accounting_approved;
   const showApproveCosting = canApprove && item.is_active && costingPending && costingReady;
@@ -147,9 +149,9 @@ export default function InventoryView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/inventory')}>Back to Lists</button>
-          {canEdit && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/inventory/${id}/edit`)}>Edit</button>}
-          {canAdd && <button className="btn btn-sm" onClick={() => navigate('/inventory/new')}>Add New</button>}
+          <button className="btn btn-sm" onClick={() => navigate(isNonInventory ? '/non-inventories' : '/inventory')}>Back to Lists</button>
+          {canEdit && <button className="btn btn-sm btn-primary" onClick={() => navigate(isNonInventory ? `/non-inventories/${id}/edit` : `/inventory/${id}/edit`)}>Edit</button>}
+          {canAdd && <button className="btn btn-sm" onClick={() => navigate(isNonInventory ? '/non-inventories/new' : '/inventory/new')}>Add New</button>}
           {showApproveCosting && <button className="btn btn-sm btn-primary" disabled={approving} onClick={handleApproveCosting}>Approve Costing</button>}
           {showApproveAccounting && <button className="btn btn-sm btn-primary" disabled={approving} onClick={handleApproveAccounting}>Approve Accounting</button>}
         </div>
@@ -201,6 +203,15 @@ export default function InventoryView() {
                 <div>With JO : <span className="hi">{YES_NO(item.is_with_jo)}</span></div>
                 <div>PO : <span className="hi">{YES_NO(item.is_po)}</span></div>
                 <div>JO : <span className="hi">{YES_NO(item.is_jo)}</span></div>
+              </>
+            )}
+            {isNonInventory && (
+              <>
+                <div>With JO : <span className="hi">{YES_NO(item.is_with_jo)}</span></div>
+                <div>PO : <span className="hi">{YES_NO(item.is_po)}</span></div>
+                <div>Length x Width : <span className="hi">{item.length ?? '—'} x {item.width ?? '—'}</span></div>
+                <div>Conversion Type : <span className="hi">{item.conversion_type || '—'}</span></div>
+                <div>Can be Received : <span className="hi">{YES_NO(item.can_be_received)}</span></div>
               </>
             )}
           </div>

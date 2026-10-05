@@ -18,6 +18,11 @@ const FIELDS = [
   'is_with_jo', 'is_po', 'is_jo',
   'expense_account_id', 'asset_account_id', 'income_account_id', 'cogs_account_id',
 ];
+// Only the Non-Inventory form sends these (alter-non-inventory-fields.js), so they are written
+// only when present -- the Inventory form and Material Costing PUT the record without them and
+// must not blank what the Non-Inventory form saved.
+const OPTIONAL_FIELDS = ['length', 'width', 'conversion_type', 'can_be_received'];
+function presentOptional(body) { return OPTIONAL_FIELDS.filter((f) => body[f] !== undefined); }
 
 async function logAudit(conn, { inventoryId, userId, eventType, fieldName = null, oldValue = null, newValue = null }) {
   await conn.query(
@@ -396,9 +401,10 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
 router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
   try {
     const body = { ...req.body };
-    const values = FIELDS.map((f) => (body[f] === undefined ? null : body[f]));
+    const fields = [...FIELDS, ...presentOptional(body)];
+    const values = fields.map((f) => (body[f] === undefined ? null : body[f]));
     const [result] = await pool.query(
-      `INSERT INTO inventories (${FIELDS.join(', ')}, is_costing_approved, is_accounting_approved) VALUES (${FIELDS.map(() => '?').join(', ')}, FALSE, FALSE)`,
+      `INSERT INTO inventories (${fields.join(', ')}, is_costing_approved, is_accounting_approved) VALUES (${fields.map(() => '?').join(', ')}, FALSE, FALSE)`,
       values
     );
     const [[row]] = await pool.query('SELECT * FROM inventories WHERE id = ?', [result.insertId]);
@@ -415,10 +421,11 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (!before) return res.status(404).json({ error: 'Not found' });
 
     const body = { ...req.body };
-    const values = FIELDS.map((f) => (body[f] === undefined ? null : body[f]));
+    const fields = [...FIELDS, ...presentOptional(body)];
+    const values = fields.map((f) => (body[f] === undefined ? null : body[f]));
 
     await pool.query(
-      `UPDATE inventories SET ${FIELDS.map((f) => `${f} = ?`).join(', ')}, updated_at = NOW() WHERE id = ?`,
+      `UPDATE inventories SET ${fields.map((f) => `${f} = ?`).join(', ')}, updated_at = NOW() WHERE id = ?`,
       [...values, req.params.id]
     );
 

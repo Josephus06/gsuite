@@ -52,7 +52,7 @@ export default function NonInventories() {
     <div>
       <div className="page-header">
         <h1>Non-Inventories</h1>
-        {can('/non-inventories', 'can_add') && <button className="btn btn-primary" onClick={() => navigate('/inventory/new')}>Add New</button>}
+        {can('/non-inventories', 'can_add') && <button className="btn btn-primary" onClick={() => navigate('/non-inventories/new')}>Add New</button>}
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
@@ -103,7 +103,7 @@ export default function NonInventories() {
                     <td data-label="Is PO">{YES_NO(row.is_po)}</td>
                     <td data-label="Expense">{row.expense_account_name}</td>
                     <td style={{ display: 'flex', gap: 6 }}>
-                      {can('/non-inventories', 'can_edit') && <button className="btn btn-sm" onClick={() => navigate(`/inventory/${row.id}/edit`)}>Update</button>}
+                      {can('/non-inventories', 'can_edit') && <button className="btn btn-sm" onClick={() => navigate(`/non-inventories/${row.id}/edit`)}>Update</button>}
                       <Link className="btn btn-sm btn-primary" to={`/inventory/${row.id}`}>View</Link>
                     </td>
                   </tr>
