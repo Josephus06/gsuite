@@ -83,13 +83,20 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const params = [];
     if (status) { where.push('o.status = ?'); params.push(status); }
     if (asOf) { where.push('o.date_created <= ?'); params.push(asOf); }
-    if (search) { where.push('(o.osr_no LIKE ? OR o.memo LIKE ? OR loc.location_name LIKE ?)'); params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
+    if (search) {
+      where.push('(o.osr_no LIKE ? OR o.memo LIKE ? OR loc.location_name LIKE ? OR tloc.location_name LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    // Transfer To is the receiving department, as the source's OSR list shows it. department_id
+    // is never set by the form, which is why the old Department column was always blank.
     const [rows] = await pool.query(
       `SELECT o.id, o.osr_no, o.date_created, o.date_needed, o.status, o.memo,
-              loc.location_name, CONCAT(e.first_name, ' ', e.last_name) AS requestor_name, d.name AS department_name
+              loc.location_name, tloc.location_name AS transfer_to_location_name,
+              CONCAT(e.first_name, ' ', e.last_name) AS requestor_name, d.name AS department_name
        FROM office_supply_requisitions o
        LEFT JOIN locations loc ON loc.id = o.location_id
+       LEFT JOIN locations tloc ON tloc.id = o.transfer_to_location_id
        LEFT JOIN employees e ON e.id = o.requestor_id
        LEFT JOIN departments d ON d.id = o.department_id
        ${whereSql} ORDER BY o.id DESC`,
