@@ -251,9 +251,50 @@ async function openingItems(side, asOf, books, { partyId, nameStarts, locationId
       if (e.code !== 'ER_NO_SUCH_TABLE') throw e; // e.g. an install without bill credit applications
     }
   }
+  // OPENING PAYMENTS APPLIED AFTER THE SNAPSHOT. A payment the snapshot lists as Unapplied Payment
+  // was unapplied when it was taken, so any application of it was made afterwards -- whatever the
+  // payment's own date. Those dates are before the books start, so the settlement query above never
+  // sees them, and both sides stayed open: INV-83203 (204.10) beside PAY-60698 (-204.10), dated
+  // 2026-09-29 and applied to it after the 2026-09-30 snapshot -- 515 invoices, 5.3M, as of
+  // 2026-10-05. The customer's total was right; its open items were not.
+  //   - an opening invoice is reduced by what an opening payment applied to it;
+  //   - an opening payment is reduced by what it applied to an opening invoice or to one raised
+  //     since the books start (whose own side lib/arAging.js already settles from the line).
+  // Applications to other pre-start invoices are left out: those were made before the snapshot,
+  // which already nets them.
+  const fromOpeningPayment = new Map(); // invoice id -> amount
+  const openingPaymentUsed = new Map(); // payment no -> amount
+  if (side === 'ar') {
+    const payNos = rows.filter((r) => r.doc_type === 'Unapplied Payment' && r.doc_no).map((r) => r.doc_no);
+    if (payNos.length) {
+      const [apps] = await pool.query(
+        `SELECT cp.customer_payment_no AS pay_no, cpl.sales_invoice_id AS invoice_id, SUM(cpl.applied_amount) AS amt,
+                MAX(oi.id IS NOT NULL) AS opening_invoice
+           FROM customer_payment_lines cpl
+           JOIN customer_payments cp ON cp.id = cpl.customer_payment_id
+           JOIN sales_invoices si ON si.id = cpl.sales_invoice_id
+           LEFT JOIN opening_ar_items oi ON oi.as_of = ? AND oi.sales_invoice_id = cpl.sales_invoice_id
+          WHERE cp.customer_payment_no IN (?) AND cp.status != 'voided' AND si.status != 'cancelled'
+            AND (oi.id IS NOT NULL OR si.date_created >= ?)
+          GROUP BY cp.customer_payment_no, cpl.sales_invoice_id`,
+        [books.asOf, payNos, books.start],
+      );
+      for (const a of apps) {
+        const amt = Number(a.amt) || 0;
+        if (Number(a.opening_invoice)) fromOpeningPayment.set(a.invoice_id, (fromOpeningPayment.get(a.invoice_id) || 0) + amt);
+        openingPaymentUsed.set(a.pay_no, (openingPaymentUsed.get(a.pay_no) || 0) + amt);
+      }
+    }
+  }
+
   const out = [];
   for (const r of rows) {
-    const balance = round2(Number(r.balance) - (r[s.link] ? (settledBy.get(r[s.link]) || 0) : 0));
+    let settled = r[s.link] ? (settledBy.get(r[s.link]) || 0) + (fromOpeningPayment.get(r[s.link]) || 0) : 0;
+    // A payment's credit is negative; what it has since applied brings it back toward zero, never past.
+    if (r.doc_type === 'Unapplied Payment' && openingPaymentUsed.has(r.doc_no)) {
+      settled = -Math.min(openingPaymentUsed.get(r.doc_no), Math.abs(Number(r.balance)));
+    }
+    const balance = round2(Number(r.balance) - settled);
     if (Math.abs(balance) < 0.005) continue;
     out.push({
       party_id: r[s.party], party_name: r.party_name,
