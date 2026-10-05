@@ -2489,3 +2489,11 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .artist-calendar-chip.cal-dt-converted { color: #1d4ed8; background: rgba(59, 130, 246, 0.14); border-color: rgba(37, 99, 235, 0.45); }
 :root[data-theme="dark"] .artist-calendar-chip.cal-dt-open { color: #fdba74; background: rgba(249, 115, 22, 0.22); }
 :root[data-theme="dark"] .artist-calendar-chip.cal-dt-converted { color: #93c5fd; background: rgba(59, 130, 246, 0.24); }
+
+/* Process Costing brackets (ProcessCostingView / ProcessCostingEdit), as the source draws them:
+   the subtotal columns shaded light blue, New INK Cost's heading and figure in red. */
+.pc-table td.pc-shade, .pc-table th.pc-shade { background: #e3f2fd; }
+.pc-table th.pc-highlight, .pc-table td.pc-highlight { color: #d32f2f; }
+.pc-table td input { min-width: 70px; }
+:root[data-theme="dark"] .pc-table td.pc-shade, :root[data-theme="dark"] .pc-table th.pc-shade { background: rgba(59, 130, 246, 0.18); }
+:root[data-theme="dark"] .pc-table th.pc-highlight, :root[data-theme="dark"] .pc-table td.pc-highlight { color: #f87171; }

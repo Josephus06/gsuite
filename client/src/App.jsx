@@ -183,6 +183,8 @@ import TicketSummary from './pages/reports/TicketSummary';
 import Lookups from './pages/Lookups';
 import TransactionSettings from './pages/TransactionSettings';
 import ProcessCosting from './pages/ProcessCosting';
+import ProcessCostingView from './pages/ProcessCostingView';
+import ProcessCostingEdit from './pages/ProcessCostingEdit';
 import MaterialCosting from './pages/MaterialCosting';
 import MaterialCostEdit from './pages/MaterialCostEdit';
 import ScheduledJobOrders from './pages/ScheduledJobOrders';
@@ -498,6 +500,9 @@ function App() {
         <Route path="/lookups" element={<Lookups />} />
         <Route path="/transaction-settings" element={<TransactionSettings />} />
         <Route path="/process-costing" element={<ProcessCosting />} />
+        <Route path="/process-costing/new" element={<ProcessCostingEdit />} />
+        <Route path="/process-costing/:id" element={<ProcessCostingView />} />
+        <Route path="/process-costing/:id/edit" element={<ProcessCostingEdit />} />
         <Route path="/material-costing" element={<MaterialCosting />} />
         <Route path="/material-costing/:id" element={<MaterialCostEdit />} />
       </Route>
