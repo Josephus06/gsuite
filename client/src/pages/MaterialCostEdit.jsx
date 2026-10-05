@@ -14,6 +14,7 @@ import { displayDateTime } from '../utils/dates';
 //
 //   Wastage Amount = Material Cost x Wastage %       Subtotal    = Material Cost + Wastage Amount
 //   Mark-Up Amount = Subtotal x Mark-Up %            Total Price = Subtotal + Mark-Up Amount
+//   Selling Price  = Total Price rounded up to the whole peso (42.44 -> 43), worked out here, not typed
 //   each DC Amount = Selling Price x its %           (the price actually quoted, not Total Price)
 //   Price Indicator = Material Cost / Last Purchase Price (Base Cost) -- how far the costing
 //   basis sits from what the item last cost; the source prints it with a % sign, e.g. "1.03%".
@@ -63,7 +64,9 @@ export default function MaterialCostEdit() {
   const avgBase = num(item.average_cost) / cf;
   const c = computeMaterialCosting({ ...item, ...form, selling_price: null });
   const priceIndicator = lppBase > 0 && num(form.material_cost) > 0 ? num(form.material_cost) / lppBase : 0;
-  const sellingPrice = num(form.selling_price);
+  // Rounded UP to the peso, as computeMaterialCosting prices a material; toFixed first so a total
+  // that is whole but for float noise (42.000000001) is not pushed to the next peso.
+  const sellingPrice = Math.ceil(Number(c.priceUnrounded.toFixed(6)));
 
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
   function input(key) {
@@ -74,7 +77,7 @@ export default function MaterialCostEdit() {
     setSaving(true);
     setError('');
     // PUT writes every item field, so send the whole record with this screen's edits on top.
-    const payload = { ...item, ...form };
+    const payload = { ...item, ...form, selling_price: num(form.material_cost) > 0 ? sellingPrice : form.selling_price };
     EDITABLE.forEach((k) => { if (payload[k] === '') payload[k] = ['selling_price', 'material_cost', 'beg_selling_price'].includes(k) ? null : 0; });
     payload.last_purchase_date = item.last_purchase_date ? String(item.last_purchase_date).slice(0, 10) : null;
     try {
@@ -126,7 +129,7 @@ export default function MaterialCostEdit() {
             <div><div className="muted">Amount</div><strong>{fmt(c.priceUnrounded - c.costPerUnit)}</strong></div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, alignItems: 'end' }}>
               <div><div className="muted">Total Price</div><strong style={{ color: 'var(--accent)', fontSize: '1.2em' }}>{fmt(c.priceUnrounded)}</strong></div>
-              <div className="field"><label>Selling Price</label>{input('selling_price')}</div>
+              <div className="field"><label>Selling Price</label><input value={fmt(sellingPrice)} readOnly disabled title="Total Price rounded up to the whole peso" /></div>
             </div>
 
             {DISCOUNTS.map(([key, label], i) => (
