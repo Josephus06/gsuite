@@ -19,4 +19,12 @@ const pool = mysql.createPool({
   dateStrings: true,
 });
 
+// Every session in UTC, whatever the MySQL server's own clock says. The droplet's MySQL runs on
+// UTC but the office's runs on Philippine time, so NOW() / CURRENT_TIMESTAMP stamped office-made
+// records 8 hours ahead of the droplet's -- and the dashboard read them as created in the future
+// ("-468m ago", 2026-10-05). The two replicate into one dataset, so they must write one clock.
+pool.on('connection', (conn) => {
+  conn.query("SET time_zone = '+00:00'");
+});
+
 module.exports = pool;

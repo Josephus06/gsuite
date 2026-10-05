@@ -236,17 +236,74 @@ async function adminMetrics(userId) {
   const [[userTotals]] = await pool.query('SELECT COUNT(*) AS total FROM users');
   const [[estRingTotals]] = await pool.query(`SELECT COUNT(*) AS total, SUM(status = 'approved') AS approved FROM estimates`);
 
-  const [topCustomers] = await pool.query(
-    `SELECT c.id, c.name, COUNT(*) AS order_count, COALESCE(SUM(so.total_amount), 0) AS amount
-     FROM sales_orders so JOIN customers c ON c.id = so.customer_id
-     GROUP BY c.id, c.name ORDER BY amount DESC LIMIT 5`
+  // The three cards under the calendar (reworked 2026-10-05). They had been all-time totals --
+  // Sales Order gross with cancelled orders in, and a count of every job order line ever -- which
+  // said who mattered years ago, not now.
+  const today = businessToday();
+  const daysBack = (n) => new Date(Date.parse(`${today}T00:00:00Z`) - n * 86400000).toISOString().slice(0, 10);
+
+  // Top Customers: invoiced sales net of VAT over the last 12 months, each with its share of all
+  // invoiced sales in that window and what it still owes on open invoices (any age).
+  const salesFrom = daysBack(365);
+  const [[[salesTotal]], [topCustomers]] = await Promise.all([
+    pool.query(`SELECT COALESCE(SUM(net_of_tax), 0) AS amount FROM sales_invoices
+                WHERE status <> 'cancelled' AND date_created BETWEEN ? AND ?`, [salesFrom, today]),
+    // An invoice's customer is its own customer_id or, for nearly all migrated ones (13,591 of the
+    // 13,627 in the year to 2026-10-05 have none), its Sales Order's.
+    pool.query(
+      `SELECT c.id, c.name, top.invoice_count, top.amount, COALESCE(ar.open_ar, 0) AS open_ar
+       FROM (
+         SELECT COALESCE(si.customer_id, so.customer_id) AS customer_id, COUNT(*) AS invoice_count, SUM(si.net_of_tax) AS amount
+         FROM sales_invoices si LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+         WHERE si.status <> 'cancelled' AND si.date_created BETWEEN ? AND ?
+         GROUP BY COALESCE(si.customer_id, so.customer_id)
+         HAVING customer_id IS NOT NULL
+         ORDER BY amount DESC LIMIT 5
+       ) top
+       JOIN customers c ON c.id = top.customer_id
+       LEFT JOIN (
+         SELECT COALESCE(o.customer_id, oso.customer_id) AS customer_id, SUM(o.amount_due) AS open_ar
+         FROM sales_invoices o LEFT JOIN sales_orders oso ON oso.id = o.sales_order_id
+         WHERE o.status = 'saved' AND o.amount_due > 0
+         GROUP BY COALESCE(o.customer_id, oso.customer_id)
+       ) ar ON ar.customer_id = top.customer_id
+       ORDER BY top.amount DESC`, [salesFrom, today]),
+  ]);
+
+  // Trending Job Types: Weighted Sales (Sales Order lines net of tax, cancelled orders out -- the
+  // rule lib/salesBreakdown.js applies) for the last 90 days, beside the 90 days before, so the
+  // card says what is rising or falling rather than what is merely common.
+  const [trendingJobTypes] = await pool.query(
+    `SELECT jt.id, jt.display_name,
+            COALESCE(SUM(CASE WHEN so.date_created > ? THEN sol.net_of_tax END), 0) AS amount,
+            COALESCE(SUM(CASE WHEN so.date_created <= ? THEN sol.net_of_tax END), 0) AS prev_amount
+     FROM sales_order_lines sol
+     JOIN sales_orders so ON so.id = sol.sales_order_id
+     JOIN job_types jt ON jt.id = sol.job_type_id
+     WHERE (so.status IS NULL OR so.status <> 'cancelled') AND so.date_created > ? AND so.date_created <= ?
+     GROUP BY jt.id, jt.display_name
+     HAVING amount > 0
+     ORDER BY amount DESC LIMIT 5`,
+    [daysBack(90), daysBack(90), daysBack(180), today]
   );
 
-  const [trendingJobTypes] = await pool.query(
-    `SELECT jt.id, jt.display_name, COUNT(*) AS uses
-     FROM sales_order_lines sol JOIN job_types jt ON jt.id = sol.job_type_id
-     WHERE sol.job_type_id IS NOT NULL
-     GROUP BY jt.id, jt.display_name ORDER BY uses DESC LIMIT 5`
+  // Estimates Needing Attention: open ones raised in the last 90 days, waiting on a supervisor or
+  // the customer, biggest first -- with how long each has waited and whether any line sits below
+  // its job type's passing GP without an Admin/GM approval (the check the approval screen makes).
+  const [attentionEstimates] = await pool.query(
+    `SELECT e.id, e.estimate_no, e.status, e.created_at, c.name AS customer_name,
+            DATEDIFF(?, DATE(e.created_at)) AS days_waiting,
+            COALESCE(SUM(ejo.gross_amount), 0) AS total_amount,
+            COALESCE(SUM(ejo.gp_amount), 0) AS gp_amount, COALESCE(SUM(ejo.net_of_tax), 0) AS net_amount,
+            MAX(ejo.gp_rate < jt.gp_rate_head AND NOT COALESCE(ejo.is_approved_low_gp, 0)) AS below_gp
+     FROM estimates e
+     JOIN customers c ON c.id = e.customer_id
+     LEFT JOIN estimate_job_orders ejo ON ejo.estimate_id = e.id
+     LEFT JOIN job_types jt ON jt.id = ejo.job_type_id
+     WHERE e.status IN ('pending_supervisor_approval', 'pending_customer_approval') AND e.created_at >= ?
+     GROUP BY e.id, e.estimate_no, e.status, e.created_at, c.name
+     ORDER BY total_amount DESC LIMIT 6`,
+    [today, daysBack(90)]
   );
 
   const [salesByDepartment] = await pool.query(
@@ -291,8 +348,20 @@ async function adminMetrics(userId) {
 
   return {
     activeUsers: Number(activeUsers.count),
-    topCustomers: topCustomers.map((c) => ({ id: c.id, name: c.name, orderCount: Number(c.order_count), amount: Number(c.amount) })),
-    trendingJobTypes: trendingJobTypes.map((j) => ({ id: j.id, name: j.display_name, uses: Number(j.uses) })),
+    topCustomers: topCustomers.map((c) => ({
+      id: c.id, name: c.name, invoiceCount: Number(c.invoice_count), amount: Number(c.amount), openAr: Number(c.open_ar),
+      share: Number(salesTotal.amount) > 0 ? Number(((Number(c.amount) / Number(salesTotal.amount)) * 100).toFixed(1)) : 0,
+    })),
+    trendingJobTypes: trendingJobTypes.map((j) => ({
+      id: j.id, name: j.display_name, amount: Number(j.amount), prevAmount: Number(j.prev_amount),
+      // null when there were no sales the 90 days before -- "new", not an infinite rise.
+      change: Number(j.prev_amount) > 0 ? Number((((Number(j.amount) - Number(j.prev_amount)) / Number(j.prev_amount)) * 100).toFixed(0)) : null,
+    })),
+    attentionEstimates: attentionEstimates.map((r) => ({
+      id: r.id, estimateNo: r.estimate_no, status: r.status, customerName: r.customer_name,
+      totalAmount: Number(r.total_amount), daysWaiting: Math.max(0, Number(r.days_waiting) || 0), belowGp: !!Number(r.below_gp),
+      gpRate: Number(r.net_amount) > 0 ? Number(((Number(r.gp_amount) / Number(r.net_amount)) * 100).toFixed(1)) : null,
+    })),
     salesByDepartment: salesByDepartment.map((d) => ({ id: d.id, name: d.name, orderCount: Number(d.order_count), amount: Number(d.amount) })),
     pendingApprovals: Number(pendingApprovals.count),
     salesThisMonth: { count: Number(salesThisMonth.count), amount: Number(salesThisMonth.amount) },

@@ -114,6 +114,13 @@ function money2(v) {
   const n = Number(v) || 0;
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+// "9.3M" / "512K" -- for a donut's centre and legend, where a full peso figure will not fit.
+function compactMoney(v) {
+  const n = Number(v) || 0;
+  if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (Math.abs(n) >= 1e3) return `${Math.round(n / 1e3)}K`;
+  return money(n);
+}
 function timeAgo(iso) {
   if (!iso) return '';
   const diffMs = Date.now() - parseUtc(iso).getTime();
@@ -292,8 +299,9 @@ function AdminDashboard({ data, user, navigate }) {
   // API refuses it without the page permission anyway.
   const { can } = useAuth();
   const canSeeCollections = can('/treasury/collection-forecast');
-  const trendingTotal = data.trendingJobTypes.reduce((s, j) => s + j.uses, 0);
-  const jobTypeSegments = data.trendingJobTypes.map((j, i) => ({ label: j.name, value: j.uses, color: JOB_TYPE_COLORS[i % JOB_TYPE_COLORS.length] }));
+  const trendingTotal = data.trendingJobTypes.reduce((s, j) => s + j.amount, 0);
+  const jobTypeSegments = data.trendingJobTypes.map((j, i) => ({ label: j.name, value: j.amount, change: j.change, color: JOB_TYPE_COLORS[i % JOB_TYPE_COLORS.length] }));
+  const topCustomerMax = Math.max(...data.topCustomers.map((c) => c.amount), 1);
   const approvalRingValue = data.estimatesApprovedPct ?? 0;
   const activity = data.recentEstimates.slice(0, 4).map((r) => ({
     title: `${r.estimateNo} · ${r.customerName}`,
@@ -371,42 +379,72 @@ function AdminDashboard({ data, user, navigate }) {
       </div>
 
       <div className="holo-grid holo-grid-wide">
+        {/* Invoiced sales net of VAT over the last 12 months, with each customer's share of them and
+            what it still owes -- a big customer that pays slowly shows here. */}
         <div className="holo-card">
-          <h3>Top Customers by Amount Ordered</h3>
-          <BarList
-            color="var(--dash-purple)"
-            data={data.topCustomers.map((c) => ({ label: c.name, value: c.amount, color: '#7c6fe8' }))}
-            formatValue={(v) => `₱${money(v)}`}
-          />
+          <h3>Top Customers · Last 12 Months</h3>
+          {data.topCustomers.length ? (
+            <div className="holo-barlist">
+              {data.topCustomers.map((c) => (
+                <div key={c.id} style={{ cursor: 'pointer' }} title={`${c.name} -- ${c.invoiceCount} invoices`}
+                  onClick={() => navigate(`/customers/${c.id}`)}>
+                  <div className="holo-barlist-row">
+                    <div className="holo-barlist-label">{c.name}</div>
+                    <div className="holo-barlist-track">
+                      <div className="holo-barlist-fill" style={{ width: `${(c.amount / topCustomerMax) * 100}%`, background: '#7c6fe8', boxShadow: '0 0 8px #7c6fe8' }} />
+                    </div>
+                    <div className="holo-barlist-value">₱{money(c.amount)}</div>
+                  </div>
+                  <div className="holo-activity-sub" style={{ margin: '-4px 0 8px', textAlign: 'right' }}>
+                    {c.share}% of sales · Open AR ₱{money(c.openAr)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : <p className="holo-empty">No invoices in the last 12 months.</p>}
         </div>
 
+        {/* Weighted Sales by job type for the last 90 days, each against the 90 days before. */}
         <div className="holo-card">
-          <h3>Most Trending Job Type</h3>
+          <h3>Trending Job Types · Last 90 Days</h3>
           {data.trendingJobTypes.length ? (
             <div style={{ display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap' }}>
-              <DonutChart data={jobTypeSegments} centerLabel={trendingTotal} centerSub="uses" />
+              <DonutChart data={jobTypeSegments} centerLabel={`₱${compactMoney(trendingTotal)}`} centerSub="sales" />
               <div className="holo-legend" style={{ flex: 1, minWidth: 140 }}>
                 {jobTypeSegments.map((s, i) => (
                   <div className="holo-legend-row" key={i}>
                     <span className="holo-legend-dot" style={{ background: s.color, color: s.color }} />
                     <span className="holo-legend-label">{s.label}</span>
-                    <span className="holo-legend-value">{s.value}</span>
+                    <span className="holo-legend-value">
+                      ₱{compactMoney(s.value)}{' '}
+                      <span style={{ color: s.change == null ? 'var(--holo-cyan)' : s.change >= 0 ? '#34d399' : '#f87171', fontSize: '0.85em' }}
+                        title="Against the 90 days before">
+                        {s.change == null ? 'new' : `${s.change >= 0 ? '▲' : '▼'} ${Math.abs(s.change)}%`}
+                      </span>
+                    </span>
                   </div>
                 ))}
               </div>
             </div>
-          ) : <p className="holo-empty">No job order lines yet.</p>}
+          ) : <p className="holo-empty">No sales orders in the last 90 days.</p>}
         </div>
 
+        {/* Open estimates from the last 90 days waiting on a supervisor or the customer, biggest
+            first -- what the GM can push. Below GP: a line under its job type's passing GP with
+            no Admin/GM approval. */}
         <div className="holo-card">
-          <h3>Recent Estimates</h3>
-          {data.recentEstimates.length ? (
+          <h3>Estimates Needing Attention</h3>
+          {data.attentionEstimates.length ? (
             <div className="holo-activity">
-              {data.recentEstimates.map((r) => (
-                <div className="holo-activity-row" key={r.id}>
+              {data.attentionEstimates.map((r) => (
+                <div className="holo-activity-row" key={r.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/estimates/${r.id}`)}>
                   <div>
                     <div className="holo-activity-main">{r.estimateNo} · {r.customerName}</div>
-                    <div className="holo-activity-sub">{timeAgo(r.createdAt)}</div>
+                    <div className="holo-activity-sub">
+                      waiting {r.daysWaiting} day{r.daysWaiting === 1 ? '' : 's'}
+                      {r.gpRate != null && <> · GP {r.gpRate}%</>}
+                      {r.belowGp && <span style={{ color: '#f87171', fontWeight: 600 }}> · below GP</span>}
+                    </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <div className="holo-activity-amount">₱{money(r.totalAmount)}</div>
@@ -415,7 +453,7 @@ function AdminDashboard({ data, user, navigate }) {
                 </div>
               ))}
             </div>
-          ) : <p className="holo-empty">No estimates yet.</p>}
+          ) : <p className="holo-empty">Nothing waiting.</p>}
         </div>
       </div>
 
