@@ -72,6 +72,8 @@ router.get('/for-sales-order/:salesOrderId', requireAuth, requirePermission(ROUT
     const [[so]] = await pool.query(
       `SELECT so.id, so.sales_order_no, so.credit_term, so.sales_rep_id, so.office_location_id,
               so.contact_email, so.contact_title, so.contact_phone,
+              -- The order's "PO #" (the customer's confirmation ref) prefills the ticket's PO #.
+              so.order_confirmation_ref AS po_no,
               c.name AS customer_name, c.tin AS customer_tin,
               cc.contact_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,

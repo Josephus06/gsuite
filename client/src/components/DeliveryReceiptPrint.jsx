@@ -88,6 +88,7 @@ export default function DeliveryReceiptPrint({ si }) {
             {/* The order this delivery is against -- what the customer's receiving clerk checks
                 the goods off with. */}
             <div><strong>SO # :</strong> {orderNo}</div>
+            <div><strong>PO # :</strong> {si.po_no}</div>
             <div><strong>Date :</strong> {displayDate(si.date_created)}</div>
             <div><strong>Term :</strong> {si.term}</div>
           </div>

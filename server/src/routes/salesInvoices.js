@@ -325,6 +325,8 @@ router.get('/for-sales-order/:salesOrderId', requireAuth, requirePermission(ROUT
   try {
     const [[so]] = await pool.query(
       `SELECT so.id, so.sales_order_no, so.credit_term, so.sales_rep_id, so.office_location_id, so.shipping_address,
+              -- The order's "PO #" (the customer's confirmation ref) prefills the invoice's PO #.
+              so.order_confirmation_ref AS po_no,
               c.name AS customer_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               loc.location_name AS office_location_name,
@@ -540,7 +542,10 @@ router.get('/for-estimate/:estimateId', requireAuth, requirePermission(ROUTE, 'c
 router.get('/for-delivery-ticket/:deliveryTicketId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[dt]] = await pool.query(
-      `SELECT dt.id AS delivery_ticket_id, dt.dt_no, dt.status, dt.sales_order_id, dt.term, dt.po_no,
+      `SELECT dt.id AS delivery_ticket_id, dt.dt_no, dt.status, dt.sales_order_id, dt.term,
+              -- The ticket's own PO #, else its Sales Order's (tickets raised before the order's PO #
+              -- was carried onto them have none).
+              COALESCE(NULLIF(dt.po_no, ''), so.order_confirmation_ref) AS po_no,
               dt.sales_rep_id, dt.office_location_id, dt.department_id, dt.memo,
               dt.subtotal, dt.discount_amount, dt.net_of_tax, dt.tax_amount, dt.gross_amount,
               so.sales_order_no, so.shipping_address, so.credit_term,

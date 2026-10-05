@@ -91,6 +91,8 @@ export default function DeliveryTicketModal({ salesOrderId, ticket = null, onClo
       if (d.office_location_id) setOfficeLocation({ id: d.office_location_id, location_name: d.office_location_name });
       setDateDue(addDays(new Date().toISOString().slice(0, 10), 30));
       setRows(d.lines.map((l, idx) => ({ ...l, key: `so-${l.sales_order_line_id ?? idx}` })));
+      // The Sales Order's PO # (its customer confirmation ref) carries onto a new ticket.
+      setPoNo(d.po_no || '');
       if (ticket) {
         // Editing: the saved ticket's own header and lines, not the order's prefill. A line's tax
         // rate comes from its code, or -- for a code not in the table -- from its stored tax / net.
