@@ -42,6 +42,7 @@
 //   Assembly Build                    abl.unit -- almost always the base unit already
 //   Inventory Adjustment              ial.unit -- base when written by inventoryAdjustments.js,
 //                                     the stock unit on migrated rows
+//   RMI Receipt                       rrl.uom -- the RMI line's own unit
 //
 // A unit is recognised as "already base" by its CODE or its TITLE ('SQFT' and 'Square Foot' are
 // one unit), and dimension codes never trigger a conversion. See toBase.
@@ -239,13 +240,39 @@ function movementsSql(filterByItem = false) {
   LEFT JOIN inventories i6 ON i6.id = osfl2.item_id
   LEFT JOIN units_of_measure bu6 ON bu6.id = i6.base_unit_id
   WHERE osf2.transfer_to_location_id IS NOT NULL AND (i6.item_type IS NULL OR LOWER(i6.item_type) NOT IN ('service', 'non-inventory', 'noninventory'))${and('osfl2')}
+
+  UNION ALL
+
+  -- RMI receipts (rmi_receipt_lines, 2026-10-05): material returned from a branch arrives at the
+  -- RMI's Return To and leaves its Return From, on the day it was received -- a one-step transfer.
+  -- Only receipts taken in T1S: the migrated RMIs' receipts are inside the source's Beginning
+  -- Balance already (see db/create-rmi-receipts.js). The line's own unit, so toBase converts it.
+  SELECT rrl.date_received, rmi.rmi_no, 'RMI Receipt',
+         NULL, rrl.item_id, rmi.return_from_location_id, rfloc.location_name, NULL, NULL,
+         0, ${toBase('rrl.qty', 'rrl.uom', 'i7', 'bu7')}, i7.average_cost, rrl.id, rrl.created_at, rrl.uom, rrl.uom
+  FROM rmi_receipt_lines rrl
+  JOIN rmis rmi ON rmi.id = rrl.rmi_id
+  LEFT JOIN locations rfloc ON rfloc.id = rmi.return_from_location_id
+  LEFT JOIN inventories i7 ON i7.id = rrl.item_id
+  LEFT JOIN units_of_measure bu7 ON bu7.id = i7.base_unit_id${where('rrl')}
+
+  UNION ALL
+
+  SELECT rrl2.date_received, rmi2.rmi_no, 'RMI Receipt',
+         NULL, rrl2.item_id, NULL, NULL, rmi2.return_to_location_id, rtloc.location_name,
+         ${toBase('rrl2.qty', 'rrl2.uom', 'i8', 'bu8')}, 0, i8.average_cost, rrl2.id, rrl2.created_at, rrl2.uom, rrl2.uom
+  FROM rmi_receipt_lines rrl2
+  JOIN rmis rmi2 ON rmi2.id = rrl2.rmi_id
+  LEFT JOIN locations rtloc ON rtloc.id = rmi2.return_to_location_id
+  LEFT JOIN inventories i8 ON i8.id = rrl2.item_id
+  LEFT JOIN units_of_measure bu8 ON bu8.id = i8.base_unit_id${where('rrl2')}
 `;
 }
 
 // How many item-id placeholders movementsSql(true) carries -- one per movement branch. Callers
 // pass movementParams(ids) rather than counting branches themselves, so adding a branch here
 // cannot leave a caller one parameter short.
-const MOVEMENT_FILTER_COUNT = 8;
+const MOVEMENT_FILTER_COUNT = 10;
 function movementParams(ids) {
   return Array.from({ length: MOVEMENT_FILTER_COUNT }, () => ids);
 }

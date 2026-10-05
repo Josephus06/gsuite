@@ -179,9 +179,86 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     if (!rmi) return res.status(404).json({ error: 'RMI not found.' });
 
     const [lines] = await pool.query(`${LINE_SELECT} WHERE l.rmi_id = ? ORDER BY l.line_no`, [req.params.id]);
-    res.json({ ...rmi, lines });
+    // What has been received in T1S, receipt by receipt. Migrated documents have none -- their
+    // received quantities came over on the lines alone.
+    const [receipts] = await pool.query(
+      `SELECT rrl.id, rrl.rmi_line_id, rrl.qty, rrl.uom, DATE_FORMAT(rrl.date_received, '%Y-%m-%d') AS date_received,
+              rrl.created_at, i.item_code, i.display_name AS item_name, u.display_name AS received_by_name
+         FROM rmi_receipt_lines rrl
+         LEFT JOIN inventories i ON i.id = rrl.item_id
+         LEFT JOIN users u ON u.id = rrl.received_by_user_id
+        WHERE rrl.rmi_id = ? ORDER BY rrl.date_received, rrl.id`,
+      [req.params.id],
+    );
+    res.json({ ...rmi, lines, receipts });
   } catch (err) {
     next(err);
+  }
+});
+
+// Receive an RMI (asked 2026-10-05: receiving had never been built). Each line takes what arrived,
+// up to what is still outstanding on it -- all of it at once, or part now and the rest later. Every
+// receipt is a stock movement (rmi_receipt_lines, read by lib/stockLedger.js): out of Return From,
+// into Return To, on the date received. The status follows the lines -- Partially Received while
+// anything is short, Received once every line is in full.
+//
+// can_update, not can_edit: receiving advances the document, it does not change what it says.
+router.post('/:id/receive', requireAuth, requirePermission(ROUTE, 'can_update'), async (req, res, next) => {
+  const { date_received: dateReceived, lines } = req.body;
+  if (!dateReceived) return res.status(400).json({ error: 'Date Received is required.' });
+  const wanted = (Array.isArray(lines) ? lines : []).filter((l) => l && l.rmi_line_id && Number(l.qty) > 0);
+  if (!wanted.length) return res.status(400).json({ error: 'Enter a quantity received on at least one line.' });
+
+  const conn = await pool.getConnection();
+  try {
+    await assertPeriodOpen(dateReceived, 'non_gl', conn);
+    await conn.beginTransaction();
+    const [[rmi]] = await conn.query('SELECT id, rmi_no, status, date_created FROM rmis WHERE id = ? FOR UPDATE', [req.params.id]);
+    if (!rmi) { await conn.rollback(); return res.status(404).json({ error: 'RMI not found.' }); }
+    if (rmi.status === 'cancelled') { await conn.rollback(); return res.status(409).json({ error: 'This RMI is cancelled.' }); }
+    if (rmi.status === 'received') { await conn.rollback(); return res.status(409).json({ error: 'This RMI has already been received in full.' }); }
+    if (String(dateReceived).slice(0, 10) < String(rmi.date_created).slice(0, 10)) {
+      await conn.rollback();
+      return res.status(400).json({ error: 'Date Received cannot be before the RMI was raised.' });
+    }
+
+    const [rmiLines] = await conn.query('SELECT id, line_no, item_id, qty, received, uom FROM rmi_lines WHERE rmi_id = ? FOR UPDATE', [rmi.id]);
+    const lineById = new Map(rmiLines.map((l) => [Number(l.id), l]));
+    for (const w of wanted) {
+      const l = lineById.get(Number(w.rmi_line_id));
+      if (!l) { await conn.rollback(); return res.status(400).json({ error: 'One of the lines is not on this RMI.' }); }
+      const outstanding = Number((Number(l.qty) - Number(l.received)).toFixed(4));
+      if (Number(w.qty) > outstanding + 1e-9) {
+        await conn.rollback();
+        return res.status(409).json({ error: `Line ${l.line_no}: only ${outstanding} is still to be received.` });
+      }
+    }
+
+    for (const w of wanted) {
+      const l = lineById.get(Number(w.rmi_line_id));
+      const q = Number(Number(w.qty).toFixed(4));
+      await conn.query(
+        `INSERT INTO rmi_receipt_lines (rmi_id, rmi_line_id, item_id, qty, uom, date_received, received_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [rmi.id, l.id, l.item_id, q, l.uom || null, dateReceived, req.user.id],
+      );
+      await conn.query('UPDATE rmi_lines SET received = received + ? WHERE id = ?', [q, l.id]);
+      l.received = Number(l.received) + q;
+    }
+    const allIn = rmiLines.every((l) => Number(l.received) >= Number(l.qty) - 1e-9);
+    const status = allIn ? 'received' : 'partially_received';
+    await conn.query(
+      'UPDATE rmis SET status = ?, received_at = IF(? = \'received\', ?, received_at) WHERE id = ?',
+      [status, status, dateReceived, rmi.id],
+    );
+    await conn.commit();
+    res.json({ id: rmi.id, status });
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  } finally {
+    conn.release();
   }
 });
 
