@@ -4,6 +4,10 @@ import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 
+// The PO-3 Job Order picker: job orders proper, not RWIP rework orders, newest first. There are
+// 124k of them, so the picker opens on the newest 100 and searches the server as you type.
+const JO_PICKER_PARAMS = { limit: 100, exclude_rwip: '1' };
+
 function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
@@ -20,6 +24,19 @@ export default function PurchaseOrderCreate() {
   const [locations, setLocations] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [jobOrders, setJobOrders] = useState([]);
+  // Job orders already chosen on a line, kept so each line still shows its JO # after a search
+  // has replaced the picker's list.
+  const [pickedJobOrders, setPickedJobOrders] = useState([]);
+  function rememberJobOrder(jo) {
+    setPickedJobOrders((prev) => (prev.some((x) => x.id === jo.id) ? prev : [...prev, jo]));
+  }
+  async function searchJobOrders(term) {
+    try {
+      const { data } = await api.get('/job-orders', { params: { ...JO_PICKER_PARAMS, search: term || undefined } });
+      setJobOrders(data.rows || []);
+    } catch { /* keep the list already shown */ }
+  }
+  const jobOrderChoices = [...pickedJobOrders, ...jobOrders.filter((jo) => !pickedJobOrders.some((x) => x.id === jo.id))];
   const [serviceItems, setServiceItems] = useState([]);
   const [nonInventoryItems, setNonInventoryItems] = useState([]);
 
@@ -53,7 +70,7 @@ export default function PurchaseOrderCreate() {
     load('Tax codes', api.get('/lookups/taxes'), setTaxes);
     load('Locations', api.get('/lookups/locations'), setLocations);
     load('Departments', api.get('/lookups/departments'), setDepartments);
-    load('Job Orders', api.get('/job-orders', { params: { limit: 1000 } }), (d) => setJobOrders(d.rows || []));
+    load('Job Orders', api.get('/job-orders', { params: JO_PICKER_PARAMS }), (d) => setJobOrders(d.rows || []));
     load('Service items', api.get('/inventory', { params: { item_type: 'Service' } }), setServiceItems);
     load('Non-inventory items', api.get('/inventory', { params: { item_type: 'Non-Inventory' } }), setNonInventoryItems);
   }, []);
@@ -249,9 +266,15 @@ export default function PurchaseOrderCreate() {
                     {poCategory === 'PO3' && (
                       <td>
                         <EntityPicker
-                          label="Job Order" items={jobOrders} value={l.job_order_id} getLabel={(jo) => jo?.job_order_no}
-                          columns={[{ key: 'job_order_no', label: 'JO #' }]} searchKeys={['job_order_no']}
-                          onSelect={(jo) => updateLine(l._key, { job_order_id: jo.id })}
+                          label="Job Order" items={jobOrderChoices} value={l.job_order_id} getLabel={(jo) => jo?.job_order_no}
+                          columns={[
+                            { key: 'job_order_no', label: 'JO #' },
+                            { key: 'customer_name', label: 'Customer' },
+                            { key: 'description', label: 'Description' },
+                          ]}
+                          searchKeys={['job_order_no', 'customer_name', 'description']}
+                          onSearch={searchJobOrders}
+                          onSelect={(jo) => { rememberJobOrder(jo); updateLine(l._key, { job_order_id: jo.id }); }}
                         />
                       </td>
                     )}

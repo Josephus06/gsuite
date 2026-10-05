@@ -127,6 +127,7 @@ async function listFilter(req) {
   const {
     search, sales_rep_id: salesRepId, job_location_id: jobLocationId, office_location_id: officeLocationId,
     department_id: departmentId, customer_id: customerId, date_from: dateFrom, as_of: asOf, tab,
+    exclude_rwip: excludeRwip,
   } = req.query;
 
   const where = [];
@@ -146,6 +147,9 @@ async function listFilter(req) {
   if (officeLocationId) { where.push('so.office_location_id = ?'); params.push(officeLocationId); }
   if (departmentId) { where.push('so.sales_division_id = ?'); params.push(departmentId); }
   if (customerId) { where.push('so.customer_id = ?'); params.push(customerId); }
+  // Job orders proper, without the RWIP-### rework orders -- the PO-3 Job Order picker (asked
+  // 2026-10-05), where the RWIPs, being the newest rows, had crowded every real JO off the list.
+  if (excludeRwip === '1') where.push("jo.job_order_no NOT LIKE 'RWIP-%'");
   // Period From: inclusive lower bound on Date Created, the same column As of bounds from above.
   if (dateFrom) { where.push('jo.created_at >= ?'); params.push(String(dateFrom).slice(0, 10)); }
   // created_at is a DATETIME: "<= day" stopped at that day's midnight and left the day itself out.
