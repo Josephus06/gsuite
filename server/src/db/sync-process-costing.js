@@ -82,6 +82,12 @@ const range = (s, code) => {
 // --add-only: insert the brackets T1S lacks and change nothing else. The full sync also rewrites
 // existing brackets, DL among them -- which takes off the +8% T1S adds (adjust-process-costing-dl.js).
 const ADD_ONLY = process.argv.includes('--add-only');
+// T1S carries DL and Sub Con 8% above the source (adjust-process-costing-dl.js: DL 2026-10-01,
+// Sub Con 2026-10-02). That script raised the brackets that existed then and refuses to run twice,
+// so a bracket added here gets the same raise, rounded as it rounds -- otherwise it would come in
+// 8% cheaper than every bracket around it.
+const T1S_RAISE = { direct_labor: 1.08, sub_con: 1.08 };
+const raise = (col, v) => (T1S_RAISE[col] && v ? Math.round(v * T1S_RAISE[col] * 10000) / 10000 : v);
 const bracketName = (r) => `${display(r.qty_min) ?? '?'}-${display(r.qty_max) ?? '?'}`;
 
 async function main() {
@@ -140,7 +146,11 @@ async function main() {
           } else out.priceCheck.pesoOk += 1;
         }
         const idx = mine.findIndex((m) => same(m.qty_min, min) && same(m.qty_max, max));
-        if (idx < 0) { inserts.push({ process_id: processId, qty_min: min, qty_max: max, ...want }); continue; }
+        if (idx < 0) {
+          const raised = Object.fromEntries(Object.entries(want).map(([c, v]) => [c, raise(c, v)]));
+          inserts.push({ process_id: processId, qty_min: min, qty_max: max, ...raised });
+          continue;
+        }
         const cur = mine.splice(idx, 1)[0];
         const changes = COLS.filter((c) => (c === 'costing_reference' || c === 'selling_price_override')
           ? String(cur[c] == null ? '' : Number(cur[c])) !== String(want[c] == null ? '' : Number(want[c]))
@@ -208,7 +218,7 @@ async function main() {
         [r.process_id, r.qty_min, r.qty_max, ...COLS.map((c) => r[c])]);
       await conn.query(
         `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, set_by_user_id)
-         VALUES ('ProcessCosting', ?, 'Created', ?, ?)`, [r.process_id, `Bracket ${bracketName(r)} (from source)`, admin.id]);
+         VALUES ('ProcessCosting', ?, 'Created', ?, ?)`, [r.process_id, `Bracket ${bracketName(r)} (from source, DL/Sub Con +8%)`, admin.id]);
     }
     await conn.commit();
     console.log(`Updated ${updates.length} bracket(s), added ${inserts.length}.`);
