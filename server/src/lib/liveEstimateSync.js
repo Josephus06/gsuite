@@ -324,6 +324,46 @@ async function importOneEstimate(cache, token, stub) {
   return { outcome: 'imported', estimateNo: stub.est_upk, jobOrders: jobs };
 }
 
+// One source job line's process/material rows, written under T1S estimate line `joId`. Returns
+// how many were written. Also used on its own to fill the processes of a line that came over
+// without them (db/backfill-estimate-lines.js).
+async function insertJobProcesses(cache, joId, jo) {
+  const lines = jo.transactionledgerjob_transactionledgerinvtys || [];
+  for (let lIdx = 0; lIdx < lines.length; lIdx++) {
+    const l = lines[lIdx];
+    const processId = await processIdByCode(l.transactionledgerinvty_process?.UserPK_Proc);
+    const itemId = await ensureInventoryItem(cache, l.transactionledgerinvty_invty);
+    const lineTaxCodeId = await ensureTax(cache, l.TaxCode_LdgrInvty);
+    const discProcessPrice = num(l.DiscProcessPrice_LdgrInvty);
+    const discMaterialPrice = num(l.DiscMaterialPrice_LdgrInvty);
+    const netOfTax = Number((discProcessPrice + discMaterialPrice).toFixed(2));
+    const taxAmount = num(l.TaxAmount_LdgrInvty);
+    const grossAmount = num(l.TotalAmountOut_LdgrInvty) || Number((netOfTax + taxAmount).toFixed(2));
+
+    await pool.query(
+      `INSERT INTO estimate_job_order_processes
+         (estimate_job_order_id, line_no, process_id, process_qty, process_uom, category, parts, item_id,
+          length, width, uom, qty, total, unit, process_price, process_disc_percent, process_disc_amount,
+          disc_process_price, material_price, material_disc_percent, material_disc_amount, disc_material_price,
+          net_of_tax, tax_code_id, tax_amount, gross_amount, remarks, gp_rate, process_cost, material_cost,
+          total_cost, total_price)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        joId, lIdx + 1, processId, nullableNum(l.ProcessQty_LdgrInvty), l.transactionledgerinvty_process?.UOM_Proc || null,
+        l.Category_LdgrInvty || null, l.Parts_LdgrInvty || null, itemId,
+        nullableNum(l.Length_LdgrInvty), nullableNum(l.Width_LdgrInvty), l.UnitOfMeasure_LdgrInvty || null,
+        num(l.Qty_LdgrInvty), computeLineTotal(l), l.Unit_LdgrInvty || null,
+        num(l.ProcessPrice_LdgrInvty), num(l.ProcessDiscountPercent_LdgrInvty), num(l.ProcessDiscountAmount_LdgrInvty),
+        discProcessPrice, num(l.MaterialPrice_LdgrInvty), num(l.MaterialDiscountPercent_LdgrInvty), num(l.MaterialDiscountAmount_LdgrInvty),
+        discMaterialPrice, netOfTax, lineTaxCodeId, taxAmount, grossAmount, l.SalesRemarks_LdgrInvty || null,
+        num(l.GPRate_LdgrInvty), num(l.ProcessCost_LdgrInvty), num(l.MaterialCost_LdgrInvty),
+        Number((num(l.ProcessCost_LdgrInvty) + num(l.MaterialCost_LdgrInvty)).toFixed(2)), grossAmount,
+      ]
+    );
+  }
+  return lines.length;
+}
+
 // The source estimate's job lines (with their processes/materials) under an estimate already in
 // T1S, and its Est. GP from them. Returns the number of job lines written.
 async function insertEstimateJobs(cache, estimateId, t) {
@@ -355,39 +395,7 @@ async function insertEstimateJobs(cache, estimateId, t) {
     );
     const joId = joResult.insertId;
 
-    const lines = jo.transactionledgerjob_transactionledgerinvtys || [];
-    for (let lIdx = 0; lIdx < lines.length; lIdx++) {
-      const l = lines[lIdx];
-      const processId = await processIdByCode(l.transactionledgerinvty_process?.UserPK_Proc);
-      const itemId = await ensureInventoryItem(cache, l.transactionledgerinvty_invty);
-      const lineTaxCodeId = await ensureTax(cache, l.TaxCode_LdgrInvty);
-      const discProcessPrice = num(l.DiscProcessPrice_LdgrInvty);
-      const discMaterialPrice = num(l.DiscMaterialPrice_LdgrInvty);
-      const netOfTax = Number((discProcessPrice + discMaterialPrice).toFixed(2));
-      const taxAmount = num(l.TaxAmount_LdgrInvty);
-      const grossAmount = num(l.TotalAmountOut_LdgrInvty) || Number((netOfTax + taxAmount).toFixed(2));
-
-      await pool.query(
-        `INSERT INTO estimate_job_order_processes
-           (estimate_job_order_id, line_no, process_id, process_qty, process_uom, category, parts, item_id,
-            length, width, uom, qty, total, unit, process_price, process_disc_percent, process_disc_amount,
-            disc_process_price, material_price, material_disc_percent, material_disc_amount, disc_material_price,
-            net_of_tax, tax_code_id, tax_amount, gross_amount, remarks, gp_rate, process_cost, material_cost,
-            total_cost, total_price)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          joId, lIdx + 1, processId, nullableNum(l.ProcessQty_LdgrInvty), l.transactionledgerinvty_process?.UOM_Proc || null,
-          l.Category_LdgrInvty || null, l.Parts_LdgrInvty || null, itemId,
-          nullableNum(l.Length_LdgrInvty), nullableNum(l.Width_LdgrInvty), l.UnitOfMeasure_LdgrInvty || null,
-          num(l.Qty_LdgrInvty), computeLineTotal(l), l.Unit_LdgrInvty || null,
-          num(l.ProcessPrice_LdgrInvty), num(l.ProcessDiscountPercent_LdgrInvty), num(l.ProcessDiscountAmount_LdgrInvty),
-          discProcessPrice, num(l.MaterialPrice_LdgrInvty), num(l.MaterialDiscountPercent_LdgrInvty), num(l.MaterialDiscountAmount_LdgrInvty),
-          discMaterialPrice, netOfTax, lineTaxCodeId, taxAmount, grossAmount, l.SalesRemarks_LdgrInvty || null,
-          num(l.GPRate_LdgrInvty), num(l.ProcessCost_LdgrInvty), num(l.MaterialCost_LdgrInvty),
-          Number((num(l.ProcessCost_LdgrInvty) + num(l.MaterialCost_LdgrInvty)).toFixed(2)), grossAmount,
-        ]
-      );
-    }
+    await insertJobProcesses(cache, joId, jo);
   }
 
   const netOfTaxTotal = num(t.SubTotalVatEx_TransH);
@@ -445,4 +453,4 @@ async function syncNewEstimates({ lookbackDays = 90 } = {}) {
 // Exported beyond syncNewEstimates so a one-off script can import a single, specific
 // estimate by SysPK (e.g. one pasted from a URL) without duplicating all the
 // master-data-resolution logic above.
-module.exports = { syncNewEstimates, login, apiCall, importOneEstimate, freshCache, fetchEstimateDetail, insertEstimateJobs, computeLineTotal };
+module.exports = { syncNewEstimates, login, apiCall, importOneEstimate, freshCache, fetchEstimateDetail, insertEstimateJobs, insertJobProcesses, computeLineTotal };
