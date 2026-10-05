@@ -209,7 +209,7 @@ export default function PurchaseOrderPrint() {
                 <td className="po-qty">{money(l.qty)}</td>
                 <td className="po-unit">{l.purchase_unit || l.unit_title || ''}</td>
                 <td className="po-num">{money(l.rate)}</td>
-                <td className="po-num po-disc">{Number(l.disc_percent) ? money(l.disc_percent) : ''}</td>
+                <td className="po-num po-disc">{l.disc_formula || (Number(l.disc_percent) ? money(l.disc_percent) : '')}</td>
                 <td className="po-num">{money(l.ext_price)}</td>
               </tr>
             ))}

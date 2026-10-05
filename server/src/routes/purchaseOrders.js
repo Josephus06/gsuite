@@ -8,6 +8,21 @@ const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { insertNumbered } = require('../lib/docNumber');
 const { isApproved, normalisePoStatus, statusNormSql } = require('../lib/poStatus');
 const { sendXlsx, day } = require('../lib/xlsxExport');
+const { parseDiscountChain } = require('../lib/discountChain');
+
+// A line's Discount % may be a chain ("10;5" -- 10% off, then 5% off the rest). Resolved here into
+// the one percent it comes to, which is what every calculation below and every document copied
+// from the PO already uses; the chain itself is kept in disc_formula for the screens. Returns an
+// error message for a discount that is not a valid percent or chain.
+function resolveLineDiscounts(lines) {
+  for (const l of lines) {
+    const d = parseDiscountChain(l.disc_formula != null && l.disc_formula !== '' ? l.disc_formula : l.disc_percent);
+    if (d.error) return d.error;
+    l.disc_percent = d.pct;
+    l.disc_formula = d.formula;
+  }
+  return null;
+}
 
 const router = express.Router();
 const ROUTE = '/purchase-orders';
@@ -655,6 +670,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const { date_created: dateCreated, ref_no: refNo, memo, lines } = req.body;
     const submitted = (Array.isArray(lines) ? lines : []).filter((l) => l.item_id && l.supplier_id && Number(l.qty) > 0);
     if (!submitted.length) return res.status(400).json({ error: 'Add at least one line with a Supplier and Qty greater than 0.' });
+    const discError = resolveLineDiscounts(submitted);
+    if (discError) return res.status(400).json({ error: discError });
     await assertPeriodOpen(dateCreated, 'non_gl', conn);
 
     const prLineIds = [...new Set(submitted.map((l) => l.purchase_requisition_line_id).filter(Boolean))];
@@ -724,10 +741,10 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
         await conn.query(
           `INSERT INTO purchase_order_lines
              (purchase_order_id, purchase_requisition_line_id, item_id, purchase_description, location_id, department_id,
-              qty, purchase_unit, unit_title, rate, disc_percent, disc_amount, net_of_tax, tax_code_id, tax_amount, ext_price)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              qty, purchase_unit, unit_title, rate, disc_percent, disc_formula, disc_amount, net_of_tax, tax_code_id, tax_amount, ext_price)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [poId, l.purchase_requisition_line_id || null, l.item_id, l.purchase_description || null, l.location_id || null, l.department_id || null,
-            l.qty, l.purchase_unit || null, l.unit_title || null, l.rate || 0, l.disc_percent || 0, l.lineDiscAmount, l.lineNetOfTax, l.tax_code_id || null, l.lineTaxAmount, l.extPrice]
+            l.qty, l.purchase_unit || null, l.unit_title || null, l.rate || 0, l.disc_percent || 0, l.disc_formula || null, l.lineDiscAmount, l.lineNetOfTax, l.tax_code_id || null, l.lineTaxAmount, l.extPrice]
         );
         if (l.purchase_requisition_line_id) {
           await conn.query('UPDATE purchase_requisition_lines SET po_qty = po_qty + ? WHERE id = ?', [l.qty, l.purchase_requisition_line_id]);
@@ -995,6 +1012,8 @@ router.post('/direct', requireAuth, requirePermission(ROUTE, 'can_add'), async (
     if (!supplierId) return res.status(400).json({ error: 'Select a Supplier.' });
     const submitted = (Array.isArray(lines) ? lines : []).filter((l) => l.item_id && Number(l.qty) > 0);
     if (!submitted.length) return res.status(400).json({ error: 'Add at least one line with a Qty greater than 0.' });
+    const discError = resolveLineDiscounts(submitted);
+    if (discError) return res.status(400).json({ error: discError });
 
     const taxCodeIds = [...new Set(submitted.map((l) => l.tax_code_id).filter(Boolean))];
     const taxRateById = new Map();
@@ -1042,11 +1061,11 @@ router.post('/direct', requireAuth, requirePermission(ROUTE, 'can_add'), async (
       await conn.query(
         `INSERT INTO purchase_order_lines
            (purchase_order_id, item_id, purchase_description, location_id, department_id, job_order_id, memo,
-            qty, purchase_unit, unit_title, rate, disc_percent, disc_amount, net_of_tax, tax_code_id, tax_amount, ext_price)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            qty, purchase_unit, unit_title, rate, disc_percent, disc_formula, disc_amount, net_of_tax, tax_code_id, tax_amount, ext_price)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [poId, l.item_id, l.purchase_description || null, l.location_id || null, l.department_id || null,
           poCategory === 'PO3' ? (l.job_order_id || null) : null, l.memo || null,
-          l.qty, l.purchase_unit || null, l.unit_title || null, l.rate || 0, l.disc_percent || 0,
+          l.qty, l.purchase_unit || null, l.unit_title || null, l.rate || 0, l.disc_percent || 0, l.disc_formula || null,
           l.lineDiscAmount, l.lineNetOfTax, l.tax_code_id || null, l.lineTaxAmount, l.extPrice]
       );
     }
@@ -1437,6 +1456,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (!supplierId) return res.status(400).json({ error: 'Select a Supplier.' });
     const submitted = (Array.isArray(lines) ? lines : []).filter((l) => l.item_id && Number(l.qty) > 0);
     if (!submitted.length) return res.status(400).json({ error: 'Add at least one line with a Qty greater than 0.' });
+    const discError = resolveLineDiscounts(submitted);
+    if (discError) return res.status(400).json({ error: discError });
 
     const [existingLines] = await conn.query('SELECT * FROM purchase_order_lines WHERE purchase_order_id = ?', [req.params.id]);
     const existingById = new Map(existingLines.map((l) => [l.id, l]));
@@ -1510,19 +1531,19 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         await conn.query(
           `UPDATE purchase_order_lines SET
              purchase_description = ?, location_id = ?, department_id = ?, qty = ?, purchase_unit = ?, unit_title = ?,
-             rate = ?, disc_percent = ?, disc_amount = ?, net_of_tax = ?, tax_code_id = ?, tax_amount = ?, ext_price = ?
+             rate = ?, disc_percent = ?, disc_formula = ?, disc_amount = ?, net_of_tax = ?, tax_code_id = ?, tax_amount = ?, ext_price = ?
            WHERE id = ?`,
           [l.purchase_description || null, l.location_id || null, l.department_id || null, l.qty, l.purchase_unit || null, l.unit_title || null,
-            l.rate || 0, l.disc_percent || 0, l.lineDiscAmount, l.lineNetOfTax, l.tax_code_id || null, l.lineTaxAmount, l.extPrice, l.id]
+            l.rate || 0, l.disc_percent || 0, l.disc_formula || null, l.lineDiscAmount, l.lineNetOfTax, l.tax_code_id || null, l.lineTaxAmount, l.extPrice, l.id]
         );
       } else {
         await conn.query(
           `INSERT INTO purchase_order_lines
              (purchase_order_id, item_id, purchase_description, location_id, department_id, job_order_id,
-              qty, purchase_unit, unit_title, rate, disc_percent, disc_amount, net_of_tax, tax_code_id, tax_amount, ext_price)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              qty, purchase_unit, unit_title, rate, disc_percent, disc_formula, disc_amount, net_of_tax, tax_code_id, tax_amount, ext_price)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [req.params.id, l.item_id, l.purchase_description || null, l.location_id || null, l.department_id || null, l.job_order_id || null,
-            l.qty, l.purchase_unit || null, l.unit_title || null, l.rate || 0, l.disc_percent || 0, l.lineDiscAmount, l.lineNetOfTax, l.tax_code_id || null, l.lineTaxAmount, l.extPrice]
+            l.qty, l.purchase_unit || null, l.unit_title || null, l.rate || 0, l.disc_percent || 0, l.disc_formula || null, l.lineDiscAmount, l.lineNetOfTax, l.tax_code_id || null, l.lineTaxAmount, l.extPrice]
         );
       }
     }

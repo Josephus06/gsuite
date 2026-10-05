@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { parseDiscountChain, discountLabel } from '../utils/discountChain';
 
 // The PO-3 Job Order picker: job orders proper, not RWIP rework orders, newest first. There are
 // 124k of them, so the picker opens on the newest 100 and searches the server as you type.
@@ -116,7 +117,8 @@ export default function PurchaseOrderCreate() {
     const qty = Number(l.qty || 0);
     const rate = Number(l.rate || 0);
     const subtotal = qty * rate;
-    const discAmount = subtotal * (Number(l.disc_percent || 0) / 100);
+    // Discount % may be a chain ("10;5": 10% off, then 5% off the rest) -- utils/discountChain.js.
+    const discAmount = subtotal * ((parseDiscountChain(l.disc_percent).pct || 0) / 100);
     const netOfTax = subtotal - discAmount;
     const tax = taxes.find((t) => t.id === l.tax_code_id);
     const taxAmount = netOfTax * (Number(tax?.rate || 0) / 100);
@@ -140,6 +142,8 @@ export default function PurchaseOrderCreate() {
     if (!poCategory) { setError('Select a PO Category.'); return; }
     if (!supplierId) { setError('Select a Supplier.'); return; }
     if (!lines.length) { setError('Add at least one Material.'); return; }
+    const badDisc = lines.map((l) => parseDiscountChain(l.disc_percent)).find((d) => d.error);
+    if (badDisc) { setError(badDisc.error); return; }
     setSaving(true);
     try {
       const { data } = await api.post('/purchase-orders/direct', {
@@ -155,7 +159,7 @@ export default function PurchaseOrderCreate() {
           location_id: l.location_id || null, department_id: l.department_id || null,
           job_order_id: poCategory === 'PO3' ? (l.job_order_id || null) : null,
           memo: l.memo || null, qty: l.qty, purchase_unit: l.purchase_unit, unit_title: l.unit_title,
-          rate: l.rate, disc_percent: l.disc_percent, tax_code_id: l.tax_code_id || null,
+          rate: l.rate, disc_percent: parseDiscountChain(l.disc_percent).pct || 0, disc_formula: String(l.disc_percent ?? ""), tax_code_id: l.tax_code_id || null,
         })),
       });
       navigate(`/purchase-orders/${data.id}`);
@@ -281,7 +285,7 @@ export default function PurchaseOrderCreate() {
                     <td><input type="number" step="0.0001" style={{ width: 80 }} value={l.qty} onChange={(e) => updateLine(l._key, { qty: e.target.value })} /></td>
                     <td><input style={{ width: 90 }} value={l.purchase_unit} onChange={(e) => updateLine(l._key, { purchase_unit: e.target.value })} /></td>
                     <td><input type="number" step="0.01" style={{ width: 90 }} value={l.rate} onChange={(e) => updateLine(l._key, { rate: e.target.value })} /></td>
-                    <td><input type="number" step="0.01" style={{ width: 70 }} value={l.disc_percent} onChange={(e) => updateLine(l._key, { disc_percent: e.target.value })} /></td>
+                    <td><input type="text" inputMode="decimal" style={{ width: 80 }} value={l.disc_percent} placeholder="10;5" title="One discount (10) or a discount after discount (10;5 = 10% off, then 5% off the rest)" onChange={(e) => updateLine(l._key, { disc_percent: e.target.value })} /></td>
                     <td>
                       <EntityPicker
                         label="Tax Code" items={taxes} value={l.tax_code_id} getLabel={(t) => t?.code}

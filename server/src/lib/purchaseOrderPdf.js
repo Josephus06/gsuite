@@ -191,7 +191,7 @@ function buildPurchaseOrderPdf(po) {
       lines.forEach((l, i) => drawRow(doc, {
         idx: i + 1, code: l.item_code, desc: l.purchase_description || l.item_name, jo: l.job_order_no || '',
         qty: money(l.qty), unit: l.purchase_unit || l.unit_title || '', rate: money(l.rate),
-        disc: Number(l.disc_percent) ? money(l.disc_percent) : '', amount: money(l.ext_price),
+        disc: l.disc_formula || (Number(l.disc_percent) ? money(l.disc_percent) : ''), amount: money(l.ext_price),
       }));
 
       // Totals, off the PO header exactly as the print shows them.

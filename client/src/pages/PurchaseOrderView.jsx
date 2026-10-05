@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import VendorBillModal from '../components/VendorBillModal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { discountLabel } from '../utils/discountChain';
 import Modal from '../components/Modal';
 import { isApprovedPo, isSettledPo, normalisePoStatus } from '../utils/poStatus';
 
@@ -341,7 +342,7 @@ export default function PurchaseOrderView() {
                         unit_title for rows saved before purchase_unit was recorded properly. */}
                     <td>{l.purchase_unit || l.unit_title}</td>
                     <td>{money(l.rate)}</td>
-                    <td>{l.disc_percent}</td>
+                    <td>{discountLabel(l)}</td>
                     <td>{money(l.net_of_tax)}</td>
                     <td>{l.tax_code}</td>
                     <td>{money(l.tax_amount)}</td>
