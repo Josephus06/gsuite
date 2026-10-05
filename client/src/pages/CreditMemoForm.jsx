@@ -37,6 +37,10 @@ export default function CreditMemoForm() {
   // Drawn by Customer Payments (or applied to invoices this database lacks): kept as it is by an edit.
   const [keptApplied, setKeptApplied] = useState(0);
   const [loadedApply, setLoadedApply] = useState(null);
+  // A memo migrated from the source came over as its header only -- no item lines (all 5,476 of
+  // them, 2026-10-05). Its amounts are shown as they are and kept by an edit; rebuilding them from
+  // lines that do not exist would open every one at 0.00.
+  const [importedTotals, setImportedTotals] = useState(null);
   const [lookups, setLookups] = useState(null);
   const [customer, setCustomer] = useState(null);
   const [source, setSource] = useState(null); // for-customer: open invoices, A/R account
@@ -70,6 +74,12 @@ export default function CreditMemoForm() {
           setDateCreated(String(cm.date_created).slice(0, 10));
           setMemo(cm.memo || '');
           setLocation(locations.find((x) => x.id === cm.office_location_id) || null);
+          if (!(cm.lines || []).length) {
+            setImportedTotals({
+              subtotal: Number(cm.subtotal || 0), discountAmount: Number(cm.discount_amount || 0), netOfTax: Number(cm.net_of_tax || 0),
+              taxAmount: Number(cm.tax_amount || 0), grossAmount: Number(cm.gross_amount || 0),
+            });
+          }
           setRows((cm.lines || []).map((l, idx) => ({
             key: `e${l.id || idx}`, item_id: l.item_id, item_name: l.item_name, item_code: '',
             description: l.description || '', department_id: l.department_id || null,
@@ -101,13 +111,14 @@ export default function CreditMemoForm() {
       .catch((e) => setError(e.response?.data?.error || 'Could not load the customer’s invoices.'));
   }, [customer]);
 
-  const totals = useMemo(() => rows.reduce((acc, r) => {
+  const lineTotals = useMemo(() => rows.reduce((acc, r) => {
     const a = lineAmounts(r);
     return {
       subtotal: acc.subtotal + a.subtotal, discountAmount: acc.discountAmount + a.discAmount, netOfTax: acc.netOfTax + a.netOfTax,
       taxAmount: acc.taxAmount + a.taxAmount, grossAmount: acc.grossAmount + a.grossAmount,
     };
   }, { subtotal: 0, discountAmount: 0, netOfTax: 0, taxAmount: 0, grossAmount: 0 }), [rows]);
+  const totals = importedTotals || lineTotals;
   const applied = Object.values(applyAmounts).reduce((s, v) => s + (Number(v) || 0), 0) + keptApplied;
   const unapplied = totals.grossAmount - applied;
 
@@ -127,8 +138,8 @@ export default function CreditMemoForm() {
   async function save() {
     setError('');
     if (!customer) { setError('Choose the Customer.'); return; }
-    const lines = rows.filter((r) => Number(r.quantity) > 0);
-    if (!lines.length) { setError('Add at least one item to credit.'); return; }
+    const lines = importedTotals ? [] : rows.filter((r) => Number(r.quantity) > 0);
+    if (!importedTotals && !lines.length) { setError('Add at least one item to credit.'); return; }
     if (applied > totals.grossAmount + 0.005) { setError(`Applied (${money(applied)}) exceeds this Credit Memo's total (${money(totals.grossAmount)}).`); return; }
     setSaving(true);
     try {
@@ -207,7 +218,15 @@ export default function CreditMemoForm() {
           <button type="button" className={`status-tab ${tab === 'apply' ? 'active' : ''}`} onClick={() => setTab('apply')}>APPLY <span style={{ color: '#2563eb', fontWeight: 700 }}>{money(applied)}</span></button>
         </div>
 
-        {tab === 'items' && (
+        {tab === 'items' && importedTotals && (
+          <div className="muted" style={{ marginTop: 12, padding: 16, border: '1px dashed var(--border)', borderRadius: 8 }}>
+            This Credit Memo was imported from the source system with its totals only -- its item lines did not come over.
+            Its amounts ({money(importedTotals.grossAmount)} gross) are kept as they are; the date, office location, memo and
+            the invoices it applies to can still be changed.
+          </div>
+        )}
+
+        {tab === 'items' && !importedTotals && (
           <>
             <div className="table-wrap" style={{ marginTop: 12 }}>
               <table>

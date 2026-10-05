@@ -528,8 +528,22 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     await assertPeriodOpen(cm.date_created, 'ar', conn);
     if (dateCreated) await assertPeriodOpen(dateCreated, 'ar', conn);
 
-    const { prepared, totals } = await prepareLines(conn, lines);
-    if (!prepared.length) return res.status(400).json({ error: 'Add at least one item to credit.' });
+    // A memo migrated from the source holds its header only -- no item lines (all 5,476 of them,
+    // 2026-10-05). Edited without lines, it keeps its stored amounts: only the date, location, memo
+    // and applications change. Once lines are sent they replace the amounts, as for any other memo.
+    const [[{ n: storedLines }]] = await conn.query('SELECT COUNT(*) AS n FROM credit_memo_lines WHERE credit_memo_id = ?', [cm.id]);
+    const keepAmounts = Number(storedLines) === 0 && !(Array.isArray(lines) && lines.length);
+    let prepared = [];
+    let totals;
+    if (keepAmounts) {
+      totals = {
+        subtotal: Number(cm.subtotal || 0), discountAmount: Number(cm.discount_amount || 0), netOfTax: Number(cm.net_of_tax || 0),
+        taxAmount: Number(cm.tax_amount || 0), grossAmount: Number(cm.gross_amount || 0),
+      };
+    } else {
+      ({ prepared, totals } = await prepareLines(conn, lines));
+      if (!prepared.length) return res.status(400).json({ error: 'Add at least one item to credit.' });
+    }
 
     const submittedApply = (Array.isArray(applyLines) ? applyLines : []).filter((l) => l.sales_invoice_id && Number(l.applied_amount) > 0);
     const appliedToInvoices = Number(submittedApply.reduce((acc, l) => acc + Number(l.applied_amount), 0).toFixed(2));
@@ -560,8 +574,10 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     // never touched it.
     for (const a of oldApps) await unapplyFromInvoice(conn, a.sales_invoice_id, a.applied_amount);
     await conn.query('DELETE FROM credit_memo_applications WHERE credit_memo_id = ? AND sales_invoice_id IS NOT NULL', [cm.id]);
-    await conn.query('DELETE FROM credit_memo_lines WHERE credit_memo_id = ?', [cm.id]);
-    await insertLines(conn, cm.id, prepared);
+    if (!keepAmounts) {
+      await conn.query('DELETE FROM credit_memo_lines WHERE credit_memo_id = ?', [cm.id]);
+      await insertLines(conn, cm.id, prepared);
+    }
     for (const l of submittedApply) {
       await applyToInvoice(conn, l.sales_invoice_id, Number(l.applied_amount));
       await conn.query(
