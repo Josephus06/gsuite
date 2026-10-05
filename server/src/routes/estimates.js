@@ -98,11 +98,20 @@ async function generateSalesOrderFromEstimate(conn, estimateId) {
      WHERE jo.estimate_id = ? ORDER BY jo.line_no`,
     [estimateId]
   );
-  const subtotal = jobOrders.reduce((s, jo) => s + n(jo.subtotal), 0);
-  const discountTotal = jobOrders.reduce((s, jo) => s + n(jo.disc_amount), 0);
-  const netOfTax = subtotal - discountTotal;
-  const taxTotal = jobOrders.reduce((s, jo) => s + (n(jo.subtotal) - n(jo.disc_amount)) * (n(jo.tax_rate) / 100), 0);
-  const totalAmount = netOfTax + taxTotal;
+  // Totals to the centavo, as the sum of each LINE's own 2-decimal figures -- the estimate's own
+  // footer adds them up the same way. Tax was worked here as Net x rate per line, unrounded, and
+  // summed: EST-105221's lines carry 305.35 of VAT, the unrounded sum came to 305.358, and the
+  // order read 2,850.01 against the estimate's 2,850.00 (2026-10-05). A line with no stored tax
+  // still has it worked out, rounded to the centavo like a stored one.
+  const r2 = (v) => Math.round(v * 100) / 100;
+  const lineTax = (jo) => (jo.tax_amount != null && jo.tax_amount !== ''
+    ? n(jo.tax_amount)
+    : r2((n(jo.subtotal) - n(jo.disc_amount)) * (n(jo.tax_rate) / 100)));
+  const subtotal = r2(jobOrders.reduce((s, jo) => s + n(jo.subtotal), 0));
+  const discountTotal = r2(jobOrders.reduce((s, jo) => s + n(jo.disc_amount), 0));
+  const netOfTax = r2(subtotal - discountTotal);
+  const taxTotal = r2(jobOrders.reduce((s, jo) => s + lineTax(jo), 0));
+  const totalAmount = r2(netOfTax + taxTotal);
 
   // GP is the SUM of the lines' own GP, as the Sales Order screen totals it. Not Net of Tax less
   // every process's Total Cost: a migrated estimate's process cost fields are the source's rates,

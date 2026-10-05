@@ -42,7 +42,11 @@ export default function EstimatePrint() {
   let taxTotal = 0;
   const lines = jobOrders.map((jo) => {
     const amount = num(jo.subtotal) - num(jo.disc_amount);
-    const tax = amount * (num(jo.tax_rate) / 100);
+    // The line's own 2-decimal tax, as the estimate screen and the Sales Order total it -- summing
+    // Net x rate unrounded printed 2,850.01 on an estimate that reads 2,850.00 (EST-105221).
+    const tax = jo.tax_amount != null && jo.tax_amount !== ''
+      ? num(jo.tax_amount)
+      : Math.round(amount * (num(jo.tax_rate) / 100) * 100) / 100;
     subtotal += amount;
     taxTotal += tax;
     const size = [jo.length, jo.width, jo.height].map((v) => (v === null || v === '' ? 0 : v)).join(' x ');
