@@ -1077,6 +1077,63 @@ router.delete('/:id/job-orders/:joId', requireAuth, requirePermission(ROUTE, 'ca
   }
 });
 
+// --- Reordering (the ▲ ▼ arrows on the estimate form) ------------------------
+//
+// The form sends the ids in their new order and line_no is renumbered 1..n to match. Every id must
+// belong to the parent named in the URL, and all of them must be sent, so a stale form cannot leave
+// two lines sharing a number.
+async function renumber(conn, table, parentCol, parentId, ids) {
+  const [rows] = await conn.query(`SELECT id FROM ${table} WHERE ${parentCol} = ?`, [parentId]);
+  const have = new Set(rows.map((r) => Number(r.id)));
+  const want = (Array.isArray(ids) ? ids : []).map(Number);
+  if (want.length !== have.size || new Set(want).size !== want.length || !want.every((id) => have.has(id))) {
+    return false;
+  }
+  for (let i = 0; i < want.length; i++) {
+    await conn.query(`UPDATE ${table} SET line_no = ? WHERE id = ?`, [i + 1, want[i]]);
+  }
+  return true;
+}
+
+router.post('/:id/job-orders/reorder', requireAuth, requirePermission(ROUTE, 'can_edit'), requireEditableEstimate, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    if (!await renumber(conn, 'estimate_job_orders', 'estimate_id', req.params.id, req.body.ids)) {
+      await conn.rollback();
+      return res.status(409).json({ error: 'The lines changed since this form was opened. Reload and try again.' });
+    }
+    await logAudit(conn, { estimateId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'job_order order' });
+    await conn.commit();
+    res.status(204).send();
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+router.post('/:id/job-orders/:joId/processes/reorder', requireAuth, requirePermission(ROUTE, 'can_edit'), requireEditableEstimate, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[jo]] = await conn.query('SELECT line_no FROM estimate_job_orders WHERE id = ? AND estimate_id = ?', [req.params.joId, req.params.id]);
+    if (!jo || !await renumber(conn, 'estimate_job_order_processes', 'estimate_job_order_id', req.params.joId, req.body.ids)) {
+      await conn.rollback();
+      return res.status(409).json({ error: 'The process lines changed since this form was opened. Reload and try again.' });
+    }
+    await logAudit(conn, { estimateId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: `job_order[${jo.line_no}] process order` });
+    await conn.commit();
+    res.status(204).send();
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
 // --- Job order processes ----------------------------------------------------
 
 router.post('/:id/job-orders/:joId/processes', requireAuth, requirePermission(ROUTE, 'can_edit'), requireEditableEstimate, async (req, res, next) => {

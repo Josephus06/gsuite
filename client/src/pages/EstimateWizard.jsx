@@ -815,6 +815,53 @@ export default function EstimateWizard() {
     await recalcJobOrderSubtotal(joIdx, updatedProcs);
   }
 
+  // --- Reordering (▲ ▼) ---
+  //
+  // Swaps a line with its neighbour and renumbers the list on the server. Not offered while the
+  // list holds an unsaved draft: in-flight saves find their row by position, so moving rows under
+  // them would land a saved id on the wrong line.
+  const [reordering, setReordering] = useState(false);
+  const hasDraftLine = jobOrders.some((jo) => !jo.id || (jo.processes || []).some((p) => !p.id));
+
+  function swapped(list, idx, dir) {
+    const next = [...list];
+    [next[idx], next[idx + dir]] = [next[idx + dir], next[idx]];
+    return next.map((r, i) => ({ ...r, line_no: i + 1 }));
+  }
+
+  async function moveJobOrderRow(idx, dir) {
+    const list = jobOrdersRef.current;
+    if (idx + dir < 0 || idx + dir >= list.length) return;
+    const next = swapped(list, idx, dir);
+    setReordering(true);
+    setJobOrders(next);
+    try {
+      await api.post(`/estimates/${estimateId}/job-orders/reorder`, { ids: next.map((r) => r.id) });
+    } catch (err) {
+      setJobOrders(list);
+      setError(err.response?.data?.error || 'Could not move the line.');
+    } finally {
+      setReordering(false);
+    }
+  }
+
+  async function moveProcessRow(joIdx, procIdx, dir) {
+    const jo = jobOrdersRef.current[joIdx];
+    const procs = jo.processes || [];
+    if (procIdx + dir < 0 || procIdx + dir >= procs.length) return;
+    const next = swapped(procs, procIdx, dir);
+    setReordering(true);
+    setJobOrders((prev) => prev.map((r, i) => (i === joIdx ? { ...r, processes: next } : r)));
+    try {
+      await api.post(`/estimates/${estimateId}/job-orders/${jo.id}/processes/reorder`, { ids: next.map((p) => p.id) });
+    } catch (err) {
+      setJobOrders((prev) => prev.map((r, i) => (i === joIdx ? { ...r, processes: procs } : r)));
+      setError(err.response?.data?.error || 'Could not move the process line.');
+    } finally {
+      setReordering(false);
+    }
+  }
+
   // --- Shipping / Blanket PO ---
 
   async function addShipping() {
@@ -1429,6 +1476,10 @@ export default function EstimateWizard() {
                       <tr className={!jo.id ? 'draft-row' : ''}>
                         <td>
                           <div className="spreadsheet-row-actions">
+                            <button type="button" className="btn btn-sm" title={hasDraftLine ? 'Finish the unsaved line first' : 'Move this line up'}
+                              disabled={idx === 0 || hasDraftLine || reordering} onClick={() => moveJobOrderRow(idx, -1)}>▲</button>
+                            <button type="button" className="btn btn-sm" title={hasDraftLine ? 'Finish the unsaved line first' : 'Move this line down'}
+                              disabled={idx === jobOrders.length - 1 || hasDraftLine || reordering} onClick={() => moveJobOrderRow(idx, 1)}>▼</button>
                             <button type="button" className="btn btn-sm btn-danger" onClick={() => deleteJobOrderRow(idx)}>✕</button>
                             <button type="button" className="btn btn-sm" title="Copy this line, with its processes, as a new line"
                               disabled={copyingJo !== null} onClick={() => duplicateJobOrderRow(idx)}>{copyingJo === idx ? '…' : 'Copy'}</button>
@@ -1471,7 +1522,13 @@ export default function EstimateWizard() {
                                     {(jo.processes || []).map((proc, procIdx) => (
                                       <tr key={proc.id || proc._tempId} className={`process-row ${!proc.id ? 'draft-row' : ''}`}>
                                         <td>
-                                          <button type="button" className="btn btn-sm btn-danger" onClick={() => deleteProcessRow(idx, procIdx)}>✕</button>
+                                          <div className="spreadsheet-row-actions">
+                                            <button type="button" className="btn btn-sm" title={hasDraftLine ? 'Finish the unsaved line first' : 'Move this process up'}
+                                              disabled={procIdx === 0 || hasDraftLine || reordering} onClick={() => moveProcessRow(idx, procIdx, -1)}>▲</button>
+                                            <button type="button" className="btn btn-sm" title={hasDraftLine ? 'Finish the unsaved line first' : 'Move this process down'}
+                                              disabled={procIdx === jo.processes.length - 1 || hasDraftLine || reordering} onClick={() => moveProcessRow(idx, procIdx, 1)}>▼</button>
+                                            <button type="button" className="btn btn-sm btn-danger" onClick={() => deleteProcessRow(idx, procIdx)}>✕</button>
+                                          </div>
                                         </td>
                                         {PROCESS_COLUMNS.map((col) => <td key={col.key}>{processCell(col, proc, idx, procIdx)}</td>)}
                                       </tr>
