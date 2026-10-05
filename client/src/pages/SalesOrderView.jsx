@@ -266,11 +266,18 @@ export default function SalesOrderView() {
   // user.is_head_office is resolved server-side by the same helper that decides the real thing.
   const canBillSI = can('/sales-invoices', user?.is_head_office === false ? 'can_view' : 'can_edit');
   const canBillDT = can('/delivery-tickets', 'can_edit');
-  const subtotal = lines.reduce((s, l) => s + num(l.subtotal), 0);
-  const discountTotal = lines.reduce((s, l) => s + num(l.disc_amount), 0);
-  const netOfTax = subtotal - discountTotal;
-  const taxTotal = lines.reduce((s, l) => s + (num(l.subtotal) - num(l.disc_amount)) * (num(l.tax_rate) / 100), 0);
-  const totalAmount = netOfTax + taxTotal;
+  // Totals to the centavo, as the sum of each line's own 2-decimal figures -- the Tax Amt column
+  // above, and the way the estimate totals it. Net x rate per line, unrounded and summed, read
+  // 305.36 / 2,850.01 under lines whose Tax Amt adds up to 305.35 (SO-195471 from EST-205221).
+  const r2 = (v) => Math.round(v * 100) / 100;
+  const lineTax = (l) => (l.tax_amount != null && l.tax_amount !== ''
+    ? num(l.tax_amount)
+    : r2((num(l.subtotal) - num(l.disc_amount)) * (num(l.tax_rate) / 100)));
+  const subtotal = r2(lines.reduce((s, l) => s + num(l.subtotal), 0));
+  const discountTotal = r2(lines.reduce((s, l) => s + num(l.disc_amount), 0));
+  const netOfTax = r2(subtotal - discountTotal);
+  const taxTotal = r2(lines.reduce((s, l) => s + lineTax(l), 0));
+  const totalAmount = r2(netOfTax + taxTotal);
 
   return (
     <div>

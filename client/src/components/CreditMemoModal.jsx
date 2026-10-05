@@ -17,14 +17,16 @@ function lineAmounts(l) {
   const qty = Number(l.quantity || 0);
   const price = Number(l.price_per_unit || 0);
   const pct = Number(l.disc_percent || 0);
-  const subtotal = price * qty;
-  const discAmount = subtotal * (pct / 100);
-  const discPerUnit = price * (pct / 100);
-  const netOfTax = subtotal - discAmount;
-  const taxAmount = netOfTax * (Number(l.tax_rate || 0) / 100);
+  // Rounded per line exactly as routes/creditMemos.js saves it, so the totals shown are the ones saved.
+  const r2 = (v) => Math.round(v * 100) / 100;
+  const subtotal = r2(price * qty);
+  const discAmount = r2(subtotal * (pct / 100));
+  const discPerUnit = Math.round(price * (pct / 100) * 10000) / 10000;
+  const netOfTax = r2(subtotal - discAmount);
+  const taxAmount = r2(netOfTax * (Number(l.tax_rate || 0) / 100));
   return {
     subtotal, discAmount, discPerUnit, discPricePerUnit: price - discPerUnit,
-    netOfTax, taxAmount, grossAmount: netOfTax + taxAmount,
+    netOfTax, taxAmount, grossAmount: r2(netOfTax + taxAmount),
   };
 }
 
