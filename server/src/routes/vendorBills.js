@@ -61,6 +61,16 @@ function lineWtax(l, netOfTax, wtaxRate) {
   const amount = typed ? Math.abs(Number(l.wtax_amount)) : Math.abs(netOfTax) * wtaxRate / 100;
   return { is_withhold: true, wtax_amount: Number((sign * Math.min(amount, Math.abs(netOfTax))).toFixed(2)) };
 }
+// A line's VAT: the Tax Amount typed for it when one was sent (the supplier's own figure, asked for
+// 2026-10-05), else Net of Tax x the tax code's rate as computed. Same rules as lineWtax: it takes
+// the line's sign and is never more than the line's net. Ext Price (gross) follows it.
+function withTypedTax(l, amounts) {
+  const typed = l && l.tax_amount !== undefined && l.tax_amount !== null && l.tax_amount !== '' && Number.isFinite(Number(l.tax_amount));
+  if (!typed) return amounts;
+  const net = amounts.net_of_tax;
+  const tax = Number(((net < 0 ? -1 : 1) * Math.min(Math.abs(Number(l.tax_amount)), Math.abs(net))).toFixed(2));
+  return { ...amounts, tax_amount: tax, ext_price: Number((net + tax).toFixed(2)) };
+}
 
 // GL Impact computation lives in server/src/lib/glImpact.js (computeVendorBillGl),
 // shared with the Reports engine so the reports can never drift from what this tab shows.
@@ -354,7 +364,7 @@ async function createStandaloneBill(req, res, conn) {
     const unitPrice = Number(l.unit_price);
     // Negative is allowed: a reversal bill (asked 2026-10-03).
     if (!Number.isFinite(unitPrice)) return res.status(400).json({ error: `Enter an amount on line ${idx + 1}.` });
-    const amounts = computeLineAmounts({ unitPrice, discPercent: l.disc_percent, taxRate: taxRate.get(Number(l.tax_code_id)) || 0, qty });
+    const amounts = withTypedTax(l, computeLineAmounts({ unitPrice, discPercent: l.disc_percent, taxRate: taxRate.get(Number(l.tax_code_id)) || 0, qty }));
     const w = lineWtax(l, amounts.net_of_tax, wtaxRate);
     const isWithhold = w.is_withhold;
     const lineWtaxAmount = w.wtax_amount;
@@ -468,7 +478,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       // A typed Amount wins; Unit Price follows it (computeLineFromAmount).
       const fromAmount = hasAmount(s) ? computeLineFromAmount({ amount: s.amount, discPercent, taxRate: poLine.tax_rate, qty }) : null;
       const unitPrice = fromAmount ? fromAmount.unit_price : (s.unit_price !== undefined ? Number(s.unit_price) : Number(poLine.rate));
-      const amounts = fromAmount || computeLineAmounts({ unitPrice, discPercent, taxRate: poLine.tax_rate, qty });
+      const amounts = withTypedTax(s, fromAmount || computeLineAmounts({ unitPrice, discPercent, taxRate: poLine.tax_rate, qty }));
       const w = lineWtax({ ...s, is_withhold: isWithhold }, amounts.net_of_tax, wtaxRate);
       const lineWtaxAmount = w.wtax_amount;
       computedLines.push({
@@ -637,9 +647,9 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       }
       const price = (l, qty, unitPrice) => {
         const rate = taxRate.get(Number(l.tax_code_id)) || 0;
-        const amounts = hasAmount(l)
+        const amounts = withTypedTax(l, hasAmount(l)
           ? computeLineFromAmount({ amount: l.amount, discPercent: l.disc_percent, taxRate: rate, qty })
-          : { ...computeLineAmounts({ unitPrice, discPercent: l.disc_percent, taxRate: rate, qty }), unit_price: unitPrice };
+          : { ...computeLineAmounts({ unitPrice, discPercent: l.disc_percent, taxRate: rate, qty }), unit_price: unitPrice });
         const w = lineWtax(l, amounts.net_of_tax, wtaxRate);
         return { ...amounts, ...w, amount_due: Number((amounts.ext_price - w.wtax_amount).toFixed(2)) };
       };

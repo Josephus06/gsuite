@@ -32,7 +32,9 @@ function computeLine(l, wtaxRate) {
   const typed = l.amount !== undefined && l.amount !== '' && Number.isFinite(Number(l.amount));
   const netOfTax = typed ? Number(l.amount) : q * unitPrice * (1 - discPercent / 100);
   const discAmount = typed ? (discPercent > 0 && discPercent < 100 ? netOfTax / (1 - discPercent / 100) - netOfTax : 0) : q * unitPrice * (discPercent / 100);
-  const taxAmount = netOfTax * (taxRate / 100);
+  // A typed Tax Amount (tax_typed) stands; otherwise Net x the line's tax rate.
+  const taxTyped = l.tax_typed !== undefined && l.tax_typed !== '' && Number.isFinite(Number(l.tax_typed));
+  const taxAmount = taxTyped ? Number(l.tax_typed) : netOfTax * (taxRate / 100);
   const extPrice = netOfTax + taxAmount;
   // A typed withholding (wtax_typed) stands; otherwise Net x the bill's rate.
   const wtTyped = l.wtax_typed !== undefined && l.wtax_typed !== '' && Number.isFinite(Number(l.wtax_typed));
@@ -124,6 +126,8 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
       }
       // A new amount puts the withholding back on Net x rate.
       if (('amount' in patch || 'qty' in patch || 'unit_price' in patch || 'disc_percent' in patch) && !('wtax_typed' in patch)) delete next.wtax_typed;
+      // ...and the tax back on Net x rate.
+      if (('amount' in patch || 'qty' in patch || 'unit_price' in patch || 'disc_percent' in patch) && !('tax_typed' in patch)) delete next.tax_typed;
       if ('amount' in patch) {
         const q = Number(next.qty) || 0;
         const d = Number(next.disc_percent) || 0;
@@ -156,6 +160,8 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
           // Sent only when typed; the server then keeps it exactly and derives Unit Price.
           amount: l.amount !== undefined && l.amount !== '' ? Number(l.amount) : undefined,
           disc_percent: l.disc_percent,
+          // Sent only when typed; the server then keeps it (withTypedTax).
+          tax_amount: l.tax_typed !== undefined && l.tax_typed !== '' ? Number(l.tax_typed) : undefined,
           is_withhold: l.is_withhold,
           // Sent only when typed; the server then keeps it (lineWtax).
           wtax_amount: l.is_withhold && l.wtax_typed !== undefined && l.wtax_typed !== '' ? Number(l.wtax_typed) : undefined,
@@ -306,7 +312,11 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
                         />
                       </td>
                       <td>{l.tax_code}</td>
-                      <td>{money(l.tax_amount)}</td>
+                      <td>
+                        <input type="number" step="0.01" style={{ width: 90 }} title="Tax for this line -- Net x the tax rate unless typed"
+                          value={l.tax_typed !== undefined ? l.tax_typed : Number(l.tax_amount.toFixed(2))}
+                          onChange={(e) => updateLine(l.purchase_order_line_id, { tax_typed: e.target.value })} />
+                      </td>
                       <td>{money(l.ext_price)}</td>
                       <td>
                         <input

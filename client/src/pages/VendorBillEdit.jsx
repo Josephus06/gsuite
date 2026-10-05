@@ -22,7 +22,9 @@ function amountOf(l) {
 }
 function lineAmounts(l, taxRate, wtaxRate) {
   const net = round2(Number(l.amount || 0));
-  const tax = round2(net * (Number(taxRate || 0) / 100));
+  // A typed Tax Amount (tax_typed) stands; otherwise Net x the tax code's rate.
+  const taxTyped = l.tax_typed !== undefined && l.tax_typed !== '';
+  const tax = taxTyped ? round2(Number(l.tax_typed)) : round2(net * (Number(taxRate || 0) / 100));
   const gross = round2(net + tax);
   // A typed withholding (wtax_typed) stands; otherwise Net x the bill's rate.
   const typed = l.wtax_typed !== undefined && l.wtax_typed !== '';
@@ -90,16 +92,24 @@ export default function VendorBillEdit() {
       const guessRate = Number(m.data.wtaxes.find((w) => String(w.id) === wtaxGuess)?.rate || 0);
       const keepWtax = (l) => (l.is_withhold && Math.abs(Number(l.wtax_amount || 0) - round2(Number(l.net_of_tax || 0) * guessRate / 100)) > 0.01
         ? String(Number(l.wtax_amount || 0)) : undefined);
+      // Likewise a stored Tax Amount that is not Net x its code's rate opens as typed.
+      const keepTax = (l, taxCodeId) => {
+        const r = Number(m.data.taxes.find((t) => String(t.id) === String(taxCodeId))?.rate || 0);
+        return Math.abs(Number(l.tax_amount || 0) - round2(Number(l.net_of_tax || 0) * r / 100)) > 0.01 ? String(Number(l.tax_amount || 0)) : undefined;
+      };
       const acctById = new Map(m.data.accounts.map((a) => [a.id, a]));
-      setLines(bill.lines.map((l) => ({
-        key: newKey(), id: l.id, item_code: l.item_code, item_name: l.item_name,
-        account: l.account_id ? (acctById.get(l.account_id) || { id: l.account_id, account_code: l.line_account_code, account_name: l.line_account_name }) : null,
-        description: l.description || '', department_id: l.department_id ? String(l.department_id) : '',
-        qty: Number(l.qty), unit_price: Number(l.unit_price), disc_percent: Number(l.disc_percent || 0), amount: Number(l.net_of_tax || 0),
-        tax_code_id: l.tax_code_id ? String(l.tax_code_id)
-          : (Number(l.tax_amount) > 0 ? String(taxForRate(rateOf(l.tax_amount, l.net_of_tax))?.id || '') : ''),
-        is_withhold: !!l.is_withhold, wtax_typed: keepWtax(l),
-      })));
+      setLines(bill.lines.map((l) => {
+        const taxCodeId = l.tax_code_id ? String(l.tax_code_id)
+          : (Number(l.tax_amount) > 0 ? String(taxForRate(rateOf(l.tax_amount, l.net_of_tax))?.id || '') : '');
+        return {
+          key: newKey(), id: l.id, item_code: l.item_code, item_name: l.item_name,
+          account: l.account_id ? (acctById.get(l.account_id) || { id: l.account_id, account_code: l.line_account_code, account_name: l.line_account_name }) : null,
+          description: l.description || '', department_id: l.department_id ? String(l.department_id) : '',
+          qty: Number(l.qty), unit_price: Number(l.unit_price), disc_percent: Number(l.disc_percent || 0), amount: Number(l.net_of_tax || 0),
+          tax_code_id: taxCodeId, tax_typed: keepTax(l, taxCodeId),
+          is_withhold: !!l.is_withhold, wtax_typed: keepWtax(l),
+        };
+      }));
     }).catch((err) => setError(err.response?.data?.error || 'Could not load this Vendor Bill.'));
   }, [id]);
 
@@ -125,6 +135,8 @@ export default function VendorBillEdit() {
     }
     // A new amount puts the withholding back on Net x rate; a typed one is for the figure as it was.
     if (('amount' in patch || 'qty' in patch || 'unit_price' in patch || 'disc_percent' in patch) && !('wtax_typed' in patch)) next.wtax_typed = undefined;
+    // So does the tax: a new amount or tax code puts it back on Net x rate.
+    if (('amount' in patch || 'qty' in patch || 'unit_price' in patch || 'disc_percent' in patch || 'tax_code_id' in patch) && !('tax_typed' in patch)) next.tax_typed = undefined;
     return next;
   }));
 
@@ -148,6 +160,7 @@ export default function VendorBillEdit() {
           id: l.id, account_id: l.account?.id || null, description: l.description, department_id: Number(l.department_id) || null,
           qty: Number(l.qty), unit_price: Number(l.unit_price || 0), disc_percent: Number(l.disc_percent || 0),
           tax_code_id: l.tax_code_id || null, is_withhold: l.is_withhold, amount: Number(l.amount || 0),
+          tax_amount: l.tax_typed !== undefined && l.tax_typed !== '' ? Number(l.tax_typed) : undefined,
           wtax_amount: l.is_withhold && l.wtax_typed !== undefined && l.wtax_typed !== '' ? Number(l.wtax_typed) : undefined,
         })),
       });
@@ -311,7 +324,12 @@ export default function VendorBillEdit() {
                       {meta.taxes.map((t) => <option key={t.id} value={t.id}>{t.code} ({Number(t.rate)}%)</option>)}
                     </select>
                   </td>
-                  <td style={{ textAlign: 'right' }}>{money(l.amt.tax)}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    {ro ? money(l.amt.tax) : (
+                      <input type="number" step="0.01" style={{ width: 100 }} title="Tax for this line -- Net x the tax code's rate unless typed"
+                        value={l.tax_typed !== undefined ? l.tax_typed : l.amt.tax} onChange={(e) => setLine(l.key, { tax_typed: e.target.value })} />
+                    )}
+                  </td>
                   <td style={{ textAlign: 'right' }}>{money(l.amt.gross)}</td>
                   <td style={{ textAlign: 'center' }}><input type="checkbox" disabled={ro} checked={l.is_withhold} onChange={(e) => setLine(l.key, { is_withhold: e.target.checked })} /></td>
                   <td style={{ textAlign: 'right' }}>

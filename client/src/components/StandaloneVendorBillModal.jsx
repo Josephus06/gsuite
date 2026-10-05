@@ -18,7 +18,9 @@ const round2 = (n) => Math.round(n * 100) / 100;
 // only: the server recomputes every figure on save.
 function lineAmounts(l, taxRate, wtaxRate) {
   const net = round2(Number(l.amount || 0));
-  const tax = round2(net * (Number(taxRate || 0) / 100));
+  // A typed Tax Amount (tax_typed) stands; otherwise Net x the tax code's rate.
+  const taxTyped = l.tax_typed !== undefined && l.tax_typed !== '';
+  const tax = taxTyped ? round2(Number(l.tax_typed)) : round2(net * (Number(taxRate || 0) / 100));
   const gross = round2(net + tax);
   const wtax = l.is_withhold ? round2(net * (Number(wtaxRate || 0) / 100)) : 0;
   return { net, tax, gross, wtax, due: round2(gross - wtax) };
@@ -124,7 +126,13 @@ export default function StandaloneVendorBillModal({ onClose, onSaved, replicateF
   const wtaxRate = Number(wtax?.rate || 0);
   const priced = lines.map((l) => ({ ...l, amt: lineAmounts(l, taxRate(l.tax_code_id), wtaxRate) }));
   const sum = (k) => priced.reduce((s, l) => s + l.amt[k], 0);
-  const setLine = (key, patch) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  // A new Amount or tax code puts the tax back on Net x rate.
+  const setLine = (key, patch) => setLines((ls) => ls.map((l) => {
+    if (l.key !== key) return l;
+    const next = { ...l, ...patch };
+    if (('amount' in patch || 'tax_code_id' in patch) && !('tax_typed' in patch)) next.tax_typed = undefined;
+    return next;
+  }));
   const allWithheld = lines.length > 0 && lines.every((l) => l.is_withhold);
   const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
@@ -162,6 +170,7 @@ export default function StandaloneVendorBillModal({ onClose, onSaved, replicateF
         lines: payload.map((l) => ({
           account_id: l.account.id, description: l.description, department_id: Number(l.department_id),
           qty: 1, unit_price: Number(l.amount || 0), tax_code_id: l.tax_code_id || null, is_withhold: l.is_withhold,
+          tax_amount: l.tax_typed !== undefined && l.tax_typed !== '' ? Number(l.tax_typed) : undefined,
         })),
       });
       onSaved(vb);
@@ -295,7 +304,10 @@ export default function StandaloneVendorBillModal({ onClose, onSaved, replicateF
                             {meta.taxes.map((t) => <option key={t.id} value={t.id}>{t.code} ({Number(t.rate)}%)</option>)}
                           </select>
                         </td>
-                        <td style={{ textAlign: 'right' }}>{money(l.amt.tax)}</td>
+                        <td style={{ textAlign: 'right' }}>
+                          <input type="number" step="0.01" style={{ width: 100 }} title="Tax for this line -- Net x the tax code's rate unless typed"
+                            value={l.tax_typed !== undefined ? l.tax_typed : l.amt.tax} onChange={(e) => setLine(l.key, { tax_typed: e.target.value })} />
+                        </td>
                         <td style={{ textAlign: 'right' }}>{money(l.amt.gross)}</td>
                         <td style={{ textAlign: 'center' }}>
                           <input type="checkbox" checked={l.is_withhold} onChange={(e) => setLine(l.key, { is_withhold: e.target.checked })} />
