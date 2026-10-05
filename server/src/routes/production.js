@@ -28,9 +28,15 @@ const ROUTE = '/production';
 function isInProduction(jo) {
   return !!jo?.production_stage && jo.production_stage !== 'for_revision';
 }
+// The artist's steps -- FILE PREPARATION (and FILE PREPARATION LAYOUT) and every layout charge:
+// Layout Fee - Easy / Standard / Moderate / Difficult and the Layout - Minimum lines, all coded
+// LYT-*. They are finished in Design before the job reaches the floor.
 function isFilePreparation(p) {
-  return String(p.process_name || '').trim().toUpperCase() === 'FILE PREPARATION';
+  const name = String(p.process_name || '').trim().toUpperCase();
+  const code = String(p.process_code || '').trim().toUpperCase();
+  return name.startsWith('FILE PREPARATION') || name.startsWith('LAYOUT') || code.startsWith('LYT-');
 }
+const FILE_PREPARATION_SQL = "(UPPER(TRIM(pr.process_name)) LIKE 'FILE PREPARATION%' OR UPPER(TRIM(pr.process_name)) LIKE 'LAYOUT%' OR UPPER(TRIM(pr.process_code)) LIKE 'LYT-%')";
 
 // The floor roles below (the department planners, Production Supervisor) carry their capability
 // as a per-user tag rather than as a /production permission row, and a capability on a screen the
@@ -311,7 +317,7 @@ router.get('/:id', requireAuth, requireProductionView, async (req, res, next) =>
     // without one) -- COALESCE to the JO's own job_location_id so a missing location
     // doesn't read as a false "0 on hand everywhere" shortage.
     const [processes] = await pool.query(
-      `SELECT jop.*, pr.process_name, pr.minutes_per_unit, i.display_name AS item_name, i.item_type, loc.location_name,
+      `SELECT jop.*, pr.process_name, pr.process_code, pr.minutes_per_unit, i.display_name AS item_name, i.item_type, loc.location_name,
               il.qty_committed AS committed,
               COALESCE(jop.total, 0) * COALESCE(pr.minutes_per_unit, 0) AS allotted_minutes,
               -- Where this line is actually worked. Same COALESCE the location_name and on-hand
@@ -373,9 +379,9 @@ router.get('/:id', requireAuth, requireProductionView, async (req, res, next) =>
       p.can_complete = !scopeLocationId || Number(p.effective_location_id) === Number(scopeLocationId);
     }
 
-    // FILE PREPARATION is the artist's step, finished before the job reaches the floor, so once
-    // the JO is in production it reads 100% and is not the floor's to record. Most of these lines
-    // are SERVICE LABOR with a total of 0, which otherwise drew as 0% forever.
+    // FILE PREPARATION and the layout charges are the artist's steps, finished before the job
+    // reaches the floor, so once the JO is in production they read 100% and are not the floor's
+    // to record. Most are SERVICE LABOR lines with a total of 0, which otherwise drew 0% forever.
     if (isInProduction(jo)) {
       for (const p of processes) {
         if (!isFilePreparation(p)) continue;
@@ -933,11 +939,11 @@ router.put('/:id/assembly-build', requireAuth, requireProductionFloor, async (re
       [jo.job_location_id, req.params.id]
     );
 
-    // FILE PREPARATION counts as done once the job is in production -- see GET /:id.
+    // FILE PREPARATION and layout lines count as done once the job is in production -- see GET /:id.
     const [[stageRow]] = await conn.query('SELECT production_stage FROM job_orders WHERE id = ?', [req.params.id]);
     const [filePrepRows] = await conn.query(
       `SELECT jop.id FROM job_order_processes jop JOIN processes pr ON pr.id = jop.process_id
-        WHERE jop.job_order_id = ? AND pr.process_name = 'FILE PREPARATION'`,
+        WHERE jop.job_order_id = ? AND ${FILE_PREPARATION_SQL}`,
       [req.params.id]
     );
     const filePrepIds = isInProduction(stageRow) ? new Set(filePrepRows.map((r) => Number(r.id))) : new Set();

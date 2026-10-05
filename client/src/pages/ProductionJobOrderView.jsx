@@ -847,7 +847,7 @@ export default function ProductionJobOrderView() {
                               disabled={!p.can_complete || !canWorkFloor}
                               onClick={() => setCompletingProcess(p)}
                               title={p.file_prep_complete
-                                ? 'File preparation is complete once the Job Order is in production'
+                                ? 'File preparation / layout is complete once the Job Order is in production'
                                 : !canWorkFloor
                                 ? 'Recording output on this Job Order is production\u2019s to do'
                                 : (p.can_complete ? 'Update Completed' : `Completed by ${p.location_name}`)}
