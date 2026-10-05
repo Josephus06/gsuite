@@ -47,7 +47,7 @@ export const FORM = {
     top: 43,
     rowHeight: 5,
     // How far down the form the item band may run, counted in the pad's own 5mm rules: 7 x 5mm
-    // = 35mm, so items occupy 43mm to 78mm and the Order ID line lands at 83mm, still clear of
+    // = 35mm, so items occupy 43mm to 78mm and the Order ID / PO # lines land at 83 / 87mm, clear of
     // the totals at 95mm.
     //
     // It was 6. At 7.5pt a text line is 3.04mm, so a 30mm band held nine lines and a ten-item
@@ -63,8 +63,10 @@ export const FORM = {
       unitPrice: { x: 171, w: 26, right: true },
       amount: { x: 201, w: 28, right: true },
     },
-    // "Order ID : SO-##### PO/Ref. Doc: #####" sits under the last item in the description area.
+    // "Order ID : SO-#####" sits under the last item in the description area, "PO # : #####"
+    // on the line below it.
     orderId: { x: 48, w: 95, gap: 5 },
+    poNo: { x: 48, w: 95, gap: 9 },
   },
 
   // Totals band. Left block is the BIR VAT breakdown the form labels VATABLE (V) /
@@ -246,7 +248,16 @@ export default function InvoicePrintType1({ si, totals, calibrate }) {
                   calibrate={calibrate}
                   name="orderId"
                 >
-                  {`Order ID : ${si.sales_order_no || ''}${si.po_no ? `  PO/Ref. Doc: ${si.po_no}` : ''}`}
+                  {`Order ID : ${si.sales_order_no || ''}`}
+                </Field>
+              )}
+              {isLast && (
+                <Field
+                  spec={{ ...FORM.items.poNo, y: page.itemsBottom + FORM.items.poNo.gap }}
+                  calibrate={calibrate}
+                  name="poNo"
+                >
+                  {`PO # : ${si.po_no || ''}`}
                 </Field>
               )}
 
