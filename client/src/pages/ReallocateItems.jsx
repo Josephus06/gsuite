@@ -58,7 +58,11 @@ export default function ReallocateItems() {
     if (!lines.length) { setError('Select at least one order to commit qty to.'); return; }
     setSaving(true);
     try {
-      await api.post(`/transfer-orders/lines/${lineId}/reallocate`, { lines });
+      const { data: result } = await api.post(`/transfer-orders/lines/${lineId}/reallocate`, { lines });
+      // Stock the ticked orders needed was taken back from unticked ones, newest first -- say which.
+      if (result?.released?.length) {
+        alert(`Committed qty moved from:\n${result.released.map((r) => `${r.to_no}: ${qty(r.from)} -> ${qty(r.to)}`).join('\n')}`);
+      }
       navigate(`/transfer-orders/${id}`);
     } catch (err) {
       setError(err.response?.data?.error || 'Save failed');
@@ -128,6 +132,9 @@ export default function ReallocateItems() {
       </div>
 
       <div className="card" style={{ marginTop: 20 }}>
+        <div className="muted" style={{ marginBottom: 8 }}>
+          Tick the orders to commit to. If on hand is already committed, what they need is taken back from the unticked orders, newest first.
+        </div>
         <div className="table-wrap">
           <table>
             <thead>

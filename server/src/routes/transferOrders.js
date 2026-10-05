@@ -597,12 +597,8 @@ router.get('/lines/:lineId/reallocate', requireAuth, requirePermission(ROUTE, 'c
     // deriveOnHand anchors exactly as the Bin Card does (the source system's Beginning Balance plus
     // the movements since), so this screen and that report cannot disagree.
     //
-    // qty_committed still comes from the snapshot: a commitment is a promise against future work,
-    // not a movement, so there is nothing in the ledger to derive it from.
-    const [[stock]] = await pool.query(
-      'SELECT qty_committed FROM inventory_locations WHERE inventory_id = ? AND location_id = ?',
-      [line.item_id, line.withdraw_from_location_id]
-    );
+    // qty_committed is not in the ledger either (a commitment is a promise, not a movement); it is
+    // summed from the candidate lines below.
     const onHandByPair = await deriveOnHand(pool, [line.item_id]);
     const qtyOnHandBase = Number(onHandByPair.get(`${line.item_id}|${line.withdraw_from_location_id}`) || 0);
 
@@ -622,7 +618,9 @@ router.get('/lines/:lineId/reallocate', requireAuth, requirePermission(ROUTE, 'c
     res.json({
       item, location,
       qty_on_hand: qtyOnHandBase,
-      qty_committed: Number(stock?.qty_committed || 0),
+      // The open lines' own commitments -- what Submit totals against on hand. The inventory_locations
+      // snapshot has no row for most pairs, so it showed 0 committed beside three orders holding 3.
+      qty_committed: Number(candidates.reduce((s, c) => s + Number(c.committed || 0), 0).toFixed(4)),
       conversion_factor: Number(item?.conversion_factor) || 1,
       stock_unit_title: item?.stock_unit_title || null,
       base_unit_title: item?.base_unit_title || null,
@@ -654,10 +652,12 @@ router.post('/lines/:lineId/reallocate', requireAuth, requirePermission(ROUTE, '
 
     // Every submitted line must genuinely belong to this same item+location pool --
     // otherwise stock earmarked for one item could get reassigned to an unrelated one.
+    // Newest first: the order the release below takes stock back in.
     const [poolLines] = await conn.query(
-      `SELECT tol.id, tol.qty, tol.adjusted_qty, tol.committed, tol.fulfilled FROM transfer_order_lines tol
+      `SELECT tol.id, tol.qty, tol.adjusted_qty, tol.committed, tol.fulfilled, t.to_no FROM transfer_order_lines tol
        JOIN transfer_orders t ON t.id = tol.transfer_order_id
-       WHERE tol.item_id = ? AND t.withdraw_from_location_id = ? AND t.status IN (?)`,
+       WHERE tol.item_id = ? AND t.withdraw_from_location_id = ? AND t.status IN (?)
+       ORDER BY t.date_created DESC, t.id DESC, tol.id DESC`,
       [line.item_id, line.withdraw_from_location_id, OPEN_TO_STATUSES]
     );
     const poolById = new Map(poolLines.map((l) => [l.id, l]));
@@ -686,17 +686,31 @@ router.post('/lines/:lineId/reallocate', requireAuth, requirePermission(ROUTE, '
     const onHand = Number(onHandByPair.get(`${line.item_id}|${line.withdraw_from_location_id}`) || 0);
 
     const submittedById = new Map(submitted.map((s) => [Number(s.transfer_order_line_id), Number(s.committed)]));
-    let newTotal = 0;
-    for (const l of poolLines) {
-      newTotal += submittedById.has(l.id) ? submittedById.get(l.id) : Number(l.committed || 0);
+    const round4 = (n) => Number(n.toFixed(4));
+    // The ticked orders alone may not ask for more than is on hand -- nothing can be freed for that.
+    const tickedTotal = round4([...submittedById.values()].reduce((s, q) => s + q, 0));
+    if (tickedTotal > onHand) {
+      return res.status(409).json({ error: `The ticked orders ask for ${tickedTotal}, more than is on hand at this location (${onHand}).` });
     }
-    if (newTotal > onHand) {
-      return res.status(409).json({ error: `Total committed (${newTotal}) can't exceed what's on hand at this location (${onHand}).` });
+    // Reallocating MOVES a commitment (asked 2026-10-05): what the ticked orders need beyond the stock
+    // still free is taken back from the unticked orders holding it, newest order first, so the oldest
+    // keep their place in line. Unticked orders are otherwise left as they are.
+    let newTotal = round4(poolLines.reduce((s, l) => s + (submittedById.has(l.id) ? submittedById.get(l.id) : Number(l.committed || 0)), 0));
+    const released = [];
+    for (const l of poolLines) {
+      if (newTotal <= onHand) break;
+      if (submittedById.has(l.id) || !(Number(l.committed) > 0)) continue;
+      const take = Math.min(Number(l.committed), round4(newTotal - onHand));
+      released.push({ id: l.id, to_no: l.to_no, from: Number(l.committed), to: round4(Number(l.committed) - take) });
+      newTotal = round4(newTotal - take);
     }
 
     await conn.beginTransaction();
     for (const [lineId, committedQty] of submittedById) {
       await conn.query('UPDATE transfer_order_lines SET committed = ? WHERE id = ?', [committedQty, lineId]);
+    }
+    for (const r of released) {
+      await conn.query('UPDATE transfer_order_lines SET committed = ? WHERE id = ?', [r.to, r.id]);
     }
     await conn.query(
       `INSERT INTO inventory_locations (inventory_id, location_id, qty_committed)
@@ -706,7 +720,7 @@ router.post('/lines/:lineId/reallocate', requireAuth, requirePermission(ROUTE, '
     );
     await conn.commit();
 
-    res.json({ ok: true, qty_committed: newTotal });
+    res.json({ ok: true, qty_committed: newTotal, released: released.map(({ to_no, from, to }) => ({ to_no, from, to })) });
   } catch (err) {
     await conn.rollback();
     next(err);
