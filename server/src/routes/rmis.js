@@ -2,13 +2,16 @@
 // warehouse to a central one. See the block comment in db/create-rmi.js for the shape and
 // for why it is a single document rather than the three-document transfer-order chain.
 //
-// Read-only for now: the 199 historical documents migrated from live are the content, and
-// raising a new one is a separate piece of work. Stock is deliberately untouched here --
-// nothing in this file writes inventory_locations, so listing and opening a migrated RMI
-// cannot move a balance.
+// The 199 historical documents migrated from live, plus new ones raised here (POST /, added
+// 2026-10-05). A new RMI is raised Pending Receipt, as on live, and receiving it is a separate
+// piece of work. Stock is deliberately untouched here -- nothing in this file writes
+// inventory_locations, so raising, listing or opening an RMI cannot move a balance.
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { insertNumbered } = require('../lib/docNumber');
+const { deriveOnHand } = require('../lib/stockLedger');
+const { assertPeriodOpen } = require('../lib/accountingPeriod');
 
 const router = express.Router();
 const ROUTE = '/rmis';
@@ -67,6 +70,93 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     res.json({ rows, counts });
   } catch (err) {
     next(err);
+  }
+});
+
+// The pickers on the new-RMI form, from this route's own permission: /employees and /inventory
+// answer only to those pages' permissions, and a refusal there would stop the form loading.
+router.get('/form-meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [employees] = await pool.query('SELECT id, first_name, last_name, position_title FROM employees ORDER BY id DESC');
+    const [items] = await pool.query(
+      `SELECT i.id, i.item_code, i.display_name, u.code AS base_unit_code, u.title AS base_unit_title
+         FROM inventories i LEFT JOIN units_of_measure u ON u.id = i.base_unit_id
+        WHERE i.is_active = 1 ORDER BY i.id DESC`
+    );
+    res.json({ employees, items });
+  } catch (err) { next(err); }
+});
+
+// Raise a new RMI. Lines come in as { item_id, job_order_no, qty }: JO # is typed, as on live, and
+// resolved here. UOM / Unit and Qty on Hand (the Bin Card balance at Return From) are snapshotted
+// now, like every other line table, so the document keeps reading the way it was raised.
+router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
+  const {
+    date_created: dateCreated, return_from_location_id: fromId, return_to_location_id: toId,
+    returned_by_employee_id: returnedBy, memo, lines,
+  } = req.body;
+  if (!dateCreated) return res.status(400).json({ error: 'Date Created is required.' });
+  if (!fromId || !toId) return res.status(400).json({ error: 'Return From and Return To are both required.' });
+  if (Number(fromId) === Number(toId)) return res.status(400).json({ error: 'Return From and Return To must be different warehouses.' });
+  const items = (Array.isArray(lines) ? lines : []).filter((l) => l && l.item_id);
+  if (!items.length) return res.status(400).json({ error: 'Add at least one material.' });
+  for (const [i, l] of items.entries()) {
+    if (!(Number(l.qty) > 0)) return res.status(400).json({ error: `Line ${i + 1}: Qty must be more than 0.` });
+  }
+
+  const conn = await pool.getConnection();
+  try {
+    await assertPeriodOpen(dateCreated, 'non_gl', conn);
+    // Resolve each typed JO # to its job order; one that matches nothing is refused, not dropped.
+    const joNos = [...new Set(items.map((l) => String(l.job_order_no || '').trim()).filter(Boolean))];
+    const joByNo = new Map();
+    if (joNos.length) {
+      const [jos] = await conn.query('SELECT id, job_order_no FROM job_orders WHERE job_order_no IN (?)', [joNos]);
+      jos.forEach((j) => joByNo.set(j.job_order_no.toUpperCase(), j.id));
+      const unknown = joNos.find((n) => !joByNo.has(n.toUpperCase()));
+      if (unknown) return res.status(400).json({ error: `JO # ${unknown} was not found.` });
+    }
+    const [itemRows] = await conn.query(
+      `SELECT i.id, u.code AS base_unit_code, u.title AS base_unit_title
+         FROM inventories i LEFT JOIN units_of_measure u ON u.id = i.base_unit_id WHERE i.id IN (?)`,
+      [items.map((l) => Number(l.item_id))]
+    );
+    const itemById = new Map(itemRows.map((r) => [Number(r.id), r]));
+    const missing = items.find((l) => !itemById.has(Number(l.item_id)));
+    if (missing) return res.status(400).json({ error: 'One of the materials is no longer in the item list.' });
+    const onHand = await deriveOnHand(conn, items.map((l) => l.item_id));
+
+    await conn.beginTransaction();
+    const { id: rmiId, no: rmiNo } = await insertNumbered(conn, {
+      table: 'rmis',
+      column: 'rmi_no',
+      prefix: 'RMI-',
+      run: (no) => conn.query(
+        `INSERT INTO rmis (rmi_no, date_created, return_from_location_id, return_to_location_id,
+                           returned_by_employee_id, memo, status, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, 'pending_receipt', ?)`,
+        [no, dateCreated, fromId, toId, returnedBy || null, memo || null, req.user.id]
+      ),
+    });
+    for (const [i, l] of items.entries()) {
+      const it = itemById.get(Number(l.item_id));
+      const jo = String(l.job_order_no || '').trim();
+      await conn.query(
+        `INSERT INTO rmi_lines (rmi_id, line_no, item_id, job_order_id, qty, received, uom, unit, qty_on_hand)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+        [rmiId, i + 1, it.id, jo ? joByNo.get(jo.toUpperCase()) : null, Number(l.qty),
+          it.base_unit_code || null, it.base_unit_title || null,
+          Number(onHand.get(`${it.id}|${fromId}`) || 0)]
+      );
+    }
+    await conn.commit();
+    res.status(201).json({ id: rmiId, rmi_no: rmiNo });
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  } finally {
+    conn.release();
   }
 });
 

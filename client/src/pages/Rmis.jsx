@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../context/useAuth';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -36,6 +37,7 @@ function qty(v) {
 function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 export default function Rmis() {
+  const { can } = useAuth();
   const [rows, setRows] = useState([]);
   const [counts, setCounts] = useState({});
   const [loading, setLoading] = useState(true);
@@ -70,6 +72,7 @@ export default function Rmis() {
     <div>
       <div className="page-header">
         <h1>Return Material Inventory</h1>
+        {can('/rmis', 'can_add') && <Link className="btn btn-primary" to="/rmis/new">Add New</Link>}
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>

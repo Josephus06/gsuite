@@ -4,8 +4,7 @@ import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 // The single-document view, laid out like the live RMI screen: header fields above, then the
-// Materials grid. Read-only -- these are the migrated historical documents, and raising or
-// receiving one is separate work.
+// Materials grid. Read-only: new ones are raised on RmiForm, and receiving one is separate work.
 const LABEL = {
   pending_receipt: 'Pending Receipt',
   partially_received: 'Partially Received',
