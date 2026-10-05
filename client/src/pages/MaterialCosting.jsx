@@ -39,6 +39,13 @@ function money(v) {
 // Average Cost are tracked in the item's stock/purchase unit, then shown a second time
 // normalized into the base unit by dividing out the conversion factor (e.g. a cost
 // tracked per ROLL, where 1 ROLL = 5 LMTR base units, shown per-LMTR here too).
+// Selling Price follows Total Price, rounded UP to the peso (42.44 -> 43), as on the Material Cost
+// screen -- so changing Material Cost, Wastage % or Mark-Up % moves it, and it is never typed.
+// toFixed first so float noise on a whole total (42.000000001) doesn't push it a peso up.
+function roundedSellingPrice(row) {
+  const { priceUnrounded } = computeMaterialCosting({ ...row, selling_price: null });
+  return Math.ceil(Number(priceUnrounded.toFixed(6)));
+}
 function baseCost(raw, conversionFactor) {
   const cf = num(conversionFactor) || 1;
   return num(raw) / cf;
@@ -87,6 +94,8 @@ export default function MaterialCosting() {
   async function commitField(row, field) {
     try {
       const payload = { ...row, [field]: row[field] === '' ? null : row[field] };
+      // An item with no Material Cost keeps whatever Selling Price it already had.
+      if (Number(payload.material_cost) > 0) payload.selling_price = roundedSellingPrice(payload);
       await api.put(`/inventory/${row.id}`, payload);
     } catch (err) {
       alert(err.response?.data?.error || 'Save failed');
@@ -203,12 +212,9 @@ export default function MaterialCosting() {
                       <td>{money(computed.priceUnrounded - computed.costPerUnit)}</td>
                       <td>
                         <input
-                          type="number" step="0.0001" disabled={!canEdit}
-                          style={{ fontWeight: 600 }}
-                          value={row.selling_price ?? ''}
-                          placeholder={money(computed.pricePerUnit)}
-                          onChange={(e) => updateField(row.id, 'selling_price', e.target.value)}
-                          onBlur={() => commitField(row, 'selling_price')}
+                          readOnly disabled style={{ fontWeight: 600 }}
+                          title="Total Price rounded up to the whole peso"
+                          value={money(Number(row.material_cost) > 0 ? roundedSellingPrice(row) : row.selling_price)}
                         />
                       </td>
                       <td style={{ display: 'flex', gap: 6, flexDirection: 'column', alignItems: 'flex-start' }}>
