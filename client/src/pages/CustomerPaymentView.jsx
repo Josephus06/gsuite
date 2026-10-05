@@ -62,6 +62,27 @@ export default function CustomerPaymentView() {
     }
   }, [tab, id]);
 
+  // Take an invoice back off this payment -- all of it, or part -- deposited or not. The invoice's
+  // balance comes back and the amount returns to the payment's Unapplied balance; the amount
+  // received and the deposit are untouched (PUT /customer-payments/:id/unapply).
+  async function handleUnapply(l) {
+    const applied = Number(l.applied_amount).toFixed(2);
+    const typed = window.prompt(`Unapply how much from ${l.invoice_no}? (applied: ${applied})`, applied);
+    if (typed === null) return;
+    const amount = Number(String(typed).replace(/,/g, ''));
+    if (!Number.isFinite(amount) || amount <= 0) { setError('Enter an amount more than 0 to unapply.'); return; }
+    setBusy(true);
+    setError('');
+    try {
+      await api.put(`/customer-payments/${id}/unapply`, { lines: [{ sales_invoice_id: l.sales_invoice_id, amount }] });
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Unapply failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleVoid() {
     if (!confirm('Void this Customer Payment? The amounts it settled will be released back.')) return;
     setBusy(true);
@@ -178,10 +199,10 @@ export default function CustomerPaymentView() {
         <div className="card">
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Invoice #</th><th>Date Created</th><th>Original Amount</th><th>Applied Amount</th></tr></thead>
+              <thead><tr><th>Invoice #</th><th>Date Created</th><th>Original Amount</th><th>Applied Amount</th><th></th></tr></thead>
               <tbody>
                 {invoiceLines.length === 0 && (
-                  <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>Nothing applied to an invoice.</td></tr>
+                  <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>Nothing applied to an invoice.</td></tr>
                 )}
                 {invoiceLines.map((l) => (
                   <tr key={l.id}>
@@ -189,6 +210,13 @@ export default function CustomerPaymentView() {
                     <td>{formatDate(l.invoice_date)}</td>
                     <td>{money(l.invoice_gross)}</td>
                     <td>{money(l.applied_amount)}</td>
+                    <td>
+                      {canEdit && isOpen && (
+                        <button type="button" className="btn btn-sm" disabled={busy}
+                          title="Take this invoice off the payment; the amount goes back to Unapplied"
+                          onClick={() => handleUnapply(l)}>Unapply</button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

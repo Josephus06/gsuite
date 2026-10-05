@@ -835,6 +835,75 @@ router.put('/:id/apply', requireAuth, requirePermission(ROUTE, 'can_edit'), asyn
   }
 });
 
+// Unapply (asked 2026-10-05): take an invoice -- or part of what was applied to it -- back off a
+// payment, the reverse of Apply above, and like it allowed once the payment is deposited, when Edit
+// is locked. Voiding was the only way before, and voiding a deposited receipt leaves the deposit
+// counting money the payment no longer claims. Nothing about the receipt changes: the amount
+// received, the deposit and the OR stay; the invoice's balance comes back and the amount returns to
+// the payment's Unapplied balance (Customer Deposits in its ledger, which is derived on read).
+router.put('/:id/unapply', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[cp]] = await conn.query(
+      'SELECT id, status, date_created, unapplied_amount, deposit_account_id, created_by_user_id FROM customer_payments WHERE id = ?',
+      [req.params.id]);
+    if (!cp) return res.status(404).json({ error: 'Not found' });
+    if (cp.status === 'voided') return res.status(409).json({ error: 'A voided Customer Payment cannot be unapplied.' });
+
+    const lines = (Array.isArray(req.body?.lines) ? req.body.lines : [])
+      .map((l) => ({ sales_invoice_id: Number(l.sales_invoice_id), amount: Number(Number(l.amount).toFixed(2)) }))
+      .filter((l) => l.sales_invoice_id && l.amount > 0);
+    if (!lines.length) return res.status(400).json({ error: 'Enter an amount to unapply on at least one invoice.' });
+
+    const [mine] = await conn.query(
+      'SELECT id, sales_invoice_id, applied_amount FROM customer_payment_lines WHERE customer_payment_id = ? AND sales_invoice_id IN (?)',
+      [cp.id, lines.map((l) => l.sales_invoice_id)]);
+    for (const l of lines) {
+      const applied = mine.filter((m) => Number(m.sales_invoice_id) === l.sales_invoice_id)
+        .reduce((t, m) => t + Number(m.applied_amount), 0);
+      if (l.amount > applied + 0.005) {
+        return res.status(409).json({ error: `Only ${applied.toFixed(2)} of this payment is applied to that invoice.` });
+      }
+    }
+    if (cp.created_by_user_id || cp.deposit_account_id) await assertPeriodOpen(cp.date_created, 'ar', conn);
+
+    await conn.beginTransaction();
+    let total = 0;
+    for (const l of lines) {
+      await reverseInvoiceApplication(conn, l.sales_invoice_id, l.amount);
+      // Taken off this payment's line(s) for the invoice, emptying (and removing) them in order.
+      let left = l.amount;
+      for (const m of mine.filter((x) => Number(x.sales_invoice_id) === l.sales_invoice_id)) {
+        if (left <= 0.005) break;
+        const cut = Math.min(Number(m.applied_amount), left);
+        const rest = Number((Number(m.applied_amount) - cut).toFixed(2));
+        if (rest <= 0.005) await conn.query('DELETE FROM customer_payment_lines WHERE id = ?', [m.id]);
+        else await conn.query('UPDATE customer_payment_lines SET applied_amount = ? WHERE id = ?', [rest, m.id]);
+        left = Number((left - cut).toFixed(2));
+      }
+      total += l.amount;
+    }
+    total = Number(total.toFixed(2));
+    await conn.query(
+      'UPDATE customer_payments SET applied_amount = GREATEST(applied_amount - ?, 0), unapplied_amount = unapplied_amount + ? WHERE id = ?',
+      [total, total, cp.id]);
+    const [nos] = await conn.query('SELECT invoice_no FROM sales_invoices WHERE id IN (?)', [lines.map((l) => l.sales_invoice_id)]);
+    await logAudit(conn, {
+      paymentId: cp.id, userId: req.user.id, eventType: 'Updated', fieldName: 'unapplied from invoice',
+      oldValue: Number(cp.unapplied_amount || 0).toFixed(2), newValue: `unapplied ${total.toFixed(2)} from ${nos.map((x) => x.invoice_no).join(', ')}`,
+    });
+    await conn.commit();
+    const [[row]] = await pool.query('SELECT * FROM customer_payments WHERE id = ?', [cp.id]);
+    res.json(row);
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
 // Editing a payment that has not been deposited yet.
 //
 // WHY ONLY UNTIL IT IS DEPOSITED. A deposit sweeps the receipt into the bank and becomes the
