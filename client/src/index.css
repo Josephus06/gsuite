@@ -1910,6 +1910,14 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .cal-tally-item.cal-actual { border-left: 2px solid #e09a2b; padding-left: 5px; }
 :root[data-theme="dark"] .cal-actual { color: #f0b429; }
 
+/* Open Delivery Tickets on the GM's Invoice calendar: delivered but not yet billed. Violet, so
+   it reads apart from both the invoiced figure and the collection calendar's amber. */
+.cal-dt { color: #7c3aed; }
+.cal-tally-item.cal-dt { border-left: 2px solid #8b5cf6; padding-left: 5px; }
+.artist-calendar-chip.cal-dt { color: #6d28d9; background: rgba(139, 92, 246, 0.12); border-color: rgba(139, 92, 246, 0.35); }
+:root[data-theme="dark"] .cal-dt { color: #c4b5fd; }
+:root[data-theme="dark"] .artist-calendar-chip.cal-dt { color: #ddd6fe; background: rgba(139, 92, 246, 0.22); }
+
 .jo-c0 { --jo-fill: #fdf0d5; --jo-border: #d9a441; --jo-text: #6b4a10; }
 .jo-c1 { --jo-fill: #fbe0e6; --jo-border: #d9748f; --jo-text: #7a2740; }
 .jo-c2 { --jo-fill: #e2f0e6; --jo-border: #66a67e; --jo-text: #1f5133; }

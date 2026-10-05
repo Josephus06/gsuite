@@ -7,13 +7,18 @@ import Modal from './Modal';
 // or invoices by the day they were created, as customer chips with the day's total -- laid out
 // like CollectionForecastCalendar so the switch between them reads as one calendar.
 // GET /dashboard/gm-calendar decides which rows count (the same as the Weighted Sales card).
+//
+// The Invoice calendar also carries OPEN Delivery Tickets -- delivered, not yet billed -- in their
+// own colour (.cal-dt), with their own count and total, so the invoiced figure is never mixed
+// with what is still waiting to be invoiced.
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 const WEEKDAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const TYPES = {
-  sales: { noun: 'sales order', docLabel: 'Sales Order No', amountLabel: 'Net of Tax', path: (id) => `/sales-orders/${id}` },
-  invoices: { noun: 'invoice', docLabel: 'Invoice No', amountLabel: 'Amount', path: (id) => `/sales-invoices/${id}` },
+  sales: { noun: 'sales order', plural: 'Sales Orders', docLabel: 'Sales Order No', amountLabel: 'Net of Tax', path: (id) => `/sales-orders/${id}` },
+  invoices: { noun: 'invoice', plural: 'Invoices', docLabel: 'Invoice No', amountLabel: 'Amount', path: (id) => `/sales-invoices/${id}` },
 };
+const DT = { noun: 'open delivery ticket', plural: 'Open Delivery Tickets', docLabel: 'DT No', amountLabel: 'Amount', path: (id) => `/delivery-tickets/${id}` };
 
 function money(v) {
   const n = Number(v);
@@ -21,23 +26,22 @@ function money(v) {
 }
 const pad = (n) => String(n).padStart(2, '0');
 const plural = (n, noun) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+const EMPTY = { calendar: [], count: 0, total: 0, dtCount: 0, dtTotal: 0 };
 
 export default function GmDocumentCalendar({ type }) {
   const cfg = TYPES[type];
-  const navigate = useNavigate();
   const now = new Date();
   const [month, setMonth] = useState(`${now.getFullYear()}-${pad(now.getMonth() + 1)}`);
-  const [data, setData] = useState({ calendar: [], count: 0, total: 0 });
+  const [data, setData] = useState(EMPTY);
   const [loading, setLoading] = useState(true);
   const [openDay, setOpenDay] = useState(null);
-  const [openCustomer, setOpenCustomer] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     api.get('/dashboard/gm-calendar', { params: { type, month } })
       .then(({ data: d }) => { if (!cancelled) setData(d); })
-      .catch(() => { if (!cancelled) setData({ calendar: [], count: 0, total: 0 }); })
+      .catch(() => { if (!cancelled) setData(EMPTY); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [type, month]);
@@ -56,6 +60,7 @@ export default function GmDocumentCalendar({ type }) {
     setMonth(`${base.getFullYear()}-${pad(base.getMonth() + 1)}`);
   };
   const openEntry = openDay ? byDay.get(openDay) : null;
+  const showDts = type === 'invoices';
 
   return (
     <div className="artist-calendar">
@@ -64,7 +69,14 @@ export default function GmDocumentCalendar({ type }) {
         <strong>{MONTH_NAMES[monthNo - 1]} {year}</strong>
         <button type="button" className="btn btn-sm" onClick={() => shift(1)} disabled={loading}>&rsaquo;</button>
         <span className="muted artist-calendar-count">
-          {loading ? 'Loading...' : `${plural(data.count, cfg.noun)} · ${money(data.total)}`}
+          {loading ? 'Loading...' : (
+            <>
+              {`${plural(data.count, cfg.noun)} · ${money(data.total)}`}
+              {showDts && (
+                <span className="cal-dt">{` · ${plural(data.dtCount || 0, DT.noun)} · ${money(data.dtTotal || 0)}`}</span>
+              )}
+            </>
+          )}
         </span>
       </div>
 
@@ -74,26 +86,44 @@ export default function GmDocumentCalendar({ type }) {
           if (!key) return <div key={`pad-${i}`} className="artist-calendar-day is-empty" />;
           const entry = byDay.get(key);
           const customers = entry?.customers || [];
+          const dtCustomers = showDts ? (entry?.dtCustomers || []) : [];
+          // Three chips a day in all, invoices first; the rest fold into "+n more".
+          const chips = [
+            ...customers.map((c) => ({ ...c, dt: false })),
+            ...dtCustomers.map((c) => ({ ...c, dt: true })),
+          ];
+          const titleParts = [];
+          if (entry?.count) titleParts.push(`${plural(entry.count, cfg.noun)}, ${money(entry.total)}`);
+          if (entry?.dtCount) titleParts.push(`${plural(entry.dtCount, DT.noun)}, ${money(entry.dtTotal)}`);
           return (
             <div
               key={key}
               role="button"
               tabIndex={0}
-              className={`artist-calendar-day is-clickable${key === todayKey ? ' is-today' : ''}${customers.length ? ' has-jobs' : ''}`}
-              title={entry ? `${plural(entry.count, cfg.noun)}, ${money(entry.total)} -- click to see them` : `No ${cfg.noun}s -- click to confirm`}
-              onClick={() => { setOpenDay(key); setOpenCustomer(null); }}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenDay(key); setOpenCustomer(null); } }}
+              className={`artist-calendar-day is-clickable${key === todayKey ? ' is-today' : ''}${chips.length ? ' has-jobs' : ''}`}
+              title={titleParts.length ? `${titleParts.join(' · ')} -- click to see them` : 'Nothing on this day -- click to confirm'}
+              onClick={() => setOpenDay(key)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenDay(key); } }}
             >
               <span className="artist-calendar-daynum">{Number(key.slice(8, 10))}</span>
-              {entry?.total > 0 && (
-                <div className="cal-tally"><span className="cal-tally-item">{money(entry.total)}</span></div>
+              {(entry?.total > 0 || entry?.dtTotal > 0) && (
+                <div className="cal-tally">
+                  {entry.total > 0 && <span className="cal-tally-item">{money(entry.total)}</span>}
+                  {showDts && entry.dtTotal > 0 && (
+                    <span className="cal-tally-item cal-dt" title={`Open delivery tickets: ${money(entry.dtTotal)}`}>{money(entry.dtTotal)}</span>
+                  )}
+                </div>
               )}
-              {customers.slice(0, 3).map((c) => (
-                <span key={c.customerId} className="artist-calendar-chip" title={`${c.customerName} · ${plural(c.count, cfg.noun)} · ${money(c.total)}`}>
+              {chips.slice(0, 3).map((c) => (
+                <span
+                  key={`${c.dt ? 'dt' : 'doc'}-${c.customerId}`}
+                  className={`artist-calendar-chip${c.dt ? ' cal-dt' : ''}`}
+                  title={`${c.customerName} · ${plural(c.count, c.dt ? DT.noun : cfg.noun)} · ${money(c.total)}`}
+                >
                   {c.customerName}
                 </span>
               ))}
-              {customers.length > 3 && <span className="artist-calendar-more">+{customers.length - 3} more</span>}
+              {chips.length > 3 && <span className="artist-calendar-more">+{chips.length - 3} more</span>}
             </div>
           );
         })}
@@ -106,60 +136,77 @@ export default function GmDocumentCalendar({ type }) {
           large
         >
           {!openEntry ? (
-            <div className="muted" style={{ padding: 20, textAlign: 'center' }}>No {cfg.noun}s on this day.</div>
+            <div className="muted" style={{ padding: 20, textAlign: 'center' }}>Nothing on this day.</div>
           ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th style={{ width: 32 }} />
-                    <th>Customer</th>
-                    <th className="text-right">{cfg.noun === 'invoice' ? 'Invoices' : 'Sales Orders'}</th>
-                    <th className="text-right">{cfg.amountLabel}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {openEntry.customers.map((c) => {
-                    const open = openCustomer === c.customerId;
-                    return [
-                      <tr key={c.customerId} className="is-clickable" onClick={() => setOpenCustomer(open ? null : c.customerId)}>
-                        <td>{open ? '▾' : '▸'}</td>
-                        <td>{c.customerName}</td>
-                        <td className="text-right">{c.count}</td>
-                        <td className="text-right">{money(c.total)}</td>
-                      </tr>,
-                      open && (
-                        <tr key={`${c.customerId}-docs`}>
-                          <td />
-                          <td colSpan={3} style={{ padding: 0 }}>
-                            <table style={{ width: '100%' }}>
-                              <thead><tr><th>{cfg.docLabel}</th><th className="text-right">{cfg.amountLabel}</th></tr></thead>
-                              <tbody>
-                                {c.docs.map((d) => (
-                                  <tr key={d.id} className="is-clickable" onClick={() => navigate(cfg.path(d.id))}>
-                                    <td className="link-btn">{d.docNo}</td>
-                                    <td className="text-right">{money(d.amount)}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </td>
-                        </tr>
-                      ),
-                    ];
-                  })}
-                  <tr>
-                    <td />
-                    <td><strong>Total</strong></td>
-                    <td className="text-right"><strong>{openEntry.count}</strong></td>
-                    <td className="text-right"><strong>{money(openEntry.total)}</strong></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+            <>
+              {openEntry.count > 0 && <CustomerTable cfg={cfg} customers={openEntry.customers} count={openEntry.count} total={openEntry.total} />}
+              {showDts && openEntry.dtCount > 0 && (
+                <div className="cal-dt" style={{ marginTop: openEntry.count > 0 ? 20 : 0 }}>
+                  <h4 style={{ margin: '0 0 8px' }}>{DT.plural}</h4>
+                  <CustomerTable cfg={DT} customers={openEntry.dtCustomers} count={openEntry.dtCount} total={openEntry.dtTotal} />
+                </div>
+              )}
+            </>
           )}
         </Modal>
       )}
+    </div>
+  );
+}
+
+// One row per customer with their count and total, expanding to the documents behind it.
+function CustomerTable({ cfg, customers, count, total }) {
+  const navigate = useNavigate();
+  const [openCustomer, setOpenCustomer] = useState(null);
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style={{ width: 32 }} />
+            <th>Customer</th>
+            <th className="text-right">{cfg.plural}</th>
+            <th className="text-right">{cfg.amountLabel}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {customers.map((c) => {
+            const open = openCustomer === c.customerId;
+            return [
+              <tr key={c.customerId} className="is-clickable" onClick={() => setOpenCustomer(open ? null : c.customerId)}>
+                <td>{open ? '▾' : '▸'}</td>
+                <td>{c.customerName}</td>
+                <td className="text-right">{c.count}</td>
+                <td className="text-right">{money(c.total)}</td>
+              </tr>,
+              open && (
+                <tr key={`${c.customerId}-docs`}>
+                  <td />
+                  <td colSpan={3} style={{ padding: 0 }}>
+                    <table style={{ width: '100%' }}>
+                      <thead><tr><th>{cfg.docLabel}</th><th className="text-right">{cfg.amountLabel}</th></tr></thead>
+                      <tbody>
+                        {c.docs.map((d) => (
+                          <tr key={d.id} className="is-clickable" onClick={() => navigate(cfg.path(d.id))}>
+                            <td className="link-btn">{d.docNo}</td>
+                            <td className="text-right">{money(d.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </td>
+                </tr>
+              ),
+            ];
+          })}
+          <tr>
+            <td />
+            <td><strong>Total</strong></td>
+            <td className="text-right"><strong>{count}</strong></td>
+            <td className="text-right"><strong>{money(total)}</strong></td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   );
 }
