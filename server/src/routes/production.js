@@ -1093,7 +1093,12 @@ router.get('/:id/rwip-draft', requireAuth, requirePermission(ROUTE, 'can_view'),
 // Create an RWIP job order from a mother JO that's in process. Number RWIP-###, starts in
 // "Pending RMA Approval" (production_stage NULL). Reuses the mother's SO + line and copies its
 // header; the (edited) processes come from the modal. Only when the mother JO is in process.
-router.post('/:id/rwip', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+// Production edit rights, or RWIP > Add for someone allowed to raise RWIPs and nothing else on
+// this screen (asked 2026-10-05).
+router.post('/:id/rwip', requireAuth, async (req, res, next) => {
+  if (!(await userCan(req.user.id, ROUTE, 'can_edit')) && !(await userCan(req.user.id, '/rwip-job-orders', 'can_add'))) {
+    return res.status(403).json({ error: 'You do not have permission to perform this action' });
+  }
   const conn = await pool.getConnection();
   try {
     if (await refuseAdvanceCopy(conn, req.params.id, res)) return;

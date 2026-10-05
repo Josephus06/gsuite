@@ -538,6 +538,10 @@ export default function ProductionJobOrderView() {
 
   const canEdit = can('/job-orders', 'can_edit');
   const canCreateRwip = can('/production', 'can_edit');
+  // Raising an RWIP alone: Production edit rights, or RWIP > Add for someone given only that
+  // (asked 2026-10-05) -- the server accepts the same pair. Deliberately NOT folded into
+  // canWorkFloorRole below: RWIP > Add opens this one button, not the floor's other work.
+  const canAddRwip = canCreateRwip || can('/rwip-job-orders', 'can_add');
   // Working the floor -- Assembly Build and recording completion -- is production's job, and it
   // was gated here on can_edit for /job-orders: a Sales permission, which the production accounts
   // hold and the server does not accept, so the button was drawn for the very people it then
@@ -989,7 +993,7 @@ export default function ProductionJobOrderView() {
               </tbody>
             </table>
           </div>
-          {canCreateRwip && isInProcess && (
+          {canAddRwip && isInProcess && (
             <button type="button" className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => setShowRwip(true)}>Add</button>
           )}
         </div>
