@@ -826,6 +826,61 @@ async function generalManagerCards() {
   };
 }
 
+// The General Manager's calendar switch: one month of Weighted Sales (sales orders by date
+// created, net of tax, cancelled left out -- the same rows as the Weighted Sales card) or of
+// Invoices (by date created, cancelled left out), grouped by day and then customer. An invoice is
+// counted at its gross amount -- what was billed -- not amount_due, which is what is still unpaid
+// and reads 0 on most of a month's invoices. Its customer is resolved through its source document
+// the way the Invoices list does it, since sales_invoices.customer_id is mostly empty.
+// Production and Collection Forecast have endpoints of their own.
+const GM_CALENDARS = {
+  sales: `SELECT so.id, so.sales_order_no AS doc_no, DATE_FORMAT(so.date_created, '%Y-%m-%d') AS day,
+                 so.customer_id, c.name AS customer_name, COALESCE(so.net_of_tax, 0) AS amount
+            FROM sales_orders so LEFT JOIN customers c ON c.id = so.customer_id
+           WHERE so.date_created >= ? AND so.date_created < ? AND so.status <> 'cancelled'`,
+  invoices: `SELECT si.id, si.invoice_no AS doc_no, DATE_FORMAT(si.date_created, '%Y-%m-%d') AS day,
+                    c.id AS customer_id, c.name AS customer_name, COALESCE(si.gross_amount, 0) AS amount
+               FROM sales_invoices si
+               LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+               LEFT JOIN estimates e ON e.id = si.estimate_id
+               LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
+               LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
+              WHERE si.date_created >= ? AND si.date_created < ? AND si.cancelled_at IS NULL`,
+};
+router.get('/gm-calendar', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await isGeneralManager(req.user.id))) return res.status(403).json({ error: 'General Manager only.' });
+    const sql = GM_CALENDARS[req.query.type];
+    if (!sql) return res.status(400).json({ error: 'type must be sales or invoices' });
+    const bounds = monthBounds(req.query.month);
+    const [rows] = await pool.query(`${sql} ORDER BY day, customer_name, doc_no`, [bounds.start, bounds.end]);
+
+    const days = new Map();
+    for (const r of rows) {
+      if (!days.has(r.day)) days.set(r.day, { day: r.day, count: 0, total: 0, customers: new Map() });
+      const d = days.get(r.day);
+      const key = r.customer_id || 0;
+      if (!d.customers.has(key)) {
+        d.customers.set(key, { customerId: key, customerName: r.customer_name || '—', count: 0, total: 0, docs: [] });
+      }
+      const c = d.customers.get(key);
+      const amount = Number(r.amount);
+      c.docs.push({ id: r.id, docNo: r.doc_no, amount });
+      c.count += 1; c.total += amount;
+      d.count += 1; d.total += amount;
+    }
+    const calendar = [...days.values()].map((d) => ({
+      ...d, customers: [...d.customers.values()].sort((a, b) => b.total - a.total),
+    }));
+    res.json({
+      month: bounds.month,
+      calendar,
+      count: rows.length,
+      total: rows.reduce((s, r) => s + Number(r.amount), 0),
+    });
+  } catch (err) { next(err); }
+});
+
 router.get('/', requireAuth, async (req, res, next) => {
   try {
     const scope = await resolveScope(req.user.id);

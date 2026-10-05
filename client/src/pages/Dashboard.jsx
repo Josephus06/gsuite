@@ -9,6 +9,7 @@ import SyncFromSourceButton from '../components/SyncFromSourceButton';
 import { parseUtc } from '../utils/datetime';
 import { isPlanner } from '../utils/plannerRoles';
 import CollectionForecastCalendar from '../components/CollectionForecastCalendar';
+import GmDocumentCalendar from '../components/GmDocumentCalendar';
 import SystemHealthCard from '../components/SystemHealthCard';
 import SalesBreakdownCard from '../components/SalesBreakdownCard';
 import Feed from './Feed';
@@ -330,7 +331,11 @@ function AdminDashboard({ data, user, navigate }) {
 
       <div className="dash-main-grid">
         <ProfileCard user={user} roleLabel={ROLE_LABELS.admin} rings={data.rings} activity={activity} />
-        {isPlanner(user) ? (
+        {data.gmCards ? (
+          // The General Manager reads the whole business off one calendar: production load,
+          // money expected in, sales booked and invoices raised, switched by the tabs above it.
+          <GmCalendarCard navigate={navigate} canSeeCollections={canSeeCollections} />
+        ) : isPlanner(user) ? (
           // A planner opens this screen to answer "what is on the floor this month", not to
           // read a sales trend -- so the production forecast calendar takes that panel for them.
           <ForecastCalendarCard navigate={navigate} />
@@ -731,7 +736,50 @@ function assignJoColours(jobs) {
   return byId;
 }
 
-function ForecastCalendarCard({ navigate }) {
+const GM_CALENDARS = [
+  { key: 'production', label: 'Production' },
+  { key: 'collection', label: 'Collection Forecast' },
+  { key: 'sales', label: 'Weighted Sales' },
+  { key: 'invoices', label: 'Invoice' },
+];
+
+// The General Manager's calendar card: one calendar, switched between the four views. Opens on
+// Collection Forecast, which is what this panel showed before the switch was added; the choice is
+// remembered per browser. Collection Forecast is left out for an account without Treasury access,
+// whose API would refuse it.
+function GmCalendarCard({ navigate, canSeeCollections }) {
+  const tabs = GM_CALENDARS.filter((t) => t.key !== 'collection' || canSeeCollections);
+  const [view, setView] = useState(() => {
+    let saved = null;
+    try { saved = localStorage.getItem('gm-calendar-view'); } catch { /* storage unavailable */ }
+    return tabs.some((t) => t.key === saved) ? saved : (canSeeCollections ? 'collection' : 'production');
+  });
+  const choose = (key) => {
+    setView(key);
+    try { localStorage.setItem('gm-calendar-view', key); } catch { /* storage unavailable */ }
+  };
+
+  return (
+    <div className="holo-card dash-chart-card">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+        <h3 style={{ margin: 0 }}>Calendar</h3>
+        <div className="status-tabs" style={{ margin: 0, flex: 1 }}>
+          {tabs.map((t) => (
+            <button key={t.key} type="button" className={`status-tab ${view === t.key ? 'active' : ''}`} onClick={() => choose(t.key)}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {view === 'production' && <ForecastCalendarCard navigate={navigate} embedded />}
+      {view === 'collection' && <CollectionForecastCalendar />}
+      {view === 'sales' && <GmDocumentCalendar type="sales" />}
+      {view === 'invoices' && <GmDocumentCalendar type="invoices" />}
+    </div>
+  );
+}
+
+function ForecastCalendarCard({ navigate, embedded = false }) {
   const pad = (n) => String(n).padStart(2, '0');
   const now = new Date();
   const [month, setMonth] = useState(`${now.getFullYear()}-${pad(now.getMonth() + 1)}`);
@@ -797,8 +845,8 @@ function ForecastCalendarCard({ navigate }) {
   };
 
   return (
-    <div className="holo-card dash-chart-card">
-      <h3>Production Schedule</h3>
+    <div className={embedded ? undefined : 'holo-card dash-chart-card'}>
+      {!embedded && <h3>Production Schedule</h3>}
       <div className="artist-calendar">
         <div className="artist-calendar-head">
           <button type="button" className="btn btn-sm" onClick={() => shift(-1)} disabled={loading}>&lsaquo;</button>
