@@ -46,20 +46,35 @@ async function logAudit(conn, { paymentId, userId, eventType, fieldName = null, 
   );
 }
 
+// An invoice's Amount Due as the invoice view shows it (asked 2026-10-05): gross, i.e. the stored
+// balance plus its EWT while anything is still owed. amount_due is stored net of EWT -- the cash
+// left to collect once the customer withholds -- and 0 once settled.
+const dueSql = (a) => `CASE WHEN ${a}.amount_due > 0.005 THEN ${a}.amount_due + COALESCE(${a}.ewt_amount, 0) ELSE ${a}.amount_due END`;
+
 // Draws an invoice's Amount Due down and flips it to paid_in_full when it lands at zero.
 // Rejects rather than clamps an over-application, the same discipline used for every
 // other amount cap in this codebase.
+//
+// Up to the GROSS Amount Due (balance + EWT), not just the balance (asked 2026-10-05): a customer
+// who pays without withholding pays the EWT in cash too. What is applied past the stored balance
+// comes off the invoice's EWT -- it was not withheld after all. The invoice's GL debits AR at
+// gross and carries no EWT (computeSalesInvoiceGl), so this moves no entry; it only stops the
+// invoice reading as still owed its EWT.
 async function applyToInvoice(conn, invoiceId, amount) {
-  const [[si]] = await conn.query('SELECT invoice_no, amount_due, status FROM sales_invoices WHERE id = ?', [invoiceId]);
+  const [[si]] = await conn.query('SELECT invoice_no, amount_due, ewt_amount, status FROM sales_invoices WHERE id = ?', [invoiceId]);
   if (!si) throw Object.assign(new Error('One of the selected invoices is no longer valid.'), { status: 400 });
   if (si.status === 'cancelled') throw Object.assign(new Error(`${si.invoice_no} is void and cannot be paid.`), { status: 409 });
-  if (amount > Number(si.amount_due) + 1e-9) {
-    throw Object.assign(new Error(`Applied Amount (${amount}) exceeds ${si.invoice_no}'s remaining Amount Due (${si.amount_due}).`), { status: 409 });
+  const balance = Number(si.amount_due);
+  const ewt = balance > 0.005 ? Number(si.ewt_amount || 0) : 0;
+  const grossDue = Number((balance + ewt).toFixed(2));
+  if (amount > grossDue + 1e-9) {
+    throw Object.assign(new Error(`Applied Amount (${amount}) exceeds ${si.invoice_no}'s remaining Amount Due (${grossDue.toFixed(2)}).`), { status: 409 });
   }
-  const newDue = Number((Number(si.amount_due) - amount).toFixed(2));
+  const pastBalance = Math.max(Number((amount - balance).toFixed(2)), 0);
+  const newDue = Math.max(Number((balance - amount).toFixed(2)), 0);
   await conn.query(
-    "UPDATE sales_invoices SET amount_due = ?, status = IF(? <= 0.005, 'paid_in_full', status) WHERE id = ?",
-    [newDue, newDue, invoiceId]
+    "UPDATE sales_invoices SET amount_due = ?, ewt_amount = GREATEST(COALESCE(ewt_amount, 0) - ?, 0), status = IF(? <= 0.005, 'paid_in_full', status) WHERE id = ?",
+    [newDue, pastBalance, newDue, invoiceId]
   );
 }
 
@@ -180,7 +195,7 @@ router.get('/for-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can
       // whichever source it has. An INNER JOIN here made the payment form fail to load at all
       // for those invoices -- they could be raised but never collected.
       `SELECT si.id AS sales_invoice_id, si.invoice_no, si.office_location_id, si.department_id, si.memo,
-              si.amount_due, COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) AS customer_id, c.name AS customer_name,
+              ${dueSql('si')} AS amount_due, COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) AS customer_id, c.name AS customer_name,
               loc.location_name AS office_location_name, d.name AS department_name
        FROM sales_invoices si
        LEFT JOIN sales_orders so ON so.id = si.sales_order_id
@@ -197,7 +212,7 @@ router.get('/for-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can
     const [applyLines] = await pool.query(
       // Same reason: an estimate-sourced invoice belongs in this customer's open items too,
       // otherwise a payment settling several invoices at once would silently skip it.
-      `SELECT si2.id AS sales_invoice_id, si2.invoice_no, si2.date_created, si2.gross_amount, si2.amount_due,
+      `SELECT si2.id AS sales_invoice_id, si2.invoice_no, si2.date_created, si2.gross_amount, ${dueSql('si2')} AS amount_due,
               c.name AS customer_name
        FROM sales_invoices si2
        LEFT JOIN sales_orders so2 ON so2.id = si2.sales_order_id
@@ -279,7 +294,7 @@ router.get('/for-customer/:customerId', requireAuth, requirePermission(ROUTE, 'c
       // invoices this payment settled are therefore included regardless of their balance, and
       // each row carries what this payment already draws from it, so the form can work out how
       // much is really available: amount_due plus its own existing application.
-      `SELECT si.id AS sales_invoice_id, si.invoice_no, si.bs_si_no, si.date_created, si.gross_amount, si.amount_due,
+      `SELECT si.id AS sales_invoice_id, si.invoice_no, si.bs_si_no, si.date_created, si.gross_amount, ${dueSql('si')} AS amount_due,
               c.name AS customer_name,
               COALESCE(mine.applied_amount, 0) AS applied_by_this_payment
          FROM sales_invoices si
