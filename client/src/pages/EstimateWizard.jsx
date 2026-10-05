@@ -179,6 +179,11 @@ export default function EstimateWizard() {
   const [shippingAddresses, setShippingAddresses] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
   const [contacts, setContacts] = useState([]);
+  // Inline "new contact" panel. Saving it writes to the customer's contacts in Master Lists,
+  // then selects it here -- same flow as the NSTDJO form.
+  const [newContact, setNewContact] = useState(null);
+  const [savingContact, setSavingContact] = useState(false);
+  const [contactError, setContactError] = useState('');
   const [blanketPos, setBlanketPos] = useState([]);
   const [newPo, setNewPo] = useState('');
   const [newShipping, setNewShipping] = useState('');
@@ -333,6 +338,7 @@ export default function EstimateWizard() {
 
   async function handleCustomerSelect(cust) {
     setHeader((h) => ({ ...h, customer_id: cust.id, contact_person_id: '', contact_email: '', contact_title: '', contact_phone: '', blanket_po_id: '' }));
+    setNewContact(null);
     await loadCustomerExtras(cust.id);
   }
 
@@ -341,6 +347,23 @@ export default function EstimateWizard() {
       ...h, contact_person_id: contact.id,
       contact_email: contact.email || '', contact_title: contact.title || '', contact_phone: contact.phone || '',
     }));
+  }
+
+  // Saves the new contact against the chosen customer, then selects it.
+  async function saveNewContact() {
+    if (!newContact?.contact_name.trim()) { setContactError('Contact name is required.'); return; }
+    setSavingContact(true);
+    setContactError('');
+    try {
+      const { data } = await api.post('/estimates/contacts', { ...newContact, customer_id: header.customer_id });
+      setContacts((current) => [...current, data]);
+      handleContactSelect(data);
+      setNewContact(null);
+    } catch (err) {
+      setContactError(err.response?.data?.error || 'Could not save this contact.');
+    } finally {
+      setSavingContact(false);
+    }
   }
 
   function buildHeaderPayload() {
@@ -1277,6 +1300,28 @@ export default function EstimateWizard() {
                     disabled={!header.customer_id}
                     placeholder={header.customer_id ? 'Select contact...' : 'Select a customer first'}
                   />
+                  {header.customer_id && !newContact && (
+                    <button type="button" className="btn btn-link" style={{ padding: '4px 0' }}
+                      onClick={() => { setContactError(''); setNewContact({ contact_name: '', title: '', email: '', phone: '' }); }}>
+                      + Add new contact
+                    </button>
+                  )}
+                  {newContact && (
+                    <div style={{ border: '1px solid var(--border, #ddd)', borderRadius: 6, padding: 10, marginTop: 6 }}>
+                      <label>New Contact <span className="muted">(saved to this customer in Master Lists)</span></label>
+                      {contactError && <div className="error-banner">{contactError}</div>}
+                      {[['contact_name', 'Name *'], ['title', 'Title'], ['email', 'Email'], ['phone', 'Contact No']].map(([key, label]) => (
+                        <input key={key} placeholder={label} value={newContact[key]} style={{ marginBottom: 6 }}
+                          onChange={(e) => setNewContact((current) => ({ ...current, [key]: e.target.value }))} />
+                      ))}
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button type="button" className="btn btn-primary" disabled={savingContact} onClick={saveNewContact}>
+                          {savingContact ? 'Saving...' : 'Save Contact'}
+                        </button>
+                        <button type="button" className="btn" disabled={savingContact} onClick={() => setNewContact(null)}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="field"><label>Contact Email</label><input value={header.contact_email} onChange={(e) => setHeaderField('contact_email', e.target.value)} /></div>
                 <div className="field"><label>Contact Title</label><input value={header.contact_title} onChange={(e) => setHeaderField('contact_title', e.target.value)} /></div>

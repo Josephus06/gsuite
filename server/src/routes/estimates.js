@@ -482,6 +482,36 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
   }
 });
 
+// Add a contact person without leaving the estimate form. Writes to customer_contacts, the
+// same table Master Lists > Customer reads, so the contact becomes part of the customer's
+// details -- mirrors POST /non-standard-job-orders/contacts. Gated on this page's Add or Edit
+// (the form is used for both) rather than Customers can_edit: quoting a customer should not
+// require rights to edit the customer master.
+router.post('/contacts', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await userCan(req.user.id, ROUTE, 'can_add')) && !(await userCan(req.user.id, ROUTE, 'can_edit'))) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const { customer_id: customerId, contact_name: contactName, title, email, phone } = req.body;
+    if (!customerId) return res.status(400).json({ error: 'Select a customer first.' });
+    if (!contactName || !contactName.trim()) return res.status(400).json({ error: 'Contact name is required.' });
+
+    const [[customer]] = await pool.query('SELECT id FROM customers WHERE id = ?', [customerId]);
+    if (!customer) return res.status(400).json({ error: 'Invalid customer.' });
+
+    const [result] = await pool.query(
+      `INSERT INTO customer_contacts (customer_id, contact_name, title, email, phone, is_primary)
+       VALUES (?, ?, ?, ?, ?, FALSE)`,
+      [customerId, contactName.trim(), title?.trim() || null, email?.trim() || null, phone?.trim() || null],
+    );
+    const [[row]] = await pool.query(
+      'SELECT id, contact_name, title, email, phone, description FROM customer_contacts WHERE id = ?',
+      [result.insertId],
+    );
+    res.status(201).json(row);
+  } catch (err) { next(err); }
+});
+
 router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
