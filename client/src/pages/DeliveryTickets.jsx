@@ -28,16 +28,45 @@ export default function DeliveryTickets() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('');
   const [search, setSearch] = useState('');
+  // Period From / As of Date: inclusive bounds on Date Created, applied on Search.
+  const [dateFrom, setDateFrom] = useState('');
+  const [asOf, setAsOf] = useState('');
   const [page, setPage] = useState(1);
+
+  function listParams() {
+    const params = {};
+    if (status) params.status = status;
+    if (search) params.search = search;
+    if (dateFrom) params.date_from = dateFrom;
+    if (asOf) params.as_of = asOf;
+    return params;
+  }
+
+  // Extract: every ticket under the filters above, as a workbook (same params as the list).
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  async function runExport() {
+    setExporting(true); setExportError('');
+    try {
+      const { data } = await api.get('/delivery-tickets/export', { params: listParams(), responseType: 'blob' });
+      const url = URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'delivery-tickets.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setExportError('Could not extract the delivery tickets.');
+    } finally {
+      setExporting(false);
+    }
+  }
 
   // Asks the server for ONE page. This used to fetch every row and slice it here, which meant
   // downloading the whole table to display ten of it -- and it made the search box a lie, since
   // it could only match rows already downloaded. Both now happen server-side.
   async function load(toPage = page) {
     setLoading(true);
-    const params = { page: toPage, limit: PAGE_SIZE };
-    if (status) params.status = status;
-    if (search) params.search = search;
+    const params = { ...listParams(), page: toPage, limit: PAGE_SIZE };
     try {
       const { data } = await api.get('/delivery-tickets', { params });
       setRows(data.rows || []);
@@ -87,8 +116,22 @@ export default function DeliveryTickets() {
               <option value="void">Void</option>
             </select>
           </div>
+          <div className="field">
+            <label>Period From</label>
+            <input type="date" value={dateFrom} max={asOf || undefined} onChange={(e) => setDateFrom(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} />
+          </div>
+          <div className="field">
+            <label>As of Date</label>
+            <input type="date" value={asOf} min={dateFrom || undefined} onChange={(e) => setAsOf(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} />
+          </div>
         </div>
-        <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>
+        <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn btn-primary" onClick={runSearch}>Search</button>
+          <button className="btn" disabled={exporting} onClick={runExport} title="Download every delivery ticket under the filters above">
+            {exporting ? 'Extracting...' : 'Extract'}
+          </button>
+          {exportError && <span style={{ color: 'var(--danger)' }}>{exportError}</span>}
+        </div>
       </div>
 
       <div className="card">

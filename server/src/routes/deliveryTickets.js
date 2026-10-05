@@ -7,6 +7,7 @@ const { computeDeliveryTicketGl } = require('../lib/glImpact');
 
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { postReversalJournal, listReversalJournals } = require('../lib/reversalJournal');
+const { sendXlsx, day } = require('../lib/xlsxExport');
 
 const router = express.Router();
 // Like Sales Invoices (and unlike Item Fulfillment/Receipt, which borrow their parent's
@@ -125,24 +126,47 @@ router.get('/for-sales-order/:salesOrderId', requireAuth, requirePermission(ROUT
   }
 });
 
+// The list's filters, shared with its Excel extract so the file holds exactly what the list shows.
+async function listFilter(req) {
+  const { search, status, date_from: dateFrom, as_of: asOf } = req.query;
+  const where = [];
+  const params = [];
+  if (status) { where.push('dt.status = ?'); params.push(status); }
+  // Period From / As of Date: inclusive bounds on Date Created.
+  if (dateFrom) { where.push('dt.date_created >= ?'); params.push(String(dateFrom).slice(0, 10)); }
+  if (asOf) { where.push('dt.date_created <= ?'); params.push(String(asOf).slice(0, 10)); }
+  // An Account Officer sees only their own delivery tickets; a Supervisor sees theirs plus their
+  // reports'. Same rule Estimates and Sales Orders already apply -- see lib/salesVisibility.js,
+  // which returns null (and so changes nothing) for every account that is neither.
+  const salesScope = await getSalesRepEmployeeScope(req.user.id);
+  if (salesScope) { where.push('dt.sales_rep_id IN (?)'); params.push(salesScope); }
+  if (search) {
+    where.push('(dt.dt_no LIKE ? OR so.sales_order_no LIKE ? OR c.name LIKE ? OR dt.po_no LIKE ?)');
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+  }
+  return { whereSql: where.length ? `WHERE ${where.join(' AND ')}` : '', params };
+}
+
+const LIST_SELECT = `SELECT dt.id, dt.dt_no, dt.date_created, dt.date_due, dt.term, dt.po_no, dt.memo, dt.status,
+              dt.net_of_tax, dt.tax_amount, dt.gross_amount, dt.amount_due,
+              so.sales_order_no, c.name AS customer_name,
+              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
+              loc.location_name AS office_location_name, d.name AS department_name,
+              si.id AS sales_invoice_id, si.invoice_no
+       FROM delivery_tickets dt
+       JOIN sales_orders so ON so.id = dt.sales_order_id
+       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN employees sr ON sr.id = dt.sales_rep_id
+       LEFT JOIN locations loc ON loc.id = dt.office_location_id
+       LEFT JOIN departments d ON d.id = dt.department_id
+       LEFT JOIN sales_invoices si ON si.delivery_ticket_id = dt.id AND si.status != 'cancelled'`;
+
 // Flat list with a Status filter, same shape as Saved Invoices -- no status tabs, since
 // a ticket only ever sits in one of three states.
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { search, status, page = '1', limit = '10' } = req.query;
-    const where = [];
-    const params = [];
-    if (status) { where.push('dt.status = ?'); params.push(status); }
-    // An Account Officer sees only their own delivery tickets; a Supervisor sees theirs plus their
-    // reports'. Same rule Estimates and Sales Orders already apply -- see lib/salesVisibility.js,
-    // which returns null (and so changes nothing) for every account that is neither.
-    const salesScope = await getSalesRepEmployeeScope(req.user.id);
-    if (salesScope) { where.push('dt.sales_rep_id IN (?)'); params.push(salesScope); }
-    if (search) {
-      where.push('(dt.dt_no LIKE ? OR so.sales_order_no LIKE ? OR c.name LIKE ? OR dt.po_no LIKE ?)');
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
-    }
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const { search, page = '1', limit = '10' } = req.query;
+    const { whereSql, params } = await listFilter(req);
 
     // PAGINATED SERVER-SIDE. This used to return every delivery ticket with no LIMIT while the
     // page showed ten at a time and sliced the rest away in the browser -- 2.6 MB down the wire
@@ -169,19 +193,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     );
 
     const [rows] = await pool.query(
-      `SELECT dt.id, dt.dt_no, dt.date_created, dt.date_due, dt.term, dt.po_no, dt.memo, dt.status,
-              dt.net_of_tax, dt.tax_amount, dt.gross_amount, dt.amount_due,
-              so.sales_order_no, c.name AS customer_name,
-              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
-              loc.location_name AS office_location_name, d.name AS department_name,
-              si.id AS sales_invoice_id, si.invoice_no
-       FROM delivery_tickets dt
-       JOIN sales_orders so ON so.id = dt.sales_order_id
-       LEFT JOIN customers c ON c.id = so.customer_id
-       LEFT JOIN employees sr ON sr.id = dt.sales_rep_id
-       LEFT JOIN locations loc ON loc.id = dt.office_location_id
-       LEFT JOIN departments d ON d.id = dt.department_id
-       LEFT JOIN sales_invoices si ON si.delivery_ticket_id = dt.id AND si.status != 'cancelled'
+      `${LIST_SELECT}
        ${whereSql}
        ORDER BY dt.id DESC
        LIMIT ? OFFSET ?`,
@@ -189,6 +201,47 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     );
     res.json({ rows, total, page: pageNum, limit: limitNum });
   } catch (err) {
+    next(err);
+  }
+});
+
+// Extract: every ticket under the list's current filters, as a workbook. Registered before /:id.
+router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const { whereSql, params } = await listFilter(req);
+    const [rows] = await pool.query(`${LIST_SELECT} ${whereSql} ORDER BY dt.id DESC`, params);
+    const STATUS = { open: 'Open', converted: 'Converted', void: 'Void' };
+    await sendXlsx(res, {
+      filename: 'delivery-tickets.xlsx',
+      sheet: 'Delivery Tickets',
+      columns: [
+        { header: 'DT #', key: 'dt_no', width: 14 },
+        { header: 'SO #', key: 'so_no', width: 14 },
+        { header: 'Date Created', key: 'date_created', width: 12 },
+        { header: 'Date Due', key: 'date_due', width: 12 },
+        { header: 'Office Location', key: 'location', width: 20 },
+        { header: 'Customer', key: 'customer', width: 38 },
+        { header: 'Sales Rep', key: 'sales_rep', width: 24 },
+        { header: 'Department', key: 'department', width: 22 },
+        { header: 'Net of Tax', key: 'net', width: 15, money: true },
+        { header: 'Tax Amount', key: 'tax', width: 14, money: true },
+        { header: 'Gross Amount', key: 'gross', width: 15, money: true },
+        { header: 'Term', key: 'term', width: 12 },
+        { header: 'PO #', key: 'po_no', width: 16 },
+        { header: 'Invoice', key: 'invoice', width: 14 },
+        { header: 'Status', key: 'status', width: 11 },
+        { header: 'Memo', key: 'memo', width: 50 },
+      ],
+      rows: rows.map((r) => ({
+        dt_no: r.dt_no, so_no: r.sales_order_no || '', date_created: day(r.date_created), date_due: day(r.date_due),
+        location: r.office_location_name || '', customer: r.customer_name || '', sales_rep: r.sales_rep_name || '',
+        department: r.department_name || '', net: Number(r.net_of_tax || 0), tax: Number(r.tax_amount || 0),
+        gross: Number(r.gross_amount || 0), term: r.term || '', po_no: r.po_no || '', invoice: r.invoice_no || '',
+        status: STATUS[r.status] || r.status, memo: r.memo || '',
+      })),
+    });
+  } catch (err) {
+    if (res.headersSent) { res.destroy(err); return; }
     next(err);
   }
 });
