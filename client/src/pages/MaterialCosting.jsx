@@ -212,7 +212,7 @@ export default function MaterialCosting() {
                         />
                       </td>
                       <td style={{ display: 'flex', gap: 6, flexDirection: 'column', alignItems: 'flex-start' }}>
-                        <Link className="btn btn-sm" to={`/inventory/${row.id}`}>View</Link>
+                        <Link className="btn btn-sm" to={`/material-costing/${row.id}`}>Update</Link>
                         {canApproveCosting && (
                           <button type="button" className="btn btn-sm btn-primary" disabled={approvingId === row.id} onClick={() => handleApproveCosting(row)}>
                             Approve Costing

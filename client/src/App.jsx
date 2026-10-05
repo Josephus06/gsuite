@@ -183,6 +183,7 @@ import Lookups from './pages/Lookups';
 import TransactionSettings from './pages/TransactionSettings';
 import ProcessCosting from './pages/ProcessCosting';
 import MaterialCosting from './pages/MaterialCosting';
+import MaterialCostEdit from './pages/MaterialCostEdit';
 import ScheduledJobOrders from './pages/ScheduledJobOrders';
 import ScheduledJobOrderTasks from './pages/ScheduledJobOrderTasks';
 import ScheduledJobOrderRun from './pages/ScheduledJobOrderRun';
@@ -496,6 +497,7 @@ function App() {
         <Route path="/transaction-settings" element={<TransactionSettings />} />
         <Route path="/process-costing" element={<ProcessCosting />} />
         <Route path="/material-costing" element={<MaterialCosting />} />
+        <Route path="/material-costing/:id" element={<MaterialCostEdit />} />
       </Route>
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
