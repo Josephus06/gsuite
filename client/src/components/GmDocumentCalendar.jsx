@@ -8,15 +8,18 @@ import Modal from './Modal';
 // like CollectionForecastCalendar so the switch between them reads as one calendar.
 // GET /dashboard/gm-calendar decides which rows count (the same as the Weighted Sales card).
 //
-// The Invoice calendar counts invoices only (asked 2026-10-05), and an invoice converted from a ticket
-// raised in an earlier month is left out. The month's Delivery Tickets are shown on the day they were
-// raised -- orange while open, blue once converted -- but never counted in any total.
+// The Invoice calendar counts invoices AND the month's Delivery Tickets, open or converted, each ticket
+// on the day it was raised -- orange while open, blue once converted (asked 2026-10-05). An invoice
+// converted from a ticket is never counted, so the ticket's amount is not counted twice.
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 const WEEKDAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const TYPES = {
   sales: { noun: 'sales order', plural: 'Sales Orders', docLabel: 'Sales Order No', amountLabel: 'Net of Tax', path: (id) => `/sales-orders/${id}` },
-  invoices: { noun: 'invoice', plural: 'Invoices', docLabel: 'Invoice No', amountLabel: 'Amount', path: (id) => `/sales-invoices/${id}` },
+  invoices: {
+    noun: 'document', plural: 'Invoices / DTs', docLabel: 'Invoice / DT No', amountLabel: 'Amount',
+    path: (id, kind) => (kind === 'dt' ? `/delivery-tickets/${id}` : `/sales-invoices/${id}`),
+  },
 };
 
 function money(v) {
@@ -77,12 +80,13 @@ export default function GmDocumentCalendar({ type }) {
           if (!key) return <div key={`pad-${i}`} className="artist-calendar-day is-empty" />;
           const entry = byDay.get(key);
           const customers = entry?.customers || [];
-          // Three chips a day; the rest fold into "+n more".
-          const chips = customers;
+          // Three chips a day; the rest fold into "+n more". A customer whose only document that day
+          // is a ticket shows as the coloured DT chip below instead, not twice.
+          const chips = customers.filter((c) => c.docs.some((d) => d.kind !== 'dt'));
           const dts = entry?.dts || [];
           const titleParts = [];
           if (entry?.count) titleParts.push(`${plural(entry.count, cfg.noun)}, ${money(entry.total)}`);
-          if (dts.length) titleParts.push(`${plural(dts.length, 'delivery ticket')} (not counted)`);
+          if (dts.length) titleParts.push(`incl. ${plural(dts.length, 'delivery ticket')}`);
           return (
             <div
               key={key}
@@ -113,7 +117,7 @@ export default function GmDocumentCalendar({ type }) {
                 <span
                   key={`dt-${t.id}`}
                   className={`artist-calendar-chip ${t.status === 'converted' ? 'cal-dt-converted' : 'cal-dt-open'}`}
-                  title={`${t.docNo} · ${t.customerName} · ${t.status === 'converted' ? 'converted' : 'open'} · ${money(t.amount)} (not counted)`}
+                  title={`${t.docNo} · ${t.customerName} · ${t.status === 'converted' ? 'converted' : 'open'} · ${money(t.amount)}`}
                 >
                   {t.docNo}
                 </span>
@@ -133,38 +137,10 @@ export default function GmDocumentCalendar({ type }) {
           {!openEntry ? (
             <div className="muted" style={{ padding: 20, textAlign: 'center' }}>Nothing on this day.</div>
           ) : (
-            <>
-              {openEntry.count > 0
-                ? <CustomerTable cfg={cfg} customers={openEntry.customers} count={openEntry.count} total={openEntry.total} />
-                : <div className="muted" style={{ padding: 12 }}>No {cfg.plural.toLowerCase()} on this day.</div>}
-              {(openEntry.dts || []).length > 0 && <DeliveryTicketList dts={openEntry.dts} />}
-            </>
+            <CustomerTable cfg={cfg} customers={openEntry.customers} count={openEntry.count} total={openEntry.total} />
           )}
         </Modal>
       )}
-    </div>
-  );
-}
-
-// The day's Delivery Tickets, listed for reference only -- none of them is in the totals above.
-function DeliveryTicketList({ dts }) {
-  const navigate = useNavigate();
-  return (
-    <div className="table-wrap" style={{ marginTop: 16 }}>
-      <h4 style={{ margin: '0 0 6px' }}>Delivery Tickets <span className="muted" style={{ fontWeight: 400 }}>(not counted)</span></h4>
-      <table>
-        <thead><tr><th>DT No</th><th>Customer</th><th>Status</th><th className="text-right">Gross</th></tr></thead>
-        <tbody>
-          {dts.map((t) => (
-            <tr key={t.id} className="is-clickable" onClick={() => navigate(`/delivery-tickets/${t.id}`)}>
-              <td><span className={`artist-calendar-chip ${t.status === 'converted' ? 'cal-dt-converted' : 'cal-dt-open'}`}>{t.docNo}</span></td>
-              <td>{t.customerName}</td>
-              <td>{t.status === 'converted' ? 'Converted' : 'Open'}</td>
-              <td className="text-right">{money(t.amount)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }
@@ -202,8 +178,12 @@ function CustomerTable({ cfg, customers, count, total }) {
                       <thead><tr><th>{cfg.docLabel}</th><th className="text-right">{cfg.amountLabel}</th></tr></thead>
                       <tbody>
                         {c.docs.map((d) => (
-                          <tr key={d.id} className="is-clickable" onClick={() => navigate(cfg.path(d.id))}>
-                            <td className="link-btn">{d.docNo}</td>
+                          <tr key={`${d.kind || 'doc'}-${d.id}`} className="is-clickable" onClick={() => navigate(cfg.path(d.id, d.kind))}>
+                            <td className="link-btn">
+                              {d.kind === 'dt'
+                                ? <span className={`artist-calendar-chip ${d.status === 'converted' ? 'cal-dt-converted' : 'cal-dt-open'}`} title={d.status === 'converted' ? 'Converted -- its invoice is not counted again' : 'Open'}>{d.docNo}</span>
+                                : d.docNo}
+                            </td>
                             <td className="text-right">{money(d.amount)}</td>
                           </tr>
                         ))}

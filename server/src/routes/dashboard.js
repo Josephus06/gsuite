@@ -972,22 +972,22 @@ const GM_CALENDARS = {
                LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
                LEFT JOIN delivery_tickets dt ON dt.id = si.delivery_ticket_id
               WHERE si.date_created >= ? AND si.date_created < ? AND si.cancelled_at IS NULL
-                -- An invoice converted from a Delivery Ticket raised in an earlier month is left out
-                -- (asked 2026-10-05): that sale was already delivered last month.
-                AND (dt.id IS NULL OR dt.date_created >= ?)`,
+                -- An invoice converted from a Delivery Ticket is never counted: the ticket itself is,
+                -- on the day it was raised (GM_DT_SQL), so counting its invoice too would double it.
+                AND si.delivery_ticket_id IS NULL`,
 };
 // Params for each calendar's SQL, from the month's bounds.
 const GM_CALENDAR_PARAMS = {
   sales: (b) => [b.start, b.end],
-  invoices: (b) => [b.start, b.end, b.start],
+  invoices: (b) => [b.start, b.end],
 };
 
-// The month's Delivery Tickets, shown on the Invoice calendar on the day each was raised but NEVER
-// counted (asked 2026-10-05): open ones orange, converted ones blue. A ticket's invoice counts only in
-// the ticket's own month (the invoices query above), so a September ticket invoiced in October turns
-// blue in September and adds nothing to October.
+// The month's Delivery Tickets on the Invoice calendar, open or converted, COUNTED at their gross on
+// the day each was raised (asked 2026-10-05) -- orange while open, blue once converted. The invoice a
+// ticket becomes is left out of the invoices query instead, so the sale is counted once, in the
+// ticket's month: a September ticket invoiced in October stays in September and adds nothing to October.
 const GM_DT_SQL = `SELECT dt.id, dt.dt_no AS doc_no, DATE_FORMAT(dt.date_created, '%Y-%m-%d') AS day, dt.status,
-                          c.name AS customer_name, COALESCE(dt.gross_amount, 0) AS amount
+                          c.id AS customer_id, c.name AS customer_name, COALESCE(dt.gross_amount, 0) AS amount
                      FROM delivery_tickets dt
                      LEFT JOIN sales_orders so ON so.id = dt.sales_order_id
                      LEFT JOIN customers c ON c.id = so.customer_id
@@ -1006,7 +1006,7 @@ function groupByDayAndCustomer(rows) {
     }
     const c = d.customers.get(key);
     const amount = Number(r.amount);
-    c.docs.push({ id: r.id, docNo: r.doc_no, amount });
+    c.docs.push({ id: r.id, docNo: r.doc_no, amount, kind: r.kind || null, status: r.status || null });
     c.count += 1; c.total += amount;
     d.count += 1; d.total += amount;
   }
@@ -1020,23 +1020,27 @@ router.get('/gm-calendar', requireAuth, async (req, res, next) => {
     const sql = GM_CALENDARS[req.query.type];
     if (!sql) return res.status(400).json({ error: 'type must be sales or invoices' });
     const bounds = monthBounds(req.query.month);
-    // The Invoice calendar also lists the month's Delivery Tickets, for show only -- see GM_DT_SQL.
+    // The Invoice calendar counts the month's Delivery Tickets alongside its invoices -- see GM_DT_SQL.
     const withDts = req.query.type === 'invoices';
-    const [[rows], [dtRows]] = await Promise.all([
+    const [[invRows], [dtRows]] = await Promise.all([
       pool.query(`${sql} ORDER BY day, customer_name, doc_no`, GM_CALENDAR_PARAMS[req.query.type](bounds)),
       withDts ? pool.query(GM_DT_SQL, [bounds.start, bounds.end]) : [[]],
     ]);
+    const rows = [
+      ...invRows.map((r) => ({ ...r, kind: withDts ? 'invoice' : null })),
+      ...dtRows.map((r) => ({ ...r, kind: 'dt' })),
+    ];
 
     const docs = groupByDayAndCustomer(rows);
-    const dtsByDay = new Map();
-    for (const r of dtRows) {
-      if (!dtsByDay.has(r.day)) dtsByDay.set(r.day, []);
-      dtsByDay.get(r.day).push({ id: r.id, docNo: r.doc_no, status: r.status, customerName: r.customer_name || '—', amount: Number(r.amount) });
-    }
-    const empty = { count: 0, total: 0, customers: [] };
-    const calendar = [...new Set([...docs.keys(), ...dtsByDay.keys()])].sort().map((day) => {
-      const d = docs.get(day) || empty;
-      return { day, count: d.count, total: d.total, customers: d.customers, dts: dtsByDay.get(day) || [] };
+    const calendar = [...docs.keys()].sort().map((day) => {
+      const d = docs.get(day);
+      return {
+        day, count: d.count, total: d.total, customers: d.customers,
+        // The day's tickets again, flat, for the coloured DT chips on the calendar.
+        dts: dtRows.filter((r) => r.day === day).map((r) => ({
+          id: r.id, docNo: r.doc_no, status: r.status, customerName: r.customer_name || '—', amount: Number(r.amount),
+        })),
+      };
     });
     res.json({
       month: bounds.month,
