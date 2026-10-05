@@ -204,11 +204,14 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
     .filter(([key, v, idx]) => v !== undefined && v !== '' && !excludedIds.has(key)
       && Number(v) !== Number(data.lines[idx].price_per_unit))
     .map(([key, v]) => [key, Number(v)]));
-  const subtotal = includedLines.reduce((s, l) => s + Number(l.subtotal || 0), 0);
-  const discountAmount = includedLines.reduce((s, l) => s + Number(l.disc_amount || 0), 0);
-  const netOfTax = includedLines.reduce((s, l) => s + Number(l.net_of_tax || 0), 0);
-  const taxAmount = includedLines.reduce((s, l) => s + Number(l.tax_amount || 0), 0);
-  const grossAmount = includedLines.reduce((s, l) => s + Number(l.gross_amount || 0), 0);
+  // A ticket converted untouched bills the ticket's own totals, as the server does -- summing its
+  // rounded lines can land a centavo off them. A changed price means summing the lines.
+  const ticketTotals = fromTicket && !Object.keys(priceOverrides).length ? data.ticket_totals : null;
+  const subtotal = ticketTotals ? ticketTotals.subtotal : includedLines.reduce((s, l) => s + Number(l.subtotal || 0), 0);
+  const discountAmount = ticketTotals ? ticketTotals.discount_amount : includedLines.reduce((s, l) => s + Number(l.disc_amount || 0), 0);
+  const netOfTax = ticketTotals ? ticketTotals.net_of_tax : includedLines.reduce((s, l) => s + Number(l.net_of_tax || 0), 0);
+  const taxAmount = ticketTotals ? ticketTotals.tax_amount : includedLines.reduce((s, l) => s + Number(l.tax_amount || 0), 0);
+  const grossAmount = ticketTotals ? ticketTotals.gross_amount : includedLines.reduce((s, l) => s + Number(l.gross_amount || 0), 0);
   const ewtAmount = netOfTax * (withholdingPct / 100);
   const amountDue = grossAmount - ewtAmount;
 

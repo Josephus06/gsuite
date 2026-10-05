@@ -286,6 +286,29 @@ function priceOverrideFor(body, lineId) {
 
 // A line billed at a changed price: its own Price/Unit, and Disc Price/Unit re-derived as Net of
 // Tax / Qty, the same pair the Estimate keeps.
+// A Delivery Ticket line's tax rate. Most ticket lines carry the source's own code
+// ('VAT_PH:VATIN-12') that the taxes table, holding only 'VAT12', does not match -- so the plain
+// lookup came back null and re-pricing a line on the Create SI form zeroed its 12% VAT. The table
+// first, then the rate the code ends in, then the rate the line was actually billed at (tax / net).
+function dtLineTaxRate(l) {
+  if (l.tax_rate !== null && l.tax_rate !== undefined) return Number(l.tax_rate);
+  const fromCode = String(l.tax_code || '').match(/-(\d+(?:\.\d+)?)$/);
+  if (fromCode) return Number(fromCode[1]);
+  const net = Number(l.net_of_tax || 0);
+  return net > 0 ? Number(((Number(l.tax_amount || 0) / net) * 100).toFixed(4)) : 0;
+}
+
+// Converting a ticket untouched bills the ticket's OWN totals. Its header was carried over from the
+// source, which totals unrounded line amounts, so summing the rounded lines lands a centavo off
+// (DT-6494: 7,622.05 on the ticket, 7,622.06 on the invoice). Once a price is changed there is no
+// such total to keep, and the lines are summed.
+const DT_TOTAL_KEYS = ['subtotal', 'discount_amount', 'net_of_tax', 'tax_amount', 'gross_amount'];
+function dtHeaderTotals(dt) {
+  return DT_TOTAL_KEYS.every((k) => dt[k] !== null && dt[k] !== undefined)
+    ? Object.fromEntries(DT_TOTAL_KEYS.map((k) => [k, Number(dt[k])]))
+    : null;
+}
+
 function repricedLine(line, price, amounts, qty) {
   return {
     price_per_unit: price,
@@ -519,6 +542,7 @@ router.get('/for-delivery-ticket/:deliveryTicketId', requireAuth, requirePermiss
     const [[dt]] = await pool.query(
       `SELECT dt.id AS delivery_ticket_id, dt.dt_no, dt.status, dt.sales_order_id, dt.term, dt.po_no,
               dt.sales_rep_id, dt.office_location_id, dt.department_id, dt.memo,
+              dt.subtotal, dt.discount_amount, dt.net_of_tax, dt.tax_amount, dt.gross_amount,
               so.sales_order_no, so.shipping_address, so.credit_term,
               c.name AS customer_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
@@ -551,7 +575,11 @@ router.get('/for-delivery-ticket/:deliveryTicketId', requireAuth, requirePermiss
       [req.params.deliveryTicketId]
     );
 
-    res.json({ ...dt, term: dt.term || dt.credit_term, lines });
+    const { subtotal, discount_amount, net_of_tax, tax_amount, gross_amount, ...header } = dt;
+    res.json({
+      ...header, term: dt.term || dt.credit_term, ticket_totals: dtHeaderTotals(dt),
+      lines: lines.map((l) => ({ ...l, tax_rate: dtLineTaxRate(l) })),
+    });
   } catch (err) {
     next(err);
   }
@@ -776,7 +804,10 @@ async function billDeliveryTicket(req, res, conn) {
     withholding_tax_pct: withholdingTaxPct,
   } = req.body;
 
-  const [[dt]] = await conn.query('SELECT id, sales_order_id, status FROM delivery_tickets WHERE id = ?', [deliveryTicketId]);
+  const [[dt]] = await conn.query(
+    `SELECT id, sales_order_id, status, subtotal, discount_amount, net_of_tax, tax_amount, gross_amount
+       FROM delivery_tickets WHERE id = ?`, [deliveryTicketId]
+  );
   if (!dt) return res.status(404).json({ error: 'Delivery Ticket not found.' });
   if (dt.status === 'void') return res.status(409).json({ error: 'This Delivery Ticket is void and cannot be billed.' });
   if (dt.status === 'converted') return res.status(409).json({ error: 'This Delivery Ticket has already been converted to an Invoice.' });
@@ -795,17 +826,18 @@ async function billDeliveryTicket(req, res, conn) {
     const price = priceOverrideFor(req.body, l.id);
     if (price === null) return { ...l, gross_amount: Number((Number(l.net_of_tax || 0) + Number(l.tax_amount || 0)).toFixed(2)) };
     const amounts = computeBillableLineAmounts({
-      pricePerUnit: price, discPercent: l.disc_percent, taxRate: l.tax_rate, billableQty: Number(l.quantity) || 0,
+      pricePerUnit: price, discPercent: l.disc_percent, taxRate: dtLineTaxRate(l), billableQty: Number(l.quantity) || 0,
     });
-    return { ...l, ...repricedLine(l, price, amounts, Number(l.quantity) || 0) };
+    return { ...l, repriced: true, ...repricedLine(l, price, amounts, Number(l.quantity) || 0) };
   });
 
   const sum = (key) => Number(lines.reduce((s, l) => s + Number(l[key] || 0), 0).toFixed(2));
-  const subtotal = sum('subtotal');
-  const discountAmount = sum('disc_amount');
-  const netOfTax = sum('net_of_tax');
-  const taxAmount = sum('tax_amount');
-  const grossAmount = sum('gross_amount');
+  const ticketTotals = lines.some((l) => l.repriced) ? null : dtHeaderTotals(dt);
+  const subtotal = ticketTotals ? ticketTotals.subtotal : sum('subtotal');
+  const discountAmount = ticketTotals ? ticketTotals.discount_amount : sum('disc_amount');
+  const netOfTax = ticketTotals ? ticketTotals.net_of_tax : sum('net_of_tax');
+  const taxAmount = ticketTotals ? ticketTotals.tax_amount : sum('tax_amount');
+  const grossAmount = ticketTotals ? ticketTotals.gross_amount : sum('gross_amount');
   const ewtAmount = Number((netOfTax * (Number(withholdingTaxPct || 0) / 100)).toFixed(2));
   const amountDue = Number((grossAmount - ewtAmount).toFixed(2));
   await assertPeriodOpen(dateCreated, 'ar', conn);
