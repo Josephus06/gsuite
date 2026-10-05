@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import { REPORT_TIMING } from '../../utils/reportTiming';
@@ -16,6 +17,17 @@ function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 // Current / 1-30 / 31-60 / 61-90 / Over-90 buckets with a totals row. DETAILS and LEDGER
 // drill each customer down to the open items behind the number, and the full transaction
 // history, respectively.
+// Each transaction in the Details and Ledger popups opens its own record (asked 2026-10-05).
+const PATH_BY_TYPE = {
+  Invoice: 'sales-invoices',
+  'Credit Memo': 'credit-memos',
+  'Unapplied Payment': 'customer-payments',
+  Payment: 'customer-payments',
+};
+function DocLink({ type, id, children }) {
+  return PATH_BY_TYPE[type] && id != null ? <Link to={`/${PATH_BY_TYPE[type]}/${id}`}>{children}</Link> : children;
+}
+
 export default function ArAging() {
   const [asOf, setAsOf] = useState(today());
   const [locationId, setLocationId] = useState('');
@@ -221,7 +233,7 @@ export default function ArAging() {
                   {drill.data.items.map((it, idx) => (
                     <tr key={idx}>
                       <td>{it.type}</td>
-                      <td>{it.reference}</td>
+                      <td><DocLink type={it.type} id={it.id}>{it.reference}</DocLink></td>
                       <td>{formatDate(it.date)}</td>
                       <td>{formatDate(it.due_date)}</td>
                       <td style={{ textAlign: 'right' }}>{money(it.original_amount)}</td>
@@ -264,7 +276,7 @@ export default function ArAging() {
                     <tr key={idx}>
                       <td>{formatDate(e.date)}</td>
                       <td>{e.type}</td>
-                      <td>{e.reference}</td>
+                      <td><DocLink type={e.type} id={e.id}>{e.reference}</DocLink></td>
                       <td style={{ textAlign: 'right' }}>{money(e.amount)}</td>
                       <td style={{ textAlign: 'right' }}>{money(e.balance)}</td>
                     </tr>

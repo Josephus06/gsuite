@@ -630,13 +630,37 @@ async function buildArAgingCustomerLedger(customerId, asOf) {
 // customer documents open at the books start -- each less what 2026 has settled against it -- plus
 // every document dated from the start. Pre-start documents are history: the source system's own
 // 2025-12-31 aging is what they amounted to. An as-of date before the start reads history as before.
+// The T1S record behind each opening item, so the reports can open it (asked 2026-10-05: every
+// transaction on AR Aging / AR Aging Details clickable). An opening row's own link column is the
+// INVOICE it was tied to, whatever its type -- so an opening Credit Memo or Unapplied Payment pointed
+// at an invoice id, or nowhere. Each is found by its document number in its own table instead; one
+// that T1S never imported keeps a null id and shows as plain text.
+async function resolveOpeningIds(opening) {
+  const lookups = [
+    ['Invoice', 'sales_invoices', 'invoice_no'],
+    ['Credit Memo', 'credit_memos', 'credit_memo_no'],
+    ['Unapplied Payment', 'customer_payments', 'customer_payment_no'],
+  ];
+  const resolved = new Map(); // `${type}|${reference}` -> id
+  for (const [type, table, col] of lookups) {
+    const nos = [...new Set(opening.filter((o) => o.type === type && o.reference && !(type === 'Invoice' && o.id)).map((o) => o.reference))];
+    if (!nos.length) continue;
+    const [rows] = await pool.query(`SELECT id, ${col} AS no FROM ${table} WHERE ${col} IN (?)`, [nos]);
+    rows.forEach((r) => resolved.set(`${type}|${r.no}`, r.id));
+  }
+  return opening.map((o) => ({
+    ...o,
+    id: o.type === 'Invoice' && o.id ? o.id : (resolved.get(`${o.type}|${o.reference}`) || null),
+  }));
+}
+
 async function collectOpenItems(asOf, filters = {}) {
   const items = await collectOpenItemsFromDocs(asOf, filters);
   const books = await agingAnchor('ar', asOf);
   if (!books) return items;
-  const opening = await openingItems('ar', asOf, books, {
+  const opening = await resolveOpeningIds(await openingItems('ar', asOf, books, {
     partyId: filters.customerId, nameStarts: filters.nameStarts, locationId: filters.locationId, noLocation: filters.noLocation,
-  });
+  }));
   // An opening item that links to a T1S invoice shows that invoice's BS/SI #, PO # and memo, the
   // way an invoice dated after the start does -- the opening balance itself carries none of them.
   const invIds = opening.filter((o) => o.type === 'Invoice' && o.id).map((o) => o.id);
@@ -654,10 +678,10 @@ async function collectOpenItems(asOf, filters = {}) {
       original_amount: o.original_amount, balance: o.balance,
       // The source's own details for the document (as its AR Aging Details shows them), else the
       // linked T1S invoice's. The placeholder only where neither has ever been loaded.
-      bs_no: o.bs_no || invById.get(o.id)?.bs_si_no || null, po_no: o.po_no || invById.get(o.id)?.po_no || null,
-      memo: o.memo || invById.get(o.id)?.memo || (o.src_location === undefined ? 'Opening balance from the source system' : null),
+      bs_no: o.bs_no || (o.type === 'Invoice' ? invById.get(o.id) : null)?.bs_si_no || null, po_no: o.po_no || (o.type === 'Invoice' ? invById.get(o.id) : null)?.po_no || null,
+      memo: o.memo || (o.type === 'Invoice' ? invById.get(o.id) : null)?.memo || (o.src_location === undefined ? 'Opening balance from the source system' : null),
       location_name: o.location_name || o.src_location || null,
-      sales_rep: o.sales_rep || invById.get(o.id)?.sales_rep || null,
+      sales_rep: o.sales_rep || (o.type === 'Invoice' ? invById.get(o.id) : null)?.sales_rep || null,
       marked_paid_unevidenced: false, opening: true,
     })),
     ...items.filter((i) => String(i.date).slice(0, 10) >= books.start),
@@ -669,7 +693,7 @@ async function buildArAgingCustomerDetails(customerId, asOf) {
   if (!result) return result;
   const books = await agingAnchor('ar', asOf);
   if (!books) return result;
-  const opening = await openingItems('ar', asOf, books, { partyId: customerId });
+  const opening = await resolveOpeningIds(await openingItems('ar', asOf, books, { partyId: customerId }));
   const items = [
     ...opening.map((o) => ({
       type: o.type, reference: o.reference, id: o.id, date: o.date, due_date: o.due_date,

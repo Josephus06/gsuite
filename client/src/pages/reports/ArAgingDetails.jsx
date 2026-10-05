@@ -37,10 +37,14 @@ function today() {
 // that invoice exists here. Building the path regardless produced "/sales-invoices/null", which
 // renders as a page about nothing -- INV-1692 on BE HOTEL AND RESORTS (MACTAN) was the report of
 // it. 3,065 of the 4,989 rows on the droplet were in that state.
+// Every transaction opens its own record (asked 2026-10-05) -- including opening-balance rows,
+// which the server resolves to the T1S document by number. One the source never handed over has no
+// id and stays plain text.
 const PATH_BY_TYPE = {
   Invoice: 'sales-invoices',
   'Credit Memo': 'credit-memos',
   'Unapplied Payment': 'customer-payments',
+  Payment: 'customer-payments',
 };
 const linkFor = (it) => (it.id == null ? null : `/${PATH_BY_TYPE[it.type]}/${it.id}`);
 
