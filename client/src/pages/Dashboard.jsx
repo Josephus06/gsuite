@@ -179,8 +179,9 @@ function ProfileCard({ user, roleLabel, rings, activity }) {
       {rings && rings.length > 0 && (
         <div className="dash-rings-row">
           {rings.map((r) => (
-            <div className="dash-ring-item" key={r.label}>
-              <GaugeRing value={r.value} size={64} thickness={7} color={r.color} label={`${r.value}%`} />
+            // `display` overrides the "N%" label (e.g. the GM's Sales Index reads "3.2×"); `hint` explains the figure.
+            <div className="dash-ring-item" key={r.label} title={r.hint}>
+              <GaugeRing value={r.value} size={64} thickness={7} color={r.color} label={r.display ?? `${r.value}%`} />
               <div className="dash-ring-label">{r.label}</div>
             </div>
           ))}
@@ -293,7 +294,7 @@ function AdminDashboard({ data, user, navigate }) {
   const canSeeCollections = can('/treasury/collection-forecast');
   const trendingTotal = data.trendingJobTypes.reduce((s, j) => s + j.uses, 0);
   const jobTypeSegments = data.trendingJobTypes.map((j, i) => ({ label: j.name, value: j.uses, color: JOB_TYPE_COLORS[i % JOB_TYPE_COLORS.length] }));
-  const approvalRingValue = data.rings?.find((r) => r.label === 'Estimates Approved')?.value ?? 0;
+  const approvalRingValue = data.estimatesApprovedPct ?? 0;
   const activity = data.recentEstimates.slice(0, 4).map((r) => ({
     title: `${r.estimateNo} · ${r.customerName}`,
     sub: `${timeAgo(r.createdAt)} · ₱${money(r.totalAmount)}`,

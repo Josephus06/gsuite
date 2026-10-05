@@ -5,6 +5,7 @@ const { requireAuth } = require('../middleware/auth');
 const { DESIGN_QUEUE_STATUS } = require('../lib/designSupervisorVisibility');
 const { isPlannerUser } = require('../lib/plannerRoles');
 const { businessToday } = require('../lib/crmCadence');
+const { buildIncomeStatement } = require('../lib/reportsEngine');
 // Shared with the Artist Incentive report and the Assigned JO list, so the calendar cannot
 // quote a different figure for the same job than the other two do.
 const {
@@ -300,12 +301,67 @@ async function adminMetrics(userId) {
       id: r.id, estimateNo: r.estimate_no, status: r.status, totalAmount: Number(r.total_amount || 0),
       customerName: r.customer_name, createdAt: r.created_at,
     })),
+    // Read by the Org-Wide Sales Trend orb, which must not depend on which rings are shown.
+    estimatesApprovedPct: estRingTotals.total ? Math.round((Number(estRingTotals.approved || 0) / estRingTotals.total) * 100) : 0,
     rings: [
       { label: 'Users Active', value: userTotals.total ? Math.round((Number(activeUsers.count) / userTotals.total) * 100) : 0, color: '#7c6fe8' },
       { label: 'Estimates Approved', value: estRingTotals.total ? Math.round((Number(estRingTotals.approved || 0) / estRingTotals.total) * 100) : 0, color: '#4f8cf7' },
       { label: 'Orders Paid', value: orderPaidThisMonth.count ? Math.round((Number(orderPaidThisMonth.paid || 0) / orderPaidThisMonth.count) * 100) : 0, color: '#22c39e' },
     ],
   };
+}
+
+// The General Manager's three rings (asked 2026-10-05), over the last 30 days:
+//   Sales Index           Sales Invoices net of VAT / Vendor Bills net of VAT -- pesos of sales
+//                         per peso of purchases. Shown as "3.2x"; the ring is full at 5x.
+//   Gross Profit          (Revenue - Cost of Goods Sold - Cost of Services) / Revenue, from the
+//                         Income Statement itself so the two can never disagree.
+//   Collection Efficiency customer payments received / invoice Amount (Gross - EWT) falling due.
+// A ring whose base is zero shows a dash rather than a made-up 0% or 100%.
+//
+// Over the LAST 30 DAYS, rolling -- not the calendar month. Month to date read 16.4x / 98% / 6% on
+// Oct 5 against 2.5x / 62% / 83% for all of September: early in a month the bills and cost of sales
+// are not booked yet, and collections were weighed against invoices not yet due.
+const RING_INDEX_FULL = 5;
+const RING_WINDOW_DAYS = 30;
+async function generalManagerRings() {
+  const today = businessToday();
+  const from = new Date(Date.parse(`${today}T00:00:00Z`) - (RING_WINDOW_DAYS - 1) * 86400000).toISOString().slice(0, 10);
+  const [[[si]], [[vb]], [[paid]], [[due]], is] = await Promise.all([
+    pool.query(`SELECT COALESCE(SUM(net_of_tax), 0) AS amount FROM sales_invoices
+                WHERE status <> 'cancelled' AND date_created BETWEEN ? AND ?`, [from, today]),
+    pool.query(`SELECT COALESCE(SUM(net_of_tax), 0) AS amount FROM vendor_bills
+                WHERE status NOT IN ('cancelled', 'void') AND date_created BETWEEN ? AND ?`, [from, today]),
+    pool.query(`SELECT COALESCE(SUM(payment_amount), 0) AS amount FROM customer_payments
+                WHERE status <> 'voided' AND date_created BETWEEN ? AND ?`, [from, today]),
+    pool.query(`SELECT COALESCE(SUM(gross_amount - COALESCE(ewt_amount, 0)), 0) AS amount FROM sales_invoices
+                WHERE status <> 'cancelled' AND date_due BETWEEN ? AND ?`, [from, today]),
+    buildIncomeStatement(today, from),
+  ]);
+
+  const sales = Number(si.amount); const purchases = Number(vb.amount);
+  const index = purchases > 0 ? sales / purchases : null;
+
+  const subtotal = (sections, subTypes) => sections
+    .filter((s) => subTypes.includes(s.sub_type)).reduce((t, s) => t + Number(s.subtotals[0] || 0), 0);
+  const revenue = subtotal(is.revenue_sections, ['REVENUES']);
+  const cost = subtotal(is.expense_sections, ['COST OF GOOD SOLDS', 'COST OF SERVICES']);
+  const gp = revenue > 0 ? Math.round(((revenue - cost) / revenue) * 100) : null;
+
+  const collected = Number(paid.amount); const dueAmt = Number(due.amount);
+  const collection = dueAmt > 0 ? Math.round((collected / dueAmt) * 100) : null;
+
+  const pct = (v) => (v == null ? '—' : `${v}%`);
+  const peso = (n) => `₱${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return [
+    { label: 'Sales Index', value: index == null ? 0 : Math.min(100, Math.round((index / RING_INDEX_FULL) * 100)),
+      display: index == null ? '—' : `${index.toFixed(1)}×`, color: '#7c6fe8',
+      hint: `Last 30 days: ₱${index == null ? '—' : index.toFixed(2)} of sales per ₱1 of purchases (invoiced ${peso(sales)} / billed ${peso(purchases)}, net of VAT)` },
+    { label: 'Gross Profit', value: gp == null ? 0 : Math.max(0, Math.min(100, gp)), display: pct(gp), color: '#4f8cf7',
+      hint: `Last 30 days: revenue less cost of goods sold and cost of services, as a share of revenue (Income Statement)` },
+    { label: 'Collection Efficiency', value: collection == null ? 0 : Math.min(100, collection), display: pct(collection), color: '#22c39e',
+      hint: `Last 30 days: collected ${peso(collected)} of ${peso(dueAmt)} invoiced amount that fell due` },
+  ];
 }
 
 // A JO counts as "active" on the design/artist board once it has an artist and hasn't
@@ -918,8 +974,8 @@ router.get('/', requireAuth, async (req, res, next) => {
 
     if (scope.role === 'admin') {
       const [metrics, gm] = await Promise.all([adminMetrics(req.user.id), isGeneralManager(req.user.id)]);
-      const gmCards = gm ? await generalManagerCards() : null;
-      return res.json({ role: 'admin', ...metrics, gmCards });
+      const [gmCards, gmRings] = gm ? await Promise.all([generalManagerCards(), generalManagerRings()]) : [null, null];
+      return res.json({ role: 'admin', ...metrics, ...(gmRings ? { rings: gmRings } : {}), gmCards });
     }
 
     if (scope.role === 'design_supervisor') {
