@@ -4,6 +4,7 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const {
   movementsQuery, ledgerQuery, shapeLedgerRow, SOURCES, snapshotFrom, today,
 } = require('../lib/stockMovements');
+const { sendXlsx } = require('../lib/xlsxExport');
 
 const router = express.Router();
 const ROUTE = '/stock-ledger-reports';
@@ -31,20 +32,77 @@ const ROUTE = '/stock-ledger-reports';
 // repeated on every build of that order, so multi-build job orders overstate the draw. Receipts,
 // transfers, returns and adjustments are exact. `/movements` shows the documents behind any
 // figure, which is how to check one.
+//
+// The report's rows, shared with its Excel extract so the file holds exactly the figures on screen.
+async function ledgerRows(req) {
+  // "As of" sends only `to`, meaning everything up to that date -- so the period opens at the
+  // snapshot date, which is as far back as the data goes.
+  const { sql, params } = ledgerQuery({
+    snapshotFrom: await snapshotFrom(pool),
+    itemId: req.query.item_id || null,
+    locationId: req.query.location_id || null,
+    from: req.query.from || null,
+    to: req.query.to || null,
+  });
+  const [rows] = await pool.query(sql, params);
+  return rows.map(shapeLedgerRow);
+}
+
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    // "As of" sends only `to`, meaning everything up to that date -- so the period opens at the
-    // snapshot date, which is as far back as the data goes.
-    const { sql, params } = ledgerQuery({
-      snapshotFrom: await snapshotFrom(pool),
-      itemId: req.query.item_id || null,
-      locationId: req.query.location_id || null,
-      from: req.query.from || null,
-      to: req.query.to || null,
-    });
-    const [rows] = await pool.query(sql, params);
-    res.json(rows.map(shapeLedgerRow));
+    res.json(await ledgerRows(req));
   } catch (err) {
+    next(err);
+  }
+});
+
+// Extract: the whole report under the current filters, as a workbook -- every item, not the ten on
+// screen. Flattened to one row per Item + Location with the Item Code repeated so it can be
+// filtered; an item with no location row gets a single row of its own, as it does on screen.
+router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const rows = await ledgerRows(req);
+    const out = [];
+    const seen = new Set();
+    for (const r of rows) {
+      if (!r.location_id) {
+        if (!seen.has(r.inventory_id)) out.push({ item_code: r.item_code, unit_title: r.unit_title || '' });
+        seen.add(r.inventory_id);
+        continue;
+      }
+      seen.add(r.inventory_id);
+      out.push({
+        item_code: r.item_code, location: r.location_name || '', unit_title: r.unit_title || '',
+        // beg_cost comes straight from the query and is blank on screen when null; so here too.
+        beg_qty: r.beg_qty, beg_cost: r.beg_cost == null || r.beg_cost === '' ? null : Number(r.beg_cost),
+        beg_value: r.beg_value, input: r.input, value_of_inputs: r.value_of_inputs,
+        output: r.output, value_of_outputs: r.value_of_outputs,
+        ending_qty: r.ending_qty, ending_cost: r.ending_cost, ending_value: r.ending_value,
+      });
+    }
+    const QTY = '#,##0.0000'; // quantities show 4 decimals on screen
+    await sendXlsx(res, {
+      filename: 'stock-ledger.xlsx',
+      sheet: 'Stock Ledger',
+      columns: [
+        { header: 'Item Code', key: 'item_code', width: 18 },
+        { header: 'Location', key: 'location', width: 24 },
+        { header: 'Unit Title', key: 'unit_title', width: 12 },
+        { header: 'Beg. Inv. Qty On-hand', key: 'beg_qty', width: 16, numFmt: QTY },
+        { header: 'Beg. Ave. Cost', key: 'beg_cost', width: 14, money: true },
+        { header: 'Beg. Inv. On-hand Value', key: 'beg_value', width: 17, money: true },
+        { header: 'Input', key: 'input', width: 14, numFmt: QTY },
+        { header: 'Value of Inputs', key: 'value_of_inputs', width: 16, money: true },
+        { header: 'Output', key: 'output', width: 14, numFmt: QTY },
+        { header: 'Value of Outputs', key: 'value_of_outputs', width: 16, money: true },
+        { header: 'Ending Inv. Qty On-hand', key: 'ending_qty', width: 16, numFmt: QTY },
+        { header: 'Ending Ave. Cost', key: 'ending_cost', width: 14, money: true },
+        { header: 'Ending Inv On-hand Value', key: 'ending_value', width: 17, money: true },
+      ],
+      rows: out,
+    });
+  } catch (err) {
+    if (res.headersSent) { res.destroy(err); return; }
     next(err);
   }
 });

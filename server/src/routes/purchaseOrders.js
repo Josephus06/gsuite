@@ -7,6 +7,7 @@ const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../m
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { insertNumbered } = require('../lib/docNumber');
 const { isApproved, normalisePoStatus, statusNormSql } = require('../lib/poStatus');
+const { sendXlsx, day } = require('../lib/xlsxExport');
 
 const router = express.Router();
 const ROUTE = '/purchase-orders';
@@ -99,45 +100,60 @@ const LIST_STATUS_VALUES = [
   'pending_billing', 'partially_billed', 'fully_billed', 'cancelled',
 ];
 
-router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
-  try {
-    const { search, status, supplier_id: supplierId, as_of: asOf, page = '1', limit = '10' } = req.query;
+// The list's filters, shared with its Excel extract so the file holds exactly what the list shows.
+// The common* half leaves out the status tab, since the tab counts are taken across every tab.
+function listFilter(req) {
+  const { search, status, supplier_id: supplierId, date_from: dateFrom, as_of: asOf } = req.query;
+  const commonWhere = [];
+  const commonParams = [];
+  if (supplierId) { commonWhere.push('po.supplier_id = ?'); commonParams.push(supplierId); }
+  // Period From / Date Created (As of): inclusive bounds on Date Created.
+  if (dateFrom) { commonWhere.push('po.date_created >= ?'); commonParams.push(String(dateFrom).slice(0, 10)); }
+  if (asOf) { commonWhere.push('po.date_created <= ?'); commonParams.push(asOf); }
+  if (search) { commonWhere.push('(po.po_no LIKE ? OR s.name LIKE ?)'); commonParams.push(`%${search}%`, `%${search}%`); }
 
-    const commonWhere = [];
-    const commonParams = [];
-    if (supplierId) { commonWhere.push('po.supplier_id = ?'); commonParams.push(supplierId); }
-    if (asOf) { commonWhere.push('po.date_created <= ?'); commonParams.push(asOf); }
-    if (search) { commonWhere.push('(po.po_no LIKE ? OR s.name LIKE ?)'); commonParams.push(`%${search}%`, `%${search}%`); }
+  const where = [...commonWhere];
+  const params = [...commonParams];
+  if (status && LIST_STATUS_VALUES.includes(status)) { where.push(`(${LIST_STATUS_CASE}) = ?`); params.push(status); }
+  return {
+    whereSql: where.length ? `WHERE ${where.join(' AND ')}` : '',
+    params,
+    commonWhereSql: commonWhere.length ? `WHERE ${commonWhere.join(' AND ')}` : '',
+    commonParams,
+  };
+}
 
-    const where = [...commonWhere];
-    const params = [...commonParams];
-    if (status && LIST_STATUS_VALUES.includes(status)) { where.push(`(${LIST_STATUS_CASE}) = ?`); params.push(status); }
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const commonWhereSql = commonWhere.length ? `WHERE ${commonWhere.join(' AND ')}` : '';
-
-    const baseFrom = `FROM purchase_orders po
+const LIST_FROM = `FROM purchase_orders po
        LEFT JOIN suppliers s ON s.id = po.supplier_id
        LEFT JOIN users u ON u.id = po.created_by_user_id`;
 
-    const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${baseFrom} ${whereSql}`, params);
+const LIST_SELECT = `SELECT po.id, po.po_no, po.ref_no, po.type, po.date_created, po.status, po.receipt_status, po.bill_status,
+              po.discount_amount, po.net_of_tax, po.tax_amount, po.total_amount, po.memo,
+              s.name AS supplier_name, u.display_name AS created_by_name,
+              (${LIST_STATUS_CASE}) AS list_status
+       ${LIST_FROM}`;
+
+router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const { page = '1', limit = '10' } = req.query;
+    const { whereSql, params, commonWhereSql, commonParams } = listFilter(req);
+
+    const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${LIST_FROM} ${whereSql}`, params);
 
     const pageNum = Math.max(1, Number(page) || 1);
     const limitNum = Math.min(100, Math.max(1, Number(limit) || 10));
     const offset = (pageNum - 1) * limitNum;
 
     const [rows] = await pool.query(
-      `SELECT po.id, po.po_no, po.ref_no, po.type, po.date_created, po.status, po.receipt_status, po.bill_status,
-              po.discount_amount, po.net_of_tax, po.tax_amount, po.total_amount, po.memo,
-              s.name AS supplier_name, u.display_name AS created_by_name,
-              (${LIST_STATUS_CASE}) AS list_status
-       ${baseFrom} ${whereSql}
+      `${LIST_SELECT}
+       ${whereSql}
        ORDER BY po.id DESC
        LIMIT ? OFFSET ?`,
       [...params, limitNum, offset]
     );
 
     const [countRows] = await pool.query(
-      `SELECT (${LIST_STATUS_CASE}) AS list_status, COUNT(*) AS count ${baseFrom} ${commonWhereSql} GROUP BY list_status`,
+      `SELECT (${LIST_STATUS_CASE}) AS list_status, COUNT(*) AS count ${LIST_FROM} ${commonWhereSql} GROUP BY list_status`,
       commonParams
     );
     const counts = Object.fromEntries(LIST_STATUS_VALUES.map((s) => [s, 0]));
@@ -145,6 +161,51 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     res.json({ rows, total, page: pageNum, limit: limitNum, counts });
   } catch (err) {
+    next(err);
+  }
+});
+
+// Extract: every purchase order under the list's current filters and status tab, as a workbook.
+// Registered before /:id.
+router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const { whereSql, params } = listFilter(req);
+    const [rows] = await pool.query(`${LIST_SELECT} ${whereSql} ORDER BY po.id DESC`, params);
+    const STATUS = {
+      pending_approval: 'Pending Approval', pending_approval_gm: 'Pending Approval (GM)',
+      pending_receipt: 'Pending Receipt', partially_received: 'Partially Received',
+      pending_billing: 'Pending Billing', partially_billed: 'Partially Billed',
+      fully_billed: 'Fully Billed', cancelled: 'Cancelled',
+    };
+    const ITEM_STATUS = { partially_received: 'Partially Received', fully_received: 'Fully Received' };
+    await sendXlsx(res, {
+      filename: 'purchase-orders.xlsx',
+      sheet: 'Purchase Orders',
+      columns: [
+        { header: 'PO No', key: 'po_no', width: 14 },
+        { header: 'Ref. No', key: 'ref_no', width: 14 },
+        { header: 'Date Created', key: 'date_created', width: 12 },
+        { header: 'Supplier', key: 'supplier', width: 38 },
+        { header: 'Discount Amt', key: 'discount', width: 14, money: true },
+        { header: 'Total Amt (Net of VAT)', key: 'net', width: 20, money: true },
+        { header: 'Tax Amt', key: 'tax', width: 14, money: true },
+        { header: 'Total Amt', key: 'total', width: 15, money: true },
+        { header: 'Prepared By', key: 'prepared_by', width: 24 },
+        { header: 'Status', key: 'status', width: 20 },
+        { header: 'Item Status', key: 'item_status', width: 18 },
+        { header: 'PO Type', key: 'type', width: 14 },
+        { header: 'Memo', key: 'memo', width: 50 },
+      ],
+      rows: rows.map((r) => ({
+        po_no: r.po_no, ref_no: r.ref_no || '', date_created: day(r.date_created), supplier: r.supplier_name || '',
+        discount: Number(r.discount_amount || 0), net: Number(r.net_of_tax || 0), tax: Number(r.tax_amount || 0),
+        total: Number(r.total_amount || 0), prepared_by: r.created_by_name || '',
+        status: STATUS[r.list_status] || r.list_status, item_status: ITEM_STATUS[r.receipt_status] || '',
+        type: r.type || '', memo: r.memo || '',
+      })),
+    });
+  } catch (err) {
+    if (res.headersSent) { res.destroy(err); return; }
     next(err);
   }
 });

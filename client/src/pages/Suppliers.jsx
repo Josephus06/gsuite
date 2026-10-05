@@ -26,6 +26,38 @@ export default function Suppliers() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  // Period From / As of Date: inclusive bounds on the day the supplier was created (created_at).
+  const [dateFrom, setDateFrom] = useState('');
+  const [asOf, setAsOf] = useState('');
+
+  // The filters as the server takes them -- for the Extract, which builds its file server-side
+  // under the same rules the list below applies in the browser.
+  function listParams() {
+    const params = {};
+    if (search.trim()) params.search = search.trim();
+    if (dateFrom) params.date_from = dateFrom;
+    if (asOf) params.as_of = asOf;
+    return params;
+  }
+
+  // Extract: every supplier under the filters above, as a workbook.
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  async function runExport() {
+    setExporting(true); setExportError('');
+    try {
+      const { data } = await api.get('/suppliers/export', { params: listParams(), responseType: 'blob' });
+      const url = URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'suppliers.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setExportError('Could not extract the suppliers.');
+    } finally {
+      setExporting(false);
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -112,13 +144,22 @@ export default function Suppliers() {
   // and seven other pages rely on that shape for their supplier dropdowns. With 1,700-odd
   // suppliers after the live import, ten to a page, this box is the only practical way to reach
   // one -- paging to it would mean 170-odd pages.
+  // The same rules as listFilter() in server/src/routes/suppliers.js, which the Extract uses --
+  // keep the two in step. created_at arrives as 'YYYY-MM-DD HH:MM:SS' (dateStrings), so its first
+  // ten characters are the day, comparable as a string.
+  const filtering = !!(search.trim() || dateFrom || asOf);
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((r) => ['supplier_code', 'name', 'company_name', 'tin', 'address',
-      'contact_no', 'mobile_no', 'email']
-      .some((f) => String(r[f] || '').toLowerCase().includes(q)));
-  }, [rows, search]);
+    if (!q && !dateFrom && !asOf) return rows;
+    return rows.filter((r) => {
+      const created = String(r.created_at || '').slice(0, 10);
+      if (dateFrom && (!created || created < dateFrom)) return false;
+      if (asOf && (!created || created > asOf)) return false;
+      if (!q) return true;
+      return ['supplier_code', 'name', 'company_name', 'tin', 'address', 'contact_no', 'mobile_no', 'email']
+        .some((f) => String(r[f] || '').toLowerCase().includes(q));
+    });
+  }, [rows, search, dateFrom, asOf]);
 
   const columns = [
     { key: 'supplier_code', label: 'Code' },
@@ -138,17 +179,37 @@ export default function Suppliers() {
         {can('/suppliers', 'can_add') && <button className="btn btn-primary" onClick={openCreate}>Add Supplier</button>}
       </div>
       <div className="card">
-        <div className="field" style={{ maxWidth: 380, marginBottom: 12 }}>
-          <label>Search</label>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Name, code, company, TIN, contact or address..."
-          />
+        {/* The filters apply as you type; Search (or Enter) re-reads the list from the server so
+            suppliers added elsewhere since the page opened show up too. */}
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div className="field" style={{ flex: '1 1 300px', maxWidth: 380 }}>
+            <label>Search</label>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && load()}
+              placeholder="Name, code, company, TIN, contact or address..."
+            />
+          </div>
+          <div className="field">
+            <label>Period From</label>
+            <input type="date" value={dateFrom} max={asOf || undefined} onChange={(e) => setDateFrom(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
+          </div>
+          <div className="field">
+            <label>As of Date</label>
+            <input type="date" value={asOf} min={dateFrom || undefined} onChange={(e) => setAsOf(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && load()} />
+          </div>
+        </div>
+        <div style={{ marginTop: 4, marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn btn-primary" onClick={load}>Search</button>
+          <button className="btn" disabled={exporting} onClick={runExport} title="Download every supplier under the filters above">
+            {exporting ? 'Extracting...' : 'Extract'}
+          </button>
+          {exportError && <span style={{ color: 'var(--danger)' }}>{exportError}</span>}
         </div>
         {!loading && (
           <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
-            {search ? `${visible.length} of ${rows.length} suppliers` : `${rows.length} suppliers`}
+            {filtering ? `${visible.length} of ${rows.length} suppliers` : `${rows.length} suppliers`}
           </div>
         )}
         {loading ? <LoadingSpinner /> : (

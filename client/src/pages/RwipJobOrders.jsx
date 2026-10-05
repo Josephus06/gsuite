@@ -24,13 +24,42 @@ export default function RwipJobOrders() {
   const [loading, setLoading] = useState(true);
   const [stage, setStage] = useState('');
   const [search, setSearch] = useState('');
+  // Period From / As of Date: inclusive bounds on the Date column, applied on Search.
+  const [dateFrom, setDateFrom] = useState('');
+  const [asOf, setAsOf] = useState('');
   const [page, setPage] = useState(1);
 
-  async function load() {
-    setLoading(true);
+  function listParams() {
     const params = {};
     if (stage) params.stage = stage;
     if (search) params.search = search;
+    if (dateFrom) params.date_from = dateFrom;
+    if (asOf) params.as_of = asOf;
+    return params;
+  }
+
+  // Extract: every RWIP under the filters above, as a workbook (same params as the list).
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  async function runExport() {
+    setExporting(true); setExportError('');
+    try {
+      const { data } = await api.get('/rwip-job-orders/export', { params: listParams(), responseType: 'blob' });
+      const url = URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'rwip-job-orders.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setExportError('Could not extract the RWIP job orders.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function load() {
+    setLoading(true);
+    const params = listParams();
     const { data } = await api.get('/rwip-job-orders', { params });
     setRows(data);
     setLoading(false);
@@ -64,8 +93,22 @@ export default function RwipJobOrders() {
               <option value="completed">Completed</option>
             </select>
           </div>
+          <div className="field">
+            <label>Period From</label>
+            <input type="date" value={dateFrom} max={asOf || undefined} onChange={(e) => setDateFrom(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} />
+          </div>
+          <div className="field">
+            <label>As of Date</label>
+            <input type="date" value={asOf} min={dateFrom || undefined} onChange={(e) => setAsOf(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} />
+          </div>
         </div>
-        <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>
+        <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn btn-primary" onClick={runSearch}>Search</button>
+          <button className="btn" disabled={exporting} onClick={runExport} title="Download every RWIP job order under the filters above">
+            {exporting ? 'Extracting...' : 'Extract'}
+          </button>
+          {exportError && <span style={{ color: 'var(--danger)' }}>{exportError}</span>}
+        </div>
       </div>
 
       <div className="card">

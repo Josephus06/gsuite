@@ -58,6 +58,8 @@ export default function JobOrders() {
   const [jobLocationId, setJobLocationId] = useState('');
   const [officeLocationId, setOfficeLocationId] = useState('');
   const [customerId, setCustomerId] = useState('');
+  // Period From / Date Created (As of): inclusive bounds on Date Created, applied on Search.
+  const [dateFrom, setDateFrom] = useState('');
   const [asOf, setAsOf] = useState('');
   const [page, setPage] = useState(1);
   const limit = 10;
@@ -78,16 +80,41 @@ export default function JobOrders() {
   // The bulk "Assign Artist" action, on the same grant the single-order button uses.
   const canAssignArtist = can('/job-orders/assign-artist', 'can_edit');
 
-  async function load() {
-    setLoading(true);
-    const params = { page, limit };
+  function listParams() {
+    const params = {};
     if (search) params.search = search;
     if (salesRepId) params.sales_rep_id = salesRepId;
     if (jobLocationId) params.job_location_id = jobLocationId;
     if (officeLocationId) params.office_location_id = officeLocationId;
     if (customerId) params.customer_id = customerId;
+    if (dateFrom) params.date_from = dateFrom;
     if (asOf) params.as_of = asOf;
     if (tab) params.tab = tab;
+    return params;
+  }
+
+  // Extract: every job order under the filters and tab above, as a workbook (same params as the list).
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  async function runExport() {
+    setExporting(true); setExportError('');
+    try {
+      const { data } = await api.get('/job-orders/export', { params: listParams(), responseType: 'blob' });
+      const url = URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'job-orders.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setExportError('Could not extract the job orders.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function load() {
+    setLoading(true);
+    const params = { ...listParams(), page, limit };
     const { data } = await api.get('/job-orders', { params });
     setRows(data.rows);
     setTotal(data.total);
@@ -248,11 +275,21 @@ export default function JobOrders() {
               </select>
             </div>
             <div className="field">
+              <label>Period From</label>
+              <input type="date" value={dateFrom} max={asOf || undefined} onChange={(e) => setDateFrom(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} />
+            </div>
+            <div className="field">
               <label>Date Created (As of)</label>
-              <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+              <input type="date" value={asOf} min={dateFrom || undefined} onChange={(e) => setAsOf(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} />
             </div>
           </div>
-          <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>
+          <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button className="btn btn-primary" onClick={runSearch}>Search</button>
+            <button className="btn" disabled={exporting} onClick={runExport} title="Download every job order under the filters above">
+              {exporting ? 'Extracting...' : 'Extract'}
+            </button>
+            {exportError && <span style={{ color: 'var(--danger)' }}>{exportError}</span>}
+          </div>
         </div>
       )}
 

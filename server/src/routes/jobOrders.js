@@ -10,6 +10,7 @@ const { mayAssignArtist } = require('../lib/artistAssignment');
 const { isHeadOfficeUser } = require('../lib/userLocation');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
+const { sendXlsx, day } = require('../lib/xlsxExport');
 const {
   notifyDesignSupervisors, notifyAssignedArtist, notifySalesRep, NOTIFY_TYPE_JO_REVISION,
 } = require('../lib/designNotifications');
@@ -119,64 +120,68 @@ async function logAudit(conn, { jobOrderId, userId, eventType, fieldName = null,
   );
 }
 
-// Mirrors the real system's "Saved Job Orders" list -- a flat table (no status tabs)
-// with a filter panel, since job orders don't move through the same tab-per-stage
-// pattern Estimates/Sales Orders use.
-router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
-  try {
-    const {
-      search, sales_rep_id: salesRepId, job_location_id: jobLocationId, office_location_id: officeLocationId,
-      department_id: departmentId, customer_id: customerId, as_of: asOf, tab, page = '1', limit = '10',
-    } = req.query;
+// The list's filters, shared with its Excel extract so the file holds exactly what the list shows.
+// `whereSql` is every filter EXCEPT the status tab (the tab counts run over it); `listWhereSql`
+// additionally narrows to the picked tab, and is what the listing, its total and the extract use.
+async function listFilter(req) {
+  const {
+    search, sales_rep_id: salesRepId, job_location_id: jobLocationId, office_location_id: officeLocationId,
+    department_id: departmentId, customer_id: customerId, date_from: dateFrom, as_of: asOf, tab,
+  } = req.query;
 
-    const where = [];
-    const params = [];
-    // A production department only sees its own warehouse's job orders. This is a ceiling, not
-    // one more scope to choose between: it stacks with the design-queue/artist rules below rather
-    // than replacing them, and it goes into `where` so the status tab counts inherit it too.
-    const scopeLocationId = await getJobLocationScope(req.user.id);
-    if (scopeLocationId) { where.push('jo.job_location_id = ?'); params.push(scopeLocationId); }
-    if (salesRepId) { where.push('so.sales_rep_id = ?'); params.push(salesRepId); }
-    // Scoped on the job order's OWN rep, not the sales order's. The two agree on every one of
-    // the 124,300 rows, but a job order can exist without a sales order at all (NSJO, RWIP), and
-    // scoping through the join would make those invisible to everyone rather than to nobody.
-    const salesScope = await getSalesRepEmployeeScope(req.user.id);
-    if (salesScope) { where.push('jo.sales_rep_id IN (?)'); params.push(salesScope); }
-    if (jobLocationId) { where.push('jo.job_location_id = ?'); params.push(jobLocationId); }
-    if (officeLocationId) { where.push('so.office_location_id = ?'); params.push(officeLocationId); }
-    if (departmentId) { where.push('so.sales_division_id = ?'); params.push(departmentId); }
-    if (customerId) { where.push('so.customer_id = ?'); params.push(customerId); }
-    if (asOf) { where.push('jo.created_at <= ?'); params.push(asOf); }
-    if (search) {
-      where.push('(jo.job_order_no LIKE ? OR so.sales_order_no LIKE ? OR c.name LIKE ? OR jo.description LIKE ?)');
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+  const where = [];
+  const params = [];
+  // A production department only sees its own warehouse's job orders. This is a ceiling, not
+  // one more scope to choose between: it stacks with the design-queue/artist rules below rather
+  // than replacing them, and it goes into `where` so the status tab counts inherit it too.
+  const scopeLocationId = await getJobLocationScope(req.user.id);
+  if (scopeLocationId) { where.push('jo.job_location_id = ?'); params.push(scopeLocationId); }
+  if (salesRepId) { where.push('so.sales_rep_id = ?'); params.push(salesRepId); }
+  // Scoped on the job order's OWN rep, not the sales order's. The two agree on every one of
+  // the 124,300 rows, but a job order can exist without a sales order at all (NSJO, RWIP), and
+  // scoping through the join would make those invisible to everyone rather than to nobody.
+  const salesScope = await getSalesRepEmployeeScope(req.user.id);
+  if (salesScope) { where.push('jo.sales_rep_id IN (?)'); params.push(salesScope); }
+  if (jobLocationId) { where.push('jo.job_location_id = ?'); params.push(jobLocationId); }
+  if (officeLocationId) { where.push('so.office_location_id = ?'); params.push(officeLocationId); }
+  if (departmentId) { where.push('so.sales_division_id = ?'); params.push(departmentId); }
+  if (customerId) { where.push('so.customer_id = ?'); params.push(customerId); }
+  // Period From: inclusive lower bound on Date Created, the same column As of bounds from above.
+  if (dateFrom) { where.push('jo.created_at >= ?'); params.push(String(dateFrom).slice(0, 10)); }
+  // created_at is a DATETIME: "<= day" stopped at that day's midnight and left the day itself out.
+  if (asOf) { where.push('jo.created_at < DATE_ADD(?, INTERVAL 1 DAY)'); params.push(String(asOf).slice(0, 10)); }
+  if (search) {
+    where.push('(jo.job_order_no LIKE ? OR so.sales_order_no LIKE ? OR c.name LIKE ? OR jo.description LIKE ?)');
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+  }
+  // A Design Supervisor only ever sees their own design queue -- JOs still in "For
+  // Design Supervisor" (awaiting an artist assignment from them) or "For Artist"
+  // (already assigned, still in layout) -- not the full Job Orders list.
+  if (await isScopedToDesignQueue(req.user.id)) {
+    where.push('jo.status = ? AND jo.sub_status IN (?)');
+    params.push(DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES);
+  } else {
+    // An Artist sees only the Job Orders assigned to them. Without this they match no
+    // filter at all (they are neither an Account Officer nor a Supervisor) and see the
+    // entire list.
+    const artistEmployeeId = await getArtistEmployeeScope(req.user.id);
+    if (artistEmployeeId) {
+      where.push('jo.artist_id = ?');
+      params.push(artistEmployeeId);
     }
-    // A Design Supervisor only ever sees their own design queue -- JOs still in "For
-    // Design Supervisor" (awaiting an artist assignment from them) or "For Artist"
-    // (already assigned, still in layout) -- not the full Job Orders list.
-    if (await isScopedToDesignQueue(req.user.id)) {
-      where.push('jo.status = ? AND jo.sub_status IN (?)');
-      params.push(DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES);
-    } else {
-      // An Artist sees only the Job Orders assigned to them. Without this they match no
-      // filter at all (they are neither an Account Officer nor a Supervisor) and see the
-      // entire list.
-      const artistEmployeeId = await getArtistEmployeeScope(req.user.id);
-      if (artistEmployeeId) {
-        where.push('jo.artist_id = ?');
-        params.push(artistEmployeeId);
-      }
-    }
-    // The tab counts run over every filter EXCEPT the status tab itself, so each tab always shows its
-    // full total regardless of which one is active. The listing/total additionally narrow to the
-    // picked tab's condition.
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const listWhere = [...where];
-    const listParams = [...params];
-    if (tab && JO_TAB_MAP[tab]) listWhere.push(`(${JO_TAB_MAP[tab]})`);
-    const listWhereSql = listWhere.length ? `WHERE ${listWhere.join(' AND ')}` : '';
+  }
+  // The tab counts run over every filter EXCEPT the status tab itself, so each tab always shows its
+  // full total regardless of which one is active. The listing/total additionally narrow to the
+  // picked tab's condition.
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const listWhere = [...where];
+  const listParams = [...params];
+  if (tab && JO_TAB_MAP[tab]) listWhere.push(`(${JO_TAB_MAP[tab]})`);
+  const listWhereSql = listWhere.length ? `WHERE ${listWhere.join(' AND ')}` : '';
+  return { whereSql, params, listWhereSql, listParams };
+}
 
-    const baseFrom = `FROM job_orders jo
+const LIST_FROM = `FROM job_orders jo
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
        LEFT JOIN customers c ON c.id = so.customer_id
        LEFT JOIN customer_contacts cc ON cc.id = so.contact_person_id
@@ -188,20 +193,30 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN employees pb ON pb.id = so.prepared_by_id
        LEFT JOIN employees ar ON ar.id = jo.artist_id`;
 
-    const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${baseFrom} ${listWhereSql}`, listParams);
+const LIST_SELECT = `SELECT jo.*, so.sales_order_no, c.name AS customer_name, cc.contact_name,
+              jt.display_name AS job_type_name, jloc.location_name AS job_location_name,
+              oloc.location_name AS office_location_name, sd.name AS sales_division_name,
+              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
+              CONCAT(pb.first_name, ' ', pb.last_name) AS prepared_by_name,
+              CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name
+       ${LIST_FROM}`;
+
+// Mirrors the real system's "Saved Job Orders" list -- a flat table (no status tabs)
+// with a filter panel, since job orders don't move through the same tab-per-stage
+// pattern Estimates/Sales Orders use.
+router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const { page = '1', limit = '10' } = req.query;
+    const { whereSql, params, listWhereSql, listParams } = await listFilter(req);
+
+    const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${LIST_FROM} ${listWhereSql}`, listParams);
 
     const pageNum = Math.max(1, Number(page) || 1);
     const limitNum = Math.min(100, Math.max(1, Number(limit) || 10));
     const offset = (pageNum - 1) * limitNum;
 
     const [rows] = await pool.query(
-      `SELECT jo.*, so.sales_order_no, c.name AS customer_name, cc.contact_name,
-              jt.display_name AS job_type_name, jloc.location_name AS job_location_name,
-              oloc.location_name AS office_location_name, sd.name AS sales_division_name,
-              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
-              CONCAT(pb.first_name, ' ', pb.last_name) AS prepared_by_name,
-              CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name
-       ${baseFrom} ${listWhereSql}
+      `${LIST_SELECT} ${listWhereSql}
        ORDER BY jo.id DESC
        LIMIT ? OFFSET ?`,
       [...listParams, limitNum, offset]
@@ -210,12 +225,53 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     // One pass tallies every tab (a SUM/CASE per tab), so the counts are always consistent with the
     // same conditions used to filter the listing.
     const countSelect = JO_TABS.map((t) => `SUM(CASE WHEN ${t.cond} THEN 1 ELSE 0 END) AS ${t.key}`).join(', ');
-    const [[countRow]] = await pool.query(`SELECT COUNT(*) AS all_count, ${countSelect} ${baseFrom} ${whereSql}`, params);
+    const [[countRow]] = await pool.query(`SELECT COUNT(*) AS all_count, ${countSelect} ${LIST_FROM} ${whereSql}`, params);
     const counts = { all: Number(countRow.all_count) || 0 };
     JO_TABS.forEach((t) => { counts[t.key] = Number(countRow[t.key]) || 0; });
 
     res.json({ rows, total, page: pageNum, limit: limitNum, counts });
   } catch (err) {
+    next(err);
+  }
+});
+
+// Extract: every job order under the list's current filters and tab, as a workbook. Registered before /:id.
+router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const { listWhereSql, listParams } = await listFilter(req);
+    const [rows] = await pool.query(`${LIST_SELECT} ${listWhereSql} ORDER BY jo.id DESC`, listParams);
+    await sendXlsx(res, {
+      filename: 'job-orders.xlsx',
+      sheet: 'Job Orders',
+      columns: [
+        { header: 'JO #', key: 'jo_no', width: 14 },
+        { header: 'SO #', key: 'so_no', width: 14 },
+        { header: 'Date Created', key: 'date_created', width: 12 },
+        { header: 'Office Location', key: 'office_location', width: 20 },
+        { header: 'Location', key: 'job_location', width: 20 },
+        { header: 'Department', key: 'department', width: 22 },
+        { header: 'Job Type', key: 'job_type', width: 22 },
+        { header: 'Job Desc', key: 'description', width: 50 },
+        { header: 'Qty', key: 'qty', width: 10 },
+        { header: 'Customer', key: 'customer', width: 38 },
+        { header: 'Contact Person', key: 'contact', width: 24 },
+        { header: 'Prepared By', key: 'prepared_by', width: 24 },
+        { header: 'Sales Rep', key: 'sales_rep', width: 24 },
+        { header: 'Artist', key: 'artist', width: 24 },
+        { header: 'Status', key: 'status', width: 26 },
+        { header: 'Sub Status', key: 'sub_status', width: 24 },
+      ],
+      rows: rows.map((r) => ({
+        jo_no: r.job_order_no, so_no: r.sales_order_no || '', date_created: day(r.created_at),
+        office_location: r.office_location_name || '', job_location: r.job_location_name || '',
+        department: r.sales_division_name || '', job_type: r.job_type_name || '', description: r.description || '',
+        qty: r.quantity == null ? '' : Number(r.quantity), customer: r.customer_name || '', contact: r.contact_name || '',
+        prepared_by: r.prepared_by_name || '', sales_rep: r.sales_rep_name || '', artist: r.artist_name || '',
+        status: r.status || '', sub_status: r.sub_status || '',
+      })),
+    });
+  } catch (err) {
+    if (res.headersSent) { res.destroy(err); return; }
     next(err);
   }
 });

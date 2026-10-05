@@ -32,6 +32,9 @@ export default function BinCardReport() {
   const [location, setLocation] = useState(null);
   const [period, setPeriod] = useState('as_of');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  // Period From: hides the rows before it without changing any balance -- the server computes the
+  // whole card first and shows what the hidden rows leave behind as a Balance Forward row.
+  const [dateFrom, setDateFrom] = useState('');
 
   const [inventoryItems, setInventoryItems] = useState([]);
   const [locations, setLocations] = useState([]);
@@ -59,13 +62,43 @@ export default function BinCardReport() {
 
   const { balances: pickerBalances, load: loadPickerBalances } = useItemBalances(balanceLocation?.id ?? null);
 
+  // The filters, shared by Generate and Extract so the file holds exactly the card on screen.
+  function cardParams() {
+    const params = { item_id: item.id };
+    if (location) params.location_id = location.id;
+    if (period === 'as_of') {
+      params.as_of = date;
+      if (dateFrom) params.date_from = dateFrom;
+    }
+    return params;
+  }
+
+  // Extract: every row of the card under the filters above (all pages), as a workbook.
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  async function runExport() {
+    setExportError('');
+    if (!item) { setExportError('Select an Item.'); return; }
+    setExporting(true);
+    try {
+      const { data } = await api.get('/bin-card-reports/export', { params: cardParams(), responseType: 'blob' });
+      const url = URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'bin-card.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setExportError('Could not extract the bin card.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function generate() {
     setError('');
     if (!item) { setError('Select an Item.'); return; }
     setLoading(true);
-    const params = { item_id: item.id };
-    if (location) params.location_id = location.id;
-    if (period === 'as_of') params.as_of = date;
+    const params = cardParams();
     try {
       const { data } = await api.get('/bin-card-reports', { params });
       setRows(data.rows);
@@ -107,7 +140,9 @@ export default function BinCardReport() {
   // A row is only a problem now when it is in some other unit AND the item has no conversion
   // factor to bring it across, which is the one case where the quantity really does land in the
   // balance unconverted.
-  const mismatched = (r) => !r.is_opening && !!r.uom && r.uom_convertible === false;
+  // Beginning Balance and Balance Forward rows are balances, not movements.
+  const isBalanceRow = (r) => r.is_opening || r.is_balance_forward;
+  const mismatched = (r) => !isBalanceRow(r) && !!r.uom && r.uom_convertible === false;
   const mismatchCount = (rows || []).filter(mismatched).length;
 
   return (
@@ -157,8 +192,14 @@ export default function BinCardReport() {
             </div>
             {period === 'as_of' && (
               <div className="field">
+                <label>Period From</label>
+                <input type="date" value={dateFrom} max={date || undefined} onChange={(e) => setDateFrom(e.target.value)} />
+              </div>
+            )}
+            {period === 'as_of' && (
+              <div className="field">
                 <label>Date</label>
-                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+                <input type="date" value={date} min={dateFrom || undefined} onChange={(e) => setDate(e.target.value)} />
               </div>
             )}
           </div>
@@ -169,10 +210,14 @@ export default function BinCardReport() {
               offset through every row). Both numbers were honest answers to different questions,
               but only one of them is the question a bin card is opened to ask, and the other was a
               switch away. Reconciling the migration itself is src/db/compare-stock-asof.js. */}
-          <div style={{ marginTop: 12 }}>
+          <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <button className="btn btn-primary" onClick={generate} disabled={loading}>
               Generate
             </button>
+            <button className="btn" disabled={exporting} onClick={runExport} title="Download every row of the bin card under the filters above">
+              {exporting ? 'Extracting...' : 'Extract'}
+            </button>
+            {exportError && <span style={{ color: 'var(--danger)' }}>{exportError}</span>}
           </div>
         </div>
       )}
@@ -233,9 +278,9 @@ export default function BinCardReport() {
                   <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: 20 }}>No transactions found.</td></tr>
                 )}
                 {pageRows.map((r, idx) => (
-                  <tr key={idx} style={r.is_opening ? { fontWeight: 600 } : undefined}>
+                  <tr key={idx} style={isBalanceRow(r) ? { fontWeight: 600 } : undefined}>
                     <td>{formatDate(r.trans_date)}</td>
-                    <td>{r.is_opening ? <span className="muted">Beginning Balance</span> : r.trans_no}</td>
+                    <td>{isBalanceRow(r) ? <span className="muted">{r.is_balance_forward ? 'Balance Forward' : 'Beginning Balance'}</span> : r.trans_no}</td>
                     <td>{r.ref_no || '—'}</td>
                     <td>{r.from_location_name || ''}</td>
                     <td>{r.to_location_name || ''}</td>
@@ -250,7 +295,7 @@ export default function BinCardReport() {
                         balance kept in SQFT. Only the rows that could NOT be converted are marked;
                         a converted one is not an error and is no longer coloured like one. */}
                     <td style={mismatched(r) ? { color: '#b45309', fontWeight: 600 } : undefined}>
-                      {r.is_opening ? '' : rowUom(r)}
+                      {isBalanceRow(r) ? '' : rowUom(r)}
                       {mismatched(r) && (
                         <span title={`Recorded in ${r.uom}, but this item has no conversion factor, so it goes into the ${baseUom} balance unconverted.`}> !</span>
                       )}

@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { sendXlsx, day } = require('../lib/xlsxExport');
 
 const router = express.Router();
 const ROUTE = '/suppliers';
@@ -25,16 +26,87 @@ const FIELDS = ['supplier_code', 'name', 'company_name', 'tin', 'payment_term_id
 // Applying it to the text columns too keeps a cleared field matching what the importer stores.
 const blankToNull = (value) => (value === '' || value === undefined ? null : value);
 
+// The list's filters, shared with its Excel extract so the file holds exactly what the list shows.
+// All optional: with none given the list is every supplier, which is the shape the supplier
+// dropdowns on seven other pages rely on. The Suppliers page itself filters in the browser on the
+// same rules (see `visible` in pages/Suppliers.jsx) -- keep the two in step.
+const SEARCH_FIELDS = ['supplier_code', 'name', 'company_name', 'tin', 'address', 'contact_no', 'mobile_no', 'email'];
+function listFilter(req) {
+  const { date_from: dateFrom, as_of: asOf } = req.query;
+  const search = String(req.query.search || '').trim();
+  const where = [];
+  const params = [];
+  // Period From / As of Date: inclusive bounds on the day the supplier was created. created_at is
+  // a DATETIME, so the upper bound is "before the start of the next day" rather than <= the date,
+  // which would drop everything created after midnight on the As of day.
+  if (dateFrom) { where.push('s.created_at >= ?'); params.push(String(dateFrom).slice(0, 10)); }
+  if (asOf) { where.push('s.created_at < DATE_ADD(?, INTERVAL 1 DAY)'); params.push(String(asOf).slice(0, 10)); }
+  if (search) {
+    where.push(`(${SEARCH_FIELDS.map((f) => `s.${f} LIKE ?`).join(' OR ')})`);
+    params.push(...SEARCH_FIELDS.map(() => `%${search}%`));
+  }
+  return { whereSql: where.length ? `WHERE ${where.join(' AND ')}` : '', params };
+}
+
+const LIST_SELECT = `SELECT s.*, pt.term_name AS payment_term_name
+       FROM suppliers s
+       LEFT JOIN payment_terms pt ON pt.id = s.payment_term_id`;
+
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const [rows] = await pool.query(
-      `SELECT s.*, pt.term_name AS payment_term_name
-       FROM suppliers s
-       LEFT JOIN payment_terms pt ON pt.id = s.payment_term_id
-       ORDER BY s.id DESC`
-    );
+    const { whereSql, params } = listFilter(req);
+    const [rows] = await pool.query(`${LIST_SELECT} ${whereSql} ORDER BY s.id DESC`, params);
     res.json(rows);
   } catch (err) {
+    next(err);
+  }
+});
+
+// Extract: every supplier under the list's current filters, as a workbook. Registered before /:id.
+router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const { whereSql, params } = listFilter(req);
+    const [rows] = await pool.query(`${LIST_SELECT} ${whereSql} ORDER BY s.id DESC`, params);
+    await sendXlsx(res, {
+      filename: 'suppliers.xlsx',
+      sheet: 'Suppliers',
+      columns: [
+        { header: 'Code', key: 'code', width: 14 },
+        { header: 'Name', key: 'name', width: 38 },
+        { header: 'Company', key: 'company', width: 38 },
+        { header: 'Contact', key: 'contact_no', width: 18 },
+        { header: 'Payment Term', key: 'payment_term', width: 18 },
+        { header: 'Status', key: 'status', width: 10 },
+        { header: 'TIN', key: 'tin', width: 22 },
+        { header: 'Address', key: 'address', width: 50 },
+        { header: 'Mobile No.', key: 'mobile_no', width: 18 },
+        { header: 'Office No.', key: 'office_no', width: 18 },
+        { header: 'Fax No.', key: 'fax_no', width: 16 },
+        { header: 'Email', key: 'email', width: 30 },
+        { header: 'Credit Term', key: 'credit_term', width: 18 },
+        { header: 'Term (days)', key: 'term_days', width: 11 },
+        { header: 'Credit Limit', key: 'credit_limit', width: 15, money: true },
+        { header: 'Payee Name', key: 'payee_name', width: 30 },
+        { header: 'Bank Name', key: 'bank_name', width: 24 },
+        { header: 'Bank Account Name', key: 'bank_account_name', width: 30 },
+        { header: 'Bank Account No.', key: 'bank_account_no', width: 20 },
+        { header: 'Date Created', key: 'date_created', width: 12 },
+      ],
+      rows: rows.map((r) => ({
+        code: r.supplier_code || '', name: r.name || '', company: r.company_name || '', contact_no: r.contact_no || '',
+        // Same fallback as the list column: imported suppliers carry live's free-text credit term only.
+        payment_term: r.payment_term_name || r.credit_term || '',
+        status: r.is_active ? 'Active' : 'Inactive', tin: r.tin || '', address: r.address || '',
+        mobile_no: r.mobile_no || '', office_no: r.office_no || '', fax_no: r.fax_no || '', email: r.email || '',
+        credit_term: r.credit_term || '', term_days: r.term_days ?? '',
+        // Blank means no limit agreed, which is not zero -- left blank rather than written as 0.00.
+        credit_limit: r.credit_limit == null ? '' : Number(r.credit_limit),
+        payee_name: r.payee_name || '', bank_name: r.bank_name || '', bank_account_name: r.bank_account_name || '',
+        bank_account_no: r.bank_account_no || '', date_created: day(r.created_at),
+      })),
+    });
+  } catch (err) {
+    if (res.headersSent) { res.destroy(err); return; }
     next(err);
   }
 });

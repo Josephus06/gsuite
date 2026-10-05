@@ -59,13 +59,38 @@ export default function StockLedgerReport() {
     return params;
   }
 
+  // The period plus the Item / Location filters -- what both Generate and Extract send.
+  function reportParams() {
+    const params = currentParams();
+    if (item) params.item_id = item.id;
+    if (location) params.location_id = location.id;
+    return params;
+  }
+
+  // Extract: the whole report under the filters above, as a workbook (same params as Generate).
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  async function runExport() {
+    setExporting(true); setExportError('');
+    try {
+      const { data } = await api.get('/stock-ledger-reports/export', { params: reportParams(), responseType: 'blob' });
+      const url = URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'stock-ledger.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setExportError('Could not extract the stock ledger.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function generate() {
     setLoading(true);
     setOpenCell(null);
     setMovements({});
-    const params = currentParams();
-    if (item) params.item_id = item.id;
-    if (location) params.location_id = location.id;
+    const params = reportParams();
     const { data } = await api.get('/stock-ledger-reports', { params });
     setRows(data);
     setShownPeriod(currentParams());
@@ -162,9 +187,15 @@ export default function StockLedgerReport() {
               </>
             )}
           </div>
-          <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={generate}>
-            Generate
-          </button>
+          <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button className="btn btn-primary" onClick={generate}>
+              Generate
+            </button>
+            <button className="btn" disabled={exporting} onClick={runExport} title="Download the whole stock ledger under the filters above">
+              {exporting ? 'Extracting...' : 'Extract'}
+            </button>
+            {exportError && <span style={{ color: 'var(--danger)' }}>{exportError}</span>}
+          </div>
         </div>
       )}
 

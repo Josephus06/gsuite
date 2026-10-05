@@ -43,18 +43,46 @@ export default function PurchaseOrders() {
   const [status, setStatus] = useState('pending_approval');
   const [search, setSearch] = useState('');
   const [supplier, setSupplier] = useState(null);
+  // Period From / Date Created (As of): inclusive bounds on Date Created, applied on Search.
+  const [dateFrom, setDateFrom] = useState('');
   const [asOf, setAsOf] = useState('');
   const [page, setPage] = useState(1);
   const limit = 10;
 
   const [suppliers, setSuppliers] = useState([]);
 
-  async function load() {
-    setLoading(true);
-    const params = { status, page, limit };
+  function listParams() {
+    const params = { status };
     if (search) params.search = search;
     if (supplier) params.supplier_id = supplier.id;
+    if (dateFrom) params.date_from = dateFrom;
     if (asOf) params.as_of = asOf;
+    return params;
+  }
+
+  // Extract: every purchase order under the filters and status tab above, as a workbook
+  // (same params as the list).
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  async function runExport() {
+    setExporting(true); setExportError('');
+    try {
+      const { data } = await api.get('/purchase-orders/export', { params: listParams(), responseType: 'blob' });
+      const url = URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'purchase-orders.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setExportError('Could not extract the purchase orders.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function load() {
+    setLoading(true);
+    const params = { ...listParams(), page, limit };
     const { data } = await api.get('/purchase-orders', { params });
     setRows(data.rows);
     setTotal(data.total);
@@ -108,11 +136,21 @@ export default function PurchaseOrders() {
               </div>
             </div>
             <div className="field">
+              <label>Period From</label>
+              <input type="date" value={dateFrom} max={asOf || undefined} onChange={(e) => setDateFrom(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} />
+            </div>
+            <div className="field">
               <label>Date Created (As of)</label>
-              <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+              <input type="date" value={asOf} min={dateFrom || undefined} onChange={(e) => setAsOf(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} />
             </div>
           </div>
-          <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>
+          <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button className="btn btn-primary" onClick={runSearch}>Search</button>
+            <button className="btn" disabled={exporting} onClick={runExport} title="Download every purchase order under the filters and status tab above">
+              {exporting ? 'Extracting...' : 'Extract'}
+            </button>
+            {exportError && <span style={{ color: 'var(--danger)' }}>{exportError}</span>}
+          </div>
         </div>
       )}
 
