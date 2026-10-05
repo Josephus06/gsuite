@@ -832,7 +832,10 @@ export default function ProductionJobOrderView() {
                       }
                       if (c.key === 'completed_input') {
                         if (!p.item_id) return <td key={c.key} />;
-                        const pct = num(p.total) > 0 ? Math.min((num(p.total_completed) / num(p.total)) * 100, 100) : 0;
+                        // FILE PREPARATION is done before the job reaches the floor; the API flags it
+                        // once the JO is in production, whatever its total.
+                        const pct = p.file_prep_complete ? 100
+                          : num(p.total) > 0 ? Math.min((num(p.total_completed) / num(p.total)) * 100, 100) : 0;
                         // A line worked at another warehouse is that department's to complete, so
                         // its progress still reads but the control is inert. can_complete comes from
                         // the API, which knows this user's scope; the server refuses either way.
@@ -843,7 +846,9 @@ export default function ProductionJobOrderView() {
                               className="progress-bar"
                               disabled={!p.can_complete || !canWorkFloor}
                               onClick={() => setCompletingProcess(p)}
-                              title={!canWorkFloor
+                              title={p.file_prep_complete
+                                ? 'File preparation is complete once the Job Order is in production'
+                                : !canWorkFloor
                                 ? 'Recording output on this Job Order is production\u2019s to do'
                                 : (p.can_complete ? 'Update Completed' : `Completed by ${p.location_name}`)}
                             >

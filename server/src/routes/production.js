@@ -23,6 +23,15 @@ const today = () => new Date().toISOString().slice(0, 10);
 const router = express.Router();
 const ROUTE = '/production';
 
+// A job order is "in production" once it has a production stage, other than being sent back to
+// sales for revision. Advance copies (no stage) are not.
+function isInProduction(jo) {
+  return !!jo?.production_stage && jo.production_stage !== 'for_revision';
+}
+function isFilePreparation(p) {
+  return String(p.process_name || '').trim().toUpperCase() === 'FILE PREPARATION';
+}
+
 // The floor roles below (the department planners, Production Supervisor) carry their capability
 // as a per-user tag rather than as a /production permission row, and a capability on a screen the
 // holder cannot open is no capability at all -- a planner has no /production row whatsoever.
@@ -362,6 +371,18 @@ router.get('/:id', requireAuth, requireProductionView, async (req, res, next) =>
     // because the whole job has to be readable, but its Completed control is locked.
     for (const p of processes) {
       p.can_complete = !scopeLocationId || Number(p.effective_location_id) === Number(scopeLocationId);
+    }
+
+    // FILE PREPARATION is the artist's step, finished before the job reaches the floor, so once
+    // the JO is in production it reads 100% and is not the floor's to record. Most of these lines
+    // are SERVICE LABOR with a total of 0, which otherwise drew as 0% forever.
+    if (isInProduction(jo)) {
+      for (const p of processes) {
+        if (!isFilePreparation(p)) continue;
+        p.total_completed = p.total;
+        p.file_prep_complete = true;
+        p.can_complete = false;
+      }
     }
 
     // Every Assembly Build transaction saved against this JO -- surfaced on the Related
@@ -912,7 +933,16 @@ router.put('/:id/assembly-build', requireAuth, requireProductionFloor, async (re
       [jo.job_location_id, req.params.id]
     );
 
-    const fractions = processes.map((p) => (Number(p.total) > 0 ? Number(p.total_completed) / Number(p.total) : 1));
+    // FILE PREPARATION counts as done once the job is in production -- see GET /:id.
+    const [[stageRow]] = await conn.query('SELECT production_stage FROM job_orders WHERE id = ?', [req.params.id]);
+    const [filePrepRows] = await conn.query(
+      `SELECT jop.id FROM job_order_processes jop JOIN processes pr ON pr.id = jop.process_id
+        WHERE jop.job_order_id = ? AND pr.process_name = 'FILE PREPARATION'`,
+      [req.params.id]
+    );
+    const filePrepIds = isInProduction(stageRow) ? new Set(filePrepRows.map((r) => Number(r.id))) : new Set();
+    const fractions = processes.map((p) => (filePrepIds.has(Number(p.id)) ? 1
+      : Number(p.total) > 0 ? Number(p.total_completed) / Number(p.total) : 1));
     const minFraction = fractions.length ? Math.min(...fractions) : 0;
     const currentBuilt = Number(jo.quantity_built || 0);
     const availableQtyToBuild = Math.max(Math.floor(minFraction * jobQty) - currentBuilt, 0);
