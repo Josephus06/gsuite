@@ -102,26 +102,32 @@ export default function Inventory() {
                 <tr>
                   <th>Item Code</th>
                   <th>Display Name</th>
+                  <th>Sales Description</th>
                   <th>Unit Title</th>
-                  <th>Last Purchase Price</th>
-                  <th>Average Cost</th>
+                  <th>Type</th>
+                  <th>Category</th>
+                  <th style={{ textAlign: 'right' }}>Last Purchase Price</th>
+                  <th style={{ textAlign: 'right' }}>Average Cost</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && (
-                  <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>No items found.</td></tr>
+                  <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 20 }}>No items found.</td></tr>
                 )}
                 {pageRows.map((row) => (
                   <tr key={row.id}>
                     <td data-label="Item Code">{row.item_code}</td>
                     <td data-label="Display Name">{row.display_name}</td>
+                    <td data-label="Sales Description">{row.sales_description}</td>
                     <td data-label="Unit Title">{row.base_unit_title}</td>
-                    <td data-label="Last Purchase Price">{money(row.last_purchase_price)}</td>
-                    <td data-label="Average Cost">{money(row.average_cost)}</td>
+                    <td data-label="Type">{row.to_type}</td>
+                    <td data-label="Category">{row.category_name}</td>
+                    <td data-label="Last Purchase Price" style={{ textAlign: 'right' }}>{money(row.last_purchase_price)}</td>
+                    <td data-label="Average Cost" style={{ textAlign: 'right' }}>{money(row.average_cost)}</td>
                     <td style={{ display: 'flex', gap: 6 }}>
-                      <Link className="btn btn-sm btn-primary" to={`/inventory/${row.id}`}>View</Link>
                       {can('/inventory', 'can_edit') && <button className="btn btn-sm" onClick={() => navigate(`/inventory/${row.id}/edit`)}>Update</button>}
+                      <Link className="btn btn-sm btn-primary" to={`/inventory/${row.id}`}>View</Link>
                       {can('/inventory', 'can_delete') && <button className="btn btn-sm btn-danger" onClick={() => handleDelete(row)}>Delete</button>}
                     </td>
                   </tr>
