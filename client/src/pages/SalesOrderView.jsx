@@ -123,6 +123,7 @@ export default function SalesOrderView() {
   const [showDTModal, setShowDTModal] = useState(false);
   const [invoices, setInvoices] = useState([]);
   const [deliveries, setDeliveries] = useState([]);
+  const [tickets, setTickets] = useState([]);
   const [attachments, setAttachments] = useState([]);
   const [attachmentError, setAttachmentError] = useState('');
   const [canManageAttachments, setCanManageAttachments] = useState(false);
@@ -139,6 +140,9 @@ export default function SalesOrderView() {
     if (tab === 'related') {
       api.get(`/sales-invoices/by-sales-order/${id}`).then(({ data }) => setInvoices(data));
       api.get(`/item-deliveries/by-sales-order/${id}`).then(({ data }) => setDeliveries(data));
+      // Delivery Tickets bill the order too (their quantity counts as billed while they are open),
+      // so they belong here. Their own permission: someone who cannot read DTs just sees none.
+      api.get(`/delivery-tickets/by-sales-order/${id}`).then(({ data }) => setTickets(data)).catch(() => setTickets([]));
     }
     if (tab === 'attachments') {
       api.get(`/sales-orders/${id}/attachments`)
@@ -422,7 +426,7 @@ export default function SalesOrderView() {
             <table>
               <thead><tr><th>Type</th><th>Reference</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead>
               <tbody>
-                {invoices.length === 0 && deliveries.length === 0 && (
+                {invoices.length === 0 && deliveries.length === 0 && tickets.length === 0 && (
                   <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>No related records yet.</td></tr>
                 )}
                 {deliveries.map((del) => (
@@ -434,9 +438,18 @@ export default function SalesOrderView() {
                     <td>{del.status === 'cancelled' ? 'Cancelled' : 'Saved'}</td>
                   </tr>
                 ))}
+                {tickets.map((t) => (
+                  <tr key={`dt-${t.id}`}>
+                    <td>Delivery Ticket</td>
+                    <td><button type="button" className="link-btn" onClick={() => navigate(`/delivery-tickets/${t.id}`)}>{t.dt_no}</button></td>
+                    <td>{t.date_created ? String(t.date_created).slice(0, 10) : ''}</td>
+                    <td>{money(t.gross_amount)}</td>
+                    <td>{{ open: 'Open', converted: 'Converted', void: 'Void' }[t.status] || t.status}</td>
+                  </tr>
+                ))}
                 {invoices.map((inv) => (
                   <tr key={inv.id}>
-                    <td>Invoice</td>
+                    <td>{inv.invoice_type === 'DR' ? 'DR' : 'Invoice'}</td>
                     <td><button type="button" className="link-btn" onClick={() => navigate(`/sales-invoices/${inv.id}`)}>{inv.invoice_no}</button></td>
                     <td>{inv.date_created ? String(inv.date_created).slice(0, 10) : ''}</td>
                     <td>{money(inv.gross_amount)}</td>

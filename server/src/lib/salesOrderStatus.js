@@ -60,4 +60,17 @@ function computeSalesOrderStatus(lines) {
   return 'jo_in_process';
 }
 
-module.exports = { computeSalesOrderStatus };
+// Quantity on a Sales Order line that sits on an OPEN Delivery Ticket. A ticket does not advance
+// job_orders.quantity_invoiced (see routes/deliveryTickets.js) -- it is billed when it is converted
+// -- but the quantity on it is spoken for: billing it again from the Sales Order, or raising a
+// second ticket for it, bills the same goods twice (SO-71114, 2026-10-05). So it counts as billed
+// for the order's status and is left out of what the order still has to bill. A converted ticket
+// drops out here because its invoice has advanced quantity_invoiced; a voided one frees its qty.
+const openDtQtySql = (lineAlias = 'sol') => `COALESCE((SELECT SUM(dtl.quantity)
+  FROM delivery_ticket_lines dtl JOIN delivery_tickets dt ON dt.id = dtl.delivery_ticket_id
+ WHERE dt.status = 'open' AND dtl.sales_order_line_id = ${lineAlias}.id), 0)`;
+// For the status queries: invoiced, counting what is on open tickets, under the name the status
+// rule reads.
+const invoicedOrTicketedSql = (joAlias = 'jo', lineAlias = 'sol') => `(${joAlias}.quantity_invoiced + ${openDtQtySql(lineAlias)}) AS quantity_invoiced`;
+
+module.exports = { computeSalesOrderStatus, openDtQtySql, invoicedOrTicketedSql };

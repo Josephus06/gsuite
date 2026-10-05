@@ -4,7 +4,7 @@ const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
-const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
+const { computeSalesOrderStatus, invoicedOrTicketedSql, openDtQtySql } = require('../lib/salesOrderStatus');
 const { recomputeNssoStatus } = require('../lib/nssoStatus');
 const { computeSalesInvoiceGl } = require('../lib/glImpact');
 
@@ -356,13 +356,14 @@ router.get('/for-sales-order/:salesOrderId', requireAuth, requirePermission(ROUT
               sol.quantity AS ordered_quantity, sol.units, sol.price_per_unit, sol.disc_percent,
               sol.disc_price_per_unit, t.code AS tax_code, t.rate AS tax_rate,
               sol.subtotal, sol.disc_amount, sol.net_of_tax, sol.tax_amount,
-              jo.quantity_delivered, jo.quantity_invoiced
+              -- quantity on an open Delivery Ticket counts as billed: see openDtQtySql.
+              jo.quantity_delivered, ${invoicedOrTicketedSql('jo')}
        FROM sales_order_lines sol
        JOIN job_orders jo ON jo.id = sol.job_order_id
        LEFT JOIN job_types jt ON jt.id = sol.job_type_id
        LEFT JOIN locations loc ON loc.id = sol.job_location_id
        LEFT JOIN taxes t ON t.id = sol.tax_code_id
-       WHERE sol.sales_order_id = ? AND jo.quantity_delivered > jo.quantity_invoiced
+       WHERE sol.sales_order_id = ? AND jo.quantity_delivered > jo.quantity_invoiced + ${openDtQtySql()}
        ORDER BY sol.line_no`,
       [req.params.salesOrderId]
     );
@@ -675,7 +676,7 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
 router.get('/by-sales-order/:salesOrderId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT si.id, si.invoice_no, si.date_created, si.gross_amount, si.status
+      `SELECT si.id, si.invoice_no, si.date_created, si.gross_amount, si.status, si.invoice_type
          FROM sales_invoices si
         WHERE si.sales_order_id = ?
           AND (si.estimate_id IS NULL OR NOT EXISTS (
@@ -896,7 +897,7 @@ async function billDeliveryTicket(req, res, conn) {
   );
 
   const [freshLines] = await conn.query(
-    `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, jo.quantity_invoiced
+    `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, ${invoicedOrTicketedSql('jo')}
      FROM sales_order_lines sol
      LEFT JOIN job_orders jo ON jo.id = sol.job_order_id WHERE sol.sales_order_id = ?`,
     [dt.sales_order_id]
@@ -1314,7 +1315,8 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
     if (!submittedIds.length) return res.status(400).json({ error: 'Include at least one item.' });
 
     const [rawLines] = await conn.query(
-      `SELECT sol.*, jo.id AS job_order_id, jo.quantity_delivered, jo.quantity_invoiced, t.rate AS tax_rate
+      `SELECT sol.*, jo.id AS job_order_id, jo.quantity_delivered, jo.quantity_invoiced, t.rate AS tax_rate,
+              ${openDtQtySql()} AS open_dt_qty
        FROM sales_order_lines sol JOIN job_orders jo ON jo.id = sol.job_order_id
        LEFT JOIN taxes t ON t.id = sol.tax_code_id
        WHERE sol.sales_order_id = ? AND sol.id IN (?)`,
@@ -1322,8 +1324,9 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
     );
     if (rawLines.length !== submittedIds.length) return res.status(400).json({ error: 'One of the selected items is no longer eligible.' });
     for (const l of rawLines) {
-      if (Number(l.quantity_delivered) <= Number(l.quantity_invoiced)) {
-        return res.status(409).json({ error: `Line ${l.line_no} has nothing left to invoice.` });
+      // What sits on an open Delivery Ticket is billed when that ticket is converted, not here.
+      if (Number(l.quantity_delivered) <= Number(l.quantity_invoiced) + Number(l.open_dt_qty)) {
+        return res.status(409).json({ error: `Line ${l.line_no} has nothing left to invoice (check its open Delivery Tickets).` });
       }
     }
 
@@ -1334,7 +1337,7 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
     // disc_percent/tax rate are fixed per-unit rates, so Subtotal/Disc/Net/Tax/Gross are
     // recomputed against that billable qty rather than copied from the line's full-Qty totals.
     const lines = rawLines.map((l) => {
-      const invoicedNow = Number(l.quantity_delivered) - Number(l.quantity_invoiced);
+      const invoicedNow = Number(l.quantity_delivered) - Number(l.quantity_invoiced) - Number(l.open_dt_qty);
       const price = priceOverrideFor(req.body, l.id);
       if (price === null) return { ...l, invoicedNow, ...soLineBillableAmounts(l, l.quantity, invoicedNow) };
       const amounts = computeBillableLineAmounts({
@@ -1394,7 +1397,7 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
     // see computeSalesOrderStatus for the full hierarchy (an unstarted line elsewhere
     // pulls the whole order back to "In Process" even after this one's fully billed).
     const [freshLines] = await conn.query(
-      `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, jo.quantity_invoiced
+      `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, ${invoicedOrTicketedSql('jo')}
        FROM sales_order_lines sol
        LEFT JOIN job_orders jo ON jo.id = sol.job_order_id WHERE sol.sales_order_id = ?`,
       [salesOrderId]
@@ -1674,7 +1677,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (touchedJobOrders.size && si.sales_order_id) {
       const [freshLines] = await conn.query(
         `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected,
-                jo.quantity_delivered, jo.quantity_invoiced
+                jo.quantity_delivered, ${invoicedOrTicketedSql('jo')}
            FROM sales_order_lines sol
            LEFT JOIN job_orders jo ON jo.id = sol.job_order_id
           WHERE sol.sales_order_id = ?`,
@@ -1793,7 +1796,7 @@ router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_void'), asy
     const [[so]] = si.sales_order_id ? await conn.query('SELECT status FROM sales_orders WHERE id = ?', [si.sales_order_id]) : [[null]];
     if (so && so.status !== 'cancelled') {
       const [freshLines] = await conn.query(
-        `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, jo.quantity_invoiced
+        `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, ${invoicedOrTicketedSql('jo')}
          FROM sales_order_lines sol
          LEFT JOIN job_orders jo ON jo.id = sol.job_order_id WHERE sol.sales_order_id = ?`,
         [si.sales_order_id]

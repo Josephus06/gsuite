@@ -2,7 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
-const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
+const { computeSalesOrderStatus, invoicedOrTicketedSql } = require('../lib/salesOrderStatus');
 const { recomputeNssoStatus } = require('../lib/nssoStatus');
 const { computeItemDeliveryGl } = require('../lib/glImpact');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
@@ -360,7 +360,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       await recomputeNssoStatus(conn, nssoId);
     } else {
       const [freshLines] = await conn.query(
-        `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, jo.quantity_invoiced
+        `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, ${invoicedOrTicketedSql('jo')}
          FROM sales_order_lines sol
          LEFT JOIN job_orders jo ON jo.id = sol.job_order_id WHERE sol.sales_order_id = ?`,
         [salesOrderId]
@@ -479,7 +479,7 @@ router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_void'), asy
     const [[so]] = d.sales_order_id ? await conn.query('SELECT status FROM sales_orders WHERE id = ?', [d.sales_order_id]) : [[null]];
     if (so && so.status !== 'cancelled') {
       const [freshLines] = await conn.query(
-        `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, jo.quantity_invoiced
+        `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, ${invoicedOrTicketedSql('jo')}
          FROM sales_order_lines sol
          LEFT JOIN job_orders jo ON jo.id = sol.job_order_id WHERE sol.sales_order_id = ?`,
         [d.sales_order_id]

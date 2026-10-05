@@ -2,7 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
-const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
+const { computeSalesOrderStatus, invoicedOrTicketedSql } = require('../lib/salesOrderStatus');
 
 const router = express.Router();
 const ROUTE = '/sales-orders';
@@ -332,7 +332,7 @@ router.put('/:id', requireAuth, async (req, res, next) => {
     // Status only when a quantity changed: migrated JOs carry no invoiced qty, so recomputing an old
     // billed order's status from them would wrongly reopen it.
     const [statusLines] = await conn.query(
-      `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, jo.quantity_invoiced
+      `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, ${invoicedOrTicketedSql('jo')}
          FROM sales_order_lines sol LEFT JOIN job_orders jo ON jo.id = sol.job_order_id WHERE sol.sales_order_id = ?`, [req.params.id]);
     if (qtyChanged && statusLines.some((l) => l.job_order_id)) {
       await conn.query('UPDATE sales_orders SET status = ? WHERE id = ?', [computeSalesOrderStatus(statusLines), req.params.id]);

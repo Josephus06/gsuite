@@ -2,7 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
-const { computeSalesOrderStatus } = require('../lib/salesOrderStatus');
+const { computeSalesOrderStatus, invoicedOrTicketedSql } = require('../lib/salesOrderStatus');
 const { createReworkJobOrder, countOpenRework } = require('../lib/reworkJobOrder');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
@@ -311,7 +311,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       const [[so]] = await conn.query('SELECT status FROM sales_orders WHERE id = ?', [jo.sales_order_id]);
       if (so && so.status !== 'cancelled') {
         const [soLines] = await conn.query(
-          `SELECT sol.job_order_id, sol.quantity, j.quantity_built, j.quantity_inspected, j.quantity_delivered, j.quantity_invoiced
+          `SELECT sol.job_order_id, sol.quantity, j.quantity_built, j.quantity_inspected, j.quantity_delivered, ${invoicedOrTicketedSql('j')}
            FROM sales_order_lines sol LEFT JOIN job_orders j ON j.id = sol.job_order_id
            WHERE sol.sales_order_id = ?`,
           [jo.sales_order_id]

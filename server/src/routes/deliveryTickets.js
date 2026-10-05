@@ -3,6 +3,7 @@ const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
+const { computeSalesOrderStatus, openDtQtySql, invoicedOrTicketedSql } = require('../lib/salesOrderStatus');
 const { computeDeliveryTicketGl } = require('../lib/glImpact');
 
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
@@ -15,6 +16,22 @@ const router = express.Router();
 // a real page entry rather than a borrowed one. Registered by
 // src/db/create-delivery-tickets.js, which also grants admins full access.
 const ROUTE = '/delivery-tickets';
+
+// The order's status, recomputed whenever a ticket is raised, edited or voided: quantity on an open
+// ticket counts as billed (lib/salesOrderStatus.js openDtQtySql), so the order leaves Pending
+// Billing when its delivered quantity is all on tickets, and returns to it when one is voided.
+// A cancelled order is left as it is.
+async function refreshSalesOrderStatus(conn, salesOrderId) {
+  if (!salesOrderId) return;
+  const [[so]] = await conn.query('SELECT status FROM sales_orders WHERE id = ?', [salesOrderId]);
+  if (!so || so.status === 'cancelled') return;
+  const [lines] = await conn.query(
+    `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, ${invoicedOrTicketedSql('jo')}
+       FROM sales_order_lines sol LEFT JOIN job_orders jo ON jo.id = sol.job_order_id WHERE sol.sales_order_id = ?`,
+    [salesOrderId]
+  );
+  await conn.query('UPDATE sales_orders SET status = ?, updated_at = NOW() WHERE id = ?', [computeSalesOrderStatus(lines), salesOrderId]);
+}
 
 async function logAudit(conn, { ticketId, userId, eventType, fieldName = null, oldValue = null, newValue = null }) {
   await conn.query(
@@ -95,13 +112,14 @@ router.get('/for-sales-order/:salesOrderId', requireAuth, requirePermission(ROUT
               sol.units, sol.uom AS unit_title, sol.price_per_unit, sol.disc_percent,
               sol.tax_code_id, t.code AS tax_code, t.rate AS tax_rate,
               sol.quantity AS ordered_quantity, sol.subtotal, sol.disc_amount, sol.net_of_tax, sol.tax_amount,
-              jo.quantity_delivered, jo.quantity_invoiced
+              -- what is already on another open ticket is not offered again: see openDtQtySql.
+              jo.quantity_delivered, ${invoicedOrTicketedSql('jo')}
        FROM sales_order_lines sol
        JOIN job_orders jo ON jo.id = sol.job_order_id
        LEFT JOIN job_types jt ON jt.id = sol.job_type_id
        LEFT JOIN locations loc ON loc.id = sol.job_location_id
        LEFT JOIN taxes t ON t.id = sol.tax_code_id
-       WHERE sol.sales_order_id = ? AND jo.quantity_delivered > jo.quantity_invoiced
+       WHERE sol.sales_order_id = ? AND jo.quantity_delivered > jo.quantity_invoiced + ${openDtQtySql()}
        ORDER BY sol.line_no`,
       [req.params.salesOrderId]
     );
@@ -491,6 +509,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
     }
 
     await logAudit(conn, { ticketId, userId: req.user.id, eventType: 'Created', fieldName: 'dt_no', newValue: dtNo });
+    await refreshSalesOrderStatus(conn, salesOrderId);
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM delivery_tickets WHERE id = ?', [ticketId]);
@@ -565,6 +584,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       if (!same) await logAudit(conn, { ticketId: dt.id, userId: req.user.id, eventType: 'Updated', fieldName: k, oldValue: before, newValue: after });
     }
     await logAudit(conn, { ticketId: dt.id, userId: req.user.id, eventType: 'Updated', fieldName: 'lines', newValue: `${prepared.length} line(s)` });
+    await refreshSalesOrderStatus(conn, dt.sales_order_id);
     await conn.commit();
     const [[row]] = await pool.query('SELECT * FROM delivery_tickets WHERE id = ?', [dt.id]);
     res.json(row);
@@ -620,6 +640,7 @@ router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async
         fieldName: 'reversal_journal_no', newValue: reversal.journalNo,
       });
     }
+    await refreshSalesOrderStatus(conn, fullDt.sales_order_id);
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM delivery_tickets WHERE id = ?', [req.params.id]);
