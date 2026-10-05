@@ -25,6 +25,27 @@ const EMPTY = {
 function accountLabel(a) { return a ? `${a.account_code} — ${a.account_name}` : ''; }
 function unitLabel(u) { return u ? `${u.title} (${u.code})` : ''; }
 
+// Sales / Pricing follows the costing sheet (matcosting.xlsx) cell for cell:
+//   Wastage Amt = Material Cost x Wastage %      Subtotal = Material Cost + Wastage Amt
+//   Markup Amt  = Subtotal x Markup %            Selling Price = Subtotal + Markup Amt
+//   each Disc. Amt (AC / Supervisor / Manager / GM) = Selling Price x its %
+function xlN(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
+function xlNum(v) { return xlN(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function computePricing(f) {
+  const cost = xlN(f.material_cost);
+  const wastageAmt = cost * xlN(f.wastage_allowance_pct) / 100;
+  const subtotal = wastageAmt + cost;
+  const markupAmt = subtotal * xlN(f.markup_pct) / 100;
+  const sellingPrice = markupAmt + subtotal;
+  return {
+    wastageAmt, subtotal, markupAmt, sellingPrice,
+    discAc: sellingPrice * xlN(f.disc_ceiling_pct) / 100,
+    discSupervisor: sellingPrice * xlN(f.disc_supervisor_pct) / 100,
+    discManager: sellingPrice * xlN(f.disc_manager_pct) / 100,
+    discGm: sellingPrice * xlN(f.disc_gm_pct) / 100,
+  };
+}
+
 export default function InventoryEdit() {
   const { id } = useParams();
   const isNew = !id;
@@ -75,10 +96,17 @@ export default function InventoryEdit() {
     });
   }, [id, isNew]);
 
+  const pricing = computePricing(form);
+  function cellInput(key, step = '0.01') {
+    return <input type="number" step={step} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} />;
+  }
+
   async function handleSave() {
     setSaving(true);
     setError('');
     const payload = { ...form };
+    // Selling Price is no longer typed in -- it's the sheet's Subtotal + Markup Amount.
+    payload.selling_price = form.material_cost === '' ? form.selling_price : Math.round(pricing.sellingPrice * 10000) / 10000;
     ['category_id', 'base_unit_id', 'purchase_unit_id', 'stock_unit_id', 'sales_unit_id', 'expense_account_id', 'asset_account_id', 'income_account_id', 'cogs_account_id']
       .forEach((k) => { payload[k] = payload[k] || null; });
     ['last_purchase_price', 'last_purchase_date', 'average_cost', 'material_cost', 'selling_price', 'beg_selling_price']
@@ -233,18 +261,43 @@ export default function InventoryEdit() {
         </div>
 
         <h3 className="subsection">Sales / Pricing</h3>
-        <div className="field-row">
-          <div className="field"><label>Material Cost <span className="muted">(base unit, costing basis)</span></label><input type="number" step="0.0001" value={form.material_cost} onChange={(e) => setForm({ ...form, material_cost: e.target.value })} /></div>
-          <div className="field"><label>Wastage Allowance %</label><input type="number" step="0.01" value={form.wastage_allowance_pct} onChange={(e) => setForm({ ...form, wastage_allowance_pct: e.target.value })} /></div>
-          <div className="field"><label>Mark-Up %</label><input type="number" step="0.01" value={form.markup_pct} onChange={(e) => setForm({ ...form, markup_pct: e.target.value })} /></div>
-          <div className="field"><label>Selling Price <span className="muted">(blank = auto)</span></label><input type="number" step="0.0001" value={form.selling_price} onChange={(e) => setForm({ ...form, selling_price: e.target.value })} /></div>
-          <div className="field"><label>Beg. Selling Price</label><input type="number" step="0.0001" value={form.beg_selling_price} onChange={(e) => setForm({ ...form, beg_selling_price: e.target.value })} /></div>
+        <div className="xl-pricing-wrap">
+          <table className="xl-pricing">
+            <thead>
+              <tr>
+                <th colSpan={7} className="xl-blank" />
+                <th colSpan={2} className="xl-blue">Disc. AC</th>
+                <th colSpan={2} className="xl-blue">Disc. Supervisor</th>
+                <th colSpan={2} className="xl-blue">Disc. Manager</th>
+                <th colSpan={2} className="xl-blue">Disc. GM</th>
+              </tr>
+              <tr className="xl-orange">
+                <th>Material Cost</th><th>Wastage Allowance %</th><th>Amount</th><th>Subtotal</th>
+                <th>Markup %</th><th>Amount</th><th>Selling Price</th>
+                <th>%</th><th>Amount</th><th>%</th><th>Amount</th><th>%</th><th>Amount</th><th>%</th><th>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="xl-orange">
+                <td>{cellInput('material_cost', '0.0001')}</td>
+                <td>{cellInput('wastage_allowance_pct')}</td>
+                <td>{xlNum(pricing.wastageAmt)}</td>
+                <td>{xlNum(pricing.subtotal)}</td>
+                <td>{cellInput('markup_pct')}</td>
+                <td>{xlNum(pricing.markupAmt)}</td>
+                <td className="xl-strong">{xlNum(pricing.sellingPrice)}</td>
+                <td>{cellInput('disc_ceiling_pct')}</td><td>{xlNum(pricing.discAc)}</td>
+                <td>{cellInput('disc_supervisor_pct')}</td><td>{xlNum(pricing.discSupervisor)}</td>
+                <td>{cellInput('disc_manager_pct')}</td><td>{xlNum(pricing.discManager)}</td>
+                <td>{cellInput('disc_gm_pct')}</td><td>{xlNum(pricing.discGm)}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <div className="field-row">
-          <div className="field"><label>Disc. Ceiling %</label><input type="number" step="0.01" value={form.disc_ceiling_pct} onChange={(e) => setForm({ ...form, disc_ceiling_pct: e.target.value })} /></div>
-          <div className="field"><label>Disc. Supervisor %</label><input type="number" step="0.01" value={form.disc_supervisor_pct} onChange={(e) => setForm({ ...form, disc_supervisor_pct: e.target.value })} /></div>
-          <div className="field"><label>Disc. Manager %</label><input type="number" step="0.01" value={form.disc_manager_pct} onChange={(e) => setForm({ ...form, disc_manager_pct: e.target.value })} /></div>
-          <div className="field"><label>Disc. GM %</label><input type="number" step="0.01" value={form.disc_gm_pct} onChange={(e) => setForm({ ...form, disc_gm_pct: e.target.value })} /></div>
+        <div className="field-row" style={{ marginTop: 12 }}>
+          <div className="field"><label>Beg. Selling Price</label><input type="number" step="0.0001" value={form.beg_selling_price} onChange={(e) => setForm({ ...form, beg_selling_price: e.target.value })} /></div>
+          <div className="field" />
+          <div className="field" />
         </div>
 
         <h3 className="subsection">Accounting</h3>
