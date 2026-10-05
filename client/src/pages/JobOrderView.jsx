@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { isPlanner } from '../utils/plannerRoles';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
@@ -331,6 +332,10 @@ export default function JobOrderView() {
   // ...and the rep's own JO in full, until Production has it (no production stage yet).
   const canEditOwn = mayEditOwnJobOrder(user, jo);
   const inDesignPhase = !isSpecialJo && !jo.production_stage && jo.status !== 'Cancelled';
+  // A Production account that plans or supervises edits a job order only while it is In Process,
+  // whatever its can_edit -- the server's jobOrderEditGrant applies the same rule. A Sales account
+  // tagged Production Supervisor keeps the Sales rules.
+  const isProductionFloor = user?.account_type === 'Production' && (isPlanner(user) || !!user?.is_production_supervisor);
 
   const processes = jo.processes || [];
   const totalCost = processes.reduce((s, p) => s + num(p.total_cost), 0);
@@ -359,7 +364,7 @@ export default function JobOrderView() {
               ]}
             />
           )}
-          {(canEdit || canRework || canEditOwn) && jo.status !== 'Cancelled' && (
+          {(isProductionFloor ? jo.production_stage === 'in_process' : (canEdit || canRework || canEditOwn)) && jo.status !== 'Cancelled' && (
             <button className="btn btn-sm btn-primary"
               title={canRework && !canEdit && !canEditOwn ? 'Change the materials and processes Production asked about' : undefined}
               onClick={() => navigate(`/job-orders/${id}/edit`)}>Edit</button>

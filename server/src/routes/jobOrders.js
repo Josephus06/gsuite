@@ -2,7 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { completeDesignProcesses } = require('../lib/designAutoComplete');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
-const { isPlannerUser } = require('../lib/plannerRoles');
+const { isPlannerUser, isPlanner, PLANNER_COLUMNS } = require('../lib/plannerRoles');
 const { isAdvanceCopy } = require('../lib/advanceCopy');
 const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } = require('../lib/designSupervisorVisibility');
 const { getArtistEmployeeScope } = require('../lib/artistVisibility');
@@ -80,6 +80,22 @@ const PROCESS_FIELDS = [
 // Returns 'permission' | 'owner' | 'rework' | null, because they are not equivalent downstream: a
 // rework grant is scoped to the spec (see REWORK_PROTECTED_FIELDS) where the others are not.
 async function jobOrderEditGrant(userId, jobOrderId) {
+  // The production floor -- a Production account that is a planner or a Production Supervisor --
+  // edits a job order while it is In Process and at no other time, whatever its can_edit says
+  // (asked 2026-10-05). Before that it is Sales' and Design's; after, it is done. A Sales account
+  // carrying the Production Supervisor tag (a branch's own) is not this: it keeps the rules below.
+  if (!(await isSystemAdmin(userId))) {
+    const [[u]] = await pool.query(`SELECT account_type, is_production_supervisor, ${PLANNER_COLUMNS} FROM users WHERE id = ?`, [userId]);
+    if (u?.account_type === 'Production' && (isPlanner(u) || u.is_production_supervisor)) {
+      const [[jo]] = await pool.query('SELECT production_stage, job_location_id FROM job_orders WHERE id = ?', [jobOrderId]);
+      if (jo?.production_stage !== 'in_process') return null;
+      // ...and only their own department's warehouse, the same ceiling the list applies.
+      const scopeLocationId = await getJobLocationScope(userId);
+      if (scopeLocationId && String(scopeLocationId) !== String(jo.job_location_id)) return null;
+      return 'production';
+    }
+  }
+
   const [[page]] = await pool.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
   const [[perm]] = await pool.query(
     'SELECT can_edit AS allowed FROM user_page_permissions WHERE user_id = ? AND page_id = ?',
