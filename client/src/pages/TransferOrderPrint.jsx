@@ -138,8 +138,10 @@ export default function TransferOrderPrint() {
                 <td>{l.item_code}</td>
                 <td>{l.item_name}</td>
                 <td>{l.job_order_no || ''}</td>
-                {/* The quantity being asked for: the adjusted one where the warehouse changed it. */}
-                <td className="top-num">{qty(l.new_qty ?? l.qty)}</td>
+                {/* The quantity being asked for: the adjusted one where the warehouse changed it.
+                    new_qty is stored 0.0000 rather than NULL when nobody changed it (67,746 lines,
+                    2026-10-05), so `new_qty ?? qty` printed 0 for TO-39365's 30 SHT. */}
+                <td className="top-num">{qty(l.adjusted_qty ?? (Number(l.new_qty) > 0 ? l.new_qty : l.qty))}</td>
                 <td>{l.unit || ''}</td>
                 <td className="top-num">{qty(l.fulfilled)}</td>
                 <td className="top-num">{qty(l.received)}</td>
