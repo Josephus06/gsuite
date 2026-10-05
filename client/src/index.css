@@ -2482,3 +2482,10 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .xl-pricing .xl-orange th, .xl-pricing .xl-orange td { background: #F8CBAD; }
 .xl-pricing .xl-strong { font-weight: 700; }
 .xl-pricing td input { width: 100%; min-width: 70px; text-align: right; background: rgba(255, 255, 255, 0.55); color: #1f1f1f; border: 1px solid rgba(0, 0, 0, 0.15); border-radius: 4px; padding: 4px 6px; }
+
+/* Delivery Tickets on the GM's Invoice calendar -- shown, never counted. Orange while open
+   (delivered, not yet billed), blue once converted to an invoice. */
+.artist-calendar-chip.cal-dt-open { color: #9a4a00; background: rgba(249, 115, 22, 0.16); border-color: rgba(234, 88, 12, 0.45); }
+.artist-calendar-chip.cal-dt-converted { color: #1d4ed8; background: rgba(59, 130, 246, 0.14); border-color: rgba(37, 99, 235, 0.45); }
+:root[data-theme="dark"] .artist-calendar-chip.cal-dt-open { color: #fdba74; background: rgba(249, 115, 22, 0.22); }
+:root[data-theme="dark"] .artist-calendar-chip.cal-dt-converted { color: #93c5fd; background: rgba(59, 130, 246, 0.24); }

@@ -982,6 +982,18 @@ const GM_CALENDAR_PARAMS = {
   invoices: (b) => [b.start, b.end, b.start],
 };
 
+// The month's Delivery Tickets, shown on the Invoice calendar on the day each was raised but NEVER
+// counted (asked 2026-10-05): open ones orange, converted ones blue. A ticket's invoice counts only in
+// the ticket's own month (the invoices query above), so a September ticket invoiced in October turns
+// blue in September and adds nothing to October.
+const GM_DT_SQL = `SELECT dt.id, dt.dt_no AS doc_no, DATE_FORMAT(dt.date_created, '%Y-%m-%d') AS day, dt.status,
+                          c.name AS customer_name, COALESCE(dt.gross_amount, 0) AS amount
+                     FROM delivery_tickets dt
+                     LEFT JOIN sales_orders so ON so.id = dt.sales_order_id
+                     LEFT JOIN customers c ON c.id = so.customer_id
+                    WHERE dt.date_created >= ? AND dt.date_created < ? AND dt.status IN ('open', 'converted')
+                    ORDER BY day, dt.dt_no`;
+
 // Rows -> { day -> { count, total, customers: [{ customerName, count, total, docs }] } }.
 function groupByDayAndCustomer(rows) {
   const days = new Map();
@@ -1008,14 +1020,23 @@ router.get('/gm-calendar', requireAuth, async (req, res, next) => {
     const sql = GM_CALENDARS[req.query.type];
     if (!sql) return res.status(400).json({ error: 'type must be sales or invoices' });
     const bounds = monthBounds(req.query.month);
-    // Open Delivery Tickets no longer ride along on the Invoice calendar (asked 2026-10-05): it shows
-    // invoices only.
-    const [rows] = await pool.query(`${sql} ORDER BY day, customer_name, doc_no`, GM_CALENDAR_PARAMS[req.query.type](bounds));
+    // The Invoice calendar also lists the month's Delivery Tickets, for show only -- see GM_DT_SQL.
+    const withDts = req.query.type === 'invoices';
+    const [[rows], [dtRows]] = await Promise.all([
+      pool.query(`${sql} ORDER BY day, customer_name, doc_no`, GM_CALENDAR_PARAMS[req.query.type](bounds)),
+      withDts ? pool.query(GM_DT_SQL, [bounds.start, bounds.end]) : [[]],
+    ]);
 
     const docs = groupByDayAndCustomer(rows);
-    const calendar = [...docs.keys()].sort().map((day) => {
-      const d = docs.get(day);
-      return { day, count: d.count, total: d.total, customers: d.customers };
+    const dtsByDay = new Map();
+    for (const r of dtRows) {
+      if (!dtsByDay.has(r.day)) dtsByDay.set(r.day, []);
+      dtsByDay.get(r.day).push({ id: r.id, docNo: r.doc_no, status: r.status, customerName: r.customer_name || '—', amount: Number(r.amount) });
+    }
+    const empty = { count: 0, total: 0, customers: [] };
+    const calendar = [...new Set([...docs.keys(), ...dtsByDay.keys()])].sort().map((day) => {
+      const d = docs.get(day) || empty;
+      return { day, count: d.count, total: d.total, customers: d.customers, dts: dtsByDay.get(day) || [] };
     });
     res.json({
       month: bounds.month,

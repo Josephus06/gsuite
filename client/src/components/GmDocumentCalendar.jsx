@@ -8,8 +8,9 @@ import Modal from './Modal';
 // like CollectionForecastCalendar so the switch between them reads as one calendar.
 // GET /dashboard/gm-calendar decides which rows count (the same as the Weighted Sales card).
 //
-// The Invoice calendar shows invoices only (asked 2026-10-05): open Delivery Tickets no longer
-// ride along, and an invoice converted from a ticket raised in an earlier month is left out.
+// The Invoice calendar counts invoices only (asked 2026-10-05), and an invoice converted from a ticket
+// raised in an earlier month is left out. The month's Delivery Tickets are shown on the day they were
+// raised -- orange while open, blue once converted -- but never counted in any total.
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December'];
 const WEEKDAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
@@ -78,14 +79,16 @@ export default function GmDocumentCalendar({ type }) {
           const customers = entry?.customers || [];
           // Three chips a day; the rest fold into "+n more".
           const chips = customers;
+          const dts = entry?.dts || [];
           const titleParts = [];
           if (entry?.count) titleParts.push(`${plural(entry.count, cfg.noun)}, ${money(entry.total)}`);
+          if (dts.length) titleParts.push(`${plural(dts.length, 'delivery ticket')} (not counted)`);
           return (
             <div
               key={key}
               role="button"
               tabIndex={0}
-              className={`artist-calendar-day is-clickable${key === todayKey ? ' is-today' : ''}${chips.length ? ' has-jobs' : ''}`}
+              className={`artist-calendar-day is-clickable${key === todayKey ? ' is-today' : ''}${chips.length || dts.length ? ' has-jobs' : ''}`}
               title={titleParts.length ? `${titleParts.join(' · ')} -- click to see them` : 'Nothing on this day -- click to confirm'}
               onClick={() => setOpenDay(key)}
               onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenDay(key); } }}
@@ -106,6 +109,16 @@ export default function GmDocumentCalendar({ type }) {
                 </span>
               ))}
               {chips.length > 3 && <span className="artist-calendar-more">+{chips.length - 3} more</span>}
+              {dts.slice(0, 3).map((t) => (
+                <span
+                  key={`dt-${t.id}`}
+                  className={`artist-calendar-chip ${t.status === 'converted' ? 'cal-dt-converted' : 'cal-dt-open'}`}
+                  title={`${t.docNo} · ${t.customerName} · ${t.status === 'converted' ? 'converted' : 'open'} · ${money(t.amount)} (not counted)`}
+                >
+                  {t.docNo}
+                </span>
+              ))}
+              {dts.length > 3 && <span className="artist-calendar-more">+{dts.length - 3} DT</span>}
             </div>
           );
         })}
@@ -120,10 +133,38 @@ export default function GmDocumentCalendar({ type }) {
           {!openEntry ? (
             <div className="muted" style={{ padding: 20, textAlign: 'center' }}>Nothing on this day.</div>
           ) : (
-            <CustomerTable cfg={cfg} customers={openEntry.customers} count={openEntry.count} total={openEntry.total} />
+            <>
+              {openEntry.count > 0
+                ? <CustomerTable cfg={cfg} customers={openEntry.customers} count={openEntry.count} total={openEntry.total} />
+                : <div className="muted" style={{ padding: 12 }}>No {cfg.plural.toLowerCase()} on this day.</div>}
+              {(openEntry.dts || []).length > 0 && <DeliveryTicketList dts={openEntry.dts} />}
+            </>
           )}
         </Modal>
       )}
+    </div>
+  );
+}
+
+// The day's Delivery Tickets, listed for reference only -- none of them is in the totals above.
+function DeliveryTicketList({ dts }) {
+  const navigate = useNavigate();
+  return (
+    <div className="table-wrap" style={{ marginTop: 16 }}>
+      <h4 style={{ margin: '0 0 6px' }}>Delivery Tickets <span className="muted" style={{ fontWeight: 400 }}>(not counted)</span></h4>
+      <table>
+        <thead><tr><th>DT No</th><th>Customer</th><th>Status</th><th className="text-right">Gross</th></tr></thead>
+        <tbody>
+          {dts.map((t) => (
+            <tr key={t.id} className="is-clickable" onClick={() => navigate(`/delivery-tickets/${t.id}`)}>
+              <td><span className={`artist-calendar-chip ${t.status === 'converted' ? 'cal-dt-converted' : 'cal-dt-open'}`}>{t.docNo}</span></td>
+              <td>{t.customerName}</td>
+              <td>{t.status === 'converted' ? 'Converted' : 'Open'}</td>
+              <td className="text-right">{money(t.amount)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
