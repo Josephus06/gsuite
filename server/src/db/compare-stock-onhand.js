@@ -18,7 +18,7 @@
 const fs = require('fs');
 const pool = require('../db');
 require('dotenv').config();
-const { movementsSql } = require('../lib/stockLedger');
+const { movementsSql, movementParams } = require('../lib/stockLedger');
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
 const arg = (n, d) => (process.argv.find((a) => a.startsWith(`--${n}=`)) || '').split('=')[1] || d;
@@ -88,7 +88,7 @@ async function main() {
       `SELECT m.item_id, COALESCE(m.to_location_id, m.from_location_id) AS location_id, m.trans_date, m.trans_no, m.trans_type,
               m.qty_in, m.qty_out, m.doc_uom, m.uom
          FROM (${movementsSql(true)}) m
-        WHERE m.trans_date >= ? AND m.trans_date <= ?`, [chunk, chunk, chunk, chunk, chunk, chunk, FROM, AS_OF]);
+        WHERE m.trans_date >= ? AND m.trans_date <= ?`, [...movementParams(chunk), FROM, AS_OF]);
     for (const r of rows) moves.push(r);
     process.stdout.write(`\r  T1S movements: ${Math.min(i + BATCH, ids.length)}/${ids.length} items`);
     await sleep(DB_PAUSE);

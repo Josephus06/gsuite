@@ -10,6 +10,7 @@ const PAGE_SIZE = 25;
 const TYPES = [
   ['Purchase Order', 'PO'], ['Receiving Report', 'RR'], ['Vendor Return', 'VR'], ['Transfer Order', 'TO'],
   ['Item Fulfillment', 'IF'], ['Item Receipt', 'IR'], ['Assembly Build', 'AB'], ['Inventory Adjustment', 'IA'],
+  ['Office Supply Fulfillment', 'OSRF'],
 ];
 // Where each document opens. The ledger's doc_id is that document's own id.
 const LINK = {
@@ -21,6 +22,7 @@ const LINK = {
   'Item Receipt': (id) => `/transfer-orders/item-receipts/${id}`,
   'Assembly Build': (id) => `/assembly-builds/${id}`,
   'Inventory Adjustment': (id) => `/inventory-adjustments/${id}`,
+  'Office Supply Fulfillment': (id) => `/office-supply-requisitions/fulfillments/${id}`,
 };
 
 function qty(v) {

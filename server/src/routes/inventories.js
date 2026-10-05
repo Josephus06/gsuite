@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
-const { deriveOnHand, movementsSql } = require('../lib/stockLedger');
+const { deriveOnHand, movementsSql, movementParams } = require('../lib/stockLedger');
 
 const router = express.Router();
 const ROUTE = '/inventory';
@@ -324,7 +324,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
 // two documents that ask for stock without moving it: Purchase Orders and Transfer Orders, shown
 // with their own quantity and unit and no In/Out. `type` narrows to one kind; paged because a
 // common material has thousands of rows.
-const TXN_TYPES = ['Receiving Report', 'Vendor Return', 'Item Fulfillment', 'Item Receipt', 'Assembly Build',
+const TXN_TYPES = ['Receiving Report', 'Vendor Return', 'Item Fulfillment', 'Item Receipt', 'Assembly Build', 'Office Supply Fulfillment',
   'Inventory Adjustment', 'Purchase Order', 'Transfer Order'];
 router.get('/:id/transactions', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
@@ -355,7 +355,7 @@ router.get('/:id/transactions', requireAuth, requirePermission(ROUTE, 'can_view'
         LEFT JOIN locations wl ON wl.id = t.withdraw_from_location_id
         LEFT JOIN locations tl ON tl.id = t.transfer_to_location_id
        WHERE tol.item_id = ?`;
-    const params = [ids, ids, ids, ids, ids, ids, id, id];
+    const params = [...movementParams(ids), id, id];
     const filter = type ? 'WHERE x.trans_type = ?' : '';
     const fParams = type ? [type] : [];
 

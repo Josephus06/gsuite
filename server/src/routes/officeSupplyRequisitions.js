@@ -99,15 +99,27 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   } catch (err) { next(err); }
 });
 
+// On hand at the Withdraw From warehouse, from the stock ledger -- the figure the form's picker,
+// the Bin Card and the item page show. It read the inventory_locations snapshot, which holds
+// nothing for office supplies, so every line showed a blank Qty on Hand.
+async function onHandAt(db, itemIds, locationId) {
+  const out = new Map();
+  if (!locationId || !itemIds.length) return out;
+  const byPair = await deriveOnHand(db, itemIds);
+  for (const id of itemIds) out.set(Number(id), Number((byPair.get(`${id}|${locationId}`) || 0).toFixed(4)));
+  return out;
+}
+
 async function loadLines(osrId, locationId) {
   const [lines] = await pool.query(
-    `SELECT l.*, i.item_code, i.display_name AS item_name, i.item_type,
-            (SELECT qty_on_hand FROM inventory_locations il WHERE il.inventory_id = l.item_id AND il.location_id = ?) AS on_hand
+    `SELECT l.*, i.item_code, i.display_name AS item_name, i.item_type
      FROM office_supply_requisition_lines l
      LEFT JOIN inventories i ON i.id = l.item_id
      WHERE l.osr_id = ? ORDER BY l.line_no`,
-    [locationId || null, osrId]
+    [osrId]
   );
+  const onHand = await onHandAt(pool, lines.filter((l) => l.item_id && !isNonStockItem(l.item_type)).map((l) => l.item_id), locationId);
+  for (const l of lines) l.on_hand = onHand.has(Number(l.item_id)) ? onHand.get(Number(l.item_id)) : null;
   return lines;
 }
 
@@ -233,6 +245,9 @@ router.post('/:id/fulfill', requireAuth, requirePermission(ROUTE, 'can_approve')
       [req.params.id]
     );
     const byId = new Map(lines.map((l) => [l.id, l]));
+    // Checked against the stock ledger, the same Qty on Hand the screen shows. It read the empty
+    // inventory_locations snapshot, so every fulfillment was refused as exceeding 0 on hand.
+    const onHand = await onHandAt(conn, lines.filter((l) => l.item_id && !isNonStockItem(l.item_type)).map((l) => l.item_id), o.location_id);
 
     for (const s of submitted) {
       const line = byId.get(Number(s.line_id));
@@ -241,8 +256,7 @@ router.post('/:id/fulfill', requireAuth, requirePermission(ROUTE, 'can_approve')
       const serve = num(s.qty_to_serve);
       if (serve > remaining) return res.status(409).json({ error: `Qty to Serve for ${line.item_code} exceeds the remaining balance (${remaining}).` });
       if (isNonStockItem(line.item_type)) continue;
-      const [[stock]] = await conn.query('SELECT qty_on_hand FROM inventory_locations WHERE inventory_id = ? AND location_id = ?', [line.item_id, o.location_id]);
-      const available = num(stock?.qty_on_hand);
+      const available = num(onHand.get(Number(line.item_id)));
       if (serve > available) return res.status(409).json({ error: `Qty to Serve for ${line.item_code} exceeds what's on hand at this location (${available}).` });
     }
 
@@ -330,12 +344,14 @@ router.get('/fulfillments/:id', requireAuth, requirePermission(ROUTE, 'can_view'
     );
     if (!f) return res.status(404).json({ error: 'Not found' });
     const [lines] = await pool.query(
-      `SELECT fl.*, i.item_code, i.display_name AS item_name,
-              (SELECT qty_on_hand FROM inventory_locations il WHERE il.inventory_id = fl.item_id AND il.location_id = ?) AS on_hand
+      `SELECT fl.*, i.item_code, i.display_name AS item_name, i.item_type
        FROM osr_fulfillment_lines fl LEFT JOIN inventories i ON i.id = fl.item_id
        WHERE fl.osrf_id = ? ORDER BY fl.id`,
-      [f.transfer_to_location_id || f.withdraw_from_location_id || null, req.params.id]
+      [req.params.id]
     );
+    const onHand = await onHandAt(pool, lines.filter((l) => l.item_id && !isNonStockItem(l.item_type)).map((l) => l.item_id),
+      f.transfer_to_location_id || f.withdraw_from_location_id);
+    for (const l of lines) l.on_hand = onHand.has(Number(l.item_id)) ? onHand.get(Number(l.item_id)) : null;
     // GL Impact: DR 30504 Materials, Tools & Supplies / CR 15400 Supplies Inventory for the total value.
     const [[dr]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '30504'");
     const [[cr]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '15400'");

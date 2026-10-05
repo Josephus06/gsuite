@@ -209,7 +209,45 @@ function movementsSql(filterByItem = false) {
   LEFT JOIN units_of_measure bu4 ON bu4.id = i4.base_unit_id
   LEFT JOIN units_of_measure su4 ON su4.id = i4.stock_unit_id
   WHERE ia.status = 'approved'${and('ial')}
+
+  UNION ALL
+
+  -- Office Supply Requisition fulfillments (OSRF): out of the Withdraw From warehouse, and into
+  -- the Transfer To one when the requisition names it -- a one-step transfer. Left out until
+  -- 2026-10-05, so a fulfilled requisition never came off the shelf it was served from. The lines
+  -- record the item's base unit code, so toBase leaves them as they are.
+  SELECT osf.date_created, osf.osrf_no, 'Office Supply Fulfillment',
+         osr.osr_no, osfl.item_id, osf.withdraw_from_location_id, owloc.location_name, NULL, NULL,
+         0, ${toBase('osfl.fulfilled_qty', 'osfl.uom', 'i5', 'bu5')}, osfl.cost, osf.id, osf.created_at, osfl.uom, osfl.uom
+  FROM osr_fulfillment_lines osfl
+  JOIN osr_fulfillments osf ON osf.id = osfl.osrf_id
+  JOIN office_supply_requisitions osr ON osr.id = osf.osr_id
+  LEFT JOIN locations owloc ON owloc.id = osf.withdraw_from_location_id
+  LEFT JOIN inventories i5 ON i5.id = osfl.item_id
+  LEFT JOIN units_of_measure bu5 ON bu5.id = i5.base_unit_id
+  WHERE osf.withdraw_from_location_id IS NOT NULL AND (i5.item_type IS NULL OR LOWER(i5.item_type) NOT IN ('service', 'non-inventory', 'noninventory'))${and('osfl')}
+
+  UNION ALL
+
+  SELECT osf2.date_created, osf2.osrf_no, 'Office Supply Fulfillment',
+         osr2.osr_no, osfl2.item_id, NULL, NULL, osf2.transfer_to_location_id, otloc.location_name,
+         ${toBase('osfl2.fulfilled_qty', 'osfl2.uom', 'i6', 'bu6')}, 0, osfl2.cost, osf2.id, osf2.created_at, osfl2.uom, osfl2.uom
+  FROM osr_fulfillment_lines osfl2
+  JOIN osr_fulfillments osf2 ON osf2.id = osfl2.osrf_id
+  JOIN office_supply_requisitions osr2 ON osr2.id = osf2.osr_id
+  LEFT JOIN locations otloc ON otloc.id = osf2.transfer_to_location_id
+  LEFT JOIN inventories i6 ON i6.id = osfl2.item_id
+  LEFT JOIN units_of_measure bu6 ON bu6.id = i6.base_unit_id
+  WHERE osf2.transfer_to_location_id IS NOT NULL AND (i6.item_type IS NULL OR LOWER(i6.item_type) NOT IN ('service', 'non-inventory', 'noninventory'))${and('osfl2')}
 `;
+}
+
+// How many item-id placeholders movementsSql(true) carries -- one per movement branch. Callers
+// pass movementParams(ids) rather than counting branches themselves, so adding a branch here
+// cannot leave a caller one parameter short.
+const MOVEMENT_FILTER_COUNT = 8;
+function movementParams(ids) {
+  return Array.from({ length: MOVEMENT_FILTER_COUNT }, () => ids);
 }
 
 // On-hand per item + location, as the running total of those movements -- the same number the
@@ -233,7 +271,7 @@ async function deriveOnHand(db, itemIds) {
   const ids = [...new Set((itemIds || []).filter((id) => id != null).map(Number))];
   const byPair = new Map();
   if (!ids.length) return byPair;
-  const p6 = [ids, ids, ids, ids, ids, ids];
+  const p6 = movementParams(ids);
 
   const sumByPair = async (since) => {
     const [rows] = await db.query(
@@ -345,5 +383,5 @@ function toDocQty(baseQty, docUom, baseCode, baseTitle, conversionFactor) {
 }
 
 module.exports = {
-  movementsSql, deriveOnHand, unitIsBase, unitIsConvertible, toDocQty, DIMENSION_UNITS,
+  movementsSql, movementParams, deriveOnHand, unitIsBase, unitIsConvertible, toDocQty, DIMENSION_UNITS,
 };

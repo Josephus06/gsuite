@@ -29,7 +29,7 @@
 const fs = require('fs');
 require('dotenv').config();
 const pool = require('../db');
-const { movementsSql } = require('../lib/stockLedger');
+const { movementsSql, movementParams } = require('../lib/stockLedger');
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
 const arg = (n, d) => (process.argv.find((a) => a.startsWith(`--${n}=`)) || '').split('=')[1] || d;
@@ -109,7 +109,7 @@ async function main() {
          FROM (${movementsSql(true)}) m
         WHERE m.trans_date <= ?
         GROUP BY 1, 2`,
-      [WINDOW_FROM, chunk, chunk, chunk, chunk, chunk, chunk, AS_OF]);
+      [WINDOW_FROM, ...movementParams(chunk), AS_OF]);
     for (const r of rows) {
       if (r.location_id == null) continue;
       const k = `${r.item_id}|${r.location_id}`;
