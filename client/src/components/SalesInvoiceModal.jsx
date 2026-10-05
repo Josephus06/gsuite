@@ -236,8 +236,8 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
               ? { nsso_id: nssoId, nsso_line_ids: includedLines.map((l) => l.nsso_line_id) }
               : { sales_order_line_ids: includedLines.map((l) => l.sales_order_line_id) }),
         ...(fromEstimate || nssoId ? {} : { sales_order_id: fromTicket ? data.sales_order_id : salesOrderId }),
-        // SI or DR, chosen on the Sales Order's Bill menu. A converted Delivery Ticket stays SI.
-        invoice_type: fromTicket ? 'SI' : invoiceType,
+        // SI or DR, chosen on the Sales Order's or the Delivery Ticket's Bill menu.
+        invoice_type: invoiceType,
         date_created: dateCreated,
         date_due: dateDue,
         term,
@@ -263,7 +263,7 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
     <div className="modal-overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal modal-xl" style={{ padding: 0, overflow: 'hidden' }}>
         <div className="estimate-banner" style={{ borderRadius: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <h2 style={{ margin: 0, color: '#fff' }}>{fromTicket ? `Create SI from ${data.dt_no}` : `Create ${invoiceType}`}</h2>
+          <h2 style={{ margin: 0, color: '#fff' }}>{fromTicket ? `Create ${invoiceType} from ${data.dt_no}` : `Create ${invoiceType}`}</h2>
 
           <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 24, lineHeight: 1, cursor: 'pointer' }}>×</button>
         </div>

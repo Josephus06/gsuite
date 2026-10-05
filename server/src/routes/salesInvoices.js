@@ -845,12 +845,13 @@ async function billDeliveryTicket(req, res, conn) {
   await conn.beginTransaction();
   const [result] = await conn.query(
     `INSERT INTO sales_invoices
-       (invoice_no, sales_order_id, delivery_ticket_id, date_created, date_due, term, bs_si_no, po_no,
+       (invoice_no, invoice_type, sales_order_id, delivery_ticket_id, date_created, date_due, term, bs_si_no, po_no,
         sales_rep_id, office_location_id, department_id, bill_to_address, memo, withholding_tax_pct,
         subtotal, discount_amount, net_of_tax, ewt_amount, tax_amount, gross_amount, amount_due, created_by_user_id)
-     VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      dt.sales_order_id, deliveryTicketId, dateCreated || new Date().toISOString().slice(0, 10), dateDue || null,
+      // SI or DR -- a ticket converts to either, picked on its Bill menu.
+      normaliseInvoiceType(req.body.invoice_type), dt.sales_order_id, deliveryTicketId, dateCreated || new Date().toISOString().slice(0, 10), dateDue || null,
       term || null, bsSiNo || null, poNo || null, salesRepId || null, officeLocationId || null, departmentId || null,
       billToAddress || null, memo || null, withholdingTaxPct || 0, subtotal, discountAmount, netOfTax,
       ewtAmount, taxAmount, grossAmount, amountDue, req.user.id,

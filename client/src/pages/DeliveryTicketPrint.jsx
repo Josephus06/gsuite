@@ -90,6 +90,7 @@ export default function DeliveryTicketPrint() {
             <div><strong>Delivery Ticket # :</strong> {dt.dt_no}</div>
             <div>Date : {displayDate(dt.date_created)}</div>
             <div>Term : {dt.term || ''}</div>
+            <div>PO # : {dt.po_no || ''}</div>
           </div>
         </div>
 

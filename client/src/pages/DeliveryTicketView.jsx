@@ -34,7 +34,8 @@ export default function DeliveryTicketView() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [showBillMenu, setShowBillMenu] = useState(false);
-  const [showSIModal, setShowSIModal] = useState(false);
+  // 'SI' or 'DR' while the Create form is open -- a ticket converts to either.
+  const [billType, setBillType] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -107,7 +108,9 @@ export default function DeliveryTicketView() {
               <button className="btn btn-sm btn-primary" onClick={() => setShowBillMenu((s) => !s)}>Bill ▾</button>
               {showBillMenu && (
                 <div className="card" style={{ position: 'absolute', right: 0, top: '110%', zIndex: 20, padding: 6, minWidth: 80 }}>
-                  <button type="button" className="btn btn-sm" style={{ width: '100%' }} onClick={() => { setShowBillMenu(false); setShowSIModal(true); }}>SI</button>
+                  {['SI', 'DR'].map((t) => (
+                    <button key={t} type="button" className="btn btn-sm" style={{ width: '100%', marginBottom: 4 }} onClick={() => { setShowBillMenu(false); setBillType(t); }}>{t}</button>
+                  ))}
                 </div>
               )}
             </div>
@@ -318,11 +321,12 @@ export default function DeliveryTicketView() {
         />
       )}
 
-      {showSIModal && (
+      {billType && (
         <SalesInvoiceModal
           deliveryTicketId={Number(id)}
-          onClose={() => setShowSIModal(false)}
-          onSaved={async (si) => { setShowSIModal(false); await load(); navigate(`/sales-invoices/${si.id}`); }}
+          invoiceType={billType}
+          onClose={() => setBillType(null)}
+          onSaved={async (si) => { setBillType(null); await load(); navigate(`/sales-invoices/${si.id}`); }}
         />
       )}
     </div>
