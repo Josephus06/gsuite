@@ -35,6 +35,16 @@ export default function DeliveryReceiptPrint({ si }) {
   return (
     <div className="estimate-print">
       <style>{`
+        /* The acknowledgement sits at the FOOT of the page however short the receipt (asked
+           2026-10-06), the way the Delivery Ticket's does: the sheet is a page-tall column and the
+           box takes the space left with margin-top: auto. A receipt that runs past one page simply
+           ends with it, after the last line. */
+        @page { size: A4 portrait; margin: 12mm; }
+        .dr-sheet { display: flex; flex-direction: column; min-height: 1000px; }
+        @media print {
+          .estimate-print .print-sheet.dr-sheet { padding: 0; }
+          .dr-sheet { min-height: 270mm; }
+        }
         .dr-items { width: 100%; table-layout: fixed; border-collapse: collapse; margin-bottom: 16px; }
         /* white-space is reset explicitly: the app's global "th, td { white-space: nowrap }"
            applies outside .table-wrap, and these descriptions run to 200 characters. */
@@ -58,9 +68,10 @@ export default function DeliveryReceiptPrint({ si }) {
         /* The acknowledgement. Boxed, because it is the part of the page that is signed, and
            kept off a page break so a signature can never land away from what it acknowledges. */
         .dr-ack {
-          border: 1px solid #999; padding: 14px 16px 18px; margin-top: 28px;
+          border: 1px solid #999; padding: 14px 16px 18px; margin-top: auto;
           break-inside: avoid; page-break-inside: avoid;
         }
+        .dr-ack-gap { height: 28px; flex-shrink: 0; }
         .dr-ack-text { font-size: 12px; margin: 0 0 34px; }
         .dr-ack-row { display: flex; justify-content: space-between; gap: 32px; text-align: center; }
         .dr-ack-row > div { flex: 1; }
@@ -72,7 +83,7 @@ export default function DeliveryReceiptPrint({ si }) {
         <button className="btn btn-primary" onClick={() => window.print()}>Print</button>
       </div>
 
-      <div className="print-sheet">
+      <div className="print-sheet dr-sheet">
         <PrintLetterhead />
 
         <h2 className="print-title">Delivery Receipt</h2>
@@ -137,6 +148,8 @@ export default function DeliveryReceiptPrint({ si }) {
           </tfoot>
         </table>
 
+        {/* Keeps the old 28px clear of the total when the page is full and auto has nothing to give. */}
+        <div className="dr-ack-gap" />
         <div className="dr-ack">
           <p className="dr-ack-text">Received the above articles good order and condition.</p>
           {/* Both sides are signed by hand at the door. Nothing is pre-filled here -- in
