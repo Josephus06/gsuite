@@ -69,7 +69,7 @@ export default function FormView() {
       await load();
       setSaved(`${account.account_code} — ${account.account_name} set on ${todo.length} item(s).`);
     } catch (e) {
-      setError(e.response?.data?.error || 'Could not set the COGS accounts.');
+      setError(e.response?.data?.error || 'Could not set the accounts.');
       await load();
     } finally { setBusy(false); }
   }
@@ -90,7 +90,7 @@ export default function FormView() {
       await api.put(`/forms/${id}/items/${itemId}/cogs`, { cogs_account_id: accountId || null });
       await load();
     } catch (e) {
-      setError(e.response?.data?.error || 'Could not set the COGS account.');
+      setError(e.response?.data?.error || 'Could not set the account.');
     }
   }
 
@@ -162,7 +162,7 @@ export default function FormView() {
           )}
           {mayNote && (
             <button className="btn btn-sm btn-primary" disabled={busy || cogsBlocksNote}
-              title={cogsBlocksNote ? `Assign a COGS account to every item first (${doc.cogs_missing} missing)` : undefined}
+              title={cogsBlocksNote ? `Select an account for every item first (${doc.cogs_missing} missing)` : undefined}
               onClick={() => act('note', null, 'Noted.')}>Note</button>
           )}
           {mayApprove && (
@@ -274,19 +274,19 @@ export default function FormView() {
           <h3>{doc.type === 'payment' ? 'Particulars' : 'Expenses'}</h3>
           {cogsBlocksNote && (
             <div className="muted" style={{ marginBottom: 8, color: 'var(--danger, #b91c1c)' }}>
-              Assign a COGS account to every item before noting -- {doc.cogs_missing} still missing.
+              Select an account for every item before noting -- {doc.cogs_missing} still missing.
             </div>
           )}
           {canSetCogs && doc.cogs_missing > 0 && (
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
-              <span className="muted">Apply to all items without COGS :</span>
+              <span className="muted">Apply to all items without an account :</span>
               <div style={{ minWidth: 300 }}>
                 <EntityPicker
-                  label="COGS Account (all items)" items={cogsAccounts} value=""
+                  label="Select Account (all items)" items={cogsAccounts} value=""
                   getLabel={(a) => `${a.account_code} — ${a.account_name}`}
                   columns={[{ key: 'account_code', label: 'Code' }, { key: 'account_name', label: 'Account' }, { key: 'account_type', label: 'Type' }]}
                   searchKeys={['account_code', 'account_name']}
-                  placeholder="Select COGS for all..."
+                  placeholder="Select Account"
                   disabled={busy}
                   onSelect={applyCogsToAll}
                 />
@@ -300,7 +300,7 @@ export default function FormView() {
                   {isFund && <th>Date</th>}
                   <th>Particulars</th>
                   <th style={{ textAlign: 'right' }}>Amount</th>
-                  {doc.needs_cogs && <th>COGS</th>}
+                  {doc.needs_cogs && <th>Account</th>}
                 </tr>
               </thead>
               <tbody>
@@ -324,11 +324,11 @@ export default function FormView() {
                         {canSetCogs ? (
                           <div style={{ minWidth: 260, ...(!r.cogs_account_id ? { outline: '1px solid var(--danger, #b91c1c)', borderRadius: 6 } : {}) }}>
                             <EntityPicker
-                              label="COGS Account" items={cogsAccounts} value={r.cogs_account_id || ''}
+                              label="Select Account" items={cogsAccounts} value={r.cogs_account_id || ''}
                               getLabel={(a) => `${a.account_code} — ${a.account_name}`}
                               columns={[{ key: 'account_code', label: 'Code' }, { key: 'account_name', label: 'Account' }, { key: 'account_type', label: 'Type' }]}
                               searchKeys={['account_code', 'account_name']}
-                              placeholder="Select COGS..."
+                              placeholder="Select Account"
                               onSelect={(a) => setItemCogs(r.id, a.id)}
                               onClear={() => setItemCogs(r.id, null)}
                             />
@@ -357,7 +357,7 @@ export default function FormView() {
           <p className="muted" style={{ marginTop: 0 }}>
             {doc.gl_posts
               ? 'Posted to the books on the day this liquidation was approved.'
-              : 'What this liquidation will post once it is approved: each item\'s COGS account is debited, and the credit account below is credited.'}
+              : 'What this liquidation will post once it is approved: each item\'s account is debited, and the credit account below is credited.'}
           </p>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
             <span className="muted">Credit Account :</span>
@@ -382,7 +382,7 @@ export default function FormView() {
               <thead><tr><th>Account Code</th><th>Account Title</th><th>Memo</th><th style={{ textAlign: 'right' }}>Debit</th><th style={{ textAlign: 'right' }}>Credit</th></tr></thead>
               <tbody>
                 {(doc.gl_impact || []).length === 0 && (
-                  <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 16 }}>Nothing to post until the items have COGS accounts.</td></tr>
+                  <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 16 }}>Nothing to post until every item has an account.</td></tr>
                 )}
                 {(doc.gl_impact || []).map((g, i) => (
                   <tr key={i}>

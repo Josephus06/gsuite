@@ -677,7 +677,7 @@ router.post('/:id/note', requireAuth, async (req, res, next) => {
       const [[m]] = await pool.query(
         'SELECT COUNT(*) AS n FROM form_request_items WHERE form_request_id = ? AND cogs_account_id IS NULL', [doc.id]);
       if (Number(m.n)) {
-        return res.status(409).json({ error: `Assign a COGS account to every item first -- ${m.n} item(s) still have none.` });
+        return res.status(409).json({ error: `Select an account for every item first -- ${m.n} item(s) still have none.` });
       }
     }
 
