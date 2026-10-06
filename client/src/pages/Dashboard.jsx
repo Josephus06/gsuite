@@ -844,6 +844,16 @@ const jobDepartment = (j) => {
   const m = String(j.jobLocationName || '').toLowerCase().match(/warehouse\s*-\s*(sign|dpod|cnc|lfp)\b/);
   return m ? m[1] : null;
 };
+// On the GM's card a band's colour is its DEPARTMENT (asked 2026-10-06), with a legend saying so --
+// reusing the .jo-c* palette. Any other job location (a branch, none) is Other.
+const DEPT_COLOURS = [
+  { key: 'sign', label: 'Sign', cls: 'jo-c3' },
+  { key: 'dpod', label: 'DPOD', cls: 'jo-c1' },
+  { key: 'cnc', label: 'CNC', cls: 'jo-c0' },
+  { key: 'lfp', label: 'LFP', cls: 'jo-c2' },
+  { key: null, label: 'Other', cls: 'jo-c7' },
+];
+const deptColour = (j) => (DEPT_COLOURS.find((d) => d.key === jobDepartment(j)) || DEPT_COLOURS[DEPT_COLOURS.length - 1]).cls;
 
 // `range` is the GM card's Day / Week / Month switch (utils/calendarRange.jsx); the standalone
 // Production Schedule card stays on Month. The endpoint is monthly, so a week across a month end
@@ -902,7 +912,9 @@ function ForecastCalendarCard({ navigate, embedded = false, range = 'month' }) {
     list.sort((a, b) => String(a.plannedStart).localeCompare(String(b.plannedStart))
       || String(a.jobOrderNo).localeCompare(String(b.jobOrderNo)));
   }
+  // The GM's card colours by department (deptColour); everywhere else each job keeps its own colour.
   const colourById = assignJoColours(jobs);
+  const colourOf = (j) => (embedded ? deptColour(j) : colourById.get(j.id) || 'jo-c0');
   // Jobs whose forecast window touches the days on screen -- the header's count.
   const shownJobs = jobs.filter((j) => {
     const start = String(j.plannedStart || '').slice(0, 10);
@@ -944,6 +956,19 @@ function ForecastCalendarCard({ navigate, embedded = false, range = 'month' }) {
           )}
         </div>
 
+        {embedded && (
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', margin: '6px 0 10px', fontSize: 12 }}>
+            <span className="muted">Colour = department:</span>
+            {DEPT_COLOURS.map((d) => (
+              <span key={d.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                <span className={d.cls} style={{ width: 22, height: 12, borderRadius: 3, display: 'inline-block', background: 'var(--jo-fill)', border: '1px solid var(--jo-border)' }} />
+                {d.label}
+              </span>
+            ))}
+            <span className="muted">· a band runs from the job&apos;s Planned Start to its Planned End</span>
+          </div>
+        )}
+
         {/* Day: that day's jobs as the table the popup shows, in place of a single-cell grid. */}
         {range === 'day' && !loading && <ProductionDayTable list={byDay.get(days[0]) || []} spanLabel={spanLabel} navigate={navigate} />}
 
@@ -979,7 +1004,7 @@ function ForecastCalendarCard({ navigate, embedded = false, range = 'month' }) {
                   return (
                     <span
                       key={j.id}
-                      className={`artist-calendar-chip jo-span ${colourById.get(j.id) || 'jo-c0'}${key > start ? ' is-cont-left' : ''}${key < end ? ' is-cont-right' : ''}`}
+                      className={`artist-calendar-chip jo-span ${colourOf(j)}${key > start ? ' is-cont-left' : ''}${key < end ? ' is-cont-right' : ''}`}
                       title={`${j.jobOrderNo} - ${j.customerName || ''} - ${money2(j.amount)} - ${spanLabel(j)}`}
                     >
                       {j.jobOrderNo}
