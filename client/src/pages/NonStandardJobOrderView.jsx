@@ -261,7 +261,11 @@ export default function NonStandardJobOrderView() {
   const canRequestSalesRevision = canApproveSales && revisionsLeft > 0;
   // Forward only becomes available once the order is sitting on SBU Approved (or was
   // never gated). Approval unlocks the handoff; pressing Forward is what performs it.
-  const sbuCleared = FORWARDABLE.includes(order.sub_status);
+  // A SITE INSPECTION never goes to Design: once approved it sits In Process until Production --
+  // whoever holds Update on this page -- presses Complete. Same rule the server applies.
+  const isSiteInspection = order.job_type === 'SITE INSPECTION';
+  const sbuCleared = FORWARDABLE.includes(order.sub_status) && !isSiteInspection;
+  const canComplete = isSiteInspection && order.status === 'In Process' && can(ROUTE, 'can_update');
   // Editing stays open until the SBU gate is cleared -- while the order is queued for its
   // approver(s), and while an approver has parked it back in Sales Revision. Once approved
   // the details it was signed off against must not shift. Only the person who raised it
@@ -327,6 +331,12 @@ export default function NonStandardJobOrderView() {
               while parked with Sales for changes. The server refuses both regardless. */}
           {canEdit && !isCancelled && sbuCleared && !order.forwarded_at && (
             <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => act('forward')}>Forward to Design Supervisor</button>
+          )}
+          {canComplete && (
+            <button className="btn btn-sm btn-primary" disabled={busy}
+              onClick={() => { if (window.confirm(`Mark site inspection ${order.nstdjo_no} as complete?`)) act('complete', 'put'); }}>
+              Complete
+            </button>
           )}
           {canAssignArtist && (
             <button className="btn btn-sm btn-primary" disabled={busy} onClick={openAssign}>

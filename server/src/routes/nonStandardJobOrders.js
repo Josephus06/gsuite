@@ -46,7 +46,9 @@ const SUB_SALES_REVISION_DESIGN = 'Sales Revision (Design)';
 // not an approval outcome.
 const LIST_TABS = {
   for_approval: ['SBU Approval', 'Sales Approval'],
-  approved: ['SBU Approved', 'Approved'],
+  // A site inspection clears the SBU gate onto "Site Inspection" (In Process), and closes on
+  // "Site Inspection Done" -- the same two sides as SBU Approved / Approved.
+  approved: ['SBU Approved', 'Approved', 'Site Inspection', 'Site Inspection Done'],
 };
 // Cleared by an approver but not yet handed over. Approval only unlocks the handoff --
 // Sales still chooses when the order actually goes to Design by pressing Forward, which
@@ -82,6 +84,17 @@ const COMPLETED_STATUS = 'COMPLETED';
 // The states Forward can act from: approved, or never gated because the raiser's
 // department has no approvers configured.
 const FORWARDABLE_SUB_STATUSES = [SUB_PENDING, SUB_SBU_APPROVED];
+// A SITE INSPECTION has no layout, so it never goes to Design or an artist (asked
+// 2026-10-06). Clearing the SBU gate -- or raising one with no approvers -- puts it straight
+// In Process, where whoever holds Update on this page (Production, who do the inspection)
+// presses Complete to close it.
+const IN_PROCESS_STATUS = 'In Process';
+const SUB_SITE_INSPECTION = 'Site Inspection';
+const SUB_SITE_INSPECTION_DONE = 'Site Inspection Done';
+// Where an order lands once its SBU gate is cleared (or when it had none).
+const afterSbuGate = (jobType, status, gatedSubStatus) => (jobType === SITE_INSPECTION
+  ? { status: IN_PROCESS_STATUS, sub_status: SUB_SITE_INSPECTION }
+  : { status, sub_status: gatedSubStatus });
 const CANCELLED_STATUS = 'Cancelled';
 // End states -- nothing further can be done to an order once it reaches one of these.
 const TERMINAL_STATUSES = [CANCELLED_STATUS, COMPLETED_STATUS];
@@ -439,7 +452,11 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       [req.user.id],
     );
     const needsApproval = approvers.length > 0;
-    const initialSubStatus = needsApproval ? SUB_SBU_APPROVAL : SUB_PENDING;
+    // No gate to clear: a site inspection goes straight In Process (see afterSbuGate).
+    const initial = needsApproval
+      ? { status: INITIAL_STATUS, sub_status: SUB_SBU_APPROVAL }
+      : afterSbuGate(jobType.display_name, INITIAL_STATUS, SUB_PENDING);
+    const initialSubStatus = initial.sub_status;
 
     await conn.beginTransaction();
     const [result] = await conn.query(
@@ -454,7 +471,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
         h.date_created || new Date().toISOString().slice(0, 10), jobLocationId, jobType.id, jobType.display_name,
         h.pms_job_type_id || null, h.description.trim(), h.quantity, h.shipping_address || null,
         h.delivery_date, h.delivery_time || null, branch.employee_id, branch.sales_division_id,
-        INITIAL_STATUS, initialSubStatus, req.user.id],
+        initial.status, initialSubStatus, req.user.id],
     );
     const nstdjoNo = `NSTDJO-${result.insertId}`;
     await conn.query('UPDATE non_standard_job_orders SET nstdjo_no = ? WHERE id = ?', [nstdjoNo, result.insertId]);
@@ -489,7 +506,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
     await conn.commit();
     res.status(201).json({
-      id: result.insertId, nstdjo_no: nstdjoNo, status: INITIAL_STATUS,
+      id: result.insertId, nstdjo_no: nstdjoNo, status: initial.status,
       sub_status: initialSubStatus, needs_approval: needsApproval,
     });
   } catch (err) {
@@ -504,12 +521,15 @@ router.post('/:id/forward', requireAuth, requirePermission(ROUTE, 'can_edit'), a
   const conn = await pool.getConnection();
   try {
     const [[row]] = await conn.query(
-      'SELECT id, nstdjo_no, description, status, sub_status, forwarded_at FROM non_standard_job_orders WHERE id = ?',
+      'SELECT id, nstdjo_no, description, job_type, status, sub_status, forwarded_at FROM non_standard_job_orders WHERE id = ?',
       [req.params.id],
     );
     if (!row) return res.status(404).json({ error: 'Non-standard job order not found.' });
     if (TERMINAL_STATUSES.includes(row.status)) {
       return res.status(409).json({ error: `This job order is ${row.status} and can no longer be forwarded.` });
+    }
+    if (row.job_type === SITE_INSPECTION) {
+      return res.status(409).json({ error: 'A Site Inspection does not go to Design -- it is completed by Production once inspected.' });
     }
     // Nothing reaches Design until the SBU gate is cleared -- neither while it is still
     // waiting on an approver, nor while it is parked with Sales for changes.
@@ -725,11 +745,40 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 // SBU approval gate. Any ONE of the order's tagged approvers clears it for everyone --
 // not unanimous, same rule as Tickets. Clearing it moves the order out of "SBU Approval"
 // and into "For Design Supervisor", which is what makes it visible to Design at all.
+// Clears the SBU gate on an order -- shared by Approve and Bulk Approve. Approval does not hand
+// the order over: it lands on "SBU Approved", where Forward becomes available to Sales -- except
+// a SITE INSPECTION, which has no Design stage and goes straight In Process (afterSbuGate).
+// Runs inside the caller's transaction; returns the order's new status and sub status.
+async function clearSbuGate(conn, row, userId) {
+  const next = afterSbuGate(row.job_type, row.status, SUB_SBU_APPROVED);
+  const siteInspection = next.sub_status === SUB_SITE_INSPECTION;
+  await conn.query(
+    'UPDATE non_standard_job_orders SET approved_by_user_id = ?, approved_at = NOW(), status = ?, sub_status = ?, updated_at = NOW() WHERE id = ?',
+    [userId, next.status, next.sub_status, row.id],
+  );
+  await conn.query(
+    `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
+     VALUES (?, 'nstdjo_approved', ?, ?, 'NonStandardJobOrder', ?)`,
+    [row.created_by_user_id, `${row.nstdjo_no} has been approved`,
+      siteInspection
+        ? `Your site inspection ${row.nstdjo_no} is approved and now In Process with Production.`
+        : `Your non-standard job order ${row.nstdjo_no} is approved and can now be forwarded to the Design Supervisor.`, row.id],
+  );
+  await logAudit(conn, { id: row.id, userId, eventType: 'Approved', fieldName: 'approved_at', newValue: 'approved' });
+  if (next.status !== row.status) {
+    await logAudit(conn, { id: row.id, userId, eventType: 'Status Change', fieldName: 'status', oldValue: row.status, newValue: next.status });
+  }
+  await logAudit(conn, {
+    id: row.id, userId, eventType: 'Status Change', fieldName: 'sub_status', oldValue: row.sub_status, newValue: next.sub_status,
+  });
+  return next;
+}
+
 router.put('/:id/approve', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[row]] = await conn.query(
-      'SELECT id, nstdjo_no, status, sub_status, approved_at, description, created_by_user_id, sales_division_id FROM non_standard_job_orders WHERE id = ?',
+      'SELECT id, nstdjo_no, job_type, status, sub_status, approved_at, description, created_by_user_id, sales_division_id FROM non_standard_job_orders WHERE id = ?',
       [req.params.id],
     );
     if (!row) return res.status(404).json({ error: 'Non-standard job order not found.' });
@@ -746,28 +795,9 @@ router.put('/:id/approve', requireAuth, async (req, res, next) => {
     }
 
     await conn.beginTransaction();
-    // Approval clears the gate but does not hand the order over -- it lands on
-    // "SBU Approved", where Forward becomes available to Sales.
-    await conn.query(
-      'UPDATE non_standard_job_orders SET approved_by_user_id = ?, approved_at = NOW(), sub_status = ?, updated_at = NOW() WHERE id = ?',
-      [req.user.id, SUB_SBU_APPROVED, req.params.id],
-    );
-    await conn.query(
-      `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
-       VALUES (?, 'nstdjo_approved', ?, ?, 'NonStandardJobOrder', ?)`,
-      [row.created_by_user_id, `${row.nstdjo_no} has been approved`,
-        `Your non-standard job order ${row.nstdjo_no} is approved and can now be forwarded to the Design Supervisor.`, req.params.id],
-    );
-    await logAudit(conn, {
-      id: req.params.id, userId: req.user.id, eventType: 'Approved',
-      fieldName: 'approved_at', newValue: 'approved',
-    });
-    await logAudit(conn, {
-      id: req.params.id, userId: req.user.id, eventType: 'Status Change',
-      fieldName: 'sub_status', oldValue: row.sub_status, newValue: SUB_SBU_APPROVED,
-    });
+    const moved = await clearSbuGate(conn, row, req.user.id);
     await conn.commit();
-    res.json({ id: Number(req.params.id), status: row.status, sub_status: SUB_SBU_APPROVED });
+    res.json({ id: Number(req.params.id), ...moved });
   } catch (err) {
     await conn.rollback();
     next(err);
@@ -857,6 +887,50 @@ router.put('/:id/approve-sales', requireAuth, requirePermission(ROUTE, 'can_appr
     });
     await conn.commit();
     res.json({ id: Number(req.params.id), status: COMPLETED_STATUS, sub_status: SUB_APPROVED });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally { conn.release(); }
+});
+
+// Closes a SITE INSPECTION once it has been done. Its own right -- Update on this page -- so it
+// can be given to Production (who do the inspection) without Edit, which would let them change
+// or cancel the order. Only from In Process: approval is what puts it there.
+router.put('/:id/complete', requireAuth, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!(await userCan(req.user.id, ROUTE, 'can_update'))) {
+      return res.status(403).json({ error: 'You do not have rights to complete site inspections.' });
+    }
+    const [[row]] = await conn.query(
+      'SELECT id, nstdjo_no, job_type, status, sub_status, created_by_user_id FROM non_standard_job_orders WHERE id = ?',
+      [req.params.id],
+    );
+    if (!row) return res.status(404).json({ error: 'Non-standard job order not found.' });
+    if (row.job_type !== SITE_INSPECTION) return res.status(409).json({ error: 'Only a Site Inspection is completed this way.' });
+    if (row.status !== IN_PROCESS_STATUS) {
+      return res.status(409).json({ error: `This site inspection is ${row.status}${row.sub_status ? ` (${row.sub_status})` : ''}, not In Process.` });
+    }
+
+    await conn.beginTransaction();
+    await conn.query(
+      'UPDATE non_standard_job_orders SET status = ?, sub_status = ?, updated_at = NOW() WHERE id = ?',
+      [COMPLETED_STATUS, SUB_SITE_INSPECTION_DONE, row.id],
+    );
+    await logAudit(conn, { id: row.id, userId: req.user.id, eventType: 'Completed', fieldName: 'status', oldValue: row.status, newValue: COMPLETED_STATUS });
+    await logAudit(conn, {
+      id: row.id, userId: req.user.id, eventType: 'Status Change', fieldName: 'sub_status', oldValue: row.sub_status, newValue: SUB_SITE_INSPECTION_DONE,
+    });
+    if (row.created_by_user_id && row.created_by_user_id !== req.user.id) {
+      await conn.query(
+        `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
+         VALUES (?, 'nstdjo_completed', ?, ?, 'NonStandardJobOrder', ?)`,
+        [row.created_by_user_id, `${row.nstdjo_no} site inspection completed`,
+          `The site inspection ${row.nstdjo_no} has been marked complete.`, row.id],
+      );
+    }
+    await conn.commit();
+    res.json({ id: row.id, status: COMPLETED_STATUS, sub_status: SUB_SITE_INSPECTION_DONE });
   } catch (err) {
     await conn.rollback();
     next(err);
@@ -1357,7 +1431,7 @@ router.post('/bulk-approve', requireAuth, async (req, res, next) => {
       const conn = await pool.getConnection();
       try {
         const [[row]] = await conn.query(
-          `SELECT id, nstdjo_no, status, sub_status, approved_at, artist_employee_id, created_by_user_id, sales_division_id
+          `SELECT id, nstdjo_no, job_type, status, sub_status, approved_at, artist_employee_id, created_by_user_id, sales_division_id
              FROM non_standard_job_orders WHERE id = ?`,
           [id],
         );
@@ -1376,23 +1450,9 @@ router.post('/bulk-approve', requireAuth, async (req, res, next) => {
           }
 
           await conn.beginTransaction();
-          await conn.query(
-            'UPDATE non_standard_job_orders SET approved_by_user_id = ?, approved_at = NOW(), sub_status = ?, updated_at = NOW() WHERE id = ?',
-            [req.user.id, SUB_SBU_APPROVED, id],
-          );
-          await conn.query(
-            `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
-             VALUES (?, 'nstdjo_approved', ?, ?, 'NonStandardJobOrder', ?)`,
-            [row.created_by_user_id, `${row.nstdjo_no} has been approved`,
-              `Your non-standard job order ${row.nstdjo_no} is approved and can now be forwarded to the Design Supervisor.`, id],
-          );
-          await logAudit(conn, { id, userId: req.user.id, eventType: 'Approved', fieldName: 'approved_at', newValue: 'approved' });
-          await logAudit(conn, {
-            id, userId: req.user.id, eventType: 'Status Change',
-            fieldName: 'sub_status', oldValue: row.sub_status, newValue: SUB_SBU_APPROVED,
-          });
+          const moved = await clearSbuGate(conn, row, req.user.id);
           await conn.commit();
-          approved.push({ ...ref, gate: 'SBU', status: row.status, sub_status: SUB_SBU_APPROVED });
+          approved.push({ ...ref, gate: 'SBU', ...moved });
           continue;
         }
 
