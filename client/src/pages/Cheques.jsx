@@ -169,7 +169,7 @@ export default function Cheques() {
           <div className="table-wrap">
             <table className="responsive-cards">
               <thead>
-                <tr><th>Cheque No</th><th>Date</th><th>Memo</th><th>Cheque #</th><th>Payee</th><th>Account</th><th style={{ textAlign: 'right' }}>Total</th><th>Released</th><th>Status</th><th></th></tr>
+                <tr><th>Cheque No</th><th>Date</th><th>Cheque #</th><th>Payee</th><th>Account</th><th style={{ textAlign: 'right' }}>Total</th><th>Released</th><th>Status</th><th>Memo</th><th></th></tr>
               </thead>
               <tbody>
                 {rows.length === 0 && <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>No cheques found.</td></tr>}
@@ -177,14 +177,14 @@ export default function Cheques() {
                   <tr key={row.id}>
                     <td data-label="Cheque No">{row.cheque_no}</td>
                     <td data-label="Date">{formatDate(row.date_created)}</td>
-                    {/* Memo in the Cheque Date column's place (asked 2026-10-02); the cheque date is on the cheque itself. */}
-                    <td data-label="Memo" style={{ whiteSpace: 'normal', maxWidth: 320 }}>{row.memo || ''}</td>
                     <td data-label="Cheque #">{row.cheque_number}</td>
                     <td data-label="Payee">{row.payee_account_name || row.payee_name}</td>
                     <td data-label="Account">{row.account_name}</td>
                     <td data-label="Total" style={{ textAlign: 'right' }}>{money(row.total_amount)}</td>
                     <td data-label="Released">{row.date_released ? formatDate(row.date_released) : <span className="muted">Not released</span>}</td>
                     <td data-label="Status">{STATUS_LABELS[row.status] || row.status}</td>
+                    {/* Memo right after Status (asked 2026-10-06; it had taken the Cheque Date column's place). */}
+                    <td data-label="Memo" style={{ whiteSpace: 'normal', maxWidth: 320 }}>{row.memo || ''}</td>
                     <td><Link className="btn btn-sm btn-primary" to={`/cheques/${row.id}`}>View</Link></td>
                   </tr>
                 ))}
