@@ -1106,6 +1106,7 @@ router.delete('/:id/job-orders/:joId', requireAuth, requirePermission(ROUTE, 'ca
     await conn.query('DELETE FROM estimate_job_order_processes WHERE estimate_job_order_id = ?', [req.params.joId]);
     await conn.query('DELETE FROM estimate_job_orders WHERE id = ?', [req.params.joId]);
     await logAudit(conn, { estimateId: req.params.id, userId: req.user.id, eventType: 'Deleted', fieldName: `job_order[${jo.line_no}]` });
+    await closeLineGaps(conn, 'estimate_job_orders', 'estimate_id', req.params.id);
     await conn.commit();
     res.status(204).send();
   } catch (err) {
@@ -1121,6 +1122,15 @@ router.delete('/:id/job-orders/:joId', requireAuth, requirePermission(ROUTE, 'ca
 // The form sends the ids in their new order and line_no is renumbered 1..n to match. Every id must
 // belong to the parent named in the URL, and all of them must be sent, so a stale form cannot leave
 // two lines sharing a number.
+// After a delete, close the gap: what is left is numbered 1..n in its existing order, so deleting
+// line 3 of 4 leaves 1, 2, 3 rather than 1, 2, 4 (asked 2026-10-06).
+async function closeLineGaps(conn, table, parentCol, parentId) {
+  const [rows] = await conn.query(`SELECT id FROM ${table} WHERE ${parentCol} = ? ORDER BY line_no, id`, [parentId]);
+  for (let i = 0; i < rows.length; i++) {
+    await conn.query(`UPDATE ${table} SET line_no = ? WHERE id = ? AND line_no <> ?`, [i + 1, rows[i].id, i + 1]);
+  }
+}
+
 async function renumber(conn, table, parentCol, parentId, ids) {
   const [rows] = await conn.query(`SELECT id FROM ${table} WHERE ${parentCol} = ?`, [parentId]);
   const have = new Set(rows.map((r) => Number(r.id)));
@@ -1258,6 +1268,7 @@ router.delete('/:id/job-orders/:joId/processes/:procId', requireAuth, requirePer
       return res.status(404).json({ error: 'Not found' });
     }
     await conn.query('DELETE FROM estimate_job_order_processes WHERE id = ?', [req.params.procId]);
+    await closeLineGaps(conn, 'estimate_job_order_processes', 'estimate_job_order_id', req.params.joId);
     await logAudit(conn, {
       estimateId: req.params.id, userId: req.user.id, eventType: 'Deleted',
       fieldName: `job_order[${jo.line_no}].process[${proc.line_no}]`,

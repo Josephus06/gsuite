@@ -561,7 +561,8 @@ export default function EstimateWizard() {
       if (!confirm(`Delete job order line #${row.line_no}?`)) return;
       await api.delete(`/estimates/${estimateId}/job-orders/${row.id}`);
     }
-    setJobOrders((prev) => prev.filter((_, i) => i !== idx));
+    // The server renumbers what is left 1..n; the screen follows, drafts (no number yet) included.
+    setJobOrders((prev) => prev.filter((_, i) => i !== idx).map((r, i) => (r.line_no ? { ...r, line_no: i + 1 } : r)));
   }
 
   // Copy a line, processes and all, as the next line. A saved line is copied on the server and the
@@ -833,7 +834,9 @@ export default function EstimateWizard() {
       if (!confirm(`Delete process line #${row.line_no}?`)) return;
       await api.delete(`/estimates/${estimateId}/job-orders/${jo.id}/processes/${row.id}`);
     }
-    setJobOrders((prev) => prev.map((r, i) => (i === joIdx ? { ...r, processes: r.processes.filter((_, pi) => pi !== procIdx) } : r)));
+    setJobOrders((prev) => prev.map((r, i) => (i === joIdx
+      ? { ...r, processes: r.processes.filter((_, pi) => pi !== procIdx).map((p, pi) => (p.line_no ? { ...p, line_no: pi + 1 } : p)) }
+      : r)));
     const updatedProcs = jo.processes.filter((_, pi) => pi !== procIdx);
     await recalcJobOrderSubtotal(joIdx, updatedProcs);
   }
