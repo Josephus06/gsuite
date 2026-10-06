@@ -6,6 +6,7 @@ import SalesInvoiceModal from '../components/SalesInvoiceModal';
 import DeliveryTicketModal from '../components/DeliveryTicketModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
+import EntityPicker from '../components/EntityPicker';
 import { displayDateTime } from '../utils/dates';
 
 // Read-only Sales Order detail -- mirrors EstimateView.jsx's layout (banner + 4-column
@@ -87,6 +88,31 @@ export default function SalesOrderView() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { can, user } = useAuth();
+  // Changing the Sales Rep (PUT /sales-orders/:id/sales-rep): a sales supervisor or SBU head (or a
+  // System Admin), on an order not yet Billed or Cancelled. The order's Job Orders follow.
+  const mayChangeRep = !!(user?.is_supervisor || user?.is_sales_business_unit || user?.account_type === 'System Admin');
+  const [repOptions, setRepOptions] = useState(null);
+  const [repError, setRepError] = useState('');
+  async function openRepPicker() {
+    setRepError('');
+    try {
+      const { data } = await api.get(`/sales-orders/${id}/sales-rep-options`);
+      setRepOptions(data);
+    } catch (err) {
+      setRepError(err.response?.data?.error || 'Could not load the reps.');
+    }
+  }
+  async function changeRep(emp) {
+    if (!confirm(`Change the Sales Rep to ${emp.first_name} ${emp.last_name}? This order's Job Orders change with it.`)) return;
+    setRepError('');
+    try {
+      await api.put(`/sales-orders/${id}/sales-rep`, { sales_rep_id: emp.id });
+      setRepOptions(null);
+      await load();
+    } catch (err) {
+      setRepError(err.response?.data?.error || 'Could not change the Sales Rep.');
+    }
+  }
   const [so, setSo] = useState(null);
   const [tab, setTab] = useState('items');
   const [loading, setLoading] = useState(true);
@@ -368,7 +394,26 @@ export default function SalesOrderView() {
           </div>
           <div>
             <h4>Other Details</h4>
-            <div>Sales Rep : <span className="hi">{so.sales_rep_name}</span></div>
+            <div>
+              Sales Rep : <span className="hi">{so.sales_rep_name}</span>
+              {mayChangeRep && !['billed', 'cancelled'].includes(so.status) && (
+                repOptions ? (
+                  <span style={{ display: 'inline-block', minWidth: 220, marginLeft: 8, verticalAlign: 'middle' }}>
+                    <EntityPicker
+                      label="Sales Rep" items={repOptions} value={so.sales_rep_id || ''}
+                      getLabel={(e) => `${e.first_name} ${e.last_name}`}
+                      columns={[{ key: 'name', label: 'Name', render: (e) => `${e.first_name} ${e.last_name}` }, { key: 'position_title', label: 'Position' }]}
+                      searchKeys={['first_name', 'last_name']}
+                      onSelect={changeRep}
+                    />
+                    <button type="button" className="link-btn" style={{ marginLeft: 6 }} onClick={() => setRepOptions(null)}>Cancel</button>
+                  </span>
+                ) : (
+                  <button type="button" className="link-btn" style={{ marginLeft: 8 }} onClick={openRepPicker}>Edit</button>
+                )
+              )}
+              {repError && <div className="error-banner" style={{ marginTop: 4 }}>{repError}</div>}
+            </div>
             <div>Prepared By : <span className="hi">{so.prepared_by_name}</span></div>
             <div>Approved By : <span className="hi">{so.approved_by_name}</span></div>
             <div>Production Lead Time : <span className="hi">{so.production_lead_time}</span></div>

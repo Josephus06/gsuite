@@ -184,6 +184,68 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
 // cancelled order with a live invoice or delivery behind it would leave AR and stock pointing at
 // an order that no longer exists. Its job orders that are not already Completed are cancelled
 // with it, so Production stops working on them.
+// Change a Sales Order's Sales Rep (asked 2026-10-06) -- a sales supervisor's or an SBU head's call
+// (or a System Admin's), on an order not yet Billed: once billed, the rep is what the commission
+// has been worked on. The order's Job Orders carry their own sales_rep_id (commission and visibility
+// read it there -- see listFilter in jobOrders.js), so they move with it in the same transaction.
+async function mayChangeSalesRep(userId) {
+  if (await isSystemAdmin(userId)) return true;
+  const [[u]] = await pool.query('SELECT is_supervisor, is_sales_business_unit FROM users WHERE id = ?', [userId]);
+  return !!(u && (u.is_supervisor || u.is_sales_business_unit));
+}
+const REP_LOCKED_STATUSES = ['billed', 'cancelled'];
+
+// The reps to choose from, for the picker -- from this route, so it needs no Employees permission.
+router.get('/:id/sales-rep-options', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await mayChangeSalesRep(req.user.id))) return res.status(403).json({ error: 'Only a sales supervisor or SBU head can change the Sales Rep.' });
+    const [rows] = await pool.query('SELECT id, first_name, last_name, position_title FROM employees ORDER BY first_name, last_name');
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+router.put('/:id/sales-rep', requireAuth, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!(await mayChangeSalesRep(req.user.id))) return res.status(403).json({ error: 'Only a sales supervisor or SBU head can change the Sales Rep.' });
+    const repId = Number(req.body?.sales_rep_id) || null;
+    if (!repId) return res.status(400).json({ error: 'Choose a Sales Rep.' });
+    const [[so]] = await conn.query(
+      `SELECT so.id, so.status, so.sales_rep_id, CONCAT(e.first_name, ' ', e.last_name) AS rep_name
+         FROM sales_orders so LEFT JOIN employees e ON e.id = so.sales_rep_id WHERE so.id = ?`, [req.params.id]);
+    if (!so) return res.status(404).json({ error: 'Not found' });
+    if (REP_LOCKED_STATUSES.includes(so.status)) {
+      return res.status(409).json({ error: `This Sales Order is ${so.status === 'billed' ? 'Billed' : 'Cancelled'}; its Sales Rep can no longer be changed.` });
+    }
+    const [[rep]] = await conn.query("SELECT id, CONCAT(first_name, ' ', last_name) AS name FROM employees WHERE id = ?", [repId]);
+    if (!rep) return res.status(400).json({ error: 'That employee no longer exists.' });
+    if (Number(so.sales_rep_id) === rep.id) return res.json({ ok: true, job_orders: 0 });
+
+    await conn.beginTransaction();
+    await conn.query('UPDATE sales_orders SET sales_rep_id = ?, updated_at = NOW() WHERE id = ?', [rep.id, so.id]);
+    const [jos] = await conn.query('SELECT id, sales_rep_id FROM job_orders WHERE sales_order_id = ?', [so.id]);
+    for (const jo of jos) {
+      if (Number(jo.sales_rep_id) === rep.id) continue;
+      await conn.query('UPDATE job_orders SET sales_rep_id = ?, updated_at = NOW() WHERE id = ?', [rep.id, jo.id]);
+      await conn.query(
+        `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+         VALUES ('JobOrder', ?, 'Updated', 'sales_rep', ?, ?, ?)`,
+        [jo.id, so.rep_name || null, rep.name, req.user.id]);
+    }
+    await conn.query(
+      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+       VALUES ('SalesOrder', ?, 'Updated', 'sales_rep', ?, ?, ?)`,
+      [so.id, so.rep_name || null, rep.name, req.user.id]);
+    await conn.commit();
+    res.json({ ok: true, job_orders: jos.length });
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
 router.put('/:id/cancel', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
