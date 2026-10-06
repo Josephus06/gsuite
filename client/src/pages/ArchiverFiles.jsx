@@ -118,7 +118,7 @@ export default function ArchiverFiles() {
                 {rows.map((r) => (
                   <tr key={r.id}>
                     <td data-label="Document">
-                      <button type="button" className="link-btn" onClick={() => navigate(`/archiver/files/${r.id}`)}>{r.title}</button>
+                      <Link className="link-btn" to={`/archiver/files/${r.id}`}>{r.title}</Link>
                       <div className="muted" style={{ fontSize: 11 }}>
                         {r.file_no}{r.visibility === 'company' ? ' · company-wide' : ''}
                       </div>
@@ -143,7 +143,7 @@ export default function ArchiverFiles() {
                     <td data-label="Ver">v{r.current_version}</td>
                     <td data-label="Owner">{r.owner_name || '—'}</td>
                     <td data-label="Status">{FILE_STATUS_LABELS[r.status] || r.status}</td>
-                    <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/archiver/files/${r.id}`)}>Open</button></td>
+                    <td><Link className="btn btn-sm btn-primary" to={`/archiver/files/${r.id}`}>Open</Link></td>
                   </tr>
                 ))}
               </tbody>

@@ -105,7 +105,7 @@ export default function SupplierView() {
     <div>
       <div className="page-header">
         <div />
-        <button className="btn btn-sm" onClick={() => navigate('/suppliers')}>Back</button>
+        <Link className="btn btn-sm" to={'/suppliers'}>Back</Link>
       </div>
 
       <div className="estimate-banner">

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -88,7 +88,7 @@ export default function ScheduledJobOrderTasks() {
     <div>
       <div className="page-header">
         <h1>Scheduled JO — {jo.job_order_no}</h1>
-        <button className="btn btn-sm" onClick={() => navigate('/scheduled-jo')}>Back to Scheduled JO</button>
+        <Link className="btn btn-sm" to={'/scheduled-jo'}>Back to Scheduled JO</Link>
       </div>
 
       <div className="card">
@@ -175,7 +175,7 @@ export default function ScheduledJobOrderTasks() {
                     </td>
                     <td>{Number(t.allotted_minutes || 0).toFixed(0)} mins</td>
                     <td><span className={`badge ${STATUS_CLASS[status]}`}>{status}</span></td>
-                    <td><button type="button" className="btn btn-sm" onClick={() => navigate(`/scheduled-jo/process/${t.id}`)}>Open</button></td>
+                    <td><Link className="btn btn-sm" to={`/scheduled-jo/process/${t.id}`}>Open</Link></td>
                   </tr>
                 );
               })}

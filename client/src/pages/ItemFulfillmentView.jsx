@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -48,7 +48,7 @@ export default function ItemFulfillmentView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(`/transfer-orders/${data.transfer_order_id}`)}>Back</button>
+          <Link className="btn btn-sm" to={`/transfer-orders/${data.transfer_order_id}`}>Back</Link>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Item Fulfillment isn't implemented in this build">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
         </div>
@@ -65,7 +65,7 @@ export default function ItemFulfillmentView() {
           <div>
             <div>Item Fulfillment # : <span className="hi">{data.fulfillment_no}</span></div>
             <div>Date : <span className="hi">{formatDate(data.date_created)}</span></div>
-            <div>Created From : <button type="button" className="link-btn" onClick={() => navigate(`/transfer-orders/${data.transfer_order_id}`)}>{data.to_no}</button></div>
+            <div>Created From : <Link className="link-btn" to={`/transfer-orders/${data.transfer_order_id}`}>{data.to_no}</Link></div>
           </div>
           <div>
             <div>Withdraw From : <span className="hi">{data.withdraw_from_name}</span></div>
@@ -106,9 +106,9 @@ export default function ItemFulfillmentView() {
                   <tr key={l.id}>
                     <td>
                       <span style={{ color: '#db2777', fontWeight: 600, marginRight: 8 }}>{idx + 1}</span>
-                      <button type="button" className="link-btn" onClick={() => navigate(`/inventory/${l.item_id}`)}>
+                      <Link className="link-btn" to={`/inventory/${l.item_id}`}>
                         {l.item_code} {l.item_name ? `— ${l.item_name}` : ''}
-                      </button>
+                      </Link>
                     </td>
                     <td>{qty(l.qty_fulfilled)}</td>
                     <td>{qty(l.received)}</td>
@@ -166,7 +166,7 @@ export default function ItemFulfillmentView() {
                 {receipts.map((r) => (
                   <tr key={r.id}>
                     <td>Item Receipt</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/transfer-orders/item-receipts/${r.id}`)}>{r.receipt_no}</button></td>
+                    <td><Link className="link-btn" to={`/transfer-orders/item-receipts/${r.id}`}>{r.receipt_no}</Link></td>
                     <td>{formatDate(r.date_created)}</td>
                   </tr>
                 ))}

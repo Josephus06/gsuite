@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
@@ -175,11 +175,11 @@ export default function ArchiverFileView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-sm" onClick={() => navigate('/archiver/files')}>Back to Lists</button>
+          <Link className="btn btn-sm" to={'/archiver/files'}>Back to Lists</Link>
           {current && (!current.upload_status || current.upload_status === 'complete') && (
             <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => download(current)}>Download</button>
           )}
-          {mine.can_edit && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/archiver/files/${id}/edit`)}>Edit</button>}
+          {mine.can_edit && <Link className="btn btn-sm btn-primary" to={`/archiver/files/${id}/edit`}>Edit</Link>}
           {mine.can_edit && meta && <button className="btn btn-sm" onClick={() => setShowVersion(true)}>New Version</button>}
           {mine.can_edit && meta && <button className="btn btn-sm" onClick={() => setShowShare(true)}>Share</button>}
           {can('/archiver/files', 'can_delete') && (mine.via === 'owner' || mine.via === 'system_admin') && (

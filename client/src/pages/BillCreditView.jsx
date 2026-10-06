@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -72,7 +72,7 @@ export default function BillCreditView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(source)}>Back</button>
+          <Link className="btn btn-sm" to={source}>Back</Link>
           {/* A voided credit is final; one already spent on a payment or cheque opens read-only with the reason. */}
           {canEdit && bc.status !== 'voided' && <button className="btn btn-sm" onClick={() => setEditing(true)}>Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
@@ -88,7 +88,7 @@ export default function BillCreditView() {
           <span className="estimate-no">{bc.bill_credit_no}</span>
         </div>
         <div className="estimate-status">{STATUS_LABELS[bc.status] || bc.status}</div>
-        <div><button type="button" className="link-btn" onClick={() => navigate(source)}>{bc.bill_no}</button></div>
+        <div><Link className="link-btn" to={source}>{bc.bill_no}</Link></div>
 
         <div className="estimate-detail-grid">
           <div>
@@ -162,7 +162,7 @@ export default function BillCreditView() {
                 )}
                 {bc.applications.map((a) => (
                   <tr key={a.id}>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/vendor-bills/${a.vendor_bill_id}`)}>{a.bill_no}</button></td>
+                    <td><Link className="link-btn" to={`/vendor-bills/${a.vendor_bill_id}`}>{a.bill_no}</Link></td>
                     <td>{money(a.applied_amount)}</td>
                   </tr>
                 ))}

@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -147,7 +147,7 @@ export default function CustomerForm() {
     <div>
       <div className="page-header">
         <h1>Customer</h1>
-        <button type="button" className="btn btn-sm" onClick={() => navigate('/customers')}>Back</button>
+        <Link className="btn btn-sm" to={'/customers'}>Back</Link>
       </div>
       <div className="card">
         <h2 style={{ marginTop: 0 }}>Setup Your Customer</h2>
@@ -163,9 +163,9 @@ export default function CustomerForm() {
                 <div className="error-banner" style={{ marginTop: 6 }}>
                   <strong>{duplicate.name}</strong>{duplicate.customer_code ? ` (${duplicate.customer_code})` : ''} is
                   already on file. Use that customer rather than saving another.{' '}
-                  <button type="button" className="link-btn" onClick={() => navigate(`/customers/${duplicate.id}/edit`)}>
+                  <Link className="link-btn" to={`/customers/${duplicate.id}/edit`}>
                     Open it
-                  </button>
+                  </Link>
                 </div>
               )}
             </div>

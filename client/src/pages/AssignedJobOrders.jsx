@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -142,7 +142,7 @@ export default function AssignedJobOrders() {
                     <td>{formatDateTime(row.planned_start_at)}</td>
                     <td>{formatDateTime(row.planned_end_at)}</td>
                     <td>{timerStatus(row)}</td>
-                    <td><button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(row.kind === 'NSTDJO' ? `/assigned-jo/nstdjo/${row.id}` : `/assigned-jo/${row.id}`)}>Open</button></td>
+                    <td><Link className="btn btn-sm btn-primary" to={row.kind === 'NSTDJO' ? `/assigned-jo/nstdjo/${row.id}` : `/assigned-jo/${row.id}`}>Open</Link></td>
                   </tr>
                 ))}
               </tbody>

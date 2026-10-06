@@ -44,7 +44,7 @@ export default function ProcessCosting() {
       <div className="page-header">
         <h1>Process Costing <span className="muted" style={{ fontSize: '0.55em', fontWeight: 400 }}>Lists</span></h1>
         {can('/process-costing', 'can_add') && (
-          <button type="button" className="btn btn-primary" onClick={() => navigate('/process-costing/new')}>Add New</button>
+          <Link className="btn btn-primary" to={'/process-costing/new'}>Add New</Link>
         )}
       </div>
 

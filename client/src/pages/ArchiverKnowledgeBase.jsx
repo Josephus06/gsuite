@@ -158,9 +158,8 @@ export default function ArchiverKnowledgeBase() {
                   // a button is invalid markup, and the browsers that tolerate it fire both
                   // handlers -- so Delete would also navigate into the card it just removed.
                   <div key={t.id} style={{ position: 'relative' }}>
-                    <button
-                      type="button"
-                      onClick={() => navigate(`/archiver/knowledge-base/${t.id}`)}
+                    <Link
+                      to={`/archiver/knowledge-base/${t.id}`}
                       style={{
                         textAlign: 'left', cursor: 'pointer', padding: 14, borderRadius: 10,
                         border: '1px solid var(--border, #e2e8f0)', background: 'transparent', color: 'inherit',
@@ -184,7 +183,7 @@ export default function ArchiverKnowledgeBase() {
                           : `${t.file_count} file${Number(t.file_count) === 1 ? '' : 's'}`}
                         {t.last_upload_at ? ` · ${formatDateTime(t.last_upload_at).split(',')[0]}` : ''}
                       </div>
-                    </button>
+                    </Link>
                     {(canEdit || canDelete) && (
                       <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 10 }}>
                         {canEdit && (

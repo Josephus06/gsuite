@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -40,7 +40,7 @@ export default function PurchaseReturnView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(`/purchase-orders/${data.purchase_order_id}`)}>Back</button>
+          <Link className="btn btn-sm" to={`/purchase-orders/${data.purchase_order_id}`}>Back</Link>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Vendor Return isn't implemented in this build">Edit</button>}
         </div>
       </div>
@@ -54,7 +54,7 @@ export default function PurchaseReturnView() {
         <div className="estimate-detail-grid">
           <div>
             <div>Date : <span className="hi">{formatDate(data.date_created)}</span></div>
-            <div>Created From : <button type="button" className="link-btn" onClick={() => navigate(`/purchase-orders/${data.purchase_order_id}`)}>{data.po_no}</button></div>
+            <div>Created From : <Link className="link-btn" to={`/purchase-orders/${data.purchase_order_id}`}>{data.po_no}</Link></div>
             <div>Reference # : <span className="hi">{data.ref_no || '—'}</span></div>
           </div>
           <div>
@@ -95,9 +95,9 @@ export default function PurchaseReturnView() {
                   <tr key={l.id}>
                     <td>
                       <span style={{ color: '#db2777', fontWeight: 600, marginRight: 8 }}>{idx + 1}</span>
-                      <button type="button" className="link-btn" onClick={() => navigate(`/inventory/${l.item_id}`)}>
+                      <Link className="link-btn" to={`/inventory/${l.item_id}`}>
                         {l.item_code} {l.item_name ? `— ${l.item_name}` : ''}
-                      </button>
+                      </Link>
                     </td>
                     <td>{l.location_name || '—'}</td>
                     <td>{qty(l.qty_returned)}</td>
@@ -123,7 +123,7 @@ export default function PurchaseReturnView() {
               <tbody>
                 <tr>
                   <td>Purchase Order</td>
-                  <td><button type="button" className="link-btn" onClick={() => navigate(`/purchase-orders/${data.purchase_order_id}`)}>{data.po_no}</button></td>
+                  <td><Link className="link-btn" to={`/purchase-orders/${data.purchase_order_id}`}>{data.po_no}</Link></td>
                 </tr>
               </tbody>
             </table>

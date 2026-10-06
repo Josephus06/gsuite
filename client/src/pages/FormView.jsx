@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
@@ -151,11 +151,11 @@ export default function FormView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-sm" onClick={() => navigate('/forms')}>Back</button>
+          <Link className="btn btn-sm" to={'/forms'}>Back</Link>
           {printable && can('/forms', 'can_print') && (
             <button className="btn btn-sm" onClick={() => window.open(`/forms/${id}/print`, '_blank')}>Print</button>
           )}
-          {mayEdit && <button className="btn btn-sm" onClick={() => navigate(`/forms/${id}/edit`)}>Edit</button>}
+          {mayEdit && <Link className="btn btn-sm" to={`/forms/${id}/edit`}>Edit</Link>}
           {maySubmit && (
             <button className="btn btn-sm btn-primary" disabled={busy}
               onClick={() => act('submit', null, 'Submitted for approval.')}>Submit</button>

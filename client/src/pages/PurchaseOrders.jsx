@@ -111,7 +111,7 @@ export default function PurchaseOrders() {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <SyncFromSourceButton module="purchase_orders" onDone={load} />
-          <button className="btn btn-primary" onClick={() => navigate('/purchase-orders/new')}>Add Purchase Order</button>
+          <Link className="btn btn-primary" to={'/purchase-orders/new'}>Add Purchase Order</Link>
         </div>
       </div>
 

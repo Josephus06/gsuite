@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -355,7 +355,7 @@ export default function VendorBillEdit() {
         )}
 
         <div className="modal-actions">
-          <button type="button" className="btn" onClick={() => navigate(`/vendor-bills/${id}`)}>Cancel</button>
+          <Link className="btn" to={`/vendor-bills/${id}`}>Cancel</Link>
           <button type="button" className="btn btn-primary" disabled={saving} onClick={handleSave}>{saving ? 'Saving...' : 'SAVE'}</button>
         </div>
       </div>

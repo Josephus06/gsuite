@@ -65,7 +65,7 @@ export default function TransferOrders() {
     <div>
       <div className="page-header">
         <h1>Transfer Orders</h1>
-        {can('/transfer-orders', 'can_add') && <button className="btn btn-primary" onClick={() => navigate('/transfer-orders/new')}>Add New</button>}
+        {can('/transfer-orders', 'can_add') && <Link className="btn btn-primary" to={'/transfer-orders/new'}>Add New</Link>}
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>

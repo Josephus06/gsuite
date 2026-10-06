@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -86,8 +86,8 @@ export default function VendorBillView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(vb.purchase_order_id ? `/purchase-orders/${vb.purchase_order_id}` : '/vendor-bills')}>Back</button>
-          {canEdit && vb.status !== 'cancelled' && <button className="btn btn-sm" onClick={() => navigate(`/vendor-bills/${vb.id}/edit`)}>Edit</button>}
+          <Link className="btn btn-sm" to={vb.purchase_order_id ? `/purchase-orders/${vb.purchase_order_id}` : '/vendor-bills'}>Back</Link>
+          {canEdit && vb.status !== 'cancelled' && <Link className="btn btn-sm" to={`/vendor-bills/${vb.id}/edit`}>Edit</Link>}
           {isOpen && <button className="btn btn-sm btn-primary" onClick={() => setShowBillPaymentModal(true)}>Bill Payment</button>}
           {isOpen && <button className="btn btn-sm btn-primary" onClick={() => setShowBillCreditModal(true)}>Bill Credit</button>}
           {canReplicate && !vb.purchase_order_id && (
@@ -123,7 +123,7 @@ export default function VendorBillView() {
           </div>
           <div>
             <div>Created From : {vb.purchase_order_id
-              ? <button type="button" className="link-btn" onClick={() => navigate(`/purchase-orders/${vb.purchase_order_id}`)}>{vb.po_no}</button>
+              ? <Link className="link-btn" to={`/purchase-orders/${vb.purchase_order_id}`}>{vb.po_no}</Link>
               : <span className="hi">Direct (no PO)</span>}</div>
             <div>Reference # : <span className="hi">{vb.reference_no || ''}</span></div>
             <div>Memo : <span className="hi">{vb.memo || ''}</span></div>
@@ -240,7 +240,7 @@ export default function VendorBillView() {
                 {related.bill_payments.map((bp) => (
                   <tr key={`bp-${bp.id}`}>
                     <td>Bill Payment</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/bill-payments/${bp.id}`)}>{bp.bill_payment_no}</button></td>
+                    <td><Link className="link-btn" to={`/bill-payments/${bp.id}`}>{bp.bill_payment_no}</Link></td>
                     <td>{formatDate(bp.date_created)}</td>
                     <td>{money(bp.total_amount)}</td>
                     <td>{bp.status === 'voided' ? 'Voided' : 'Open'}</td>
@@ -249,7 +249,7 @@ export default function VendorBillView() {
                 {related.bill_credits.map((bc) => (
                   <tr key={`bc-${bc.id}`}>
                     <td>Bill Credit</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/bill-credits/${bc.id}`)}>{bc.bill_credit_no}</button></td>
+                    <td><Link className="link-btn" to={`/bill-credits/${bc.id}`}>{bc.bill_credit_no}</Link></td>
                     <td>{formatDate(bc.date_created)}</td>
                     <td>{money(bc.total_amount)}</td>
                     <td>{bc.status === 'voided' ? 'Voided' : 'Open'}</td>

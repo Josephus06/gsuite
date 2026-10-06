@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -44,8 +44,8 @@ export default function WarrantyCertificateView() {
       <div className="page-header">
         <div style={{ fontWeight: 600 }}>WARRANTY CERTIFICATE <span className="muted">{STATUS_LABELS[wc.status] || wc.status}</span></div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/warranty-certificates')}>Back</button>
-          {can('/warranty-certificates', 'can_edit') && !isVoided && !isApproved && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/warranty-certificates/${id}/edit`)}>Edit</button>}
+          <Link className="btn btn-sm" to={'/warranty-certificates'}>Back</Link>
+          {can('/warranty-certificates', 'can_edit') && !isVoided && !isApproved && <Link className="btn btn-sm btn-primary" to={`/warranty-certificates/${id}/edit`}>Edit</Link>}
           {can('/warranty-certificates', 'can_approve') && wc.status === 'pending_approval' && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>Approve</button>}
           {/* Print is only available once the certificate has been approved. */}
           {isApproved && <button className="btn btn-sm btn-primary" onClick={() => window.open(`/warranty-certificates/${id}/print`, '_blank')}>Print</button>}

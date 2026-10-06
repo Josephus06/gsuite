@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -154,7 +154,7 @@ export default function ItemDeliveryView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(d.nsso_id ? `/non-standard-sales-orders/${d.nsso_id}` : `/sales-orders/${d.sales_order_id}`)}>Back to Lists</button>
+          <Link className="btn btn-sm" to={d.nsso_id ? `/non-standard-sales-orders/${d.nsso_id}` : `/sales-orders/${d.sales_order_id}`}>Back to Lists</Link>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Item Delivery isn't implemented in this build">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           {canVoid && !isCancelled && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
@@ -170,9 +170,9 @@ export default function ItemDeliveryView() {
         </div>
         <div className="estimate-status">
           {isCancelled ? 'Cancelled' : 'Saved'}
-          <button type="button" className="estimate-so-link" onClick={() => navigate(d.nsso_id ? `/non-standard-sales-orders/${d.nsso_id}` : `/sales-orders/${d.sales_order_id}`)}>
+          <Link className="estimate-so-link" to={d.nsso_id ? `/non-standard-sales-orders/${d.nsso_id}` : `/sales-orders/${d.sales_order_id}`}>
             {d.sales_order_no}
-          </button>
+          </Link>
         </div>
 
         <div className="estimate-detail-grid">
@@ -232,9 +232,9 @@ export default function ItemDeliveryView() {
                   <tr key={l.id}>
                     <td>{idx + 1}</td>
                     <td>
-                      <button type="button" className="link-btn" onClick={() => navigate(`/production/${l.job_order_id}`)}>
+                      <Link className="link-btn" to={`/production/${l.job_order_id}`}>
                         {l.job_order_no}
-                      </button>
+                      </Link>
                     </td>
                     <td>{l.item_name}</td>
                     <td>{l.description}</td>
@@ -291,9 +291,9 @@ export default function ItemDeliveryView() {
                 <tr>
                   <td>{formatDate(d.date_created)}</td>
                   <td>
-                    <button type="button" className="link-btn" onClick={() => navigate(d.nsso_id ? `/non-standard-sales-orders/${d.nsso_id}` : `/sales-orders/${d.sales_order_id}`)}>
+                    <Link className="link-btn" to={d.nsso_id ? `/non-standard-sales-orders/${d.nsso_id}` : `/sales-orders/${d.sales_order_id}`}>
                       {d.sales_order_no}
-                    </button>
+                    </Link>
                   </td>
                   <td>{isCancelled ? 'Cancelled' : 'Saved'}</td>
                 </tr>

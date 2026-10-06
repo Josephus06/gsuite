@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -97,11 +97,11 @@ export default function InventoryAdjustmentView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/inventory-adjustments')}>Back to Lists</button>
+          <Link className="btn btn-sm" to={'/inventory-adjustments'}>Back to Lists</Link>
           {canApprove && isPending && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>Approve</button>}
           {canEdit && (isPending || adminEditsApproved) && (
-            <button className="btn btn-sm btn-primary" onClick={() => navigate(`/inventory-adjustments/${id}/edit`)}
-              title={adminEditsApproved ? 'Approved -- your changes move stock by the difference they make' : undefined}>Edit</button>
+            <Link className="btn btn-sm btn-primary" to={`/inventory-adjustments/${id}/edit`}
+              title={adminEditsApproved ? 'Approved -- your changes move stock by the difference they make' : undefined}>Edit</Link>
           )}
           {canVoid && isPending && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
         </div>

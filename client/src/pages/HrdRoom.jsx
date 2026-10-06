@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -128,7 +128,7 @@ export default function HrdRoom() {
       <div className="page-header">
         <h1>{room.name}</h1>
         <div>
-          <button className="btn btn-sm" onClick={() => navigate(ROUTE)}>Back to HRD</button>{' '}
+          <Link className="btn btn-sm" to={ROUTE}>Back to HRD</Link>{' '}
           {can(ROUTE, 'can_add') && (
             <button className="btn btn-primary" disabled={!!uploading} onClick={() => fileInput.current?.click()}>
               {uploading ? `Uploading ${uploading}…` : 'Upload Files'}

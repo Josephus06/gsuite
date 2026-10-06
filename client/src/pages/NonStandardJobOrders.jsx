@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
@@ -205,7 +205,7 @@ export default function NonStandardJobOrders() {
                 <td>{row.sales_rep_name}</td><td>{row.artist_name || ''}</td><td>{String(row.delivery_date).slice(0, 10)}</td><td>{row.delivery_time || ''}</td><td>{row.status}</td>
                 {/* Flagged so an approver can spot what is waiting on them from the list. */}
                 <td>{row.sub_status}{row.is_my_approval && row.sub_status === 'SBU Approval' ? ' (yours)' : ''}</td>
-                <td><button className="btn btn-sm" onClick={() => navigate(`${ROUTE}/${row.id}`)}>View</button></td>
+                <td><Link className="btn btn-sm" to={`${ROUTE}/${row.id}`}>View</Link></td>
               </tr>)}
             </tbody>
           </table>

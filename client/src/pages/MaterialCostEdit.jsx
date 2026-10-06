@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -95,7 +95,7 @@ export default function MaterialCostEdit() {
       <div className="page-header">
         <h1>Material Cost</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={() => navigate('/material-costing')}>Back to Lists</button>
+          <Link className="btn" to={'/material-costing'}>Back to Lists</Link>
           {canEdit && <button className="btn btn-primary" disabled={saving} onClick={handleSave}>{saving ? <LoadingSpinner inline size="sm" label="Saving..." /> : 'Save'}</button>}
         </div>
       </div>

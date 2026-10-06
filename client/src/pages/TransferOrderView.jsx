@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -109,8 +109,8 @@ export default function TransferOrderView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/transfer-orders')}>Back</button>
-          {canEdit && isPending && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/transfer-orders/${id}/edit`)}>Edit</button>}
+          <Link className="btn btn-sm" to={'/transfer-orders'}>Back</Link>
+          {canEdit && isPending && <Link className="btn btn-sm btn-primary" to={`/transfer-orders/${id}/edit`}>Edit</Link>}
           {mayFulfill && canStillFulfill && lines.length > 0 && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfillModal(true)}>Fulfill</button>}
           {mayReceive && canReceive && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfillmentsPicker(true)}>Receive</button>}
           {can('/transfer-orders', 'can_edit') && canCancel && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
@@ -141,7 +141,7 @@ export default function TransferOrderView() {
           <div>
             <div>Requestor : <span className="hi">{to.requestor_name || '—'}</span></div>
             {to.job_order_no && (
-              <div>Job Order : <button type="button" className="link-btn" onClick={() => navigate(`/production/${to.job_order_id}`)}>{to.job_order_no}</button></div>
+              <div>Job Order : <Link className="link-btn" to={`/production/${to.job_order_id}`}>{to.job_order_no}</Link></div>
             )}
             {to.fulfilled_by_name && <div>Fulfilled By : <span className="hi">{to.fulfilled_by_name}</span></div>}
           </div>
@@ -175,12 +175,12 @@ export default function TransferOrderView() {
                 {lines.map((l) => (
                   <tr key={l.id}>
                     <td>
-                      <button type="button" className="link-btn" onClick={() => navigate(`/inventory/${l.item_id}`)}>
+                      <Link className="link-btn" to={`/inventory/${l.item_id}`}>
                         {l.item_code} {l.item_name ? `— ${l.item_name}` : ''}
-                      </button>
+                      </Link>
                     </td>
                     <td>{to.job_order_id ? (
-                      <button type="button" className="link-btn" onClick={() => navigate(`/production/${to.job_order_id}`)}>{l.job_order_no}</button>
+                      <Link className="link-btn" to={`/production/${to.job_order_id}`}>{l.job_order_no}</Link>
                     ) : (l.job_order_no || '—')}</td>
                     <td>{l.to_count}</td>
                     <td>{qty(l.qty)}</td>
@@ -225,7 +225,7 @@ export default function TransferOrderView() {
                           divide and needs no commitment before it can be fulfilled. */}
                       {isNonStockItem(l.item_type)
                         ? <span className="muted" title="Service items hold no stock -- nothing to reallocate.">—</span>
-                        : <button type="button" className="btn btn-sm" onClick={() => navigate(`/transfer-orders/${id}/lines/${l.id}/reallocate`)}>Reallocate</button>}
+                        : <Link className="btn btn-sm" to={`/transfer-orders/${id}/lines/${l.id}/reallocate`}>Reallocate</Link>}
                     </td>
                   </tr>
                 ))}
@@ -247,14 +247,14 @@ export default function TransferOrderView() {
                 {to.job_order_no && (
                   <tr>
                     <td>Job Order</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/production/${to.job_order_id}`)}>{to.job_order_no}</button></td>
+                    <td><Link className="link-btn" to={`/production/${to.job_order_id}`}>{to.job_order_no}</Link></td>
                     <td>—</td>
                   </tr>
                 )}
                 {itemFulfillments.map((f) => (
                   <tr key={f.id}>
                     <td>Item Fulfillment</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/transfer-orders/item-fulfillments/${f.id}`)}>{f.fulfillment_no}</button></td>
+                    <td><Link className="link-btn" to={`/transfer-orders/item-fulfillments/${f.id}`}>{f.fulfillment_no}</Link></td>
                     <td>{formatDate(f.date_created)}</td>
                   </tr>
                 ))}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -631,7 +631,7 @@ export default function ProductionJobOrderView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/production')}>Back to Lists</button>
+          <Link className="btn btn-sm" to={'/production'}>Back to Lists</Link>
           {canEdit && !advanceCopy && jo.status !== 'Cancelled' && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/job-orders/${id}/edit`, { state: { from: 'production' } })}>Edit</button>}
           {/* The same two prints as the Job Order screen; the server still decides whether the
               Job Order print is allowed (an assigned artist), the PAR needs only can_print. */}
@@ -691,20 +691,20 @@ export default function ProductionJobOrderView() {
           <span className="estimate-no">{jo.job_order_no}</span>
           {/* An RWIP / RFQC names the job order it reworks, and opens it. */}
           {jo.parent_job_order_no && (
-            <button type="button" className="estimate-no" style={{ cursor: 'pointer', border: 'none' }}
+            <Link className="estimate-no" style={{ cursor: 'pointer', border: 'none' }}
               title="Open the job order this was raised from"
-              onClick={() => navigate(jo.parent_production_stage ? `/production/${jo.parent_job_order_id}` : `/job-orders/${jo.parent_job_order_id}`)}>
+              to={jo.parent_production_stage ? `/production/${jo.parent_job_order_id}` : `/job-orders/${jo.parent_job_order_id}`}>
               from {jo.parent_job_order_no}
-            </button>
+            </Link>
           )}
         </div>
         <div className="estimate-status">
           {jo.status} <span style={{ opacity: 0.7 }}>{STAGE_LABELS[jo.production_stage] || jo.sub_status}</span>
           {isOnHold && <span className="estimate-so-link" style={{ background: 'rgba(245, 159, 0, 0.35)' }}>On Hold</span>}
           {advanceCopy && <span className="estimate-so-link" style={{ background: 'rgba(79, 140, 247, 0.35)' }}>Advance Copy</span>}
-          <button type="button" className="estimate-so-link" onClick={() => navigate(`/sales-orders/${jo.sales_order_id}`)}>
+          <Link className="estimate-so-link" to={`/sales-orders/${jo.sales_order_id}`}>
             {jo.sales_order_no}
-          </button>
+          </Link>
         </div>
 
         {/* Otherwise this screen just looks oddly empty of buttons, and the reason -- that Sales
@@ -927,9 +927,9 @@ export default function ProductionJobOrderView() {
                 <tr>
                   <td>{jo.created_at ? String(jo.created_at).slice(0, 10) : ''}</td>
                   <td>
-                    <button type="button" className="link-btn" onClick={() => navigate(`/sales-orders/${jo.sales_order_id}`)}>
+                    <Link className="link-btn" to={`/sales-orders/${jo.sales_order_id}`}>
                       {jo.sales_order_no}
-                    </button>
+                    </Link>
                   </td>
                   <td>0.00</td>
                   <td></td>
@@ -939,9 +939,9 @@ export default function ProductionJobOrderView() {
                   <tr key={`ab-${ab.id}`}>
                     <td>{ab.date_created ? String(ab.date_created).slice(0, 10) : ''}</td>
                     <td>
-                      <button type="button" className="link-btn" onClick={() => navigate(`/assembly-builds/${ab.id}`)}>
+                      <Link className="link-btn" to={`/assembly-builds/${ab.id}`}>
                         {ab.ab_no}
-                      </button>
+                      </Link>
                     </td>
                     <td>{ab.quantity_built}</td>
                     <td>{jo.units}</td>
@@ -996,7 +996,7 @@ export default function ProductionJobOrderView() {
                 {(jo.rwips || []).map((r) => (
                   <tr key={r.id}>
                     <td>{r.created_at ? String(r.created_at).slice(0, 10) : ''}</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(r.production_stage ? `/production/${r.id}` : `/job-orders/${r.id}`)}>{r.job_order_no}</button></td>
+                    <td><Link className="link-btn" to={r.production_stage ? `/production/${r.id}` : `/job-orders/${r.id}`}>{r.job_order_no}</Link></td>
                     <td style={{ textAlign: 'right' }}>{Number(r.quantity)}</td>
                     <td>{r.units}</td>
                     <td>{STAGE_LABELS[r.production_stage] || r.status}</td>

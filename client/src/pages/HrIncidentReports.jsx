@@ -148,8 +148,8 @@ export default function HrIncidentReports() {
                     <td data-label="Recommendation">{pretty(r.recommendation) || '—'}</td>
                     <td>
                       <div style={{ display: 'flex', gap: 6 }}>
-                        <button className="btn btn-sm btn-primary"
-                          onClick={() => navigate(`/hrd/incident-reports/${r.id}`)}>Evaluate</button>
+                        <Link className="btn btn-sm btn-primary"
+                          to={`/hrd/incident-reports/${r.id}`}>Evaluate</Link>
                         {canDelete && (
                           <button className="btn btn-sm btn-danger" disabled={busy}
                             onClick={() => remove(r)}>Delete</button>

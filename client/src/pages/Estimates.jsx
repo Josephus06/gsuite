@@ -138,7 +138,7 @@ export default function Estimates() {
             </button>
           )}
           <SyncFromSourceButton module="estimates" label="Refresh Status" onDone={load} />
-          {can('/estimates', 'can_add') && <button className="btn btn-primary" onClick={() => navigate('/estimates/new')}>Add Estimate</button>}
+          {can('/estimates', 'can_add') && <Link className="btn btn-primary" to={'/estimates/new'}>Add Estimate</Link>}
         </div>
       </div>
 

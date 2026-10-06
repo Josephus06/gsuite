@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import EntityPicker from '../components/EntityPicker';
@@ -180,7 +180,7 @@ export default function TicketView() {
     <div>
       <div className="page-header">
         <div>
-          <button className="btn btn-sm" onClick={() => navigate('/tickets')}>← Back to Tickets</button>
+          <Link className="btn btn-sm" to={'/tickets'}>← Back to Tickets</Link>
           <h1 style={{ marginTop: 8 }}>{ticket.ticket_no}</h1>
         </div>
         <span className={`badge ${STATUS_BADGE[ticket.status] || 'badge-muted'}`}>{STATUS_LABELS[ticket.status] || ticket.status}</span>

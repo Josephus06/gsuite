@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Pagination from '../../components/Pagination';
@@ -167,7 +167,7 @@ export default function ForecastReport() {
                     <td data-label="STATUS" style={{ fontWeight: 600 }}>{r.build_status}</td>
                     <td data-label="Weekly Target" style={{ textAlign: 'right' }}>{r.weekly_target ? money(r.weekly_target) : ''}</td>
                     <td data-label="Pending" style={{ textAlign: 'right' }}>{r.pending ? money(r.pending) : ''}</td>
-                    <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/production/${r.id}`)}>View</button></td>
+                    <td><Link className="btn btn-sm btn-primary" to={`/production/${r.id}`}>View</Link></td>
                   </tr>
                 ))}
               </tbody>

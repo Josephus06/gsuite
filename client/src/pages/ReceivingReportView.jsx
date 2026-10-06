@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -44,12 +44,12 @@ export default function ReceivingReportView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           {/* Back goes where the user came from: the module list, or the PO that raised it. */}
-          <button
+          <Link
             className="btn btn-sm"
-            onClick={() => navigate(fromModule ? '/receiving-reports' : `/purchase-orders/${data.purchase_order_id}`)}
+            to={fromModule ? '/receiving-reports' : `/purchase-orders/${data.purchase_order_id}`}
           >
             Back
-          </button>
+          </Link>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Receiving Report isn't implemented in this build">Edit</button>}
         </div>
       </div>
@@ -64,7 +64,7 @@ export default function ReceivingReportView() {
         <div className="estimate-detail-grid">
           <div>
             <div>Date Created : <span className="hi">{formatDate(data.date_created)}</span></div>
-            <div>Created From : <button type="button" className="link-btn" onClick={() => navigate(`/purchase-orders/${data.purchase_order_id}`)}>{data.po_no}</button></div>
+            <div>Created From : <Link className="link-btn" to={`/purchase-orders/${data.purchase_order_id}`}>{data.po_no}</Link></div>
             <div>Ref. # : <span className="hi">{data.ref_no || '—'}</span></div>
           </div>
           <div>
@@ -105,9 +105,9 @@ export default function ReceivingReportView() {
                   <tr key={l.id}>
                     <td>
                       <span style={{ color: '#db2777', fontWeight: 600, marginRight: 8 }}>{idx + 1}</span>
-                      <button type="button" className="link-btn" onClick={() => navigate(`/inventory/${l.item_id}`)}>
+                      <Link className="link-btn" to={`/inventory/${l.item_id}`}>
                         {l.item_code} {l.item_name ? `— ${l.item_name}` : ''}
-                      </button>
+                      </Link>
                     </td>
                     <td>{l.location_name || '—'}</td>
                     {/* From the purchase order line -- a receipt carries no department of its own. */}
@@ -135,7 +135,7 @@ export default function ReceivingReportView() {
               <tbody>
                 <tr>
                   <td>Purchase Order</td>
-                  <td><button type="button" className="link-btn" onClick={() => navigate(`/purchase-orders/${data.purchase_order_id}`)}>{data.po_no}</button></td>
+                  <td><Link className="link-btn" to={`/purchase-orders/${data.purchase_order_id}`}>{data.po_no}</Link></td>
                 </tr>
               </tbody>
             </table>

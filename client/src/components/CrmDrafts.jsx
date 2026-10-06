@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import DraftEditorModal from './DraftEditorModal';
 import LoadingSpinner from './LoadingSpinner';
@@ -52,7 +52,7 @@ export default function CrmDrafts() {
                   const [label, badge] = KIND_BADGE[d.kind] || [d.kind, 'badge-muted'];
                   return (
                     <tr key={d.id}>
-                      <td><button type="button" className="link-btn" onClick={() => navigate(`/customers/${d.customer_id}?tab=activity`)}>{d.customer_name}</button></td>
+                      <td><Link className="link-btn" to={`/customers/${d.customer_id}?tab=activity`}>{d.customer_name}</Link></td>
                       <td>{d.contact_name || ''}<div className="muted" style={{ fontSize: 12 }}>{d.to_email}</div></td>
                       <td><span className={`badge ${badge}`}>{label}</span></td>
                       <td>{d.subject}</td>

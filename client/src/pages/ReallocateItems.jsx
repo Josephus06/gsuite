@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
@@ -83,7 +83,7 @@ export default function ReallocateItems() {
       <div className="page-header">
         <h1>Reallocate Items</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(`/transfer-orders/${id}`)}>Back</button>
+          <Link className="btn btn-sm" to={`/transfer-orders/${id}`}>Back</Link>
           <button className="btn btn-sm btn-primary" disabled={saving} onClick={handleSubmit}>Submit</button>
         </div>
       </div>
@@ -159,7 +159,7 @@ export default function ReallocateItems() {
                     <td>{formatDate(c.order_date)}</td>
                     <td>{formatDate(c.date_needed)}</td>
                     <td>
-                      <button type="button" className="link-btn" onClick={() => navigate(`/transfer-orders/${c.to_id}`)}>{c.to_no}</button>
+                      <Link className="link-btn" to={`/transfer-orders/${c.to_id}`}>{c.to_no}</Link>
                     </td>
                     <td>—</td>
                     <td>{qty(ordered)}</td>

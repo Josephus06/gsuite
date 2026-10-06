@@ -69,7 +69,7 @@ export default function Inventory() {
     <div>
       <div className="page-header">
         <h1>Inventory Items</h1>
-        {can('/inventory', 'can_add') && <button className="btn btn-primary" onClick={() => navigate('/inventory/new')}>Add New</button>}
+        {can('/inventory', 'can_add') && <Link className="btn btn-primary" to={'/inventory/new'}>Add New</Link>}
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
@@ -126,7 +126,7 @@ export default function Inventory() {
                     <td data-label="Last Purchase Price" style={{ textAlign: 'right' }}>{money(row.last_purchase_price)}</td>
                     <td data-label="Average Cost" style={{ textAlign: 'right' }}>{money(row.average_cost)}</td>
                     <td style={{ display: 'flex', gap: 6 }}>
-                      {can('/inventory', 'can_edit') && <button className="btn btn-sm" onClick={() => navigate(`/inventory/${row.id}/edit`)}>Update</button>}
+                      {can('/inventory', 'can_edit') && <Link className="btn btn-sm" to={`/inventory/${row.id}/edit`}>Update</Link>}
                       <Link className="btn btn-sm btn-primary" to={`/inventory/${row.id}`}>View</Link>
                       {can('/inventory', 'can_delete') && <button className="btn btn-sm btn-danger" onClick={() => handleDelete(row)}>Delete</button>}
                     </td>

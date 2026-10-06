@@ -80,7 +80,7 @@ export default function CreditMemos() {
     <div>
       <div className="page-header">
         <h1>Credit Memos</h1>
-        {can('/credit-memos', 'can_add') && <button className="btn btn-primary" onClick={() => navigate('/credit-memos/new')}>Add Credit Memo</button>}
+        {can('/credit-memos', 'can_add') && <Link className="btn btn-primary" to={'/credit-memos/new'}>Add Credit Memo</Link>}
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { parseUtc } from '../utils/datetime';
 
@@ -126,14 +126,13 @@ export default function RunningJobTimer() {
       }}
     >
       <div className="running-timer-head">
-        <button
-          type="button"
+        <Link
           className="running-timer-no"
           title="Open this job"
-          onClick={() => navigate(base)}
+          to={base}
         >
           {running.job_order_no}
-        </button>
+        </Link>
         <span className="running-timer-grip" title="Drag to move">⠿</span>
       </div>
 

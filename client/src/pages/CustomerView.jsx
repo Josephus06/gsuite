@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import ActivityTimeline from '../components/ActivityTimeline';
 import ContactEditModal from '../components/ContactEditModal';
@@ -97,7 +97,7 @@ export default function CustomerView() {
     <div>
       <div className="page-header">
         <div />
-        <button className="btn btn-sm" onClick={() => navigate('/customers')}>Back</button>
+        <Link className="btn btn-sm" to={'/customers'}>Back</Link>
       </div>
 
       <div className="estimate-banner">
@@ -237,12 +237,11 @@ export default function CustomerView() {
                 {pipeline.map((r) => (
                   <tr key={r.estimate_id}>
                     <td>
-                      <button
-                        type="button" className="link-btn"
-                        onClick={() => navigate(r.sales_order_id ? `/sales-orders/${r.sales_order_id}` : `/estimates/${r.estimate_id}`)}
+                      <Link className="link-btn"
+                        to={r.sales_order_id ? `/sales-orders/${r.sales_order_id}` : `/estimates/${r.estimate_id}`}
                       >
                         {r.current_doc_no}
-                      </button>
+                      </Link>
                     </td>
                     <td>{stages.labels[r.stage]}</td>
                     <td>{money(r.value)}</td>
@@ -272,7 +271,7 @@ export default function CustomerView() {
                 {estimates.length === 0 && <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>None yet.</td></tr>}
                 {estimates.map((e) => (
                   <tr key={e.id}>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/estimates/${e.id}`)}>{e.estimate_no}</button></td>
+                    <td><Link className="link-btn" to={`/estimates/${e.id}`}>{e.estimate_no}</Link></td>
                     <td>{formatDate(e.date_created)}</td><td>{e.status}</td><td>{money(e.total_amount)}</td>
                   </tr>
                 ))}
@@ -287,7 +286,7 @@ export default function CustomerView() {
                 {salesOrders.length === 0 && <tr><td colSpan={3} className="muted" style={{ textAlign: 'center', padding: 20 }}>None yet.</td></tr>}
                 {salesOrders.map((so) => (
                   <tr key={so.id}>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/sales-orders/${so.id}`)}>{so.sales_order_no}</button></td>
+                    <td><Link className="link-btn" to={`/sales-orders/${so.id}`}>{so.sales_order_no}</Link></td>
                     <td>{formatDate(so.date_created)}</td><td>{so.status}</td>
                   </tr>
                 ))}
@@ -302,7 +301,7 @@ export default function CustomerView() {
                 {invoices.length === 0 && <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>None yet.</td></tr>}
                 {invoices.map((inv) => (
                   <tr key={inv.id}>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/sales-invoices/${inv.id}`)}>{inv.invoice_no}</button></td>
+                    <td><Link className="link-btn" to={`/sales-invoices/${inv.id}`}>{inv.invoice_no}</Link></td>
                     <td>{formatDate(inv.date_created)}</td><td>{inv.status}</td><td>{money(inv.gross_amount)}</td><td>{money(inv.amount_due)}</td>
                   </tr>
                 ))}

@@ -172,7 +172,7 @@ export default function NonInventoryEdit() {
       <div className="page-header">
         <h1>Non-Inventory <span className="muted" style={{ fontSize: '0.6em', fontWeight: 400 }}>{isNew ? 'Create' : form.item_code}</span></h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={() => navigate(isNew ? '/non-inventories' : `/inventory/${id}`)}>Cancel</button>
+          <Link className="btn" to={isNew ? '/non-inventories' : `/inventory/${id}`}>Cancel</Link>
           <button className="btn btn-primary" disabled={saving} onClick={handleSave}>{saving ? <LoadingSpinner inline size="sm" label="Saving..." /> : 'Save'}</button>
         </div>
       </div>

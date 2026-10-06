@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -70,7 +70,7 @@ export default function AssemblyBuildView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/assembly-builds')}>Back to Lists</button>
+          <Link className="btn btn-sm" to={'/assembly-builds'}>Back to Lists</Link>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Assembly Build isn't implemented in this build">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           {canVoid && !isCancelled && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
@@ -86,9 +86,9 @@ export default function AssemblyBuildView() {
         </div>
         <div className="estimate-status">
           {isCancelled ? 'Cancelled' : 'Saved'}
-          <button type="button" className="estimate-so-link" onClick={() => navigate(`/production/${ab.job_order_id}`)}>
+          <Link className="estimate-so-link" to={`/production/${ab.job_order_id}`}>
             {ab.job_order_no}
-          </button>
+          </Link>
         </div>
 
         <div className="estimate-detail-grid">
@@ -208,9 +208,9 @@ export default function AssemblyBuildView() {
                 <tr>
                   <td>{formatDate(ab.date_created)}</td>
                   <td>
-                    <button type="button" className="link-btn" onClick={() => navigate(`/production/${ab.job_order_id}`)}>
+                    <Link className="link-btn" to={`/production/${ab.job_order_id}`}>
                       {ab.job_order_no}
-                    </button>
+                    </Link>
                   </td>
                   <td>{qty(ab.quantity)}</td>
                   <td>Released</td>

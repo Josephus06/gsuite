@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Modal from '../../components/Modal';
@@ -134,8 +134,8 @@ export default function BankReconciliations() {
                       </span>
                     </td>
                     <td>
-                      <button className="btn btn-sm btn-primary"
-                        onClick={() => navigate(`/accounting/bank-reconciliation/${r.id}`)}>Open</button>
+                      <Link className="btn btn-sm btn-primary"
+                        to={`/accounting/bank-reconciliation/${r.id}`}>Open</Link>
                     </td>
                   </tr>
                 ))}

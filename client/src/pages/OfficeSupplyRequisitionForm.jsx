@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -94,7 +94,7 @@ export default function OfficeSupplyRequisitionForm() {
       <div className="page-header">
         <div style={{ fontWeight: 600 }}>Office Supply Requisitions</div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/office-supply-requisitions')}>Back to Lists</button>
+          <Link className="btn btn-sm" to={'/office-supply-requisitions'}>Back to Lists</Link>
           <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
         </div>
       </div>

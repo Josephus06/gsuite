@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import Pagination from '../components/Pagination';
@@ -153,15 +153,15 @@ export default function ReceivingReports() {
                   {rows.map((r) => (
                     <tr key={r.id}>
                       <td>
-                        <button type="button" className="link-btn" onClick={() => navigate(`/receiving-reports/${r.id}`)}>
+                        <Link className="link-btn" to={`/receiving-reports/${r.id}`}>
                           {r.receipt_no}
-                        </button>
+                        </Link>
                       </td>
                       <td>{formatDate(r.date_created)}</td>
                       <td>
-                        <button type="button" className="link-btn" onClick={() => navigate(`/purchase-orders/${r.purchase_order_id}`)}>
+                        <Link className="link-btn" to={`/purchase-orders/${r.purchase_order_id}`}>
                           {r.po_no}
-                        </button>
+                        </Link>
                       </td>
                       <td>{r.supplier_name || '—'}</td>
                       <td>{r.ref_no || ''}</td>

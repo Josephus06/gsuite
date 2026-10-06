@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -72,7 +72,7 @@ export default function AssetDepreciationView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-sm" onClick={() => navigate('/asset-depreciation')}>Back to Lists</button>
+          <Link className="btn btn-sm" to={'/asset-depreciation'}>Back to Lists</Link>
           {isDraft && can('/asset-depreciation', 'can_edit') && (
             <button className="btn btn-sm" disabled={busy} onClick={() => act(() => api.post(`/asset-depreciation/${id}/recalculate`))}>Recalculate</button>
           )}
@@ -147,7 +147,7 @@ export default function AssetDepreciationView() {
                 {lines.map((l) => (
                   <tr key={l.id}>
                     <td data-label="#">{l.line_no}</td>
-                    <td data-label="Reference No"><button type="button" className="link-btn" onClick={() => navigate(`/assets/${l.asset_id}`)}>{l.reference_no}</button></td>
+                    <td data-label="Reference No"><Link className="link-btn" to={`/assets/${l.asset_id}`}>{l.reference_no}</Link></td>
                     <td data-label="Asset">{l.item_name}</td>
                     <td data-label="Class">{l.class_name}</td>
                     <td data-label="Base" style={{ textAlign: 'right' }}>{formatMoney(l.depreciable_base)}</td>

@@ -317,7 +317,7 @@ export default function Itineraries() {
                       <span className={`badge ${STATUS_BADGE[r.status] || 'badge-muted'}`}>{r.status}</span>
                     </td>
                     <td>
-                      <button className="btn btn-sm btn-primary" onClick={() => navigate(`/itineraries/${r.id}`)}>Open</button>
+                      <Link className="btn btn-sm btn-primary" to={`/itineraries/${r.id}`}>Open</Link>
                     </td>
                   </tr>
                 ))}

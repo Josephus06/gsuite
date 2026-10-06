@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import DataTable from '../components/DataTable';
 import EntityPicker from '../components/EntityPicker';
@@ -84,7 +84,7 @@ export default function ChartOfAccountEdit() {
       <div className="page-header">
         <h1>{isNew ? 'Add Chart of Account' : `Chart of Account — ${form.account_code}`}</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={() => navigate(isNew ? '/chart-of-accounts' : `/chart-of-accounts/${id}`)}>Back</button>
+          <Link className="btn" to={isNew ? '/chart-of-accounts' : `/chart-of-accounts/${id}`}>Back</Link>
           <button className="btn btn-primary" disabled={saving} onClick={handleSave}>{saving ? <LoadingSpinner inline size="sm" label="Saving..." /> : 'Save'}</button>
         </div>
       </div>

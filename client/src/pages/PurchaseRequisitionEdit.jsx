@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import DataTable from '../components/DataTable';
 import EntityPicker from '../components/EntityPicker';
@@ -152,7 +152,7 @@ export default function PurchaseRequisitionEdit() {
       <div className="page-header">
         <h1>Purchase Requisition</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={() => navigate(isNew ? '/purchase-requisitions' : `/purchase-requisitions/${id}`)}>Back to Lists</button>
+          <Link className="btn" to={isNew ? '/purchase-requisitions' : `/purchase-requisitions/${id}`}>Back to Lists</Link>
           <button className="btn btn-primary" disabled={saving} onClick={handleSave}>{saving ? <LoadingSpinner inline size="sm" label="Saving..." /> : 'Save'}</button>
         </div>
       </div>

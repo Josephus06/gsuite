@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
@@ -239,8 +239,8 @@ export default function ArchiverEntryView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-sm" onClick={() => navigate('/archiver/credentials')}>Back to Lists</button>
-          {mine.can_edit && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/archiver/credentials/${id}/edit`)}>Edit</button>}
+          <Link className="btn btn-sm" to={'/archiver/credentials'}>Back to Lists</Link>
+          {mine.can_edit && <Link className="btn btn-sm btn-primary" to={`/archiver/credentials/${id}/edit`}>Edit</Link>}
           {mine.can_edit && meta && <button className="btn btn-sm" onClick={() => setShowShare(true)}>Share</button>}
           {entry.has_secret && mine.can_reveal && (
             <button className="btn btn-sm btn-primary" onClick={() => setShowReveal(true)}>Reveal Password</button>

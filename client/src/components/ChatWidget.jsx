@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { chime, speak } from '../utils/notificationSound';
@@ -431,7 +431,7 @@ export default function ChatWidget() {
                 </button>
               )}
               {ticket && (
-                <button type="button" onClick={() => navigate(`/tickets/${ticket.id}`)} title="Open full ticket" style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 13 }}>↗</button>
+                <Link to={`/tickets/${ticket.id}`} title="Open full ticket" style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 13 }}>↗</Link>
               )}
               {/* Arming the wake word holds the microphone open for the session, so it is a
                   visible switch rather than a setting buried somewhere -- anyone should be able

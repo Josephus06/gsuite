@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Modal from './Modal';
@@ -207,7 +207,7 @@ export default function AssetAccountingPanel({ asset, meta, onChanged }) {
                 onClick={() => act(() => api.post(`/assets/${asset.id}/decapitalize`), 'Reverse the capitalisation of this asset?')}>Reverse Capitalisation</button>
             )}
             {can('/asset-disposals', 'can_add') && !disposal && asset.status !== 'disposed' && (
-              <button className="btn btn-sm btn-primary" onClick={() => navigate(`/asset-disposals/new?asset_id=${asset.id}`)}>Dispose</button>
+              <Link className="btn btn-sm btn-primary" to={`/asset-disposals/new?asset_id=${asset.id}`}>Dispose</Link>
             )}
           </div>
         </div>
@@ -233,7 +233,7 @@ export default function AssetAccountingPanel({ asset, meta, onChanged }) {
         {disposal && (
           <div className="error-banner" style={{ marginTop: 12 }}>
             Disposed by{' '}
-            <button type="button" className="link-btn" onClick={() => navigate(`/asset-disposals/${disposal.id}`)}>{disposal.disposal_no}</button>
+            <Link className="link-btn" to={`/asset-disposals/${disposal.id}`}>{disposal.disposal_no}</Link>
             {' '}on {String(disposal.disposal_date).slice(0, 10)} ({DISPOSAL_STATUS_LABELS[disposal.status] || disposal.status}),
             {Number(disposal.gain_loss) < 0 ? ' loss of ' : ' gain of '}
             {formatMoney(Math.abs(Number(disposal.gain_loss)))}.

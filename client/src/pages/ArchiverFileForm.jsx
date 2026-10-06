@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { FILE_STATUS_LABELS, formatBytes } from '../utils/archiverLabels';
@@ -81,7 +81,7 @@ export default function ArchiverFileForm() {
       <div className="page-header">
         <div style={{ fontWeight: 600 }}>Files</div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(id ? `/archiver/files/${id}` : '/archiver/files')}>Back</button>
+          <Link className="btn btn-sm" to={id ? `/archiver/files/${id}` : '/archiver/files'}>Back</Link>
           <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
         </div>
       </div>

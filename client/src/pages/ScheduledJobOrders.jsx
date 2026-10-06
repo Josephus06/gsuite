@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -75,7 +75,7 @@ export default function ScheduledJobOrders() {
                     <td>{row.job_location_name}</td>
                     <td>{row.delivery_date ? String(row.delivery_date).slice(0, 10) : ''}</td>
                     <td>{row.assigned_count} / {row.task_count}</td>
-                    <td><button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(`/scheduled-jo/${row.id}`)}>Open</button></td>
+                    <td><Link className="btn btn-sm btn-primary" to={`/scheduled-jo/${row.id}`}>Open</Link></td>
                   </tr>
                 ))}
               </tbody>
@@ -112,7 +112,7 @@ export default function ScheduledJobOrders() {
                     <td>{row.minutes_per_unit ?? 0}</td>
                     <td>{Number(row.allotted_minutes || 0).toFixed(0)} mins</td>
                     <td>{timerStatus(row)}</td>
-                    <td><button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(`/scheduled-jo/process/${row.id}`)}>Open</button></td>
+                    <td><Link className="btn btn-sm btn-primary" to={`/scheduled-jo/process/${row.id}`}>Open</Link></td>
                   </tr>
                 ))}
               </tbody>

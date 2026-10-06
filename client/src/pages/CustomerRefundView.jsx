@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -121,7 +121,7 @@ export default function CustomerRefundView() {
                 {cr.lines.map((l) => (
                   <tr key={l.id}>
                     <td>{l.customer_payment_id
-                      ? <button type="button" className="link-btn" onClick={() => navigate(`/customer-payments/${l.customer_payment_id}`)}>{l.customer_payment_no}</button>
+                      ? <Link className="link-btn" to={`/customer-payments/${l.customer_payment_id}`}>{l.customer_payment_no}</Link>
                       : (l.customer_payment_no || '—')}</td>
                     <td>{formatDate(l.payment_date)}</td>
                     <td>{money(l.original_amount)}</td>

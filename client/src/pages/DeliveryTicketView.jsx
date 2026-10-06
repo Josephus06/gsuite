@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -89,7 +89,7 @@ export default function DeliveryTicketView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(`/sales-orders/${dt.sales_order_id}`)}>Back</button>
+          <Link className="btn btn-sm" to={`/sales-orders/${dt.sales_order_id}`}>Back</Link>
           {/* Edit sits here, next to Back. Only an open ticket can be edited -- a converted one has
               become its invoice, a void one is final -- so those show it greyed with the reason. */}
           {canEdit && isOpen && <button className="btn btn-sm" onClick={() => setEditing(true)}>Edit</button>}
@@ -128,9 +128,9 @@ export default function DeliveryTicketView() {
         </div>
         <div className="estimate-status">
           {STATUS_LABELS[dt.status] || dt.status}
-          <button type="button" className="estimate-so-link" onClick={() => navigate(`/sales-orders/${dt.sales_order_id}`)}>
+          <Link className="estimate-so-link" to={`/sales-orders/${dt.sales_order_id}`}>
             {dt.sales_order_no}
-          </button>
+          </Link>
         </div>
 
         <div className="estimate-detail-grid">
@@ -145,7 +145,7 @@ export default function DeliveryTicketView() {
           </div>
           <div>
             <div>Date : <span className="hi">{formatDate(dt.date_created)}</span></div>
-            <div>Created From : <button type="button" className="link-btn" onClick={() => navigate(`/sales-orders/${dt.sales_order_id}`)}>{dt.sales_order_no}</button></div>
+            <div>Created From : <Link className="link-btn" to={`/sales-orders/${dt.sales_order_id}`}>{dt.sales_order_no}</Link></div>
             <div>Memo : <span className="hi">{dt.memo || ''}</span></div>
             <div>Sales Rep : <span className="hi">{dt.sales_rep_name || '—'}</span></div>
             <div>Office Location : <span className="hi">{dt.office_location_name || '—'}</span></div>
@@ -192,7 +192,7 @@ export default function DeliveryTicketView() {
                   <tr key={l.id}>
                     <td>{l.line_no}</td>
                     <td>{l.job_order_id ? (
-                      <button type="button" className="link-btn" onClick={() => navigate(`/production/${l.job_order_id}`)}>{l.job_order_no}</button>
+                      <Link className="link-btn" to={`/production/${l.job_order_id}`}>{l.job_order_no}</Link>
                     ) : '—'}</td>
                     <td>{l.item_name}</td>
                     <td>{l.description}</td>
@@ -271,20 +271,20 @@ export default function DeliveryTicketView() {
               <tbody>
                 <tr>
                   <td>Sales Order</td>
-                  <td><button type="button" className="link-btn" onClick={() => navigate(`/sales-orders/${dt.sales_order_id}`)}>{dt.sales_order_no}</button></td>
+                  <td><Link className="link-btn" to={`/sales-orders/${dt.sales_order_id}`}>{dt.sales_order_no}</Link></td>
                   <td>—</td>
                 </tr>
                 {invoices.map((si) => (
                   <tr key={si.id}>
                     <td>Sales Invoice</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/sales-invoices/${si.id}`)}>{si.invoice_no}</button></td>
+                    <td><Link className="link-btn" to={`/sales-invoices/${si.id}`}>{si.invoice_no}</Link></td>
                     <td>{formatDate(si.date_created)}</td>
                   </tr>
                 ))}
                 {(dt.reversal_journals || []).map((j) => (
                   <tr key={`j${j.id}`}>
                     <td>Reversal Journal</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/journals/${j.id}`)}>{j.journal_no}</button></td>
+                    <td><Link className="link-btn" to={`/journals/${j.id}`}>{j.journal_no}</Link></td>
                     <td>{formatDate(j.date_created)}</td>
                   </tr>
                 ))}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -71,8 +71,8 @@ export default function ChequeView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/cheques')}>Back to Lists</button>
-          {can('/cheques', 'can_edit') && c.status !== 'void' && <button className="btn btn-sm" onClick={() => navigate(`/cheques/${c.id}/edit`)}>Edit</button>}
+          <Link className="btn btn-sm" to={'/cheques'}>Back to Lists</Link>
+          {can('/cheques', 'can_edit') && c.status !== 'void' && <Link className="btn btn-sm" to={`/cheques/${c.id}/edit`}>Edit</Link>}
           {can('/cheques', 'can_print') && <button className="btn btn-sm" onClick={() => window.open(`/cheques/${c.id}/print`, '_blank')}>Print Voucher</button>}
           {can('/cheques', 'can_print') && <button className="btn btn-sm" onClick={() => window.open(`/cheques/${c.id}/print?as=cheque`, '_blank')}>Print Cheque</button>}
           {/* As on a Vendor Bill: a new Bill Credit for this cheque's vendor, made from the cheque. */}
@@ -212,7 +212,7 @@ export default function ChequeView() {
                 {credits.length === 0 && <tr><td colSpan={3} className="muted" style={{ textAlign: 'center', padding: 20 }}>No bill credits applied.</td></tr>}
                 {credits.map((x) => (
                   <tr key={x.bill_credit_id}>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/bill-credits/${x.bill_credit_id}`)}>{x.bill_credit_no}</button></td>
+                    <td><Link className="link-btn" to={`/bill-credits/${x.bill_credit_id}`}>{x.bill_credit_no}</Link></td>
                     <td>{x.ap_account_code} — {x.ap_account_name}</td>
                     <td style={{ textAlign: 'right' }}>{money(x.applied_amount)}</td>
                   </tr>
@@ -252,7 +252,7 @@ export default function ChequeView() {
                 {related.map((r) => (
                   <tr key={`${r.kind}-${r.id}`}>
                     <td>{r.date_created ? String(r.date_created).slice(0, 10) : ''}</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(r.path || `/journals/${r.id}`)}>{r.doc_no || r.journal_no}</button></td>
+                    <td><Link className="link-btn" to={r.path || `/journals/${r.id}`}>{r.doc_no || r.journal_no}</Link></td>
                     <td style={{ textAlign: 'right' }}>{money(r.amount)}</td>
                     <td>{r.status}</td>
                   </tr>

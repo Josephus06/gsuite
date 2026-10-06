@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -89,7 +89,7 @@ export default function HrIncidentReportView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-sm" onClick={() => navigate('/hrd/incident-reports')}>Back</button>
+          <Link className="btn btn-sm" to={'/hrd/incident-reports'}>Back</Link>
           <button className="btn btn-sm" onClick={() => window.print()}>Print</button>
           {canDelete && (
             <button className="btn btn-sm btn-danger" disabled={busy} onClick={remove}>Delete</button>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -101,7 +101,7 @@ export default function EmployeeQuotaView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/employee-quotas')}>Back</button>
+          <Link className="btn btn-sm" to={'/employee-quotas'}>Back</Link>
           {canEdit && !editing && <button className="btn btn-sm btn-primary" onClick={startEdit}>Edit</button>}
           {editing && <button className="btn btn-sm btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>}
           {editing && <button className="btn btn-sm" onClick={cancelEdit}>Cancel</button>}

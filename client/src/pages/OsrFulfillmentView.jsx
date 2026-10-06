@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -34,7 +34,7 @@ export default function OsrFulfillmentView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(`/office-supply-requisitions/${f.osr_id}`)}>Back</button>
+          <Link className="btn btn-sm" to={`/office-supply-requisitions/${f.osr_id}`}>Back</Link>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a saved OSR Fulfillment isn't implemented in this build">Edit</button>}
         </div>
       </div>
@@ -48,7 +48,7 @@ export default function OsrFulfillmentView() {
           <div>
             <div>OSR Fulfillment # : <span className="hi">{f.osrf_no}</span></div>
             <div>Date : <span className="hi">{formatDate(f.date_created)}</span></div>
-            <div>Created From : <button type="button" className="estimate-so-link" onClick={() => navigate(`/office-supply-requisitions/${f.osr_id}`)}>{f.created_from_osr_no}</button></div>
+            <div>Created From : <Link className="estimate-so-link" to={`/office-supply-requisitions/${f.osr_id}`}>{f.created_from_osr_no}</Link></div>
           </div>
           <div>
             <div>Withdraw From : <span className="hi">{f.withdraw_from_name || ''}</span></div>

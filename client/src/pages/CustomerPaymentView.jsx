@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -129,7 +129,7 @@ export default function CustomerPaymentView() {
           {can('/deposits', 'can_add') && cp.status === 'not_deposited' && (
             <button className="btn btn-sm btn-primary" onClick={() => navigate('/deposits/new', { state: { preselectPaymentId: cp.id } })}>Deposit</button>
           )}
-          {cp.deposit_id && <button className="btn btn-sm" onClick={() => navigate(`/deposits/${cp.deposit_id}`)}>View Deposit</button>}
+          {cp.deposit_id && <Link className="btn btn-sm" to={`/deposits/${cp.deposit_id}`}>View Deposit</Link>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
@@ -206,7 +206,7 @@ export default function CustomerPaymentView() {
                 )}
                 {invoiceLines.map((l) => (
                   <tr key={l.id}>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/sales-invoices/${l.sales_invoice_id}`)}>{l.invoice_no}</button></td>
+                    <td><Link className="link-btn" to={`/sales-invoices/${l.sales_invoice_id}`}>{l.invoice_no}</Link></td>
                     <td>{formatDate(l.invoice_date)}</td>
                     <td>{money(l.invoice_gross)}</td>
                     <td>{money(l.applied_amount)}</td>
@@ -236,7 +236,7 @@ export default function CustomerPaymentView() {
                 )}
                 {creditLines.map((l) => (
                   <tr key={l.id}>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/credit-memos/${l.credit_memo_id}`)}>{l.credit_memo_no}</button></td>
+                    <td><Link className="link-btn" to={`/credit-memos/${l.credit_memo_id}`}>{l.credit_memo_no}</Link></td>
                     <td>{money(l.applied_amount)}</td>
                   </tr>
                 ))}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -304,7 +304,7 @@ export default function NonStandardJobOrderView() {
       <div className="page-header">
         <h1>{order.job_location_name || 'Head Office'}</h1>
         <div className="spreadsheet-row-actions">
-          <button className="btn btn-sm" onClick={() => navigate(ROUTE)}>Back</button>
+          <Link className="btn btn-sm" to={ROUTE}>Back</Link>
           {canApprove && <>
             <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => act('approve', 'put')}>Approve</button>
             <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setRevisionOpen(true)}>Revision</button>

@@ -206,6 +206,9 @@ label {
   transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
 .btn:hover { background: var(--color-neutral-bg); }
+/* A button that only goes somewhere is a link (so it opens in a new tab, 2026-10-06): drawn exactly
+   like the button it replaced -- no underline, the button's own colour. */
+a.btn, a.link-btn { text-decoration: none; }
 /* Every variant shares one focus ring, so focus looks the same wherever it lands. */
 .btn:focus-visible {
   outline: none;

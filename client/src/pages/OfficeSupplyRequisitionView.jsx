@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -97,8 +97,8 @@ export default function OfficeSupplyRequisitionView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/office-supply-requisitions')}>Back to Lists</button>
-          {canEdit && o.status === 'open' && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/office-supply-requisitions/${id}/edit`)}>Edit</button>}
+          <Link className="btn btn-sm" to={'/office-supply-requisitions'}>Back to Lists</Link>
+          {canEdit && o.status === 'open' && <Link className="btn btn-sm btn-primary" to={`/office-supply-requisitions/${id}/edit`}>Edit</Link>}
           {canFulfill && isOpen && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfill(true)}>Fulfill</button>}
           {canEdit && o.status !== 'cancelled' && o.status !== 'served' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
         </div>
@@ -169,7 +169,7 @@ export default function OfficeSupplyRequisitionView() {
                 {(o.fulfillments || []).map((fu) => (
                   <tr key={fu.id}>
                     <td>{formatDate(fu.date_created)}</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/office-supply-requisitions/fulfillments/${fu.id}`)}>{fu.osrf_no}</button></td>
+                    <td><Link className="link-btn" to={`/office-supply-requisitions/fulfillments/${fu.id}`}>{fu.osrf_no}</Link></td>
                     <td style={{ textAlign: 'right' }}>{Number(fu.total_amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
                     <td>{fu.status}</td>
                   </tr>

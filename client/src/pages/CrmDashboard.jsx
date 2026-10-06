@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import CrmCalendar from '../components/CrmCalendar';
 import CrmDrafts from '../components/CrmDrafts';
@@ -106,7 +106,7 @@ function CrmOverview() {
               </tbody>
             </table>
           </div>
-          <button type="button" className="btn" style={{ marginTop: 12 }} onClick={() => navigate('/pipeline')}>View Pipeline</button>
+          <Link className="btn" style={{ marginTop: 12 }} to={'/pipeline'}>View Pipeline</Link>
         </div>
 
         <div className="card">
@@ -124,7 +124,7 @@ function CrmOverview() {
           ))}
           <h3 className="subsection">Leads</h3>
           <div>Open Leads: <strong>{openLeads}</strong></div>
-          <button type="button" className="btn" style={{ marginTop: 12 }} onClick={() => navigate('/leads')}>View Leads</button>
+          <Link className="btn" style={{ marginTop: 12 }} to={'/leads'}>View Leads</Link>
         </div>
       </div>
     </div>

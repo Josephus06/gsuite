@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -1254,7 +1254,7 @@ export default function EstimateWizard() {
     <div>
       <div className="page-header">
         <h1>ESTIMATE — {isNew && !estimateId ? 'Create' : estimateNo}</h1>
-        <button className="btn" onClick={() => navigate('/estimates')}>Back to Lists</button>
+        <Link className="btn" to={'/estimates'}>Back to Lists</Link>
       </div>
 
       <div className="card">
@@ -1747,7 +1747,7 @@ export default function EstimateWizard() {
 
             <div className="wizard-actions">
               <button type="button" className="btn" onClick={() => setStep(3)}>PREVIOUS</button>
-              <button type="button" className="btn btn-primary" onClick={() => navigate('/estimates')}>Back to Lists</button>
+              <Link className="btn btn-primary" to={'/estimates'}>Back to Lists</Link>
             </div>
           </div>
         )}

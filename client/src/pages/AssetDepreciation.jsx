@@ -169,7 +169,7 @@ export default function AssetDepreciation() {
                     <td data-label="Amount" style={{ textAlign: 'right' }}>{formatMoney(r.total_amount)}</td>
                     <td data-label="Status">{DEPRECIATION_STATUS_LABELS[r.status] || r.status}</td>
                     <td data-label="Posted By">{r.posted_by_name || '—'}</td>
-                    <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/asset-depreciation/${r.id}`)}>View</button></td>
+                    <td><Link className="btn btn-sm btn-primary" to={`/asset-depreciation/${r.id}`}>View</Link></td>
                   </tr>
                 ))}
               </tbody>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import DraftEditorModal from './DraftEditorModal';
 import LoadingSpinner from './LoadingSpinner';
@@ -152,7 +152,7 @@ export default function NeedsAttention() {
                 {data.rows.map((r) => (
                   <tr key={r.customer_id}>
                     <td>
-                      <button type="button" className="link-btn" onClick={() => navigate(`/customers/${r.customer_id}`)}>{r.customer_name}</button>
+                      <Link className="link-btn" to={`/customers/${r.customer_id}`}>{r.customer_name}</Link>
                       <div style={{ marginTop: 4 }}>
                         <span className={`badge ${PRIORITY_BADGE[r.crm_priority] || 'badge-muted'}`}>{r.crm_priority}</span>
                       </div>
@@ -171,7 +171,7 @@ export default function NeedsAttention() {
                     <td>{money(r.revenue_12m)}</td>
                     <td><strong>{Math.round(r.score)}</strong></td>
                     <td style={{ whiteSpace: 'nowrap' }}>
-                      <button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(`/customers/${r.customer_id}?tab=activity`)}>Plan Visit</button>{' '}
+                      <Link className="btn btn-sm btn-primary" to={`/customers/${r.customer_id}?tab=activity`}>Plan Visit</Link>{' '}
                       {can('/crm-dashboard', 'can_edit') && (
                         <>
                           <button type="button" className="btn btn-sm" disabled={drafting === r.customer_id} onClick={() => draftEmail(r)}>

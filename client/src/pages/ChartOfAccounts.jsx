@@ -46,7 +46,7 @@ export default function ChartOfAccounts() {
     <div>
       <div className="page-header">
         <h1>Chart of Accounts</h1>
-        {can('/chart-of-accounts', 'can_add') && <button className="btn btn-primary" onClick={() => navigate('/chart-of-accounts/new')}>Add New</button>}
+        {can('/chart-of-accounts', 'can_add') && <Link className="btn btn-primary" to={'/chart-of-accounts/new'}>Add New</Link>}
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
@@ -86,7 +86,7 @@ export default function ChartOfAccounts() {
                       <td data-label="Type">{row.coa_account_type}</td>
                       <td data-label="Sub-Type">{row.account_sub_type}</td>
                       <td style={{ display: 'flex', gap: 6 }}>
-                        {can('/chart-of-accounts', 'can_edit') && <button className="btn btn-sm" onClick={() => navigate(`/chart-of-accounts/${row.id}/edit`)}>Update</button>}
+                        {can('/chart-of-accounts', 'can_edit') && <Link className="btn btn-sm" to={`/chart-of-accounts/${row.id}/edit`}>Update</Link>}
                         <Link className="btn btn-sm btn-primary" to={`/chart-of-accounts/${row.id}`}>View</Link>
                       </td>
                     </tr>

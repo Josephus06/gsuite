@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -49,10 +49,10 @@ export default function DepositView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/deposits')}>Back to Lists</button>
+          <Link className="btn btn-sm" to={'/deposits'}>Back to Lists</Link>
           {can('/deposits', 'can_edit') && d.status !== 'void' && (d.reconciled
             ? <button className="btn btn-sm" disabled title="Cleared in a Bank Reconciliation -- it can no longer be edited">Edit</button>
-            : <button className="btn btn-sm" onClick={() => navigate(`/deposits/${d.id}/edit`)}>Edit</button>)}
+            : <Link className="btn btn-sm" to={`/deposits/${d.id}/edit`}>Edit</Link>)}
           {can('/deposits', 'can_void') && d.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
@@ -96,7 +96,7 @@ export default function DepositView() {
                 {payments.length === 0 && <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>No payments.</td></tr>}
                 {payments.map((p) => (
                   <tr key={p.id}>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/customer-payments/${p.id}`)}>{p.customer_payment_no}</button></td>
+                    <td><Link className="link-btn" to={`/customer-payments/${p.id}`}>{p.customer_payment_no}</Link></td>
                     <td>{p.customer_name}</td>
                     <td>{formatDate(p.date_created)}</td>
                     <td style={{ textAlign: 'right' }}>{money(p.payment_amount)}</td>

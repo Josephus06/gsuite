@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -82,11 +82,11 @@ export default function JournalView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/journals')}>Back to Lists</button>
+          <Link className="btn btn-sm" to={'/journals'}>Back to Lists</Link>
           {/* Not on a void journal, nor on a reversal a void wrote (the server refuses both too). */}
           {can('/journals', 'can_edit') && j.status !== 'void' && !j.source_type && String(j.status).toUpperCase() !== 'REVERSAL'
-            && <button className="btn btn-sm" onClick={() => navigate(`/journals/${j.id}/edit`)}>Edit</button>}
-          {can('/journals', 'can_add') && <button className="btn btn-sm" title="Start a new journal with this one's lines" onClick={() => navigate(`/journals/new?replicate=${j.id}`)}>Replicate</button>}
+            && <Link className="btn btn-sm" to={`/journals/${j.id}/edit`}>Edit</Link>}
+          {can('/journals', 'can_add') && <Link className="btn btn-sm" title="Start a new journal with this one's lines" to={`/journals/new?replicate=${j.id}`}>Replicate</Link>}
           {can('/journals', 'can_void') && j.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>

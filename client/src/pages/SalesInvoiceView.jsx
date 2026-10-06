@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -160,7 +160,7 @@ export default function SalesInvoiceView() {
         <div style={{ display: 'flex', gap: 8 }}>
           {/* Back to wherever this invoice came from -- an estimate-sourced one has no Sales
               Order to go back to, so it returns to the invoice list. */}
-          <button className="btn btn-sm" onClick={() => navigate(si.sales_order_id ? `/sales-orders/${si.sales_order_id}` : '/sales-invoices')}>Back</button>
+          <Link className="btn btn-sm" to={si.sales_order_id ? `/sales-orders/${si.sales_order_id}` : '/sales-invoices'}>Back</Link>
           {/* Editable while the invoice is OPEN and nothing has settled it. Both conditions are
               decided server-side (see whyNotEditable) and arrive on the invoice, so the button and
               the refusal cannot disagree -- and the disabled tooltip is the server's own words. */}
@@ -230,15 +230,15 @@ export default function SalesInvoiceView() {
             <div>
               Created Form :{' '}
               {si.sales_order_id ? (
-                <button type="button" className="link-btn" onClick={() => navigate(`/sales-orders/${si.sales_order_id}`)}>{si.sales_order_no}</button>
+                <Link className="link-btn" to={`/sales-orders/${si.sales_order_id}`}>{si.sales_order_no}</Link>
               ) : si.estimate_id ? (
-                <button type="button" className="link-btn" onClick={() => navigate(`/estimates/${si.estimate_id}`)}>{si.estimate_no}</button>
+                <Link className="link-btn" to={`/estimates/${si.estimate_id}`}>{si.estimate_no}</Link>
               ) : si.nsso_id ? (
-                <button type="button" className="link-btn" onClick={() => navigate(`/non-standard-sales-orders/${si.nsso_id}`)}>{si.nsso_no}</button>
+                <Link className="link-btn" to={`/non-standard-sales-orders/${si.nsso_id}`}>{si.nsso_no}</Link>
               ) : <span className="hi">{si.customer_id ? 'Direct (no order)' : '—'}</span>}
             </div>
             {si.delivery_ticket_id && (
-              <div>Delivery Ticket : <button type="button" className="link-btn" onClick={() => navigate(`/delivery-tickets/${si.delivery_ticket_id}`)}>{si.dt_no}</button></div>
+              <div>Delivery Ticket : <Link className="link-btn" to={`/delivery-tickets/${si.delivery_ticket_id}`}>{si.dt_no}</Link></div>
             )}
             <div>Date : <span className="hi">{formatDate(si.date_created)}</span></div>
             <div>BS/SI # : <span className="hi">{si.bs_si_no || ''}</span></div>
@@ -300,7 +300,7 @@ export default function SalesInvoiceView() {
                 {si.lines.map((l) => (
                   <tr key={l.id}>
                     <td>{l.job_order_id ? (
-                      <button type="button" className="link-btn" onClick={() => navigate(`/production/${l.job_order_id}`)}>{l.job_order_no}</button>
+                      <Link className="link-btn" to={`/production/${l.job_order_id}`}>{l.job_order_no}</Link>
                     ) : '—'}</td>
                     <td>{l.description}</td>
                     <td>{qty(l.quantity)}</td>
@@ -355,16 +355,16 @@ export default function SalesInvoiceView() {
       {tab === 'related' && (
         <div className="card">
           {si.sales_order_id && (
-            <p>Sales Order: <button type="button" className="btn btn-sm" onClick={() => navigate(`/sales-orders/${si.sales_order_id}`)}>{si.sales_order_no}</button></p>
+            <p>Sales Order: <Link className="btn btn-sm" to={`/sales-orders/${si.sales_order_id}`}>{si.sales_order_no}</Link></p>
           )}
           {si.estimate_id && (
-            <p>Estimate: <button type="button" className="btn btn-sm" onClick={() => navigate(`/estimates/${si.estimate_id}`)}>{si.estimate_no}</button></p>
+            <p>Estimate: <Link className="btn btn-sm" to={`/estimates/${si.estimate_id}`}>{si.estimate_no}</Link></p>
           )}
           {si.nsso_id && (
-            <p>Non-Standard SO: <button type="button" className="btn btn-sm" onClick={() => navigate(`/non-standard-sales-orders/${si.nsso_id}`)}>{si.nsso_no}</button></p>
+            <p>Non-Standard SO: <Link className="btn btn-sm" to={`/non-standard-sales-orders/${si.nsso_id}`}>{si.nsso_no}</Link></p>
           )}
           {si.delivery_ticket_id && (
-            <p>Delivery Ticket: <button type="button" className="btn btn-sm" onClick={() => navigate(`/delivery-tickets/${si.delivery_ticket_id}`)}>{si.dt_no}</button></p>
+            <p>Delivery Ticket: <Link className="btn btn-sm" to={`/delivery-tickets/${si.delivery_ticket_id}`}>{si.dt_no}</Link></p>
           )}
           <div className="table-wrap" style={{ marginTop: 12 }}>
             <table>
@@ -378,7 +378,7 @@ export default function SalesInvoiceView() {
                 {(si.reversal_journals || []).map((j) => (
                   <tr key={`j${j.id}`}>
                     <td>Reversal Journal</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/journals/${j.id}`)}>{j.journal_no}</button></td>
+                    <td><Link className="link-btn" to={`/journals/${j.id}`}>{j.journal_no}</Link></td>
                     <td>{formatDate(j.date_created)}</td>
                     <td>{money(j.total_debit)}</td>
                     <td>{j.status === 'REVERSAL' ? 'Reversal' : j.status}</td>
@@ -387,7 +387,7 @@ export default function SalesInvoiceView() {
                 {payments.map((p) => (
                   <tr key={`p${p.id}`}>
                     <td>Customer Payment</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/customer-payments/${p.id}`)}>{p.customer_payment_no}</button></td>
+                    <td><Link className="link-btn" to={`/customer-payments/${p.id}`}>{p.customer_payment_no}</Link></td>
                     <td>{formatDate(p.date_created)}</td>
                     <td>{money(p.applied_amount)}</td>
                     <td>{RELATED_STATUS_LABELS[p.status] || p.status}</td>
@@ -396,7 +396,7 @@ export default function SalesInvoiceView() {
                 {creditMemos.map((c) => (
                   <tr key={`c${c.id}`}>
                     <td>Credit Memo</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/credit-memos/${c.id}`)}>{c.credit_memo_no}</button></td>
+                    <td><Link className="link-btn" to={`/credit-memos/${c.id}`}>{c.credit_memo_no}</Link></td>
                     <td>{formatDate(c.date_created)}</td>
                     {/* What this memo put against THIS invoice, like the payment rows above it.
                         Its own gross only where it is linked to the invoice but applied elsewhere. */}

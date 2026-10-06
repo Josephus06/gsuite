@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -296,8 +296,8 @@ export default function EstimateView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/estimates')}>Back</button>
-          {canEditContent && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/estimates/${id}/edit`)}>Edit</button>}
+          <Link className="btn btn-sm" to={'/estimates'}>Back</Link>
+          {canEditContent && <Link className="btn btn-sm btn-primary" to={`/estimates/${id}/edit`}>Edit</Link>}
           {canShowPrint && <button className="btn btn-sm btn-primary" onClick={() => window.open(`/estimates/${id}/print`, '_blank')}>Print</button>}
           {(canEdit || canRecordCustomerAnswer || supervisorCanAct) && isPending && canShowApprove && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>{approveLabel}</button>}
           {/* The customer saying no is as much their answer as saying yes, so it opens to the same
@@ -323,9 +323,9 @@ export default function EstimateView() {
         <div className="estimate-status">
           {STATUS_LABELS[estimate.status] || estimate.status}
           {estimate.sales_order_no && (
-            <button type="button" className="estimate-so-link" onClick={() => navigate(`/sales-orders/${estimate.sales_order_id}`)}>
+            <Link className="estimate-so-link" to={`/sales-orders/${estimate.sales_order_id}`}>
               {estimate.sales_order_no}
-            </button>
+            </Link>
           )}
         </div>
 

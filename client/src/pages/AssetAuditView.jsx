@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
@@ -110,7 +110,7 @@ export default function AssetAuditView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-sm" onClick={() => navigate('/asset-audits')}>Back to Lists</button>
+          <Link className="btn btn-sm" to={'/asset-audits'}>Back to Lists</Link>
           {isOpen && can('/asset-audits', 'can_edit') && summary.pending > 0 && (
             <button className="btn btn-sm" disabled={busy} onClick={() => run(() => api.put(`/asset-audits/${id}/verify-remaining`), `Mark all ${summary.pending} uncounted asset(s) as verified?`)}>
               Verify Remaining ({summary.pending})
@@ -190,7 +190,7 @@ export default function AssetAuditView() {
               <tbody>
                 {exceptions.map((l) => (
                   <tr key={l.id}>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/assets/${l.asset_id}`)}>{l.reference_no}</button></td>
+                    <td><Link className="link-btn" to={`/assets/${l.asset_id}`}>{l.reference_no}</Link></td>
                     <td>{l.item_name}</td>
                     <td>{l.expected_location_name || '—'}{l.expected_custodian_name?.trim() ? ` · ${l.expected_custodian_name}` : ''}</td>
                     <td>{l.found_location_name || '—'}{l.found_custodian_name?.trim() ? ` · ${l.found_custodian_name}` : ''}</td>
@@ -234,7 +234,7 @@ export default function AssetAuditView() {
                 return (
                   <tr key={l.id}>
                     <td data-label="#">{l.line_no}</td>
-                    <td data-label="Reference No"><button type="button" className="link-btn" onClick={() => navigate(`/assets/${l.asset_id}`)}>{l.reference_no}</button></td>
+                    <td data-label="Reference No"><Link className="link-btn" to={`/assets/${l.asset_id}`}>{l.reference_no}</Link></td>
                     <td data-label="Asset Type">{l.item_name}</td>
                     <td data-label="Serial">{l.serial_no || '—'}</td>
                     <td data-label="Expected Location">{l.expected_location_name || '—'}</td>

@@ -343,9 +343,9 @@ export default function JobOrders() {
                       )}
                       <td data-label="JO #">{row.job_order_no}</td>
                       <td data-label="SO #">
-                        <button type="button" className="link-btn" onClick={() => navigate(`/sales-orders/${row.sales_order_id}`)}>
+                        <Link className="link-btn" to={`/sales-orders/${row.sales_order_id}`}>
                           {row.sales_order_no}
-                        </button>
+                        </Link>
                       </td>
                       <td data-label="Date Created">{row.created_at ? String(row.created_at).slice(0, 10) : ''}</td>
                       <td data-label="Office Location">{row.office_location_name}</td>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -232,7 +232,7 @@ export default function CommissionPayableView() {
                 {(!cp.vouchers || cp.vouchers.length === 0) && <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>No commission voucher has released this payable yet.</td></tr>}
                 {(cp.vouchers || []).map((v) => (
                   <tr key={v.id}>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/commission-vouchers/${v.id}`)}>{v.voucher_no}</button></td>
+                    <td><Link className="link-btn" to={`/commission-vouchers/${v.id}`}>{v.voucher_no}</Link></td>
                     <td>{formatDate(v.date_created)}</td>
                     <td style={{ textAlign: 'right' }}>{money(v.released_amount)}</td>
                     <td>{v.status === 'void' ? 'Void' : 'Posted'}</td>

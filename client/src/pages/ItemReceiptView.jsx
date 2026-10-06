@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -41,7 +41,7 @@ export default function ItemReceiptView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(`/transfer-orders/${data.transfer_order_id}`)}>Back</button>
+          <Link className="btn btn-sm" to={`/transfer-orders/${data.transfer_order_id}`}>Back</Link>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Item Receipt isn't implemented in this build">Edit</button>}
         </div>
       </div>
@@ -56,9 +56,9 @@ export default function ItemReceiptView() {
           <div>
             <div>Item Receipt # : <span className="hi">{data.receipt_no}</span></div>
             <div>Date : <span className="hi">{formatDate(data.date_created)}</span></div>
-            <div>TO # : <button type="button" className="link-btn" onClick={() => navigate(`/transfer-orders/${data.transfer_order_id}`)}>{data.to_no}</button></div>
+            <div>TO # : <Link className="link-btn" to={`/transfer-orders/${data.transfer_order_id}`}>{data.to_no}</Link></div>
             <div>TO Date : <span className="hi">{formatDate(data.to_date_created)}</span></div>
-            <div>IF # : <button type="button" className="link-btn" onClick={() => navigate(`/transfer-orders/item-fulfillments/${data.item_fulfillment_id}`)}>{data.fulfillment_no}</button></div>
+            <div>IF # : <Link className="link-btn" to={`/transfer-orders/item-fulfillments/${data.item_fulfillment_id}`}>{data.fulfillment_no}</Link></div>
             <div>IF Date : <span className="hi">{formatDate(data.if_date_created)}</span></div>
           </div>
           <div>
@@ -98,9 +98,9 @@ export default function ItemReceiptView() {
                   <tr key={idx}>
                     <td>
                       <span style={{ color: '#db2777', fontWeight: 600, marginRight: 8 }}>{idx + 1}</span>
-                      <button type="button" className="link-btn" onClick={() => navigate(`/inventory/${l.item_id}`)}>
+                      <Link className="link-btn" to={`/inventory/${l.item_id}`}>
                         {l.item_code} {l.item_name ? `— ${l.item_name}` : ''}
-                      </button>
+                      </Link>
                     </td>
                     <td>{qty(l.qty_fulfilled)}</td>
                     <td>{qty(l.received)}</td>
@@ -154,7 +154,7 @@ export default function ItemReceiptView() {
               <tbody>
                 <tr>
                   <td>Item Fulfillment</td>
-                  <td><button type="button" className="link-btn" onClick={() => navigate(`/transfer-orders/item-fulfillments/${data.item_fulfillment_id}`)}>{data.fulfillment_no}</button></td>
+                  <td><Link className="link-btn" to={`/transfer-orders/item-fulfillments/${data.item_fulfillment_id}`}>{data.fulfillment_no}</Link></td>
                 </tr>
               </tbody>
             </table>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -81,7 +81,7 @@ export default function Users() {
           {can('/users', 'can_view') && (
             <button className="btn" onClick={() => setShowTemplates(true)}>Permission Templates</button>
           )}
-          {can('/users', 'can_add') && <button className="btn btn-primary" onClick={() => navigate('/users/new')}>Add User</button>}
+          {can('/users', 'can_add') && <Link className="btn btn-primary" to={'/users/new'}>Add User</Link>}
         </div>
       </div>
       <div className="card" style={{ marginBottom: 16 }}>
@@ -106,7 +106,7 @@ export default function Users() {
             emptyLabel={search ? 'No users match this search.' : 'No users yet.'}
             actions={(row) => (
               <>
-                {can('/users', 'can_edit') && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/users/${row.id}/edit`)}>Edit</button>}
+                {can('/users', 'can_edit') && <Link className="btn btn-sm btn-primary" to={`/users/${row.id}/edit`}>Edit</Link>}
                 {/* System Admin only, and never on your own row or a switched-off account --
                     the server refuses both regardless. */}
                 {isAdmin && row.is_active && row.id !== user?.id && (

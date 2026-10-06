@@ -474,10 +474,10 @@ export default function HrViolations() {
                     </td>
                     <td data-label="Incident Report">
                       {v.incident_report_id ? (
-                        <button type="button" className="link-btn"
-                          onClick={() => navigate(`/hrd/incident-reports/${v.incident_report_id}`)}>
+                        <Link className="link-btn"
+                          to={`/hrd/incident-reports/${v.incident_report_id}`}>
                           {v.incident_no}
-                        </button>
+                        </Link>
                       ) : <span className="muted">—</span>}
                       <div>
                         <span className={`badge ${STATUS_BADGE[v.status] || 'badge-muted'}`}>{pretty(v.incident_status || v.status)}</span>

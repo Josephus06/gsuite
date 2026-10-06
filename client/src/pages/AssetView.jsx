@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -137,11 +137,11 @@ export default function AssetView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/assets')}>Back to Lists</button>
-          {canAct && can('/assets', 'can_edit') && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/assets/${id}/edit`)}>Edit</button>}
+          <Link className="btn btn-sm" to={'/assets'}>Back to Lists</Link>
+          {canAct && can('/assets', 'can_edit') && <Link className="btn btn-sm btn-primary" to={`/assets/${id}/edit`}>Edit</Link>}
           {canAct && can('/assets', 'can_edit') && <button className="btn btn-sm" onClick={() => setShowStatus(true)}>Change Status</button>}
           {canAct && can('/assets', 'can_approve') && !a.parent_asset_id && <button className="btn btn-sm" onClick={() => setShowRelocate(true)}>Correct Location</button>}
-          {canAct && can('/asset-transfers', 'can_add') && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/asset-transfers/new?asset_id=${a.id}`)}>Transfer</button>}
+          {canAct && can('/asset-transfers', 'can_add') && <Link className="btn btn-sm btn-primary" to={`/asset-transfers/new?asset_id=${a.id}`}>Transfer</Link>}
           {canAct && can('/assets', 'can_delete') && <button className="btn btn-sm btn-warning" onClick={remove}>Delete</button>}
         </div>
       </div>
@@ -164,7 +164,7 @@ export default function AssetView() {
           {openTransfers.map((t, i) => (
             <span key={t.id}>
               {i > 0 && ', '}
-              <button type="button" className="link-btn" onClick={() => navigate(`/asset-transfers/${t.id}`)}>{t.transfer_no}</button>
+              <Link className="link-btn" to={`/asset-transfers/${t.id}`}>{t.transfer_no}</Link>
               {' '}({t.status.replace('_', ' ')})
             </span>
           ))}
@@ -214,7 +214,7 @@ export default function AssetView() {
             {(a.custody_chain || []).map((c, i) => (
               <span key={c.id}>
                 {i > 0 && ' → '}
-                <button type="button" className="link-btn" onClick={() => navigate(`/assets/${c.id}`)}>{c.item_name} {c.reference_no}</button>
+                <Link className="link-btn" to={`/assets/${c.id}`}>{c.item_name} {c.reference_no}</Link>
               </span>
             ))}
             {a.location_name ? ` → ${a.location_name}` : ''}
@@ -258,7 +258,7 @@ export default function AssetView() {
                 {attached.length === 0 && <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>Nothing is attached to this asset.</td></tr>}
                 {attached.map((c) => (
                   <tr key={c.id}>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/assets/${c.id}`)}>{c.reference_no}</button></td>
+                    <td><Link className="link-btn" to={`/assets/${c.id}`}>{c.reference_no}</Link></td>
                     <td>{c.item_name}</td>
                     <td>{c.serial_no || '—'}</td>
                     <td>{STATUS_LABELS[c.status] || c.status}</td>
@@ -292,7 +292,7 @@ export default function AssetView() {
                     <td>{m.to_location_name || '—'}{m.to_custodian_name?.trim() ? ` · ${m.to_custodian_name}` : ''}</td>
                     <td>
                       {m.transfer_no
-                        ? <button type="button" className="link-btn" onClick={() => navigate(`/asset-transfers/${m.transfer_id}`)}>{m.transfer_no}</button>
+                        ? <Link className="link-btn" to={`/asset-transfers/${m.transfer_id}`}>{m.transfer_no}</Link>
                         : '—'}
                     </td>
                     <td>{m.moved_by_name || '—'}</td>

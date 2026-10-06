@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { parseUtc } from '../utils/datetime';
@@ -94,7 +94,7 @@ export default function ScheduledJobOrderRun() {
     <div>
       <div className="page-header">
         <div />
-        <button className="btn btn-sm" onClick={() => navigate('/scheduled-jo')}>Back to Scheduled JO</button>
+        <Link className="btn btn-sm" to={'/scheduled-jo'}>Back to Scheduled JO</Link>
       </div>
 
       {error && <div className="error-banner">{error}</div>}

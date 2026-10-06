@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -92,7 +92,7 @@ export default function JournalForm() {
       <div className="page-header">
         <h1>{editId ? `Edit ${replicatedFrom || 'Journal'}` : 'New Journal'}{!editId && replicatedFrom && <span className="muted" style={{ fontSize: "0.6em", marginLeft: 10 }}>replicated from {replicatedFrom}</span>}</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(editId ? `/journals/${editId}` : '/journals')}>{editId ? 'Cancel' : 'Back'}</button>
+          <Link className="btn btn-sm" to={editId ? `/journals/${editId}` : '/journals'}>{editId ? 'Cancel' : 'Back'}</Link>
           <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
         </div>
       </div>

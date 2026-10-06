@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
@@ -74,7 +74,7 @@ export default function RmiView() {
       <div className="page-header">
         <h1>{rmi.rmi_no}</h1>
         <div className="spreadsheet-row-actions">
-          <button className="btn btn-sm" onClick={() => navigate('/rmis')}>Back to Lists</button>
+          <Link className="btn btn-sm" to={'/rmis'}>Back to Lists</Link>
           {canReceive && <button className="btn btn-sm btn-primary" onClick={openReceive}>Receive</button>}
           <button className="btn btn-sm" onClick={() => window.print()}>Print</button>
         </div>

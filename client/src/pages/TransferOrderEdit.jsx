@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -192,7 +192,7 @@ export default function TransferOrderEdit() {
       <div className="page-header">
         <h1>{isNew ? 'Add Transfer Order' : `Transfer Order — ${to?.to_no}`}</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={() => navigate(isNew ? '/transfer-orders' : `/transfer-orders/${id}`)}>Back</button>
+          <Link className="btn" to={isNew ? '/transfer-orders' : `/transfer-orders/${id}`}>Back</Link>
           {canEdit && <button className="btn btn-primary" disabled={saving} onClick={handleSave}>{saving ? <LoadingSpinner inline size="sm" label="Saving..." /> : 'Save'}</button>}
         </div>
       </div>

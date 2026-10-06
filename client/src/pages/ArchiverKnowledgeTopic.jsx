@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
@@ -233,12 +233,12 @@ export default function ArchiverKnowledgeTopic() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {/* Back to the card this one sits in, not all the way out -- three levels deep, the
               front page is rarely where you meant to go. */}
-          <button
+          <Link
             className="btn btn-sm"
-            onClick={() => navigate(parent ? `/archiver/knowledge-base/${parent.id}` : '/archiver/knowledge-base')}
+            to={parent ? `/archiver/knowledge-base/${parent.id}` : '/archiver/knowledge-base'}
           >
             {parent ? `Back to ${parent.name}` : 'Back to Knowledge Base'}
-          </button>
+          </Link>
           {can('/archiver/knowledge-base', 'can_add') && (
             <button className="btn btn-sm" onClick={() => setShowNewChild(true)}>Add Card Inside</button>
           )}
@@ -269,13 +269,12 @@ export default function ArchiverKnowledgeTopic() {
             {ancestors.map((a) => (
               <span key={a.id}>
                 {' / '}
-                <button
-                  type="button"
+                <Link
                   className="link-btn"
-                  onClick={() => navigate(`/archiver/knowledge-base/${a.id}`)}
+                  to={`/archiver/knowledge-base/${a.id}`}
                 >
                   {a.name}
-                </button>
+                </Link>
               </span>
             ))}
             {' / '}{topic.name}
@@ -300,9 +299,8 @@ export default function ArchiverKnowledgeTopic() {
               // Edit beside the card button, not inside it -- nesting buttons is invalid markup
               // and fires both handlers, so a rename would also navigate into the card.
               <div key={c.id} style={{ position: 'relative' }}>
-                <button
-                  type="button"
-                  onClick={() => navigate(`/archiver/knowledge-base/${c.id}`)}
+                <Link
+                  to={`/archiver/knowledge-base/${c.id}`}
                   style={{
                     textAlign: 'left', cursor: 'pointer', padding: 14, borderRadius: 10,
                     border: '1px solid var(--border, #e2e8f0)', background: 'transparent', color: 'inherit',
@@ -318,7 +316,7 @@ export default function ArchiverKnowledgeTopic() {
                         ? 'Empty'
                         : `${c.file_count} file${Number(c.file_count) === 1 ? '' : 's'}`}
                   </div>
-                </button>
+                </Link>
                 {canEditCards && (
                   <button
                     type="button"

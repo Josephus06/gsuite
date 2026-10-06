@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import DataTable from '../components/DataTable';
 import EntityPicker from '../components/EntityPicker';
@@ -277,7 +277,7 @@ export default function JobOrderEdit() {
       <div className="page-header">
         <h1>Job Order — {jo.job_order_no}</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={() => navigate(backTo)}>Cancel</button>
+          <Link className="btn" to={backTo}>Cancel</Link>
           <button className="btn btn-primary" disabled={saving} onClick={handleSave}>{saving ? <LoadingSpinner inline size="sm" label="Saving..." /> : 'Save'}</button>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -57,7 +57,7 @@ export default function Customers() {
     <div>
       <div className="page-header">
         <h1>Customers</h1>
-        {can('/customers', 'can_add') && <button className="btn btn-primary" onClick={() => navigate('/customers/new')}>Add Customer</button>}
+        {can('/customers', 'can_add') && <Link className="btn btn-primary" to={'/customers/new'}>Add Customer</Link>}
       </div>
       {!loading && (
         <div className="card" style={{ marginBottom: 16 }}>
@@ -87,8 +87,8 @@ export default function Customers() {
             emptyLabel={terms.length ? `No customer matches "${search.trim()}".` : 'No customers yet.'}
             actions={(row) => (
               <>
-                <button className="btn btn-sm btn-primary" onClick={() => navigate(`/customers/${row.id}`)}>View</button>
-                {can('/customers', 'can_edit') && <button className="btn btn-sm" onClick={() => navigate(`/customers/${row.id}/edit`)}>Edit</button>}
+                <Link className="btn btn-sm btn-primary" to={`/customers/${row.id}`}>View</Link>
+                {can('/customers', 'can_edit') && <Link className="btn btn-sm" to={`/customers/${row.id}/edit`}>Edit</Link>}
                 {can('/customers', 'can_delete') && <button className="btn btn-sm btn-danger" onClick={() => handleDelete(row)}>Delete</button>}
               </>
             )}

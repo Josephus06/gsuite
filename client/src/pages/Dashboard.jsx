@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { Sparkline, DonutChart, GaugeRing, BarList, Holo3DOrb, Holo3DBars, useCountUp } from '../components/charts';
@@ -1065,7 +1065,7 @@ function ProductionDayTable({ list, spanLabel, navigate }) {
                 {!!j.onHold && <div className="muted" style={{ fontSize: '0.85em' }}>On Hold</div>}
               </td>
               <td>
-                <button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(`/production/${j.id}`)}>Open</button>
+                <Link className="btn btn-sm btn-primary" to={`/production/${j.id}`}>Open</Link>
               </td>
             </tr>
           ))}
@@ -1450,7 +1450,7 @@ function ScheduleCalendar({
                         </td>
                       )}
                       <td>
-                        <button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(runPath)}>Open</button>
+                        <Link className="btn btn-sm btn-primary" to={runPath}>Open</Link>
                       </td>
                     </tr>
                     {isOpen && (

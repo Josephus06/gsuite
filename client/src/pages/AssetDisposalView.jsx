@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -83,9 +83,9 @@ export default function AssetDisposalView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-sm" onClick={() => navigate('/asset-disposals')}>Back to Lists</button>
+          <Link className="btn btn-sm" to={'/asset-disposals'}>Back to Lists</Link>
           {isDraft && can('/asset-disposals', 'can_edit') && (
-            <button className="btn btn-sm btn-primary" onClick={() => navigate(`/asset-disposals/${id}/edit`)}>Edit</button>
+            <Link className="btn btn-sm btn-primary" to={`/asset-disposals/${id}/edit`}>Edit</Link>
           )}
           {isDraft && can('/asset-disposals', 'can_approve') && (
             <button className="btn btn-sm btn-primary" disabled={busy}
@@ -113,7 +113,7 @@ export default function AssetDisposalView() {
         <div className="estimate-detail-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginTop: 12 }}>
           <div>
             <div>Asset : <span className="hi">
-              <button type="button" className="link-btn" onClick={() => navigate(`/assets/${d.asset_id}`)}>{d.reference_no}</button> — {d.item_name}
+              <Link className="link-btn" to={`/assets/${d.asset_id}`}>{d.reference_no}</Link> — {d.item_name}
             </span></div>
             <div>Class : <span className="hi">{d.class_name || '—'}</span></div>
             <div>Date : <span className="hi">{formatDate(d.disposal_date)}</span></div>

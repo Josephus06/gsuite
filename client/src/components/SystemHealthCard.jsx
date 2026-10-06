@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { Sparkline } from './charts';
@@ -58,7 +59,7 @@ export default function SystemHealthCard({ navigate }) {
     <div className="holo-card dash-chart-card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
         <h3 style={{ margin: 0 }}>System Health</h3>
-        <button type="button" className="link-btn" onClick={() => navigate('/system-health')}>Open details</button>
+        <Link className="link-btn" to={'/system-health'}>Open details</Link>
       </div>
       {data && <div className="muted" style={{ fontSize: 12, marginBottom: 10 }}>{data.host?.name} · last 30 minutes</div>}
       {error && <div className="error-banner">{error}</div>}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -92,7 +92,7 @@ export default function BillPaymentView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/bill-payments')}>Back</button>
+          <Link className="btn btn-sm" to={'/bill-payments'}>Back</Link>
           {canEdit && isOpen && <button className="btn btn-sm" onClick={() => setEditOpen(true)}>Edit</button>}
           {canPrint && <button className="btn btn-sm" onClick={() => window.open(`/bill-payments/${id}/print`, '_blank')}>Print Voucher</button>}
           {canPrint && <button className="btn btn-sm" onClick={() => window.open(`/bill-payments/${id}/print?as=cheque`, '_blank')}>Print Cheque</button>}
@@ -190,7 +190,7 @@ export default function BillPaymentView() {
                   <tr key={`${r.kind}-${r.id}`}>
                     <td>{r.kind}</td>
                     <td>{formatDate(r.date_created)}</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(r.path)}>{r.doc_no}</button></td>
+                    <td><Link className="link-btn" to={r.path}>{r.doc_no}</Link></td>
                     <td style={{ textAlign: 'right' }}>{money(r.amount)}</td>
                     <td>{r.status}</td>
                   </tr>
@@ -212,7 +212,7 @@ export default function BillPaymentView() {
                 )}
                 {applyLines.map((l) => (
                   <tr key={l.id}>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/vendor-bills/${l.vendor_bill_id}`)}>{l.bill_no}</button></td>
+                    <td><Link className="link-btn" to={`/vendor-bills/${l.vendor_bill_id}`}>{l.bill_no}</Link></td>
                     <td>{formatDate(l.vb_date_created)}</td>
                     <td>{formatDate(l.vb_date_due)}</td>
                     <td>{money(l.vb_gross_amount)}</td>
@@ -236,7 +236,7 @@ export default function BillPaymentView() {
                 )}
                 {debitLines.map((l) => (
                   <tr key={l.id}>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/bill-credits/${l.bill_credit_id}`)}>{l.bill_credit_no}</button></td>
+                    <td><Link className="link-btn" to={`/bill-credits/${l.bill_credit_id}`}>{l.bill_credit_no}</Link></td>
                     <td>{money(l.applied_amount)}</td>
                   </tr>
                 ))}
@@ -253,7 +253,7 @@ export default function BillPaymentView() {
           {bp.reversal_journal && (
             <div className="muted" style={{ marginBottom: 10 }}>
               Reversed by{' '}
-              <button type="button" className="link-btn" onClick={() => navigate(`/journals/${bp.reversal_journal.id}`)}>{bp.reversal_journal.journal_no}</button>
+              <Link className="link-btn" to={`/journals/${bp.reversal_journal.id}`}>{bp.reversal_journal.journal_no}</Link>
             </div>
           )}
           <div className="table-wrap">

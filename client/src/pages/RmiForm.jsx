@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import EntityPicker from '../components/EntityPicker';
@@ -88,7 +88,7 @@ export default function RmiForm() {
       <div className="page-header">
         <h1>Return Material Inventory</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={() => navigate('/rmis')}>Back to Lists</button>
+          <Link className="btn" to={'/rmis'}>Back to Lists</Link>
           <button className="btn btn-primary" disabled={saving} onClick={handleSave}>{saving ? <LoadingSpinner inline size="sm" label="Saving..." /> : 'Save'}</button>
         </div>
       </div>

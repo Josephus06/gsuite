@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -121,9 +121,9 @@ export default function CommissionPayableEdit() {
       <div className="page-header">
         <h1>Commission Payable{isEdit && emp ? ` · ${emp.name}` : ''}</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(isEdit ? `/commission-payables/${id}` : '/commission-payables')}>
+          <Link className="btn btn-sm" to={isEdit ? `/commission-payables/${id}` : '/commission-payables'}>
             {isEdit ? 'Cancel' : 'Back to Lists'}
-          </button>
+          </Link>
           <button className="btn btn-sm btn-primary" disabled={saving || !computed} onClick={handleSave}>{isEdit ? 'Update' : 'Save'}</button>
         </div>
       </div>

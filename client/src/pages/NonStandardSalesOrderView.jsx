@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -80,10 +80,10 @@ export default function NonStandardSalesOrderView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/non-standard-sales-orders')}>Back</button>
-          {canEdit && isOpen && <button className="btn btn-sm" onClick={() => navigate(`/non-standard-sales-orders/${id}/edit`)}>Edit</button>}
+          <Link className="btn btn-sm" to={'/non-standard-sales-orders'}>Back</Link>
+          {canEdit && isOpen && <Link className="btn btn-sm" to={`/non-standard-sales-orders/${id}/edit`}>Edit</Link>}
           {canApprove && notApproved && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>Approve</button>}
-          {hasDeliverableLine && canRaiseDelivery && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/non-standard-sales-orders/${id}/item-delivery/new`)}>Item Delivery</button>}
+          {hasDeliverableLine && canRaiseDelivery && <Link className="btn btn-sm btn-primary" to={`/non-standard-sales-orders/${id}/item-delivery/new`}>Item Delivery</Link>}
           {hasInvoiceableLine && canBillSI && (
             <div style={{ position: 'relative' }}>
               <button className="btn btn-sm btn-primary" onClick={() => setShowBillMenu((v) => !v)}>Bill ▾</button>
@@ -134,10 +134,10 @@ export default function NonStandardSalesOrderView() {
             <div>Type : <span className="hi">{TYPE_LABELS[n.type] || n.type}</span></div>
             {n.type === 'sample'
               ? <div>Estimate # : <span className="hi">{n.nested_estimate_no
-                  ? <button type="button" className="link-btn" onClick={() => navigate(`/estimates/${n.nested_estimate_id}`)}>{n.nested_estimate_no}</button>
+                  ? <Link className="link-btn" to={`/estimates/${n.nested_estimate_id}`}>{n.nested_estimate_no}</Link>
                   : '—'}</span></div>
               : <div>Sales Order # : <span className="hi">{n.nested_sales_order_no
-                  ? <button type="button" className="link-btn" onClick={() => navigate(`/sales-orders/${n.nested_sales_order_id}`)}>{n.nested_sales_order_no}</button>
+                  ? <Link className="link-btn" to={`/sales-orders/${n.nested_sales_order_id}`}>{n.nested_sales_order_no}</Link>
                   : '—'}</span></div>}
           </div>
           <div>
@@ -175,10 +175,10 @@ export default function NonStandardSalesOrderView() {
                     <td>{i + 1}</td>
                     <td>{l.job_type_name}</td>
                     <td>{l.source_job_order_no
-                      ? <button type="button" className="link-btn" onClick={() => navigate(`/job-orders/${l.source_job_order_id}`)}>{l.source_job_order_no}</button>
+                      ? <Link className="link-btn" to={`/job-orders/${l.source_job_order_id}`}>{l.source_job_order_no}</Link>
                       : '—'}</td>
                     <td>{l.created_job_order_no
-                      ? <button type="button" className="link-btn" onClick={() => navigate(`/job-orders/${l.created_job_order_id}`)}>{l.created_job_order_no}</button>
+                      ? <Link className="link-btn" to={`/job-orders/${l.created_job_order_id}`}>{l.created_job_order_no}</Link>
                       : (canAdd
                         ? <button type="button" className="link-btn" disabled={notApproved || busy}
                             title={notApproved ? 'Approve the NSSO before creating the JO' : 'Create the job order'}
@@ -216,27 +216,27 @@ export default function NonStandardSalesOrderView() {
               <tbody>
                 {n.nested_sales_order_no && (
                   <tr><td>Nested Sales Order</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/sales-orders/${n.nested_sales_order_id}`)}>{n.nested_sales_order_no}</button></td>
+                    <td><Link className="link-btn" to={`/sales-orders/${n.nested_sales_order_id}`}>{n.nested_sales_order_no}</Link></td>
                     <td></td></tr>
                 )}
                 {n.nested_estimate_no && (
                   <tr><td>Nested Estimate</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/estimates/${n.nested_estimate_id}`)}>{n.nested_estimate_no}</button></td>
+                    <td><Link className="link-btn" to={`/estimates/${n.nested_estimate_id}`}>{n.nested_estimate_no}</Link></td>
                     <td></td></tr>
                 )}
                 {n.lines.filter((l) => l.created_job_order_no).map((l) => (
                   <tr key={l.id}><td>Job Order</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/job-orders/${l.created_job_order_id}`)}>{l.created_job_order_no}</button></td>
+                    <td><Link className="link-btn" to={`/job-orders/${l.created_job_order_id}`}>{l.created_job_order_no}</Link></td>
                     <td></td></tr>
                 ))}
                 {(n.deliveries || []).map((d) => (
                   <tr key={`del-${d.id}`}><td>Item Delivery</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/item-deliveries/${d.id}`)}>{d.delivery_no}</button></td>
+                    <td><Link className="link-btn" to={`/item-deliveries/${d.id}`}>{d.delivery_no}</Link></td>
                     <td>{d.status}</td></tr>
                 ))}
                 {(n.invoices || []).map((si) => (
                   <tr key={`si-${si.id}`}><td>Invoice</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/sales-invoices/${si.id}`)}>{si.invoice_no}</button></td>
+                    <td><Link className="link-btn" to={`/sales-invoices/${si.id}`}>{si.invoice_no}</Link></td>
                     <td>{si.status}</td></tr>
                 ))}
                 {!n.nested_sales_order_no && !n.nested_estimate_no && !n.lines.some((l) => l.created_job_order_no)

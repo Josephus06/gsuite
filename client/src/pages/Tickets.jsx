@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -244,7 +244,7 @@ export default function Tickets() {
         {Object.entries(STATUS_LABELS).map(([key, label]) => (
           <button key={key} className={`status-tab ${status === key ? 'active' : ''}`} onClick={() => setStatus(key)}>{label}</button>
         ))}
-        <button className="status-tab" onClick={() => navigate('/reports/ticket-summary')}>Ticket Summary</button>
+        <Link className="status-tab" to={'/reports/ticket-summary'}>Ticket Summary</Link>
         <button className="status-tab" onClick={handleDownloadReport}>Download CSV</button>
       </div>
 
@@ -257,7 +257,7 @@ export default function Tickets() {
             emptyLabel="No tickets yet."
             actions={(row) => (
               <>
-                <button className="btn btn-sm" onClick={() => navigate(`/tickets/${row.id}`)}>View</button>
+                <Link className="btn btn-sm" to={`/tickets/${row.id}`}>View</Link>
                 {/* Approve and Decline are the same decision, so they belong together. Both are
                     gated exactly as the server gates them, and as the ticket's own page does. */}
                 {row.is_my_approval && !row.approved_at && !row.declined_at && (

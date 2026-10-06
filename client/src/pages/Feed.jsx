@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Avatar from '../components/Avatar';
@@ -184,17 +184,17 @@ export default function Feed() {
         </aside>
 
         <aside className="fb-rail fb-rail-left">
-          <button type="button" className="fb-rail-item" onClick={() => navigate(`/profile/${user?.id}`)}>
+          <Link className="fb-rail-item" to={`/profile/${user?.id}`}>
             <Avatar user={user} size={36} />
             <span>{user?.display_name}</span>
-          </button>
+          </Link>
           <div className="fb-rail-sep" />
           <div className="fb-rail-title">Shortcuts</div>
           {SHORTCUTS.map((s) => (
-            <button key={s.to} type="button" className="fb-rail-item" onClick={() => navigate(s.to)}>
+            <Link key={s.to} className="fb-rail-item" to={s.to}>
               <span className="fb-rail-icon">{s.icon}</span>
               <span>{s.label}</span>
-            </button>
+            </Link>
           ))}
         </aside>
 
@@ -270,12 +270,11 @@ export default function Feed() {
           {/* Everyone in this list is online by construction -- the server only returns users
               whose heartbeat is inside the window -- so the green dot is always accurate. */}
           {contacts.map((c) => (
-            <button
+            <Link
               key={c.id}
-              type="button"
               className="fb-rail-item"
               title={c.group_name || c.account_type || ''}
-              onClick={() => navigate(`/profile/${c.id}`)}
+              to={`/profile/${c.id}`}
             >
               <span className="fb-rail-avatar-wrap">
                 <Avatar user={c} size={36} />
@@ -284,7 +283,7 @@ export default function Feed() {
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {c.display_name}
               </span>
-            </button>
+            </Link>
           ))}
           {contacts.length === 0 && (
             <div style={{ padding: 8, color: 'var(--fb-text-2)', fontSize: 14 }}>No one else is online right now.</div>

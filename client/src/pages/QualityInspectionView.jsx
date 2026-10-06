@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -70,7 +70,7 @@ export default function QualityInspectionView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(`/production/${qi.job_order_id}`)}>Back</button>
+          <Link className="btn btn-sm" to={`/production/${qi.job_order_id}`}>Back</Link>
           {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Quality Inspection isn't implemented in this build">Edit</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           {canEdit && isSaved && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
@@ -86,15 +86,15 @@ export default function QualityInspectionView() {
         </div>
         <div>
           {qi.lines.map((l) => (
-            <button key={l.id} type="button" className="link-btn" style={{ color: '#fff', textDecoration: 'underline', marginRight: 12 }} onClick={() => navigate(`/assembly-builds/${l.assembly_build_id}`)}>
+            <Link key={l.id} className="link-btn" style={{ color: '#fff', textDecoration: 'underline', marginRight: 12 }} to={`/assembly-builds/${l.assembly_build_id}`}>
               {l.ab_no}
-            </button>
+            </Link>
           ))}
         </div>
         <div>
-          <button type="button" className="link-btn" style={{ color: '#fff', textDecoration: 'underline' }} onClick={() => navigate(`/production/${qi.job_order_id}`)}>
+          <Link className="link-btn" style={{ color: '#fff', textDecoration: 'underline' }} to={`/production/${qi.job_order_id}`}>
             {qi.job_order_no}
-          </button>
+          </Link>
         </div>
 
         <div className="estimate-detail-grid" style={{ marginTop: 16 }}>
@@ -144,7 +144,7 @@ export default function QualityInspectionView() {
                 {qi.lines.map((l) => (
                   <tr key={l.id}>
                     <td>{formatDate(qi.date_created)}</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/assembly-builds/${l.assembly_build_id}`)}>{l.ab_no}</button></td>
+                    <td><Link className="link-btn" to={`/assembly-builds/${l.assembly_build_id}`}>{l.ab_no}</Link></td>
                     <td>{qty(l.pass_qty)} passed / {qty(l.rma_qty)} RMA</td>
                     <td></td>
                     <td>{qi.status === 'cancelled' ? 'Cancelled' : 'Saved'}</td>

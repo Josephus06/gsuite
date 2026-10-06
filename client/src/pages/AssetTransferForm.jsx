@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -167,7 +167,7 @@ export default function AssetTransferForm() {
       <div className="page-header">
         <div style={{ fontWeight: 600 }}>Asset Transfers</div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/asset-transfers')}>Back to Lists</button>
+          <Link className="btn btn-sm" to={'/asset-transfers'}>Back to Lists</Link>
           <button className="btn btn-sm" disabled={saving} onClick={() => save(false)}>{saving ? 'Saving...' : 'Save Draft'}</button>
           <button className="btn btn-primary" disabled={saving} onClick={() => save(true)}>Save &amp; Submit for Approval</button>
         </div>

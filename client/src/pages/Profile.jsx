@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Avatar from '../components/Avatar';
@@ -265,9 +265,9 @@ export default function Profile() {
           <div className="fb-card fb-empty">
             <div className="big">🙁</div>
             <div style={{ fontWeight: 600, color: 'var(--fb-text)' }}>{error || 'Profile unavailable'}</div>
-            <button type="button" className="fb-btn-secondary" style={{ marginTop: 12 }} onClick={() => navigate('/dashboard')}>
+            <Link className="fb-btn-secondary" style={{ marginTop: 12 }} to={'/dashboard'}>
               Back to feed
-            </button>
+            </Link>
           </div>
         </div>
       </div>
@@ -320,9 +320,9 @@ export default function Profile() {
                   ✏️ Edit bio
                 </button>
               ) : (
-                <button type="button" className="fb-btn-secondary" onClick={() => navigate('/dashboard')}>
+                <Link className="fb-btn-secondary" to={'/dashboard'}>
                   ← Back to feed
-                </button>
+                </Link>
               )}
             </div>
           </div>

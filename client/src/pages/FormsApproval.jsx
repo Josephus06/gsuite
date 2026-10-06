@@ -100,7 +100,7 @@ export default function FormsApproval() {
                       <span className={`badge ${STATUS_BADGE[r.status] || 'badge-muted'}`}>{pretty(r.status)}</span>
                     </td>
                     <td>
-                      <button className="btn btn-sm btn-primary" onClick={() => navigate(`/forms/${r.id}`)}>Review</button>
+                      <Link className="btn btn-sm btn-primary" to={`/forms/${r.id}`}>Review</Link>
                     </td>
                   </tr>
                 ))}

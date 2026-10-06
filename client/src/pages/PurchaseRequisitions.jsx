@@ -57,7 +57,7 @@ export default function PurchaseRequisitions() {
     <div>
       <div className="page-header">
         <h1>Saved Purchase Requisitions</h1>
-        {can('/purchase-requisitions', 'can_add') && <button className="btn btn-primary" onClick={() => navigate('/purchase-requisitions/new')}>Add New</button>}
+        {can('/purchase-requisitions', 'can_add') && <Link className="btn btn-primary" to={'/purchase-requisitions/new'}>Add New</Link>}
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>

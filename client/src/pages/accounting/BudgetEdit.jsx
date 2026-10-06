@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../../api/client';
 import { useAuth } from '../../context/useAuth';
 import LoadingSpinner from '../../components/LoadingSpinner';
@@ -129,7 +129,7 @@ export default function BudgetEdit() {
       <div className="page-header">
         <h1>{b.name} <span className="muted" style={{ fontSize: '0.6em' }}>FY {b.fiscal_year} · v{b.version}</span></h1>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-sm" onClick={() => navigate('/budgets')}>Back</button>
+          <Link className="btn btn-sm" to={'/budgets'}>Back</Link>
           <button className="btn btn-sm" disabled={!!busy} onClick={exportFile}>Export to Excel</button>
           {editable && (
             <label className="btn btn-sm" style={{ cursor: 'pointer' }}>

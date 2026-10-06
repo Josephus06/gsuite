@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../../api/client';
 import { useAuth } from '../../context/useAuth';
 
@@ -107,7 +107,7 @@ export default function DeptBudgetEdit({ budget: b, onReload }) {
       <div className="page-header">
         <h1>{b.name} <span className="muted" style={{ fontSize: '0.6em' }}>FY {b.fiscal_year} · v{b.version} · {STATUS[b.status]}</span></h1>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-sm" onClick={() => navigate('/budgets')}>Back</button>
+          <Link className="btn btn-sm" to={'/budgets'}>Back</Link>
           {editable && (
             <label className="btn btn-sm" style={{ cursor: 'pointer' }} title="The accounting workbook: sheets with a 'Department | Monthly Budget' table and a 'Month | Budget' COGS table">
               Import Accounting Workbook

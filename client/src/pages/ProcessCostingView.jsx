@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { computeProcessCosting } from '../utils/costing';
@@ -44,9 +44,9 @@ export default function ProcessCostingView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" className="btn btn-sm" onClick={() => navigate('/process-costing')}>Back</button>
+          <Link className="btn btn-sm" to={'/process-costing'}>Back</Link>
           {(can('/process-costing', 'can_edit') || can('/process-costing', 'can_add')) && (
-            <button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(`/process-costing/${id}/edit`)}>Edit</button>
+            <Link className="btn btn-sm btn-primary" to={`/process-costing/${id}/edit`}>Edit</Link>
           )}
         </div>
       </div>

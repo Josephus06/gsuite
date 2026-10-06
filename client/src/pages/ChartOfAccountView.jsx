@@ -34,8 +34,8 @@ export default function ChartOfAccountView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/chart-of-accounts')}>Back to Lists</button>
-          {canEdit && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/chart-of-accounts/${id}/edit`)}>Edit</button>}
+          <Link className="btn btn-sm" to={'/chart-of-accounts'}>Back to Lists</Link>
+          {canEdit && <Link className="btn btn-sm btn-primary" to={`/chart-of-accounts/${id}/edit`}>Edit</Link>}
         </div>
       </div>
 
@@ -63,9 +63,9 @@ export default function ChartOfAccountView() {
           <div>
             <h4>Hierarchy</h4>
             <div>Parent Account : {account.parent_account_code ? (
-              <button type="button" className="link-btn" onClick={() => navigate(`/chart-of-accounts/${account.parent_account_id}`)}>
+              <Link className="link-btn" to={`/chart-of-accounts/${account.parent_account_id}`}>
                 {account.parent_account_code} — {account.parent_account_name}
-              </button>
+              </Link>
             ) : <span className="hi">—</span>}</div>
           </div>
         </div>

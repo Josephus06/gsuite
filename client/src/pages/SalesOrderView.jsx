@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import SalesInvoiceModal from '../components/SalesInvoiceModal';
@@ -329,15 +329,15 @@ export default function SalesOrderView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/sales-orders')}>Back</button>
+          <Link className="btn btn-sm" to={'/sales-orders'}>Back</Link>
           {/* System Admin only (the server enforces it too). */}
           {user?.account_type === 'System Admin' && !String(so.status || '').toLowerCase().includes('cancel') && (
-            <button className="btn btn-sm" onClick={() => navigate(`/sales-orders/${id}/edit`)}>Edit</button>
+            <Link className="btn btn-sm" to={`/sales-orders/${id}/edit`}>Edit</Link>
           )}
           {user?.account_type === 'System Admin' && so.status !== 'cancelled' && (
             <button className="btn btn-sm btn-danger" onClick={openCancel}>Cancel</button>
           )}
-          {hasDeliverableLine && canRaiseDelivery && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/sales-orders/${id}/item-delivery/new`)}>Item Delivery</button>}
+          {hasDeliverableLine && canRaiseDelivery && <Link className="btn btn-sm btn-primary" to={`/sales-orders/${id}/item-delivery/new`}>Item Delivery</Link>}
           {hasInvoiceableLine && (canBillSI || canBillDT) && (
             <div style={{ position: 'relative' }}>
               <button className="btn btn-sm btn-primary" onClick={() => setShowBillMenu((s) => !s)}>Bill ▾</button>
@@ -366,9 +366,9 @@ export default function SalesOrderView() {
               — {so.cancel_reason_name}{so.cancel_remarks ? `: ${so.cancel_remarks}` : ''}{so.cancelled_by_name ? ` (by ${so.cancelled_by_name})` : ''}
             </span>
           )}
-          <button type="button" className="estimate-so-link" onClick={() => navigate(`/estimates/${so.estimate_id}`)}>
+          <Link className="estimate-so-link" to={`/estimates/${so.estimate_id}`}>
             {so.estimate_no}
-          </button>
+          </Link>
         </div>
 
         <div className="estimate-detail-grid">
@@ -453,9 +453,9 @@ export default function SalesOrderView() {
                     <td>{idx + 1}</td>
                     <td>
                       {l.job_order_id ? (
-                        <button type="button" className="link-btn" onClick={() => navigate(`/job-orders/${l.job_order_id}`)}>
+                        <Link className="link-btn" to={`/job-orders/${l.job_order_id}`}>
                           {l.job_order_no}
-                        </button>
+                        </Link>
                       ) : (
                         <button type="button" className="link-btn" disabled={creatingLineId === l.id} onClick={() => handleCreateJo(l.id)}>
                           {creatingLineId === l.id ? 'Creating...' : 'Create JO'}
@@ -473,7 +473,7 @@ export default function SalesOrderView() {
 
       {tab === 'related' && (
         <div className="card">
-          <p>Originating Estimate: <button type="button" className="btn btn-sm" onClick={() => navigate(`/estimates/${so.estimate_id}`)}>{so.estimate_no}</button></p>
+          <p>Originating Estimate: <Link className="btn btn-sm" to={`/estimates/${so.estimate_id}`}>{so.estimate_no}</Link></p>
           <div className="table-wrap" style={{ marginTop: 12 }}>
             <table>
               <thead><tr><th>Type</th><th>Reference</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead>
@@ -484,7 +484,7 @@ export default function SalesOrderView() {
                 {deliveries.map((del) => (
                   <tr key={`del-${del.id}`}>
                     <td>Item Delivery</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/item-deliveries/${del.id}`)}>{del.delivery_no}</button></td>
+                    <td><Link className="link-btn" to={`/item-deliveries/${del.id}`}>{del.delivery_no}</Link></td>
                     <td>{del.date_created ? String(del.date_created).slice(0, 10) : ''}</td>
                     <td></td>
                     <td>{del.status === 'cancelled' ? 'Cancelled' : 'Saved'}</td>
@@ -493,7 +493,7 @@ export default function SalesOrderView() {
                 {tickets.map((t) => (
                   <tr key={`dt-${t.id}`}>
                     <td>Delivery Ticket</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/delivery-tickets/${t.id}`)}>{t.dt_no}</button></td>
+                    <td><Link className="link-btn" to={`/delivery-tickets/${t.id}`}>{t.dt_no}</Link></td>
                     <td>{t.date_created ? String(t.date_created).slice(0, 10) : ''}</td>
                     <td>{money(t.gross_amount)}</td>
                     <td>{{ open: 'Open', converted: 'Converted', void: 'Void' }[t.status] || t.status}</td>
@@ -502,7 +502,7 @@ export default function SalesOrderView() {
                 {invoices.map((inv) => (
                   <tr key={inv.id}>
                     <td>{inv.invoice_type === 'DR' ? 'DR' : 'Invoice'}</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/sales-invoices/${inv.id}`)}>{inv.invoice_no}</button></td>
+                    <td><Link className="link-btn" to={`/sales-invoices/${inv.id}`}>{inv.invoice_no}</Link></td>
                     <td>{inv.date_created ? String(inv.date_created).slice(0, 10) : ''}</td>
                     <td>{money(inv.gross_amount)}</td>
                     <td>{inv.status === 'cancelled' ? 'Cancelled' : 'Saved'}</td>
@@ -518,7 +518,7 @@ export default function SalesOrderView() {
         <div className="card">
           <p className="muted" style={{ marginTop: 0 }}>
             Files on this order. Those marked Estimate came across from
-            {so.estimate_no ? <> <button type="button" className="link-btn" onClick={() => navigate(`/estimates/${so.estimate_id}`)}>{so.estimate_no}</button></> : ' the estimate'}
+            {so.estimate_no ? <> <Link className="link-btn" to={`/estimates/${so.estimate_id}`}>{so.estimate_no}</Link></> : ' the estimate'}
             {' '}and are read-only here; anything added below belongs to the order itself.
           </p>
           {attachmentError && <div className="error-banner" style={{ marginBottom: 12 }}>{attachmentError}</div>}

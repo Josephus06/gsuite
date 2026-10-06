@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../../api/client';
 import { useAuth } from '../../context/useAuth';
 import LoadingSpinner from '../../components/LoadingSpinner';
@@ -76,7 +76,7 @@ export default function Budgets() {
                     <td><span className={`badge ${STATUS_BADGE[b.status]}`}>{STATUS[b.status]}</span></td>
                     <td className="text-right">{money(b.total)}</td>
                     <td>{b.approved_by_name || ''}</td>
-                    <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/budgets/${b.id}`)}>Open</button></td>
+                    <td><Link className="btn btn-sm btn-primary" to={`/budgets/${b.id}`}>Open</Link></td>
                   </tr>
                 ))}
               </tbody>

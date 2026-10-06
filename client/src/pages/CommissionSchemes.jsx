@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
@@ -112,7 +112,7 @@ export default function CommissionSchemes() {
                     <td data-label="Status">{row.is_active ? 'Active' : 'Inactive'}</td>
                     <td data-label="Created">{formatDate(row.created_at)}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>
-                      <button className="btn btn-sm btn-primary" style={{ marginRight: 4 }} onClick={() => navigate(`/commission-schemes/${row.id}`)}>View</button>
+                      <Link className="btn btn-sm btn-primary" style={{ marginRight: 4 }} to={`/commission-schemes/${row.id}`}>View</Link>
                       {can('/commission-schemes', 'can_delete') && <button className="btn btn-sm btn-warning" onClick={() => handleDelete(row)}>Delete</button>}
                     </td>
                   </tr>

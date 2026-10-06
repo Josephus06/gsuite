@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -145,7 +145,7 @@ export default function Leads() {
                 {can('/leads', 'can_edit') && row.status !== 'converted' && <button className="btn btn-sm" onClick={() => openEdit(row)}>Edit</button>}
                 {can('/leads', 'can_edit') && row.status !== 'converted' && <button className="btn btn-sm btn-primary" onClick={() => handleConvert(row)}>Convert</button>}
                 {row.status === 'converted' && row.converted_customer_id && (
-                  <button className="btn btn-sm" onClick={() => navigate(`/customers/${row.converted_customer_id}`)}>View Customer</button>
+                  <Link className="btn btn-sm" to={`/customers/${row.converted_customer_id}`}>View Customer</Link>
                 )}
               </>
             )}

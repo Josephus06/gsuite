@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
 import api from '../api/client';
@@ -316,9 +316,9 @@ export default function ProcessFlow() {
 
             <div className="modal-actions">
               {guide.route && can(guide.route, 'can_view') && (
-                <button className="btn btn-primary" onClick={() => navigate(guide.route)}>
+                <Link className="btn btn-primary" to={guide.route}>
                   Go to {openNode.kind === 'decision' ? 'the screen' : NODES.find((n) => n.id === openId).label}
-                </button>
+                </Link>
               )}
               <button className="btn" onClick={() => setOpenId(null)}>Close</button>
             </div>

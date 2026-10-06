@@ -120,7 +120,7 @@ export default function AssetTransfers() {
                     <td data-label="Receiving">{r.to_custodian_name?.trim() || '—'}</td>
                     <td data-label="Assets" style={{ textAlign: 'right' }}>{r.asset_count}</td>
                     <td data-label="Status">{TRANSFER_STATUS_LABELS[r.status] || r.status}</td>
-                    <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/asset-transfers/${r.id}`)}>View</button></td>
+                    <td><Link className="btn btn-sm btn-primary" to={`/asset-transfers/${r.id}`}>View</Link></td>
                   </tr>
                 ))}
               </tbody>

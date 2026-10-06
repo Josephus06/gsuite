@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -353,7 +353,7 @@ export default function NonStandardSalesOrderWizard() {
       <div className="page-header">
         <h1>Non Standard Sales Order</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/non-standard-sales-orders')}>Back</button>
+          <Link className="btn btn-sm" to={'/non-standard-sales-orders'}>Back</Link>
           {nssoId && <button className="btn btn-sm btn-primary" disabled={busy} onClick={saveAndView}>Save</button>}
         </div>
       </div>
@@ -747,7 +747,7 @@ export default function NonStandardSalesOrderWizard() {
 
             <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 16 }}>
               <button className="btn" onClick={() => setStep(3)}>Previous</button>
-              <button className="btn btn-primary" onClick={() => navigate(`/non-standard-sales-orders/${nssoId}`)}>Save &amp; View</button>
+              <Link className="btn btn-primary" to={`/non-standard-sales-orders/${nssoId}`}>Save &amp; View</Link>
             </div>
           </div>
         )}

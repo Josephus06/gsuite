@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -65,7 +65,7 @@ export default function EmployeeQuotas() {
                     <td data-label="Position">{row.position_title}</td>
                     <td data-label="Department">{row.department_name}</td>
                     <td data-label="Quota Rows">{row.quota_count}</td>
-                    <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/employee-quotas/${row.id}`)}>View</button></td>
+                    <td><Link className="btn btn-sm btn-primary" to={`/employee-quotas/${row.id}`}>View</Link></td>
                   </tr>
                 ))}
               </tbody>

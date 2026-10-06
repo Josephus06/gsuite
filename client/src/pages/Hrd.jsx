@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -92,10 +92,9 @@ export default function Hrd() {
             // big <button>, and a second button inside it would be invalid HTML -- the click
             // target of the inner one is not reliably its own.
             <div key={room.id} className="hrd-room-slot">
-              <button
-                type="button"
+              <Link
                 className="card hrd-room-card"
-                onClick={() => navigate(`${ROUTE}/${room.id}`)}
+                to={`${ROUTE}/${room.id}`}
               >
                 <div className="hrd-room-name">{room.name}</div>
                 {room.description && <div className="muted hrd-room-desc">{room.description}</div>}
@@ -103,7 +102,7 @@ export default function Hrd() {
                   {room.file_count} file{Number(room.file_count) === 1 ? '' : 's'}
                   {Number(room.total_bytes) > 0 && ` · ${formatBytes(room.total_bytes)}`}
                 </div>
-              </button>
+              </Link>
               {mayRename(room) && (
                 <button
                   type="button"

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 
@@ -82,7 +82,7 @@ export default function ItemDelivery({ source = 'sales-order' }) {
       <div className="page-header">
         <h1>Item Delivery</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(backTo)}>Back to Lists</button>
+          <Link className="btn btn-sm" to={backTo}>Back to Lists</Link>
           <button className="btn btn-sm btn-primary" disabled={saving} onClick={handleSave}>{saving ? <LoadingSpinner inline size="sm" label="Saving..." /> : 'Save'}</button>
         </div>
       </div>
@@ -105,7 +105,7 @@ export default function ItemDelivery({ source = 'sales-order' }) {
           </div>
           <div className="field">
             <label>Created Form</label>
-            <div><button type="button" className="link-btn" onClick={() => navigate(backTo)}>{data.sales_order_no}</button></div>
+            <div><Link className="link-btn" to={backTo}>{data.sales_order_no}</Link></div>
           </div>
         </div>
       </div>
@@ -162,7 +162,7 @@ export default function ItemDelivery({ source = 'sales-order' }) {
                 const cap = Math.min(Number(l.quantity_built || 0), Number(l.quantity_inspected || 0)) - Number(l.quantity_delivered || 0);
                 return (
                   <tr key={l.job_order_id}>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/production/${l.job_order_id}`)}>{l.job_order_no}</button></td>
+                    <td><Link className="link-btn" to={`/production/${l.job_order_id}`}>{l.job_order_no}</Link></td>
                     <td>{l.item_name}</td>
                     <td>{l.description}</td>
                     <td>{l.job_location_name}</td>

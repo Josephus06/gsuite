@@ -135,7 +135,7 @@ export default function Archiver() {
                 {rows.map((r) => (
                   <tr key={r.id}>
                     <td data-label="Entry">
-                      <button type="button" className="link-btn" onClick={() => navigate(`/archiver/credentials/${r.id}`)}>{r.title}</button>
+                      <Link className="link-btn" to={`/archiver/credentials/${r.id}`}>{r.title}</Link>
                       <div className="muted" style={{ fontSize: 11 }}>{r.entry_no}</div>
                     </td>
                     <td data-label="Vendor">{r.vendor || '—'}</td>
@@ -146,7 +146,7 @@ export default function Archiver() {
                     <td data-label="Renews / Expires">{renewalCell(r)}</td>
                     <td data-label="Owner">{r.owner_name || '—'}</td>
                     <td data-label="Status">{ARCHIVE_STATUS_LABELS[r.status] || r.status}</td>
-                    <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/archiver/credentials/${r.id}`)}>Open</button></td>
+                    <td><Link className="btn btn-sm btn-primary" to={`/archiver/credentials/${r.id}`}>Open</Link></td>
                   </tr>
                 ))}
               </tbody>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import { displayDate } from '../utils/dates';
@@ -97,7 +97,7 @@ export default function CustomerRefundEdit() {
       <div className="page-header">
         <h1>Customer Refund</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/customer-refunds')}>Back to Lists</button>
+          <Link className="btn btn-sm" to={'/customer-refunds'}>Back to Lists</Link>
           <button className="btn btn-sm btn-primary" disabled={saving} onClick={handleSave}>Save</button>
         </div>
       </div>

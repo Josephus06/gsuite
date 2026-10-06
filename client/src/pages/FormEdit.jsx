@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../context/useAuth';
@@ -141,7 +141,7 @@ export default function FormEdit() {
     return (
       <div>
         <div className="page-header"><h1>Fill Out a Form</h1>
-          <button className="btn btn-sm" onClick={() => navigate('/forms')}>Back</button>
+          <Link className="btn btn-sm" to={'/forms'}>Back</Link>
         </div>
         <div className="card">
           <p className="muted">Which form is this?</p>
@@ -159,7 +159,7 @@ export default function FormEdit() {
     <div>
       <div className="page-header">
         <h1>{isNew ? 'Fill Out a Form' : 'Edit Form'} — {TYPE_LABELS[type] || type}</h1>
-        <button className="btn btn-sm" onClick={() => navigate(isNew ? '/forms' : `/forms/${id}`)}>Cancel</button>
+        <Link className="btn btn-sm" to={isNew ? '/forms' : `/forms/${id}`}>Cancel</Link>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
@@ -388,7 +388,7 @@ export default function FormEdit() {
       )}
 
       <div className="modal-actions" style={{ marginTop: 16 }}>
-        <button className="btn" onClick={() => navigate(isNew ? '/forms' : `/forms/${id}`)}>Cancel</button>
+        <Link className="btn" to={isNew ? '/forms' : `/forms/${id}`}>Cancel</Link>
         <button className="btn btn-primary" disabled={saving} onClick={save}>
           {saving ? 'Saving…' : 'Save'}
         </button>

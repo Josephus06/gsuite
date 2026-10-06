@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
@@ -470,8 +470,8 @@ export default function ItineraryView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-sm" onClick={() => navigate('/itineraries')}>Back</button>
-          <button className="btn btn-sm" onClick={() => navigate(`/itineraries/${id}/print`)}>Print</button>
+          <Link className="btn btn-sm" to={'/itineraries'}>Back</Link>
+          <Link className="btn btn-sm" to={`/itineraries/${id}/print`}>Print</Link>
           {canEdit && !cancelled && (
             <button className="btn btn-sm btn-primary" onClick={() => setShowAdd(true)}>Add Sales Orders</button>
           )}
@@ -653,8 +653,8 @@ export default function ItineraryView() {
                     </div>
                   </td>
                   <td data-label="SO Number">
-                    <button type="button" className="link-btn"
-                      onClick={() => navigate(`/sales-orders/${s.sales_order_id}`)}>{s.sales_order_no}</button>
+                    <Link className="link-btn"
+                      to={`/sales-orders/${s.sales_order_id}`}>{s.sales_order_no}</Link>
                   </td>
                   <td data-label="Delivery Date">{fmtDate(s.delivery_date)}</td>
                   <td data-label="Customer">{s.customer_name || '—'}</td>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -149,9 +149,9 @@ export default function InventoryView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(isNonInventory ? '/non-inventories' : '/inventory')}>Back to Lists</button>
-          {canEdit && <button className="btn btn-sm btn-primary" onClick={() => navigate(isNonInventory ? `/non-inventories/${id}/edit` : `/inventory/${id}/edit`)}>Edit</button>}
-          {canAdd && <button className="btn btn-sm" onClick={() => navigate(isNonInventory ? '/non-inventories/new' : '/inventory/new')}>Add New</button>}
+          <Link className="btn btn-sm" to={isNonInventory ? '/non-inventories' : '/inventory'}>Back to Lists</Link>
+          {canEdit && <Link className="btn btn-sm btn-primary" to={isNonInventory ? `/non-inventories/${id}/edit` : `/inventory/${id}/edit`}>Edit</Link>}
+          {canAdd && <Link className="btn btn-sm" to={isNonInventory ? '/non-inventories/new' : '/inventory/new'}>Add New</Link>}
           {showApproveCosting && <button className="btn btn-sm btn-primary" disabled={approving} onClick={handleApproveCosting}>Approve Costing</button>}
           {showApproveAccounting && <button className="btn btn-sm btn-primary" disabled={approving} onClick={handleApproveAccounting}>Approve Accounting</button>}
         </div>
@@ -187,9 +187,9 @@ export default function InventoryView() {
             <div>Purchase Description : <span className="hi">{item.purchase_description}</span></div>
             <div>Sales Description : <span className="hi">{item.sales_description}</span></div>
             <div>Sub-Item Of : {item.subItemOf ? (
-              <button type="button" className="link-btn" onClick={() => navigate(`/inventory/${item.subItemOf.parent_inventory_id}`)}>
+              <Link className="link-btn" to={`/inventory/${item.subItemOf.parent_inventory_id}`}>
                 {item.subItemOf.item_code} — {item.subItemOf.display_name}
-              </button>
+              </Link>
             ) : <span className="hi">—</span>}</div>
           </div>
           <div>

@@ -171,7 +171,7 @@ export default function AssetAudits() {
                     <td data-label="Uncounted" style={{ textAlign: 'right' }}>{r.pending_count}</td>
                     <td data-label="Exceptions" style={{ textAlign: 'right' }}>{r.exception_count}</td>
                     <td data-label="Status">{AUDIT_STATUS_LABELS[r.status] || r.status}</td>
-                    <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/asset-audits/${r.id}`)}>View</button></td>
+                    <td><Link className="btn btn-sm btn-primary" to={`/asset-audits/${r.id}`}>View</Link></td>
                   </tr>
                 ))}
               </tbody>

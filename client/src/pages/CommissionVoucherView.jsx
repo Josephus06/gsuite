@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -54,7 +54,7 @@ export default function CommissionVoucherView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(-1)}>Back to Lists</button>
-          {canEdit && isOpen && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/commission-vouchers/${id}/edit`)}>Edit</button>}
+          {canEdit && isOpen && <Link className="btn btn-sm btn-primary" to={`/commission-vouchers/${id}/edit`}>Edit</Link>}
           {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
@@ -107,7 +107,7 @@ export default function CommissionVoucherView() {
                 {cv.lines.map((l) => (
                   <tr key={l.id}>
                     <td>{l.commission_payable_id
-                      ? <button type="button" className="link-btn" onClick={() => navigate(`/commission-payables/${l.commission_payable_id}`)}>{l.commission_payable_no}</button>
+                      ? <Link className="link-btn" to={`/commission-payables/${l.commission_payable_id}`}>{l.commission_payable_no}</Link>
                       : (l.commission_payable_no || '—')}</td>
                     <td>{formatDate(l.payable_date)}</td>
                     <td>{formatMonth(l.period_from)}</td>
@@ -184,7 +184,7 @@ export default function CommissionVoucherView() {
                 {cv.lines.map((l) => (
                   <tr key={l.id}>
                     <td>{l.commission_payable_id
-                      ? <button type="button" className="link-btn" onClick={() => navigate(`/commission-payables/${l.commission_payable_id}`)}>{l.commission_payable_no}</button>
+                      ? <Link className="link-btn" to={`/commission-payables/${l.commission_payable_id}`}>{l.commission_payable_no}</Link>
                       : (l.commission_payable_no || '—')}</td>
                     <td>{formatMonth(l.period_from)}</td>
                     <td style={{ textAlign: 'right' }}>{money(l.released_amount)}</td>

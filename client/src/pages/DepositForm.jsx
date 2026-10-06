@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -173,7 +173,7 @@ export default function DepositForm() {
       <div className="page-header">
         <div style={{ fontWeight: 600 }}>Deposit <span className="muted">/ {editId ? `Edit ${bdNo}` : 'Create'}</span></div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(editId ? `/deposits/${editId}` : '/deposits')}>{editId ? 'Cancel' : 'Back to Lists'}</button>
+          <Link className="btn btn-sm" to={editId ? `/deposits/${editId}` : '/deposits'}>{editId ? 'Cancel' : 'Back to Lists'}</Link>
           <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
         </div>
       </div>

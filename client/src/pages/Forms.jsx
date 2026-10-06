@@ -127,7 +127,7 @@ export default function Forms() {
                       <span className={`badge ${STATUS_BADGE[r.status] || 'badge-muted'}`}>{pretty(r.status)}</span>
                     </td>
                     <td>
-                      <button className="btn btn-sm btn-primary" onClick={() => navigate(`/forms/${r.id}`)}>Open</button>
+                      <Link className="btn btn-sm btn-primary" to={`/forms/${r.id}`}>Open</Link>
                     </td>
                   </tr>
                 ))}

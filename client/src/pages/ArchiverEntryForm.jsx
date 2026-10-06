@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { ENTRY_TYPE_LABELS, ARCHIVE_STATUS_LABELS, BILLING_CYCLE_LABELS } from '../utils/archiverLabels';
@@ -91,7 +91,7 @@ export default function ArchiverEntryForm() {
       <div className="page-header">
         <div style={{ fontWeight: 600 }}>Archiver</div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(id ? `/archiver/credentials/${id}` : '/archiver/credentials')}>Back</button>
+          <Link className="btn btn-sm" to={id ? `/archiver/credentials/${id}` : '/archiver/credentials'}>Back</Link>
           <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
         </div>
       </div>

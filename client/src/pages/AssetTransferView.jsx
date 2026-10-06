@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -131,10 +131,10 @@ export default function AssetTransferView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-sm" onClick={() => navigate('/asset-transfers')}>Back to Lists</button>
+          <Link className="btn btn-sm" to={'/asset-transfers'}>Back to Lists</Link>
           {t.status === 'draft' && can('/asset-transfers', 'can_edit') && (
             <>
-              <button className="btn btn-sm btn-primary" onClick={() => navigate(`/asset-transfers/${id}/edit`)}>Edit</button>
+              <Link className="btn btn-sm btn-primary" to={`/asset-transfers/${id}/edit`}>Edit</Link>
               <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => run(() => api.post(`/asset-transfers/${id}/submit`))}>Submit for Approval</button>
             </>
           )}
@@ -202,7 +202,7 @@ export default function AssetTransferView() {
                 {lines.map((l, i) => (
                   <tr key={l.id}>
                     <td>{i + 1}</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/assets/${l.asset_id}`)}>{l.reference_no}</button></td>
+                    <td><Link className="link-btn" to={`/assets/${l.asset_id}`}>{l.reference_no}</Link></td>
                     <td>{l.item_name}{Number(l.attached_count) > 0 ? <span className="muted"> (+{l.attached_count} attached)</span> : null}</td>
                     <td>{l.serial_no || '—'}</td>
                     <td>{l.from_location_name || '—'}</td>

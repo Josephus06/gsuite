@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import Pagination from '../components/Pagination';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 
@@ -157,7 +157,7 @@ export default function PlaceOrderForm() {
       <div className="page-header">
         <h1>Placing Order Form</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" onClick={() => navigate('/purchase-orders')}>Purchase Orders</button>
+          <Link className="btn" to={'/purchase-orders'}>Purchase Orders</Link>
           <button className="btn btn-primary" onClick={openPicker}>Select Purchase Requisitions</button>
         </div>
       </div>

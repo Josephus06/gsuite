@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { isPlanner } from '../utils/plannerRoles';
 import { useAuth } from '../context/useAuth';
@@ -351,7 +351,7 @@ export default function JobOrderView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/job-orders')}>Back to Lists</button>
+          <Link className="btn btn-sm" to={'/job-orders'}>Back to Lists</Link>
           {/* The server decides whether this JO may actually be printed (System Admin any
               time; everyone else needs an assigned artist), so the button only checks that
               the user holds the print permission at all. */}
@@ -365,9 +365,9 @@ export default function JobOrderView() {
             />
           )}
           {(isProductionFloor ? jo.production_stage === 'in_process' : (canEdit || canRework || canEditOwn)) && jo.status !== 'Cancelled' && (
-            <button className="btn btn-sm btn-primary"
+            <Link className="btn btn-sm btn-primary"
               title={canRework && !canEdit && !canEditOwn ? 'Change the materials and processes Production asked about' : undefined}
-              onClick={() => navigate(`/job-orders/${id}/edit`)}>Edit</button>
+              to={`/job-orders/${id}/edit`}>Edit</Link>
           )}
           {isPendingRma && canApproveRma && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApproveRma}>{isRmaType ? 'Approve RMA' : 'Approve'}</button>}
           {isHeadOffice && canForwardProduction && canApproveRma && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleForwardToProduction}>Forward to Production</button>}
@@ -450,18 +450,18 @@ export default function JobOrderView() {
           {jo.status} <span style={{ opacity: 0.7 }}>{STAGE_LABELS[jo.production_stage] || jo.sub_status}</span>
           {isOnHold && <span className="estimate-so-link" style={{ background: 'rgba(245, 159, 0, 0.35)' }}>On Hold</span>}
           {jo.nsso_no && (
-            <button type="button" className="estimate-so-link" onClick={() => navigate(`/non-standard-sales-orders/${jo.nsso_id}`)}>
+            <Link className="estimate-so-link" to={`/non-standard-sales-orders/${jo.nsso_id}`}>
               {jo.nsso_no}
-            </button>
+            </Link>
           )}
           {isRwip && jo.parent_job_order_no && (
-            <button type="button" className="estimate-so-link" onClick={() => navigate(`/job-orders/${jo.parent_job_order_id}`)}>
+            <Link className="estimate-so-link" to={`/job-orders/${jo.parent_job_order_id}`}>
               {jo.parent_job_order_no}
-            </button>
+            </Link>
           )}
-          <button type="button" className="estimate-so-link" onClick={() => navigate(`/sales-orders/${jo.sales_order_id}`)}>
+          <Link className="estimate-so-link" to={`/sales-orders/${jo.sales_order_id}`}>
             {jo.sales_order_no}
-          </button>
+          </Link>
         </div>
 
         <div className="estimate-detail-grid">
@@ -546,7 +546,7 @@ export default function JobOrderView() {
                 {(jo.rwips || []).map((r) => (
                   <tr key={r.id}>
                     <td>{r.created_at ? String(r.created_at).slice(0, 10) : ''}</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(r.production_stage ? `/production/${r.id}` : `/job-orders/${r.id}`)}>{r.job_order_no}</button></td>
+                    <td><Link className="link-btn" to={r.production_stage ? `/production/${r.id}` : `/job-orders/${r.id}`}>{r.job_order_no}</Link></td>
                     <td style={{ textAlign: 'right' }}>{Number(r.quantity)}</td>
                     <td>{r.units}</td>
                     <td>{STAGE_LABELS[r.production_stage] || r.status}</td>
@@ -604,9 +604,9 @@ export default function JobOrderView() {
                 <tr>
                   <td>{jo.created_at ? String(jo.created_at).slice(0, 10) : ''}</td>
                   <td>
-                    <button type="button" className="link-btn" onClick={() => navigate(`/sales-orders/${jo.sales_order_id}`)}>
+                    <Link className="link-btn" to={`/sales-orders/${jo.sales_order_id}`}>
                       {jo.sales_order_no}
-                    </button>
+                    </Link>
                   </td>
                   <td>0.00</td>
                   <td></td>

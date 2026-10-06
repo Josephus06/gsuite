@@ -67,7 +67,7 @@ export default function Assets() {
     return (
       <tr key={u.id}>
         <td data-label="Reference No">
-          <button type="button" className="link-btn" onClick={() => navigate(`/assets/${u.id}`)}>{u.reference_no}</button>
+          <Link className="link-btn" to={`/assets/${u.id}`}>{u.reference_no}</Link>
         </td>
         <td data-label="Serial">{u.serial_no || '—'}</td>
         <td data-label="Location">{u.location_name || <span className="muted">Unassigned</span>}</td>
@@ -188,7 +188,7 @@ export default function Assets() {
                 {rows.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>No assets found.</td></tr>}
                 {rows.map((r) => (
                   <tr key={r.id}>
-                    <td data-label="Reference No"><button type="button" className="link-btn" onClick={() => navigate(`/assets/${r.id}`)}>{r.reference_no}</button></td>
+                    <td data-label="Reference No"><Link className="link-btn" to={`/assets/${r.id}`}>{r.reference_no}</Link></td>
                     <td data-label="Asset Type">{r.item_name}</td>
                     <td data-label="Serial">{r.serial_no || '—'}</td>
                     <td data-label="Location">{r.location_name || <span className="muted">Unassigned</span>}</td>

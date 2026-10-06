@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -43,9 +43,9 @@ export default function FundTransferView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/fund-transfers')}>Back to Lists</button>
+          <Link className="btn btn-sm" to={'/fund-transfers'}>Back to Lists</Link>
           {can('/fund-transfers', 'can_print') && <button className="btn btn-sm" onClick={() => window.open(`/fund-transfers/${ft.id}/print`, '_blank')}>Print</button>}
-          {can('/fund-transfers', 'can_edit') && ft.status !== 'void' && <button className="btn btn-sm" onClick={() => navigate(`/fund-transfers/${ft.id}/edit`)}>Edit</button>}
+          {can('/fund-transfers', 'can_edit') && ft.status !== 'void' && <Link className="btn btn-sm" to={`/fund-transfers/${ft.id}/edit`}>Edit</Link>}
           {can('/fund-transfers', 'can_void') && ft.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>

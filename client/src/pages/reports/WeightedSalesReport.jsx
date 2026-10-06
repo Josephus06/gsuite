@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Pagination from '../../components/Pagination';
@@ -147,7 +147,7 @@ export default function WeightedSalesReport() {
                   {data.rows.map((r) => (
                     <tr key={r.id}>
                       <td data-label="SO Date">{displayDate(String(r.date_created).slice(0, 10))}</td>
-                      <td data-label="SO #"><button type="button" className="link-btn" onClick={() => navigate(`/sales-orders/${r.sales_order_id}`)}>{r.sales_order_no}</button></td>
+                      <td data-label="SO #"><Link className="link-btn" to={`/sales-orders/${r.sales_order_id}`}>{r.sales_order_no}</Link></td>
                       <td data-label="Customer">{r.customer_name}</td>
                       <td data-label="Sales Rep">{r.sales_rep}</td>
                       <td data-label="Division">{r.division_name}</td>

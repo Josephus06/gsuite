@@ -99,7 +99,7 @@ export default function AssetDisposals() {
                       {Number(r.gain_loss) < 0 ? `(${formatMoney(Math.abs(Number(r.gain_loss)))})` : formatMoney(r.gain_loss)}
                     </td>
                     <td data-label="Status">{DISPOSAL_STATUS_LABELS[r.status] || r.status}</td>
-                    <td><button className="btn btn-sm btn-primary" onClick={() => navigate(`/asset-disposals/${r.id}`)}>View</button></td>
+                    <td><Link className="btn btn-sm btn-primary" to={`/asset-disposals/${r.id}`}>View</Link></td>
                   </tr>
                 ))}
               </tbody>

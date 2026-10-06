@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
@@ -117,7 +117,7 @@ export default function AssignedJobOrderRun({ kind = 'JO' }) {
         <div className="page-header"><h1>Assigned JO</h1></div>
         <div className="card">
           <div className="error-banner">{error || 'This job order could not be opened.'}</div>
-          <button className="btn" style={{ marginTop: 12 }} onClick={() => navigate('/assigned-jo')}>Back to Assigned JO</button>
+          <Link className="btn" style={{ marginTop: 12 }} to={'/assigned-jo'}>Back to Assigned JO</Link>
         </div>
       </div>
     );
@@ -158,7 +158,7 @@ export default function AssignedJobOrderRun({ kind = 'JO' }) {
     <div>
       <div className="page-header">
         <div />
-        <button className="btn btn-sm" onClick={() => navigate('/assigned-jo')}>Back to Assigned JO</button>
+        <Link className="btn btn-sm" to={'/assigned-jo'}>Back to Assigned JO</Link>
       </div>
 
       {error && <div className="error-banner">{error}</div>}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import EntityPicker from '../components/EntityPicker';
@@ -115,7 +115,7 @@ export default function AssetForm() {
       <div className="page-header">
         <div style={{ fontWeight: 600 }}>Assets</div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(id ? `/assets/${id}` : '/assets')}>Back</button>
+          <Link className="btn btn-sm" to={id ? `/assets/${id}` : '/assets'}>Back</Link>
           <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
         </div>
       </div>

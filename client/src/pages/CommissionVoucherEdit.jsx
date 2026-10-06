@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import { displayMonth } from '../utils/dates';
@@ -167,7 +167,7 @@ export default function CommissionVoucherEdit() {
       <div className="page-header">
         <h1>Commission Voucher{isEdit && employee ? ` · ${employee.name}` : ''}</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/commission-vouchers')}>Back to Lists</button>
+          <Link className="btn btn-sm" to={'/commission-vouchers'}>Back to Lists</Link>
           <button className="btn btn-sm btn-primary" disabled={saving} onClick={handleSave}>{isEdit ? 'Update' : 'Save'}</button>
         </div>
       </div>

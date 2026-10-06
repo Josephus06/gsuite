@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { computeProcessCosting } from '../utils/costing';
@@ -100,7 +100,7 @@ export default function ProcessCostingEdit() {
       <div className="page-header">
         <h1>Process Costing</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" className="btn" onClick={() => navigate('/process-costing')}>Back to Lists</button>
+          <Link className="btn" to={'/process-costing'}>Back to Lists</Link>
           <button type="button" className="btn btn-primary" disabled={saving || !processId} onClick={save}>{saving ? 'Saving…' : 'Save'}</button>
         </div>
       </div>

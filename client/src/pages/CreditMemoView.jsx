@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -70,8 +70,8 @@ export default function CreditMemoView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate(`/sales-invoices/${cm.sales_invoice_id}`)}>Back</button>
-          {canEdit && isOpen && <button className="btn btn-sm" onClick={() => navigate(`/credit-memos/${cm.id}/edit`)}>Edit</button>}
+          <Link className="btn btn-sm" to={`/sales-invoices/${cm.sales_invoice_id}`}>Back</Link>
+          {canEdit && isOpen && <Link className="btn btn-sm" to={`/credit-memos/${cm.id}/edit`}>Edit</Link>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
@@ -86,9 +86,9 @@ export default function CreditMemoView() {
         </div>
         <div className="estimate-status">
           {STATUS_LABELS[cm.status] || cm.status}
-          <button type="button" className="estimate-so-link" onClick={() => navigate(`/sales-invoices/${cm.sales_invoice_id}`)}>
+          <Link className="estimate-so-link" to={`/sales-invoices/${cm.sales_invoice_id}`}>
             {cm.invoice_no}
-          </button>
+          </Link>
         </div>
 
         <div className="estimate-detail-grid">
@@ -99,7 +99,7 @@ export default function CreditMemoView() {
             {/* An imported memo can apply to several invoices at once, so there is no single
                 "created from" -- the Apply tab lists them all. */}
             {cm.sales_invoice_id && (
-              <div>Created From : <button type="button" className="link-btn" onClick={() => navigate(`/sales-invoices/${cm.sales_invoice_id}`)}>{cm.invoice_no}</button></div>
+              <div>Created From : <Link className="link-btn" to={`/sales-invoices/${cm.sales_invoice_id}`}>{cm.invoice_no}</Link></div>
             )}
           </div>
           <div>
@@ -147,7 +147,7 @@ export default function CreditMemoView() {
                   <tr key={l.id}>
                     <td>{l.line_no}</td>
                     <td>{l.job_order_id ? (
-                      <button type="button" className="link-btn" onClick={() => navigate(`/production/${l.job_order_id}`)}>{l.job_order_no}</button>
+                      <Link className="link-btn" to={`/production/${l.job_order_id}`}>{l.job_order_no}</Link>
                     ) : '—'}</td>
                     <td>{l.item_name || '—'}</td>
                     <td>{l.description}</td>
@@ -210,7 +210,7 @@ export default function CreditMemoView() {
                         live recorded rather than a link that would 404. */}
                     <td>
                       {a.sales_invoice_id
-                        ? <button type="button" className="link-btn" onClick={() => navigate(`/sales-invoices/${a.sales_invoice_id}`)}>{a.invoice_no}</button>
+                        ? <Link className="link-btn" to={`/sales-invoices/${a.sales_invoice_id}`}>{a.invoice_no}</Link>
                         : <span title="This invoice is not in this database">{a.invoice_no || '—'}</span>}
                     </td>
                     <td>{formatDate(a.invoice_date)}</td>

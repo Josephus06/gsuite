@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -239,11 +239,11 @@ export default function PurchaseOrderView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-sm" onClick={() => navigate('/purchase-orders')}>Back</button>
-          {showEdit && <button className="btn btn-sm" onClick={() => navigate(`/purchase-orders/${id}/edit`)}>Edit</button>}
-          {showReceive && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/purchase-orders/${id}/receive`)}>Receive</button>}
+          <Link className="btn btn-sm" to={'/purchase-orders'}>Back</Link>
+          {showEdit && <Link className="btn btn-sm" to={`/purchase-orders/${id}/edit`}>Edit</Link>}
+          {showReceive && <Link className="btn btn-sm btn-primary" to={`/purchase-orders/${id}/receive`}>Receive</Link>}
           {hasBillableLine && <button className="btn btn-sm btn-primary" onClick={() => setShowBillModal(true)}>Bill</button>}
-          {showVendorReturn && <button className="btn btn-sm" onClick={() => navigate(`/purchase-orders/${id}/return`)}>Vendor Return</button>}
+          {showVendorReturn && <Link className="btn btn-sm" to={`/purchase-orders/${id}/return`}>Vendor Return</Link>}
           {showApprove && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>Approve</button>}
           {showPrint && <button className="btn btn-sm" onClick={() => window.open(`/purchase-orders/${id}/print`, '_blank')}>Print</button>}
           {/* Same gate as Print: emailing it is delivering the printout. */}
@@ -274,7 +274,7 @@ export default function PurchaseOrderView() {
           <div>
             <div>Memo : <span className="hi">{po.memo || ''}</span></div>
             {po.type === 'PO2' && po.parent_po_no && (
-              <div>Landed Cost of : <button type="button" className="link-btn" onClick={() => navigate(`/purchase-orders/${po.parent_purchase_order_id}`)}>{po.parent_po_no}</button></div>
+              <div>Landed Cost of : <Link className="link-btn" to={`/purchase-orders/${po.parent_purchase_order_id}`}>{po.parent_po_no}</Link></div>
             )}
           </div>
           <div>
@@ -329,9 +329,9 @@ export default function PurchaseOrderView() {
                     </td>
                     <td>
                       <span style={{ color: '#db2777', fontWeight: 600, marginRight: 8 }}>{idx + 1}</span>
-                      <button type="button" className="link-btn" onClick={() => navigate(`/inventory/${l.item_id}`)}>
+                      <Link className="link-btn" to={`/inventory/${l.item_id}`}>
                         {l.item_code} {l.item_name ? `— ${l.item_name}` : ''}
-                      </button>
+                      </Link>
                     </td>
                     {po.type === 'PO1' && <td>{l.pr_no || '—'}</td>}
                     <td>{l.location_name || '—'}</td>
@@ -372,7 +372,7 @@ export default function PurchaseOrderView() {
                 )}
                 {landedCosts.map((lc) => (
                   <tr key={lc.id}>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/purchase-orders/${lc.id}`)}>{lc.po_no}</button></td>
+                    <td><Link className="link-btn" to={`/purchase-orders/${lc.id}`}>{lc.po_no}</Link></td>
                     <td>{formatDate(lc.date_created)}</td>
                     <td>{lc.supplier_name}</td>
                     <td>{lc.term_name || '—'}</td>
@@ -385,7 +385,7 @@ export default function PurchaseOrderView() {
             </table>
           </div>
           <div style={{ marginTop: 12 }}>
-            <button className="btn btn-primary" onClick={() => navigate(`/purchase-orders/${id}/landed-cost/new`)}>Create PO</button>
+            <Link className="btn btn-primary" to={`/purchase-orders/${id}/landed-cost/new`}>Create PO</Link>
           </div>
         </div>
       )}
@@ -399,7 +399,7 @@ export default function PurchaseOrderView() {
                 {po.type === 'PO2' && po.parent_po_no && (
                   <tr>
                     <td>Purchase Order</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/purchase-orders/${po.parent_purchase_order_id}`)}>{po.parent_po_no}</button></td>
+                    <td><Link className="link-btn" to={`/purchase-orders/${po.parent_purchase_order_id}`}>{po.parent_po_no}</Link></td>
                     <td>—</td>
                     <td>—</td>
                     <td>Parent</td>
@@ -408,7 +408,7 @@ export default function PurchaseOrderView() {
                 {receipts.map((r) => (
                   <tr key={`rr-${r.id}`}>
                     <td>Receiving Report</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/purchase-orders/receipts/${r.id}`)}>{r.receipt_no}</button></td>
+                    <td><Link className="link-btn" to={`/purchase-orders/receipts/${r.id}`}>{r.receipt_no}</Link></td>
                     <td>{formatDate(r.date_created)}</td>
                     <td>{money(r.total_amount)}</td>
                     <td>{r.is_on_hold ? 'On Hold' : 'Open'}</td>
@@ -417,7 +417,7 @@ export default function PurchaseOrderView() {
                 {returns.map((r) => (
                   <tr key={`vr-${r.id}`}>
                     <td>Vendor Return</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/purchase-orders/returns/${r.id}`)}>{r.return_no}</button></td>
+                    <td><Link className="link-btn" to={`/purchase-orders/returns/${r.id}`}>{r.return_no}</Link></td>
                     <td>{formatDate(r.date_created)}</td>
                     <td>{money(r.total_amount)}</td>
                     <td>—</td>
@@ -426,7 +426,7 @@ export default function PurchaseOrderView() {
                 {bills.map((b) => (
                   <tr key={`vb-${b.id}`}>
                     <td>Vendor Bill</td>
-                    <td><button type="button" className="link-btn" onClick={() => navigate(`/vendor-bills/${b.id}`)}>{b.bill_no}</button></td>
+                    <td><Link className="link-btn" to={`/vendor-bills/${b.id}`}>{b.bill_no}</Link></td>
                     <td>{formatDate(b.date_created)}</td>
                     <td>{money(b.gross_amount)}</td>
                     <td>{b.status === 'cancelled' ? 'Cancelled' : 'Open'}</td>
@@ -522,10 +522,10 @@ export default function PurchaseOrderView() {
                           <td>{formatDate(sp.last_purchase_date)}</td>
                           <td>
                             {sp.doc_type === 'RR' && (
-                              <button type="button" className="link-btn" onClick={() => navigate(`/purchase-orders/receipts/${sp.doc_id}`)}>{sp.ref_no}</button>
+                              <Link className="link-btn" to={`/purchase-orders/receipts/${sp.doc_id}`}>{sp.ref_no}</Link>
                             )}
                             {sp.doc_type === 'PO' && (
-                              <button type="button" className="link-btn" onClick={() => navigate(`/purchase-orders/${sp.doc_id}`)}>{sp.ref_no}</button>
+                              <Link className="link-btn" to={`/purchase-orders/${sp.doc_id}`}>{sp.ref_no}</Link>
                             )}
                             {/* Price-list rows name a document this install may not hold, so no link. */}
                             {!sp.doc_type && <span>{sp.ref_no || '—'} <span className="muted">· price list</span></span>}
@@ -562,12 +562,11 @@ export default function PurchaseOrderView() {
                       <tr key={`${h.doc_type}-${h.line_id}`}>
                         <td>{formatDate(h.doc_date)}</td>
                         <td>
-                          <button
-                            type="button" className="link-btn"
-                            onClick={() => navigate(h.doc_type === 'RR' ? `/purchase-orders/receipts/${h.doc_id}` : `/purchase-orders/${h.doc_id}`)}
+                          <Link className="link-btn"
+                            to={h.doc_type === 'RR' ? `/purchase-orders/receipts/${h.doc_id}` : `/purchase-orders/${h.doc_id}`}
                           >
                             {h.doc_no}
-                          </button>
+                          </Link>
                           {h.doc_type === 'RR' && h.po_no && <span className="muted"> · {h.po_no}</span>}
                         </td>
                         <td>{h.supplier_name}</td>

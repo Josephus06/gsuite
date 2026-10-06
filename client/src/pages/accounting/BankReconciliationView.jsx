@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Modal from '../../components/Modal';
@@ -108,7 +108,7 @@ export default function BankReconciliationView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-sm" onClick={() => navigate('/accounting/bank-reconciliation')}>Back</button>
+          <Link className="btn btn-sm" to={'/accounting/bank-reconciliation'}>Back</Link>
           {can('/accounting/bank-reconciliation', 'can_print') && (
             <a className="btn btn-sm" href={`/api/bank-reconciliation/${id}/export`}
               onClick={(e) => { e.preventDefault(); downloadExport(id, setError); }}>Export</a>

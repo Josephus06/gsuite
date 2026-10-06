@@ -60,7 +60,7 @@ export default function InventoryAdjustments() {
     <div>
       <div className="page-header">
         <h1>Saved Inventory Adjustments</h1>
-        {can('/inventory-adjustments', 'can_add') && <button className="btn btn-primary" onClick={() => navigate('/inventory-adjustments/new')}>Add New</button>}
+        {can('/inventory-adjustments', 'can_add') && <Link className="btn btn-primary" to={'/inventory-adjustments/new'}>Add New</Link>}
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
