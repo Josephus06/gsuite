@@ -195,11 +195,37 @@ async function mayChangeSalesRep(userId) {
 }
 const REP_LOCKED_STATUSES = ['billed', 'cancelled'];
 
+// Whom this user may hand an order to: their own subordinates -- everyone below them in
+// user_supervisors, down every level (an SBU head's supervisors and those supervisors' reps) -- and
+// themself (asked 2026-10-06: "they can only see their subordinates"). null = anyone (System Admin).
+async function assignableRepIds(userId) {
+  if (await isSystemAdmin(userId)) return null;
+  const [[me]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [userId]);
+  const ids = new Set(me?.employee_id ? [Number(me.employee_id)] : []);
+  const seen = new Set([Number(userId)]);
+  let frontier = [Number(userId)];
+  while (frontier.length) {
+    const [rows] = await pool.query(
+      'SELECT DISTINCT u.id, u.employee_id FROM user_supervisors us JOIN users u ON u.id = us.user_id WHERE us.supervisor_id IN (?)',
+      [frontier]);
+    frontier = [];
+    for (const r of rows) {
+      if (r.employee_id) ids.add(Number(r.employee_id));
+      if (!seen.has(Number(r.id))) { seen.add(Number(r.id)); frontier.push(Number(r.id)); }
+    }
+  }
+  return [...ids];
+}
+
 // The reps to choose from, for the picker -- from this route, so it needs no Employees permission.
 router.get('/:id/sales-rep-options', requireAuth, async (req, res, next) => {
   try {
     if (!(await mayChangeSalesRep(req.user.id))) return res.status(403).json({ error: 'Only a sales supervisor or SBU head can change the Sales Rep.' });
-    const [rows] = await pool.query('SELECT id, first_name, last_name, position_title FROM employees ORDER BY first_name, last_name');
+    const allowed = await assignableRepIds(req.user.id);
+    if (allowed && !allowed.length) return res.json([]);
+    const [rows] = await pool.query(
+      `SELECT id, first_name, last_name, position_title FROM employees ${allowed ? 'WHERE id IN (?)' : ''} ORDER BY first_name, last_name`,
+      allowed ? [allowed] : []);
     res.json(rows);
   } catch (err) { next(err); }
 });
@@ -219,6 +245,10 @@ router.put('/:id/sales-rep', requireAuth, async (req, res, next) => {
     }
     const [[rep]] = await conn.query("SELECT id, CONCAT(first_name, ' ', last_name) AS name FROM employees WHERE id = ?", [repId]);
     if (!rep) return res.status(400).json({ error: 'That employee no longer exists.' });
+    const allowed = await assignableRepIds(req.user.id);
+    if (allowed && !allowed.includes(Number(rep.id))) {
+      return res.status(403).json({ error: 'You can only give the order to one of your own subordinates.' });
+    }
     if (Number(so.sales_rep_id) === rep.id) return res.json({ ok: true, job_orders: 0 });
 
     await conn.beginTransaction();
