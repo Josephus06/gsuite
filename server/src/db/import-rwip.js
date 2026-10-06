@@ -159,12 +159,13 @@ async function main() {
     try {
       await conn.beginTransaction();
       const [r] = await conn.query(
-        `INSERT INTO job_orders (job_order_no, parent_job_order_id, sales_order_id, sales_order_line_id, job_type_id, job_location_id,
+        `INSERT INTO job_orders (job_order_no, parent_job_order_id, sales_order_id, nsso_id, sales_order_line_id, job_type_id, job_location_id,
            description, quantity, units, length, width, height, memo, contact_email, contact_title, contact_phone, shipping_address,
            sales_rep_id, delivery_date, delivery_time, reason_code_id, reason, action_to_be_taken,
            status, sub_status, production_stage, rma_approved_by_id, is_on_hold, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [no, mother.id, mother.sales_order_id, mother.sales_order_line_id, mother.job_type_id,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        // The mother's NSSO as well: a rework of an NSJO otherwise has no order at all (RWIP-1286).
+        [no, mother.id, mother.sales_order_id, mother.nsso_id || null, mother.sales_order_line_id, mother.job_type_id,
          locByName.get(normWs(h.joloc_name)) || mother.job_location_id,
          trunc(h.JobDescription_TransH, 500) || mother.description,
          num(h.Quantity_TransH) ?? 0, trunc(h.Unit_TransH, 30) || mother.units,
