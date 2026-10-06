@@ -8,12 +8,13 @@ import { displayDate } from '../utils/dates';
 const PAGE_SIZE = 25;
 // Short codes as the documents are known on the floor, in the order they happen to stock.
 const TYPES = [
-  ['Purchase Order', 'PO'], ['Receiving Report', 'RR'], ['Vendor Return', 'VR'], ['Transfer Order', 'TO'],
+  ['Purchase Requisition', 'PR'], ['Purchase Order', 'PO'], ['Receiving Report', 'RR'], ['Vendor Return', 'VR'], ['Transfer Order', 'TO'],
   ['Item Fulfillment', 'IF'], ['Item Receipt', 'IR'], ['Assembly Build', 'AB'], ['Inventory Adjustment', 'IA'],
   ['Office Supply Fulfillment', 'OSRF'],
 ];
 // Where each document opens. The ledger's doc_id is that document's own id.
 const LINK = {
+  'Purchase Requisition': (id) => `/purchase-requisitions/${id}`,
   'Purchase Order': (id) => `/purchase-orders/${id}`,
   'Receiving Report': (id) => `/purchase-orders/receipts/${id}`,
   'Vendor Return': (id) => `/purchase-orders/returns/${id}`,
@@ -35,7 +36,7 @@ function label(s) { return s ? String(s).replace(/_/g, ' ').replace(/\b\w/g, (c)
 
 // The Inventory Item's Transactions tab: every document this item appears on, newest first, from
 // GET /inventory/:id/transactions. Stock movements show In/Out in the Base Unit -- the same figures
-// as the Bin Card. Purchase Orders and Transfer Orders ask for stock without moving it, so they
+// as the Bin Card. Purchase Requisitions, Purchase Orders and Transfer Orders ask for stock without moving it, so they
 // show their own ordered/requested quantity and status instead.
 export default function ItemTransactions({ itemId, baseUnit }) {
   const [type, setType] = useState('');

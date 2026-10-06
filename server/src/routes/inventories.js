@@ -321,11 +321,12 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
 // Every transaction this item appears on, newest first: the stock ledger's movements (Receiving
 // Report, Vendor Return, Item Fulfillment, Item Receipt, Assembly Build, approved Inventory
 // Adjustment -- lib/stockLedger.js, so In/Out match the Bin Card exactly, in Base Unit), plus the
-// two documents that ask for stock without moving it: Purchase Orders and Transfer Orders, shown
+// documents that ask for stock without moving it: Purchase Requisitions (added 2026-10-06), Purchase
+// Orders and Transfer Orders, shown
 // with their own quantity and unit and no In/Out. `type` narrows to one kind; paged because a
 // common material has thousands of rows.
 const TXN_TYPES = ['Receiving Report', 'Vendor Return', 'Item Fulfillment', 'Item Receipt', 'Assembly Build', 'Office Supply Fulfillment',
-  'Inventory Adjustment', 'Purchase Order', 'Transfer Order'];
+  'Inventory Adjustment', 'Purchase Requisition', 'Purchase Order', 'Transfer Order'];
 router.get('/:id/transactions', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -338,6 +339,16 @@ router.get('/:id/transactions', requireAuth, requirePermission(ROUTE, 'can_view'
              m.from_location_name, m.to_location_name, m.qty_in, m.qty_out,
              NULL AS doc_qty, m.doc_uom, NULL AS status, m.sort_ts
         FROM (${movementsSql(true)}) m
+      UNION ALL
+      -- A requisition has no warehouse: To is the department asking, Reference its job order.
+      SELECT pr.date_created, pr.pr_no, 'Purchase Requisition', jo.job_order_no, pr.id,
+             NULL, d.name, NULL, NULL,
+             prl.qty, COALESCE(prl.unit_title, prl.purchase_unit), pr.status, pr.created_at
+        FROM purchase_requisition_lines prl
+        JOIN purchase_requisitions pr ON pr.id = prl.purchase_requisition_id
+        LEFT JOIN departments d ON d.id = pr.department_id
+        LEFT JOIN job_orders jo ON jo.id = prl.job_order_id
+       WHERE prl.item_id = ?
       UNION ALL
       SELECT po.date_created, po.po_no, 'Purchase Order', NULL, po.id,
              NULL, loc.location_name, NULL, NULL,
@@ -355,7 +366,7 @@ router.get('/:id/transactions', requireAuth, requirePermission(ROUTE, 'can_view'
         LEFT JOIN locations wl ON wl.id = t.withdraw_from_location_id
         LEFT JOIN locations tl ON tl.id = t.transfer_to_location_id
        WHERE tol.item_id = ?`;
-    const params = [...movementParams(ids), id, id];
+    const params = [...movementParams(ids), id, id, id];
     const filter = type ? 'WHERE x.trans_type = ?' : '';
     const fParams = type ? [type] : [];
 
