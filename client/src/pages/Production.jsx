@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -125,8 +125,16 @@ export default function Production() {
                   <tr><td colSpan={14} className="muted" style={{ textAlign: 'center', padding: 20 }}>No Job Orders in this stage.</td></tr>
                 )}
                 {pageRows.map((row) => (
-                  <tr key={row.id} onClick={() => navigate(`/production/${row.id}`)} style={{ cursor: 'pointer' }}>
-                    <td><button type="button" className="link-btn" onClick={(e) => { e.stopPropagation(); navigate(`/production/${row.id}`); }}>{row.job_order_no}</button></td>
+                  <tr
+                    key={row.id}
+                    style={{ cursor: 'pointer' }}
+                    // Ctrl/Cmd-click or middle-click anywhere on the row opens the JO in a new tab, like a link.
+                    onClick={(e) => (e.ctrlKey || e.metaKey ? window.open(`/production/${row.id}`, '_blank') : navigate(`/production/${row.id}`))}
+                    onAuxClick={(e) => { if (e.button === 1) window.open(`/production/${row.id}`, '_blank'); }}
+                  >
+                    {/* A real link, so the JO opens in a new tab (Ctrl/middle-click, right-click); the
+                        row itself still opens it on a plain click. */}
+                    <td><Link className="link-btn" to={`/production/${row.id}`} onClick={(e) => e.stopPropagation()}>{row.job_order_no}</Link></td>
                     <td>{row.sales_order_no}</td>
                     <td>{formatDate(row.created_at)}</td>
                     <td>{formatDate(row.date_forwarded)}</td>
