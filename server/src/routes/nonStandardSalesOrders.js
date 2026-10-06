@@ -128,6 +128,36 @@ router.get('/nestable-sales-orders', requireAuth, requirePermission(ROUTE, 'can_
   } catch (err) { next(err); }
 });
 
+// The customer's contacts, for the Contact Name picker -- and adding one, as the estimate form does
+// (asked 2026-10-06). A new contact is saved to the customer in Master Lists, not just on this NSSO.
+router.get('/customer-contacts/:customerId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT id, contact_name, title, email, phone FROM customer_contacts WHERE customer_id = ? ORDER BY is_primary DESC, contact_name',
+      [req.params.customerId]);
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+router.post('/contacts', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await userCan(req.user.id, ROUTE, 'can_add')) && !(await userCan(req.user.id, ROUTE, 'can_edit'))) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    const { customer_id: customerId, contact_name: contactName, title, email, phone } = req.body;
+    if (!customerId) return res.status(400).json({ error: 'Select a customer first.' });
+    if (!contactName || !String(contactName).trim()) return res.status(400).json({ error: 'Contact name is required.' });
+    const [[customer]] = await pool.query('SELECT id FROM customers WHERE id = ?', [customerId]);
+    if (!customer) return res.status(400).json({ error: 'Invalid customer.' });
+    const [result] = await pool.query(
+      `INSERT INTO customer_contacts (customer_id, contact_name, title, email, phone, is_primary)
+       VALUES (?, ?, ?, ?, ?, FALSE)`,
+      [customerId, String(contactName).trim(), title?.trim() || null, email?.trim() || null, phone?.trim() || null]);
+    const [[row]] = await pool.query('SELECT id, contact_name, title, email, phone FROM customer_contacts WHERE id = ?', [result.insertId]);
+    res.status(201).json(row);
+  } catch (err) { next(err); }
+});
+
 // Billing block for the wizard's Billing / Review steps: the customer's credit terms + address.
 router.get('/customer-billing/:customerId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {

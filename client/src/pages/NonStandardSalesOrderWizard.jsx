@@ -104,6 +104,36 @@ export default function NonStandardSalesOrderWizard() {
     }
   }, [step, header.type, header.nested_estimate_id]);
 
+  // The customer's contacts, and the inline "new contact" panel -- as on the estimate form. A new
+  // contact is saved to the customer in Master Lists, then selected here.
+  const [contacts, setContacts] = useState([]);
+  const [newContact, setNewContact] = useState(null);
+  const [savingContact, setSavingContact] = useState(false);
+  const [contactError, setContactError] = useState('');
+  useEffect(() => {
+    setNewContact(null);
+    if (header.customer_id) api.get(`/non-standard-sales-orders/customer-contacts/${header.customer_id}`).then(({ data }) => setContacts(data)).catch(() => setContacts([]));
+    else setContacts([]);
+  }, [header.customer_id]);
+  function onContactSelect(c) {
+    setH({ contact_person_id: c.id, contact_email: c.email || '', contact_title: c.title || '', contact_phone: c.phone || '' });
+  }
+  async function saveNewContact() {
+    if (!newContact?.contact_name.trim()) { setContactError('Contact name is required.'); return; }
+    setSavingContact(true);
+    setContactError('');
+    try {
+      const { data } = await api.post('/non-standard-sales-orders/contacts', { ...newContact, customer_id: header.customer_id });
+      setContacts((current) => [...current, data]);
+      onContactSelect(data);
+      setNewContact(null);
+    } catch (err) {
+      setContactError(err.response?.data?.error || 'Could not save this contact.');
+    } finally {
+      setSavingContact(false);
+    }
+  }
+
   // Customer billing block (credit terms + address) for the Billing / Review steps.
   useEffect(() => {
     if (header.customer_id) api.get(`/non-standard-sales-orders/customer-billing/${header.customer_id}`).then(({ data }) => setBilling(data)).catch(() => setBilling(null));
@@ -358,6 +388,39 @@ export default function NonStandardSalesOrderWizard() {
                   <EntityPicker label="Customer" items={meta.customers} value={header.customer_id} getLabel={(c) => c.name}
                     columns={[{ key: 'name', label: 'Name' }, { key: 'tin', label: 'TIN' }]} searchKeys={['name', 'company_name', 'customer_code']}
                     placeholder="--Select--" onSelect={onCustomerSelect} />
+                </div>
+                <div className="field">
+                  <label>Contact Name</label>
+                  <EntityPicker
+                    label="Contact Name" items={contacts} value={header.contact_person_id} getLabel={(c) => c.contact_name}
+                    columns={[{ key: 'contact_name', label: 'Name' }, { key: 'title', label: 'Title' }, { key: 'email', label: 'Email' }]}
+                    searchKeys={['contact_name', 'email']}
+                    onSelect={onContactSelect}
+                    disabled={!header.customer_id}
+                    placeholder={header.customer_id ? 'Select contact...' : 'Select a customer first'}
+                  />
+                  {header.customer_id && !newContact && (
+                    <button type="button" className="btn btn-link" style={{ padding: '4px 0' }}
+                      onClick={() => { setContactError(''); setNewContact({ contact_name: '', title: '', email: '', phone: '' }); }}>
+                      + Add new contact
+                    </button>
+                  )}
+                  {newContact && (
+                    <div style={{ border: '1px solid var(--border, #ddd)', borderRadius: 6, padding: 10, marginTop: 6 }}>
+                      <label>New Contact <span className="muted">(saved to this customer in Master Lists)</span></label>
+                      {contactError && <div className="error-banner">{contactError}</div>}
+                      {[['contact_name', 'Name *'], ['title', 'Title'], ['email', 'Email'], ['phone', 'Contact No']].map(([key, label]) => (
+                        <input key={key} placeholder={label} value={newContact[key]} style={{ marginBottom: 6 }}
+                          onChange={(e) => setNewContact((current) => ({ ...current, [key]: e.target.value }))} />
+                      ))}
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button type="button" className="btn btn-primary" disabled={savingContact} onClick={saveNewContact}>
+                          {savingContact ? 'Saving...' : 'Save Contact'}
+                        </button>
+                        <button type="button" className="btn" disabled={savingContact} onClick={() => setNewContact(null)}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="field">
                   <label>Contact Title</label>
