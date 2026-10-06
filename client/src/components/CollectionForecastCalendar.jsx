@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import Modal from './Modal';
+import { useCalendarRange } from '../utils/calendarRange';
 
 // The month of expected collections, in the shape of the production schedule so the two read
 // alike -- but the chips carry CUSTOMER names, because the question here is who is paying us on
@@ -9,18 +10,15 @@ import Modal from './Modal';
 // Shared deliberately between the Treasury > Collection Forecast page and the dashboard card.
 // Two copies would eventually disagree about a day's total, and the whole point of the calendar
 // is that the number on the cell and the number in the popup are the same number.
-const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December'];
+//
+// `range` is the GM dashboard's Day / Week / Month switch (utils/calendarRange.jsx); the Treasury page
+// leaves it at Month. A week across a month end fetches both months, and the header's figures are of
+// the days on screen.
 const WEEKDAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 
 function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
-}
-const pad = (n) => String(n).padStart(2, '0');
-function thisMonth() {
-  const t = new Date();
-  return `${t.getFullYear()}-${pad(t.getMonth() + 1)}`;
 }
 function formatDayHeading(key) {
   const [y, m, d] = key.split('-').map(Number);
@@ -29,63 +27,56 @@ function formatDayHeading(key) {
   });
 }
 
-export default function CollectionForecastCalendar({ customerId }) {
-  const [month, setMonth] = useState(thisMonth);
-  const [data, setData] = useState({ calendar: [], invoiceCount: 0, total: 0 });
+export default function CollectionForecastCalendar({ customerId, range = 'month' }) {
+  const { cells, days, months, title, shift, todayKey } = useCalendarRange(range);
+  const [data, setData] = useState({ calendar: [] });
   const [loading, setLoading] = useState(true);
   const [openDay, setOpenDay] = useState(null);
+  const monthsKey = months.join(',');
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
-        const { data: d } = await api.get('/collection-forecast/calendar', {
+        const rs = await Promise.all(monthsKey.split(',').map((month) => api.get('/collection-forecast/calendar', {
           params: { month, customer_id: customerId || undefined },
-        });
-        if (!cancelled) setData(d);
+        })));
+        if (!cancelled) setData({ calendar: rs.flatMap((r) => r.data.calendar || []) });
       } catch {
-        // Leave the month showing what it had rather than blanking the calendar on a hiccup.
+        // Leave the calendar showing what it had rather than blanking it on a hiccup.
       }
       if (!cancelled) setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [month, customerId]);
+  }, [monthsKey, customerId]);
 
   const byDay = new Map((data.calendar || []).map((d) => [d.day, d]));
-  const [year, monthNo] = month.split('-').map(Number);
-  const first = new Date(year, monthNo - 1, 1);
-  const daysInMonth = new Date(year, monthNo, 0).getDate();
-  const leading = first.getDay();
-  const todayKey = (() => {
-    const t = new Date();
-    return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`;
-  })();
-
-  const cells = [];
-  for (let i = 0; i < leading; i += 1) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d += 1) cells.push(`${year}-${pad(monthNo)}-${pad(d)}`);
-
-  const shift = (delta) => {
-    const base = new Date(year, monthNo - 1 + delta, 1);
-    setMonth(`${base.getFullYear()}-${pad(base.getMonth() + 1)}`);
+  const visible = days.map((k) => byDay.get(k)).filter(Boolean);
+  const shown = {
+    invoiceCount: visible.reduce((t, e) => t + Number(e.invoiceCount || 0), 0),
+    total: visible.reduce((t, e) => t + Number(e.total || 0), 0),
+    collected: visible.reduce((t, e) => t + Number(e.collected || 0), 0),
   };
 
   return (
     <div className="artist-calendar">
       <div className="artist-calendar-head">
         <button type="button" className="btn btn-sm" onClick={() => shift(-1)} disabled={loading}>&lsaquo;</button>
-        <strong>{MONTH_NAMES[monthNo - 1]} {year}</strong>
+        <strong>{title}</strong>
         <button type="button" className="btn btn-sm" onClick={() => shift(1)} disabled={loading}>&rsaquo;</button>
         <span className="muted artist-calendar-count">
           {loading
             ? 'Loading...'
-            : `${data.invoiceCount} invoice${data.invoiceCount === 1 ? '' : 's'} · ${money(data.total)} expected`
-              + (data.collected > 0 ? ` · ${money(data.collected)} collected` : '')}
+            : `${shown.invoiceCount} invoice${shown.invoiceCount === 1 ? '' : 's'} · ${money(shown.total)} expected`
+              + (shown.collected > 0 ? ` · ${money(shown.collected)} collected` : '')}
         </span>
       </div>
 
-      <div className="artist-calendar-grid">
+      {/* Day: the day's breakdown in place of a single-cell grid. */}
+      {range === 'day' && !loading && <DayBreakdown entry={byDay.get(days[0])} />}
+
+      {range !== 'day' && <div className="artist-calendar-grid">
         {WEEKDAYS.map((w) => <div key={w} className="artist-calendar-weekday">{w}</div>)}
         {cells.map((key, i) => {
           if (!key) return <div key={`pad-${i}`} className="artist-calendar-day is-empty" />;
@@ -135,7 +126,7 @@ export default function CollectionForecastCalendar({ customerId }) {
             </div>
           );
         })}
-      </div>
+      </div>}
 
       {openDay && (
         <Modal title={`Expected on ${formatDayHeading(openDay)}`} onClose={() => setOpenDay(null)} large>

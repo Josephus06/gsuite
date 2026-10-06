@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Modal from './Modal';
+import { useCalendarRange } from '../utils/calendarRange';
 
 // The General Manager dashboard's Weighted Sales and Invoice calendars: one month of sales orders
 // or invoices by the day they were created, as customer chips with the day's total -- laid out
@@ -11,8 +12,10 @@ import Modal from './Modal';
 // The Invoice calendar counts invoices AND the month's Delivery Tickets, open or converted, each ticket
 // on the day it was raised -- orange while open, blue once converted (asked 2026-10-05). An invoice
 // converted from a ticket is never counted, so the ticket's amount is not counted twice.
-const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December'];
+//
+// `range` is the dashboard's Day / Week / Month switch (utils/calendarRange.jsx): the month grid, one
+// week of it, or a single day laid out in full. The endpoint is monthly, so a week across a month end
+// fetches both months, and the header's count and total are of the days on screen.
 const WEEKDAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const TYPES = {
   sales: { noun: 'sales order', plural: 'Sales Orders', docLabel: 'Sales Order No', amountLabel: 'Net of Tax', path: (id) => `/sales-orders/${id}` },
@@ -26,55 +29,52 @@ function money(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
-const pad = (n) => String(n).padStart(2, '0');
 const plural = (n, noun) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 const EMPTY = { calendar: [], count: 0, total: 0 };
 
-export default function GmDocumentCalendar({ type }) {
+export default function GmDocumentCalendar({ type, range = 'month' }) {
   const cfg = TYPES[type];
-  const now = new Date();
-  const [month, setMonth] = useState(`${now.getFullYear()}-${pad(now.getMonth() + 1)}`);
+  const { cells, days, months, title, shift, todayKey } = useCalendarRange(range);
   const [data, setData] = useState(EMPTY);
   const [loading, setLoading] = useState(true);
   const [openDay, setOpenDay] = useState(null);
+  const monthsKey = months.join(',');
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    api.get('/dashboard/gm-calendar', { params: { type, month } })
-      .then(({ data: d }) => { if (!cancelled) setData(d); })
+    Promise.all(monthsKey.split(',').map((month) => api.get('/dashboard/gm-calendar', { params: { type, month } })))
+      .then((rs) => { if (!cancelled) setData({ calendar: rs.flatMap((r) => r.data.calendar || []) }); })
       .catch(() => { if (!cancelled) setData(EMPTY); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [type, month]);
+  }, [type, monthsKey]);
 
   const byDay = new Map((data.calendar || []).map((d) => [d.day, d]));
-  const [year, monthNo] = month.split('-').map(Number);
-  const daysInMonth = new Date(year, monthNo, 0).getDate();
-  const leading = new Date(year, monthNo - 1, 1).getDay();
-  const todayKey = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  const cells = [];
-  for (let i = 0; i < leading; i += 1) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d += 1) cells.push(`${year}-${pad(monthNo)}-${pad(d)}`);
-
-  const shift = (delta) => {
-    const base = new Date(year, monthNo - 1 + delta, 1);
-    setMonth(`${base.getFullYear()}-${pad(base.getMonth() + 1)}`);
-  };
+  // The header speaks for the days on screen -- a week's or a day's, not the whole month's.
+  const visible = days.map((k) => byDay.get(k)).filter(Boolean);
+  const shownCount = visible.reduce((t, e) => t + Number(e.count || 0), 0);
+  const shownTotal = visible.reduce((t, e) => t + Number(e.total || 0), 0);
   const openEntry = openDay ? byDay.get(openDay) : null;
+  const dayEntry = range === 'day' ? byDay.get(days[0]) : null;
 
   return (
     <div className="artist-calendar">
       <div className="artist-calendar-head">
         <button type="button" className="btn btn-sm" onClick={() => shift(-1)} disabled={loading}>&lsaquo;</button>
-        <strong>{MONTH_NAMES[monthNo - 1]} {year}</strong>
+        <strong>{title}</strong>
         <button type="button" className="btn btn-sm" onClick={() => shift(1)} disabled={loading}>&rsaquo;</button>
         <span className="muted artist-calendar-count">
-          {loading ? 'Loading...' : `${plural(data.count, cfg.noun)} · ${money(data.total)}`}
+          {loading ? 'Loading...' : `${plural(shownCount, cfg.noun)} · ${money(shownTotal)}`}
         </span>
       </div>
 
-      <div className="artist-calendar-grid">
+      {/* Day: the day's whole breakdown in place of a single-cell grid. */}
+      {range === 'day' && !loading && (dayEntry
+        ? <CustomerTable cfg={cfg} customers={dayEntry.customers} count={dayEntry.count} total={dayEntry.total} />
+        : <div className="muted" style={{ padding: 20, textAlign: 'center' }}>Nothing on this day.</div>)}
+
+      {range !== 'day' && <div className="artist-calendar-grid">
         {WEEKDAYS.map((w) => <div key={w} className="artist-calendar-weekday">{w}</div>)}
         {cells.map((key, i) => {
           if (!key) return <div key={`pad-${i}`} className="artist-calendar-day is-empty" />;
@@ -126,7 +126,7 @@ export default function GmDocumentCalendar({ type }) {
             </div>
           );
         })}
-      </div>
+      </div>}
 
       {openDay && (
         <Modal

@@ -10,6 +10,7 @@ import { parseUtc } from '../utils/datetime';
 import { isPlanner } from '../utils/plannerRoles';
 import CollectionForecastCalendar from '../components/CollectionForecastCalendar';
 import GmDocumentCalendar from '../components/GmDocumentCalendar';
+import { useCalendarRange, CalendarRangeSwitch } from '../utils/calendarRange';
 import SystemHealthCard from '../components/SystemHealthCard';
 import SalesBreakdownCard from '../components/SalesBreakdownCard';
 import Feed from './Feed';
@@ -798,6 +799,16 @@ function GmCalendarCard({ navigate, canSeeCollections }) {
     setView(key);
     try { localStorage.setItem('gm-calendar-view-v2', key); } catch { /* storage unavailable */ }
   };
+  // Day / Week / Month (asked 2026-10-06), across all four calendars and remembered the same way.
+  const [range, setRange] = useState(() => {
+    let saved = null;
+    try { saved = localStorage.getItem('gm-calendar-range'); } catch { /* storage unavailable */ }
+    return ['day', 'week', 'month'].includes(saved) ? saved : 'month';
+  });
+  const chooseRange = (key) => {
+    setRange(key);
+    try { localStorage.setItem('gm-calendar-range', key); } catch { /* storage unavailable */ }
+  };
 
   return (
     <div className="holo-card dash-chart-card">
@@ -810,37 +821,40 @@ function GmCalendarCard({ navigate, canSeeCollections }) {
             </button>
           ))}
         </div>
+        <CalendarRangeSwitch value={range} onChange={chooseRange} />
       </div>
-      {view === 'production' && <ForecastCalendarCard navigate={navigate} embedded />}
-      {view === 'collection' && <CollectionForecastCalendar />}
-      {view === 'sales' && <GmDocumentCalendar type="sales" />}
-      {view === 'invoices' && <GmDocumentCalendar type="invoices" />}
+      {view === 'production' && <ForecastCalendarCard navigate={navigate} embedded range={range} />}
+      {view === 'collection' && <CollectionForecastCalendar range={range} />}
+      {view === 'sales' && <GmDocumentCalendar type="sales" range={range} />}
+      {view === 'invoices' && <GmDocumentCalendar type="invoices" range={range} />}
     </div>
   );
 }
 
-function ForecastCalendarCard({ navigate, embedded = false }) {
-  const pad = (n) => String(n).padStart(2, '0');
-  const now = new Date();
-  const [month, setMonth] = useState(`${now.getFullYear()}-${pad(now.getMonth() + 1)}`);
+// `range` is the GM card's Day / Week / Month switch (utils/calendarRange.jsx); the standalone
+// Production Schedule card stays on Month. The endpoint is monthly, so a week across a month end
+// fetches both months, de-duplicated by job.
+function ForecastCalendarCard({ navigate, embedded = false, range = 'month' }) {
+  const { cells, days, months, title, shift, todayKey, first: firstDay, last: lastDay } = useCalendarRange(range);
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openDay, setOpenDay] = useState(null);
+  const monthsKey = months.join(',');
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    api.get('/dashboard/production-calendar', { params: { month } })
-      .then(({ data: d }) => { if (!cancelled) setJobs(d.jobs || []); })
+    Promise.all(monthsKey.split(',').map((month) => api.get('/dashboard/production-calendar', { params: { month } })))
+      .then((rs) => {
+        if (cancelled) return;
+        const seen = new Map();
+        rs.forEach((r) => (r.data.jobs || []).forEach((j) => { if (!seen.has(j.id)) seen.set(j.id, j); }));
+        setJobs([...seen.values()]);
+      })
       .catch(() => { if (!cancelled) setJobs([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [month]);
-
-  const [year, monthNo] = month.split('-').map(Number);
-  const first = new Date(year, monthNo - 1, 1);
-  const daysInMonth = new Date(year, monthNo, 0).getDate();
-  const leading = first.getDay();
+  }, [monthsKey]);
 
   // A job occupies every day of its forecast window, not just the start -- that span is the
   // whole point of the calendar, so the walk happens here rather than the server sending the
@@ -850,8 +864,7 @@ function ForecastCalendarCard({ navigate, embedded = false }) {
     const start = String(j.plannedStart || '').slice(0, 10);
     const end = String(j.plannedEnd || '').slice(0, 10);
     if (!start || !end) continue;
-    for (let d = 1; d <= daysInMonth; d += 1) {
-      const key = `${year}-${pad(monthNo)}-${pad(d)}`;
+    for (const key of days) {
       if (key < start || key > end) continue;
       if (!byDay.has(key)) byDay.set(key, []);
       byDay.get(key).push(j);
@@ -864,16 +877,12 @@ function ForecastCalendarCard({ navigate, embedded = false }) {
       || String(a.jobOrderNo).localeCompare(String(b.jobOrderNo)));
   }
   const colourById = assignJoColours(jobs);
-
-  const todayKey = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  const cells = [];
-  for (let i = 0; i < leading; i += 1) cells.push(null);
-  for (let d = 1; d <= daysInMonth; d += 1) cells.push(`${year}-${pad(monthNo)}-${pad(d)}`);
-
-  const shift = (delta) => {
-    const base = new Date(year, monthNo - 1 + delta, 1);
-    setMonth(`${base.getFullYear()}-${pad(base.getMonth() + 1)}`);
-  };
+  // Jobs whose forecast window touches the days on screen -- the header's count.
+  const shownJobs = jobs.filter((j) => {
+    const start = String(j.plannedStart || '').slice(0, 10);
+    const end = String(j.plannedEnd || '').slice(0, 10);
+    return start && end && start <= lastDay && end >= firstDay;
+  });
 
   // The span in words as well as in colour: the band shows how long a job runs, this says it
   // exactly, including the part that falls outside the month on screen.
@@ -890,14 +899,17 @@ function ForecastCalendarCard({ navigate, embedded = false }) {
       <div className="artist-calendar">
         <div className="artist-calendar-head">
           <button type="button" className="btn btn-sm" onClick={() => shift(-1)} disabled={loading}>&lsaquo;</button>
-          <strong>{MONTH_NAMES[monthNo - 1]} {year}</strong>
+          <strong>{title}</strong>
           <button type="button" className="btn btn-sm" onClick={() => shift(1)} disabled={loading}>&rsaquo;</button>
           <span className="muted artist-calendar-count">
-            {loading ? 'Loading...' : `${jobs.length} scheduled`}
+            {loading ? 'Loading...' : `${shownJobs.length} scheduled`}
           </span>
         </div>
 
-        <div className="artist-calendar-grid">
+        {/* Day: that day's jobs as the table the popup shows, in place of a single-cell grid. */}
+        {range === 'day' && !loading && <ProductionDayTable list={byDay.get(days[0]) || []} spanLabel={spanLabel} navigate={navigate} />}
+
+        {range !== 'day' && <div className="artist-calendar-grid">
           {WEEKDAYS.map((w) => <div key={w} className="artist-calendar-weekday">{w}</div>)}
           {cells.map((key, i) => {
             if (!key) return <div key={`pad-${i}`} className="artist-calendar-day is-empty" />;
@@ -933,54 +945,61 @@ function ForecastCalendarCard({ navigate, embedded = false }) {
               </div>
             );
           })}
-        </div>
+        </div>}
 
         {openDay && (
           <Modal title={`Scheduled on ${formatDayHeading(openDay)}`} onClose={() => setOpenDay(null)} large>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>JO #</th><th>Job Type</th><th>Qty</th><th>Forecast</th>
-                    <th>Delivery</th><th>Stage</th><th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {!(byDay.get(openDay) || []).length && (
-                    <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>
-                      Nothing scheduled on this day.
-                    </td></tr>
-                  )}
-                  {(byDay.get(openDay) || []).map((j) => (
-                    <tr key={j.id}>
-                      <td>
-                        <strong>{j.jobOrderNo}</strong>
-                        {j.customerName && <div className="muted" style={{ fontSize: '0.85em' }}>{j.customerName}</div>}
-                      </td>
-                      <td>
-                        {j.jobTypeName}
-                        {j.jobLocationName && <div className="muted" style={{ fontSize: '0.85em' }}>{j.jobLocationName}</div>}
-                      </td>
-                      <td style={{ whiteSpace: 'nowrap' }}>{Number(j.quantity || 0)} {j.units || ''}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}>{spanLabel(j)}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        {j.deliveryDate ? String(j.deliveryDate).slice(0, 10) : <span className="muted">-</span>}
-                      </td>
-                      <td>
-                        {PROD_STAGE_LABELS[j.stage] || j.stage || '-'}
-                        {!!j.onHold && <div className="muted" style={{ fontSize: '0.85em' }}>On Hold</div>}
-                      </td>
-                      <td>
-                        <button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(`/production/${j.id}`)}>Open</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ProductionDayTable list={byDay.get(openDay) || []} spanLabel={spanLabel} navigate={navigate} />
           </Modal>
         )}
       </div>
+    </div>
+  );
+}
+
+// One day's scheduled jobs -- the Production calendar's day popup, and its Day view.
+function ProductionDayTable({ list, spanLabel, navigate }) {
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>JO #</th><th>Job Type</th><th>Qty</th><th>Forecast</th>
+            <th>Delivery</th><th>Stage</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {!list.length && (
+            <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+              Nothing scheduled on this day.
+            </td></tr>
+          )}
+          {list.map((j) => (
+            <tr key={j.id}>
+              <td>
+                <strong>{j.jobOrderNo}</strong>
+                {j.customerName && <div className="muted" style={{ fontSize: '0.85em' }}>{j.customerName}</div>}
+              </td>
+              <td>
+                {j.jobTypeName}
+                {j.jobLocationName && <div className="muted" style={{ fontSize: '0.85em' }}>{j.jobLocationName}</div>}
+              </td>
+              <td style={{ whiteSpace: 'nowrap' }}>{Number(j.quantity || 0)} {j.units || ''}</td>
+              <td style={{ whiteSpace: 'nowrap' }}>{spanLabel(j)}</td>
+              <td style={{ whiteSpace: 'nowrap' }}>
+                {j.deliveryDate ? String(j.deliveryDate).slice(0, 10) : <span className="muted">-</span>}
+              </td>
+              <td>
+                {PROD_STAGE_LABELS[j.stage] || j.stage || '-'}
+                {!!j.onHold && <div className="muted" style={{ fontSize: '0.85em' }}>On Hold</div>}
+              </td>
+              <td>
+                <button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(`/production/${j.id}`)}>Open</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
