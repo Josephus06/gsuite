@@ -549,11 +549,11 @@ export default function NonStandardSalesOrderWizard() {
                         return (<tr key={l.id}><td>{i + 1}</td><td>{jt?.display_name || ''}</td>
                           <td>{lineLocationCell(l)}</td><td>{lineDescriptionCell(l)}</td>
                           {/* Qty editable until the line's Job Order exists (the server holds the same rule). */}
-                          <td style={{ textAlign: 'right' }}>{l.created_job_order_id ? Number(l.quantity) : (
+                          <td style={{ textAlign: 'right' }}>
                             <input key={`q-${l.id}-${l.quantity}`} type="number" min="0" step="any" defaultValue={Number(l.quantity)} disabled={busy}
                               style={{ width: 80, textAlign: 'right' }}
                               onBlur={(e) => { const v = Number(e.target.value); if (e.target.value !== '' && Number.isFinite(v) && Math.abs(v - Number(l.quantity)) > 1e-9) saveLineDetails(l, { quantity: v }); }} />
-                          )}</td><td>{l.units}</td></tr>);
+                          </td><td>{l.units}</td></tr>);
                       })}
                     </tbody>
                   </table>
@@ -592,9 +592,9 @@ export default function NonStandardSalesOrderWizard() {
                         const jt = meta.jobTypes.find((x) => String(x.id) === String(l.job_type_id));
                         return (<tr key={l.id}><td>{i + 1}</td><td>{jt?.display_name || ''}</td>
                           <td>{lineLocationCell(l)}</td><td>{lineDescriptionCell(l)}</td>
-                          <td style={{ textAlign: 'right' }}>{l.created_job_order_id ? Number(l.sample_qty)
-                            : <input key={`q-${l.id}-${l.sample_qty}`} type="number" min="0" step="any" defaultValue={Number(l.sample_qty)} disabled={busy}
-                                style={{ width: 80, textAlign: 'right' }} onBlur={(e) => saveSampleLine(l, 'quantity', e.target.value)} />}</td>
+                          {/* Editable even once the line's JO exists -- the JO follows, until it has been built on (server). */}
+                          <td style={{ textAlign: 'right' }}><input key={`q-${l.id}-${l.sample_qty}`} type="number" min="0" step="any" defaultValue={Number(l.sample_qty)} disabled={busy}
+                                style={{ width: 80, textAlign: 'right' }} onBlur={(e) => saveSampleLine(l, 'quantity', e.target.value)} /></td>
                           <td style={{ textAlign: 'right' }}><input key={`a-${l.id}-${l.sample_amount}`} type="number" min="0" step="0.01" defaultValue={Number(l.sample_amount)} disabled={busy}
                             style={{ width: 110, textAlign: 'right' }} onBlur={(e) => saveSampleLine(l, 'amount', e.target.value)} /></td>
                           <td style={{ textAlign: 'right' }}>{money(l.allowance_amount)}</td></tr>);

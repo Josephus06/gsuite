@@ -504,6 +504,22 @@ router.put('/:id/lines', requireAuth, requireEditOrOwnDraft, async (req, res, ne
 // lines, which are copied from a source JO or estimate line and were otherwise read-only. If the
 // line's Job Order already exists it carries the same two fields, so it is updated with it -- the
 // JO's Job Location is what decides which production warehouse sees it.
+// A line's Qty once its Job Order exists (asked 2026-10-06: "still can't edit the sample qty"). The
+// JO carries the quantity, so it moves with the line -- but only while nothing has been built,
+// inspected or delivered on it: after that the floor's figures are counted against the old quantity.
+// Returns a refusal message, or null when the JO (if any) has been updated in step.
+async function moveJobOrderQty(conn, line, qty) {
+  if (!line.created_job_order_id) return null;
+  const [[jo]] = await conn.query(
+    'SELECT quantity_built, quantity_inspected, quantity_delivered, status FROM job_orders WHERE id = ?', [line.created_job_order_id]);
+  if (!jo) return null;
+  if (num(jo.quantity_built) > 0 || num(jo.quantity_inspected) > 0 || num(jo.quantity_delivered) > 0) {
+    return 'This line\'s Job Order has already been built on, so its quantity can no longer change here.';
+  }
+  await conn.query('UPDATE job_orders SET quantity = ?, updated_at = NOW() WHERE id = ?', [qty, line.created_job_order_id]);
+  return null;
+}
+
 router.put('/:id/lines/:lineId/details', requireAuth, requireEditOrOwnDraft, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
@@ -529,14 +545,13 @@ router.put('/:id/lines/:lineId/details', requireAuth, requireEditOrOwnDraft, asy
     if (b.quantity !== undefined) {
       qty = Number(b.quantity);
       if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: 'Qty must be more than zero.' });
-      if (line.created_job_order_id && Math.abs(qty - num(line.quantity)) > 1e-9) {
-        return res.status(409).json({ error: 'This line already has its Job Order, which carries the quantity. Change it there.' });
-      }
     }
     const qtyChanged = Math.abs(qty - num(line.quantity)) > 1e-9;
     await conn.beginTransaction();
     await conn.query('UPDATE non_standard_sales_order_lines SET description = ?, job_location_id = ? WHERE id = ?', [description, jobLocationId, line.id]);
     if (qtyChanged) {
+      const refusal = await moveJobOrderQty(conn, line, qty);
+      if (refusal) { await conn.rollback(); return res.status(409).json({ error: refusal }); }
       const rate = num(line.net_of_tax) > 0 ? (num(line.tax_amount) / num(line.net_of_tax)) * 100 : 0;
       const subtotal = round2(num(line.price_per_unit) * qty);
       const discAmount = round2(subtotal * num(line.disc_percent) / 100);
@@ -590,9 +605,6 @@ router.put('/:id/lines/:lineId/sample', requireAuth, requireEditOrOwnDraft, asyn
     const amount = req.body.amount === undefined ? num(line.sample_amount) : Number(req.body.amount);
     if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: 'Qty must be more than zero.' });
     if (!Number.isFinite(amount) || amount < 0) return res.status(400).json({ error: 'Amount must be zero or more.' });
-    if (line.created_job_order_id && Math.abs(qty - num(line.quantity)) > 1e-9) {
-      return res.status(409).json({ error: 'This line already has its Job Order, which carries the quantity. Only the amount can be changed.' });
-    }
 
     // The line's own tax rate: its code's, else what it was carrying (tax / net).
     const rate = line.tax_rate != null ? num(line.tax_rate)
@@ -600,6 +612,10 @@ router.put('/:id/lines/:lineId/sample', requireAuth, requireEditOrOwnDraft, asyn
     const net = round2(amount);
     const tax = round2(net * rate / 100);
     await conn.beginTransaction();
+    if (Math.abs(qty - num(line.quantity)) > 1e-9) {
+      const refusal = await moveJobOrderQty(conn, line, qty);
+      if (refusal) { await conn.rollback(); return res.status(409).json({ error: refusal }); }
+    }
     await conn.query(
       `UPDATE non_standard_sales_order_lines
           SET quantity = ?, sample_qty = ?, sample_amount = ?, price_per_unit = ?, subtotal = ?, disc_percent = 0,

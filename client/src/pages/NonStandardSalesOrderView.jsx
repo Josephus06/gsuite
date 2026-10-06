@@ -196,10 +196,10 @@ export default function NonStandardSalesOrderView() {
                         : '—')}</td>
                     <td>{l.job_location_name}</td>
                     <td>{l.description}</td>
-                    <td style={{ textAlign: 'right' }}>{canEditSample && !l.created_job_order_id
+                    <td style={{ textAlign: 'right' }}>{canEditSample && !(num(l.quantity_built) > 0)
                       ? <input key={`q-${l.id}-${l.quantity}`} type="number" min="0" step="any" defaultValue={Number(l.quantity)} disabled={busy}
                           style={{ width: 80, textAlign: 'right' }} onBlur={(e) => saveSample(l, 'quantity', e.target.value)} />
-                      : canEditQty && !l.created_job_order_id
+                      : canEditQty && !(num(l.quantity_built) > 0)
                         ? <input key={`q-${l.id}-${l.quantity}`} type="number" min="0" step="any" defaultValue={Number(l.quantity)} disabled={busy}
                             style={{ width: 80, textAlign: 'right' }} onBlur={(e) => saveQty(l, e.target.value)} />
                         : Number(l.quantity)}</td>
