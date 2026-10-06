@@ -38,7 +38,8 @@ function computeLineAmounts({ amount, taxRate, isWithhold, wtaxRate }) {
 // status-tagged error for a credit with no lines or one applied beyond its own total.
 async function buildCredit(conn, { expenseLines, applyLines, wtaxId }) {
   const submittedExpenses = (Array.isArray(expenseLines) ? expenseLines : []).filter((l) => l.account_id && Number(l.amount) > 0);
-  if (!submittedExpenses.length) throw Object.assign(new Error('Add at least one expense line.'), { status: 400 });
+  // A credit may be saved with no expense lines (asked 2026-10-06) -- its total is then 0.00, so the
+  // Total Applied check below still stops it applying anything until lines are added by Edit.
 
   const taxCodeIds = [...new Set(submittedExpenses.map((l) => l.tax_code_id).filter(Boolean))];
   const taxRateById = new Map();

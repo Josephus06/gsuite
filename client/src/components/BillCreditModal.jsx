@@ -128,7 +128,8 @@ export default function BillCreditModal({ vendorBillId, chequeId, billCreditId, 
   async function handleSave() {
     setError('');
     const submittedLines = lines.filter((l) => l.account_id && Number(l.amount) > 0);
-    if (!submittedLines.length) { setError('Add at least one expense line.'); return; }
+    // No expense lines is allowed (asked 2026-10-06): the credit saves at 0.00 and can be given its
+    // lines later by Edit. What it cannot do is apply anything until it has them (checked below).
     const applyLines = Object.entries(applyAmounts).filter(([, v]) => Number(v) > 0).map(([id, v]) => ({ vendor_bill_id: Number(id), applied_amount: Number(v) }));
     // A credit can never apply more than it is worth.
     if (applyTotal > totalAmount + 0.005) {
