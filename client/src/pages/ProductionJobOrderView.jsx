@@ -28,7 +28,7 @@ import ButtonMenu from '../components/ButtonMenu';
 // buttons on the live site but each opens its own full module or drives
 // production-execution recording this build doesn't model -- shown here as disabled
 // stubs. Create TO is the one exception -- it's wired to the real Transfer Orders module
-// (see handleCreateTO) and only appears once a process line's Back Order is > 0.
+// (see handleCreateTO) and is always offered (asked 2026-10-06), short material or not.
 const SO_STATUS_LABELS = {
   pending_for_jo: 'Pending for JO',
   jo_in_process: 'JO In-Process',
@@ -453,10 +453,11 @@ export default function ProductionJobOrderView() {
 
   useEffect(() => { load(); }, [id]);
 
-  // "Create TO" only makes sense once a material is actually short (On Hand < what this
-  // JO needs) -- withdraws from Warehouse - Central into wherever the short material is
-  // tracked for this JO, matching every short line's own location_id (they're normally
-  // all the same warehouse for one production run).
+  // "Create TO" withdraws from Warehouse - Central into wherever the JO's material is tracked,
+  // matching the lines' own location_id (normally one warehouse per production run). It is
+  // always offered now (asked 2026-10-06), not only when something is short: with a shortage it
+  // carries the short lines at their Back Order, as before; with none, the JO's material lines at
+  // their full requirement, to trim on the TO form. A JO with no material opens an empty TO.
   async function handleCreateTO(shortItems) {
     const { data: locations } = await api.get('/lookups/locations');
     const central = locations.find((l) => l.location_name === 'Warehouse - Central') || locations.find((l) => l.location_type === 'Warehouse');
@@ -475,15 +476,15 @@ export default function ProductionJobOrderView() {
         prefill: {
           job_order_id: Number(id),
           withdraw_from_location_id: central?.id || null,
-          transfer_to_location_id: Number(transferToLocationId) || null,
+          transfer_to_location_id: Number(transferToLocationId) || jo.job_location_id || null,
           requestor_id: user?.employee_id || null,
           lines: shortItems.map((p) => ({
             item_id: p.item_id,
             job_order_process_id: p.id,
-            qty: p.back_order,
+            qty: num(p.back_order) > 0 ? p.back_order : num(p.total),
             uom: p.uom,
             unit: p.unit,
-            back_ordered: p.back_order,
+            back_ordered: num(p.back_order),
             committed: p.committed,
             memo: p.process_name,
           })),
@@ -895,10 +896,12 @@ export default function ProductionJobOrderView() {
           {(() => {
             // Service lines are excluded outright, not just via back_order: a Transfer
             // Order moves stock between warehouses, and there is no labor to move.
-            const shortItems = processes.filter((p) => p.item_id && !isNonStockItem(p.item_type) && num(p.back_order) > 0);
-            if (!shortItems.length) return null;
+            const materialItems = processes.filter((p) => p.item_id && !isNonStockItem(p.item_type));
+            const shortItems = materialItems.filter((p) => num(p.back_order) > 0);
             return (
-              <button type="button" className="btn btn-primary" style={{ marginTop: 12 }} onClick={() => handleCreateTO(shortItems)}>
+              <button type="button" className="btn btn-primary" style={{ marginTop: 12 }}
+                title={shortItems.length ? 'Transfer the short materials (their Back Order)' : 'Nothing is short -- transfer the materials at their full requirement'}
+                onClick={() => handleCreateTO(shortItems.length ? shortItems : materialItems)}>
                 Create TO
               </button>
             );
