@@ -521,8 +521,34 @@ router.put('/:id/lines/:lineId/details', requireAuth, requireEditOrOwnDraft, asy
         if (!loc) return res.status(400).json({ error: 'Choose a valid Job Location.' });
       }
     }
+    // Qty (asked 2026-10-06) -- for an RMA / RMA-Installation / Internal line; a Sample line's goes
+    // through /sample, which also carries its amount. Like that one it is locked once the line's Job
+    // Order exists (the JO carries the quantity). The line is re-priced at its own Price/Unit and
+    // discount %, at its own tax rate, so the NSSO total follows.
+    let qty = num(line.quantity);
+    if (b.quantity !== undefined) {
+      qty = Number(b.quantity);
+      if (!Number.isFinite(qty) || qty <= 0) return res.status(400).json({ error: 'Qty must be more than zero.' });
+      if (line.created_job_order_id && Math.abs(qty - num(line.quantity)) > 1e-9) {
+        return res.status(409).json({ error: 'This line already has its Job Order, which carries the quantity. Change it there.' });
+      }
+    }
+    const qtyChanged = Math.abs(qty - num(line.quantity)) > 1e-9;
     await conn.beginTransaction();
     await conn.query('UPDATE non_standard_sales_order_lines SET description = ?, job_location_id = ? WHERE id = ?', [description, jobLocationId, line.id]);
+    if (qtyChanged) {
+      const rate = num(line.net_of_tax) > 0 ? (num(line.tax_amount) / num(line.net_of_tax)) * 100 : 0;
+      const subtotal = round2(num(line.price_per_unit) * qty);
+      const discAmount = round2(subtotal * num(line.disc_percent) / 100);
+      const net = round2(subtotal - discAmount);
+      const tax = round2(net * rate / 100);
+      await conn.query(
+        `UPDATE non_standard_sales_order_lines
+            SET quantity = ?, subtotal = ?, disc_amount = ?, net_of_tax = ?, tax_amount = ?, gross_amount = ?
+          WHERE id = ?`, [qty, subtotal, discAmount, net, tax, round2(net + tax), line.id]);
+      await recomputeTotals(conn, req.params.id);
+      await logAudit(conn, { id: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: `line ${line.line_no} qty`, oldValue: num(line.quantity), newValue: qty });
+    }
     if (line.created_job_order_id) {
       await conn.query('UPDATE job_orders SET description = ?, job_location_id = ?, updated_at = NOW() WHERE id = ?', [description, jobLocationId, line.created_job_order_id]);
     }
