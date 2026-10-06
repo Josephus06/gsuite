@@ -704,6 +704,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // when no BILLING one is flagged default, since most customers carry only one.
     const [[si]] = await pool.query(
       `SELECT si.*, so.sales_order_no, e.estimate_no, ns.nsso_no, c.name AS customer_name, dt.dt_no,
+              (SELECT u.display_name FROM users u WHERE u.id = si.logistics_received_by_user_id) AS logistics_received_by_name,
               c.tin AS customer_tin, c.company_name AS customer_company,
               c.bill_to_address AS customer_bill_to_address,
               -- The order behind the invoice for the printed "SO #": its own Sales Order, else the
@@ -1723,6 +1724,38 @@ router.get('/:id/reversal-preview', requireAuth, requirePermission(ROUTE, 'can_v
       rows,
     });
   } catch (err) { next(err); }
+});
+
+// Received by Logistics (asked 2026-10-06): the day Logistics took the invoice, picked on a
+// calendar, with who recorded it. can_update -- recording a hand-over advances the document, it
+// does not edit it, so Logistics needs no edit rights on invoices. Can be corrected; each change
+// is in the audit trail. Not on a voided invoice.
+router.put('/:id/logistics-received', requireAuth, requirePermission(ROUTE, 'can_update'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const date = String(req.body?.date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Choose the date Logistics received the invoice.' });
+    const [[si]] = await conn.query('SELECT id, status, date_created, logistics_received_date FROM sales_invoices WHERE id = ?', [req.params.id]);
+    if (!si) return res.status(404).json({ error: 'Not found' });
+    if (si.status === 'cancelled') return res.status(409).json({ error: 'This invoice is voided.' });
+    if (date < String(si.date_created).slice(0, 10)) return res.status(400).json({ error: 'Logistics cannot have received it before the invoice date.' });
+    await conn.beginTransaction();
+    await conn.query(
+      'UPDATE sales_invoices SET logistics_received_date = ?, logistics_received_by_user_id = ? WHERE id = ?',
+      [date, req.user.id, si.id],
+    );
+    await logAudit(conn, {
+      invoiceId: si.id, userId: req.user.id, eventType: 'Updated', fieldName: 'logistics_received_date',
+      oldValue: si.logistics_received_date ? String(si.logistics_received_date).slice(0, 10) : null, newValue: date,
+    });
+    await conn.commit();
+    res.json({ logistics_received_date: date });
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    next(err);
+  } finally {
+    conn.release();
+  }
 });
 
 router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {

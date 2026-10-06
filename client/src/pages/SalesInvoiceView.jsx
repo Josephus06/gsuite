@@ -6,6 +6,7 @@ import DataTable from '../components/DataTable';
 import CustomerPaymentModal from '../components/CustomerPaymentModal';
 import CreditMemoModal from '../components/CreditMemoModal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import Modal from '../components/Modal';
 import ButtonMenu from '../components/ButtonMenu';
 import ReversalJournalModal from '../components/ReversalJournalModal';
 import SalesInvoiceEditModal from '../components/SalesInvoiceEditModal';
@@ -52,6 +53,9 @@ export default function SalesInvoiceView() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Received by Logistics: the date picked on the calendar while the popup is open.
+  const [logisticsDate, setLogisticsDate] = useState(null);
+  const [logisticsError, setLogisticsError] = useState('');
 
   // The two related-record lists sit behind their OWN page permissions (/customer-payments
   // and /credit-memos each require can_view), which invoice viewers are not automatically
@@ -128,6 +132,26 @@ export default function SalesInvoiceView() {
   // rights ended up unable to take a payment against an invoice it could read.
   const canTakePayment = can('/customer-payments', 'can_add');
   const canRaiseCreditMemo = can('/credit-memos', 'can_add');
+  // Recording the hand-over to Logistics is can_update, not can_edit (PUT /:id/logistics-received).
+  const canMarkLogistics = can('/sales-invoices', 'can_update') && si.status !== 'cancelled';
+  const today = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  async function saveLogistics() {
+    setLogisticsError('');
+    if (!logisticsDate) { setLogisticsError('Choose the date.'); return; }
+    setBusy(true);
+    try {
+      await api.put(`/sales-invoices/${id}/logistics-received`, { date: logisticsDate });
+      setLogisticsDate(null);
+      await load();
+    } catch (err) {
+      setLogisticsError(err.response?.data?.error || 'Could not save the date.');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div>
@@ -165,11 +189,31 @@ export default function SalesInvoiceView() {
           />
           {canTakePayment && isSettleable && <button className="btn btn-sm btn-primary" onClick={() => setShowPaymentModal(true)}>Accept Payment</button>}
           {canRaiseCreditMemo && isSettleable && <button className="btn btn-sm btn-primary" onClick={() => setShowCreditMemoModal(true)}>Credit Memo</button>}
+          {canMarkLogistics && (
+            <button className="btn btn-sm" onClick={() => { setLogisticsError(''); setLogisticsDate(si.logistics_received_date ? String(si.logistics_received_date).slice(0, 10) : today()); }}
+              title={si.logistics_received_date ? 'Change the date Logistics received this invoice' : 'Record the date Logistics received this invoice'}>
+              Received by Logistics
+            </button>
+          )}
           {canVoid && isSaved && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Void</button>}
         </div>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+
+      {logisticsDate !== null && (
+        <Modal title={`Received by Logistics -- ${si.invoice_no}`} onClose={() => !busy && setLogisticsDate(null)}>
+          {logisticsError && <div className="error-banner">{logisticsError}</div>}
+          <div className="field">
+            <label>Date received by Logistics</label>
+            <input type="date" value={logisticsDate} min={String(si.date_created).slice(0, 10)} onChange={(e) => setLogisticsDate(e.target.value)} />
+          </div>
+          <div className="modal-actions">
+            <button type="button" className="btn" disabled={busy} onClick={() => setLogisticsDate(null)}>Cancel</button>
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={saveLogistics}>{busy ? 'Saving...' : 'Save'}</button>
+          </div>
+        </Modal>
+      )}
 
       <div className="estimate-banner">
         <div className="estimate-banner-title">
@@ -205,6 +249,13 @@ export default function SalesInvoiceView() {
             <div>Term : <span className="hi">{si.term}</span></div>
             <div>Date Due : <span className="hi">{formatDate(si.date_due)}</span></div>
             <div>Type : <span className="hi">{si.invoice_type || 'SI'}</span></div>
+            <div>
+              Received by Logistics :{' '}
+              <span className="hi">
+                {si.logistics_received_date ? formatDate(String(si.logistics_received_date).slice(0, 10)) : '—'}
+                {si.logistics_received_date && si.logistics_received_by_name ? ` (${si.logistics_received_by_name})` : ''}
+              </span>
+            </div>
           </div>
           <div>
             <div>Sales Rep : <span className="hi">{si.sales_rep_name || '—'}</span></div>
