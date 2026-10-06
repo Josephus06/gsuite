@@ -187,6 +187,8 @@ const NAV_STRUCTURE = [
     label: 'Production',
     children: [
       { route: '/production', label: 'Production' },
+      // Every RMA, RFQC and RWIP job order in one list.
+      { route: '/rma-job-orders', label: 'RMA' },
       { route: '/rwip-job-orders', label: 'RWIP' },
       { route: '/rfqc-job-orders', label: 'RFQC' },
       { route: '/scheduled-jo', label: 'Scheduled JO' },

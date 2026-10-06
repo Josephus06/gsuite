@@ -98,6 +98,7 @@ const nonStandardSalesOrderRoutes = require('./routes/nonStandardSalesOrders');
 const warrantyCertificateRoutes = require('./routes/warrantyCertificates');
 const rwipJobOrderRoutes = require('./routes/rwipJobOrders');
 const rfqcJobOrderRoutes = require('./routes/rfqcJobOrders');
+const rmaJobOrderRoutes = require('./routes/rmaJobOrders');
 const assetItemRoutes = require('./routes/assetItems');
 const assetRoutes = require('./routes/assets');
 const assetTransferRoutes = require('./routes/assetTransfers');
@@ -314,6 +315,7 @@ app.use('/api/non-standard-sales-orders', nonStandardSalesOrderRoutes);
 app.use('/api/warranty-certificates', warrantyCertificateRoutes);
 app.use('/api/rwip-job-orders', rwipJobOrderRoutes);
 app.use('/api/rfqc-job-orders', rfqcJobOrderRoutes);
+app.use('/api/rma-job-orders', rmaJobOrderRoutes);
 // Assets Monitoring. asset-items is the type ("UPS"), assets the individual reference numbers
 // under it, asset-transfers the dual-approval document that moves them, asset-audits the
 // month-end count sheet.

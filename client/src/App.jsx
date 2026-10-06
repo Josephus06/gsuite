@@ -77,6 +77,7 @@ import AssignedJobOrderRun from './pages/AssignedJobOrderRun';
 import Production from './pages/Production';
 import ProductionJobOrderView from './pages/ProductionJobOrderView';
 import RwipJobOrders from './pages/RwipJobOrders';
+import RmaJobOrders from './pages/RmaJobOrders';
 import RfqcJobOrders from './pages/RfqcJobOrders';
 import StockLedgerReport from './pages/StockLedgerReport';
 import BinCardReport from './pages/BinCardReport';
@@ -336,6 +337,7 @@ function App() {
         <Route path="/production" element={<Production />} />
         <Route path="/production/:id" element={<ProductionJobOrderView />} />
         <Route path="/rwip-job-orders" element={<RwipJobOrders />} />
+        <Route path="/rma-job-orders" element={<RmaJobOrders />} />
         <Route path="/rfqc-job-orders" element={<RfqcJobOrders />} />
         <Route path="/scheduled-jo" element={<ScheduledJobOrders />} />
         <Route path="/scheduled-jo/process/:id" element={<ScheduledJobOrderRun />} />
