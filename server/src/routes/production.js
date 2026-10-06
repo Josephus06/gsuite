@@ -280,8 +280,12 @@ router.get('/:id', requireAuth, requireProductionView, async (req, res, next) =>
               ljt.display_name AS layout_job_type_name,
               rqu.display_name AS revision_requested_by_name
        FROM job_orders jo
-       LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
-       LEFT JOIN non_standard_sales_orders nsso ON nsso.id = jo.nsso_id
+       -- A rework order (RWIP / RFQC) reads its customer and order details through the job order it
+       -- reworks when it carries no order of its own -- an RWIP raised from an NSJO was created with
+       -- neither a sales order nor an NSSO and showed a blank customer (RWIP-1286, 2026-10-06).
+       LEFT JOIN job_orders pjo ON pjo.id = jo.parent_job_order_id
+       LEFT JOIN sales_orders so ON so.id = COALESCE(jo.sales_order_id, pjo.sales_order_id)
+       LEFT JOIN non_standard_sales_orders nsso ON nsso.id = COALESCE(jo.nsso_id, pjo.nsso_id)
        LEFT JOIN sales_order_lines sol ON sol.id = jo.sales_order_line_id
        LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, nsso.customer_id)
        LEFT JOIN customer_contacts cc ON cc.id = COALESCE(so.contact_person_id, nsso.contact_person_id)
@@ -1124,11 +1128,12 @@ router.post('/:id/rwip', requireAuth, async (req, res, next) => {
     // office box (lib/docNumber.js), so the two boxes never issue the same one.
     const jobOrderNo = await nextDocNo('job_orders', 'job_order_no', 'RWIP-', conn);
     const [r] = await conn.query(
-      `INSERT INTO job_orders (job_order_no, parent_job_order_id, sales_order_id, sales_order_line_id, job_type_id, job_location_id,
+      `INSERT INTO job_orders (job_order_no, parent_job_order_id, sales_order_id, nsso_id, sales_order_line_id, job_type_id, job_location_id,
          description, quantity, units, length, width, height, memo, contact_email, contact_title, contact_phone, shipping_address,
          sales_rep_id, delivery_date, delivery_time, reason_code_id, reason, action_to_be_taken, production_stage, sub_status, status)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,'Pending RMA Approval')`,
-      [jobOrderNo, jo.id, jo.sales_order_id, jo.sales_order_line_id, jo.job_type_id, jo.job_location_id,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,'Pending RMA Approval')`,
+      // The NSSO as well as the sales order: an RWIP of an NSJO otherwise had neither.
+      [jobOrderNo, jo.id, jo.sales_order_id, jo.nsso_id || null, jo.sales_order_line_id, jo.job_type_id, jo.job_location_id,
        jo.description, rwipNum(jo.quantity), jo.units, jo.length, jo.width, jo.height, jo.memo, jo.contact_email, jo.contact_title,
        jo.contact_phone, jo.shipping_address, jo.sales_rep_id, deliveryDate || jo.delivery_date || null, deliveryTime || jo.delivery_time || null,
        reasonCodeId || null, rwipTrunc(reason, 500), rwipTrunc(actionTaken, 500)]

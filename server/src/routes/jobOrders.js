@@ -1330,10 +1330,11 @@ router.get('/:id/print', requireAuth, async (req, res, next) => {
               CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name,
               cc.contact_name
          FROM job_orders jo
-         -- A rework order (RWIP / RFQC) has no artist of its own; its sheet names the original's.
+         -- A rework order (RWIP / RFQC) has no artist of its own; its sheet names the original's, and
+         -- takes the original's order where it carries none (an RWIP of an NSJO).
          LEFT JOIN job_orders parent ON parent.id = jo.parent_job_order_id
-         LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
-         LEFT JOIN non_standard_sales_orders ns ON ns.id = jo.nsso_id
+         LEFT JOIN sales_orders so ON so.id = COALESCE(jo.sales_order_id, parent.sales_order_id)
+         LEFT JOIN non_standard_sales_orders ns ON ns.id = COALESCE(jo.nsso_id, parent.nsso_id)
          LEFT JOIN customers c ON c.id = COALESCE(ns.customer_id, so.customer_id)
          LEFT JOIN job_types jt ON jt.id = jo.job_type_id
          LEFT JOIN sales_divisions sd ON sd.id = COALESCE(ns.sales_division_id, so.sales_division_id)
