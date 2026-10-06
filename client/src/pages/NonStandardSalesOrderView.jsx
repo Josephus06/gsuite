@@ -41,19 +41,6 @@ export default function NonStandardSalesOrderView() {
 
   async function act(fn) { setBusy(true); setError(''); try { await fn(); await load(); } catch (err) { setError(err.response?.data?.error || 'Action failed'); } finally { setBusy(false); } }
   const handleApprove = () => { if (confirm('Approve this Non-Standard Sales Order?')) act(() => api.put(`/non-standard-sales-orders/${id}/approve`)); };
-  // A Sample line's Qty / Amount (Net of Tax), saved as soon as the field is left, if it changed.
-  // Any other type's line Qty (RMA / INST / Internal), through the line-details route.
-  async function saveQty(line, value) {
-    const v = Number(value);
-    if (value === '' || !Number.isFinite(v) || Math.abs(v - Number(line.quantity)) < 1e-9) return;
-    await act(() => api.put(`/non-standard-sales-orders/${id}/lines/${line.id}/details`, { quantity: v }));
-  }
-  async function saveSample(line, field, value) {
-    const v = Number(value);
-    const current = field === 'quantity' ? Number(line.quantity) : Number(line.net_of_tax);
-    if (value === '' || !Number.isFinite(v) || Math.abs(v - current) < 0.005) return;
-    await act(() => api.put(`/non-standard-sales-orders/${id}/lines/${line.id}/sample`, { [field]: v }));
-  }
   const handleCancel = () => { if (confirm('Cancel this Non-Standard Sales Order?')) act(() => api.put(`/non-standard-sales-orders/${id}/cancel`)); };
 
   if (loading || !n) return <LoadingSpinner />;
@@ -65,13 +52,6 @@ export default function NonStandardSalesOrderView() {
     : can('/non-standard-sales-orders', 'can_approve');
   const canAdd = can('/non-standard-sales-orders', 'can_add');
   const isOpen = n.status !== 'cancelled';
-  // Sample lines take an edited Qty and Amount -- the editor, or the author while it is still a
-  // draft, the same rule the server applies (requireEditOrOwnDraft).
-  const canEditSample = n.type === 'sample' && isOpen && (canEdit
-    || (canAdd && n.status === 'pending_approval' && Number(n.created_by_user_id) === Number(user?.id)));
-  // Every other type's Qty, by the same who-may rule, until the line's Job Order exists.
-  const canEditQty = n.type !== 'sample' && isOpen && (canEdit
-    || (canAdd && n.status === 'pending_approval' && Number(n.created_by_user_id) === Number(user?.id)));
   const notApproved = n.status === 'pending_approval';
   const [statusMain, statusSub] = STATUS[n.status] || [n.status, ''];
   const b = n.billing || {};
@@ -196,20 +176,13 @@ export default function NonStandardSalesOrderView() {
                         : '—')}</td>
                     <td>{l.job_location_name}</td>
                     <td>{l.description}</td>
-                    <td style={{ textAlign: 'right' }}>{canEditSample && !(num(l.quantity_built) > 0)
-                      ? <input key={`q-${l.id}-${l.quantity}`} type="number" min="0" step="any" defaultValue={Number(l.quantity)} disabled={busy}
-                          style={{ width: 80, textAlign: 'right' }} onBlur={(e) => saveSample(l, 'quantity', e.target.value)} />
-                      : canEditQty && !(num(l.quantity_built) > 0)
-                        ? <input key={`q-${l.id}-${l.quantity}`} type="number" min="0" step="any" defaultValue={Number(l.quantity)} disabled={busy}
-                            style={{ width: 80, textAlign: 'right' }} onBlur={(e) => saveQty(l, e.target.value)} />
-                        : Number(l.quantity)}</td>
+                    {/* Read-only here (asked 2026-10-06): Qty and the sample amount are edited on the
+                        Edit page only. */}
+                    <td style={{ textAlign: 'right' }}>{Number(l.quantity)}</td>
                     <td style={{ textAlign: 'right' }}>{num(l.quantity_built)}</td><td style={{ textAlign: 'right' }}>{num(l.quantity_inspected)}</td>
                     <td style={{ textAlign: 'right' }}>{num(l.quantity_delivered)}</td><td style={{ textAlign: 'right' }}>{num(l.quantity_invoiced)}</td>
                     <td>{l.units}</td>
-                    <td style={{ textAlign: 'right' }}>{canEditSample
-                      ? <input key={`a-${l.id}-${l.net_of_tax}`} type="number" min="0" step="0.01" defaultValue={Number(l.net_of_tax)} disabled={busy}
-                          style={{ width: 110, textAlign: 'right' }} onBlur={(e) => saveSample(l, 'amount', e.target.value)} />
-                      : money(l.net_of_tax)}</td>
+                    <td style={{ textAlign: 'right' }}>{money(l.net_of_tax)}</td>
                     <td style={{ textAlign: 'right' }}>{l.length ?? '-'}</td><td style={{ textAlign: 'right' }}>{l.width ?? '-'}</td>
                     <td>{l.delivery_date ? String(l.delivery_date).slice(0, 10) : ''}</td>
                   </tr>
