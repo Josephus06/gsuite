@@ -289,16 +289,18 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
 
 // The accounts a liquidation item can be charged to -- active, postable Expense accounts (cost of
 // sales sits there in this chart). For Accounts Payable only, who assigns them.
-// What a liquidation can credit -- active, postable Asset and Liability accounts (13305 Advances To
-// Employees - For Liquidation by default). Accounts Payable only.
+// The Chart of Accounts for AP's two pickers on a liquidation -- each item's COGS account and the
+// credit account. The WHOLE active chart (asked 2026-10-06: "wire it to chart of account"): the first
+// cut filtered to account_type 'Expense' / is_summary = 0, which on the live chart returned nothing.
+async function activeAccounts() {
+  const [rows] = await pool.query(
+    'SELECT id, account_code, account_name, account_type FROM chart_of_accounts WHERE is_active = 1 ORDER BY account_code');
+  return rows;
+}
 router.get('/meta/credit-accounts', requireAuth, async (req, res, next) => {
   try {
     if (!(await isAccountsPayable(req.user.id))) return res.status(403).json({ error: 'Only Accounts Payable sets this.' });
-    const [rows] = await pool.query(
-      `SELECT id, account_code, account_name FROM chart_of_accounts
-        WHERE account_type IN ('Asset', 'Liability') AND is_active = 1 AND COALESCE(is_summary, 0) = 0
-        ORDER BY account_code`);
-    res.json(rows);
+    res.json(await activeAccounts());
   } catch (err) { next(err); }
 });
 
@@ -313,8 +315,8 @@ router.put('/:id/credit-account', requireAuth, async (req, res, next) => {
     const accountId = req.body?.credit_account_id ? Number(req.body.credit_account_id) : null;
     if (accountId) {
       const [[acct]] = await pool.query(
-        "SELECT id FROM chart_of_accounts WHERE id = ? AND account_type IN ('Asset', 'Liability') AND is_active = 1", [accountId]);
-      if (!acct) return res.status(400).json({ error: 'Choose an active Asset or Liability account.' });
+        'SELECT id FROM chart_of_accounts WHERE id = ? AND is_active = 1', [accountId]);
+      if (!acct) return res.status(400).json({ error: 'Choose an active account from the Chart of Accounts.' });
     }
     await pool.query('UPDATE form_requests SET credit_account_id = ?, updated_at = NOW() WHERE id = ?', [accountId, doc.id]);
     res.json({ ok: true });
@@ -324,11 +326,7 @@ router.put('/:id/credit-account', requireAuth, async (req, res, next) => {
 router.get('/meta/cogs-accounts', requireAuth, async (req, res, next) => {
   try {
     if (!(await isAccountsPayable(req.user.id))) return res.status(403).json({ error: 'Only Accounts Payable assigns COGS.' });
-    const [rows] = await pool.query(
-      `SELECT id, account_code, account_name FROM chart_of_accounts
-        WHERE account_type = 'Expense' AND is_active = 1 AND COALESCE(is_summary, 0) = 0
-        ORDER BY account_code`);
-    res.json(rows);
+    res.json(await activeAccounts());
   } catch (err) { next(err); }
 });
 
@@ -344,8 +342,8 @@ router.put('/:id/items/:itemId/cogs', requireAuth, async (req, res, next) => {
     const accountId = req.body?.cogs_account_id ? Number(req.body.cogs_account_id) : null;
     if (accountId) {
       const [[acct]] = await pool.query(
-        "SELECT id FROM chart_of_accounts WHERE id = ? AND account_type = 'Expense' AND is_active = 1", [accountId]);
-      if (!acct) return res.status(400).json({ error: 'Choose an active Expense account.' });
+        'SELECT id FROM chart_of_accounts WHERE id = ? AND is_active = 1', [accountId]);
+      if (!acct) return res.status(400).json({ error: 'Choose an active account from the Chart of Accounts.' });
     }
     const [r] = await pool.query(
       'UPDATE form_request_items SET cogs_account_id = ? WHERE id = ? AND form_request_id = ?',

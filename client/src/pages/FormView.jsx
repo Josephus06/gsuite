@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
+import EntityPicker from '../components/EntityPicker';
 import { useAuth } from '../context/useAuth';
 import { PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, fmtDate, money, pretty } from '../utils/requestForms';
 
@@ -51,9 +52,27 @@ export default function FormView() {
   const canSetCogs = !!doc?.can_set_cogs;
   useEffect(() => {
     if (!canSetCogs) return;
-    api.get('/forms/meta/cogs-accounts').then(({ data }) => setCogsAccounts(data)).catch(() => setCogsAccounts([]));
-    api.get('/forms/meta/credit-accounts').then(({ data }) => setCreditAccounts(data)).catch(() => setCreditAccounts([]));
+    // Said out loud when it fails -- an empty picker with no reason reads as "there are no accounts".
+    const failed = (e) => setError(e.response?.data?.error || 'Could not load the Chart of Accounts.');
+    api.get('/forms/meta/cogs-accounts').then(({ data }) => setCogsAccounts(data)).catch(failed);
+    api.get('/forms/meta/credit-accounts').then(({ data }) => setCreditAccounts(data)).catch(failed);
   }, [canSetCogs]);
+
+  // One COGS account onto every item that has none yet -- a liquidation of 41 courier fees takes the
+  // same account on every line. Items AP has already set are left as they are.
+  async function applyCogsToAll(account) {
+    const todo = (doc?.items || []).filter((i) => !i.cogs_account_id);
+    if (!todo.length) return;
+    setBusy(true); setError(''); setSaved('');
+    try {
+      for (const it of todo) await api.put(`/forms/${id}/items/${it.id}/cogs`, { cogs_account_id: account.id });
+      await load();
+      setSaved(`${account.account_code} — ${account.account_name} set on ${todo.length} item(s).`);
+    } catch (e) {
+      setError(e.response?.data?.error || 'Could not set the COGS accounts.');
+      await load();
+    } finally { setBusy(false); }
+  }
 
   async function setCreditAccount(accountId) {
     setError(''); setSaved('');
@@ -258,6 +277,22 @@ export default function FormView() {
               Assign a COGS account to every item before noting -- {doc.cogs_missing} still missing.
             </div>
           )}
+          {canSetCogs && doc.cogs_missing > 0 && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
+              <span className="muted">Apply to all items without COGS :</span>
+              <div style={{ minWidth: 300 }}>
+                <EntityPicker
+                  label="COGS Account (all items)" items={cogsAccounts} value=""
+                  getLabel={(a) => `${a.account_code} — ${a.account_name}`}
+                  columns={[{ key: 'account_code', label: 'Code' }, { key: 'account_name', label: 'Account' }, { key: 'account_type', label: 'Type' }]}
+                  searchKeys={['account_code', 'account_name']}
+                  placeholder="Select COGS for all..."
+                  disabled={busy}
+                  onSelect={applyCogsToAll}
+                />
+              </div>
+            </div>
+          )}
           <div className="table-wrap">
             <table>
               <thead>
@@ -287,11 +322,17 @@ export default function FormView() {
                     {doc.needs_cogs && (
                       <td>
                         {canSetCogs ? (
-                          <select value={r.cogs_account_id || ''} onChange={(e) => setItemCogs(r.id, e.target.value)}
-                            style={!r.cogs_account_id ? { borderColor: 'var(--danger, #b91c1c)' } : undefined}>
-                            <option value="">-- Select COGS --</option>
-                            {cogsAccounts.map((a) => <option key={a.id} value={a.id}>{a.account_code} — {a.account_name}</option>)}
-                          </select>
+                          <div style={{ minWidth: 260, ...(!r.cogs_account_id ? { outline: '1px solid var(--danger, #b91c1c)', borderRadius: 6 } : {}) }}>
+                            <EntityPicker
+                              label="COGS Account" items={cogsAccounts} value={r.cogs_account_id || ''}
+                              getLabel={(a) => `${a.account_code} — ${a.account_name}`}
+                              columns={[{ key: 'account_code', label: 'Code' }, { key: 'account_name', label: 'Account' }, { key: 'account_type', label: 'Type' }]}
+                              searchKeys={['account_code', 'account_name']}
+                              placeholder="Select COGS..."
+                              onSelect={(a) => setItemCogs(r.id, a.id)}
+                              onClear={() => setItemCogs(r.id, null)}
+                            />
+                          </div>
                         ) : (r.cogs_account_id ? `${r.cogs_account_code} — ${r.cogs_account_name}` : <span className="muted">—</span>)}
                       </td>
                     )}
@@ -321,10 +362,17 @@ export default function FormView() {
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
             <span className="muted">Credit Account :</span>
             {canSetCogs ? (
-              <select value={doc.credit_account_id || ''} onChange={(e) => setCreditAccount(e.target.value)}>
-                <option value="">13305 — Advances To Employees - For Liquidation (default)</option>
-                {creditAccounts.map((a) => <option key={a.id} value={a.id}>{a.account_code} — {a.account_name}</option>)}
-              </select>
+              <div style={{ minWidth: 320 }}>
+                <EntityPicker
+                  label="Credit Account" items={creditAccounts} value={doc.credit_account_id || ''}
+                  getLabel={(a) => `${a.account_code} — ${a.account_name}`}
+                  columns={[{ key: 'account_code', label: 'Code' }, { key: 'account_name', label: 'Account' }, { key: 'account_type', label: 'Type' }]}
+                  searchKeys={['account_code', 'account_name']}
+                  placeholder="13305 — Advances To Employees - For Liquidation (default)"
+                  onSelect={(a) => setCreditAccount(a.id)}
+                  onClear={() => setCreditAccount(null)}
+                />
+              </div>
             ) : (
               <strong>{doc.credit_account_id ? `${doc.credit_account_code} — ${doc.credit_account_name}` : '13305 — Advances To Employees - For Liquidation'}</strong>
             )}
