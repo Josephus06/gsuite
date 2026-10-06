@@ -38,7 +38,7 @@ export default function PurchaseOrders() {
   const [total, setTotal] = useState(0);
   const [counts, setCounts] = useState({});
   const [loading, setLoading] = useState(true);
-  const [showFilters, setShowFilters] = useState(false);
+  const [showFilters, setShowFilters] = useState(true); // shown by default; Toggle Filter hides them (asked 2026-10-06)
 
   const [status, setStatus] = useState('pending_approval');
   const [search, setSearch] = useState('');

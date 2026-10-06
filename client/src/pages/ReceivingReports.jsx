@@ -34,7 +34,7 @@ export default function ReceivingReports() {
   const [total, setTotal] = useState(0);
   const [totalAmount, setTotalAmount] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [showFilters, setShowFilters] = useState(false);
+  const [showFilters, setShowFilters] = useState(true); // shown by default; Toggle Filter hides them (asked 2026-10-06)
 
   const [search, setSearch] = useState('');
   const [supplier, setSupplier] = useState(null);

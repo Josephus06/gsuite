@@ -51,7 +51,7 @@ export default function JobOrders() {
   const [counts, setCounts] = useState({});
   const [tab, setTab] = useState('');
   const [loading, setLoading] = useState(true);
-  const [showFilters, setShowFilters] = useState(false);
+  const [showFilters, setShowFilters] = useState(true); // shown by default; Toggle Filter hides them (asked 2026-10-06)
 
   const [search, setSearch] = useState('');
   const [salesRepId, setSalesRepId] = useState('');
