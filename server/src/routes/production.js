@@ -262,6 +262,8 @@ router.get('/:id', requireAuth, requireProductionView, async (req, res, next) =>
   try {
     const [[jo]] = await pool.query(
       `SELECT jo.*, so.sales_order_no, so.status AS sales_order_status,
+              -- The job order an RWIP / RFQC was raised from, named beside its own number.
+              pjo.job_order_no AS parent_job_order_no, pjo.production_stage AS parent_production_stage,
               -- From the NSSO where the job order was raised from one (no sales order) -- see
               -- routes/jobOrders.js GET /:id.
               COALESCE(so.office_location_id, nsso.office_location_id) AS office_location_id,

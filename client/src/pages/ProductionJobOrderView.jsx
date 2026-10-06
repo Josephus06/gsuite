@@ -689,6 +689,14 @@ export default function ProductionJobOrderView() {
         <div className="estimate-banner-title">
           <h1>Job Order</h1>
           <span className="estimate-no">{jo.job_order_no}</span>
+          {/* An RWIP / RFQC names the job order it reworks, and opens it. */}
+          {jo.parent_job_order_no && (
+            <button type="button" className="estimate-no" style={{ cursor: 'pointer', border: 'none' }}
+              title="Open the job order this was raised from"
+              onClick={() => navigate(jo.parent_production_stage ? `/production/${jo.parent_job_order_id}` : `/job-orders/${jo.parent_job_order_id}`)}>
+              from {jo.parent_job_order_no}
+            </button>
+          )}
         </div>
         <div className="estimate-status">
           {jo.status} <span style={{ opacity: 0.7 }}>{STAGE_LABELS[jo.production_stage] || jo.sub_status}</span>
