@@ -833,12 +833,69 @@ async function computeInventoryAdjustmentGl(adj, lines) {
 // against a supplier prepayment -- a concept this build's bill_credits schema doesn't
 // model, so reversing the bill's own line accounts is the closest correct analog here,
 // not a literal copy of that one example.)
+// The accounts a Vendor Bill DEBITED, from the bill's own GL entry (computeVendorBillGl) rather
+// than guessed from its header: a PO bill whose header Account is the payable debits 20300
+// Inventory Received Not Billed, one holding another account debits that; an expense bill debits
+// its lines' accounts; Input VAT is debited for its tax. [{ account_code, account_name, weight }].
+async function billDebitAccounts(vendorBillId) {
+  const [[vb]] = await pool.query(
+    `SELECT vb.*, coa.account_code, coa.account_name FROM vendor_bills vb
+       LEFT JOIN chart_of_accounts coa ON coa.id = vb.account_id WHERE vb.id = ?`, [vendorBillId]);
+  if (!vb) return [];
+  const [lines] = await pool.query(
+    'SELECT account_id, net_of_tax FROM vendor_bill_lines WHERE vendor_bill_id = ? AND account_id IS NOT NULL', [vendorBillId]);
+  const rows = await computeVendorBillGl(vb, lines);
+  return rows.filter((r) => Number(r.debit) > 0)
+    .map((r) => ({ account_code: r.account_code, account_name: r.account_name, weight: Number(r.debit) }));
+}
+
+// The credit side of a Bill Credit with no expense lines -- a typed amount, applied to bills (asked
+// 2026-10-06, as the source raises them: BC-7431, 9,240.00 with no lines). The source posts such a
+// credit as a lone debit to Accounts Payable; here it is credited back to what the applied bills
+// debited, split by how much went to each bill (and by each bill's own account mix), so the credit
+// reverses that part of the bills. Any unapplied remainder follows the same split.
+async function typedCreditOffsets(bc, totalAmount) {
+  const [apps] = await pool.query(
+    'SELECT vendor_bill_id, applied_amount FROM bill_credit_applications WHERE bill_credit_id = ? AND applied_amount > 0', [bc.id]);
+  const appliedTotal = apps.reduce((s, a) => s + Number(a.applied_amount), 0);
+  if (!(appliedTotal > 0)) return [];
+  const byAccount = new Map();
+  for (const a of apps) {
+    const accts = await billDebitAccounts(a.vendor_bill_id);
+    const w = accts.reduce((s, x) => s + x.weight, 0);
+    if (!(w > 0)) continue;
+    const share = totalAmount * (Number(a.applied_amount) / appliedTotal);
+    for (const x of accts) {
+      const prev = byAccount.get(x.account_code) || { account_name: x.account_name, amt: 0 };
+      byAccount.set(x.account_code, { account_name: prev.account_name, amt: prev.amt + share * (x.weight / w) });
+    }
+  }
+  const rows = [];
+  for (const [code, { account_name: name, amt }] of byAccount) {
+    rows.push({ account_code: code, account_name: name, debit: 0, credit: Number(amt.toFixed(2)) });
+  }
+  // Rounding lands on the largest line, so the entry balances to the centavo.
+  const diff = Number((totalAmount - rows.reduce((s, r) => s + r.credit, 0)).toFixed(2));
+  if (diff && rows.length) {
+    const big = rows.reduce((m, r) => (r.credit > m.credit ? r : m), rows[0]);
+    big.credit = Number((big.credit + diff).toFixed(2));
+  }
+  return rows;
+}
+
 async function computeBillCreditGl(bc, lines) {
   if (!bc.ap_account_id || !bc.ap_account_code) return [];
   const totalAmount = Number(bc.total_amount) || 0;
   if (!totalAmount) return [];
 
   const rows = [{ account_code: bc.ap_account_code, account_name: bc.ap_account_name, debit: totalAmount, credit: 0 }];
+
+  // A typed-amount credit raised in T1S (no expense lines). Migrated line-less credits
+  // (created_by_user_id is null) keep posting exactly as before.
+  if (!lines.length && bc.created_by_user_id) {
+    rows.push(...await typedCreditOffsets(bc, totalAmount));
+    return rows;
+  }
 
   for (const l of lines) {
     const amount = Number(l.amount) || 0;

@@ -36,7 +36,7 @@ function computeLineAmounts({ amount, taxRate, isWithhold, wtaxRate }) {
 // A credit's expense lines, totals and applications, worked out from what the form posted.
 // Shared by create and edit so the two can never compute a credit differently. Throws a
 // status-tagged error for a credit with no lines or one applied beyond its own total.
-async function buildCredit(conn, { expenseLines, applyLines, wtaxId }) {
+async function buildCredit(conn, { expenseLines, applyLines, wtaxId, amount }) {
   const submittedExpenses = (Array.isArray(expenseLines) ? expenseLines : []).filter((l) => l.account_id && Number(l.amount) > 0);
   // A credit may be saved with no expense lines (asked 2026-10-06) -- its total is then 0.00, so the
   // Total Applied check below still stops it applying anything until lines are added by Edit.
@@ -61,12 +61,24 @@ async function buildCredit(conn, { expenseLines, applyLines, wtaxId }) {
     ...computeLineAmounts({ amount: l.amount, taxRate: l.tax_code_id ? taxRateById.get(l.tax_code_id) : 0, isWithhold: l.is_withhold, wtaxRate }),
   }));
 
-  const subtotal = computedLines.reduce((s, l) => s + l.amount, 0);
+  let subtotal = computedLines.reduce((s, l) => s + l.amount, 0);
   const taxAmount = computedLines.reduce((s, l) => s + l.tax_amount, 0);
   const wtaxAmount = computedLines.reduce((s, l) => s + l.wtax_amount, 0);
-  const totalAmount = Number((subtotal + taxAmount).toFixed(2));
+  let totalAmount = Number((subtotal + taxAmount).toFixed(2));
 
   const submittedApply = (Array.isArray(applyLines) ? applyLines : []).filter((l) => l.vendor_bill_id && Number(l.applied_amount) > 0);
+
+  // No expense lines but a typed Amount (asked 2026-10-06 -- the source raises credits this way,
+  // BC-7431: 9,240.00 with no lines): the Amount is the credit's total, no VAT or withholding on it.
+  // Its GL credits back what the bills it is applied to debited (glImpact typedCreditOffsets), so it
+  // must be applied to at least one bill. Once it has expense lines, they decide the total.
+  if (!computedLines.length && Number(amount) > 0) {
+    if (!submittedApply.length) {
+      throw Object.assign(new Error('A Bill Credit entered as an Amount, with no expense lines, must be applied to at least one bill.'), { status: 400 });
+    }
+    subtotal = Number(Number(amount).toFixed(2));
+    totalAmount = subtotal;
+  }
   const totalApplied = submittedApply.reduce((s, l) => s + Number(l.applied_amount), 0);
   if (totalApplied > totalAmount + 1e-9) {
     throw Object.assign(new Error(`Total Applied Amount (${totalApplied.toFixed(2)}) exceeds this credit's Total Amount (${totalAmount.toFixed(2)}).`), { status: 409 });
@@ -300,7 +312,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const {
       vendor_bill_id: vendorBillId, date_created: dateCreated, office_location_id: officeLocationId,
       ap_account_id: apAccountId, memo, wtax_id: wtaxId, expense_lines: expenseLines, apply_lines: applyLines,
-      cheque_id: chequeId,
+      cheque_id: chequeId, amount,
     } = req.body;
     // Created from a Vendor Bill, or from a Cheque to a Vendor (which then names the supplier).
     let supplierId = null;
@@ -314,7 +326,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
     const {
       computedLines, subtotal, taxAmount, wtaxAmount, totalAmount, submittedApply, totalApplied, wtaxDescription,
-    } = await buildCredit(conn, { expenseLines, applyLines, wtaxId });
+    } = await buildCredit(conn, { expenseLines, applyLines, wtaxId, amount });
     await assertPeriodOpen(dateCreated, 'ap', conn);
 
     await conn.beginTransaction();
@@ -398,7 +410,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     const creditId = Number(req.params.id);
     const {
       date_created: dateCreated, office_location_id: officeLocationId, ap_account_id: apAccountId,
-      memo, wtax_id: wtaxId, expense_lines: expenseLines, apply_lines: applyLines,
+      memo, wtax_id: wtaxId, expense_lines: expenseLines, apply_lines: applyLines, amount,
     } = req.body;
     const [[bc]] = await conn.query('SELECT * FROM bill_credits WHERE id = ?', [creditId]);
     if (!bc) return res.status(404).json({ error: 'Not found' });
@@ -406,7 +418,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     const inUse = await creditInUse(conn, creditId, 'edited');
     if (inUse) return res.status(409).json({ error: inUse });
 
-    const built = await buildCredit(conn, { expenseLines, applyLines, wtaxId });
+    const built = await buildCredit(conn, { expenseLines, applyLines, wtaxId, amount });
     const newDate = dateCreated || bc.date_created;
     await assertPeriodOpen(bc.date_created, 'ap', conn);
     await assertPeriodOpen(newDate, 'ap', conn);

@@ -40,6 +40,8 @@ export default function BillCreditModal({ vendorBillId, chequeId, billCreditId, 
   const [apAccount, setApAccount] = useState(null);
   const [memo, setMemo] = useState('');
   const [lines, setLines] = useState([]);
+  // A credit with no expense lines is entered as an Amount, as the source raises them (BC-7431).
+  const [typedAmount, setTypedAmount] = useState('');
   const [wtax, setWtax] = useState(null);
   const [tab, setTab] = useState('expenses');
   const [applyAmounts, setApplyAmounts] = useState({});
@@ -86,6 +88,7 @@ export default function BillCreditModal({ vendorBillId, chequeId, billCreditId, 
         setApplyAmounts(Object.fromEntries((d.apply_lines || [])
           .filter((a) => Number(a.applied_amount) > 0).map((a) => [a.vendor_bill_id, Number(a.applied_amount)])));
         if (d.in_use) setError(d.in_use);
+        if (!(d.lines || []).length && Number(d.total_amount) > 0) setTypedAmount(String(Number(d.total_amount)));
       }
       setLoading(false);
     }).catch((e) => { setError(e.response?.data?.error || 'Could not load.'); setLoading(false); });
@@ -93,9 +96,12 @@ export default function BillCreditModal({ vendorBillId, chequeId, billCreditId, 
 
   const wtaxRate = wtax ? Number(wtax.rate) : 0;
   const computedLines = useMemo(() => lines.map((l) => ({ ...l, ...computeLine(l, wtaxRate) })), [lines, wtaxRate]);
-  const subtotal = computedLines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
-  const taxAmount = computedLines.reduce((s, l) => s + l.tax_amount, 0);
-  const wtaxAmountTotal = computedLines.reduce((s, l) => s + l.wtax_amount, 0);
+  // Expense lines decide the total when there are any; otherwise the typed Amount does.
+  const hasLines = lines.some((l) => l.account_id && Number(l.amount) > 0);
+  const amountOnly = hasLines ? 0 : (Number(typedAmount) || 0);
+  const subtotal = hasLines ? computedLines.reduce((s, l) => s + (Number(l.amount) || 0), 0) : amountOnly;
+  const taxAmount = hasLines ? computedLines.reduce((s, l) => s + l.tax_amount, 0) : 0;
+  const wtaxAmountTotal = hasLines ? computedLines.reduce((s, l) => s + l.wtax_amount, 0) : 0;
   const totalAmount = subtotal + taxAmount;
   const applyTotal = Object.values(applyAmounts).reduce((s, v) => s + (Number(v) || 0), 0);
 
@@ -131,9 +137,14 @@ export default function BillCreditModal({ vendorBillId, chequeId, billCreditId, 
     // No expense lines is allowed (asked 2026-10-06): the credit saves at 0.00 and can be given its
     // lines later by Edit. What it cannot do is apply anything until it has them (checked below).
     const applyLines = Object.entries(applyAmounts).filter(([, v]) => Number(v) > 0).map(([id, v]) => ({ vendor_bill_id: Number(id), applied_amount: Number(v) }));
+    // A credit entered as an Amount credits back what its bills debited, so it must apply to one.
+    if (!hasLines && amountOnly > 0 && !applyLines.length) {
+      setError('A credit entered as an Amount must be applied to at least one bill (Apply tab).');
+      return;
+    }
     // A credit can never apply more than it is worth.
     if (applyTotal > totalAmount + 0.005) {
-      setError(`Applied ${money(applyTotal)} is more than this credit's Total Amount of ${money(totalAmount)}. Add expense lines worth at least that much, or lower the Applied Amounts.`);
+      setError(`Applied ${money(applyTotal)} is more than this credit's Total Amount of ${money(totalAmount)}. Enter the Amount (or add expense lines) worth at least that much, or lower the Applied Amounts.`);
       return;
     }
 
@@ -149,6 +160,7 @@ export default function BillCreditModal({ vendorBillId, chequeId, billCreditId, 
           account_id: l.account_id, department_id: l.department_id, amount: l.amount, tax_code_id: l.tax_code_id, is_withhold: l.is_withhold,
         })),
         apply_lines: applyLines,
+        amount: hasLines ? undefined : amountOnly,
       };
       const { data: bc } = billCreditId
         ? await api.put(`/bill-credits/${billCreditId}`, payload)
@@ -197,6 +209,15 @@ export default function BillCreditModal({ vendorBillId, chequeId, billCreditId, 
             <div>
               <div>Created From : <span className="hi">{data.bill_no}</span></div>
               <div className="field"><label>Memo</label><textarea rows={3} value={memo} onChange={(e) => setMemo(e.target.value)} /></div>
+              <div className="field">
+                <label>Amount</label>
+                <input type="number" step="0.01" min="0" value={hasLines ? '' : typedAmount} disabled={hasLines}
+                  placeholder={hasLines ? 'Set by the expense lines' : 'Credit amount, if no expense lines'}
+                  onChange={(e) => setTypedAmount(e.target.value)} />
+                <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                  {hasLines ? 'The expense lines decide the total.' : 'With no expense lines the credit is this amount; it credits back the accounts of the bills it is applied to.'}
+                </div>
+              </div>
             </div>
             <div className="card" style={{ background: 'var(--surface-2, #f3f4f6)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}><span className="muted">Net of TAX</span><span className="hi">{money(subtotal)}</span></div>
