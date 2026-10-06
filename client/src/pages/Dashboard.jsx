@@ -831,15 +831,40 @@ function GmCalendarCard({ navigate, canSeeCollections }) {
   );
 }
 
+// The production departments, told apart by the job's location -- Warehouse - Sign / DPOD / CNC /
+// LFP (asked 2026-10-06). A job filed at a branch belongs to none of them and shows under All only.
+const PROD_DEPARTMENTS = [
+  { key: '', label: 'All' },
+  { key: 'sign', label: 'Sign' },
+  { key: 'dpod', label: 'DPOD' },
+  { key: 'cnc', label: 'CNC' },
+  { key: 'lfp', label: 'LFP' },
+];
+const jobDepartment = (j) => {
+  const m = String(j.jobLocationName || '').toLowerCase().match(/warehouse\s*-\s*(sign|dpod|cnc|lfp)\b/);
+  return m ? m[1] : null;
+};
+
 // `range` is the GM card's Day / Week / Month switch (utils/calendarRange.jsx); the standalone
 // Production Schedule card stays on Month. The endpoint is monthly, so a week across a month end
 // fetches both months, de-duplicated by job.
 function ForecastCalendarCard({ navigate, embedded = false, range = 'month' }) {
   const { cells, days, months, title, shift, todayKey, first: firstDay, last: lastDay } = useCalendarRange(range);
-  const [jobs, setJobs] = useState([]);
+  const [allJobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openDay, setOpenDay] = useState(null);
   const monthsKey = months.join(',');
+  // Department filter on the GM card only, remembered per browser.
+  const [dept, setDept] = useState(() => {
+    if (!embedded) return '';
+    let saved = '';
+    try { saved = localStorage.getItem('gm-production-dept') || ''; } catch { /* storage unavailable */ }
+    return PROD_DEPARTMENTS.some((d) => d.key === saved) ? saved : '';
+  });
+  const chooseDept = (key) => {
+    setDept(key);
+    try { localStorage.setItem('gm-production-dept', key); } catch { /* storage unavailable */ }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -859,6 +884,7 @@ function ForecastCalendarCard({ navigate, embedded = false, range = 'month' }) {
   // A job occupies every day of its forecast window, not just the start -- that span is the
   // whole point of the calendar, so the walk happens here rather than the server sending the
   // same job once per day it covers.
+  const jobs = dept ? allJobs.filter((j) => jobDepartment(j) === dept) : allJobs;
   const byDay = new Map();
   for (const j of jobs) {
     const start = String(j.plannedStart || '').slice(0, 10);
@@ -904,6 +930,15 @@ function ForecastCalendarCard({ navigate, embedded = false, range = 'month' }) {
           <span className="muted artist-calendar-count">
             {loading ? 'Loading...' : `${shownJobs.length} scheduled`}
           </span>
+          {embedded && (
+            <div className="status-tabs" style={{ margin: 0 }}>
+              {PROD_DEPARTMENTS.map((d) => (
+                <button key={d.key || 'all'} type="button" className={`status-tab ${dept === d.key ? 'active' : ''}`} onClick={() => chooseDept(d.key)}>
+                  {d.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Day: that day's jobs as the table the popup shows, in place of a single-cell grid. */}
