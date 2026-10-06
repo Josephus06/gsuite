@@ -354,7 +354,9 @@ router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
     let totalInspected = 0;
     for (const l of lines) {
       await conn.query('UPDATE assembly_builds SET passed_qty = passed_qty - ?, rma_qty = rma_qty - ? WHERE id = ?', [l.pass_qty, l.rma_qty, l.assembly_build_id]);
-      totalInspected += Number(l.pass_qty) + Number(l.rma_qty);
+      // Only the PASSED qty was added to quantity_inspected when the QI was saved (the RMA qty went
+      // to an RFQC instead), so only that comes back off -- taking pass + RMA under-counted the JO.
+      totalInspected += Number(l.pass_qty);
     }
     // Mirrors the stage logic in POST / -- reversed. Back to 0 inspected means back to
     // needing inspection at all (For QI); still some left over just downgrades from
