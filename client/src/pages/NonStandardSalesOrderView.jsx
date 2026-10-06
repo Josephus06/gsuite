@@ -52,7 +52,11 @@ export default function NonStandardSalesOrderView() {
 
   if (loading || !n) return <LoadingSpinner />;
   const canEdit = can('/non-standard-sales-orders', 'can_edit');
-  const canApprove = can('/non-standard-sales-orders', 'can_approve');
+  // A Sample is approved by an SBU head (or a System Admin) only -- not on the NSSO Approve
+  // permission a sales supervisor holds. The server decides the same way (mayApproveNsso).
+  const canApprove = n.type === 'sample'
+    ? (!!user?.is_sales_business_unit || user?.account_type === 'System Admin')
+    : can('/non-standard-sales-orders', 'can_approve');
   const canAdd = can('/non-standard-sales-orders', 'can_add');
   const isOpen = n.status !== 'cancelled';
   // Sample lines take an edited Qty and Amount -- the editor, or the author while it is still a

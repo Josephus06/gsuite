@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
-const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
+const { requireAuth, requirePermission, userCan, isSystemAdmin } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { DESIGN_QUEUE_STATUS } = require('../lib/designSupervisorVisibility');
 const { notifyDesignSupervisors } = require('../lib/designNotifications');
@@ -563,13 +563,28 @@ router.put('/:id/lines/:lineId/sample', requireAuth, requireEditOrOwnDraft, asyn
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
-// Approve an NSSO. Governed purely by the NSSO page's can_approve permission -- any user granted
-// "NSSO Can Approve" may approve, moving it from Pending / Needs Approval to JO In-Process.
-router.put('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
+// Who may approve this NSSO. A SAMPLE gives the customer work for nothing, so only an SBU head
+// (users.is_sales_business_unit) -- or a System Admin -- approves one, and a sales supervisor's
+// "NSSO Can Approve" does not reach it (asked 2026-10-06). Every other type is still governed by
+// that permission alone.
+async function mayApproveNsso(userId, type) {
+  if (type === 'sample') {
+    if (await isSystemAdmin(userId)) return true;
+    const [[u]] = await pool.query('SELECT is_sales_business_unit FROM users WHERE id = ?', [userId]);
+    return !!(u && u.is_sales_business_unit);
+  }
+  return userCan(userId, ROUTE, 'can_approve');
+}
+
+// Approve an NSSO, moving it from Pending / Needs Approval to JO In-Process -- see mayApproveNsso.
+router.put('/:id/approve', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[n]] = await conn.query('SELECT status FROM non_standard_sales_orders WHERE id = ?', [req.params.id]);
+    const [[n]] = await conn.query('SELECT status, type FROM non_standard_sales_orders WHERE id = ?', [req.params.id]);
     if (!n) return res.status(404).json({ error: 'Not found' });
+    if (!(await mayApproveNsso(req.user.id, n.type))) {
+      return res.status(403).json({ error: n.type === 'sample' ? 'Only an SBU head can approve a Sample NSSO.' : 'You do not have permission to perform this action' });
+    }
     if (n.status === 'cancelled') return res.status(409).json({ error: 'This NSSO is cancelled.' });
     if (n.status !== 'pending_approval') return res.status(409).json({ error: 'This NSSO is not pending approval.' });
     // An NSSO with nothing on it is not ready to approve (NSSO-SAM-2438 went through with no lines,
