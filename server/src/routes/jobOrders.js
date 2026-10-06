@@ -1330,19 +1330,26 @@ router.get('/:id/print', requireAuth, async (req, res, next) => {
               CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name,
               cc.contact_name
          FROM job_orders jo
+         -- A rework order (RWIP / RFQC) has no artist of its own; its sheet names the original's.
+         LEFT JOIN job_orders parent ON parent.id = jo.parent_job_order_id
          LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
          LEFT JOIN non_standard_sales_orders ns ON ns.id = jo.nsso_id
          LEFT JOIN customers c ON c.id = COALESCE(ns.customer_id, so.customer_id)
          LEFT JOIN job_types jt ON jt.id = jo.job_type_id
          LEFT JOIN sales_divisions sd ON sd.id = COALESCE(ns.sales_division_id, so.sales_division_id)
          LEFT JOIN employees sr ON sr.id = COALESCE(jo.sales_rep_id, ns.sales_rep_id, so.sales_rep_id)
-         LEFT JOIN employees ar ON ar.id = jo.artist_id
+         LEFT JOIN employees ar ON ar.id = COALESCE(jo.artist_id, parent.artist_id)
          LEFT JOIN customer_contacts cc ON cc.id = COALESCE(ns.contact_person_id, so.contact_person_id)
         WHERE jo.id = ?`,
       [req.params.id]
     );
     if (!jo) return res.status(404).json({ error: 'Not found' });
 
+    // RWIP / RFQC: rework of a job order that has already been through design (asked 2026-10-06:
+    // Daiane could not print an RWIP). They are created with no artist of their own, so the artist
+    // rule below refused every one; and whoever is allowed to raise and work RWIPs may print them on
+    // RWIP > Print, without Print on every Job Order.
+    const isRework = !!jo.parent_job_order_id;
     if (!(await isSystemAdmin(req.user.id))) {
       const [[page]] = await pool.query("SELECT id FROM pages WHERE route = ?", [ROUTE]);
       if (!page) return res.status(500).json({ error: `Page not registered: ${ROUTE}` });
@@ -1350,14 +1357,15 @@ router.get('/:id/print', requireAuth, async (req, res, next) => {
         'SELECT can_print FROM user_page_permissions WHERE user_id = ? AND page_id = ?',
         [req.user.id, page.id]
       );
-      if (!perm || !perm.can_print) {
+      const mayPrint = (perm && perm.can_print) || (isRework && await userCan(req.user.id, '/rwip-job-orders', 'can_print'));
+      if (!mayPrint) {
         return res.status(403).json({ error: 'You do not have permission to print a Job Order' });
       }
       // Reported separately from the permission failure: "ask your admin for access" and
       // "assign an artist first" are different problems with different fixes.
       // An NSJO never goes through artist assignment (RMA / INST / Internal redo or raise the
-      // work directly), so it is printable without one.
-      if (!jo.artist_id && !jo.nsso_id) {
+      // work directly), so it is printable without one -- and so is a rework order (above).
+      if (!jo.artist_id && !jo.nsso_id && !isRework) {
         return res.status(403).json({
           error: 'This Job Order has no artist assigned yet, so it cannot be printed.',
           reason: 'no_artist',

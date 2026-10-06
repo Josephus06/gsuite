@@ -635,7 +635,8 @@ export default function ProductionJobOrderView() {
           {canEdit && !advanceCopy && jo.status !== 'Cancelled' && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/job-orders/${id}/edit`, { state: { from: 'production' } })}>Edit</button>}
           {/* The same two prints as the Job Order screen; the server still decides whether the
               Job Order print is allowed (an assigned artist), the PAR needs only can_print. */}
-          {can('/job-orders', 'can_print') && (
+          {/* An RWIP / RFQC also prints on RWIP > Print -- the server allows it the same way. */}
+          {(can('/job-orders', 'can_print') || (jo.parent_job_order_id && can('/rwip-job-orders', 'can_print'))) && (
             <ButtonMenu
               label="Print"
               options={[
