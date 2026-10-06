@@ -1442,7 +1442,9 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     // Normalised: a PO imported from the source carries its labels ('Pending Approval', 'Pending
     // Approval for GM'), which the raw codes never matched -- so an imported PO still awaiting
     // approval was refused as if approved (PO-20609).
-    if (!['pending_approval', 'pending_approval_gm'].includes(normalisePoStatus(po.status))) {
+    // A System Admin edits whatever the status (asked 2026-10-06) -- approved, billed or cancelled.
+    // The line protections below (no qty change / removal on a received or billed line) still hold.
+    if (!['pending_approval', 'pending_approval_gm'].includes(normalisePoStatus(po.status)) && !(await isSystemAdmin(req.user.id))) {
       const [[me]] = await conn.query('SELECT can_edit_approved_po FROM users WHERE id = ?', [req.user.id]);
       const cancelled = String(po.status || '').toLowerCase().includes('cancel');
       if (!(me?.can_edit_approved_po && isApproved(po.status) && !cancelled)) {
