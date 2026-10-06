@@ -203,6 +203,9 @@ export default function InventoryAdjustmentEdit() {
                     columns={[{ key: 'location_name', label: 'Name' }, { key: 'location_code', label: 'Code' }]}
                     searchKeys={['location_name', 'location_code']}
                     placeholder="Select Location"
+                    // An approved line's stock has already landed there: to move it, delete the line
+                    // and add it again (the server refuses the change too).
+                    disabled={adjustment?.status === 'approved' && !!l.location_id}
                     onSelect={(loc) => commitLine(l.id, { location_id: loc.id })}
                   />
                 ),

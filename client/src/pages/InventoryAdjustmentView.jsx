@@ -34,7 +34,7 @@ function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 export default function InventoryAdjustmentView() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const [adj, setAdj] = useState(null);
   const [tab, setTab] = useState('items');
   const [loading, setLoading] = useState(true);
@@ -88,6 +88,8 @@ export default function InventoryAdjustmentView() {
   const canVoid = can('/inventory-adjustments', 'can_void');
   const canApprove = can('/inventory-adjustments', 'can_approve');
   const isPending = adj.status === 'pending_approval';
+  // Once approved, a System Admin may still correct it (the server moves stock by the difference).
+  const adminEditsApproved = adj.status === 'approved' && user?.account_type === 'System Admin';
   const lines = adj.lines || [];
 
   return (
@@ -97,7 +99,10 @@ export default function InventoryAdjustmentView() {
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate('/inventory-adjustments')}>Back to Lists</button>
           {canApprove && isPending && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>Approve</button>}
-          {canEdit && isPending && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/inventory-adjustments/${id}/edit`)}>Edit</button>}
+          {canEdit && (isPending || adminEditsApproved) && (
+            <button className="btn btn-sm btn-primary" onClick={() => navigate(`/inventory-adjustments/${id}/edit`)}
+              title={adminEditsApproved ? 'Approved -- your changes move stock by the difference they make' : undefined}>Edit</button>
+          )}
           {canVoid && isPending && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
         </div>
       </div>

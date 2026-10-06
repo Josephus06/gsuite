@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeInventoryAdjustmentGl } = require('../lib/glImpact');
 
@@ -148,13 +148,36 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   }
 });
 
+// Who may edit an adjustment in its current state: anyone with Edit while it is Pending Approval;
+// once APPROVED, a System Admin only (asked 2026-10-06) -- correcting a count after the stock has
+// moved. A cancelled one, nobody. Returns the refusal message, or null when the edit may go ahead.
+async function editRefusal(userId, adj) {
+  if (adj.status === 'pending_approval') return null;
+  if (adj.status === 'approved') {
+    return (await isSystemAdmin(userId)) ? null : 'An approved adjustment can only be edited by a System Admin.';
+  }
+  return 'Only a Pending Approval adjustment can be edited.';
+}
+
+// An APPROVED line has already written its New Qty into inventory_locations (see approve below), so
+// editing, adding or deleting one moves that stored balance by exactly the change in the line's
+// delta (New Qty - Qty on Hand). The Bin Card, On Hand and GL Impact are derived from the approved
+// lines on read and follow the edit by themselves.
+async function shiftStock(conn, itemId, locationId, by) {
+  if (!itemId || !locationId || Math.abs(by) < 1e-9) return;
+  await conn.query(
+    `INSERT INTO inventory_locations (inventory_id, location_id, qty_on_hand) VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE qty_on_hand = qty_on_hand + VALUES(qty_on_hand)`,
+    [itemId, locationId, by]
+  );
+}
+
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
     const [[adj]] = await pool.query('SELECT status, date_created FROM inventory_adjustments WHERE id = ?', [req.params.id]);
     if (!adj) return res.status(404).json({ error: 'Not found' });
-    if (adj.status !== 'pending_approval') {
-      return res.status(409).json({ error: 'Only a Pending Approval adjustment can be edited.' });
-    }
+    const refusal = await editRefusal(req.user.id, adj);
+    if (refusal) return res.status(409).json({ error: refusal });
     const { date_created: dateCreated, adjustment_account_id: adjustmentAccountId, memo } = req.body;
     await assertPeriodOpen([adj.date_created, dateCreated], 'non_gl');
     await pool.query(
@@ -191,7 +214,8 @@ router.post('/:id/lines', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
     const [[adj]] = await conn.query('SELECT status, date_created FROM inventory_adjustments WHERE id = ?', [req.params.id]);
     if (adj) await assertPeriodOpen(adj.date_created, 'non_gl', conn);
     if (!adj) { return res.status(404).json({ error: 'Not found' }); }
-    if (adj.status !== 'pending_approval') { return res.status(409).json({ error: 'Only a Pending Approval adjustment can be edited.' }); }
+    const refusal = await editRefusal(req.user.id, adj);
+    if (refusal) { return res.status(409).json({ error: refusal }); }
 
     const { item_id: itemId, location_id: locationId, department_id: departmentId, unit_used: unitUsed } = req.body;
     if (!itemId) { return res.status(400).json({ error: 'Item is required.' }); }
@@ -238,10 +262,11 @@ router.put('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_edit
     const [[adj]] = await conn.query('SELECT status, date_created FROM inventory_adjustments WHERE id = ?', [req.params.id]);
     if (adj) await assertPeriodOpen(adj.date_created, 'non_gl', conn);
     if (!adj) { return res.status(404).json({ error: 'Not found' }); }
-    if (adj.status !== 'pending_approval') { return res.status(409).json({ error: 'Only a Pending Approval adjustment can be edited.' }); }
+    const refusal = await editRefusal(req.user.id, adj);
+    if (refusal) { return res.status(409).json({ error: refusal }); }
 
     const [[line]] = await conn.query(
-      'SELECT item_id, location_id, department_id, qty_on_hand, est_unit_cost, adjust_qty_by, unit_used, memo FROM inventory_adjustment_lines WHERE id = ? AND inventory_adjustment_id = ?',
+      'SELECT item_id, location_id, department_id, qty_on_hand, new_qty, est_unit_cost, adjust_qty_by, unit_used, memo FROM inventory_adjustment_lines WHERE id = ? AND inventory_adjustment_id = ?',
       [req.params.lineId, req.params.id]
     );
     if (!line) { return res.status(404).json({ error: 'Line not found' }); }
@@ -249,6 +274,10 @@ router.put('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_edit
     const locationId = req.body.location_id !== undefined ? (req.body.location_id || null) : line.location_id;
     const departmentId = req.body.department_id !== undefined ? (req.body.department_id || null) : line.department_id;
     const locationChanged = Number(locationId || 0) !== Number(line.location_id || 0);
+    // An approved line's stock has landed at its location; moving it is a delete and a new line.
+    if (adj.status === 'approved' && locationChanged) {
+      return res.status(409).json({ error: 'On an approved adjustment, delete the line and add it again at the other location.' });
+    }
 
     let qtyOnHand = Number(line.qty_on_hand || 0);
     let estUnitCost = Number(line.est_unit_cost || 0);
@@ -296,6 +325,14 @@ router.put('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_edit
        WHERE id = ?`,
       [locationId, departmentId, qtyOnHand, estUnitCost, qtyOnHand * (estUnitCost / conversionFactor), adjustQtyBy, newQty, memo, unitUsed, req.params.lineId]
     );
+    if (adj.status === 'approved') {
+      const was = Number(line.new_qty || 0) - Number(line.qty_on_hand || 0);
+      await shiftStock(conn, line.item_id, line.location_id, (newQty - qtyOnHand) - was);
+      await logAudit(conn, {
+        adjustmentId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: `line ${req.params.lineId} (approved)`,
+        oldValue: `adjust by ${Number(line.adjust_qty_by || 0)}`, newValue: `adjust by ${adjustQtyBy}`,
+      });
+    }
     await recomputeTotal(conn, req.params.id);
     await conn.commit();
 
@@ -315,9 +352,21 @@ router.delete('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_e
     const [[adj]] = await conn.query('SELECT status, date_created FROM inventory_adjustments WHERE id = ?', [req.params.id]);
     if (adj) await assertPeriodOpen(adj.date_created, 'non_gl', conn);
     if (!adj) { return res.status(404).json({ error: 'Not found' }); }
-    if (adj.status !== 'pending_approval') { return res.status(409).json({ error: 'Only a Pending Approval adjustment can be edited.' }); }
+    const refusal = await editRefusal(req.user.id, adj);
+    if (refusal) { return res.status(409).json({ error: refusal }); }
 
+    const [[gone]] = await conn.query(
+      'SELECT item_id, location_id, qty_on_hand, new_qty, adjust_qty_by FROM inventory_adjustment_lines WHERE id = ? AND inventory_adjustment_id = ?',
+      [req.params.lineId, req.params.id]);
     await conn.beginTransaction();
+    if (gone && adj.status === 'approved') {
+      // Take back what the line put into stock when it was approved.
+      await shiftStock(conn, gone.item_id, gone.location_id, -(Number(gone.new_qty || 0) - Number(gone.qty_on_hand || 0)));
+      await logAudit(conn, {
+        adjustmentId: req.params.id, userId: req.user.id, eventType: 'Deleted', fieldName: `line ${req.params.lineId} (approved)`,
+        oldValue: `adjust by ${Number(gone.adjust_qty_by || 0)}`, newValue: null,
+      });
+    }
     await conn.query('DELETE FROM inventory_adjustment_lines WHERE id = ? AND inventory_adjustment_id = ?', [req.params.lineId, req.params.id]);
     await recomputeTotal(conn, req.params.id);
     await conn.commit();
