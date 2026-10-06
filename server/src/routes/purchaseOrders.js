@@ -100,11 +100,13 @@ const LIST_STATUS_CASE = `
     -- a PO the live system calls Fully Billed is not awaiting receipt whatever receipt_status,
     -- which the import never populated, happens to say.
     WHEN ${STATUS_NORM} = 'fully_billed' THEN 'fully_billed'
-    WHEN ${STATUS_NORM} = 'partially_billed' THEN 'partially_billed'
+    -- Billing done HERE outranks an earlier label from the source: a PO imported as Pending Billing
+    -- and then billed in T1S read Pending Billing for good, because the label was checked first
+    -- (2026-10-06). The source's label still stands for a PO nothing here has billed.
+    WHEN po.bill_status = 'fully_billed' THEN 'fully_billed'
+    WHEN ${STATUS_NORM} = 'partially_billed' OR po.bill_status = 'partially_billed' THEN 'partially_billed'
     WHEN ${STATUS_NORM} = 'pending_billing' THEN 'pending_billing'
     -- Then the workflow this system drives itself, for POs raised here.
-    WHEN po.bill_status = 'fully_billed' THEN 'fully_billed'
-    WHEN po.bill_status = 'partially_billed' THEN 'partially_billed'
     WHEN po.receipt_status = 'fully_received' THEN 'pending_billing'
     WHEN po.receipt_status = 'partially_received' THEN 'partially_received'
     ELSE 'pending_receipt'

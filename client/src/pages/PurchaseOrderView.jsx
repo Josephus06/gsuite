@@ -39,6 +39,9 @@ function statusLabel(po) {
   // Normalised first, so an imported 'Approved by General Manager' is read as approved rather than
   // falling past every branch to be printed verbatim.
   const st = normalisePoStatus(po.status);
+  // Billing done here outranks an imported Pending Billing label -- the same order the list uses.
+  if (st !== 'cancelled' && po.bill_status === 'fully_billed') return 'Fully Billed';
+  if (st === 'pending_billing' && po.bill_status === 'partially_billed') return 'Partially Billed';
   if (st === 'approved') {
     if (po.receipt_status === 'fully_received') {
       return po.bill_status === 'fully_billed' ? 'Billed' : 'Pending Billing';
