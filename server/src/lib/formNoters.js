@@ -26,7 +26,23 @@ const pool = require('../db');
 // The two forms whose noting is a departmental act. A business trip and a revolving fund keep the
 // plain permission gate (can_edit on /forms/approval): they are not an expense claim against one
 // department's budget, so there is no departmental head whose sign-off they need.
-const DEPARTMENT_NOTED_TYPES = ['liquidation', 'payment'];
+//
+// A LIQUIDATION is no longer one of them (asked 2026-10-06): Accounts Payable notes every
+// liquidation, whatever department it came from, once it has given each item the COGS account it is
+// charged to -- see AP_NOTED_TYPES below and the Accounts Payable tick on the user.
+const DEPARTMENT_NOTED_TYPES = ['payment'];
+const AP_NOTED_TYPES = ['liquidation'];
+
+// Is this user Accounts Payable (users.is_accounts_payable)? Read fresh, like the rest of this file.
+async function isAccountsPayable(userId, q = pool) {
+  const [[row]] = await q.query('SELECT is_accounts_payable FROM users WHERE id = ? AND is_active = 1', [userId]);
+  return !!(row && row.is_accounts_payable);
+}
+
+async function accountsPayableUsers(q = pool) {
+  const [rows] = await q.query('SELECT id, display_name FROM users WHERE is_accounts_payable = 1 AND is_active = 1 ORDER BY display_name');
+  return rows;
+}
 
 // Does this user head the given department -- i.e. are they one of its ticket approvers?
 async function isDepartmentNoter(userId, departmentId, q = pool) {
@@ -64,4 +80,15 @@ async function notersFor(departmentId, q = pool) {
   return rows;
 }
 
-module.exports = { DEPARTMENT_NOTED_TYPES, isDepartmentNoter, departmentsHeadedBy, notersFor };
+// Who a given form is waiting on to be noted: AP for a liquidation, the department's heads for a
+// payment, nobody named for the rest (they go by permission).
+async function notersForDoc(doc, q = pool) {
+  if (AP_NOTED_TYPES.includes(doc.type)) return accountsPayableUsers(q);
+  if (DEPARTMENT_NOTED_TYPES.includes(doc.type)) return notersFor(doc.department_id, q);
+  return [];
+}
+
+module.exports = {
+  DEPARTMENT_NOTED_TYPES, AP_NOTED_TYPES, isDepartmentNoter, departmentsHeadedBy, notersFor,
+  isAccountsPayable, accountsPayableUsers, notersForDoc,
+};

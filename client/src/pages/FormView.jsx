@@ -35,6 +35,8 @@ export default function FormView() {
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
   const [lineRemarks, setLineRemarks] = useState({});
+  // Accounts Payable assigns each liquidation item its COGS account before noting it.
+  const [cogsAccounts, setCogsAccounts] = useState([]);
 
   const load = useCallback(() => api.get(`/forms/${id}`).then(({ data }) => {
     setDoc(data);
@@ -44,6 +46,22 @@ export default function FormView() {
   useEffect(() => {
     load().catch((e) => { setError(e.response?.data?.error || 'Could not load this form.'); setLoading(false); });
   }, [load]);
+
+  const canSetCogs = !!doc?.can_set_cogs;
+  useEffect(() => {
+    if (!canSetCogs) return;
+    api.get('/forms/meta/cogs-accounts').then(({ data }) => setCogsAccounts(data)).catch(() => setCogsAccounts([]));
+  }, [canSetCogs]);
+
+  async function setItemCogs(itemId, accountId) {
+    setError(''); setSaved('');
+    try {
+      await api.put(`/forms/${id}/items/${itemId}/cogs`, { cogs_account_id: accountId || null });
+      await load();
+    } catch (e) {
+      setError(e.response?.data?.error || 'Could not set the COGS account.');
+    }
+  }
 
   async function act(path, body, note) {
     setBusy(true); setError(''); setSaved('');
@@ -79,6 +97,8 @@ export default function FormView() {
   // -- most departments have no head recorded yet, and a missing button with no explanation reads
   // as the module being broken rather than as the form waiting on somebody.
   const mayNote = doc.can_note && doc.status === 'submitted';
+  // A liquidation is noted by Accounts Payable only once every item has a COGS account.
+  const cogsBlocksNote = mayNote && doc.needs_cogs && doc.cogs_missing > 0;
   const noteBlocked = doc.status === 'submitted' && !doc.can_note && doc.note_blocked_reason;
   // Approving reads only from NOTED -- the head's sign-off is a gate, not a step to skip. Rejecting
   // still works from SUBMITTED: sending something back does not need the head to have seen it first.
@@ -110,7 +130,8 @@ export default function FormView() {
               onClick={() => act('submit', null, 'Submitted for approval.')}>Submit</button>
           )}
           {mayNote && (
-            <button className="btn btn-sm btn-primary" disabled={busy}
+            <button className="btn btn-sm btn-primary" disabled={busy || cogsBlocksNote}
+              title={cogsBlocksNote ? `Assign a COGS account to every item first (${doc.cogs_missing} missing)` : undefined}
               onClick={() => act('note', null, 'Noted.')}>Note</button>
           )}
           {mayApprove && (
@@ -220,6 +241,11 @@ export default function FormView() {
       {hasItems && (
         <div className="card" style={{ marginTop: 16 }}>
           <h3>{doc.type === 'payment' ? 'Particulars' : 'Expenses'}</h3>
+          {cogsBlocksNote && (
+            <div className="muted" style={{ marginBottom: 8, color: 'var(--danger, #b91c1c)' }}>
+              Assign a COGS account to every item before noting -- {doc.cogs_missing} still missing.
+            </div>
+          )}
           <div className="table-wrap">
             <table>
               <thead>
@@ -227,11 +253,12 @@ export default function FormView() {
                   {isFund && <th>Date</th>}
                   <th>Particulars</th>
                   <th style={{ textAlign: 'right' }}>Amount</th>
+                  {doc.needs_cogs && <th>COGS</th>}
                 </tr>
               </thead>
               <tbody>
                 {(doc.items || []).length === 0 && (
-                  <tr><td colSpan={3} className="muted" style={{ textAlign: 'center', padding: 16 }}>No lines.</td></tr>
+                  <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 16 }}>No lines.</td></tr>
                 )}
                 {(doc.items || []).map((r) => (
                   <tr key={r.id}>
@@ -245,6 +272,17 @@ export default function FormView() {
                       )}
                     </td>
                     <td style={{ textAlign: 'right' }}>{money(r.amount)}</td>
+                    {doc.needs_cogs && (
+                      <td>
+                        {canSetCogs ? (
+                          <select value={r.cogs_account_id || ''} onChange={(e) => setItemCogs(r.id, e.target.value)}
+                            style={!r.cogs_account_id ? { borderColor: 'var(--danger, #b91c1c)' } : undefined}>
+                            <option value="">-- Select COGS --</option>
+                            {cogsAccounts.map((a) => <option key={a.id} value={a.id}>{a.account_code} — {a.account_name}</option>)}
+                          </select>
+                        ) : (r.cogs_account_id ? `${r.cogs_account_code} — ${r.cogs_account_name}` : <span className="muted">—</span>)}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -252,6 +290,7 @@ export default function FormView() {
                 <tr>
                   <td colSpan={isFund ? 2 : 1} style={{ fontWeight: 700 }}>Total</td>
                   <td style={{ textAlign: 'right', fontWeight: 700 }}>{money(itemsTotal)}</td>
+                  {doc.needs_cogs && <td />}
                 </tr>
               </tfoot>
             </table>

@@ -45,7 +45,7 @@ const EMPTY_ACCOUNT = {
 const EMPTY_ACCOUNT_TYPE = {
   user_group_id: '', account_type: '', can_approve_sales_estimate: false, is_account_officer: false,
   is_supervisor: false, is_sales_manager: false, is_sales_marketing_director: false, is_sales_business_unit: false,
-  is_design_supervisor: false, is_purchasing_supervisor: false, can_edit_approved_po: false,
+  is_design_supervisor: false, is_purchasing_supervisor: false, can_edit_approved_po: false, is_accounts_payable: false,
   ...Object.fromEntries(PLANNER_FLAGS.map((flag) => [flag, false])),
   is_production_supervisor: false, approval_code: '', supervisor_ids: [],
   sales_division_ids: [],
@@ -123,7 +123,7 @@ export default function UserWizard() {
         can_approve_sales_estimate: !!data.can_approve_sales_estimate, is_account_officer: !!data.is_account_officer,
         is_supervisor: !!data.is_supervisor, is_sales_manager: !!data.is_sales_manager,
         is_sales_marketing_director: !!data.is_sales_marketing_director, is_sales_business_unit: !!data.is_sales_business_unit,
-        is_design_supervisor: !!data.is_design_supervisor, is_purchasing_supervisor: !!data.is_purchasing_supervisor,
+        is_design_supervisor: !!data.is_design_supervisor, is_purchasing_supervisor: !!data.is_purchasing_supervisor, is_accounts_payable: !!data.is_accounts_payable,
         can_edit_approved_po: !!data.can_edit_approved_po,
         ...Object.fromEntries(PLANNER_FLAGS.map((flag) => [flag, !!data[flag]])),
         is_production_supervisor: !!data.is_production_supervisor,
@@ -465,6 +465,7 @@ export default function UserWizard() {
               ['is_LFP_planner', 'LFP Planner'],
               ['is_production_supervisor', 'Production Supervisor'],
               ['can_edit_approved_po', 'Can Edit Approved PO'],
+              ['is_accounts_payable', 'Accounts Payable (notes liquidations)'],
             ].map(([key, label]) => (
               <div className="field-checkbox" key={key}>
                 <input type="checkbox" id={key} checked={accountType[key]} onChange={(e) => setAccountType({ ...accountType, [key]: e.target.checked })} />

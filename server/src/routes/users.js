@@ -39,6 +39,8 @@ const ACCOUNT_TYPE_FIELDS = [
   'is_supervisor', 'is_sales_manager', 'is_sales_marketing_director', 'is_sales_business_unit',
   'is_design_supervisor', 'is_purchasing_supervisor', ...PLANNER_FLAGS,
   'is_production_supervisor', 'can_edit_approved_po', 'approval_code',
+  // Accounts Payable: assigns each liquidation item's COGS and notes liquidations (routes/forms.js).
+  'is_accounts_payable',
 ];
 
 // Supervisors are NOT in the list above on purpose. Every field there that a PUT carries is

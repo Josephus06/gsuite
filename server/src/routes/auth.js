@@ -181,7 +181,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
               is_account_officer, is_supervisor, is_sales_manager,
               is_sales_marketing_director, is_sales_business_unit, is_purchasing_supervisor,
               ${PLANNER_COLUMNS}, is_production_supervisor, can_edit_approved_po, supervisor_id,
-              avatar_data
+              is_accounts_payable, avatar_data
        FROM users WHERE id = ?`,
       [req.user.id]
     );
@@ -199,6 +199,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
     for (const flag of PLANNER_FLAGS) user[flag] = !!user[flag];
     user.is_production_supervisor = !!user.is_production_supervisor;
     user.can_edit_approved_po = !!user.can_edit_approved_po;
+    user.is_accounts_payable = !!user.is_accounts_payable;
 
     // The "Default Login Location" branch (User Branches tab, is_default = TRUE) --
     // distinct from users.default_branch_id (a separate, legacy field set on the User
@@ -262,7 +263,8 @@ router.get('/me', requireAuth, async (req, res, next) => {
         WHERE a.user_id = ? AND a.can_note_form = 1 AND d.is_active = TRUE LIMIT 1`,
       [user.id]
     );
-    if (headOf.length && !permissions.some((perm) => perm.route === '/forms/approval')) {
+    // Accounts Payable too: it notes every liquidation, and reaches them through the same queue.
+    if ((headOf.length || user.is_accounts_payable) && !permissions.some((perm) => perm.route === '/forms/approval')) {
       permissions.push({
         route: '/forms/approval',
         can_view: 1, can_add: 0, can_edit: 0, can_update: 0, can_view_all: 0, can_delete: 0, can_approve: 0, can_print: 0, can_void: 0,

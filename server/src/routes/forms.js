@@ -4,6 +4,7 @@ const { requireAuth, requirePermission, userCan } = require('../middleware/auth'
 const { insertNumbered } = require('../lib/docNumber');
 const {
   DEPARTMENT_NOTED_TYPES, isDepartmentNoter, departmentsHeadedBy, notersFor,
+  AP_NOTED_TYPES, isAccountsPayable, notersForDoc,
 } = require('../lib/formNoters');
 
 const router = express.Router();
@@ -122,7 +123,10 @@ async function loadFull(id) {
   if (!doc) return null;
 
   const [items] = await pool.query(
-    'SELECT id, item_date, particulars, amount, rejection_remark FROM form_request_items WHERE form_request_id = ? ORDER BY id',
+    `SELECT i.id, i.item_date, i.particulars, i.amount, i.rejection_remark, i.cogs_account_id,
+            a.account_code AS cogs_account_code, a.account_name AS cogs_account_name
+       FROM form_request_items i LEFT JOIN chart_of_accounts a ON a.id = i.cogs_account_id
+      WHERE i.form_request_id = ? ORDER BY i.id`,
     [id]);
   doc.items = items;
 
@@ -152,6 +156,8 @@ async function maySee(userId, doc) {
   // Heading the department comes first because it is the one route in that does NOT depend on a
   // page grant -- a head may hold nothing on /forms and still have to note this.
   if (await isDepartmentNoter(userId, doc.department_id)) return true;
+  // AP has to open every liquidation it notes, whoever's department it came from.
+  if (AP_NOTED_TYPES.includes(doc.type) && await isAccountsPayable(userId)) return true;
   if (await userCan(userId, APPROVAL_ROUTE, 'can_view')) return true;
   if (await userCan(userId, ROUTE, 'can_view_all')) return true;
   // Your own form, provided you still hold the module at all.
@@ -161,6 +167,18 @@ async function maySee(userId, doc) {
 // May this user note this particular form, and if not, why not? One answer used by the button, the
 // endpoint and the explanation on screen, so the three cannot disagree.
 async function mayNote(userId, doc) {
+  // A liquidation is noted by Accounts Payable, and only once every item has its COGS account --
+  // the COGS check is in the note route itself, so the screen can say what is missing.
+  if (AP_NOTED_TYPES.includes(doc.type)) {
+    if (await isAccountsPayable(userId)) return { allowed: true };
+    const ap = await notersForDoc(doc);
+    return {
+      allowed: false,
+      reason: ap.length
+        ? `Only Accounts Payable can note a liquidation: ${ap.map((u) => u.display_name).join(' or ')}.`
+        : 'Nobody is marked Accounts Payable, so nobody can note this. Tick "Accounts Payable" on the AP staff under Users & Permissions.',
+    };
+  }
   if (DEPARTMENT_NOTED_TYPES.includes(doc.type)) {
     if (!doc.department_id) {
       return {
@@ -233,15 +251,19 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
   try {
     const canSeeAll = await userCan(req.user.id, APPROVAL_ROUTE, 'can_view');
     const headOf = canSeeAll ? [] : await departmentsHeadedBy(req.user.id);
-    if (!canSeeAll && headOf.length === 0) {
+    // Accounts Payable sees every liquidation, since it notes them all.
+    const isAp = canSeeAll ? false : await isAccountsPayable(req.user.id);
+    if (!canSeeAll && headOf.length === 0 && !isAp) {
       return res.status(403).json({ error: 'You do not have permission to perform this action' });
     }
 
     const where = ['f.status IN (?)'];
     const params = [WORKFLOW_STATUSES];
     if (!canSeeAll) {
-      where.push('f.department_id IN (?)');
-      params.push(headOf);
+      const mine = [];
+      if (headOf.length) { mine.push('(f.department_id IN (?) AND f.type IN (?))'); params.push(headOf, DEPARTMENT_NOTED_TYPES); }
+      if (isAp) { mine.push('f.type IN (?)'); params.push(AP_NOTED_TYPES); }
+      where.push(`(${mine.join(' OR ')})`);
     }
     if (req.query.status && WORKFLOW_STATUSES.includes(req.query.status)) {
       where.push('f.status = ?'); params.push(req.query.status);
@@ -259,6 +281,42 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
       params,
     );
     res.json(rows);
+  } catch (err) { next(err); }
+});
+
+// The accounts a liquidation item can be charged to -- active, postable Expense accounts (cost of
+// sales sits there in this chart). For Accounts Payable only, who assigns them.
+router.get('/meta/cogs-accounts', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await isAccountsPayable(req.user.id))) return res.status(403).json({ error: 'Only Accounts Payable assigns COGS.' });
+    const [rows] = await pool.query(
+      `SELECT id, account_code, account_name FROM chart_of_accounts
+        WHERE account_type = 'Expense' AND is_active = 1 AND COALESCE(is_summary, 0) = 0
+        ORDER BY account_code`);
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+// Assign one liquidation item's COGS account (asked 2026-10-06). Accounts Payable, while the
+// liquidation is waiting to be noted -- every item needs one before AP can note it.
+router.put('/:id/items/:itemId/cogs', requireAuth, async (req, res, next) => {
+  try {
+    const [[doc]] = await pool.query('SELECT id, type, status FROM form_requests WHERE id = ?', [req.params.id]);
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    if (!AP_NOTED_TYPES.includes(doc.type)) return res.status(409).json({ error: 'Only a liquidation\'s items take a COGS account.' });
+    if (!(await isAccountsPayable(req.user.id))) return res.status(403).json({ error: 'Only Accounts Payable assigns COGS.' });
+    if (doc.status !== 'submitted') return res.status(409).json({ error: 'COGS can only be assigned while the liquidation is waiting to be noted.' });
+    const accountId = req.body?.cogs_account_id ? Number(req.body.cogs_account_id) : null;
+    if (accountId) {
+      const [[acct]] = await pool.query(
+        "SELECT id FROM chart_of_accounts WHERE id = ? AND account_type = 'Expense' AND is_active = 1", [accountId]);
+      if (!acct) return res.status(400).json({ error: 'Choose an active Expense account.' });
+    }
+    const [r] = await pool.query(
+      'UPDATE form_request_items SET cogs_account_id = ? WHERE id = ? AND form_request_id = ?',
+      [accountId, req.params.itemId, doc.id]);
+    if (!r.affectedRows) return res.status(404).json({ error: 'Item not found' });
+    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 
@@ -298,9 +356,11 @@ router.get('/:id', requireAuth, async (req, res, next) => {
     // as "waiting on X" rather than as a missing button.
     doc.note_blocked_reason = note.allowed ? null : note.reason;
     // Who it is waiting on, named, whoever is looking. The owner wants to know who to chase.
-    doc.noters = DEPARTMENT_NOTED_TYPES.includes(doc.type)
-      ? (await notersFor(doc.department_id)).map((h) => h.display_name)
-      : [];
+    doc.noters = (await notersForDoc(doc)).map((h) => h.display_name);
+    // A liquidation's items each need a COGS account before it can be noted; AP assigns them.
+    doc.needs_cogs = AP_NOTED_TYPES.includes(doc.type);
+    doc.cogs_missing = doc.needs_cogs ? doc.items.filter((i) => !i.cogs_account_id).length : 0;
+    doc.can_set_cogs = doc.needs_cogs && note.allowed && doc.status === 'submitted';
 
     doc.can_approve = await userCan(req.user.id, APPROVAL_ROUTE, 'can_approve');
     return res.json(doc);
@@ -446,7 +506,9 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 // This is why noted_at/noted_by are not wiped on rejection -- they are the memory this reads.
 async function restoreAfterRevision(conn, doc) {
   if (doc.status !== 'rejected') return doc.status;
-  const backToNoted = !!(doc.noted_at && doc.noted_by);
+  // A revised LIQUIDATION goes back to AP (SUBMITTED) whatever it was: its items are re-saved
+  // without their COGS accounts, and AP must assign those again before it can be noted.
+  const backToNoted = !!(doc.noted_at && doc.noted_by) && !AP_NOTED_TYPES.includes(doc.type);
   await conn.query(
     `UPDATE form_requests
         SET status = ?, submitted_at = COALESCE(submitted_at, NOW()),
@@ -573,6 +635,13 @@ router.post('/:id/note', requireAuth, async (req, res, next) => {
     if (!allowed) return res.status(403).json({ error: reason });
 
     if (doc.status !== 'submitted') return res.status(409).json({ error: 'Only a submitted form can be noted.' });
+    if (AP_NOTED_TYPES.includes(doc.type)) {
+      const [[m]] = await pool.query(
+        'SELECT COUNT(*) AS n FROM form_request_items WHERE form_request_id = ? AND cogs_account_id IS NULL', [doc.id]);
+      if (Number(m.n)) {
+        return res.status(409).json({ error: `Assign a COGS account to every item first -- ${m.n} item(s) still have none.` });
+      }
+    }
 
     await pool.query(
       "UPDATE form_requests SET status = 'noted', noted_at = NOW(), noted_by = ?, updated_at = NOW() WHERE id = ?",
@@ -594,7 +663,10 @@ router.post('/:id/approve', requireAuth, requirePermission(APPROVAL_ROUTE, 'can_
     // The cost of that is real and deliberate: a form from a department with no head recorded has
     // nowhere to go, so the refusal names who is missing rather than just saying no.
     if (doc.status === 'submitted') {
-      const heads = DEPARTMENT_NOTED_TYPES.includes(doc.type) ? await notersFor(doc.department_id) : [];
+      const heads = await notersForDoc(doc);
+      if (AP_NOTED_TYPES.includes(doc.type) && heads.length === 0) {
+        return res.status(409).json({ error: 'This liquidation has to be noted by Accounts Payable first, and nobody is marked Accounts Payable.' });
+      }
       if (DEPARTMENT_NOTED_TYPES.includes(doc.type) && heads.length === 0) {
         return res.status(409).json({
           error: `This has to be noted before it can be approved, and ${doc.department || 'its department'} has no head recorded to note it. Add one under that department's ticket approvers.`,
