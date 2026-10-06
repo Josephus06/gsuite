@@ -98,7 +98,10 @@ export default function BillCreditModal({ vendorBillId, chequeId, billCreditId, 
   const computedLines = useMemo(() => lines.map((l) => ({ ...l, ...computeLine(l, wtaxRate) })), [lines, wtaxRate]);
   // Expense lines decide the total when there are any; otherwise the typed Amount does.
   const hasLines = lines.some((l) => l.account_id && Number(l.amount) > 0);
-  const amountOnly = hasLines ? 0 : (Number(typedAmount) || 0);
+  const applyTotalNow = Object.values(applyAmounts).reduce((s, v) => s + (Number(v) || 0), 0);
+  // Left blank, the Amount is what is being applied -- so crediting a bill in full needs nothing
+  // typed twice (VB-24638, 2026-10-06). Typed, it stands, and may exceed what is applied.
+  const amountOnly = hasLines ? 0 : (String(typedAmount).trim() === '' ? applyTotalNow : (Number(typedAmount) || 0));
   const subtotal = hasLines ? computedLines.reduce((s, l) => s + (Number(l.amount) || 0), 0) : amountOnly;
   const taxAmount = hasLines ? computedLines.reduce((s, l) => s + l.tax_amount, 0) : 0;
   const wtaxAmountTotal = hasLines ? computedLines.reduce((s, l) => s + l.wtax_amount, 0) : 0;
@@ -212,7 +215,7 @@ export default function BillCreditModal({ vendorBillId, chequeId, billCreditId, 
               <div className="field">
                 <label>Amount</label>
                 <input type="number" step="0.01" min="0" value={hasLines ? '' : typedAmount} disabled={hasLines}
-                  placeholder={hasLines ? 'Set by the expense lines' : 'Credit amount, if no expense lines'}
+                  placeholder={hasLines ? 'Set by the expense lines' : `${money(applyTotalNow)} -- the amount applied, unless you type another`}
                   onChange={(e) => setTypedAmount(e.target.value)} />
                 <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
                   {hasLines ? 'The expense lines decide the total.' : 'With no expense lines the credit is this amount; it credits back the accounts of the bills it is applied to.'}
