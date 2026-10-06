@@ -11,10 +11,14 @@
 // not a number copied over it. JOs raised in T1S (since 2026-10-01) are counted apart in the
 // report: those should never lag, so any there point at a live bug rather than migration debt.
 //
+// --cap-over (asked 2026-10-06: "if billed twice it's an error caused by the system, adapt one of
+// it"): those over-invoiced JOs are set to their own quantity instead -- invoiced once. Only the
+// counter; the duplicate invoices themselves are not touched (that would move AR and the GL).
+//
 // Dry run unless --apply; --apply writes a rollback file of the old values.
 // Production: the droplet only (replication carries it to the office).
 //
-//   node src/db/repair-jo-invoiced-qty.js [--only=JO-64627-1-1] [--apply]
+//   node src/db/repair-jo-invoiced-qty.js [--only=JO-64627-1-1] [--cap-over] [--apply]
 //   node src/db/repair-jo-invoiced-qty.js --rollback=rollback/jo-invoiced-rollback-<stamp>.json
 const fs = require('fs');
 const path = require('path');
@@ -25,6 +29,7 @@ const APPLY = process.argv.includes('--apply');
 const arg = (n) => (process.argv.find((a) => a.startsWith(`--${n}=`)) || '').split('=').slice(1).join('=');
 const ROLLBACK = arg('rollback');
 const ONLY = arg('only');
+const CAP_OVER = process.argv.includes('--cap-over');
 const GO_LIVE = '2026-10-01';
 
 async function main() {
@@ -56,12 +61,18 @@ async function main() {
 
   const plan = []; const over = [];
   for (const r of rows) {
-    if (Number(r.quantity) > 0 && Number(r.inv_qty) > Number(r.quantity) + 0.0001) { over.push(r); continue; }
+    if (Number(r.quantity) > 0 && Number(r.inv_qty) > Number(r.quantity) + 0.0001) {
+      // Billed more than once: counted once, at the JO's own quantity -- unless that is no raise.
+      if (CAP_OVER && Number(r.quantity) > Number(r.quantity_invoiced) + 0.0001) plan.push({ ...r, inv_qty: r.quantity, capped: true });
+      else over.push(r);
+      continue;
+    }
     plan.push(r);
   }
   const t1s = plan.filter((r) => String(r.created_at).slice(0, 10) >= GO_LIVE);
   console.log(`JOs whose Invoiced lags their invoice lines: ${rows.length}`);
   console.log(`  to set from the invoice lines: ${plan.length} (raised in T1S since ${GO_LIVE}: ${t1s.length})`);
+  console.log(`  of those, over-invoiced and set to the JO's own quantity (--cap-over): ${plan.filter((r) => r.capped).length}`);
   console.log(`  left alone, invoiced past the JO's own quantity: ${over.length}`);
   for (const r of plan.slice(0, 10)) console.log(`    ${r.job_order_no}: ${Number(r.quantity_invoiced)} -> ${Number(r.inv_qty)} (qty ${Number(r.quantity)})`);
   for (const r of t1s.slice(0, 15)) console.log(`    T1S-era ${r.job_order_no}: ${Number(r.quantity_invoiced)} -> ${Number(r.inv_qty)}`);
