@@ -975,6 +975,32 @@ async function computeAssetDisposalGl(d) {
   return rows;
 }
 
+// GL Impact for a Liquidation (asked 2026-10-06), as the journals AP used to key by hand for one
+// (JRNL-5976): DEBIT each item's COGS / expense account for its amount, memo the item's particulars;
+// CREDIT the account AP chose for the liquidation -- 13305 Advances To Employees - For Liquidation
+// unless they picked another -- for the total. Both sides carry the liquidation's department. Items
+// without a COGS account post nothing (AP cannot note one in that state, so an approved liquidation
+// always has them all).
+const LIQUIDATION_DEFAULT_CREDIT = '13305';
+async function computeLiquidationGl(doc, items) {
+  const rows = [];
+  let total = 0;
+  for (const it of items || []) {
+    const amount = Number(Number(it.amount || 0).toFixed(2));
+    if (!amount || !it.cogs_account_id) continue;
+    const acct = await coaById(it.cogs_account_id);
+    if (!acct) continue;
+    rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: amount, credit: 0, department_id: doc.department_id || null, memo: it.particulars || null });
+    total += amount;
+  }
+  total = Number(total.toFixed(2));
+  if (!total) return [];
+  const credit = (doc.credit_account_id ? await coaById(doc.credit_account_id) : null) || await coaByCode(LIQUIDATION_DEFAULT_CREDIT);
+  if (!credit) return [];
+  rows.push({ account_code: credit.account_code, account_name: credit.account_name, debit: 0, credit: total, department_id: doc.department_id || null, memo: doc.request_no || null });
+  return rows;
+}
+
 async function computePostedGlLines({ toDate, fromDate }) {
   const dateFilter = (col) => {
     const clauses = [`${col} <= ?`];
@@ -1229,6 +1255,25 @@ async function computePostedGlLines({ toDate, fromDate }) {
         })));
         // No department_id in meta so each line keeps its own (push spreads meta over the row).
         push(rows, { entry_date: j.date_created, source_type: 'journal', source_no: j.journal_no, source_id: j.id, memo: j.memo || null, location_id: j.location_id || null });
+      }
+    }
+  }
+
+  // Liquidations (Forms) post on the day they are APPROVED -- noted by AP with every item's COGS
+  // assigned, then approved. Each line keeps its own memo and department (no memo/department in meta).
+  {
+    const [tbl] = await pool.query("SHOW COLUMNS FROM form_request_items LIKE 'cogs_account_id'");
+    if (tbl.length) {
+      const { sql, params } = dateFilter('DATE(f.approved_at)');
+      const [headers] = await pool.query(
+        `SELECT f.id, f.request_no, f.department_id, f.credit_account_id, f.approved_at
+           FROM form_requests f WHERE f.type = 'liquidation' AND f.status = 'approved' AND f.approved_at IS NOT NULL AND ${sql}`, params);
+      const linesBy = await linesByParent(
+        'SELECT form_request_id, particulars, amount, cogs_account_id FROM form_request_items WHERE form_request_id IN (?) ORDER BY id',
+        'form_request_id', headers.map((h) => h.id));
+      for (const f of headers) {
+        const rows = await computeLiquidationGl(f, linesBy.get(f.id) || []);
+        push(rows, { entry_date: f.approved_at, source_type: 'liquidation', source_no: f.request_no, source_id: f.id, location_id: null });
       }
     }
   }
@@ -1632,5 +1677,6 @@ module.exports = {
   computeBillCreditGl,
   computeAssetDepreciationRunGl,
   computeAssetDisposalGl,
+  computeLiquidationGl,
   getPostedGlLines,
 };

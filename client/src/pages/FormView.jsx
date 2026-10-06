@@ -37,6 +37,7 @@ export default function FormView() {
   const [lineRemarks, setLineRemarks] = useState({});
   // Accounts Payable assigns each liquidation item its COGS account before noting it.
   const [cogsAccounts, setCogsAccounts] = useState([]);
+  const [creditAccounts, setCreditAccounts] = useState([]);
 
   const load = useCallback(() => api.get(`/forms/${id}`).then(({ data }) => {
     setDoc(data);
@@ -51,7 +52,18 @@ export default function FormView() {
   useEffect(() => {
     if (!canSetCogs) return;
     api.get('/forms/meta/cogs-accounts').then(({ data }) => setCogsAccounts(data)).catch(() => setCogsAccounts([]));
+    api.get('/forms/meta/credit-accounts').then(({ data }) => setCreditAccounts(data)).catch(() => setCreditAccounts([]));
   }, [canSetCogs]);
+
+  async function setCreditAccount(accountId) {
+    setError(''); setSaved('');
+    try {
+      await api.put(`/forms/${id}/credit-account`, { credit_account_id: accountId || null });
+      await load();
+    } catch (e) {
+      setError(e.response?.data?.error || 'Could not set the credit account.');
+    }
+  }
 
   async function setItemCogs(itemId, accountId) {
     setError(''); setSaved('');
@@ -293,6 +305,56 @@ export default function FormView() {
                   {doc.needs_cogs && <td />}
                 </tr>
               </tfoot>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {doc.needs_cogs && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3>GL Impact</h3>
+          <p className="muted" style={{ marginTop: 0 }}>
+            {doc.gl_posts
+              ? 'Posted to the books on the day this liquidation was approved.'
+              : 'What this liquidation will post once it is approved: each item\'s COGS account is debited, and the credit account below is credited.'}
+          </p>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
+            <span className="muted">Credit Account :</span>
+            {canSetCogs ? (
+              <select value={doc.credit_account_id || ''} onChange={(e) => setCreditAccount(e.target.value)}>
+                <option value="">13305 — Advances To Employees - For Liquidation (default)</option>
+                {creditAccounts.map((a) => <option key={a.id} value={a.id}>{a.account_code} — {a.account_name}</option>)}
+              </select>
+            ) : (
+              <strong>{doc.credit_account_id ? `${doc.credit_account_code} — ${doc.credit_account_name}` : '13305 — Advances To Employees - For Liquidation'}</strong>
+            )}
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Account Code</th><th>Account Title</th><th>Memo</th><th style={{ textAlign: 'right' }}>Debit</th><th style={{ textAlign: 'right' }}>Credit</th></tr></thead>
+              <tbody>
+                {(doc.gl_impact || []).length === 0 && (
+                  <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 16 }}>Nothing to post until the items have COGS accounts.</td></tr>
+                )}
+                {(doc.gl_impact || []).map((g, i) => (
+                  <tr key={i}>
+                    <td>{g.account_code}</td>
+                    <td>{g.account_name}</td>
+                    <td>{g.memo}</td>
+                    <td style={{ textAlign: 'right' }}>{g.debit ? money(g.debit) : ''}</td>
+                    <td style={{ textAlign: 'right' }}>{g.credit ? money(g.credit) : ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+              {(doc.gl_impact || []).length > 0 && (
+                <tfoot>
+                  <tr>
+                    <td colSpan={3} style={{ fontWeight: 700 }}>Total</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700 }}>{money(doc.gl_impact.reduce((t, g) => t + Number(g.debit || 0), 0))}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700 }}>{money(doc.gl_impact.reduce((t, g) => t + Number(g.credit || 0), 0))}</td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </div>

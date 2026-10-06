@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { insertNumbered } = require('../lib/docNumber');
+const { computeLiquidationGl } = require('../lib/glImpact');
 const {
   DEPARTMENT_NOTED_TYPES, isDepartmentNoter, departmentsHeadedBy, notersFor,
   AP_NOTED_TYPES, isAccountsPayable, notersForDoc,
@@ -112,8 +113,10 @@ async function loadFull(id) {
   const [[doc]] = await pool.query(
     `SELECT f.*, u.display_name AS owner_name, u.username AS owner_username,
             nu.display_name AS noted_by_name, au.display_name AS approved_by_name,
-            ru.display_name AS rejected_by_name
+            ru.display_name AS rejected_by_name,
+            ca.account_code AS credit_account_code, ca.account_name AS credit_account_name
        FROM form_requests f
+       LEFT JOIN chart_of_accounts ca ON ca.id = f.credit_account_id
        LEFT JOIN users u ON u.id = f.user_id
        LEFT JOIN users nu ON nu.id = f.noted_by
        LEFT JOIN users au ON au.id = f.approved_by
@@ -286,6 +289,38 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
 
 // The accounts a liquidation item can be charged to -- active, postable Expense accounts (cost of
 // sales sits there in this chart). For Accounts Payable only, who assigns them.
+// What a liquidation can credit -- active, postable Asset and Liability accounts (13305 Advances To
+// Employees - For Liquidation by default). Accounts Payable only.
+router.get('/meta/credit-accounts', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await isAccountsPayable(req.user.id))) return res.status(403).json({ error: 'Only Accounts Payable sets this.' });
+    const [rows] = await pool.query(
+      `SELECT id, account_code, account_name FROM chart_of_accounts
+        WHERE account_type IN ('Asset', 'Liability') AND is_active = 1 AND COALESCE(is_summary, 0) = 0
+        ORDER BY account_code`);
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+// The liquidation's credit account, while it waits to be noted. Empty = the default (13305).
+router.put('/:id/credit-account', requireAuth, async (req, res, next) => {
+  try {
+    const [[doc]] = await pool.query('SELECT id, type, status FROM form_requests WHERE id = ?', [req.params.id]);
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    if (!AP_NOTED_TYPES.includes(doc.type)) return res.status(409).json({ error: 'Only a liquidation has a credit account.' });
+    if (!(await isAccountsPayable(req.user.id))) return res.status(403).json({ error: 'Only Accounts Payable sets this.' });
+    if (doc.status !== 'submitted') return res.status(409).json({ error: 'The credit account can only be set while the liquidation is waiting to be noted.' });
+    const accountId = req.body?.credit_account_id ? Number(req.body.credit_account_id) : null;
+    if (accountId) {
+      const [[acct]] = await pool.query(
+        "SELECT id FROM chart_of_accounts WHERE id = ? AND account_type IN ('Asset', 'Liability') AND is_active = 1", [accountId]);
+      if (!acct) return res.status(400).json({ error: 'Choose an active Asset or Liability account.' });
+    }
+    await pool.query('UPDATE form_requests SET credit_account_id = ?, updated_at = NOW() WHERE id = ?', [accountId, doc.id]);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 router.get('/meta/cogs-accounts', requireAuth, async (req, res, next) => {
   try {
     if (!(await isAccountsPayable(req.user.id))) return res.status(403).json({ error: 'Only Accounts Payable assigns COGS.' });
@@ -361,6 +396,11 @@ router.get('/:id', requireAuth, async (req, res, next) => {
     doc.needs_cogs = AP_NOTED_TYPES.includes(doc.type);
     doc.cogs_missing = doc.needs_cogs ? doc.items.filter((i) => !i.cogs_account_id).length : 0;
     doc.can_set_cogs = doc.needs_cogs && note.allowed && doc.status === 'submitted';
+    // The entry it posts on approval (lib/glImpact.js computeLiquidationGl), shown as it stands now.
+    if (doc.needs_cogs) {
+      doc.gl_impact = await computeLiquidationGl(doc, doc.items);
+      doc.gl_posts = doc.status === 'approved';
+    }
 
     doc.can_approve = await userCan(req.user.id, APPROVAL_ROUTE, 'can_approve');
     return res.json(doc);

@@ -4,6 +4,8 @@
 //   users.is_accounts_payable          the "Accounts Payable" tick on Users & Permissions -- who may
 //                                      assign COGS and note a liquidation
 //   form_request_items.cogs_account_id the Chart of Accounts line an item is charged to, set by AP
+//   form_requests.credit_account_id    what the liquidation credits (13305 Advances To Employees - For
+//                                      Liquidation when left empty), set by AP
 //
 // Idempotent -- safe to re-run, and --env picks the install:
 //   node src/db/add-liquidation-ap-noting.js
@@ -15,6 +17,7 @@ const pool = require('../db');
 const CHANGES = [
   ['users', 'is_accounts_payable', 'ADD COLUMN is_accounts_payable TINYINT(1) NOT NULL DEFAULT 0'],
   ['form_request_items', 'cogs_account_id', 'ADD COLUMN cogs_account_id BIGINT NULL AFTER amount'],
+  ['form_requests', 'credit_account_id', 'ADD COLUMN credit_account_id BIGINT NULL'],
 ];
 
 async function main() {
