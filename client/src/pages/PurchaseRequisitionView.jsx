@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { SupplierLink } from '../components/PartyLink';
 import { displayDate, displayDateTime } from '../utils/dates';
 
 const STATUS_LABELS = {
@@ -172,7 +173,7 @@ export default function PurchaseRequisitionView() {
                     <td>Purchase Order</td>
                     <td><Link className="link-btn" to={`/purchase-orders/${po.id}`}>{po.po_no}</Link></td>
                     <td>{formatDate(po.date_created)}</td>
-                    <td>{po.supplier_name}</td>
+                    <td><SupplierLink id={po.supplier_id} name={po.supplier_name} /></td>
                     <td>{PO_STATUS_LABELS[po.status] || po.status}</td>
                   </tr>
                 ))}

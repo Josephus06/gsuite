@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import SyncFromSourceButton from '../components/SyncFromSourceButton';
 import useAutoSearch from '../utils/useAutoSearch';
+import { CustomerLink } from '../components/PartyLink';
 
 // Mirrors Estimates.jsx / the real system's "Saved Sales Orders" list -- Sales Orders
 // are only ever generated automatically (when an estimate reaches Approved), so there
@@ -156,7 +157,7 @@ export default function SalesOrders() {
                       <td data-label="Est No.">{row.estimate_no}</td>
                       <td data-label="Date">{row.date_created ? String(row.date_created).slice(0, 10) : ''}</td>
                       <td data-label="Location">{row.location_name}</td>
-                      <td data-label="Customer">{row.customer_name}</td>
+                      <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                       <td data-label="Contract Description">{row.contract_description}</td>
                       <td data-label="Sales Rep.">{row.sales_rep_name}</td>
                       <td data-label="Prepared By">{row.prepared_by_name}</td>

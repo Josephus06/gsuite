@@ -16,6 +16,7 @@ import RevisionNotice from '../components/RevisionNotice';
 import { maySalesRevise, awaitingDateDecision } from '../utils/salesRevision';
 import { displayDateTime } from '../utils/dates';
 import ButtonMenu from '../components/ButtonMenu';
+import { CustomerLink } from '../components/PartyLink';
 
 // Mirrors the real system's "Production > Production" detail screen -- same underlying
 // Job Order as JobOrderView.jsx, but reached once the JO is Released and viewed for
@@ -729,7 +730,7 @@ export default function ProductionJobOrderView() {
         <div className="estimate-detail-grid">
           <div>
             <h4>Customer</h4>
-            <div className="hi">{jo.customer_name}</div>
+            <div className="hi"><CustomerLink id={jo.customer_id} name={jo.customer_name} /></div>
             <div>Contact Person : <span className="hi">{jo.contact_name}</span></div>
             <div>Contact Email : <span className="hi">{jo.contact_email}</span></div>
             <div>Contact Title : <span className="hi">{jo.contact_title}</span></div>

@@ -8,6 +8,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
 import { displayDateTime } from '../utils/dates';
+import { CustomerLink } from '../components/PartyLink';
 
 // Read-only Sales Order detail -- mirrors EstimateView.jsx's layout (banner + 4-column
 // details + tabs + totals footer), since the real system's Sales Order screen is
@@ -374,7 +375,7 @@ export default function SalesOrderView() {
         <div className="estimate-detail-grid">
           <div>
             <h4>Customer Details</h4>
-            <div className="hi">{so.customer_name}</div>
+            <div className="hi"><CustomerLink id={so.customer_id} name={so.customer_name} /></div>
             <div>Contact Name : <span className="hi">{so.contact_name}</span></div>
             <div>Contact Title : <span className="hi">{so.contact_title}</span></div>
             <div>Contact Email : <span className="hi">{so.contact_email}</span></div>

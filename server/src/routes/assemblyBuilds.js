@@ -63,7 +63,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const [rows] = await pool.query(
       `SELECT ab.id, ab.ab_no, ab.date_created, ab.quantity_built, ab.status,
               jo.job_order_no, jo.description AS job_desc, loc.location_name AS job_location_name,
-              jt.display_name AS job_type_name, c.name AS customer_name,
+              jt.display_name AS job_type_name, c.id AS customer_id, c.name AS customer_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name
        ${baseFrom} ${whereSql}
        ORDER BY ab.id DESC
@@ -84,7 +84,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
               jo.length, jo.width, jo.height, jo.memo AS jo_memo,
               jo.job_location_id,
               loc.location_name AS job_location_name, jt.display_name AS job_type_name, jt.asset_account_id AS fg_account_id,
-              c.name AS customer_name, cc.contact_name,
+              c.id AS customer_id, c.name AS customer_name, cc.contact_name,
               so.contact_email, so.contact_title, so.contact_phone,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               CONCAT(cu.first_name, ' ', cu.last_name) AS created_by_name

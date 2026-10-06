@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate, displayDateTime } from '../utils/dates';
+import { CustomerLink } from '../components/PartyLink';
 
 const STATUS_LABELS = { pending_approval: 'Pending', approved: 'Approved', voided: 'Voided' };
 function formatDate(v) { return v ? displayDate(v) : ''; }
@@ -66,7 +67,7 @@ export default function WarrantyCertificateView() {
 
           <div className="section-band">Customer Information</div>
           <div style={{ lineHeight: 2, padding: '8px 0' }}>
-            <div>Customer : <span className="hi">{wc.customer_name}</span></div>
+            <div>Customer : <span className="hi"><CustomerLink id={wc.customer_id} name={wc.customer_name} /></span></div>
             <div>Contact Person : <span className="hi">{wc.contact_name}</span></div>
             <div>Contact Number : <span className="hi">{wc.contact_number}</span></div>
             <div>Address : <span className="hi">{wc.address}</span></div>

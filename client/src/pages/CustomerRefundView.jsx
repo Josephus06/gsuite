@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate, displayDateTime } from '../utils/dates';
+import { CustomerLink } from '../components/PartyLink';
 
 function money(v) {
   const n = Number(v);
@@ -81,7 +82,7 @@ export default function CustomerRefundView() {
 
         <div className="estimate-detail-grid">
           <div>
-            <div>Customer : <span className="hi">{cr.customer_name}</span></div>
+            <div>Customer : <span className="hi"><CustomerLink id={cr.customer_id} name={cr.customer_name} /></span></div>
             <div>TIN : <span className="hi">{cr.customer_tin || '—'}</span></div>
           </div>
           <div>

@@ -108,7 +108,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const [detail] = await pool.query(
       `SELECT del.id, del.delivery_no, del.date_created, del.delivery_cost, del.delivery_reference,
               COALESCE(dm.name, 'Not specified') AS delivery_method_name,
-              so.sales_order_no, c.name AS customer_name,
+              so.sales_order_no, c.id AS customer_id, c.name AS customer_name,
               COALESCE(ln.qty, 0) AS total_qty
          FROM item_deliveries del
          JOIN sales_orders so ON so.id = del.sales_order_id

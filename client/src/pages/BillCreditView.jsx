@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import BillCreditModal from '../components/BillCreditModal';
+import { SupplierLink } from '../components/PartyLink';
 import { displayDate, displayDateTime } from '../utils/dates';
 
 function money(v) {
@@ -92,7 +93,7 @@ export default function BillCreditView() {
 
         <div className="estimate-detail-grid">
           <div>
-            <div>Vendor : <span className="hi">{bc.supplier_name}</span></div>
+            <div>Vendor : <span className="hi"><SupplierLink id={bc.vendor_id} name={bc.supplier_name} /></span></div>
             <div>TIN : <span className="hi">{bc.tin || ''}</span></div>
             <div>A/P Account : <span className="hi">{bc.ap_account_code ? `${bc.ap_account_code} — ${bc.ap_account_name}` : '—'}</span></div>
           </div>

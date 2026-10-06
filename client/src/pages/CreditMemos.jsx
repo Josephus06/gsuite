@@ -7,6 +7,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import { CustomerLink } from '../components/PartyLink';
 
 const PAGE_SIZE = 10;
 const STATUS_LABELS = { open: 'Open', voided: 'Void' };
@@ -144,7 +145,7 @@ export default function CreditMemos() {
                   <tr key={row.id}>
                     <td data-label="Credit Memo #">{row.credit_memo_no}</td>
                     <td data-label="Date Created">{formatDate(row.date_created)}</td>
-                    <td data-label="Customer">{row.customer_name}</td>
+                    <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                     <td data-label="Invoice #">{row.invoice_no}</td>
                     <td data-label="Gross Amount">{money(row.gross_amount)}</td>
                     <td data-label="Applied">{money(row.applied_amount)}</td>

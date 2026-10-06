@@ -9,6 +9,7 @@ import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 import { displayDateTime } from '../utils/dates';
+import { CustomerLink } from '../components/PartyLink';
 
 // Read-only counterpart to EstimateWizard (which stays the create/edit form): mirrors
 // the real system's estimate detail screen -- a summary banner with status-driven
@@ -332,7 +333,7 @@ export default function EstimateView() {
         <div className="estimate-detail-grid">
           <div>
             <h4>Customer Details</h4>
-            <div className="hi">{estimate.customer_name}</div>
+            <div className="hi"><CustomerLink id={estimate.customer_id} name={estimate.customer_name} /></div>
             <div>Contact Name : <span className="hi">{estimate.contact_name}</span></div>
             <div>Contact Title : <span className="hi">{estimate.contact_title}</span></div>
             <div>Contact Email : <span className="hi">{estimate.contact_email}</span></div>

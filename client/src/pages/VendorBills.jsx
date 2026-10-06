@@ -7,6 +7,7 @@ import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
 import { useAuth } from '../context/useAuth';
 import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
+import { SupplierLink } from '../components/PartyLink';
 
 const PAGE_SIZE = 10;
 const STATUS_LABELS = { open: 'Open', paid_in_full: 'Paid in Full', paid: 'Paid in Full', cancelled: 'Cancelled' };
@@ -119,7 +120,7 @@ export default function VendorBills() {
                     <td data-label="Date Created">{formatDate(row.date_created)}</td>
                     <td data-label="Date Due">{formatDate(row.date_due)}</td>
                     <td data-label="Office Location">{row.office_location_name}</td>
-                    <td data-label="Vendor">{row.supplier_name}</td>
+                    <td data-label="Vendor"><SupplierLink id={row.supplier_id} name={row.supplier_name} /></td>
                     <td data-label="Gross Amount">{money(row.gross_amount)}</td>
                     <td data-label="Amount Due">{money(row.amount_due)}</td>
                     <td data-label="Term">{row.term}</td>

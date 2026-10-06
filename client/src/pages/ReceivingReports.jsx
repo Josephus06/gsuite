@@ -4,6 +4,7 @@ import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { SupplierLink } from '../components/PartyLink';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
 
@@ -163,7 +164,7 @@ export default function ReceivingReports() {
                           {r.po_no}
                         </Link>
                       </td>
-                      <td>{r.supplier_name || '—'}</td>
+                      <td>{r.supplier_name ? <SupplierLink id={r.supplier_id} name={r.supplier_name} /> : '—'}</td>
                       <td>{r.ref_no || ''}</td>
                       <td style={{ textAlign: 'right' }}>{r.line_count}</td>
                       <td style={{ textAlign: 'right' }}>{qty(r.qty_received)}</td>

@@ -335,7 +335,7 @@ async function buildCommissionJoDetail(employeeId, year, month, filters = {}) {
   if (filters.salesDivisionId) { whereParts.push('so.sales_division_id = ?'); params.push(filters.salesDivisionId); }
 
   const [jos] = await pool.query(
-    `SELECT jo.id AS jo_id, jo.job_order_no, so.sales_order_no, c.name AS customer_name,
+    `SELECT jo.id AS jo_id, jo.job_order_no, so.sales_order_no, c.id AS customer_id, c.name AS customer_name,
             jt.display_name AS job_type, COALESCE(sol.net_of_tax, 0) AS net_of_tax,
             -- Fall back to the order-level actual GP when the line has none (see buildCommissionReport).
             COALESCE(NULLIF(sol.gp_rate, 0), so.actual_gp_rate) AS jo_gp_rate, jt.gp_rate_head AS passing_gp_rate,
@@ -381,7 +381,7 @@ async function buildCommissionJoDetail(employeeId, year, month, filters = {}) {
     bucket.paid_invoice = round2(bucket.paid_invoice + paid);
     bucket.count += 1;
     return {
-      job_order_no: j.job_order_no, sales_order_no: j.sales_order_no, customer_name: j.customer_name,
+      job_order_no: j.job_order_no, sales_order_no: j.sales_order_no, customer_id: j.customer_id, customer_name: j.customer_name,
       rep_name: j.rep_name, job_type: j.job_type, gp_rate: j.jo_gp_rate == null ? null : Number(j.jo_gp_rate),
       passing_gp_rate: j.passing_gp_rate == null ? null : Number(j.passing_gp_rate),
       dt_no: j.dt_no || null, invoice_no: j.invoice_no || null,

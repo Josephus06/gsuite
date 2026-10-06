@@ -169,7 +169,7 @@ async function listFilter(req) {
 
 const LIST_SELECT = `SELECT dt.id, dt.dt_no, dt.date_created, dt.date_due, dt.term, dt.po_no, dt.memo, dt.status,
               dt.net_of_tax, dt.tax_amount, dt.gross_amount, dt.amount_due,
-              so.sales_order_no, c.name AS customer_name,
+              so.sales_order_no, c.name AS customer_name, so.customer_id,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               loc.location_name AS office_location_name, d.name AS department_name,
               si.id AS sales_invoice_id, si.invoice_no
@@ -282,7 +282,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
   try {
     const [[dt]] = await pool.query(
       `SELECT dt.*, so.sales_order_no, so.contact_email, so.contact_title, so.contact_phone,
-              c.name AS customer_name, c.tin AS customer_tin, cc.contact_name,
+              c.name AS customer_name, so.customer_id, c.tin AS customer_tin, cc.contact_name,
               -- For the printed ticket's Address and Business Style lines: the customer's default
               -- address on file, else any, else the free-text one on the customer record.
               COALESCE(

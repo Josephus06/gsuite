@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../../api/client';
+import { CustomerLink } from '../../components/PartyLink';
 import LoadingSpinner from '../../components/LoadingSpinner';
 
 const ROUTE = '/reports/artist-incentive';
@@ -251,7 +252,7 @@ export default function ArtistIncentiveReport() {
                     <td><span className="badge">{row.source}</span></td>
                     <td>{row.doc_no}</td>
                     <td>{row.artist_name}</td>
-                    <td>{row.customer_name || ''}</td>
+                    <td><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                     <td>{row.sales_rep_name || ''}</td>
                     <td>{row.description}</td>
                     <td>{row.layout_job_type_name || ''}</td>

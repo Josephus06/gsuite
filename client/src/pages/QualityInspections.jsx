@@ -4,6 +4,7 @@ import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import useAutoSearch from '../utils/useAutoSearch';
+import { CustomerLink } from '../components/PartyLink';
 
 // Mirrors the real system's "Production > Quality Inspection" ("Saved Quality
 // Inspection") list -- a flat filterable table (no status tabs), same pattern as
@@ -118,7 +119,7 @@ export default function QualityInspections() {
                       <td data-label="JO #">{row.job_order_no}</td>
                       <td data-label="Date Created">{row.date_created ? String(row.date_created).slice(0, 10) : ''}</td>
                       <td data-label="Job Location">{row.job_location_name}</td>
-                      <td data-label="Customer">{row.customer_name}</td>
+                      <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                       <td data-label="Pass Qty">{row.total_pass_qty}</td>
                       <td data-label="RMA Qty">{row.total_rma_qty}</td>
                       <td data-label="Status">{row.status === 'cancelled' ? <span className="badge badge-muted">Cancelled</span> : <span className="badge badge-success">Saved</span>}</td>

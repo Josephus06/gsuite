@@ -5,6 +5,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 import { displayDateTime } from '../utils/dates';
+import { CustomerLink } from '../components/PartyLink';
 
 const PAGE_SIZE = 10;
 
@@ -127,7 +128,7 @@ export default function AssignedJobOrders() {
                 {pageRows.map((row) => (
                   <tr key={`${row.kind}-${row.id}`}>
                     <td>{row.job_order_no}</td>
-                    <td>{row.customer_name}</td>
+                    <td><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                     <td>{row.sales_rep_name || '—'}</td>
                     <td>{row.description}</td>
                     <td>{row.sub_status}</td>

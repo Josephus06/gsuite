@@ -280,7 +280,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(
       `SELECT n.id, n.nsso_no, n.type, n.date_created, n.total_amount, n.status, n.memo,
-              c.name AS customer_name, loc.location_name AS office_location_name,
+              c.name AS customer_name, n.customer_id, loc.location_name AS office_location_name,
               CONCAT(e.first_name, ' ', e.last_name) AS sales_rep_name,
               so.sales_order_no AS nested_sales_order_no
        FROM non_standard_sales_orders n

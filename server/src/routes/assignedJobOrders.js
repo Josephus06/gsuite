@@ -61,7 +61,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const [rows] = await pool.query(
       `SELECT jo.id, jo.job_order_no, jo.status, jo.sub_status, jo.description,
               jo.planned_start_at, jo.planned_end_at, jo.layout_started_at, jo.layout_ended_at, jo.layout_qty,
-              c.name AS customer_name,
+              c.id AS customer_id, c.name AS customer_name,
               pjt.id AS pms_job_type_id, pjt.code AS pms_job_type_code, pjt.display_name AS pms_job_type_name,
               pjt.minutes_consume,
               -- Same expressions the Artist Incentive report uses, so the artist's worklist
@@ -91,7 +91,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const [nstdjoRows] = await pool.query(
       `SELECT n.id, n.nstdjo_no AS job_order_no, n.status, n.sub_status, n.description,
               n.planned_start_at, n.planned_end_at, n.layout_started_at, n.layout_ended_at, n.layout_qty,
-              c.name AS customer_name,
+              c.id AS customer_id, c.name AS customer_name,
               pjt.id AS pms_job_type_id, pjt.code AS pms_job_type_code, pjt.display_name AS pms_job_type_name,
               pjt.minutes_consume,
               ${nstdjoIncentiveExpression('n')} AS incentive_amount,

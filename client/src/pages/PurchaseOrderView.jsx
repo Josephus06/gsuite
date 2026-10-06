@@ -7,6 +7,7 @@ import VendorBillModal from '../components/VendorBillModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { discountLabel } from '../utils/discountChain';
 import Modal from '../components/Modal';
+import { SupplierLink } from '../components/PartyLink';
 import { isApprovedPo, isSettledPo, normalisePoStatus } from '../utils/poStatus';
 
 import { displayDate, displayDateTime } from '../utils/dates';
@@ -268,7 +269,7 @@ export default function PurchaseOrderView() {
 
         <div className="estimate-detail-grid">
           <div>
-            <div>Supplier : <span className="hi">{po.supplier_name}</span></div>
+            <div>Supplier : <span className="hi"><SupplierLink id={po.supplier_id} name={po.supplier_name} /></span></div>
             <div>Date Created : <span className="hi">{formatDate(po.date_created)}</span></div>
             {po.need_by_date && <div>Need by Date : <span className="hi">{formatDate(po.need_by_date)}</span></div>}
             <div>Term : <span className="hi">{po.term_name || '—'}</span></div>
@@ -376,7 +377,7 @@ export default function PurchaseOrderView() {
                   <tr key={lc.id}>
                     <td><Link className="link-btn" to={`/purchase-orders/${lc.id}`}>{lc.po_no}</Link></td>
                     <td>{formatDate(lc.date_created)}</td>
-                    <td>{lc.supplier_name}</td>
+                    <td><SupplierLink id={lc.supplier_id} name={lc.supplier_name} /></td>
                     <td>{lc.term_name || '—'}</td>
                     <td>{money(lc.total_amount)}</td>
                     <td>{lc.memo || ''}</td>
@@ -480,7 +481,7 @@ export default function PurchaseOrderView() {
               <div>Rate on this PO : <span className="hi">{money(compareLine.rate)}</span> {compareLine.purchase_unit || compareLine.unit_title || ''}</div>
             </div>
             <div>
-              <div>Supplier : <span className="hi">{po.supplier_name}</span></div>
+              <div>Supplier : <span className="hi"><SupplierLink id={po.supplier_id} name={po.supplier_name} /></span></div>
               <div>Qty : <span className="hi">{qty(compareLine.qty)}</span></div>
             </div>
           </div>
@@ -513,7 +514,7 @@ export default function PurchaseOrderView() {
                       return (
                         <tr key={`${sp.source}-${sp.supplier_id}`} style={isThisSupplier ? { fontWeight: 600 } : undefined}>
                           <td>
-                            {sp.supplier_name}
+                            <SupplierLink id={sp.supplier_id} name={sp.supplier_name} />
                             {isThisSupplier && <span className="muted"> · this PO’s supplier</span>}
                           </td>
                           <td>{money(sp.rate)}</td>
@@ -571,7 +572,7 @@ export default function PurchaseOrderView() {
                           </Link>
                           {h.doc_type === 'RR' && h.po_no && <span className="muted"> · {h.po_no}</span>}
                         </td>
-                        <td>{h.supplier_name}</td>
+                        <td><SupplierLink id={h.supplier_id} name={h.supplier_name} /></td>
                         <td>{qty(h.qty)}</td>
                         <td>{h.unit || '—'}</td>
                         <td>{money(h.rate)}</td>

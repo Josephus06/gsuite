@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { CustomerLink } from '../components/PartyLink';
 
 const PAGE_SIZE = 10;
 
@@ -69,7 +70,7 @@ export default function ScheduledJobOrders() {
                 {pageRows.map((row) => (
                   <tr key={row.id}>
                     <td>{row.job_order_no}</td>
-                    <td>{row.customer_name}</td>
+                    <td><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                     <td>{row.description}</td>
                     <td>{row.quantity} {row.units}</td>
                     <td>{row.job_location_name}</td>
@@ -105,7 +106,7 @@ export default function ScheduledJobOrders() {
                 {pageRows.map((row) => (
                   <tr key={row.id}>
                     <td>{row.job_order_no}</td>
-                    <td>{row.customer_name}</td>
+                    <td><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                     <td>{row.description}</td>
                     <td>{row.process_name}</td>
                     <td>{row.total}</td>

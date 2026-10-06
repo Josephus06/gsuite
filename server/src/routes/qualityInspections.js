@@ -70,7 +70,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const offset = (pageNum - 1) * limitNum;
 
     const [rows] = await pool.query(
-      `SELECT qi.id, qi.qi_no, qi.date_created, qi.status, jo.job_order_no, loc.location_name AS job_location_name, c.name AS customer_name,
+      `SELECT qi.id, qi.qi_no, qi.date_created, qi.status, jo.job_order_no, loc.location_name AS job_location_name, c.id AS customer_id, c.name AS customer_name,
               (SELECT COALESCE(SUM(pass_qty), 0) FROM quality_inspection_lines WHERE quality_inspection_id = qi.id) AS total_pass_qty,
               (SELECT COALESCE(SUM(rma_qty), 0) FROM quality_inspection_lines WHERE quality_inspection_id = qi.id) AS total_rma_qty
        ${baseFrom} ${whereSql}
@@ -135,7 +135,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     const [[qi]] = await pool.query(
       `SELECT qi.*, jo.job_order_no, jo.quantity AS jo_quantity, jo.quantity_built, jo.quantity_inspected,
               jo.job_location_id,
-              c.name AS customer_name, cc.contact_name,
+              c.id AS customer_id, c.name AS customer_name, cc.contact_name,
               so.contact_email, so.contact_title, so.contact_phone,
               u.display_name AS created_by_name
        FROM quality_inspections qi

@@ -7,6 +7,7 @@ import BillPaymentModal from '../components/BillPaymentModal';
 import BillCreditModal from '../components/BillCreditModal';
 import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { SupplierLink } from '../components/PartyLink';
 import { displayDate, displayDateTime } from '../utils/dates';
 
 function qty(v) {
@@ -112,7 +113,7 @@ export default function VendorBillView() {
 
         <div className="estimate-detail-grid">
           <div>
-            <div>Vendor : <span className="hi">{vb.supplier_name}</span></div>
+            <div>Vendor : <span className="hi"><SupplierLink id={vb.vendor_id} name={vb.supplier_name} /></span></div>
             <div>Office Location : <span className="hi">{vb.office_location_name || '—'}</span></div>
             <div>Account : <span className="hi">{vb.account_code ? `${vb.account_code} — ${vb.account_name}` : '—'}</span></div>
           </div>

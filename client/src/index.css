@@ -2500,3 +2500,8 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .pc-table td input { min-width: 70px; }
 :root[data-theme="dark"] .pc-table td.pc-shade, :root[data-theme="dark"] .pc-table th.pc-shade { background: rgba(59, 130, 246, 0.18); }
 :root[data-theme="dark"] .pc-table th.pc-highlight, :root[data-theme="dark"] .pc-table td.pc-highlight { color: #f87171; }
+
+/* Customer / supplier names that open their Master Lists record (components/PartyLink.jsx). Inherits
+   the surrounding colour -- banner text stays banner-coloured -- and shows it is a link on hover. */
+.party-link { color: inherit; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; }
+.party-link:hover { text-decoration-style: solid; }

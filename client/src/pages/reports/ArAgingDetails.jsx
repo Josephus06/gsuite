@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
+import { CustomerLink } from '../../components/PartyLink';
 import EntityPicker from '../../components/EntityPicker';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import { REPORT_TIMING } from '../../utils/reportTiming';
@@ -287,7 +288,7 @@ export default function ArAgingDetails() {
                   <tr key={`c-${g.customer_id}`} style={{ background: 'var(--color-neutral-bg)' }}>
                     <td colSpan={8} style={{ fontWeight: 600 }}>
                       <span style={{ color: 'var(--color-accent, #14b8a6)', marginRight: 8 }}>●</span>
-                      {g.customer_name}
+                      <CustomerLink id={g.customer_id} name={g.customer_name} />
                     </td>
                     <td style={{ textAlign: 'right', fontWeight: 700 }}>{money(g.total_balance)}</td>
                     <td></td>

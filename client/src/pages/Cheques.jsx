@@ -5,8 +5,17 @@ import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EntityPicker from '../components/EntityPicker';
+import { CustomerLink, SupplierLink } from '../components/PartyLink';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+
+// The Payee opens its Master List record when it is a supplier or a customer; an employee (or a
+// cheque with no linked payee) stays plain text.
+function PayeeLink({ type, id, name }) {
+  if (['VENDOR', 'supplier'].includes(type)) return <SupplierLink id={id} name={name} />;
+  if (['CUSTOMER', 'customer'].includes(type)) return <CustomerLink id={id} name={name} />;
+  return <>{name}</>;
+}
 
 const PAGE_SIZE = 15;
 const STATUS_LABELS = { open: 'Open', fully_applied: 'Fully Applied', void: 'Void' };
@@ -178,7 +187,7 @@ export default function Cheques() {
                     <td data-label="Cheque No">{row.cheque_no}</td>
                     <td data-label="Date">{formatDate(row.date_created)}</td>
                     <td data-label="Cheque #">{row.cheque_number}</td>
-                    <td data-label="Payee">{row.payee_account_name || row.payee_name}</td>
+                    <td data-label="Payee"><PayeeLink type={row.payee_type} id={row.payee_id} name={row.payee_account_name || row.payee_name} /></td>
                     <td data-label="Account">{row.account_name}</td>
                     <td data-label="Total" style={{ textAlign: 'right' }}>{money(row.total_amount)}</td>
                     <td data-label="Released">{row.date_released ? formatDate(row.date_released) : <span className="muted">Not released</span>}</td>

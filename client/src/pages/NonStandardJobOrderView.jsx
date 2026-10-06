@@ -9,6 +9,7 @@ import Modal from '../components/Modal';
 import NonStandardJobOrderFormModal from '../components/NonStandardJobOrderFormModal';
 
 import { displayDateTime } from '../utils/dates';
+import { CustomerLink } from '../components/PartyLink';
 
 const ROUTE = '/non-standard-job-orders';
 const CANCELLED = 'Cancelled';
@@ -384,7 +385,7 @@ export default function NonStandardJobOrderView() {
         <div className="estimate-detail-grid">
           <div>
             <h4>Customer</h4>
-            <div className="hi">{order.customer_name}</div>
+            <div className="hi"><CustomerLink id={order.customer_id} name={order.customer_name} /></div>
             <div>Contact Person : <span className="hi">{show(order.contact_person_name)}</span></div>
             <div>Contact Email : <span className="hi">{show(order.contact_email)}</span></div>
             <div>Contact Title : <span className="hi">{show(order.contact_title)}</span></div>

@@ -7,6 +7,7 @@ import SalesInvoiceModal from '../components/SalesInvoiceModal';
 import DeliveryTicketModal from '../components/DeliveryTicketModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate, displayDateTime } from '../utils/dates';
+import { CustomerLink } from '../components/PartyLink';
 
 function qty(v) {
   const n = Number(v);
@@ -136,7 +137,7 @@ export default function DeliveryTicketView() {
         <div className="estimate-detail-grid">
           <div>
             <h4>Customer</h4>
-            <div><span className="hi">{dt.customer_name}</span></div>
+            <div><span className="hi"><CustomerLink id={dt.customer_id} name={dt.customer_name} /></span></div>
             <div>TIN : <span className="hi">{dt.customer_tin || '—'}</span></div>
             <div>Contact Person : <span className="hi">{dt.contact_name || '—'}</span></div>
             <div>Contact Email : <span className="hi">{dt.contact_email || '—'}</span></div>

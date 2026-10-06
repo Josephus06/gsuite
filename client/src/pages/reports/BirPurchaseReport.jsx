@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/client';
+import { SupplierLink } from '../../components/PartyLink';
 import Pagination from '../../components/Pagination';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EntityPicker from '../../components/EntityPicker';
@@ -181,7 +182,7 @@ export default function BirPurchaseReport() {
                       <td>{r.created_from}</td>
                       <td>{r.reference_no}</td>
                       <td>{day(r.date_created)}</td>
-                      <td>{r.supplier_name}</td>
+                      <td><SupplierLink id={r.supplier_id} name={r.supplier_name} /></td>
                       <td className="text-right">{money(r.net_of_tax)}</td>
                       <td className="text-right">{money(r.tax_amount)}</td>
                       <td className="text-right">{money(r.total_amount)}</td>

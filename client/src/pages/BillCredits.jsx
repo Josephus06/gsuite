@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { SupplierLink } from '../components/PartyLink';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
 
@@ -88,7 +89,7 @@ export default function BillCredits() {
                     <td data-label="Credit #">{row.bill_credit_no}</td>
                     <td data-label="Created From">{row.bill_no}</td>
                     <td data-label="Date Created">{formatDate(row.date_created)}</td>
-                    <td data-label="Vendor">{row.supplier_name}</td>
+                    <td data-label="Vendor"><SupplierLink id={row.supplier_id} name={row.supplier_name} /></td>
                     <td data-label="Total Amount">{money(row.total_amount)}</td>
                     <td data-label="Applied Amount">{money(row.applied_amount)}</td>
                     <td data-label="Status">{STATUS_LABELS[row.status] || row.status}</td>

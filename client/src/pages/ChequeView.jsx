@@ -5,7 +5,16 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import BillCreditModal from '../components/BillCreditModal';
+import { CustomerLink, SupplierLink } from '../components/PartyLink';
 import { displayDate, displayDateTime } from '../utils/dates';
+
+// The Payee opens its Master List record when it is a supplier or a customer; an employee (or a
+// cheque with no linked payee) stays plain text.
+function PayeeLink({ type, id, name }) {
+  if (['VENDOR', 'supplier'].includes(type)) return <SupplierLink id={id} name={name} />;
+  if (['CUSTOMER', 'customer'].includes(type)) return <CustomerLink id={id} name={name} />;
+  return <>{name}</>;
+}
 
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'; }
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
@@ -94,7 +103,7 @@ export default function ChequeView() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 320px', gap: 20, marginTop: 12, alignItems: 'start' }}>
           <div>
             <h4>Payee</h4>
-            <div className="hi">{c.payee_account_name || c.payee_name}</div>
+            <div className="hi"><PayeeLink type={c.payee_type} id={c.payee_id} name={c.payee_account_name || c.payee_name} /></div>
             <div>Payee Name : <span className="hi">{c.payee_name}</span></div>
             <div>Office Location : <span className="hi">{c.location_name || ''}</span></div>
             <div>Account : <span className="hi">{c.account_name || ''}</span></div>

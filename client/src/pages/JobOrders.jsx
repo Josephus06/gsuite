@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import useAutoSearch from '../utils/useAutoSearch';
+import { CustomerLink } from '../components/PartyLink';
 
 // Mirrors server/src/lib/designSupervisorVisibility.js's own DESIGN_QUEUE_STATUS/
 // DESIGN_QUEUE_SUB_STATUSES -- a JO is eligible for (re)assignment here only while
@@ -354,7 +355,7 @@ export default function JobOrders() {
                       <td data-label="Job Type">{row.job_type_name}</td>
                       <td data-label="Job Desc">{row.description}</td>
                       <td data-label="Qty">{row.quantity}</td>
-                      <td data-label="Customer">{row.customer_name}</td>
+                      <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                       <td data-label="Contact Person">{row.contact_name}</td>
                       <td data-label="Prepared By">{row.prepared_by_name}</td>
                       <td data-label="Sales Rep">{row.sales_rep_name}</td>

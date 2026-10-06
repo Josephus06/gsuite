@@ -144,7 +144,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
                 pr.process_name, pr.minutes_per_unit,
                 COALESCE(jop.total, 0) * COALESCE(pr.minutes_per_unit, 0) AS allotted_minutes,
                 jo.id AS job_order_id, jo.job_order_no, jo.description,
-                c.name AS customer_name,
+                c.id AS customer_id, c.name AS customer_name,
                 EXISTS(SELECT 1 FROM job_order_process_sessions s WHERE s.job_order_process_id = jop.id AND s.ended_at IS NULL) AS is_running
          FROM job_order_processes jop
          JOIN job_orders jo ON jo.id = jop.job_order_id
@@ -160,7 +160,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     const [rows] = await pool.query(
       `SELECT jo.id, jo.job_order_no, jo.description, jo.quantity, jo.units, jo.delivery_date,
-              loc.location_name AS job_location_name, c.name AS customer_name,
+              loc.location_name AS job_location_name, c.id AS customer_id, c.name AS customer_name,
               (SELECT COUNT(*) FROM job_order_processes p WHERE p.job_order_id = jo.id) AS task_count,
               (SELECT COUNT(*) FROM job_order_processes p WHERE p.job_order_id = jo.id AND p.assigned_employee_id IS NOT NULL) AS assigned_count
        FROM job_orders jo

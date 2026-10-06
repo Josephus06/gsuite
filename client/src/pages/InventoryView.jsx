@@ -6,6 +6,7 @@ import DataTable from '../components/DataTable';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ItemTransactions from '../components/ItemTransactions';
+import { SupplierLink } from '../components/PartyLink';
 import { displayDateTime } from '../utils/dates';
 
 // Full-page read-only Inventory item view, mirroring the real system's Inventory View
@@ -364,7 +365,7 @@ export default function InventoryView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'supplier_name', label: 'Supplier' },
+              { key: 'supplier_name', label: 'Supplier', render: (r) => <SupplierLink id={r.supplier_id} name={r.supplier_name} /> },
               { key: 'price', label: 'Price', render: (r) => money(r.price) },
               { key: 'last_purchase_date', label: 'Last Purchase Date', render: (r) => (r.last_purchase_date ? String(r.last_purchase_date).slice(0, 10) : '') },
               { key: 'ref_no', label: 'Ref No.' },

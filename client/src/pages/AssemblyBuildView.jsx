@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDateTime, displayDate } from '../utils/dates';
+import { CustomerLink } from '../components/PartyLink';
 
 // Mirrors the real system's "Production > Assembly Build" detail screen: banner +
 // Details grid + Processes/GL Impact/Related Records/System Info tabs. Each line is a
@@ -94,7 +95,7 @@ export default function AssemblyBuildView() {
         <div className="estimate-detail-grid">
           <div>
             <h4>Customer</h4>
-            <div className="hi">{ab.customer_name}</div>
+            <div className="hi"><CustomerLink id={ab.customer_id} name={ab.customer_name} /></div>
             <div>Contact Person : <span className="hi">{ab.contact_name}</span></div>
             <div>Contact Email : <span className="hi">{ab.contact_email}</span></div>
             <div>Contact Title : <span className="hi">{ab.contact_title}</span></div>

@@ -111,7 +111,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     const [rows] = await pool.query(
       `SELECT del.id, del.delivery_no, del.date_created, del.status,
-              COALESCE(so.sales_order_no, ns.nsso_no) AS sales_order_no, c.name AS customer_name,
+              COALESCE(so.sales_order_no, ns.nsso_no) AS sales_order_no, c.id AS customer_id, c.name AS customer_name,
               del.delivery_cost, del.delivery_reference, dm.name AS delivery_method_name,
               (SELECT COALESCE(SUM(qty_delivered), 0) FROM item_delivery_lines WHERE item_delivery_id = del.id) AS total_qty_delivered
        ${baseFrom} ${whereSql}
@@ -234,7 +234,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
               COALESCE(so.contact_email, ns.contact_email) AS contact_email,
               COALESCE(so.contact_title, ns.contact_title) AS contact_title,
               COALESCE(so.contact_phone, ns.contact_phone) AS contact_phone,
-              c.name AS customer_name, cc.contact_name, u.display_name AS created_by_name,
+              c.id AS customer_id, c.name AS customer_name, cc.contact_name, u.display_name AS created_by_name,
               dm.name AS delivery_method_name, dm.is_third_party AS delivery_is_third_party
        FROM item_deliveries del
        LEFT JOIN sales_orders so ON so.id = del.sales_order_id

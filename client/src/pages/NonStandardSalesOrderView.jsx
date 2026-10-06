@@ -7,6 +7,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import NsjoCreateModal from '../components/NsjoCreateModal';
 import SalesInvoiceModal from '../components/SalesInvoiceModal';
 import { displayDate, displayDateTime } from '../utils/dates';
+import { CustomerLink } from '../components/PartyLink';
 
 const TYPE_LABELS = { rma: 'RMA', rma_installation: 'RMA - Installation', sample: 'Sample', internal: 'Internal' };
 // Two-part status: main headline + sub label, mirroring the live "Pending / Needs Approval" style.
@@ -100,7 +101,7 @@ export default function NonStandardSalesOrderView() {
         <div className="estimate-detail-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
           <div>
             <h4>Customer Details</h4>
-            <div style={{ fontWeight: 700 }}>{n.customer_name || '—'}</div>
+            <div style={{ fontWeight: 700 }}>{n.customer_name ? <CustomerLink id={n.customer_id} name={n.customer_name} /> : '—'}</div>
             <div>Contact Name : <span className="hi">{n.contact_person_name || ''}</span></div>
             <div>Contact Title : <span className="hi">{n.contact_title || ''}</span></div>
             <div>Contact Email : <span className="hi">{n.contact_email || ''}</span></div>

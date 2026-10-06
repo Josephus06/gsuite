@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import { CustomerLink } from '../components/PartyLink';
 
 const PAGE_SIZE = 10;
 const STATUS_LABELS = { posted: 'Posted', voided: 'Void' };
@@ -96,7 +97,7 @@ export default function CustomerRefunds() {
                   <tr key={row.id}>
                     <td data-label="Refund #">{row.customer_refund_no}</td>
                     <td data-label="Date Created">{formatDate(row.date_created)}</td>
-                    <td data-label="Customer">{row.customer_name}</td>
+                    <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                     <td data-label="Payment Method">{row.payment_method_name}</td>
                     <td data-label="Refund Amount">{money(row.refund_amount)}</td>
                     <td data-label="Status">{STATUS_LABELS[row.status] || row.status}</td>

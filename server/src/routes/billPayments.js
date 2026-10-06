@@ -122,7 +122,7 @@ async function listBillPayments(query) {
     const [rows] = await pool.query(
       `SELECT bp.id, bp.bill_payment_no, bp.date_created, bp.payment_method_id, pm.name AS payment_method_name,
               bp.total_amount, bp.status, bp.memo, bp.check_no, bp.payee_name, bp.date_released,
-              s.name AS supplier_name, coa.account_name AS bank_account_name
+              bp.supplier_id, s.name AS supplier_name, coa.account_name AS bank_account_name
        FROM bill_payments bp
        LEFT JOIN suppliers s ON s.id = bp.supplier_id
        LEFT JOIN payment_methods pm ON pm.id = bp.payment_method_id

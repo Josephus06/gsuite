@@ -33,7 +33,7 @@ async function listFilter(req) {
 
 const LIST_SELECT = `SELECT jo.id, jo.job_order_no, jo.created_at, jo.quantity, jo.units, jo.status, jo.production_stage,
               jo.description, jo.parent_job_order_id, pjo.job_order_no AS parent_job_order_no,
-              so.sales_order_no, c.name AS customer_name,
+              so.sales_order_no, c.id AS customer_id, c.name AS customer_name,
               jt.display_name AS job_type_name, loc.location_name AS job_location_name,
               CONCAT(rap.first_name, ' ', rap.last_name) AS rma_approved_by_name
        FROM job_orders jo

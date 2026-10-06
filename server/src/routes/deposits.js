@@ -149,7 +149,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     );
     if (!d) return res.status(404).json({ error: 'Not found' });
     const [payments] = await pool.query(
-      `SELECT cp.id, cp.customer_payment_no, cp.date_created, cp.payment_amount, c.name AS customer_name
+      `SELECT cp.id, cp.customer_payment_no, cp.date_created, cp.payment_amount, cp.customer_id, c.name AS customer_name
        FROM customer_payments cp LEFT JOIN customers c ON c.id = cp.customer_id
        WHERE cp.deposit_id = ? ORDER BY cp.id`,
       [req.params.id]

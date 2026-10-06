@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate, displayDateTime } from '../utils/dates';
+import { CustomerLink } from '../components/PartyLink';
 
 function qty(v) {
   const n = Number(v);
@@ -100,7 +101,7 @@ export default function QualityInspectionView() {
         <div className="estimate-detail-grid" style={{ marginTop: 16 }}>
           <div>
             <div className="muted" style={{ color: '#cbd5e1', fontSize: 12, textTransform: 'uppercase' }}>Customer</div>
-            <div className="hi">{qi.customer_name || '—'}</div>
+            <div className="hi">{qi.customer_name ? <CustomerLink id={qi.customer_id} name={qi.customer_name} /> : '—'}</div>
             <div>Contact Person : <span className="hi">{qi.contact_name || ''}</span></div>
             <div>Contact Email : <span className="hi">{qi.contact_email || ''}</span></div>
             <div>Contact Title : <span className="hi">{qi.contact_title || ''}</span></div>

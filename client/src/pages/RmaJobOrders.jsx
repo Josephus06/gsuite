@@ -5,6 +5,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import { CustomerLink } from '../components/PartyLink';
 
 const PAGE_SIZE = 10;
 const STAGE_LABELS = {
@@ -157,7 +158,7 @@ export default function RmaJobOrders() {
                     <td data-label="Date">{formatDate(row.created_at)}</td>
                     <td data-label="Mother JO">{row.parent_job_order_no || ''}</td>
                     <td data-label="SO / NSSO">{row.sales_order_no || row.nsso_no || ''}</td>
-                    <td data-label="Customer">{row.customer_name}</td>
+                    <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                     <td data-label="Job Type">{row.job_type_name}</td>
                     <td data-label="Description">{row.description}</td>
                     <td data-label="Qty" style={{ textAlign: 'right' }}>{Number(row.quantity)}</td>

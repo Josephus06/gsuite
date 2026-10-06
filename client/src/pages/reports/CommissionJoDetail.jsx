@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/client';
+import { CustomerLink } from '../../components/PartyLink';
 import { useAuth } from '../../context/useAuth';
 import EntityPicker from '../../components/EntityPicker';
 import LoadingSpinner from '../../components/LoadingSpinner';
@@ -161,7 +162,7 @@ export default function CommissionJoDetail() {
                       <td data-label="SO #">{r.sales_order_no}</td>
                       <td data-label="DT #">{r.dt_no || '—'}</td>
                       <td data-label="Invoice #">{r.invoice_no || '—'}</td>
-                      <td data-label="Customer">{r.customer_name}</td>
+                      <td data-label="Customer"><CustomerLink id={r.customer_id} name={r.customer_name} /></td>
                       <td data-label="Sales Rep">{r.rep_name}</td>
                       <td data-label="Job Type">{r.job_type}</td>
                       <td data-label="GP Rate" style={{ textAlign: 'right' }}>{r.gp_rate == null ? '—' : `${pct(r.gp_rate)}%`}</td>

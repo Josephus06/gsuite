@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
+import { CustomerLink } from '../../components/PartyLink';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import { displayDate } from '../../utils/dates';
 
@@ -109,7 +110,7 @@ export default function PendingBilling() {
                     <tr key={r.id}>
                       <td style={{ whiteSpace: 'nowrap' }}><Link to={`/job-orders/${r.id}`}>{r.job_order_no}</Link></td>
                       <td style={{ whiteSpace: 'nowrap' }}>{r.sales_order_id ? <Link to={`/sales-orders/${r.sales_order_id}`}>{r.sales_order_no}</Link> : (r.nsso_no || '')}</td>
-                      <td>{r.customer_name || ''}</td>
+                      <td><CustomerLink id={r.customer_id} name={r.customer_name} /></td>
                       <td>{r.sales_rep_name || ''}</td>
                       <td style={{ maxWidth: 320 }}>{r.description}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>{displayDate(r.completed_date || r.so_date)}</td>

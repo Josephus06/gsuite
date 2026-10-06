@@ -384,7 +384,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const people = await peopleSql();
     const [rows] = await pool.query(
       `SELECT cp.id, cp.customer_payment_no, cp.date_created, cp.or_no, cp.receipt_type, cp.payment_amount, cp.applied_amount,
-              cp.unapplied_amount, cp.status, c.name AS customer_name, pm.name AS payment_method_name,
+              cp.unapplied_amount, cp.status, cp.customer_id, c.name AS customer_name, pm.name AS payment_method_name,
               d.name AS department_name, loc.location_name AS office_location_name,
               ${people.prepared} AS prepared_by_name, ${people.issued} AS issued_by_name
        FROM customer_payments cp

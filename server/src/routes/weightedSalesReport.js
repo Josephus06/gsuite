@@ -51,7 +51,7 @@ async function buildFilter(q, userId) {
   return { scope, month, whereSql: `WHERE ${where.join(' AND ')}`, params };
 }
 
-const LINE_SELECT = `SELECT sol.id, so.id AS sales_order_id, so.sales_order_no, so.date_created, c.name AS customer_name,
+const LINE_SELECT = `SELECT sol.id, so.id AS sales_order_id, so.sales_order_no, so.date_created, c.id AS customer_id, c.name AS customer_name,
     CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep, sd.name AS division_name, ol.location_name AS office_location,
     jo.job_order_no, jt.display_name AS job_type, sol.description, sol.quantity, sol.units,
     COALESCE(sol.net_of_tax, 0) AS net_of_tax,

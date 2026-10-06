@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import BillPaymentModal from '../components/BillPaymentModal';
+import { SupplierLink } from '../components/PartyLink';
 import { displayDate, displayDateTime } from '../utils/dates';
 
 function money(v) {
@@ -111,7 +112,7 @@ export default function BillPaymentView() {
 
         <div className="estimate-detail-grid">
           <div>
-            <div>Vendor : <span className="hi">{bp.supplier_name}</span></div>
+            <div>Vendor : <span className="hi"><SupplierLink id={bp.supplier_id} name={bp.supplier_name} /></span></div>
             <div>Payee Name : <span className="hi">{bp.payee_name}</span></div>
             <div>TIN : <span className="hi">{bp.tin || ''}</span></div>
             <div>A/P : <span className="hi">{bp.ap_account_code ? `${bp.ap_account_code} — ${bp.ap_account_name}` : '—'}</span></div>

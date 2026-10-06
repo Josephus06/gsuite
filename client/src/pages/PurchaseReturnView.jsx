@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { SupplierLink } from '../components/PartyLink';
 import { displayDate } from '../utils/dates';
 
 function qty(v) {
@@ -58,7 +59,7 @@ export default function PurchaseReturnView() {
             <div>Reference # : <span className="hi">{data.ref_no || '—'}</span></div>
           </div>
           <div>
-            <div>Vendor : <span className="hi">{data.supplier_name}</span></div>
+            <div>Vendor : <span className="hi"><SupplierLink id={data.supplier_id} name={data.supplier_name} /></span></div>
             <div>Memo : <span className="hi">{data.memo || ''}</span></div>
           </div>
           <div>

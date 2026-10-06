@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
+import { CustomerLink } from '../../components/PartyLink';
 import LoadingSpinner from '../../components/LoadingSpinner';
 
 function money(v) {
@@ -200,7 +201,7 @@ export default function DeliverySummary() {
                         <td data-label="Delivered Via">{r.delivery_method_name}</td>
                         <td data-label="Reference">{r.delivery_reference || '--'}</td>
                         <td data-label="SO #">{r.sales_order_no}</td>
-                        <td data-label="Customer">{r.customer_name}</td>
+                        <td data-label="Customer"><CustomerLink id={r.customer_id} name={r.customer_name} /></td>
                         <td data-label="Qty" style={{ textAlign: 'right' }}>{count(r.total_qty)}</td>
                         <td data-label="Cost" style={{ textAlign: 'right' }}>
                           {r.delivery_cost == null ? '--' : money(r.delivery_cost)}

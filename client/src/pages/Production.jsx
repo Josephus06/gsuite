@@ -5,6 +5,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import { CustomerLink } from '../components/PartyLink';
 
 const PAGE_SIZE = 10;
 
@@ -142,7 +143,7 @@ export default function Production() {
                     <td>{row.job_type_name}</td>
                     <td>{row.description}</td>
                     <td>{row.sales_rep_name}</td>
-                    <td>{row.customer_name}</td>
+                    <td><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                     <td>{row.artist_name}</td>
                     <td>{row.quantity} {row.units}</td>
                     <td>{row.quantity_built} {row.units}</td>

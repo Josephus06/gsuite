@@ -60,7 +60,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(
       `SELECT cr.id, cr.customer_refund_no, cr.date_created, cr.refund_amount, cr.status,
-              c.name AS customer_name, pm.name AS payment_method_name
+              cr.customer_id, c.name AS customer_name, pm.name AS payment_method_name
        FROM customer_refunds cr
        LEFT JOIN customers c ON c.id = cr.customer_id
        LEFT JOIN payment_methods pm ON pm.id = cr.payment_method_id

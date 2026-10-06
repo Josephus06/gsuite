@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
+import { CustomerLink } from '../../components/PartyLink';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import { REPORT_TIMING } from '../../utils/reportTiming';
 import Modal from '../../components/Modal';
@@ -168,7 +169,7 @@ export default function ArAging() {
                 )}
                 {report.rows.map((row) => (
                   <tr key={row.customer_id}>
-                    <td data-label="Customer">{row.customer_name}</td>
+                    <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                     <td data-label="Current" style={{ textAlign: 'right' }}>{money(row.current)}</td>
                     <td data-label="1-30 days" style={{ textAlign: 'right' }}>{money(row.d1_30)}</td>
                     <td data-label="31-60 days" style={{ textAlign: 'right' }}>{money(row.d31_60)}</td>

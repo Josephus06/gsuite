@@ -6,6 +6,7 @@ import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 import { displayDate, displayDateTime } from '../utils/dates';
+import { CustomerLink } from '../components/PartyLink';
 
 function qty(v) {
   const n = Number(v);
@@ -93,7 +94,7 @@ export default function CreditMemoView() {
 
         <div className="estimate-detail-grid">
           <div>
-            <div>Customer : <span className="hi">{cm.customer_name}</span></div>
+            <div>Customer : <span className="hi"><CustomerLink id={cm.customer_id} name={cm.customer_name} /></span></div>
             <div>Sales Rep : <span className="hi">{cm.sales_rep_name || '—'}</span></div>
             <div>Date : <span className="hi">{formatDate(cm.date_created)}</span></div>
             {/* An imported memo can apply to several invoices at once, so there is no single

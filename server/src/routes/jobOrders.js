@@ -213,7 +213,7 @@ const LIST_FROM = `FROM job_orders jo
        LEFT JOIN employees pb ON pb.id = so.prepared_by_id
        LEFT JOIN employees ar ON ar.id = jo.artist_id`;
 
-const LIST_SELECT = `SELECT jo.*, so.sales_order_no, c.name AS customer_name, cc.contact_name,
+const LIST_SELECT = `SELECT jo.*, so.sales_order_no, c.name AS customer_name, c.id AS customer_id, cc.contact_name,
               jt.display_name AS job_type_name, jloc.location_name AS job_location_name,
               oloc.location_name AS office_location_name, sd.name AS sales_division_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
@@ -314,7 +314,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
               COALESCE(NULLIF(jo.shipping_address, ''), nsso.shipping_address) AS shipping_address,
               so.production_lead_time,
               sol.subtotal AS line_subtotal, sol.disc_amount AS line_disc_amount,
-              c.name AS customer_name, cc.contact_name,
+              c.name AS customer_name, c.id AS customer_id, cc.contact_name,
               jt.display_name AS job_type_name, loc.location_name AS job_location_name,
               oloc.location_name AS office_location_name, sd.name AS sales_division_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,

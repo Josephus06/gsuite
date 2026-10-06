@@ -7,6 +7,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import DriverMap from '../components/DriverMap';
 import AddressPicker from '../components/AddressPicker';
 import DriverQrModal from '../components/DriverQrModal';
+import { CustomerLink } from '../components/PartyLink';
 
 const STATUS_BADGE = {
   draft: 'badge-muted', scheduled: 'badge-info', dispatched: 'badge-warning',
@@ -657,7 +658,7 @@ export default function ItineraryView() {
                       to={`/sales-orders/${s.sales_order_id}`}>{s.sales_order_no}</Link>
                   </td>
                   <td data-label="Delivery Date">{fmtDate(s.delivery_date)}</td>
-                  <td data-label="Customer">{s.customer_name || '—'}</td>
+                  <td data-label="Customer">{s.customer_name ? <CustomerLink id={s.customer_id} name={s.customer_name} /> : '—'}</td>
                   <td data-label="Qty">{qty(s.qty_to_deliver)}</td>
                   <td data-label="Partial / Full">
                     <span className={`badge ${s.fulfillment_type === 'partial' ? 'badge-warning' : 'badge-muted'}`}>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../../api/client';
+import { CustomerLink } from '../../components/PartyLink';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Pagination from '../../components/Pagination';
 import { displayDate } from '../../utils/dates';
@@ -144,7 +145,7 @@ export default function ForecastReport() {
                 {data.rows.map((r) => (
                   <tr key={r.id}>
                     <td data-label="Date">{mdy(r.order_date)}</td>
-                    <td data-label="Customer">{r.customer_name}</td>
+                    <td data-label="Customer"><CustomerLink id={r.customer_id} name={r.customer_name} /></td>
                     <td data-label="JO #">{r.job_order_no}</td>
                     <td data-label="JO Status">{r.jo_status}</td>
                     <td data-label="Sales Rep">{r.sales_rep}</td>

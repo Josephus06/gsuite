@@ -14,6 +14,7 @@ import StandaloneInvoiceModal from '../components/StandaloneInvoiceModal';
 
 import { displayDate, displayDateTime } from '../utils/dates';
 import { billingAddress } from '../utils/invoicePrint';
+import { CustomerLink } from '../components/PartyLink';
 
 function qty(v) {
   const n = Number(v);
@@ -224,7 +225,7 @@ export default function SalesInvoiceView() {
 
         <div className="estimate-detail-grid">
           <div>
-            <div>Customer : <span className="hi">{si.customer_name}</span></div>
+            <div>Customer : <span className="hi"><CustomerLink id={si.customer_link_id} name={si.customer_name} /></span></div>
             {/* An invoice raised from an Estimate has no Sales Order, so this read blank and
                 linked to /sales-orders/null. It shows whichever source the invoice actually has. */}
             <div>

@@ -48,7 +48,7 @@ async function listFilter(req) {
 // The customer is the Sales Order's for rework, the NSSO's for an RMA (which has no Sales Order).
 const LIST_SELECT = `SELECT jo.id, ${TYPE_SQL} AS rma_type, jo.job_order_no, jo.created_at, jo.quantity, jo.units, jo.status,
               jo.production_stage, jo.description, pjo.job_order_no AS parent_job_order_no,
-              so.sales_order_no, ns.nsso_no, c.name AS customer_name,
+              so.sales_order_no, ns.nsso_no, c.id AS customer_id, c.name AS customer_name,
               jt.display_name AS job_type_name, loc.location_name AS job_location_name,
               CONCAT(rap.first_name, ' ', rap.last_name) AS rma_approved_by_name
        FROM job_orders jo

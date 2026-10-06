@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import { CustomerLink } from '../components/PartyLink';
 
 const PAGE_SIZE = 15;
 const STATUS_LABELS = { pending_approval: 'Pending Approval', approved: 'Approved', voided: 'Voided' };
@@ -76,7 +77,7 @@ export default function WarrantyCertificates() {
                     <td data-label="Warranty #">{row.wc_no}</td>
                     <td data-label="Date">{formatDate(row.date_created)}</td>
                     <td data-label="Sales Order">{row.sales_order_no}</td>
-                    <td data-label="Customer">{row.customer_name}</td>
+                    <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                     <td data-label="Project">{row.contract_description}</td>
                     <td data-label="Status">{STATUS_LABELS[row.status] || row.status}</td>
                     <td><Link className="btn btn-sm btn-primary" to={`/warranty-certificates/${row.id}`}>View</Link></td>

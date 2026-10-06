@@ -146,7 +146,7 @@ const LIST_FROM = `FROM purchase_orders po
 
 const LIST_SELECT = `SELECT po.id, po.po_no, po.ref_no, po.type, po.date_created, po.status, po.receipt_status, po.bill_status,
               po.discount_amount, po.net_of_tax, po.tax_amount, po.total_amount, po.memo,
-              s.name AS supplier_name, u.display_name AS created_by_name,
+              po.supplier_id, s.name AS supplier_name, u.display_name AS created_by_name,
               (${LIST_STATUS_CASE}) AS list_status
        ${LIST_FROM}`;
 
@@ -909,7 +909,7 @@ router.get('/:id/landed-costs', requireAuth, requirePermission(ROUTE, 'can_view'
   try {
     const [rows] = await pool.query(
       `SELECT po.id, po.po_no, po.date_created, po.status, po.total_amount, po.memo,
-              s.name AS supplier_name, pt.term_name
+              po.supplier_id, s.name AS supplier_name, pt.term_name
        FROM purchase_orders po
        LEFT JOIN suppliers s ON s.id = po.supplier_id
        LEFT JOIN payment_terms pt ON pt.id = po.term_id
@@ -1279,7 +1279,7 @@ router.get('/:id/returns', requireAuth, requirePermission(ROUTE, 'can_view'), as
 router.get('/returns/:returnId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[ret]] = await pool.query(
-      `SELECT vr.*, po.id AS purchase_order_id, po.po_no, s.name AS supplier_name, u.display_name AS created_by_name
+      `SELECT vr.*, po.id AS purchase_order_id, po.po_no, po.supplier_id, s.name AS supplier_name, u.display_name AS created_by_name
        FROM purchase_returns vr
        JOIN purchase_orders po ON po.id = vr.purchase_order_id
        LEFT JOIN suppliers s ON s.id = po.supplier_id

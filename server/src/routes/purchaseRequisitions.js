@@ -131,7 +131,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
 router.get('/:id/purchase-orders', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT DISTINCT po.id, po.po_no, po.date_created, po.status, po.total_amount, s.name AS supplier_name
+      `SELECT DISTINCT po.id, po.po_no, po.date_created, po.status, po.total_amount, po.supplier_id, s.name AS supplier_name
        FROM purchase_order_lines pol
        JOIN purchase_orders po ON po.id = pol.purchase_order_id
        JOIN purchase_requisition_lines prl ON prl.id = pol.purchase_requisition_line_id

@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import { CustomerLink } from '../components/PartyLink';
 
 const PAGE_SIZE = 10;
 const TYPE_LABELS = { rma: 'RMA', rma_installation: 'RMA - Installation', sample: 'Sample', internal: 'Internal' };
@@ -115,7 +116,7 @@ export default function NonStandardSalesOrders() {
                     <td data-label="Date">{formatDate(row.date_created)}</td>
                     <td data-label="Type">{TYPE_LABELS[row.type] || row.type}</td>
                     <td data-label="Location">{row.office_location_name}</td>
-                    <td data-label="Customer">{row.customer_name}</td>
+                    <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                     <td data-label="Sales Rep">{row.sales_rep_name}</td>
                     <td data-label="Memo">{row.memo}</td>
                     <td data-label="Total Amount" style={{ textAlign: 'right' }}>{money(row.total_amount)}</td>

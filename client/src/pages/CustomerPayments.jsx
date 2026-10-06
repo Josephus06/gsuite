@@ -9,6 +9,7 @@ import { useAuth } from '../context/useAuth';
 
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import { CustomerLink } from '../components/PartyLink';
 
 const PAGE_SIZE = 10;
 const NO_FILTERS = { search: '', status: '', departmentId: '', locationId: '', dateFrom: '', dateTo: '' };
@@ -258,7 +259,7 @@ export default function CustomerPayments() {
                   <tr key={row.id}>
                     <td data-label="Customer Payment No">{row.customer_payment_no}</td>
                     <td data-label="Date Created">{formatDate(row.date_created)}</td>
-                    <td data-label="Customer">{row.customer_name}</td>
+                    <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                     <td data-label="Location">{row.office_location_name}</td>
                     <td data-label="Prepared By">{row.prepared_by_name}</td>
                     <td data-label="Issued By">{row.issued_by_name}</td>

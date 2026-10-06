@@ -101,7 +101,7 @@ router.get('/sales', requireAuth, requirePermission(SALES_ROUTE, 'can_view'), as
 
     const select = `SELECT cp.id, cp.customer_payment_no, cp.date_created, cp.or_no,
               cp.payment_amount - COALESCE(drp.dr_amount, 0) AS total_amount, cp.status, cp.voided_at,
-              c.name AS customer_name, c.tin AS customer_tin,
+              c.id AS customer_id, c.name AS customer_name, c.tin AS customer_tin,
               t.code AS customer_tax_code,
               COALESCE(NULLIF(c.address, ''), ca.address_line) AS customer_address,
               loc.location_name`;
@@ -162,7 +162,7 @@ router.get('/purchase', requireAuth, requirePermission(PURCHASE_ROUTE, 'can_view
        LEFT JOIN suppliers s ON s.id = COALESCE(po.supplier_id, vb.supplier_id)`;
 
     const select = `SELECT vb.id, vb.bill_no, po.po_no AS created_from, vb.reference_no,
-              vb.date_created, s.name AS supplier_name,
+              vb.date_created, s.id AS supplier_id, s.name AS supplier_name,
               vb.net_of_tax, vb.tax_amount, vb.gross_amount AS total_amount,
               vb.wtax_amount,
               -- Net Amount is COMPUTED, not read from vendor_bills.amount_due. That column does hold

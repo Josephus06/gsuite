@@ -52,7 +52,7 @@ const BUILD_STATUS_SQL = `CASE
 const SELECT_SQL = `SELECT jo.id, jo.job_order_no, jo.description, jo.quantity,
     COALESCE(so.date_created, ns.date_created) AS order_date, ${BUILD_STATUS_SQL} AS build_status,
     COALESCE(jo.delivery_date, sol.delivery_date, nl.delivery_date) AS line_delivery_date,
-    c.name AS customer_name, ol.location_name AS office_location, jl.location_name AS job_location,
+    c.id AS customer_id, c.name AS customer_name, ol.location_name AS office_location, jl.location_name AS job_location,
     sd.name AS department, CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep, jt.display_name AS job_type,
     COALESCE(so.sales_order_no, ns.nsso_no) AS order_no,
     COALESCE(sol.net_of_tax, nl.net_of_tax, 0) AS jo_amount,

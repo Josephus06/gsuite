@@ -72,7 +72,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(
       `SELECT wc.id, wc.wc_no, wc.date_created, wc.status, wc.contract_description,
-              c.name AS customer_name, so.sales_order_no
+              wc.customer_id, c.name AS customer_name, so.sales_order_no
        FROM warranty_certificates wc
        LEFT JOIN customers c ON c.id = wc.customer_id
        LEFT JOIN sales_orders so ON so.id = wc.sales_order_id

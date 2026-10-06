@@ -63,7 +63,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       `SELECT r.id, r.receipt_no, r.date_created, r.ref_no, r.memo, r.is_on_hold,
               r.subtotal, r.net_of_tax, r.tax_amount, r.total_amount,
               po.id AS purchase_order_id, po.po_no,
-              s.name AS supplier_name,
+              po.supplier_id, s.name AS supplier_name,
               u.display_name AS created_by_name,
               (SELECT COUNT(*) FROM purchase_order_receipt_lines rl
                 WHERE rl.purchase_order_receipt_id = r.id) AS line_count,
@@ -100,7 +100,7 @@ router.get('/:id', requireAuth, requireReceiptView, async (req, res, next) => {
   try {
     const [[receipt]] = await pool.query(
       `SELECT r.*, po.id AS purchase_order_id, po.po_no, po.receipt_status,
-              s.name AS supplier_name, u.display_name AS created_by_name
+              po.supplier_id, s.name AS supplier_name, u.display_name AS created_by_name
          FROM purchase_order_receipts r
          JOIN purchase_orders po ON po.id = r.purchase_order_id
          LEFT JOIN suppliers s ON s.id = po.supplier_id

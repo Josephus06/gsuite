@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate, displayDateTime } from '../utils/dates';
+import { CustomerLink } from '../components/PartyLink';
 
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'; }
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
@@ -97,7 +98,7 @@ export default function DepositView() {
                 {payments.map((p) => (
                   <tr key={p.id}>
                     <td><Link className="link-btn" to={`/customer-payments/${p.id}`}>{p.customer_payment_no}</Link></td>
-                    <td>{p.customer_name}</td>
+                    <td><CustomerLink id={p.customer_id} name={p.customer_name} /></td>
                     <td>{formatDate(p.date_created)}</td>
                     <td style={{ textAlign: 'right' }}>{money(p.payment_amount)}</td>
                   </tr>

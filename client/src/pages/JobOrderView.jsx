@@ -14,6 +14,7 @@ import { isAdvanceCopy, canForwardAdvanceCopy } from '../utils/advanceCopy';
 
 import { displayDateTime } from '../utils/dates';
 import ButtonMenu from '../components/ButtonMenu';
+import { CustomerLink } from '../components/PartyLink';
 
 // Deliberately minimal Job Order detail -- mirrors the real system's layout (banner +
 // grouped info fields + Processes/RWIP JO/Sub Con/Related Records/System Info tabs +
@@ -467,7 +468,7 @@ export default function JobOrderView() {
         <div className="estimate-detail-grid">
           <div>
             <h4>Customer</h4>
-            <div className="hi">{jo.customer_name}</div>
+            <div className="hi"><CustomerLink id={jo.customer_id} name={jo.customer_name} /></div>
             <div>Contact Person : <span className="hi">{jo.contact_name}</span></div>
             <div>Contact Email : <span className="hi">{jo.contact_email}</span></div>
             <div>Contact Title : <span className="hi">{jo.contact_title}</span></div>

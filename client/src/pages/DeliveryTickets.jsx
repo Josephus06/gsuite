@@ -7,6 +7,7 @@ import SyncFromSourceButton from '../components/SyncFromSourceButton';
 
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import { CustomerLink } from '../components/PartyLink';
 
 const PAGE_SIZE = 10;
 const STATUS_LABELS = { open: 'Open', converted: 'Converted', void: 'Void' };
@@ -170,7 +171,7 @@ export default function DeliveryTickets() {
                     <td data-label="Date Created">{formatDate(row.date_created)}</td>
                     <td data-label="Date Due">{formatDate(row.date_due)}</td>
                     <td data-label="Office Location">{row.office_location_name}</td>
-                    <td data-label="Customer">{row.customer_name}</td>
+                    <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                     <td data-label="Sales Rep">{row.sales_rep_name}</td>
                     <td data-label="Department">{row.department_name}</td>
                     <td data-label="Net of Tax">{money(row.net_of_tax)}</td>

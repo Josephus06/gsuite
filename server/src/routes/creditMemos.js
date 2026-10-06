@@ -288,7 +288,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const { whereSql, params } = await listFilter(req);
     const [rows] = await pool.query(
       `SELECT cm.id, cm.credit_memo_no, cm.date_created, cm.gross_amount, cm.applied_amount, cm.status,
-              c.name AS customer_name, si.invoice_no
+              cm.customer_id, c.name AS customer_name, si.invoice_no
        FROM credit_memos cm
        LEFT JOIN customers c ON c.id = cm.customer_id
        LEFT JOIN sales_invoices si ON si.id = cm.sales_invoice_id

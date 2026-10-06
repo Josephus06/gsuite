@@ -4,6 +4,7 @@ import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import useAutoSearch from '../utils/useAutoSearch';
+import { CustomerLink } from '../components/PartyLink';
 
 // Mirrors the real system's "Production > Item Delivery" ("Saved Item Delivery") list --
 // a flat filterable table (no status tabs), same pattern as Assembly Build's list.
@@ -104,7 +105,7 @@ export default function ItemDeliveries() {
                       <td data-label="ID #">{row.delivery_no}</td>
                       <td data-label="SO #">{row.sales_order_no}</td>
                       <td data-label="Date Created">{row.date_created ? String(row.date_created).slice(0, 10) : ''}</td>
-                      <td data-label="Customer">{row.customer_name}</td>
+                      <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                       <td data-label="Total Qty Delivered">{row.total_qty_delivered}</td>
                       <td data-label="Delivered Via">
                         {row.delivery_method_name || <span className="muted">Not specified</span>}

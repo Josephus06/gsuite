@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDateTime, displayDate } from '../utils/dates';
+import { CustomerLink } from '../components/PartyLink';
 
 // Mirrors the real system's "Item Delivery" detail screen: banner + Details grid +
 // Items/GL Impact/Related Records/System Info tabs -- same structure as
@@ -178,7 +179,7 @@ export default function ItemDeliveryView() {
         <div className="estimate-detail-grid">
           <div>
             <h4>Customer</h4>
-            <div className="hi">{d.customer_name}</div>
+            <div className="hi"><CustomerLink id={d.customer_id} name={d.customer_name} /></div>
             <div>Contact Person : <span className="hi">{d.contact_name}</span></div>
             <div>Contact Email : <span className="hi">{d.contact_email}</span></div>
             <div>Contact Title : <span className="hi">{d.contact_title}</span></div>

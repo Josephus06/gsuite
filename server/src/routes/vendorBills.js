@@ -224,7 +224,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     const [rows] = await pool.query(
       `SELECT vb.id, vb.bill_no, vb.reference_no, vb.date_created, vb.date_due, vb.term, vb.memo, vb.gross_amount, vb.amount_due, vb.status,
-              po.po_no, s.name AS supplier_name, loc.location_name AS office_location_name
+              po.po_no, s.id AS supplier_id, s.name AS supplier_name, loc.location_name AS office_location_name
        FROM vendor_bills vb
        LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
        LEFT JOIN suppliers s ON s.id = COALESCE(po.supplier_id, vb.supplier_id)
@@ -242,7 +242,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[vb]] = await pool.query(
-      `SELECT vb.*, po.po_no, s.name AS supplier_name,
+      `SELECT vb.*, po.po_no, s.name AS supplier_name, s.id AS vendor_id,
               coa.account_code, coa.account_name,
               loc.location_name AS office_location_name,
               wt.code AS wtax_code, u.display_name AS created_by_name

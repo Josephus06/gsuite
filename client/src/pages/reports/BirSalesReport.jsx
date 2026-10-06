@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/client';
+import { CustomerLink } from '../../components/PartyLink';
 import Pagination from '../../components/Pagination';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EntityPicker from '../../components/EntityPicker';
@@ -209,7 +210,7 @@ export default function BirSalesReport() {
                     <tr key={r.id}>
                       <td>{r.customer_payment_no}</td>
                       <td>{day(r.date_created)}</td>
-                      <td>{r.customer_name}</td>
+                      <td><CustomerLink id={r.customer_id} name={r.customer_name} /></td>
                       <td>{r.location_name}</td>
                       <td>{r.or_no}</td>
                       <td className="text-right">{money(r.total_amount)}</td>

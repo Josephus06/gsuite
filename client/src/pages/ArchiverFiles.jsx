@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ArtistArchiveModal from '../components/ArtistArchiveModal';
 import { FILE_STATUS_LABELS, formatBytes, formatDate } from '../utils/archiverLabels';
+import { CustomerLink } from '../components/PartyLink';
 
 const PAGE_SIZE = 20;
 
@@ -130,7 +131,8 @@ export default function ArchiverFiles() {
                         <>
                           <strong>{r.jo_no}</strong>
                           <div className="muted" style={{ fontSize: 11 }}>
-                            {[r.customer_name, r.artist_name].filter(Boolean).join(' · ')}
+                            <CustomerLink id={r.customer_id} name={r.customer_name} />
+                            {r.customer_name && r.artist_name ? ' · ' : ''}{r.artist_name}
                           </div>
                         </>
                       ) : '—'}

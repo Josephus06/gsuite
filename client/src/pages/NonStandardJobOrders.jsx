@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import Modal from '../components/Modal';
 import NonStandardJobOrderFormModal from '../components/NonStandardJobOrderFormModal';
 import useAutoSearch from '../utils/useAutoSearch';
+import { CustomerLink } from '../components/PartyLink';
 
 const ROUTE = '/non-standard-job-orders';
 const SUB_SBU_APPROVAL = 'SBU Approval';
@@ -200,7 +201,7 @@ export default function NonStandardJobOrders() {
                 </td>
                 <td>{row.nstdjo_no}</td><td>{String(row.date_created).slice(0, 10)}</td><td>{row.sales_division_name}</td>
                 <td>{row.job_type}</td>
-                <td>{row.pms_job_type_name || ''}</td><td>{row.description}</td><td>{row.quantity}</td><td>{row.customer_name}</td>
+                <td>{row.pms_job_type_name || ''}</td><td>{row.description}</td><td>{row.quantity}</td><td><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                 <td>{row.contact_person_name || ''}</td>
                 <td>{row.sales_rep_name}</td><td>{row.artist_name || ''}</td><td>{String(row.delivery_date).slice(0, 10)}</td><td>{row.delivery_time || ''}</td><td>{row.status}</td>
                 {/* Flagged so an approver can spot what is waiting on them from the list. */}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import api from '../../api/client';
+import { CustomerLink } from '../../components/PartyLink';
 import CollectionForecastCalendar from '../../components/CollectionForecastCalendar';
 import Pagination from '../../components/Pagination';
 import LoadingSpinner from '../../components/LoadingSpinner';
@@ -242,7 +243,7 @@ function Worklist({ canEdit }) {
                       )}
                       <td>{r.invoice_no}</td>
                       <td>{r.bs_si_no || <span className="muted">—</span>}</td>
-                      <td>{r.customer_name}</td>
+                      <td><CustomerLink id={r.customer_id} name={r.customer_name} /></td>
                       <td>{day(r.date_created)}</td>
                       <td>{day(r.date_due)}</td>
                       <td className="text-right">{money(r.amount_due)}</td>

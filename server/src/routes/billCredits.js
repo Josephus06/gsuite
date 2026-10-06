@@ -240,7 +240,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(
       `SELECT bc.id, bc.bill_credit_no, bc.date_created, bc.total_amount, bc.applied_amount, bc.status,
-              COALESCE(vb.bill_no, ch.cheque_no) AS bill_no, s.name AS supplier_name
+              COALESCE(vb.bill_no, ch.cheque_no) AS bill_no, s.id AS supplier_id, s.name AS supplier_name
        ${CREDIT_FROM_SQL}
        ${whereSql}
        ORDER BY bc.id DESC`,
@@ -255,7 +255,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[bc]] = await pool.query(
-      `SELECT bc.*, COALESCE(vb.bill_no, ch.cheque_no) AS bill_no, ch.cheque_no, s.name AS supplier_name, s.tin,
+      `SELECT bc.*, COALESCE(vb.bill_no, ch.cheque_no) AS bill_no, ch.cheque_no, s.name AS supplier_name, s.id AS vendor_id, s.tin,
               loc.location_name AS office_location_name,
               apcoa.account_code AS ap_account_code, apcoa.account_name AS ap_account_name
        ${CREDIT_FROM_SQL}

@@ -5,6 +5,7 @@ import EntityPicker from '../components/EntityPicker';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import SyncFromSourceButton from '../components/SyncFromSourceButton';
+import { SupplierLink } from '../components/PartyLink';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
 
@@ -198,7 +199,7 @@ export default function PurchaseOrders() {
                       <td data-label="PO No">{row.po_no}</td>
                       <td data-label="Ref. No">{row.ref_no}</td>
                       <td data-label="Date Created">{formatDate(row.date_created)}</td>
-                      <td data-label="Supplier">{row.supplier_name}</td>
+                      <td data-label="Supplier"><SupplierLink id={row.supplier_id} name={row.supplier_name} /></td>
                       <td data-label="Discount Amt">{money(row.discount_amount)}</td>
                       <td data-label="Total Amt (Net of VAT)">{money(row.net_of_tax)}</td>
                       <td data-label="Tax Amt">{money(row.tax_amount)}</td>

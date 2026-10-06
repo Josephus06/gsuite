@@ -8,6 +8,7 @@ import CustomerPaymentModal from '../components/CustomerPaymentModal';
 import ApplyPaymentModal from '../components/ApplyPaymentModal';
 
 import { displayDate, displayDateTime } from '../utils/dates';
+import { CustomerLink } from '../components/PartyLink';
 
 function money(v) {
   const n = Number(v);
@@ -146,7 +147,7 @@ export default function CustomerPaymentView() {
 
         <div className="estimate-detail-grid">
           <div>
-            <div>Customer : <span className="hi">{cp.customer_name}</span></div>
+            <div>Customer : <span className="hi"><CustomerLink id={cp.customer_id} name={cp.customer_name} /></span></div>
             <div>Date : <span className="hi">{formatDate(cp.date_created)}</span></div>
             <div>Department : <span className="hi">{cp.department_name || '—'}</span></div>
             <div>Office Location : {locEdit ? (

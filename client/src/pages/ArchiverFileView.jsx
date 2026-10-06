@@ -6,6 +6,7 @@ import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { FILE_STATUS_LABELS, FILE_ACTION_LABELS, formatBytes, formatDate, formatDateTime, fileKind } from '../utils/archiverLabels';
 import { readFileAsBase64 } from '../utils/archiverUpload';
+import { CustomerLink } from '../components/PartyLink';
 
 // Adding a new copy of the document. Never replaces the previous bytes -- the point of archiving a
 // signed contract is being able to show what it said before it was amended.
@@ -234,7 +235,7 @@ export default function ArchiverFileView() {
           <div className="estimate-detail-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
             <div>{file.source_kind === 'NSTDJO' ? 'NSTDJO' : 'JO'} # : <span className="hi">{file.jo_no || '—'}</span></div>
             <div>Date : <span className="hi">{formatDate(file.jo_date)}</span></div>
-            <div>Customer : <span className="hi">{file.customer_name || '—'}</span></div>
+            <div>Customer : <span className="hi">{file.customer_name ? <CustomerLink id={file.customer_id} name={file.customer_name} /> : '—'}</span></div>
             <div>Sales Rep. : <span className="hi">{file.sales_rep_name || '—'}</span></div>
             <div>Artist : <span className="hi">{file.artist_name || '—'}</span></div>
             <div>Layout - Job Type : <span className="hi">{file.layout_job_type || '—'}</span></div>

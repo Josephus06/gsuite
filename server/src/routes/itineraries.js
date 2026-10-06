@@ -304,7 +304,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
               s.person_in_charge, s.odometer,
               s.time_of_arrival, s.signed_by_name, s.signed_at, s.status, s.remarks,
               (s.signature_data IS NOT NULL) AS has_signature,
-              so.sales_order_no, so.status AS so_status
+              so.sales_order_no, so.status AS so_status, so.customer_id
          FROM delivery_itinerary_stops s
          LEFT JOIN sales_orders so ON so.id = s.sales_order_id
         WHERE s.itinerary_id = ?

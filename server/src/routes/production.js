@@ -210,7 +210,7 @@ router.get('/', requireAuth, requireProductionView, async (req, res, next) => {
       `SELECT jo.id, jo.job_order_no, jo.description, jo.created_at, jo.date_forwarded,
               jo.quantity, jo.quantity_built, jo.units, jo.delivery_date, jo.delivery_time,
               jo.production_stage, jo.is_on_hold,
-              so.sales_order_no, c.name AS customer_name, jt.display_name AS job_type_name,
+              so.sales_order_no, c.id AS customer_id, c.name AS customer_name, jt.display_name AS job_type_name,
               loc.location_name AS job_location_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name
@@ -274,7 +274,7 @@ router.get('/:id', requireAuth, requireProductionView, async (req, res, next) =>
               COALESCE(NULLIF(jo.shipping_address, ''), nsso.shipping_address) AS shipping_address,
               nsso.nsso_no,
               sol.subtotal AS line_subtotal, sol.disc_amount AS line_disc_amount,
-              c.name AS customer_name, cc.contact_name,
+              c.id AS customer_id, c.name AS customer_name, cc.contact_name,
               jt.display_name AS job_type_name, loc.location_name AS job_location_name,
               oloc.location_name AS office_location_name, sd.name AS sales_division_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,

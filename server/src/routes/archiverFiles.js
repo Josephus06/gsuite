@@ -50,6 +50,13 @@ const FILE_COLUMNS = `f.id, f.file_no, f.title, f.folder_id, f.description, f.re
   f.source_kind, f.source_id, f.jo_no, f.jo_date, f.customer_name, f.sales_rep_name,
   f.artist_name, f.layout_job_type, f.job_description, f.artist_employee_id`;
 
+// The customer behind a file filed against a job order, so its (snapshot) customer name can open the
+// customer's record. Read live from the source order -- archive_files keeps only the name.
+const FILE_CUSTOMER_ID = `CASE f.source_kind
+    WHEN 'JO' THEN (SELECT so.customer_id FROM job_orders jo JOIN sales_orders so ON so.id = jo.sales_order_id WHERE jo.id = f.source_id)
+    WHEN 'NSTDJO' THEN (SELECT n.customer_id FROM non_standard_job_orders n WHERE n.id = f.source_id)
+  END AS customer_id`;
+
 async function logFile(conn, req, { fileId, versionId = null, action, detail = null }) {
   await (conn || pool).query(
     'INSERT INTO archive_file_logs (file_id, version_id, user_id, action, detail, ip_address) VALUES (?,?,?,?,?,?)',
@@ -140,7 +147,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total FROM archive_files f ${whereSql}`, params);
     const [rows] = await pool.query(
-      `SELECT ${FILE_COLUMNS}, fo.name AS folder_name, o.display_name AS owner_name, d.name AS department_name,
+      `SELECT ${FILE_COLUMNS}, ${FILE_CUSTOMER_ID}, fo.name AS folder_name, o.display_name AS owner_name, d.name AS department_name,
               v.file_name, v.mime_type, v.created_at AS version_uploaded_at,
               -- size_bytes is INT and caps at ~2GB; size_bytes_large is the real figure.
               COALESCE(v.size_bytes_large, v.size_bytes) AS size_bytes,
@@ -248,7 +255,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     if (!access.found || !access.canView) return res.status(404).json({ error: 'Not found' });
 
     const [[file]] = await pool.query(
-      `SELECT ${FILE_COLUMNS}, fo.name AS folder_name, o.display_name AS owner_name,
+      `SELECT ${FILE_COLUMNS}, ${FILE_CUSTOMER_ID}, fo.name AS folder_name, o.display_name AS owner_name,
               d.name AS department_name, cb.display_name AS created_by_name, ub.display_name AS updated_by_name
          FROM archive_files f
          LEFT JOIN archive_file_folders fo ON fo.id = f.folder_id

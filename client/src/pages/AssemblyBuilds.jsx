@@ -4,6 +4,7 @@ import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import useAutoSearch from '../utils/useAutoSearch';
+import { CustomerLink } from '../components/PartyLink';
 
 // Mirrors the real system's "Production > Assembly Build" ("Saved Assembly Build")
 // list -- a flat filterable table (no status tabs), same pattern as Saved Job Orders.
@@ -133,7 +134,7 @@ export default function AssemblyBuilds() {
                       <td data-label="Job Type">{row.job_type_name}</td>
                       <td data-label="Job Desc">{row.job_desc}</td>
                       <td data-label="Sales Rep">{row.sales_rep_name}</td>
-                      <td data-label="Customer">{row.customer_name}</td>
+                      <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                       <td data-label="Qty">{row.quantity_built}</td>
                       <td data-label="Status">{row.status === 'cancelled' ? <span className="badge badge-muted">Cancelled</span> : <span className="badge badge-success">Saved</span>}</td>
                       <td><Link className="btn btn-sm btn-primary" to={`/assembly-builds/${row.id}`}>View</Link></td>

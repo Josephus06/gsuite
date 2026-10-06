@@ -4,6 +4,7 @@ import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EntityPicker from '../components/EntityPicker';
+import { SupplierLink } from '../components/PartyLink';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
 
@@ -173,7 +174,7 @@ export default function BillPayments() {
                     <td data-label="Date">{formatDate(row.date_created)}</td>
                     <td data-label="Memo" style={{ whiteSpace: 'normal', maxWidth: 280 }}>{row.memo || ''}</td>
                     <td data-label="Check #">{row.check_no || ''}</td>
-                    <td data-label="Vendor">{row.supplier_name || row.payee_name}</td>
+                    <td data-label="Vendor">{row.supplier_name ? <SupplierLink id={row.supplier_id} name={row.supplier_name} /> : row.payee_name}</td>
                     <td data-label="Account">{row.bank_account_name || ''}</td>
                     <td data-label="Payment Method">{row.payment_method_name}</td>
                     <td data-label="Total Amount" style={{ textAlign: 'right' }}>{money(row.total_amount)}</td>

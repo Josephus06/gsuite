@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
+import { CustomerLink } from '../../components/PartyLink';
 import EntityPicker from '../../components/EntityPicker';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Modal from '../../components/Modal';
@@ -413,7 +414,7 @@ export default function Profitability() {
                       <td>{o.sales_rep_name || ''}</td>
                       <td>{o.sales_division_name || ''}</td>
                       <td>{o.office_location_name || ''}</td>
-                      <td>{o.customer_name || ''}</td>
+                      <td><CustomerLink id={o.customer_id} name={o.customer_name} /></td>
                       <td style={{ maxWidth: 240 }}>
                         {o.contract_description || ''}
                         {o.status === 'cancelled' && (

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
+import { SupplierLink } from '../../components/PartyLink';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Modal from '../../components/Modal';
 import { money } from './CoaTreeRows';
@@ -204,7 +205,7 @@ export default function ApAging() {
                 )}
                 {report.rows.map((row) => (
                   <tr key={row.supplier_id}>
-                    <td data-label="Vendor">{row.supplier_name}</td>
+                    <td data-label="Vendor"><SupplierLink id={row.supplier_id} name={row.supplier_name} /></td>
                     <td data-label="Current" style={{ textAlign: 'right' }}>{money(row.current)}</td>
                     <td data-label="1-30 days" style={{ textAlign: 'right' }}>{money(row.d1_30)}</td>
                     <td data-label="31-60 days" style={{ textAlign: 'right' }}>{money(row.d31_60)}</td>
