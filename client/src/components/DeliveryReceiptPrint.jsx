@@ -67,8 +67,10 @@ export default function DeliveryReceiptPrint({ si }) {
         .dr-items tfoot td { border-bottom: none; border-top: 1px solid #999; font-weight: 700; padding-top: 10px; }
         /* The acknowledgement. Boxed, because it is the part of the page that is signed, and
            kept off a page break so a signature can never land away from what it acknowledges. */
+        /* Inset 2px each side: full-width, its right border sat exactly on the printable edge and
+           print scaling rounded it off the page (2026-10-06, "the right part of the box is gone"). */
         .dr-ack {
-          border: 1px solid #999; padding: 14px 16px 18px; margin-top: auto;
+          border: 1px solid #999; padding: 14px 16px 18px; margin: auto 2px 0;
           break-inside: avoid; page-break-inside: avoid;
         }
         .dr-ack-gap { height: 28px; flex-shrink: 0; }
