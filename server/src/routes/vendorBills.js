@@ -809,10 +809,27 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[vb]] = await conn.query('SELECT status, purchase_order_id, date_created FROM vendor_bills WHERE id = ?', [req.params.id]);
+    const [[vb]] = await conn.query('SELECT status, purchase_order_id, date_created, gross_amount, wtax_amount, amount_due FROM vendor_bills WHERE id = ?', [req.params.id]);
     if (vb) await assertPeriodOpen(vb.date_created, 'ap', conn);
     if (!vb) return res.status(404).json({ error: 'Not found' });
     if (vb.status === 'cancelled') return res.status(409).json({ error: 'This Vendor Bill is already cancelled.' });
+    // Not while anything has paid or credited it (asked 2026-10-06): voiding left those Bill Payments
+    // and Bill Credits applied to a void bill -- the cash and AP no longer agreeing, with nothing to
+    // say so. What is applied is gross less withholding less what is still due, as Edit reads it.
+    const applied = Math.max(0, Number((Number(vb.gross_amount) - Number(vb.wtax_amount || 0) - Number(vb.amount_due)).toFixed(2)));
+    if (applied > 0.005) {
+      const [docs] = await conn.query(
+        `SELECT bp.bill_payment_no AS no FROM bill_payment_lines bpl JOIN bill_payments bp ON bp.id = bpl.bill_payment_id
+          WHERE bpl.vendor_bill_id = ? AND bpl.applied_amount > 0 AND bp.status <> 'voided'
+         UNION
+         SELECT bc.bill_credit_no FROM bill_credit_applications bca JOIN bill_credits bc ON bc.id = bca.bill_credit_id
+          WHERE bca.vendor_bill_id = ? AND bca.applied_amount > 0 AND bc.status <> 'voided'`,
+        [req.params.id, req.params.id]);
+      const names = docs.map((d) => d.no).filter(Boolean);
+      return res.status(409).json({
+        error: `${applied.toFixed(2)} of this bill is already paid or credited${names.length ? ` (${names.join(', ')})` : ''}. Void or unapply ${names.length === 1 ? 'that' : 'those'} first, then void the bill.`,
+      });
+    }
 
     const [lines] = await conn.query('SELECT purchase_order_line_id, qty FROM vendor_bill_lines WHERE vendor_bill_id = ?', [req.params.id]);
 

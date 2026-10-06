@@ -1578,6 +1578,22 @@ router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
     if (!po) return res.status(404).json({ error: 'Not found' });
     if (normalisePoStatus(po.status) === 'cancelled') return res.status(409).json({ error: 'This PO is already cancelled.' });
     await assertPeriodOpen(po.date_created, 'non_gl', conn);
+    // Not while anything on it is billed or received (asked 2026-10-06): cancelling left its bills,
+    // received stock and receipts standing under a PO that said Cancelled. Undo in reverse -- void
+    // the bill(s), Vendor Return what was received -- then cancel.
+    const [[act]] = await conn.query(
+      'SELECT COALESCE(SUM(billed_qty), 0) AS billed, COALESCE(SUM(received_qty), 0) AS received FROM purchase_order_lines WHERE purchase_order_id = ?',
+      [req.params.id]);
+    if (Number(act.billed) > 0.00001) {
+      const [bills] = await conn.query("SELECT bill_no FROM vendor_bills WHERE purchase_order_id = ? AND status <> 'cancelled'", [req.params.id]);
+      const names = bills.map((b) => b.bill_no).filter(Boolean);
+      return res.status(409).json({
+        error: `This PO is billed${names.length ? ` (${names.join(', ')})` : ''}. Void its bill${names.length === 1 ? '' : 's'} first (undoing any payment or credit on ${names.length === 1 ? 'it' : 'them'}), then Vendor Return what was received, then cancel.`,
+      });
+    }
+    if (Number(act.received) > 0.00001) {
+      return res.status(409).json({ error: 'Items on this PO are received. Vendor Return them first, then cancel.' });
+    }
 
     const [lines] = await conn.query('SELECT purchase_requisition_line_id, qty FROM purchase_order_lines WHERE purchase_order_id = ?', [req.params.id]);
 
