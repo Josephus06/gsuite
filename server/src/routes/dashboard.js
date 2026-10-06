@@ -1294,7 +1294,14 @@ router.get('/production-calendar', requireAuth, async (req, res, next) => {
       `SELECT jo.id, jo.job_order_no AS jobOrderNo, jo.description, jo.quantity, jo.units,
               jo.planned_start_date AS plannedStart, jo.planned_end_date AS plannedEnd,
               jo.delivery_date AS deliveryDate, jo.production_stage AS stage, jo.is_on_hold AS onHold,
-              c.name AS customerName, jt.display_name AS jobTypeName, loc.location_name AS jobLocationName
+              c.name AS customerName, jt.display_name AS jobTypeName, loc.location_name AS jobLocationName,
+              -- The JO's sales value (asked 2026-10-06): its Sales Order line's Net of Tax, the basis
+              -- Weighted Sales uses. A rework order (RWIP / RFQC, which has a parent) carries none --
+              -- its parent's line already counts that sale.
+              CASE WHEN jo.parent_job_order_id IS NOT NULL THEN 0
+                   ELSE COALESCE((SELECT sol.net_of_tax FROM sales_order_lines sol WHERE sol.job_order_id = jo.id LIMIT 1),
+                                 (SELECT sol.net_of_tax FROM sales_order_lines sol WHERE sol.id = jo.sales_order_line_id), 0)
+              END AS amount
          FROM job_orders jo
          LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
          LEFT JOIN customers c ON c.id = so.customer_id

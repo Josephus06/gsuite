@@ -909,6 +909,9 @@ function ForecastCalendarCard({ navigate, embedded = false, range = 'month' }) {
     const end = String(j.plannedEnd || '').slice(0, 10);
     return start && end && start <= lastDay && end >= firstDay;
   });
+  // Each JO's sales value (its SO line's Net of Tax; 0 for rework) -- summed once per job for the
+  // header, and per day for the cells (a job running five days is in five days' totals).
+  const shownAmount = shownJobs.reduce((t, j) => t + Number(j.amount || 0), 0);
 
   // The span in words as well as in colour: the band shows how long a job runs, this says it
   // exactly, including the part that falls outside the month on screen.
@@ -928,7 +931,7 @@ function ForecastCalendarCard({ navigate, embedded = false, range = 'month' }) {
           <strong>{title}</strong>
           <button type="button" className="btn btn-sm" onClick={() => shift(1)} disabled={loading}>&rsaquo;</button>
           <span className="muted artist-calendar-count">
-            {loading ? 'Loading...' : `${shownJobs.length} scheduled`}
+            {loading ? 'Loading...' : `${shownJobs.length} scheduled · ${money2(shownAmount)}`}
           </span>
           {embedded && (
             <div className="status-tabs" style={{ margin: 0 }}>
@@ -960,6 +963,13 @@ function ForecastCalendarCard({ navigate, embedded = false, range = 'month' }) {
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenDay(key); } }}
               >
                 <span className="artist-calendar-daynum">{Number(key.slice(8, 10))}</span>
+                {dayJobs.length > 0 && (
+                  <div className="cal-tally">
+                    <span className="cal-tally-item" title="Total of the JOs in their window this day">
+                      {money2(dayJobs.reduce((t, j) => t + Number(j.amount || 0), 0))}
+                    </span>
+                  </div>
+                )}
                 {dayJobs.slice(0, 3).map((j) => {
                   // Square the edge the window carries on through, so consecutive days join into
                   // one band. Compared as plain YYYY-MM-DD strings, which sort correctly and keep
@@ -970,7 +980,7 @@ function ForecastCalendarCard({ navigate, embedded = false, range = 'month' }) {
                     <span
                       key={j.id}
                       className={`artist-calendar-chip jo-span ${colourById.get(j.id) || 'jo-c0'}${key > start ? ' is-cont-left' : ''}${key < end ? ' is-cont-right' : ''}`}
-                      title={`${j.jobOrderNo} - ${j.customerName || ''} - ${spanLabel(j)}`}
+                      title={`${j.jobOrderNo} - ${j.customerName || ''} - ${money2(j.amount)} - ${spanLabel(j)}`}
                     >
                       {j.jobOrderNo}
                     </span>
@@ -999,13 +1009,13 @@ function ProductionDayTable({ list, spanLabel, navigate }) {
       <table>
         <thead>
           <tr>
-            <th>JO #</th><th>Job Type</th><th>Qty</th><th>Forecast</th>
+            <th>JO #</th><th>Job Type</th><th>Qty</th><th className="text-right">Amount</th><th>Forecast</th>
             <th>Delivery</th><th>Stage</th><th></th>
           </tr>
         </thead>
         <tbody>
           {!list.length && (
-            <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+            <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>
               Nothing scheduled on this day.
             </td></tr>
           )}
@@ -1020,6 +1030,7 @@ function ProductionDayTable({ list, spanLabel, navigate }) {
                 {j.jobLocationName && <div className="muted" style={{ fontSize: '0.85em' }}>{j.jobLocationName}</div>}
               </td>
               <td style={{ whiteSpace: 'nowrap' }}>{Number(j.quantity || 0)} {j.units || ''}</td>
+              <td className="text-right" style={{ whiteSpace: 'nowrap' }}>{money2(j.amount)}</td>
               <td style={{ whiteSpace: 'nowrap' }}>{spanLabel(j)}</td>
               <td style={{ whiteSpace: 'nowrap' }}>
                 {j.deliveryDate ? String(j.deliveryDate).slice(0, 10) : <span className="muted">-</span>}
@@ -1033,6 +1044,13 @@ function ProductionDayTable({ list, spanLabel, navigate }) {
               </td>
             </tr>
           ))}
+          {list.length > 0 && (
+            <tr>
+              <td colSpan={3}><strong>Total ({list.length} JO{list.length === 1 ? '' : 's'})</strong></td>
+              <td className="text-right"><strong>{money2(list.reduce((t, j) => t + Number(j.amount || 0), 0))}</strong></td>
+              <td colSpan={4} />
+            </tr>
+          )}
         </tbody>
       </table>
     </div>
