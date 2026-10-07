@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
+import EntityPicker from '../components/EntityPicker';
 
 // Edit a Sales Order -- System Admin only (PUT /sales-orders/:id). Header details and every line:
 // description, qty, price, Disc Amt PER PIECE (Disc Price/Unit = Price/Unit - Disc Amt, Net of Tax =
 // Qty x Disc Price/Unit -- the estimate's rule), tax code, sizes, delivery date/time, remarks.
-// The server recomputes every amount; this only previews them. Customer is shown, not editable.
+// The server recomputes every amount; this only previews them. The customer can be changed until the
+// SO has an invoice or delivery ticket (customer_locked); the contact follows the customer.
 const money = (v) => Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const day = (v) => (v ? String(v).slice(0, 10) : '');
 
@@ -17,6 +19,7 @@ export default function SalesOrderEdit() {
   const [head, setHead] = useState({});
   const [lines, setLines] = useState([]);
   const [lk, setLk] = useState({ contacts: [], reps: [], locations: [], taxes: [] });
+  const [customers, setCustomers] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -29,6 +32,7 @@ export default function SalesOrderEdit() {
           api.get('/employees').catch(() => ({ data: [] })), api.get('/lookups/locations'), api.get('/lookups/taxes'),
         ]);
         setLk({ contacts: cust.data.contacts || [], reps: reps.data, locations: locs.data, taxes: taxes.data });
+        if (!data.customer_locked) api.get('/customers').then((r) => setCustomers(r.data)).catch(() => {});
         setSo(data);
         setHead({ ...data, date_created: day(data.date_created) });
         setLines(data.lines.map((l) => ({
@@ -56,12 +60,27 @@ export default function SalesOrderEdit() {
   const h = (k) => ({ value: head[k] ?? '', onChange: (e) => setHead((x) => ({ ...x, [k]: e.target.value })) });
   // Line 1's Tax Code is the order's: changing it re-taxes every line the same way (asked 2026-10-07);
   // any other line can still be set on its own.
+  // Contact details come from the contact chosen; "—" clears them.
+  const fillContact = (c) => ({
+    contact_person_id: c?.id || '', contact_email: c?.email || '', contact_title: c?.title || '', contact_phone: c?.phone || '',
+  });
+  const pickContact = (cid) => setHead((x) => ({ ...x, ...fillContact(lk.contacts.find((c) => String(c.id) === String(cid))) }));
+  // A new customer brings its own contacts: the old contact and its details are replaced by the new
+  // customer's primary contact (or its only one), else left blank to choose.
+  async function pickCustomer(c) {
+    if (!c || String(c.id) === String(head.customer_id)) return;
+    let contacts = [];
+    try { contacts = (await api.get(`/customers/${c.id}`)).data.contacts || []; } catch { /* left blank */ }
+    setLk((x) => ({ ...x, contacts }));
+    const first = contacts.find((k) => k.is_primary) || (contacts.length === 1 ? contacts[0] : null);
+    setHead((x) => ({ ...x, customer_id: c.id, customer_name: c.name, ...fillContact(first) }));
+  }
   const setLine = (i, k, v) => setLines((ls) => ls.map((l, j) => (j === i || (k === 'tax_code_id' && i === 0) ? { ...l, [k]: v } : l)));
 
   async function save() {
     setSaving(true); setError('');
     try {
-      const body = { ...Object.fromEntries(['ref_no', 'date_created', 'contact_person_id', 'contact_email', 'contact_title', 'contact_phone',
+      const body = { customer_id: head.customer_id, ...Object.fromEntries(['ref_no', 'date_created', 'contact_person_id', 'contact_email', 'contact_title', 'contact_phone',
         'blanket_po_memo', 'sales_rep_id', 'office_location_id', 'contract_description', 'memo', 'shipping_address',
         'production_lead_time', 'price_validity', 'order_confirmation_type', 'order_confirmation_ref', 'credit_term', 'bill_to_contact_number']
         .map((k) => [k, head[k] ?? null])),
@@ -89,10 +108,21 @@ export default function SalesOrderEdit() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '0 20px' }}>
           <div>
-            <div className="field"><label>Customer</label><input readOnly value={so.customer_name || ''} title="Not editable: invoices read their customer through the SO" /></div>
+            <div className="field">
+              <label>Customer</label>
+              {so.customer_locked
+                ? <input readOnly value={so.customer_name || ''} title="Not editable: this Sales Order already has invoices or delivery tickets" />
+                : (
+                  <EntityPicker label="Customer" items={customers.length ? customers : [{ id: so.customer_id, name: so.customer_name }]}
+                    value={head.customer_id || ''} getLabel={(c) => c?.name}
+                    columns={[{ key: 'name', label: 'Name' }, { key: 'customer_code', label: 'Code' }]} searchKeys={['name', 'customer_code']}
+                    placeholder="--Select--" onSelect={pickCustomer} />
+                )}
+              {String(head.customer_id) !== String(so.customer_id) && <div className="muted" style={{ fontSize: 12 }}>Changed from {so.customer_name}. Blanket PO will be cleared.</div>}
+            </div>
             <div className="field">
               <label>Contact Person</label>
-              <select {...h('contact_person_id')}>
+              <select value={head.contact_person_id ?? ''} onChange={(e) => pickContact(e.target.value)}>
                 <option value="">—</option>
                 {lk.contacts.map((c) => <option key={c.id} value={c.id}>{c.contact_name}</option>)}
               </select>
