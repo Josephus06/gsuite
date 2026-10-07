@@ -61,6 +61,8 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
     // A Tax Amount typed by hand; '' means "computed from the rate".
     tax_override: '',
     job_order_no: l.job_order_no || '',
+    // Marked for removal: struck through, out of the totals, sent as removed_line_ids on save.
+    removed: false,
     original: l,
   })));
   const [employees, setEmployees] = useState([]);
@@ -118,15 +120,18 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
     return { ...it, subtotal, discAmount, net, tax, gross: Number((net + tax).toFixed(2)) };
   });
 
+  const kept = priced.filter((l) => !l.removed);
+  // Delivery Ticket conversions bill whole, so the server refuses removing their items.
+  const canRemove = !invoice.delivery_ticket_id;
   const pct = Number(withholdingPct) || 0;
-  const netOfTax = Number(priced.reduce((s, l) => s + l.net, 0).toFixed(2));
-  const taxAmount = Number(priced.reduce((s, l) => s + l.tax, 0).toFixed(2));
-  const grossAmount = Number(priced.reduce((s, l) => s + l.gross, 0).toFixed(2));
+  const netOfTax = Number(kept.reduce((s, l) => s + l.net, 0).toFixed(2));
+  const taxAmount = Number(kept.reduce((s, l) => s + l.tax, 0).toFixed(2));
+  const grossAmount = Number(kept.reduce((s, l) => s + l.gross, 0).toFixed(2));
   const ewt = Number((netOfTax * (pct / 100)).toFixed(2));
   const amountDue = Number((grossAmount - ewt).toFixed(2));
   const pctValid = Number.isFinite(pct) && pct >= 0 && pct <= 100;
   // A quantity of zero or less has no meaning on an invoice line, and the server refuses it.
-  const itemsValid = priced.every((l) => Number(l.quantity) > 0
+  const itemsValid = kept.length > 0 && kept.every((l) => Number(l.quantity) > 0
     && Number(l.price_per_unit) >= 0
     && Number(l.disc_percent) >= 0 && Number(l.disc_percent) <= 100
     && (l.tax_override === '' || Number(l.tax_override) >= 0));
@@ -140,6 +145,7 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
 
   async function save() {
     if (!pctValid) { setError('Withholding Tax % must be between 0 and 100.'); return; }
+    if (!kept.length) { setError('An Invoice needs at least one item. Void it instead of removing them all.'); return; }
     if (!itemsValid) { setError('Check the item quantities, prices and discounts.'); return; }
     const deptError = headerDepartmentError(department?.id);
     if (deptError) { setError(deptError); return; }
@@ -159,7 +165,9 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
         memo,
         withholding_tax_pct: pct,
         // Only the items that actually moved, so an untouched invoice sends no line work at all.
+        removed_line_ids: items.filter((it) => it.removed).map((it) => it.id),
         lines: items
+          .filter((it) => !it.removed)
           .filter((it) => it.description !== (it.original.description || '')
             || Number(it.quantity) !== Number(it.original.quantity || 0)
             || Number(it.price_per_unit) !== Number(it.original.price_per_unit || 0)
@@ -290,6 +298,7 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
             <table>
               <thead>
                 <tr>
+                  {canRemove && <th />}
                   <th>JO #</th>
                   <th>Description</th>
                   <th style={{ textAlign: 'right' }}>Qty</th>
@@ -304,10 +313,19 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
               </thead>
               <tbody>
                 {priced.length === 0 && (
-                  <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 16 }}>This invoice has no items.</td></tr>
+                  <tr><td colSpan={canRemove ? 11 : 10} className="muted" style={{ textAlign: 'center', padding: 16 }}>This invoice has no items.</td></tr>
                 )}
                 {priced.map((l) => (
-                  <tr key={l.id}>
+                  <tr key={l.id} style={l.removed ? { opacity: 0.45, textDecoration: 'line-through' } : undefined}>
+                    {canRemove && (
+                      <td>
+                        <button type="button" className={`btn btn-sm${l.removed ? '' : ' btn-danger'}`}
+                          title={l.removed ? 'Keep this item' : 'Remove this item from the invoice; the totals follow'}
+                          onClick={() => setItems((prev) => prev.map((it) => (it.id === l.id ? { ...it, removed: !it.removed } : it)))}>
+                          {l.removed ? 'Undo' : 'Delete'}
+                        </button>
+                      </td>
+                    )}
                     <td style={{ whiteSpace: 'nowrap' }}>{l.job_order_no || '--'}</td>
                     <td><input value={l.description} onChange={(e) => setItem(l.id, { description: e.target.value })} style={{ minWidth: 220 }} /></td>
                     <td>

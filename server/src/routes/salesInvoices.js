@@ -1599,17 +1599,53 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       }
     }
 
+    // ---- items removed (asked 2026-10-07: "add button to delete a JO line, the amount will change
+    // automatically") ----
+    // A removed line gives its qty back to its job order (quantity_invoiced), so the delivery is
+    // billable again, and the totals are re-summed without it. Not on an invoice converted from a
+    // Delivery Ticket: the ticket bills whole, and dropping a line here would leave its line billed
+    // on the ticket -- that correction is void and re-issue. At least one item must remain.
+    const removedIds = [...new Set((Array.isArray(req.body.removed_line_ids) ? req.body.removed_line_ids : [])
+      .map(Number).filter(Boolean))];
+    let removedLines = [];
+    if (removedIds.length) {
+      if (si.delivery_ticket_id) {
+        return res.status(409).json({ error: 'This Invoice was billed from a Delivery Ticket, which bills whole. Void it and re-issue instead of removing an item.' });
+      }
+      [removedLines] = await conn.query(
+        'SELECT id, job_order_id, quantity, description, gross_amount FROM sales_invoice_lines WHERE sales_invoice_id = ? AND id IN (?)',
+        [req.params.id, removedIds],
+      );
+      if (removedLines.length !== removedIds.length) return res.status(400).json({ error: 'One of the removed items is not on this Invoice.' });
+      const [[credited]] = await conn.query(
+        `SELECT COUNT(*) AS n FROM credit_memo_lines l JOIN credit_memos cm ON cm.id = l.credit_memo_id
+          WHERE l.sales_invoice_line_id IN (?) AND cm.status <> 'voided'`, [removedIds],
+      );
+      if (Number(credited.n)) return res.status(409).json({ error: 'A credit memo was raised against one of these items. Void the credit memo first.' });
+      const [[{ n }]] = await conn.query('SELECT COUNT(*) AS n FROM sales_invoice_lines WHERE sales_invoice_id = ?', [req.params.id]);
+      if (Number(n) - removedLines.length < 1) {
+        return res.status(400).json({ error: 'An Invoice needs at least one item. Void it instead of removing them all.' });
+      }
+      // An edit to a line that is also being removed is moot.
+      for (let i = lineChanges.length - 1; i >= 0; i -= 1) {
+        if (removedIds.includes(Number(lineChanges[i].cur.id))) lineChanges.splice(i, 1);
+      }
+    }
+    const removedSet = new Set(removedLines.map((l) => Number(l.id)));
+    const linesMoved = lineChanges.length > 0 || removedLines.length > 0;
+
     // Header money, after the lines are known. With no line edits these stay the stored totals and
     // only EWT and Amount Due move; with line edits the five line-derived totals are re-summed
-    // across every line -- the edited ones at their new amounts, the untouched ones as they stand.
+    // across every line -- the edited ones at their new amounts, the untouched ones as they stand,
+    // the removed ones not at all.
     const money = { ...si };
-    if (lineChanges.length) {
+    if (linesMoved) {
       const edited = new Map(lineChanges.map((c) => [Number(c.cur.id), c.amounts]));
       const [allLines] = await conn.query(
         'SELECT id, subtotal, disc_amount, net_of_tax, tax_amount, gross_amount FROM sales_invoice_lines WHERE sales_invoice_id = ?',
         [req.params.id],
       );
-      const sum = (key) => allLines.reduce((s, l) => {
+      const sum = (key) => allLines.filter((l) => !removedSet.has(Number(l.id))).reduce((s, l) => {
         const src = edited.get(Number(l.id)) || l;
         return s + Number(src[key] || 0);
       }, 0);
@@ -1631,7 +1667,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     next.withholding_tax_pct = pct;
     next.ewt_amount = ewtAmount;
     next.amount_due = amountDue;
-    if (lineChanges.length) {
+    if (linesMoved) {
       next.subtotal = money.subtotal;
       next.discount_amount = money.discount_amount;
       next.net_of_tax = money.net_of_tax;
@@ -1704,6 +1740,22 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
           fieldName: `line ${ch.cur.id} ${field}`, oldValue: before, newValue: after,
         });
       }
+    }
+
+    for (const rl of removedLines) {
+      await conn.query('DELETE FROM sales_invoice_lines WHERE id = ?', [rl.id]);
+      if (rl.job_order_id) {
+        // Clamped at zero for the same reason as a qty decrease above.
+        await conn.query(
+          'UPDATE job_orders SET quantity_invoiced = GREATEST(quantity_invoiced - ?, 0), updated_at = NOW() WHERE id = ?',
+          [Number(rl.quantity || 0), rl.job_order_id],
+        );
+        touchedJobOrders.add(rl.job_order_id);
+      }
+      await logAudit(conn, {
+        invoiceId: req.params.id, userId: req.user.id, eventType: 'Updated',
+        fieldName: `line ${rl.id} removed`, oldValue: `${rl.description || ''} (qty ${Number(rl.quantity || 0)}, ${Number(rl.gross_amount || 0).toFixed(2)})`, newValue: null,
+      });
     }
 
     // A billed quantity changed, so what the Sales Order has left to bill changed with it. Derived

@@ -270,8 +270,8 @@ export default function DeliveryTicketModal({ salesOrderId, ticket = null, onClo
             <table>
               <thead>
                 <tr>
-                  <th>#</th><th>JO #</th><th>Item</th><th>Description</th><th>Location</th><th>Qty</th>
-                  <th>Unit</th><th>Unit Title</th><th>Price/Unit</th><th>Subtotal</th><th>Disc.%</th><th></th>
+                  <th></th><th>#</th><th>JO #</th><th>Item</th><th>Description</th><th>Location</th><th>Qty</th>
+                  <th>Unit</th><th>Unit Title</th><th>Price/Unit</th><th>Subtotal</th><th>Disc.%</th>
                 </tr>
               </thead>
               <tbody>
@@ -283,6 +283,10 @@ export default function DeliveryTicketModal({ salesOrderId, ticket = null, onClo
                   const selectedLocation = locations.find((l) => String(l.id) === String(r.location_id));
                   return (
                     <tr key={r.key}>
+                      {/* First, so it is in view without scrolling the wide table; the totals follow. */}
+                      <td>
+                        <button type="button" className="btn btn-sm btn-danger" title="Remove this line; the totals follow" onClick={() => setRows((prev) => prev.filter((x) => x.key !== r.key))}>Delete</button>
+                      </td>
                       <td>{idx + 1}</td>
                       <td>{r.job_order_no || '—'}</td>
                       <td style={{ minWidth: 160 }}>
@@ -311,9 +315,6 @@ export default function DeliveryTicketModal({ salesOrderId, ticket = null, onClo
                       <td><input type="number" step="0.0001" style={{ width: 100 }} value={r.price_per_unit ?? ''} onChange={(e) => updateRow(r.key, { price_per_unit: e.target.value })} /></td>
                       <td>{money(a.subtotal)}</td>
                       <td><input type="number" step="0.01" style={{ width: 70 }} value={r.disc_percent ?? ''} onChange={(e) => updateRow(r.key, { disc_percent: e.target.value })} /></td>
-                      <td>
-                        <button type="button" className="btn btn-sm" onClick={() => setRows((prev) => prev.filter((x) => x.key !== r.key))}>Delete</button>
-                      </td>
                     </tr>
                   );
                 })}

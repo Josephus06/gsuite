@@ -418,9 +418,9 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
             <table>
               <thead>
                 <tr>
-                  <th>#</th><th>JO #</th><th>Item</th><th>Description</th><th>Location</th><th>Qty</th><th>Unit</th>
+                  <th></th><th>#</th><th>JO #</th><th>Item</th><th>Description</th><th>Location</th><th>Qty</th><th>Unit</th>
                   <th>Price/Unit</th><th>Subtotal</th><th>Disc.%</th><th>Disc. Amt</th><th>Disc. Price/Unit</th>
-                  <th>Net of Tax</th><th>Tax Code</th><th>Tax Amt</th><th>Gross Amt</th><th></th>
+                  <th>Net of Tax</th><th>Tax Code</th><th>Tax Amt</th><th>Gross Amt</th>
                 </tr>
               </thead>
               <tbody>
@@ -436,6 +436,23 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
                   const excluded = excludedIds.has(key);
                   return (
                     <tr key={key} style={excluded ? { opacity: 0.4, textDecoration: 'line-through' } : undefined}>
+                      {/* First, so it is in view without scrolling the wide table; the totals follow. */}
+                      <td>
+                        {/* Converting a ticket bills it whole -- there is no partial
+                            conversion, so excluding a line isn't offered here. */}
+                        {!fromTicket && (
+                          <button
+                            type="button" className={`btn btn-sm${excluded ? '' : ' btn-danger'}`}
+                            onClick={() => setExcludedIds((prev) => {
+                              const next = new Set(prev);
+                              if (excluded) next.delete(key); else next.add(key);
+                              return next;
+                            })}
+                          >
+                            {excluded ? 'Undo' : 'Delete'}
+                          </button>
+                        )}
+                      </td>
                       <td>{idx + 1}</td>
                       {/* Blank only while there genuinely is no Job Order -- an Estimate that has
                           been converted shows the JO its line became. */}
@@ -468,22 +485,6 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
                       <td>{l.tax_code}</td>
                       <td>{money(l.tax_amount)}</td>
                       <td>{money(l.gross_amount)}</td>
-                      <td>
-                        {/* Converting a ticket bills it whole -- there is no partial
-                            conversion, so excluding a line isn't offered here. */}
-                        {!fromTicket && (
-                          <button
-                            type="button" className="btn btn-sm"
-                            onClick={() => setExcludedIds((prev) => {
-                              const next = new Set(prev);
-                              if (excluded) next.delete(key); else next.add(key);
-                              return next;
-                            })}
-                          >
-                            {excluded ? 'Undo' : 'Delete'}
-                          </button>
-                        )}
-                      </td>
                     </tr>
                   );
                 })}
