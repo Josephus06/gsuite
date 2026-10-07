@@ -43,6 +43,17 @@ const pool = require('../db');
 // the cost is that a box skips the other's numbers (CPAY-61, 63, 65 on the droplet).
 //
 // (For an hour on 2026-10-03 the office box suffixed -O instead; those numbers are still counted.)
+//
+// THREE BOXES (2026-10-07, the SM branch server). Odd/even only splits two ways, so the rule is now
+// general: N boxes share the number space and each owns the numbers where number % N equals its
+// auto-increment offset % N -- the droplet (offset 1), the office (2) and SM (3). With N = 2 that is
+// exactly odd/even, so this changed nothing until N was raised.
+//
+// N is NOT per-box configuration. It lives in app_settings ('doc_no_slots', db/create-app-settings.js),
+// which replicates, and is read on every number: raising it is one UPDATE on the droplet that reaches
+// every box at once. Were each box told separately, a box still splitting two ways beside one splitting
+// three ways would hand out the same number (4 is even AND 4 % 3 = 1), and a duplicate on a UNIQUE
+// column stops replication.
 async function nextDocNo(table, column, prefix, conn = null) {
   const parity = await docNoParity();
   const sql = 'SELECT COALESCE(MAX(CAST(SUBSTRING(??, ?) AS UNSIGNED)), 0) AS n FROM ?? WHERE ?? REGEXP ?';
@@ -58,27 +69,40 @@ async function nextDocNo(table, column, prefix, conn = null) {
   return `${prefix}${nextOnThisBox(highest, parity)}`;
 }
 
-// 1 (odd) on the droplet, 0 (even) on the office box, null on a standalone install (Railway, a
-// laptop), which keeps plain highest + 1. Told apart by MySQL's own replication settings --
-// auto_increment_increment > 1 only on the replicated pair, auto_increment_offset 1 on the droplet
-// and 2 on the office (REPLICATION-RECOVERY.md) -- so nothing per box has to be configured.
-// DOC_NO_PARITY in .env ("odd" / "even" / "none") overrides. Read once per process.
-let parityPromise = null;
-function docNoParity() {
+// This box's share of the numbers: { slots: N, slot } -- it issues n where n % N === slot -- or null
+// on a standalone install (Railway, a laptop), which keeps plain highest + 1. The box is told apart
+// by MySQL's own replication settings: auto_increment_increment > 1 only on replicated boxes, and
+// auto_increment_offset 1 on the droplet, 2 on the office, 3 on SM (REPLICATION-RECOVERY.md), read
+// once per process. N is read from app_settings every time (see above); 2 when the row or the
+// table is not there yet, which is the odd/even split the pair has always used.
+// DOC_NO_PARITY in .env ("odd" / "even" / "none") overrides, as a two-way split.
+let offsetPromise = null;
+async function docNoParity() {
   const env = process.env.DOC_NO_PARITY;
-  if (env) return Promise.resolve(env === 'odd' ? 1 : env === 'even' ? 0 : null);
-  if (!parityPromise) {
-    parityPromise = pool.query('SELECT @@auto_increment_increment AS inc, @@auto_increment_offset AS o')
-      .then(([[r]]) => (Number(r.inc) > 1 ? Number(r.o) % 2 : null))
-      .catch((err) => { parityPromise = null; throw err; });
+  if (env) return env === 'odd' ? { slots: 2, slot: 1 } : env === 'even' ? { slots: 2, slot: 0 } : null;
+  if (!offsetPromise) {
+    offsetPromise = pool.query('SELECT @@auto_increment_increment AS inc, @@auto_increment_offset AS o')
+      .then(([[r]]) => (Number(r.inc) > 1 ? Number(r.o) : null))
+      .catch((err) => { offsetPromise = null; throw err; });
   }
-  return parityPromise;
+  const offset = await offsetPromise;
+  if (offset == null) return null;
+  let slots = 2;
+  try {
+    const [[row]] = await pool.query("SELECT value FROM app_settings WHERE name = 'doc_no_slots'");
+    if (row && Number(row.value) >= 2) slots = Number(row.value);
+  } catch (err) {
+    if (err.code !== 'ER_NO_SUCH_TABLE') throw err; // before db/create-app-settings.js has run
+  }
+  return { slots, slot: offset % slots };
 }
 
 // The smallest number above `highest` that this box may issue.
-function nextOnThisBox(highest, parity) {
-  const n = Number(highest) + 1;
-  return parity == null || n % 2 === parity ? n : n + 1;
+function nextOnThisBox(highest, share) {
+  let n = Number(highest) + 1;
+  if (!share) return n;
+  while (n % share.slots !== share.slot) n += 1;
+  return n;
 }
 
 // The numbers counted when finding the highest: plain ones, plus the -O ones the office box issued
