@@ -380,10 +380,10 @@ function AdminDashboard({ data, user, navigate }) {
       </div>
 
       <div className="holo-grid holo-grid-wide">
-        {/* Invoiced sales net of VAT over the last 12 months, with each customer's share of them and
+        {/* Invoiced sales net of VAT over the current year (1 Jan - 31 Dec), with each customer's share of them and
             what it still owes -- a big customer that pays slowly shows here. */}
         <div className="holo-card">
-          <h3>Top Customers · Last 12 Months</h3>
+          <h3>Top Customers · {data.topCustomersYear || new Date().getFullYear()}</h3>
           {data.topCustomers.length ? (
             <div className="holo-barlist">
               {data.topCustomers.map((c) => (

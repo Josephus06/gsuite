@@ -242,12 +242,15 @@ async function adminMetrics(userId) {
   const today = businessToday();
   const daysBack = (n) => new Date(Date.parse(`${today}T00:00:00Z`) - n * 86400000).toISOString().slice(0, 10);
 
-  // Top Customers: invoiced sales net of VAT over the last 12 months, each with its share of all
-  // invoiced sales in that window and what it still owes on open invoices (any age).
-  const salesFrom = daysBack(365);
+  // Top Customers: invoiced sales net of VAT over the current calendar year (1 Jan - 31 Dec; was the
+  // last 12 months until 2026-10-07), each with its share of all invoiced sales in that year and
+  // what it still owes on open invoices (any age).
+  const salesYear = Number(today.slice(0, 4));
+  const salesFrom = `${salesYear}-01-01`;
+  const salesTo = `${salesYear}-12-31`;
   const [[[salesTotal]], [topCustomers]] = await Promise.all([
     pool.query(`SELECT COALESCE(SUM(net_of_tax), 0) AS amount FROM sales_invoices
-                WHERE status <> 'cancelled' AND date_created BETWEEN ? AND ?`, [salesFrom, today]),
+                WHERE status <> 'cancelled' AND date_created BETWEEN ? AND ?`, [salesFrom, salesTo]),
     // An invoice's customer is its own customer_id or, for nearly all migrated ones (13,591 of the
     // 13,627 in the year to 2026-10-05 have none), its Sales Order's.
     pool.query(
@@ -267,7 +270,7 @@ async function adminMetrics(userId) {
          WHERE o.status = 'saved' AND o.amount_due > 0
          GROUP BY COALESCE(o.customer_id, oso.customer_id)
        ) ar ON ar.customer_id = top.customer_id
-       ORDER BY top.amount DESC`, [salesFrom, today]),
+       ORDER BY top.amount DESC`, [salesFrom, salesTo]),
   ]);
 
   // Trending Job Types: Weighted Sales (Sales Order lines net of tax, cancelled orders out -- the
@@ -348,6 +351,7 @@ async function adminMetrics(userId) {
 
   return {
     activeUsers: Number(activeUsers.count),
+    topCustomersYear: salesYear,
     topCustomers: topCustomers.map((c) => ({
       id: c.id, name: c.name, invoiceCount: Number(c.invoice_count), amount: Number(c.amount), openAr: Number(c.open_ar),
       share: Number(salesTotal.amount) > 0 ? Number(((Number(c.amount) / Number(salesTotal.amount)) * 100).toFixed(1)) : 0,
