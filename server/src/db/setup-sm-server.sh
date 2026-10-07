@@ -123,14 +123,25 @@ ufw --force enable > /dev/null 2>&1
 echo "   SSH, MySQL from Tailscale, T1S (4000) from the LAN"
 
 echo "== 7/10  seed from the cloud (a full copy, with its replication position)"
-MYSQL_PWD="$CLOUD_DB_PW" mysqldump --host="$CLOUD_TS" --user=gsuite --compress \
-  --single-transaction --set-gtid-purged=ON --no-tablespaces --routines --events --triggers \
-  --hex-blob --quick gsuite_erp --result-file=/root/seed.sql
-tail -1 /root/seed.sql | grep -q 'Dump completed' || { echo "ERROR: the dump did not complete -- not loading it."; exit 1; }
-echo "   dump complete ($(du -h /root/seed.sql | cut -f1))"
-mysql -uroot -e "STOP REPLICA; DROP DATABASE IF EXISTS gsuite_erp; CREATE DATABASE gsuite_erp CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; RESET BINARY LOGS AND GTIDS;"
-mysql -uroot gsuite_erp < /root/seed.sql
-echo "   loaded"
+# The dump is taken ON THE CLOUD as root and copied here as /home/gsuite/sm-seed.sql.gz: a consistent
+# dump with its GTID position needs FLUSH TABLES (RELOAD), which the cloud's gsuite account does not
+# hold. Without the file, fall back to dumping over Tailscale as gsuite.
+SEED_GZ=/home/gsuite/sm-seed.sql.gz
+if [ -s "$SEED_GZ" ]; then
+  zcat "$SEED_GZ" | tail -1 | grep -q 'Dump completed' || { echo "ERROR: $SEED_GZ is incomplete -- not loading it."; exit 1; }
+  echo "   using the dump taken on the cloud ($(du -h "$SEED_GZ" | cut -f1) compressed)"
+  mysql -uroot -e "STOP REPLICA; DROP DATABASE IF EXISTS gsuite_erp; CREATE DATABASE gsuite_erp CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; RESET BINARY LOGS AND GTIDS;"
+  zcat "$SEED_GZ" | mysql -uroot gsuite_erp
+else
+  MYSQL_PWD="$CLOUD_DB_PW" mysqldump --host="$CLOUD_TS" --user=gsuite --compression-algorithms=zlib \
+    --single-transaction --set-gtid-purged=ON --no-tablespaces --routines --events --triggers \
+    --hex-blob --quick gsuite_erp --result-file=/root/seed.sql
+  tail -1 /root/seed.sql | grep -q 'Dump completed' || { echo "ERROR: the dump did not complete -- not loading it."; exit 1; }
+  echo "   dump complete ($(du -h /root/seed.sql | cut -f1))"
+  mysql -uroot -e "STOP REPLICA; DROP DATABASE IF EXISTS gsuite_erp; CREATE DATABASE gsuite_erp CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; RESET BINARY LOGS AND GTIDS;"
+  mysql -uroot gsuite_erp < /root/seed.sql
+fi
+echo "   loaded: $(mysql -uroot -N -e 'SELECT COUNT(*) FROM gsuite_erp.sales_invoices') invoices"
 
 echo "== 8/10  accounts (kept out of the binlog, so they never replicate to the cloud)"
 APP_DB_PW=$(openssl rand -base64 24 | tr -d '/+=' | head -c 24)
@@ -177,7 +188,7 @@ chmod 600 "$APP_DIR/server/.env"
 bash "$APP_DIR/server/src/db/deploy-office-app.sh"
 
 shred -u "$SECRETS" 2>/dev/null || rm -f "$SECRETS"
-rm -f /root/seed.sql
+rm -f /root/seed.sql "$SEED_GZ"
 
 cat <<EOF
 
