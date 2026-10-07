@@ -8,6 +8,7 @@ import { displayDate } from './dates';
 export const TYPE_LABELS = {
   liquidation: 'Liquidation',
   payment: 'Request for Payment',
+  fund_transfer: 'RFP (Fund Transfer)',
   business_trip: 'Business Trip',
   revolving_fund: 'Revolving Fund',
 };
@@ -31,6 +32,12 @@ export const PURPOSE_LABELS = {
   employees_benefit: 'Employees Benefit',
   others: 'Others',
 };
+
+// Request for Payment, and RFP (Fund Transfer) -- the same form plus the From and To banks.
+export const PAYMENT_TYPES = ['payment', 'fund_transfer'];
+
+// A bank account as the From / To fields show it.
+export const bankLabel = (code, name) => (name ? `${code ? `${code} — ` : ''}${name}` : '');
 
 // The two forms that are a list of expenses against a cash advance.
 export const FUND_TYPES = ['liquidation', 'revolving_fund'];

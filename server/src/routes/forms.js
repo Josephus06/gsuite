@@ -42,10 +42,11 @@ const router = express.Router();
 const ROUTE = '/forms';
 const APPROVAL_ROUTE = '/forms/approval';
 
-const TYPES = ['liquidation', 'payment', 'business_trip', 'revolving_fund'];
+const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund'];
 const TYPE_LABELS = {
   liquidation: 'Liquidation',
   payment: 'Request for Payment',
+  fund_transfer: 'RFP (Fund Transfer)',
   business_trip: 'Business Trip',
   revolving_fund: 'Revolving Fund',
 };
@@ -57,6 +58,22 @@ const PURPOSES = [
 ];
 
 // A form that has left the owner's hands. Everything an approver can act on.
+// RFP (Fund Transfer) is a Request for Payment plus the bank it is paid from and the bank it goes to
+// (2026-10-07): same details table, same approval path; only From and To are added.
+const PAYMENT_TYPES = ['payment', 'fund_transfer'];
+
+// The accounts From / To may name: the actual bank accounts under Cash in Bank (11000), each with the
+// bank it sits under. Not the Cash on Hand funds (also typed "Bank"), and not the summary headings
+// that only group accounts. is_active is not consulted: every bank account in the chart reads
+// inactive (an import artifact, 2026-10-07), and the accounting Fund Transfer lists them all too.
+const BANK_ACCOUNTS_SQL = `
+  SELECT a.id, a.account_code, a.account_name, COALESCE(IF(p.account_code = '11000', NULL, p.account_name), a.account_name) AS bank_name
+    FROM chart_of_accounts a
+    JOIN chart_of_accounts p ON p.id = a.parent_account_id
+    LEFT JOIN chart_of_accounts gp ON gp.id = p.parent_account_id
+   WHERE a.detail_type = 'Bank' AND COALESCE(a.is_summary, 0) = 0
+     AND (p.account_code = '11000' OR gp.account_code = '11000')`;
+
 const WORKFLOW_STATUSES = ['submitted', 'noted', 'approved', 'rejected'];
 
 const trunc = (v, n) => (v == null || String(v).trim() === '' ? null : String(v).trim().slice(0, n));
@@ -139,8 +156,14 @@ async function loadFull(id) {
     const [p] = await pool.query(
       'SELECT purpose, other_text FROM form_liquidation_purposes WHERE form_request_id = ? ORDER BY id', [id]);
     doc.purposes = p;
-  } else if (doc.type === 'payment') {
-    const [[d]] = await pool.query('SELECT * FROM form_payment_details WHERE form_request_id = ?', [id]);
+  } else if (PAYMENT_TYPES.includes(doc.type)) {
+    const [[d]] = await pool.query(
+      `SELECT d.*, fa.account_code AS from_account_code, fa.account_name AS from_account_name,
+              ta.account_code AS to_account_code, ta.account_name AS to_account_name
+         FROM form_payment_details d
+         LEFT JOIN chart_of_accounts fa ON fa.id = d.from_account_id
+         LEFT JOIN chart_of_accounts ta ON ta.id = d.to_account_id
+        WHERE d.form_request_id = ?`, [id]);
     doc.detail = d || null;
   } else if (doc.type === 'revolving_fund') {
     const [[d]] = await pool.query('SELECT * FROM form_revolving_fund_details WHERE form_request_id = ?', [id]);
@@ -358,10 +381,13 @@ router.get('/meta/options', requireAuth, requirePermission(ROUTE, 'can_view'), a
     // Departments come from the same list every other module uses, so a form's department is a
     // real one rather than whatever was typed that day.
     const [departments] = await pool.query('SELECT id, name FROM departments ORDER BY name');
+    // From / To on an RFP (Fund Transfer): the bank accounts under Cash in Bank (BANK_ACCOUNTS_SQL).
+    const [bankAccounts] = await pool.query(`${BANK_ACCOUNTS_SQL} ORDER BY a.account_code`);
     res.json({
       types: TYPES.map((t) => ({ key: t, label: TYPE_LABELS[t] })),
       purposes: PURPOSES,
       departments: departments.map((d) => d.name),
+      bank_accounts: bankAccounts,
       can: {
         note: await userCan(req.user.id, APPROVAL_ROUTE, 'can_edit'),
         approve: await userCan(req.user.id, APPROVAL_ROUTE, 'can_approve'),
@@ -437,12 +463,14 @@ async function writeDetail(conn, docId, type, body, items) {
     return t;
   }
 
-  if (type === 'payment') {
+  if (PAYMENT_TYPES.includes(type)) {
     const total = Number(items.reduce((s, r) => s + Number(r.amount || 0), 0).toFixed(2));
+    const banks = type === 'fund_transfer';
     await conn.query(
-      `INSERT INTO form_payment_details (form_request_id, payable_to, address, doc_date, total_amount)
-       VALUES (?, ?, ?, ?, ?)`,
-      [docId, trunc(body.payable_to, 255), trunc(body.address, 255), date(body.date ?? body.doc_date), total],
+      `INSERT INTO form_payment_details (form_request_id, payable_to, address, doc_date, total_amount, from_account_id, to_account_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [docId, trunc(body.payable_to, 255), trunc(body.address, 255), date(body.date ?? body.doc_date), total,
+        banks ? Number(body.from_account_id) || null : null, banks ? Number(body.to_account_id) || null : null],
     );
     return { total_amount: total };
   }
@@ -461,9 +489,23 @@ async function writeDetail(conn, docId, type, body, items) {
   return {};
 }
 
+// From and To on an RFP (Fund Transfer) must be Bank accounts in the chart of accounts -- the only
+// ones the picker offers, checked here so a hand-made request cannot name any other account.
+async function badBanks(type, body) {
+  if (type !== 'fund_transfer') return null;
+  const ids = [Number(body.from_account_id), Number(body.to_account_id)];
+  const [rows] = await pool.query(`SELECT x.id FROM (${BANK_ACCOUNTS_SQL}) x WHERE x.id IN (?)`, [ids]);
+  return rows.length === 2 ? null : 'From and To must both be bank accounts under Cash in Bank.';
+}
+
 // Validation that differs by type. Returns an error string, or null when the body is good.
 function validate(type, body, items) {
-  if (type === 'payment' && !trunc(body.payable_to, 255)) return 'Payable To is required.';
+  if (PAYMENT_TYPES.includes(type) && !trunc(body.payable_to, 255)) return 'Payable To is required.';
+  if (type === 'fund_transfer') {
+    if (!Number(body.from_account_id)) return 'Choose the bank the funds come From.';
+    if (!Number(body.to_account_id)) return 'Choose the bank the funds go To.';
+    if (Number(body.from_account_id) === Number(body.to_account_id)) return 'From and To must be different banks.';
+  }
   if (type === 'business_trip') {
     if (!trunc(body.driver_name, 255)) return 'Driver name is required.';
     if (!trunc(body.vehicle_plate_no, 255)) return 'Vehicle plate number is required.';
@@ -481,7 +523,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   if (parsed.error) return res.status(400).json({ error: parsed.error });
   const items = parsed.items;
 
-  const problem = validate(type, req.body, items);
+  const problem = validate(type, req.body, items) || await badBanks(type, req.body);
   if (problem) return res.status(400).json({ error: problem });
 
   const conn = await pool.getConnection();
@@ -574,7 +616,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (parsed.error) return res.status(400).json({ error: parsed.error });
     const items = parsed.items;
 
-    const problem = validate(doc.type, req.body, items);
+    const problem = validate(doc.type, req.body, items) || await badBanks(doc.type, req.body);
     if (problem) return res.status(400).json({ error: problem });
 
     await conn.beginTransaction();
@@ -599,6 +641,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     const detailTable = {
       liquidation: 'form_liquidation_details',
       payment: 'form_payment_details',
+      fund_transfer: 'form_payment_details',
       revolving_fund: 'form_revolving_fund_details',
       business_trip: 'form_business_trip_details',
     }[doc.type];

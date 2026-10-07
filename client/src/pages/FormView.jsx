@@ -5,7 +5,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
 import { useAuth } from '../context/useAuth';
-import { PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, fmtDate, money, pretty } from '../utils/requestForms';
+import { PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, fmtDate, money, pretty } from '../utils/requestForms';
 
 // One form, and whatever the viewer is allowed to do to it.
 //
@@ -244,9 +244,13 @@ export default function FormView() {
         </div>
       )}
 
-      {doc.type === 'payment' && (
+      {PAYMENT_TYPES.includes(doc.type) && (
         <div className="card" style={{ marginTop: 16 }}>
-          <h3>Request for Payment</h3>
+          <h3>{TYPE_LABELS[doc.type]}</h3>
+          {doc.type === 'fund_transfer' && <>
+            <Line label="From">{bankLabel(d.from_account_code, d.from_account_name)}</Line>
+            <Line label="To">{bankLabel(d.to_account_code, d.to_account_name)}</Line>
+          </>}
           <Line label="Payable To">{d.payable_to}</Line>
           <Line label="Address">{d.address}</Line>
           <Line label="Date">{fmtDate(d.doc_date)}</Line>
@@ -271,7 +275,7 @@ export default function FormView() {
 
       {hasItems && (
         <div className="card" style={{ marginTop: 16 }}>
-          <h3>{doc.type === 'payment' ? 'Particulars' : 'Expenses'}</h3>
+          <h3>{PAYMENT_TYPES.includes(doc.type) ? 'Particulars' : 'Expenses'}</h3>
           {cogsBlocksNote && (
             <div className="muted" style={{ marginBottom: 8, color: 'var(--danger, #b91c1c)' }}>
               Select an account for every item before noting -- {doc.cogs_missing} still missing.

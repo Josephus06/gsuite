@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../context/useAuth';
-import { FUND_TYPES, PURPOSE_LABELS, TYPE_LABELS, money } from '../utils/requestForms';
+import { FUND_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, TYPE_LABELS, money } from '../utils/requestForms';
+import EntityPicker from '../components/EntityPicker';
 
 // Filling out a form, and revising one. The same page does both: an edit is the same boxes with
 // the answers already in them, and keeping one copy is what stops the create and edit forms from
@@ -37,13 +38,14 @@ export default function FormEdit() {
     week_no: '', form_no: '', date_from: '', date_to: '',
     cash_advance_amount: '', cash_advance_date: '', previous_balance: '', starting_balance: '',
     purposes: [], purpose_other_text: '',
-    payable_to: '', address: '', date: '',
+    payable_to: '', address: '', date: '', from_account_id: '', to_account_id: '',
     driver_name: '', vehicle_plate_no: '', speedometer_begin: '', speedometer_end: '',
     total_mileage_km: '', trip_date: '', time_out: '', time_in: '', purpose: '',
     checked_by: '', noted_by: '',
   });
   const [items, setItems] = useState([blankItem()]);
   const [departments, setDepartments] = useState([]);
+  const [bankAccounts, setBankAccounts] = useState([]);
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -52,7 +54,7 @@ export default function FormEdit() {
 
   useEffect(() => {
     api.get('/forms/meta/options')
-      .then(({ data }) => setDepartments(data.departments || []))
+      .then(({ data }) => { setDepartments(data.departments || []); setBankAccounts(data.bank_accounts || []); })
       .catch(() => {});
   }, []);
 
@@ -70,6 +72,7 @@ export default function FormEdit() {
       purposes: (data.purposes || []).map((p) => p.purpose),
       purpose_other_text: (data.purposes || []).find((p) => p.purpose === 'others')?.other_text || '',
       payable_to: d.payable_to || '', address: d.address || '',
+      from_account_id: d.from_account_id || '', to_account_id: d.to_account_id || '',
       date: d.doc_date ? String(d.doc_date).slice(0, 10) : '',
       driver_name: d.driver_name || '', vehicle_plate_no: d.vehicle_plate_no || '',
       speedometer_begin: d.speedometer_begin || '', speedometer_end: d.speedometer_end || '',
@@ -253,9 +256,35 @@ export default function FormEdit() {
         </div>
       )}
 
-      {type === 'payment' && (
+      {PAYMENT_TYPES.includes(type) && (
         <div className="card" style={{ marginTop: 16 }}>
-          <h3>Request for Payment</h3>
+          <h3>{TYPE_LABELS[type]}</h3>
+          {/* RFP (Fund Transfer): which bank the money leaves from and which it goes to -- the chart
+              of accounts' Bank accounts only. */}
+          {type === 'fund_transfer' && (
+            <div className="field-row">
+              <div className="field">
+                <label>From *</label>
+                <EntityPicker
+                  label="From (Bank)" items={bankAccounts} value={form.from_account_id}
+                  getLabel={(a) => `${a.account_code} — ${a.account_name}`}
+                  columns={[{ key: 'bank_name', label: 'Bank' }, { key: 'account_name', label: 'Account' }, { key: 'account_code', label: 'Code' }]}
+                  searchKeys={['bank_name', 'account_name', 'account_code']}
+                  onSelect={(a) => set('from_account_id', a.id)} onClear={() => set('from_account_id', '')}
+                />
+              </div>
+              <div className="field">
+                <label>To *</label>
+                <EntityPicker
+                  label="To (Bank)" items={bankAccounts.filter((a) => String(a.id) !== String(form.from_account_id))} value={form.to_account_id}
+                  getLabel={(a) => `${a.account_code} — ${a.account_name}`}
+                  columns={[{ key: 'bank_name', label: 'Bank' }, { key: 'account_name', label: 'Account' }, { key: 'account_code', label: 'Code' }]}
+                  searchKeys={['bank_name', 'account_name', 'account_code']}
+                  onSelect={(a) => set('to_account_id', a.id)} onClear={() => set('to_account_id', '')}
+                />
+              </div>
+            </div>
+          )}
           <div className="field-row">
             <div className="field">
               <label>Payable To *</label>
@@ -335,7 +364,7 @@ export default function FormEdit() {
 
       {hasItems && (
         <div className="card" style={{ marginTop: 16 }}>
-          <h3>{type === 'payment' ? 'Particulars' : 'Expenses'}</h3>
+          <h3>{PAYMENT_TYPES.includes(type) ? 'Particulars' : 'Expenses'}</h3>
           <div className="table-wrap">
             <table>
               <thead>
@@ -375,7 +404,7 @@ export default function FormEdit() {
 
           <div className="card" style={{ background: 'var(--surface-2, #f3f4f6)', marginTop: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span className="muted">{type === 'payment' ? 'Total Amount' : 'Reimbursement Amount'}</span>
+              <span className="muted">{PAYMENT_TYPES.includes(type) ? 'Total Amount' : 'Reimbursement Amount'}</span>
               <span className="hi">{money(itemsTotal)}</span>
             </div>
             {isFund && (

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { PURPOSE_LABELS } from '../utils/requestForms';
+import { PAYMENT_TYPES, PURPOSE_LABELS, bankLabel } from '../utils/requestForms';
 import letterhead from '../assets/graphicstar-letterhead.png';
 import { displayDate } from '../utils/dates';
 
@@ -249,8 +249,14 @@ export default function FormPrint() {
           </>
         )}
 
-        {doc.type === 'payment' && (
+        {PAYMENT_TYPES.includes(doc.type) && (
           <>
+            {doc.type === 'fund_transfer' && (
+              <div className="rf-row">
+                <Field label="From" value={bankLabel(d.from_account_code, d.from_account_name)} />
+                <Field label="To" value={bankLabel(d.to_account_code, d.to_account_name)} />
+              </div>
+            )}
             <div className="rf-row">
               <Field label="Payable To" value={d.payable_to} />
               <Field label="Date" value={fmtDate(d.doc_date)} />
