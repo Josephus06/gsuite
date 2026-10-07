@@ -100,6 +100,7 @@ export default function TransferOrderPrint() {
             www.graphicstar.com.ph
           </div>
         </div>
+        {/* No memo on the printout -- neither the order's nor the lines' (asked 2026-10-07). */}
         <div className="top-title">Transfer Order</div>
         <div className="top-cols">
           <div>
@@ -107,7 +108,6 @@ export default function TransferOrderPrint() {
             <div>Transfer To : {to.transfer_to_name || ''}</div>
             <div>Requestor : {to.requestor_name || ''}</div>
             {to.job_order_no && <div>Job Order : {to.job_order_no}</div>}
-            {to.memo && <div>Memo : {to.memo}</div>}
           </div>
           <div>
             <div>TO # : {to.to_no}</div>
@@ -127,11 +127,10 @@ export default function TransferOrderPrint() {
               <th style={{ width: '8%' }}>Unit</th>
               <th className="top-num" style={{ width: '9%' }}>Fulfilled</th>
               <th className="top-num" style={{ width: '9%' }}>Received</th>
-              <th style={{ width: '14%' }}>Memo</th>
             </tr>
           </thead>
           <tbody>
-            {lines.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center' }}>No items.</td></tr>}
+            {lines.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center' }}>No items.</td></tr>}
             {lines.map((l, i) => (
               <tr key={l.id}>
                 <td>{i + 1}</td>
@@ -145,7 +144,6 @@ export default function TransferOrderPrint() {
                 <td>{l.unit || ''}</td>
                 <td className="top-num">{qty(l.fulfilled)}</td>
                 <td className="top-num">{qty(l.received)}</td>
-                <td>{l.memo || ''}</td>
               </tr>
             ))}
           </tbody>
