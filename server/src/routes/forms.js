@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
+const { requireAuth, requirePermission, userCan, isSystemAdmin } = require('../middleware/auth');
 const { insertNumbered } = require('../lib/docNumber');
 const { computeLiquidationGl } = require('../lib/glImpact');
 const {
@@ -824,6 +824,93 @@ router.post('/:id/reject', requireAuth, requirePermission(APPROVAL_ROUTE, 'can_a
 // A business trip prints once NOTED; everything else needs APPROVED. That asymmetry is the
 // source's and it is deliberate -- the trip sheet goes out with the driver, and waiting on a final
 // approval would mean the vehicle leaves without its paperwork.
+// ---- Attachments (every form type, asked 2026-10-07) ----
+//
+// Whoever may see a form may attach to it -- its owner, and the head and approvers who have to
+// rule on it and may want to add what they relied on. A file comes off only by the person who
+// put it there, and only until the form is approved; a System Admin may always remove one. Once
+// approved, what the approval was given against stays on the record.
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
+async function formForAttachments(id) {
+  const [[doc]] = await pool.query('SELECT id, type, status, user_id, department_id FROM form_requests WHERE id = ?', [id]);
+  return doc || null;
+}
+
+router.get('/:id/attachments', requireAuth, async (req, res, next) => {
+  try {
+    const doc = await formForAttachments(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    if (!(await maySee(req.user.id, doc))) return res.status(403).json({ error: 'This form is not yours to view.' });
+    const [rows] = await pool.query(
+      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.uploaded_by_user_id,
+              u.display_name AS uploaded_by_name
+         FROM form_request_attachments a LEFT JOIN users u ON u.id = a.uploaded_by_user_id
+        WHERE a.form_request_id = ? ORDER BY a.created_at DESC, a.id DESC`, [doc.id]);
+    const admin = await isSystemAdmin(req.user.id);
+    res.json(rows.map((r) => ({
+      ...r,
+      can_remove: admin || (Number(r.uploaded_by_user_id) === Number(req.user.id) && doc.status !== 'approved'),
+    })));
+  } catch (err) { next(err); }
+});
+
+router.post('/:id/attachments', requireAuth, async (req, res, next) => {
+  try {
+    const doc = await formForAttachments(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    if (!(await maySee(req.user.id, doc))) return res.status(403).json({ error: 'This form is not yours to attach to.' });
+    const { file_name: fileName, data, mime_type: mimeType } = req.body || {};
+    if (!fileName || !data) return res.status(400).json({ error: 'file_name and data are required' });
+    // A bare base64 string or a full data: URL, which is what the browser's FileReader gives.
+    const buf = Buffer.from(String(data).includes(',') ? String(data).split(',').pop() : String(data), 'base64');
+    if (!buf.length) return res.status(400).json({ error: 'The uploaded file is empty' });
+    if (buf.length > MAX_ATTACHMENT_BYTES) return res.status(413).json({ error: 'Files must be 10MB or smaller' });
+    // Any type is accepted; the browser's reported type is only used to serve the file back.
+    const safeMime = /^[\w.+-]+\/[\w.+-]+$/.test(String(mimeType || '')) ? String(mimeType).slice(0, 100) : 'application/octet-stream';
+    const [r] = await pool.query(
+      `INSERT INTO form_request_attachments (form_request_id, file_name, mime_type, size_bytes, file_data, uploaded_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [doc.id, String(fileName).slice(0, 255), safeMime, buf.length, buf, req.user.id]);
+    res.status(201).json({ id: r.insertId });
+  } catch (err) { next(err); }
+});
+
+router.get('/:id/attachments/:attachmentId/file', requireAuth, async (req, res, next) => {
+  try {
+    const doc = await formForAttachments(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    if (!(await maySee(req.user.id, doc))) return res.status(403).json({ error: 'This form is not yours to view.' });
+    const [[row]] = await pool.query(
+      'SELECT file_name, mime_type, file_data FROM form_request_attachments WHERE id = ? AND form_request_id = ?',
+      [req.params.attachmentId, doc.id]);
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
+    // PDFs and images open in a tab; anything else downloads.
+    const inline = /^(application\/pdf|image\/)/.test(row.mime_type || '');
+    res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${row.file_name.replace(/"/g, '')}"`);
+    res.send(row.file_data);
+  } catch (err) { next(err); }
+});
+
+router.delete('/:id/attachments/:attachmentId', requireAuth, async (req, res, next) => {
+  try {
+    const doc = await formForAttachments(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    const [[att]] = await pool.query(
+      'SELECT uploaded_by_user_id FROM form_request_attachments WHERE id = ? AND form_request_id = ?',
+      [req.params.attachmentId, doc.id]);
+    if (!att) return res.status(404).json({ error: 'Not found' });
+    const own = Number(att.uploaded_by_user_id) === Number(req.user.id);
+    if (!(await isSystemAdmin(req.user.id))) {
+      if (!own) return res.status(403).json({ error: 'Only the person who attached this file can remove it.' });
+      if (doc.status === 'approved') return res.status(409).json({ error: 'This form is approved -- its attachments stay as they were.' });
+    }
+    await pool.query('DELETE FROM form_request_attachments WHERE id = ? AND form_request_id = ?', [req.params.attachmentId, doc.id]);
+    res.status(204).send();
+  } catch (err) { next(err); }
+});
+
 router.get('/:id/print', requireAuth, requirePermission(ROUTE, 'can_print'), async (req, res, next) => {
   try {
     const doc = await loadFull(req.params.id);

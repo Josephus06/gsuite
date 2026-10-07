@@ -1,3 +1,4 @@
+import FormAttachments from '../components/FormAttachments';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
@@ -354,6 +355,9 @@ export default function FormView() {
           </div>
         </div>
       )}
+
+      {/* Every form type takes attachments (2026-10-07). */}
+      <FormAttachments formId={doc.id} />
 
       {doc.needs_cogs && (
         <div className="card" style={{ marginTop: 16 }}>

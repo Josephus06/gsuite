@@ -196,6 +196,8 @@ app.use((req, res, next) => {
   return (req.method === 'POST'
     && (/^\/api\/job-orders\/\d+\/attachments\/?$/.test(req.path)
       || /^\/api\/tickets\/\d+\/attachments\/?$/.test(req.path)
+      // Forms (all five types) take an attachment up to 10MB, as Job Orders do.
+      || /^\/api\/forms\/\d+\/attachments\/?$/.test(req.path)
       // HRD room uploads take any file type up to 10MB, which is ~13.4MB of base64.
       || /^\/api\/hrd\/\d+\/files\/?$/.test(req.path)
       // Order-confirmation scans on an estimate: same 10MB ceiling.
