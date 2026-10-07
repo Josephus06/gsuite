@@ -5,6 +5,7 @@
 //   node src/db/inspect-so-billing.js SO-71114
 require('dotenv').config();
 const pool = require('../db');
+const { computeSalesOrderStatus, openDtQtySql } = require('../lib/salesOrderStatus');
 
 (async () => {
   const no = process.argv[2];
@@ -13,11 +14,20 @@ const pool = require('../db');
   if (!so) throw new Error(`${no} not found`);
   console.log(`${so.sales_order_no}  status=${so.status}`);
   const [lines] = await pool.query(
-    `SELECT sol.id, sol.line_no, sol.quantity, jo.job_order_no, jo.quantity_delivered, jo.quantity_invoiced
+    `SELECT sol.id, sol.line_no, sol.quantity, sol.job_order_id, jo.job_order_no, jo.quantity_built, jo.quantity_inspected,
+            jo.quantity_delivered, jo.quantity_invoiced, ${openDtQtySql('sol')} AS open_dt_qty
        FROM sales_order_lines sol LEFT JOIN job_orders jo ON jo.id = sol.job_order_id
       WHERE sol.sales_order_id = ? ORDER BY sol.line_no`, [so.id]);
-  console.log('\nLines (SO line id | JO | ordered | delivered | invoiced)');
-  for (const l of lines) console.log(`  ${l.line_no}. #${l.id} ${l.job_order_no || '-'} | ${+l.quantity} | ${+l.quantity_delivered} | ${+l.quantity_invoiced}`);
+  console.log('\nLines (SO line id | JO | ordered | built | QI | delivered | invoiced | on open DTs)');
+  for (const l of lines) {
+    console.log(`  ${l.line_no}. #${l.id} ${l.job_order_no || '-'} | ${+l.quantity} | ${+l.quantity_built} | ${+l.quantity_inspected} | `
+      + `${+l.quantity_delivered} | ${+l.quantity_invoiced} | ${+l.open_dt_qty}`);
+  }
+  // What the status rule works out now -- with open-DT quantity counted as billed (as the app does
+  // since 2026-10-05) and without it -- so a status that reads wrong can be traced to its cause.
+  const withDts = computeSalesOrderStatus(lines.map((l) => ({ ...l, quantity_invoiced: Number(l.quantity_invoiced || 0) + Number(l.open_dt_qty || 0) })));
+  const withoutDts = computeSalesOrderStatus(lines);
+  console.log(`\nStatus the rule gives: ${withDts} (counting open DTs as billed) | ${withoutDts} (invoices only) | stored: ${so.status}`);
   const [dts] = await pool.query('SELECT id, dt_no, status, created_at FROM delivery_tickets WHERE sales_order_id = ? ORDER BY id', [so.id]);
   console.log(`\nDelivery Tickets: ${dts.length}`);
   for (const d of dts) {
