@@ -13,6 +13,55 @@ function pct(v) {
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
 
+// How the month's Unpaid Commission comes about, step by step, with the Commission report's own
+// figures for the month (asked 2026-10-07, laid out like the Book1 worksheet Accounting uses):
+//   Confirmed = Total invoiced JO with passing GP / JO passing GP x Expected
+//   Unpaid    = Confirmed - Released
+// The figures come from the report's row (server: month_summary), so they always match it.
+function UnpaidDerivation({ s, monthName, year }) {
+  const step = { display: 'grid', gridTemplateColumns: 'minmax(220px, 1fr) auto', gap: '4px 24px', alignItems: 'baseline' };
+  const num = { textAlign: 'right', fontVariantNumeric: 'tabular-nums' };
+  const note = { gridColumn: '1 / -1', fontSize: 12, marginTop: -2, marginBottom: 6 };
+  const ratio = Number(s.passing_gp_total) > 0 ? (Number(s.paid_passing_total) / Number(s.passing_gp_total)) * 100 : 0;
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <h3 className="subsection" style={{ marginTop: 0 }}>How the Unpaid Commission is derived — {monthName} {year}</h3>
+      <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
+        <div style={{ ...step, flex: '1 1 420px' }}>
+          <span>Expected Commission</span><strong style={num}>{money(s.expected_commission)}</strong>
+          <span className="muted" style={note}>{s.scheme_name || 'The scheme'} looked up at the JO passing GP total below</span>
+
+          <span>JO passing GP</span><strong style={num}>{money(s.passing_gp_total)}</strong>
+          <span className="muted" style={note}>Net of tax of every JO that met its passing GP rate (or was added) — the &quot;Passing&quot; rows below</span>
+
+          <span>Total invoiced JO with passing GP</span><strong style={num}>{money(s.paid_passing_total)}</strong>
+          <span className="muted" style={note}>The paid-invoice part of those JOs ({pct(ratio)}% of them)</span>
+
+          <span style={{ borderTop: '1px solid var(--border)', paddingTop: 6, fontWeight: 600 }}>Confirmed Commission</span>
+          <strong style={{ ...num, borderTop: '1px solid var(--border)', paddingTop: 6 }}>{money(s.confirmed_commission)}</strong>
+          <span className="muted" style={note}>
+            {money(s.paid_passing_total)} ÷ {money(s.passing_gp_total)} × {money(s.expected_commission)}
+          </span>
+
+          <span>Released Commission</span><strong style={num}>{money(s.released_commission)}</strong>
+          <span className="muted" style={note}>Paid by Commission Vouchers against {monthName}</span>
+
+          <span style={{ borderTop: '2px solid var(--text, #333)', paddingTop: 6, fontWeight: 700 }}>Unpaid Commission</span>
+          <strong style={{ ...num, borderTop: '2px solid var(--text, #333)', paddingTop: 6, fontSize: '1.1em' }}>{money(s.unpaid_commission)}</strong>
+          <span className="muted" style={note}>{money(s.confirmed_commission)} − {money(s.released_commission)}</span>
+        </div>
+        <div style={{ flex: '0 1 300px', fontSize: 13, background: 'var(--surface-2, #f3f4f6)', borderRadius: 8, padding: '10px 14px', alignSelf: 'flex-start' }}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>Formula</div>
+          <div>Confirmed Commission =</div>
+          <div style={{ paddingLeft: 12, marginBottom: 8 }}>Total invoiced JO with passing GP ÷ JO passing GP × Expected Commission</div>
+          <div>Unpaid Commission =</div>
+          <div style={{ paddingLeft: 12 }}>Confirmed Commission − Released Commission</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Per-JO commission detail for one rep in one month: every JO (own + team + any SBU-owned
 // divisions) with its GP rate, net of tax and paid-invoice amount, split into JOs that met
 // their job type's passing GP rate and those below it. This is the line-by-line backing
@@ -125,6 +174,8 @@ export default function CommissionJoDetail() {
             <div><span className="muted">Below — Net of Tax</span><div className="hi-lg">{money(report.totals.below.net_of_tax)}</div></div>
             <div><span className="muted">Below — Paid Invoice</span><div className="hi-lg" style={{ color: '#b91c1c' }}>{money(report.totals.below.paid_invoice)}</div></div>
           </div>
+
+          {report.month_summary && <UnpaidDerivation s={report.month_summary} monthName={MONTHS[report.month - 1]} year={report.year} />}
 
           <div className="card">
             <div style={{ marginBottom: 12, display: 'flex', gap: 24, flexWrap: 'wrap' }}>

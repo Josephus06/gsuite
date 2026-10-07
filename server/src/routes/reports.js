@@ -499,6 +499,12 @@ router.get('/commission/jo-detail', requireAuth, requirePermission(COMMISSION_RO
     const filters = { salesDivisionId: req.query.salesDivisionId ? Number(req.query.salesDivisionId) : null };
     const data = await buildCommissionJoDetail(employeeId, year, month, filters);
     if (!data) return res.status(404).json({ error: 'Sales Rep not found' });
+    // The month's row of the Commission report itself, so the detail can show how its Unpaid
+    // Commission is derived (Expected -> Confirmed -> Unpaid) with the very figures the report
+    // shows, rather than re-adding them here and risking a different answer.
+    const report = await buildCommissionReport(employeeId, year, filters);
+    const row = report?.rows?.find((r) => r.month === month);
+    data.month_summary = row ? { ...row, scheme_name: report.scheme_name } : null;
     res.json(data);
   } catch (err) {
     next(err);

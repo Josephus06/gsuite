@@ -246,7 +246,9 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
       month: r.month, month_name: r.month_name, quota: round2(r.quota),
       division_name: r.division_name, weighted_sales: weighted, performance_pct: pct,
       estimated_commission: estimated, passing_gp_total: passingTotal,
-      expected_commission: expected, confirmed_commission: confirmed,
+      // paid_passing_total: the invoiced (paid) part of the passing JOs -- the numerator of
+      // Confirmed, shown on the JO Detail's breakdown.
+      expected_commission: expected, paid_passing_total: paid, confirmed_commission: confirmed,
       released_commission: released, expenses_deducted: deducted, expenses_refunded: refunded,
       unpaid_commission: unpaid,
     };
@@ -333,6 +335,11 @@ async function buildCommissionJoDetail(employeeId, year, month, filters = {}) {
   // Cancelled sales orders are excluded here too, so the detail matches the monthly totals.
   whereParts.push("(so.status IS NULL OR so.status <> 'cancelled')");
   if (filters.salesDivisionId) { whereParts.push('so.sales_division_id = ?'); params.push(filters.salesDivisionId); }
+  // Only the JO its sales-order line belongs to. A rework JO (RWIP) hangs off the same line as the
+  // original, but the line points at the original: counting both put the line's net in twice
+  // (Amelyn A. Pen, January 2026: RWIP-1221's 29,670.93 made this screen's passing total disagree
+  // with the Commission report's, found 2026-10-07). The report counts each line once.
+  whereParts.push('(sol.id IS NULL OR sol.job_order_id = jo.id)');
 
   const [jos] = await pool.query(
     `SELECT jo.id AS jo_id, jo.job_order_no, so.sales_order_no, c.id AS customer_id, c.name AS customer_name,
@@ -375,10 +382,14 @@ async function buildCommissionJoDetail(employeeId, year, month, filters = {}) {
     const addedManually = Number(j.is_approved_low_gp) === 1;
     const isPassing = meetsGp || addedManually;
     const net = round2(j.net_of_tax);
-    const paid = round2(paidByJo.get(j.jo_id) || 0);
+    const paidRaw = paidByJo.get(j.jo_id) || 0;
+    const paid = round2(paidRaw);
     const bucket = isPassing ? totals.passing : totals.below;
     bucket.net_of_tax = round2(bucket.net_of_tax + net);
-    bucket.paid_invoice = round2(bucket.paid_invoice + paid);
+    // Summed unrounded and rounded once at the end, as the report does -- rounding each JO first
+    // left this total a few centavos off the report's.
+    bucket.paid_raw = (bucket.paid_raw || 0) + paidRaw;
+    bucket.paid_invoice = round2(bucket.paid_raw);
     bucket.count += 1;
     return {
       job_order_no: j.job_order_no, sales_order_no: j.sales_order_no, customer_id: j.customer_id, customer_name: j.customer_name,
@@ -392,6 +403,9 @@ async function buildCommissionJoDetail(employeeId, year, month, filters = {}) {
       sales_order_line_id: j.sales_order_line_id || null,
     };
   });
+
+  delete totals.passing.paid_raw;
+  delete totals.below.paid_raw;
 
   return {
     employee_id: employee.id, employee_name: employee.name, year: Number(year), month: Number(month),
