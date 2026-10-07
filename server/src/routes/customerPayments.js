@@ -395,7 +395,10 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN users u ON u.id = cp.created_by_user_id
        LEFT JOIN users iu ON iu.id = cp.issued_by_user_id
        ${whereSql}
-       ORDER BY cp.id DESC
+       -- Latest payment date first, so today's are at the top (asked 2026-10-07). By id alone,
+       -- migrated payments -- whose ids do not follow their dates -- sat above current ones.
+       -- idx_customer_payments_date_created serves this (InnoDB appends id to the index).
+       ORDER BY cp.date_created DESC, cp.id DESC
        LIMIT ? OFFSET ?`,
       [...params, pageSize, (page - 1) * pageSize]
     );
@@ -458,7 +461,7 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
        LEFT JOIN departments d ON d.id = cp.department_id
        LEFT JOIN locations loc ON loc.id = cp.office_location_id
        ${whereSql}
-       ORDER BY cp.id DESC`,
+       ORDER BY cp.date_created DESC, cp.id DESC`,
       params
     );
 
