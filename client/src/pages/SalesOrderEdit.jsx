@@ -54,7 +54,9 @@ export default function SalesOrderEdit() {
   if (!so) return <LoadingSpinner />;
 
   const h = (k) => ({ value: head[k] ?? '', onChange: (e) => setHead((x) => ({ ...x, [k]: e.target.value })) });
-  const setLine = (i, k, v) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, [k]: v } : l)));
+  // Line 1's Tax Code is the order's: changing it re-taxes every line the same way (asked 2026-10-07);
+  // any other line can still be set on its own.
+  const setLine = (i, k, v) => setLines((ls) => ls.map((l, j) => (j === i || (k === 'tax_code_id' && i === 0) ? { ...l, [k]: v } : l)));
 
   async function save() {
     setSaving(true); setError('');

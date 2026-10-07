@@ -460,8 +460,11 @@ export default function EstimateWizard() {
 
   // --- Job order row helpers ---
 
+  // A new line starts on line 1's Tax Code (asked 2026-10-07) -- an order is taxed one way throughout.
   function addJobOrderRow() {
-    setJobOrders((prev) => [...prev, { _tempId: `draft-${Date.now()}`, id: null, ...EMPTY_JO, processes: [] }]);
+    setJobOrders((prev) => [...prev, {
+      _tempId: `draft-${Date.now()}`, id: null, ...EMPTY_JO, tax_code_id: prev[0]?.tax_code_id || EMPTY_JO.tax_code_id, processes: [],
+    }]);
   }
 
   function updateJobOrderField(idx, field, value) {
@@ -956,10 +959,17 @@ export default function EstimateWizard() {
           columns={[{ key: 'code', label: 'Code' }, { key: 'name', label: 'Name' }, { key: 'rate', label: 'Rate %' }]}
           searchKeys={['code', 'name']}
           onSelect={(t) => {
-            const jo = jobOrdersRef.current[idx];
-            const computed = computeJobOrderTax(jo?.subtotal, jo?.disc_amount, t.id);
-            Object.assign(computed, perUnitFor(jo?.quantity, { subtotal: jo?.subtotal, ...computed }));
-            commitJobOrderRow(idx, { tax_code_id: t.id, ...computed });
+            // Line 1's Tax Code is the order's: picking it re-taxes EVERY line the same way (VAT 12 on
+            // line 1 makes them all VAT 12; 0 VAT makes them all 0 VAT -- asked 2026-10-07). Any other
+            // line can still be changed on its own afterwards.
+            const targets = idx === 0 ? jobOrdersRef.current.map((_, i) => i) : [idx];
+            for (const i of targets) {
+              const jo = jobOrdersRef.current[i];
+              const computed = computeJobOrderTax(jo?.subtotal, jo?.disc_amount, t.id);
+              Object.assign(computed, perUnitFor(jo?.quantity, { subtotal: jo?.subtotal, ...computed }));
+              if (jo?.id || i === idx) commitJobOrderRow(i, { tax_code_id: t.id, ...computed });
+              else Object.entries({ tax_code_id: t.id, ...computed }).forEach(([k, v]) => updateJobOrderField(i, k, v));
+            }
           }}
         />
       );
