@@ -172,6 +172,7 @@ const NAV_STRUCTURE = [
     children: [
       { route: '/assigned-jo', label: 'Assigned JO' },
       { route: '/reports/artist-incentive', label: 'Artist Incentive Report' },
+      { route: '/ai-renderings', label: 'AI Rendering' },
     ],
   },
   {

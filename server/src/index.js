@@ -69,6 +69,7 @@ const crmDraftRoutes = require('./routes/crmDrafts');
 const crmPublicRoutes = require('./routes/crmPublic');
 const chatbotRoutes = require('./routes/chatbot');
 const translateRoutes = require('./routes/translate');
+const aiRenderingRoutes = require('./routes/aiRenderings');
 const ticketRoutes = require('./routes/tickets');
 const hrdRoutes = require('./routes/hrd');
 const hrViolationRoutes = require('./routes/hrViolations');
@@ -193,6 +194,10 @@ app.use((req, res, next) => {
       || /^\/api\/archiver\/knowledge-base\/topics\/\d+\/files\/?$/.test(req.path))) {
     return carouselUploadJson(req, res, next);
   }
+  // AI Rendering takes a site photo and a logo, up to 10MB each: ~27MB of base64 together.
+  if (req.method === 'POST' && /^\/api\/ai-renderings\/?$/.test(req.path)) {
+    return carouselUploadJson(req, res, next);
+  }
   return (req.method === 'POST'
     && (/^\/api\/job-orders\/\d+\/attachments\/?$/.test(req.path)
       || /^\/api\/tickets\/\d+\/attachments\/?$/.test(req.path)
@@ -285,6 +290,7 @@ app.use('/api/crm/drafts', crmDraftRoutes);
 app.use('/api/crm', crmRoutes);
 app.use('/api/chatbot', chatbotRoutes);
 app.use('/api/translate', translateRoutes);
+app.use('/api/ai-renderings', aiRenderingRoutes);
 app.use('/api/reports/artist-incentive', artistIncentiveReportRoutes);
 app.use('/api/reports/tickets', ticketReportRoutes);
 app.use('/api/reports/delivery-summary', deliverySummaryReportRoutes);

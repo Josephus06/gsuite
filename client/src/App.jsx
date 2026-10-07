@@ -64,6 +64,7 @@ import JobTypes from './pages/JobTypes';
 import JobTypeEdit from './pages/JobTypeEdit';
 import AssignedJobOrders from './pages/AssignedJobOrders';
 import ArtistIncentiveReport from './pages/reports/ArtistIncentiveReport';
+import AiRenderings from './pages/AiRenderings';
 import DeliverySummary from './pages/reports/DeliverySummary';
 import PendingBilling from './pages/reports/PendingBilling';
 import DisbursementReport from './pages/reports/DisbursementReport';
@@ -330,6 +331,7 @@ function App() {
         <Route path="/job-types/:id/edit" element={<JobTypeEdit />} />
         <Route path="/assigned-jo" element={<AssignedJobOrders />} />
         <Route path="/reports/artist-incentive" element={<ArtistIncentiveReport />} />
+        <Route path="/ai-renderings" element={<AiRenderings />} />
         {/* Same run screen for both; the route supplies which timer endpoints to use.
             Declared before the :id route so "nstdjo" isn't matched as an id. */}
         <Route path="/assigned-jo/nstdjo/:id" element={<AssignedJobOrderRun kind="NSTDJO" />} />
