@@ -447,7 +447,7 @@ async function scheduleRows(whereSql, params) {
             EXISTS(SELECT 1 FROM job_order_layout_sessions s WHERE s.job_order_id = jo.id AND s.ended_at IS NULL) AS is_running
      FROM job_orders jo
      LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
-     LEFT JOIN customers c ON c.id = so.customer_id
+     LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, (SELECT COALESCE(nx.customer_id, ex.customer_id, sx.customer_id) FROM non_standard_sales_orders nx LEFT JOIN estimates ex ON ex.id = nx.nested_estimate_id LEFT JOIN sales_orders sx ON sx.id = nx.nested_sales_order_id WHERE nx.id = jo.nsso_id))
      LEFT JOIN employees ar ON ar.id = jo.artist_id
      ${whereSql}
      ORDER BY jo.planned_start_at IS NULL, jo.planned_start_at ASC`,
@@ -608,7 +608,7 @@ async function artistCalendar(employeeId, monthStart, monthEnd) {
                     WHERE s.job_order_id = jo.id AND s.ended_at IS NULL) AS is_running
        FROM job_orders jo
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
-       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, (SELECT COALESCE(nx.customer_id, ex.customer_id, sx.customer_id) FROM non_standard_sales_orders nx LEFT JOIN estimates ex ON ex.id = nx.nested_estimate_id LEFT JOIN sales_orders sx ON sx.id = nx.nested_sales_order_id WHERE nx.id = jo.nsso_id))
       WHERE jo.artist_id = ?
         AND jo.planned_start_at >= ? AND jo.planned_start_at < ?
       ORDER BY jo.planned_start_at`,
@@ -829,7 +829,7 @@ async function salesCalendar(monthStart, monthEnd) {
               WHERE s.job_order_id = jo.id AND s.ended_at IS NULL) AS is_running
        FROM job_orders jo
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
-       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, (SELECT COALESCE(nx.customer_id, ex.customer_id, sx.customer_id) FROM non_standard_sales_orders nx LEFT JOIN estimates ex ON ex.id = nx.nested_estimate_id LEFT JOIN sales_orders sx ON sx.id = nx.nested_sales_order_id WHERE nx.id = jo.nsso_id))
        LEFT JOIN employees a ON a.id = jo.artist_id
        LEFT JOIN employees sr ON sr.id = COALESCE(jo.sales_rep_id, so.sales_rep_id)
        LEFT JOIN locations loc ON loc.id = jo.job_location_id
@@ -1304,7 +1304,7 @@ router.get('/production-calendar', requireAuth, async (req, res, next) => {
               END AS amount
          FROM job_orders jo
          LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
-         LEFT JOIN customers c ON c.id = so.customer_id
+         LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, (SELECT COALESCE(nx.customer_id, ex.customer_id, sx.customer_id) FROM non_standard_sales_orders nx LEFT JOIN estimates ex ON ex.id = nx.nested_estimate_id LEFT JOIN sales_orders sx ON sx.id = nx.nested_sales_order_id WHERE nx.id = jo.nsso_id))
          LEFT JOIN job_types jt ON jt.id = jo.job_type_id
          LEFT JOIN locations loc ON loc.id = jo.job_location_id
         WHERE jo.planned_start_date IS NOT NULL

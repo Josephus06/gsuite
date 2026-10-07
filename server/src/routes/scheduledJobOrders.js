@@ -150,7 +150,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
          JOIN job_orders jo ON jo.id = jop.job_order_id
          LEFT JOIN processes pr ON pr.id = jop.process_id
          LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
-         LEFT JOIN customers c ON c.id = so.customer_id
+         LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, (SELECT COALESCE(nx.customer_id, ex.customer_id, sx.customer_id) FROM non_standard_sales_orders nx LEFT JOIN estimates ex ON ex.id = nx.nested_estimate_id LEFT JOIN sales_orders sx ON sx.id = nx.nested_sales_order_id WHERE nx.id = jo.nsso_id))
          WHERE jop.assigned_employee_id = ?${taskLocationClause}
          ORDER BY jop.id DESC`,
         [me.employee_id, ...taskLocationParams]
@@ -166,7 +166,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        FROM job_orders jo
        LEFT JOIN locations loc ON loc.id = jo.job_location_id
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
-       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, (SELECT COALESCE(nx.customer_id, ex.customer_id, sx.customer_id) FROM non_standard_sales_orders nx LEFT JOIN estimates ex ON ex.id = nx.nested_estimate_id LEFT JOIN sales_orders sx ON sx.id = nx.nested_sales_order_id WHERE nx.id = jo.nsso_id))
        WHERE jo.production_stage = 'in_process'${jobLocationClause}
        ORDER BY jo.id DESC`,
       jobLocationParams
@@ -187,7 +187,7 @@ router.get('/:jobOrderId', requireAuth, requirePermission(ROUTE, 'can_view'), as
        FROM job_orders jo
        LEFT JOIN locations loc ON loc.id = jo.job_location_id
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
-       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, (SELECT COALESCE(nx.customer_id, ex.customer_id, sx.customer_id) FROM non_standard_sales_orders nx LEFT JOIN estimates ex ON ex.id = nx.nested_estimate_id LEFT JOIN sales_orders sx ON sx.id = nx.nested_sales_order_id WHERE nx.id = jo.nsso_id))
        WHERE jo.id = ?`,
       [req.params.jobOrderId]
     );
@@ -365,7 +365,7 @@ router.get('/process/:processId', requireAuth, requirePermission(ROUTE, 'can_vie
        JOIN job_orders jo ON jo.id = jop.job_order_id
        LEFT JOIN processes pr ON pr.id = jop.process_id
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
-       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, (SELECT COALESCE(nx.customer_id, ex.customer_id, sx.customer_id) FROM non_standard_sales_orders nx LEFT JOIN estimates ex ON ex.id = nx.nested_estimate_id LEFT JOIN sales_orders sx ON sx.id = nx.nested_sales_order_id WHERE nx.id = jo.nsso_id))
        LEFT JOIN employees ae ON ae.id = jop.assigned_employee_id
        WHERE jop.id = ?`,
       [req.params.processId]

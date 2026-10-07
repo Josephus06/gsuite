@@ -200,7 +200,7 @@ router.get('/', requireAuth, requireProductionView, async (req, res, next) => {
     const baseFrom = `FROM job_orders jo
        ${visibleJoin}
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
-       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, (SELECT COALESCE(nx.customer_id, ex.customer_id, sx.customer_id) FROM non_standard_sales_orders nx LEFT JOIN estimates ex ON ex.id = nx.nested_estimate_id LEFT JOIN sales_orders sx ON sx.id = nx.nested_sales_order_id WHERE nx.id = jo.nsso_id))
        LEFT JOIN job_types jt ON jt.id = jo.job_type_id
        LEFT JOIN locations loc ON loc.id = jo.job_location_id
        LEFT JOIN employees sr ON sr.id = so.sales_rep_id
@@ -227,7 +227,7 @@ router.get('/', requireAuth, requireProductionView, async (req, res, next) => {
     const countFrom = `FROM job_orders jo
        ${visibleJoin}
        ${needsSo ? 'LEFT JOIN sales_orders so ON so.id = jo.sales_order_id' : ''}
-       ${search ? 'LEFT JOIN customers c ON c.id = so.customer_id' : ''}`;
+       ${search ? 'LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, (SELECT COALESCE(nx.customer_id, ex.customer_id, sx.customer_id) FROM non_standard_sales_orders nx LEFT JOIN estimates ex ON ex.id = nx.nested_estimate_id LEFT JOIN sales_orders sx ON sx.id = nx.nested_sales_order_id WHERE nx.id = jo.nsso_id))' : ''}`;
 
     const [countRows] = await pool.query(
       `SELECT jo.production_stage, jo.is_on_hold, COUNT(*) AS count ${countFrom} WHERE ${commonWhere.join(' AND ')}
@@ -1087,7 +1087,7 @@ router.get('/:id/rwip-draft', requireAuth, requirePermission(ROUTE, 'can_view'),
        LEFT JOIN job_types jt ON jt.id = jo.job_type_id
        LEFT JOIN locations jl ON jl.id = jo.job_location_id
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
-       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, (SELECT COALESCE(nx.customer_id, ex.customer_id, sx.customer_id) FROM non_standard_sales_orders nx LEFT JOIN estimates ex ON ex.id = nx.nested_estimate_id LEFT JOIN sales_orders sx ON sx.id = nx.nested_sales_order_id WHERE nx.id = jo.nsso_id))
        LEFT JOIN customer_contacts cc ON cc.id = so.contact_person_id
        LEFT JOIN locations oloc ON oloc.id = so.office_location_id
        LEFT JOIN sales_divisions sd ON sd.id = so.sales_division_id

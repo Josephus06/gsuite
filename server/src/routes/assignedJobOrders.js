@@ -75,8 +75,14 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
                        CONCAT(ssr.first_name, ' ', ssr.last_name)) AS sales_rep_name,
               EXISTS(SELECT 1 FROM job_order_layout_sessions s WHERE s.job_order_id = jo.id AND s.ended_at IS NULL) AS is_running
        FROM job_orders jo
-       LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
-       LEFT JOIN customers c ON c.id = so.customer_id
+       -- The customer as the other job order screens read it: the sales order's, else (an NSJO, or a
+       -- rework of one) the NSSO's, else what the NSSO nests to (NSJO-SAM-2447 read blank here, 2026-10-07).
+       LEFT JOIN job_orders pjo ON pjo.id = jo.parent_job_order_id
+       LEFT JOIN sales_orders so ON so.id = COALESCE(jo.sales_order_id, pjo.sales_order_id)
+       LEFT JOIN non_standard_sales_orders nsso ON nsso.id = COALESCE(jo.nsso_id, pjo.nsso_id)
+       LEFT JOIN estimates nsest ON nsest.id = nsso.nested_estimate_id
+       LEFT JOIN sales_orders nsso_so ON nsso_so.id = nsso.nested_sales_order_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, nsso.customer_id, nsest.customer_id, nsso_so.customer_id)
        LEFT JOIN employees jsr ON jsr.id = jo.sales_rep_id
        LEFT JOIN employees ssr ON ssr.id = so.sales_rep_id
        LEFT JOIN pms_job_types pjt ON pjt.id = jo.layout_job_type_id
@@ -349,8 +355,14 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
               pjt.id AS pms_job_type_id, pjt.code AS pms_job_type_code, pjt.display_name AS pms_job_type_name,
               pjt.minutes_consume
        FROM job_orders jo
-       LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
-       LEFT JOIN customers c ON c.id = so.customer_id
+       -- The customer as the other job order screens read it: the sales order's, else (an NSJO, or a
+       -- rework of one) the NSSO's, else what the NSSO nests to (NSJO-SAM-2447 read blank here, 2026-10-07).
+       LEFT JOIN job_orders pjo ON pjo.id = jo.parent_job_order_id
+       LEFT JOIN sales_orders so ON so.id = COALESCE(jo.sales_order_id, pjo.sales_order_id)
+       LEFT JOIN non_standard_sales_orders nsso ON nsso.id = COALESCE(jo.nsso_id, pjo.nsso_id)
+       LEFT JOIN estimates nsest ON nsest.id = nsso.nested_estimate_id
+       LEFT JOIN sales_orders nsso_so ON nsso_so.id = nsso.nested_sales_order_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, nsso.customer_id, nsest.customer_id, nsso_so.customer_id)
        LEFT JOIN employees jsr ON jsr.id = jo.sales_rep_id
        LEFT JOIN employees ssr ON ssr.id = so.sales_rep_id
        LEFT JOIN pms_job_types pjt ON pjt.id = jo.layout_job_type_id

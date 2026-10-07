@@ -39,7 +39,7 @@ const LIST_SELECT = `SELECT jo.id, jo.job_order_no, jo.created_at, jo.quantity, 
        FROM job_orders jo
        LEFT JOIN job_orders pjo ON pjo.id = jo.parent_job_order_id
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
-       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, (SELECT COALESCE(nx.customer_id, ex.customer_id, sx.customer_id) FROM non_standard_sales_orders nx LEFT JOIN estimates ex ON ex.id = nx.nested_estimate_id LEFT JOIN sales_orders sx ON sx.id = nx.nested_sales_order_id WHERE nx.id = jo.nsso_id))
        LEFT JOIN job_types jt ON jt.id = jo.job_type_id
        LEFT JOIN locations loc ON loc.id = jo.job_location_id
        LEFT JOIN employees rap ON rap.id = jo.rma_approved_by_id`;
