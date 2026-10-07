@@ -9,6 +9,66 @@ const { isHeadOfficeUser } = require('../lib/userLocation');
 const { BILLABLE_ESTIMATE_SQL } = require('../lib/estimateBilling');
 
 const router = express.Router();
+
+// THE HEADER TOTALS FOLLOW THE LINES.
+//
+// estimates.subtotal / discount_total / net_of_tax / tax_total / total_amount / est_gp_* were never
+// recalculated in-app: a new estimate left them blank, and Replicate copied the SOURCE estimate's
+// figures onto the copy. Change the copy's lines and the header kept the old total -- the Saved
+// Estimates list (which reads the header) said 1,142,400.00 while the estimate's own page (which
+// adds the lines) said 571,200.00 (EST-206902, 2026-10-07).
+//
+// So after every successful write to an estimate's header or lines, the header is restated from
+// its lines with the same arithmetic as the estimate's own page (EstimateView's footer): each
+// line's 2-decimal figures summed, tax as stored on the line, GP the sum of the lines' own GP.
+// An estimate with no lines -- the imported ones
+// carrying only a header -- is left exactly as it is.
+async function refreshEstimateTotals(estimateId, q = pool) {
+  const [lines] = await q.query(
+    `SELECT jo.subtotal, jo.disc_amount, jo.tax_amount, jo.gp_amount, t.rate AS tax_rate,
+            (SELECT COALESCE(SUM(p.total_cost), 0) FROM estimate_job_order_processes p WHERE p.estimate_job_order_id = jo.id) AS cost
+       FROM estimate_job_orders jo LEFT JOIN taxes t ON t.id = jo.tax_code_id
+      WHERE jo.estimate_id = ?`,
+    [estimateId]
+  );
+  if (!lines.length) return;
+  const num = (v) => (v === null || v === undefined || v === '' ? 0 : Number(v));
+  const r2 = (v) => Math.round(v * 100) / 100;
+  const subtotal = r2(lines.reduce((s, l) => s + num(l.subtotal), 0));
+  const discount = r2(lines.reduce((s, l) => s + num(l.disc_amount), 0));
+  const net = r2(subtotal - discount);
+  // Each line's stored Tax Amt, exactly as the estimate's own page (EstimateView) and the wizard's
+  // footer add it -- the list has to quote the same figure the page does.
+  const tax = r2(lines.reduce((s, l) => s + num(l.tax_amount), 0));
+  const gp = lines.reduce((s, l) => s + (l.gp_amount != null ? num(l.gp_amount) : num(l.subtotal) - num(l.disc_amount) - num(l.cost)), 0);
+  await q.query(
+    `UPDATE estimates SET subtotal = ?, discount_total = ?, net_of_tax = ?, tax_total = ?, total_amount = ?,
+            est_gp_amount = ?, est_gp_rate = ? WHERE id = ?`,
+    [subtotal, discount, net, tax, r2(net + tax), Number(gp.toFixed(2)), net ? Number(((gp / net) * 100).toFixed(2)) : 0, estimateId]
+  );
+}
+
+// Runs refreshEstimateTotals after any successful POST / PUT / DELETE on an estimate's header
+// (/:id) or its lines and processes (/:id/job-orders/...), BEFORE the response is sent -- so the
+// list the user goes back to already shows the new total. Done once here rather than at each of
+// the routes that write a line, so a route added later cannot forget it.
+router.use((req, res, next) => {
+  if (!['POST', 'PUT', 'DELETE'].includes(req.method)) return next();
+  const m = req.path.match(/^\/(\d+)(?:\/job-orders(?:\/.*)?)?$/);
+  if (!m) return next();
+  const estimateId = Number(m[1]);
+  const send = res.send.bind(res);
+  let refreshed = false;
+  res.send = (body) => {
+    if (refreshed || res.statusCode >= 400) return send(body);
+    refreshed = true;
+    refreshEstimateTotals(estimateId)
+      .catch((err) => console.error(`[estimates] totals refresh for ${estimateId}:`, err.message))
+      .finally(() => send(body));
+    return res;
+  };
+  return next();
+});
 const ROUTE = '/estimates';
 // Its own page so assigning a rep to a website quote can be granted independently of estimate
 // approval -- see src/db/add-estimate-csa-assignment.js.
@@ -652,6 +712,8 @@ async function replicateEstimate(userId, sourceId) {
       fieldName: 'replicated_from', newValue: source.estimate_no,
     });
     await conn.commit();
+    // The copied header totals are the SOURCE's; the copy's lines are what count from here on.
+    await refreshEstimateTotals(newEstimateId);
     const [[row]] = await pool.query('SELECT * FROM estimates WHERE id = ?', [newEstimateId]);
     // replicated_from and the line count ride along for the chatbot, which has to describe
     // what it just did in a sentence. The button ignores them.
@@ -1661,6 +1723,8 @@ router.post('/:id/email', requireAuth, requireEmailSend, async (req, res, next) 
   } finally { conn.release(); }
 });
 
+// Exposed for scripts (a one-off restatement of headers that drifted before this existed).
+router.refreshEstimateTotals = refreshEstimateTotals;
 module.exports = router;
 // Exported so the chatbot raises a copy through exactly this code path.
 module.exports.replicateEstimate = replicateEstimate;
