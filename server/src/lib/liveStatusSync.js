@@ -21,6 +21,11 @@ const trunc = (s, n) => (s == null ? null : String(s).slice(0, n));
 function soStatus(live) {
   const s = (live || '').toUpperCase();
   if (s.includes('CANCEL')) return 'cancelled';
+  // "PARTIALLY BILLED" contains BILLED, and was read as fully billed: SO-70419, one line of twelve
+  // invoiced, read Billed and every JO on it -- unbuilt ones included -- was set to Invoiced
+  // (2026-10-07). A partly billed order has no single status here that fits every line, so the sync
+  // leaves its status (and its JOs) alone; the app's own rule keeps it as billing comes in.
+  if (s.includes('PARTIAL') && s.includes('BILLED')) return null;
   if (s.includes('BILLED') || s.includes('PAID')) return 'billed';
   if (s.includes('PENDING BILLING') && s.includes('PARTIAL')) return 'pending_billing_partially_delivered';
   if (s.includes('PENDING BILLING')) return 'pending_billing';
