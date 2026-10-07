@@ -40,7 +40,10 @@ grep -q '^TS_DEBUG_ALWAYS_USE_DERP=true' /etc/default/tailscaled 2>/dev/null \
   || echo 'TS_DEBUG_ALWAYS_USE_DERP=true' >> /etc/default/tailscaled
 systemctl restart tailscaled
 for i in $(seq 1 20); do tailscale status > /dev/null 2>&1 && break; sleep 2; done
-ping -c 2 -W 3 "$CLOUD_TS" > /dev/null || { echo "Cannot reach the cloud at $CLOUD_TS over Tailscale."; exit 1; }
+# The relay takes a little while to come up after the restart: keep trying for a minute.
+REACHED=no
+for i in $(seq 1 20); do ping -c 1 -W 3 "$CLOUD_TS" > /dev/null 2>&1 && { REACHED=yes; break; }; sleep 3; done
+[ "$REACHED" = yes ] || { echo "Cannot reach the cloud at $CLOUD_TS over Tailscale (tried for a minute)."; exit 1; }
 echo "   cloud reachable: $(tailscale status | grep "$CLOUD_TS" | awk '{print $NF, $(NF-1)}')"
 
 echo "== 2/10  system packages"
