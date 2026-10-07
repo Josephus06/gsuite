@@ -14,10 +14,32 @@
 require('dotenv').config();
 const pool = require('../db');
 const { login, apiCall, freshCache, fetchEstimateDetail, insertEstimateJobs, insertJobProcesses } = require('../lib/liveEstimateSync');
-const norm = (v) => (v == null ? '' : String(v).trim().toLowerCase().replace(/s+/g, ' '));
+const norm = (v) => (v == null ? '' : String(v).trim().toLowerCase().replace(/\s+/g, ' '));
 
 const DRY = process.argv.includes('--dry-run');
 const numbers = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+
+// An estimate already converted has a Sales Order whose lines were imported with no estimate line
+// to point at (EST-91050 / SO-61109, asked 2026-10-07). Once the estimate's lines are written, each
+// unlinked SO line is tied to the estimate line in the same position -- only when quantity and
+// description agree -- and an estimate line the source gave no job type takes the SO line's.
+async function linkSalesOrderLines(estimateId) {
+  const [estLines] = await pool.query(
+    'SELECT id, line_no, description, quantity, job_type_id FROM estimate_job_orders WHERE estimate_id = ? ORDER BY line_no, id', [estimateId]);
+  const [soLines] = await pool.query(
+    `SELECT sol.id, sol.line_no, sol.description, sol.quantity, sol.job_type_id, so.sales_order_no
+       FROM sales_order_lines sol JOIN sales_orders so ON so.id = sol.sales_order_id
+      WHERE so.estimate_id = ? AND sol.estimate_job_order_id IS NULL ORDER BY so.id, sol.line_no, sol.id`, [estimateId]);
+  for (const s of soLines) {
+    const e = estLines.find((x) => Number(x.line_no) === Number(s.line_no));
+    if (!e || Math.abs(Number(e.quantity) - Number(s.quantity)) >= 1e-6 || norm(e.description) !== norm(s.description)) {
+      console.log(`   ${s.sales_order_no} line ${s.line_no}: no matching estimate line -- left unlinked`); continue;
+    }
+    await pool.query('UPDATE sales_order_lines SET estimate_job_order_id = ? WHERE id = ?', [e.id, s.id]);
+    if (!e.job_type_id && s.job_type_id) await pool.query('UPDATE estimate_job_orders SET job_type_id = ? WHERE id = ?', [s.job_type_id, e.id]);
+    console.log(`   ${s.sales_order_no} line ${s.line_no}: linked to estimate line ${e.line_no}`);
+  }
+}
 
 (async () => {
   if (!numbers.length) throw new Error('Name the estimate(s): EST-102387 ...');
@@ -36,12 +58,13 @@ const numbers = process.argv.slice(2).filter((a) => !a.startsWith('--'));
     const jobs = t?.transaction_transactionledgerjobs || [];
     const srcTotal = jobs.reduce((s, j) => s + Number(j.GrossAmount_LdgrJob || 0), 0);
     console.log(`${no}: source has ${jobs.length} job line(s), gross ${srcTotal.toFixed(2)} (T1S header ${Number(est.total_amount).toFixed(2)})`);
-    for (const j of jobs) console.log(`   ${j.transactionledgerjob_job?.Name_Job || '?'} | ${String(j.Description_LdgrJob || '').slice(0, 60)} | qty ${j.Qty_LdgrJob} | ${j.GrossAmount_LdgrJob} | ${(j.transactionledgerjob_transactionledgerinvtys || []).length} process line(s)`);
+    for (const j of jobs) console.log(`   ${j.transactionledgerjob_job?.DisplayName_Job || j.transactionledgerjob_job?.Name_Job || '?'} | ${String(j.Description_LdgrJob || '').slice(0, 60)} | qty ${j.Qty_LdgrJob} | ${j.GrossAmount_LdgrJob} | ${(j.transactionledgerjob_transactionledgerinvtys || []).length} process line(s)`);
     if (!jobs.length) continue;
     if (!Number(est.lines_now)) {
-      if (DRY) continue;
+      if (DRY) { console.log(`   T1S has no lines: would write ${jobs.length} job line(s) with their processes, then link the Sales Order's lines`); continue; }
       const n = await insertEstimateJobs(cache, est.id, t);
       console.log(`   wrote ${n} job line(s)`);
+      await linkSalesOrderLines(est.id);
       continue;
     }
     // Lines are here: fill the processes of those that have none (no row naming a process or an item).
