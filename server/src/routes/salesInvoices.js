@@ -1577,6 +1577,14 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         const amounts = computeBillableLineAmounts({
           pricePerUnit: price, discPercent: disc, taxRate, billableQty: qty,
         });
+        // Tax Amount typed in by hand (asked 2026-10-07) -- e.g. to match a figure on the customer's
+        // copy. It replaces the computed tax; Gross follows as Net + Tax.
+        if (sub.tax_amount !== undefined && sub.tax_amount !== null && sub.tax_amount !== '') {
+          const typedTax = Number(sub.tax_amount);
+          if (!Number.isFinite(typedTax) || typedTax < 0) return res.status(400).json({ error: 'Tax Amount cannot be negative.' });
+          amounts.tax_amount = Number(typedTax.toFixed(2));
+          amounts.gross_amount = Number((Number(amounts.net_of_tax) + amounts.tax_amount).toFixed(2));
+        }
         const description = sub.description === undefined ? cur.description : (sub.description || null);
         lineChanges.push({ cur, qty, price, disc, description, taxCode, amounts, qtyDelta: qty - oldQty });
       }
@@ -1679,6 +1687,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         ['price_per_unit', Number(ch.cur.price_per_unit || 0), ch.price],
         ['disc_percent', Number(ch.cur.disc_percent || 0), ch.disc],
         ['tax_code', ch.cur.tax_code, ch.taxCode],
+        ['tax_amount', Number(ch.cur.tax_amount || 0), Number(ch.amounts.tax_amount || 0)],
       ]) {
         if (String(before ?? '') === String(after ?? '')) continue;
         await logAudit(conn, {

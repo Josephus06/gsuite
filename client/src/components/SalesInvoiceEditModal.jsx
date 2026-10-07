@@ -57,6 +57,8 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
     price_per_unit: Number(l.price_per_unit || 0),
     disc_percent: Number(l.disc_percent || 0),
     tax_code: l.tax_code || '',
+    // A Tax Amount typed by hand; '' means "computed from the rate".
+    tax_override: '',
     job_order_no: l.job_order_no || '',
     original: l,
   })));
@@ -109,7 +111,9 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
       ? Number(taxes.find((t) => t.code === it.tax_code)?.rate || 0)
       : Number(it.original.net_of_tax) > 0
         ? (Number(it.original.tax_amount) / Number(it.original.net_of_tax)) * 100 : 0;
-    const tax = Number((net * (rate / 100)).toFixed(2));
+    const tax = it.tax_override !== ''
+      ? Number((Number(it.tax_override) || 0).toFixed(2))
+      : Number((net * (rate / 100)).toFixed(2));
     return { ...it, subtotal, discAmount, net, tax, gross: Number((net + tax).toFixed(2)) };
   });
 
@@ -123,10 +127,14 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
   // A quantity of zero or less has no meaning on an invoice line, and the server refuses it.
   const itemsValid = priced.every((l) => Number(l.quantity) > 0
     && Number(l.price_per_unit) >= 0
-    && Number(l.disc_percent) >= 0 && Number(l.disc_percent) <= 100);
+    && Number(l.disc_percent) >= 0 && Number(l.disc_percent) <= 100
+    && (l.tax_override === '' || Number(l.tax_override) >= 0));
 
+  // Changing anything the tax is computed from drops a hand-typed Tax Amount, so the tax follows
+  // the new figures rather than silently staying at an amount typed for the old ones.
   function setItem(id, patch) {
-    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+    const recompute = ['quantity', 'price_per_unit', 'disc_percent', 'tax_code'].some((k) => k in patch);
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch, ...(recompute ? { tax_override: '' } : {}) } : it)));
   }
 
   async function save() {
@@ -153,7 +161,8 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
             || Number(it.quantity) !== Number(it.original.quantity || 0)
             || Number(it.price_per_unit) !== Number(it.original.price_per_unit || 0)
             || Number(it.disc_percent) !== Number(it.original.disc_percent || 0)
-            || it.tax_code !== (it.original.tax_code || ''))
+            || it.tax_code !== (it.original.tax_code || '')
+            || it.tax_override !== '')
           .map((it) => ({
             id: it.id,
             description: it.description,
@@ -161,6 +170,7 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
             price_per_unit: Number(it.price_per_unit),
             disc_percent: Number(it.disc_percent),
             tax_code: it.tax_code || null,
+            ...(it.tax_override !== '' ? { tax_amount: Number(it.tax_override) } : {}),
           })),
       });
       onSaved(data);
@@ -331,7 +341,17 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
                       </select>
                     </td>
                     <td style={{ textAlign: 'right' }}>{money(l.net)}</td>
-                    <td style={{ textAlign: 'right' }}>{money(l.tax)}</td>
+                    <td>
+                      {/* Computed from the rate until typed over; the typed figure is kept until
+                          qty, price, discount or tax code changes. */}
+                      <input
+                        type="number" min="0" step="0.01"
+                        value={l.tax_override !== '' ? l.tax_override : l.tax}
+                        onChange={(e) => setItem(l.id, { tax_override: e.target.value })}
+                        style={{ width: 100, textAlign: 'right', fontWeight: l.tax_override !== '' ? 600 : undefined }}
+                        title={l.tax_override !== '' ? 'Typed by hand' : 'Computed from the tax code'}
+                      />
+                    </td>
                     <td style={{ textAlign: 'right' }}>{money(l.gross)}</td>
                   </tr>
                 ))}
@@ -340,7 +360,7 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
           </div>
           {!itemsValid && (
             <div style={{ color: '#b91c1c', fontSize: 12, marginTop: 4 }}>
-              Qty must be greater than 0, price cannot be negative, and discount must be between 0 and 100.
+              Qty must be greater than 0, price and tax cannot be negative, and discount must be between 0 and 100.
             </div>
           )}
 
