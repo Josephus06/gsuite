@@ -27,6 +27,9 @@ function formatTime(v) {
 }
 
 const POS_KEY = 'chatWidgetPos';
+// The mascot tucked away into a small corner bubble (asked 2026-10-07: it sat on top of list
+// buttons). Remembered per browser; the chat still opens from the bubble.
+const TUCK_KEY = 'chatWidget.tucked';
 // Whether the wake word is armed. OFF unless someone turns it on: arming it holds the microphone
 // open for the whole session and streams what it hears to the transcriber, which is not something
 // to switch on for a person without asking (see utils/voiceInput.js).
@@ -71,6 +74,14 @@ export default function ChatWidget() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
+  const [tucked, setTucked] = useState(() => {
+    try { return localStorage.getItem(TUCK_KEY) === '1'; } catch { return false; }
+  });
+  const [hoverMascot, setHoverMascot] = useState(false);
+  const setTuck = (v) => {
+    setTucked(v);
+    try { localStorage.setItem(TUCK_KEY, v ? '1' : '0'); } catch { /* this session only */ }
+  };
   // Launcher icon is the full-body mascot GIF at /chat-icon.gif (drop it in client/public/); falls
   // back to the 💬 emoji if that file isn't present.
   const [iconError, setIconError] = useState(false);
@@ -398,10 +409,38 @@ export default function ChatWidget() {
     })),
   ];
 
+  // Tucked away and closed: a small corner bubble in place of the 112px figure, so it covers no
+  // buttons. It opens the chat as the figure does; "Show assistant" inside brings the figure back.
+  if (tucked && !open) {
+    return (
+      <div className="chat-widget" style={{ position: 'fixed', right: 14, bottom: 14, zIndex: 200 }}>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          title="Support chat"
+          style={{
+            width: 38, height: 38, borderRadius: '50%', background: 'var(--accent)', color: '#fff', border: 'none',
+            fontSize: 18, cursor: 'pointer', boxShadow: '0 3px 10px rgba(0,0,0,0.25)', opacity: 0.85, outline: 'none',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
+          }}
+        >
+          💬
+        </button>
+        {wakeOn && (
+          <span title='Listening for "Tetel"' style={{ position: 'absolute', top: -4, right: -4, width: 12, height: 12, borderRadius: '50%', background: 'var(--danger)', border: '2px solid #fff' }} />
+        )}
+      </div>
+    );
+  }
+
   return (
     // The class is what lets print hide it. Without one, nothing could select this element and
     // the assistant printed onto every run sheet, job order and invoice in the app.
-    <div className="chat-widget" ref={wrapRef} style={{ position: 'fixed', right: anchor.right, bottom: anchor.bottom, zIndex: 200 }}>
+    <div
+      className="chat-widget" ref={wrapRef}
+      style={{ position: 'fixed', right: anchor.right, bottom: anchor.bottom, zIndex: 200 }}
+      onMouseEnter={() => setHoverMascot(true)} onMouseLeave={() => setHoverMascot(false)}
+    >
       {open && (
         <div className="card" style={{ width: 320, height: 420, display: 'flex', flexDirection: 'column', marginBottom: 10, padding: 0, overflow: 'hidden', boxShadow: '0 8px 30px rgba(0,0,0,0.25)' }}>
           <div style={{ background: 'var(--accent)', color: '#fff', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -448,6 +487,17 @@ export default function ChatWidget() {
               >
                 {wakeOn ? '👂 On' : '👂'}
               </button>
+              {/* Tucked: the mascot is a corner bubble; this brings the figure back. */}
+              {tucked && (
+                <button
+                  type="button"
+                  onClick={() => setTuck(false)}
+                  title="Show the assistant figure again"
+                  style={{ background: 'rgba(255,255,255,0.18)', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 11, borderRadius: 10, padding: '2px 8px' }}
+                >
+                  Show assistant
+                </button>
+              )}
               <button type="button" onClick={() => setOpen(false)} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 16 }}>✕</button>
             </div>
           </div>
@@ -545,7 +595,7 @@ export default function ChatWidget() {
           // standing figure shows at full height without letterboxing.
           : {
             width: 112, height: 112, borderRadius: 0, background: 'transparent',
-            border: 'none', padding: 0, display: 'block',
+            border: 'none', padding: 0, display: 'block', outline: 'none',
             cursor: dragging ? 'grabbing' : 'grab',
             touchAction: 'none', userSelect: 'none',
           }}
@@ -556,6 +606,21 @@ export default function ChatWidget() {
               style={{ width: '100%', height: '100%', objectFit: 'contain', filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.3))' }} />
         )}
       </button>
+      {/* Hide: tucks the figure into the corner bubble (shown on hover, so it adds no clutter). */}
+      {!open && hoverMascot && !dragging && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setHoverMascot(false); setTuck(true); }}
+          title="Hide the assistant -- it stays as a small chat bubble in the corner"
+          style={{
+            position: 'absolute', top: 2, left: 2, width: 22, height: 22, borderRadius: '50%',
+            background: 'rgba(0,0,0,0.55)', color: '#fff', border: 'none', fontSize: 15, lineHeight: '20px',
+            cursor: 'pointer', padding: 0, outline: 'none',
+          }}
+        >
+          –
+        </button>
+      )}
       {/* The microphone is open even with the panel closed, so it says so on the launcher. A
           listening machine that gives no sign of it is the kind of thing people find out about
           later and rightly object to. */}
