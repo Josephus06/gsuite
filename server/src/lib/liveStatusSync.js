@@ -321,4 +321,28 @@ async function syncStatuses({ modules } = {}) {
   return { totals, results };
 }
 
-module.exports = { syncStatuses, SYNCABLE, MODULES };
+// The source's own status for each Sales Order number given -- the authority on a migrated order
+// (fix-so-partially-billed.js / restore-billed-from-source.js). One lookup per number, five at a time:
+// paging the whole list back to 2019 took far longer. Returns Map sales_order_no -> Status_TransH;
+// a number the source does not have is simply absent.
+async function sourceSoStatuses(nos) {
+  let token = await login();
+  const out = new Map();
+  const list = [...new Set(nos.map(String))];
+  let next = 0;
+  async function worker() {
+    for (;;) {
+      const i = next; next += 1;
+      if (i >= list.length) return;
+      if (i && i % 300 === 0) token = await login();
+      const res = await api(token, 'get_transactions', { where: { Module_TransH: 'SALESORDER', UserPK_TransH: list[i] }, limit: 1 });
+      const row = listRows(res)[0];
+      if (row) out.set(list[i], row.Status_TransH || '');
+      if ((i + 1) % 200 === 0) console.log(`  ...source status ${i + 1}/${list.length}`);
+    }
+  }
+  await Promise.all([1, 2, 3, 4, 5].map(worker));
+  return out;
+}
+
+module.exports = { syncStatuses, SYNCABLE, MODULES, sourceSoStatuses };

@@ -19,6 +19,7 @@
 require('dotenv').config();
 const pool = require('../db');
 const { computeSalesOrderStatus, invoicedOrTicketedSql, statusRuleReady } = require('../lib/salesOrderStatus');
+const { sourceSoStatuses } = require('../lib/liveStatusSync');
 
 const APPLY = process.argv.includes('--apply');
 const ONE = process.argv.slice(2).find((a) => !a.startsWith('--')) || null;
@@ -36,15 +37,30 @@ function stageFor(jo) {
   console.log(`DB ${process.env.DB_NAME} on ${process.env.DB_HOST} -- ${APPLY ? 'APPLYING' : 'PREVIEW'}`);
   await statusRuleReady;
   const [orders] = await pool.query(
-    `SELECT so.id, so.sales_order_no, so.status FROM sales_orders so
+    `SELECT so.id, so.sales_order_no, so.status, DATE_FORMAT(so.date_created, '%Y-%m-%d') AS day,
+            so.created_at >= '2026-09-28' AS made_here FROM sales_orders so
       WHERE so.status = 'billed' ${ONE ? 'AND so.sales_order_no = ?' : ''}
         AND EXISTS (SELECT 1 FROM sales_order_lines sol JOIN job_orders jo ON jo.id = sol.job_order_id
                      WHERE sol.sales_order_id = so.id AND jo.quantity_invoiced > 0)
         AND EXISTS (SELECT 1 FROM sales_order_lines sol JOIN job_orders jo ON jo.id = sol.job_order_id
                      WHERE sol.sales_order_id = so.id AND jo.quantity_invoiced < sol.quantity)
       ORDER BY so.id`, ONE ? [ONE] : []);
+  // THE SOURCE DECIDES FOR A MIGRATED ORDER (2026-10-07). Their Job Order quantities often came over
+  // incomplete, so an order the source calls fully Billed can look part-invoiced here -- the first run
+  // listed hundreds of 2019-2021 orders. A migrated order the source calls Billed (or Paid) is left
+  // Billed; one it calls anything else -- SO-70419 is "JO IN-PROCESS" there -- follows the rule here,
+  // as does an order raised in T1S. One the source does not have is left alone.
+  const migrated = orders.filter((o) => !Number(o.made_here));
+  if (migrated.length) console.log(`Reading ${migrated.length} migrated order(s)' status at the source...`);
+  const source = migrated.length ? await sourceSoStatuses(migrated.map((o) => o.sales_order_no)) : new Map();
+  let skippedBySource = 0;
   let soFixed = 0; let joFixed = 0;
   for (const so of orders) {
+    if (!Number(so.made_here)) {
+      if (!source.has(so.sales_order_no)) { skippedBySource += 1; continue; }
+      const st = String(source.get(so.sales_order_no)).toUpperCase();
+      if ((st.includes('BILLED') || st.includes('PAID')) && !st.includes('PARTIAL')) { skippedBySource += 1; continue; }
+    }
     const [lines] = await pool.query(
       `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, ${invoicedOrTicketedSql('jo')}
          FROM sales_order_lines sol LEFT JOIN job_orders jo ON jo.id = sol.job_order_id WHERE sol.sales_order_id = ?`, [so.id]);
@@ -67,6 +83,7 @@ function stageFor(jo) {
       await conn.commit();
     } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
   }
+  console.log(`${skippedBySource} left as Billed because the source calls them Billed (or does not have them).`);
   console.log(`${orders.length} order(s) read Billed while part-invoiced; ${soFixed} order status(es) and ${joFixed} JO stage(s) ${APPLY ? 'corrected' : 'to correct'}.`);
   await pool.end();
 })().catch(async (e) => { console.error('Failed:', e.message); await pool.end(); process.exit(1); });
