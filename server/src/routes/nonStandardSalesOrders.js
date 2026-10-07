@@ -380,6 +380,20 @@ const HEADER_FIELDS = [
   'electrical_warranty', 'electrical_warranty_term', 'prepared_by_id',
 ];
 
+// An NSSO saved with no customer takes the one on the document it nests to -- the Estimate of a
+// Sample, the Sales Order of an RMA / RMA-Installation. The wizard only copied it when the estimate
+// was picked while Customer was still empty, so NSSO-SAM-2447 was saved with none, and its Job Order
+// (NSJO-SAM-2447) showed no customer details (2026-10-07). Never overwrites a customer already set.
+async function fillCustomerFromSource(q, nssoId) {
+  await q.query(
+    `UPDATE non_standard_sales_orders n
+       LEFT JOIN estimates e ON e.id = n.nested_estimate_id
+       LEFT JOIN sales_orders so ON so.id = n.nested_sales_order_id
+        SET n.customer_id = COALESCE(e.customer_id, so.customer_id)
+      WHERE n.id = ? AND n.customer_id IS NULL AND COALESCE(e.customer_id, so.customer_id) IS NOT NULL`,
+    [nssoId]);
+}
+
 router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
@@ -408,6 +422,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     // not NSSO-<TYPE>-<row id>, which jumped to five figures once the source's NSSOs were imported.
     const nssoNo = await assignDocNo(conn, { table: 'non_standard_sales_orders', column: 'nsso_no', prefix: `NSSO-${TYPE_ABBR[type]}-`, id });
     await logAudit(conn, { id, userId: req.user.id, eventType: 'Created', fieldName: 'nsso_no', newValue: nssoNo });
+    await fillCustomerFromSource(conn, id);
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM non_standard_sales_orders WHERE id = ?', [id]);
@@ -423,6 +438,7 @@ router.put('/:id', requireAuth, requireEditOrOwnDraft, async (req, res, next) =>
     }
     if (!sets.length) return res.json({ ok: true });
     await pool.query(`UPDATE non_standard_sales_orders SET ${sets.join(', ')}, updated_at = NOW() WHERE id = ?`, [...vals, req.params.id]);
+    await fillCustomerFromSource(pool, req.params.id);
     const [[row]] = await pool.query('SELECT * FROM non_standard_sales_orders WHERE id = ?', [req.params.id]);
     res.json(row);
   } catch (err) { next(err); }
