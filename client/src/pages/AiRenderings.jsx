@@ -228,11 +228,11 @@ export default function AiRenderings() {
     try {
       const { data } = await api.post(ROUTE, {
         customer_id: customer.id, estimate_id: estimateId || null, prompt, quality, size,
-        site_image: site.dataUrl, site_mime: site.mime, logo_image: logo?.dataUrl || null, logo_mime: logo?.mime || null,
+        site_image: site?.dataUrl || null, site_mime: site?.mime || null, logo_image: logo?.dataUrl || null, logo_mime: logo?.mime || null,
       }, { timeout: 300000 });
       created(data);
     } catch (e) {
-      setError(e.response?.data?.error || (e.code === 'ECONNABORTED' ? 'The rendering took too long. Try Draft quality.' : 'The rendering failed. Try again.'));
+      setError(e.response?.data?.error || (e.code === 'ECONNABORTED' ? 'The rendering took too long. Try Draft quality.' : `The rendering failed: ${e.message}`));
     } finally { setBusy(false); }
   };
 
