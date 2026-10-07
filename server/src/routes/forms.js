@@ -316,9 +316,12 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
 // The Chart of Accounts for AP's two pickers on a liquidation -- each item's COGS account and the
 // credit account. The WHOLE active chart (asked 2026-10-06: "wire it to chart of account"): the first
 // cut filtered to account_type 'Expense' / is_summary = 0, which on the live chart returned nothing.
+// Every postable (non-summary) account, as the Journal lists them. is_active is NOT consulted: 237 of
+// the 278 accounts read inactive (an import artifact), so filtering on it hid e.g. 30631 Postage And
+// Delivery (2026-10-07).
 async function activeAccounts() {
   const [rows] = await pool.query(
-    'SELECT id, account_code, account_name, account_type FROM chart_of_accounts WHERE is_active = 1 ORDER BY account_code');
+    'SELECT id, account_code, account_name, account_type FROM chart_of_accounts WHERE COALESCE(is_summary, 0) = 0 ORDER BY account_code');
   return rows;
 }
 router.get('/meta/credit-accounts', requireAuth, async (req, res, next) => {
@@ -339,7 +342,7 @@ router.put('/:id/credit-account', requireAuth, async (req, res, next) => {
     const accountId = req.body?.credit_account_id ? Number(req.body.credit_account_id) : null;
     if (accountId) {
       const [[acct]] = await pool.query(
-        'SELECT id FROM chart_of_accounts WHERE id = ? AND is_active = 1', [accountId]);
+        'SELECT id FROM chart_of_accounts WHERE id = ? AND COALESCE(is_summary, 0) = 0', [accountId]);
       if (!acct) return res.status(400).json({ error: 'Choose an active account from the Chart of Accounts.' });
     }
     await pool.query('UPDATE form_requests SET credit_account_id = ?, updated_at = NOW() WHERE id = ?', [accountId, doc.id]);
@@ -366,7 +369,7 @@ router.put('/:id/items/:itemId/cogs', requireAuth, async (req, res, next) => {
     const accountId = req.body?.cogs_account_id ? Number(req.body.cogs_account_id) : null;
     if (accountId) {
       const [[acct]] = await pool.query(
-        'SELECT id FROM chart_of_accounts WHERE id = ? AND is_active = 1', [accountId]);
+        'SELECT id FROM chart_of_accounts WHERE id = ? AND COALESCE(is_summary, 0) = 0', [accountId]);
       if (!acct) return res.status(400).json({ error: 'Choose an active account from the Chart of Accounts.' });
     }
     const [r] = await pool.query(
