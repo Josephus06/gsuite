@@ -45,6 +45,14 @@ function stageOf(row) {
   return row.layout_started_at ? 'in_progress' : 'not_started';
 }
 
+// Not Started is split by kind (asked 2026-10-07): Job Orders and Non-Standard Job Orders queue
+// separately there, so an artist can see each pile on its own. The other tabs stay mixed.
+const KINDS = [
+  { key: 'JO', label: 'JO' },
+  { key: 'NSTDJO', label: 'NSTDJO' },
+];
+const kindOf = (row) => (row.kind === 'NSTDJO' ? 'NSTDJO' : 'JO');
+
 function timerStatus(row) {
   if (row.layout_ended_at) return 'Completed';
   if (row.is_running) return 'Running';
@@ -55,6 +63,7 @@ function timerStatus(row) {
 export default function AssignedJobOrders() {
   const navigate = useNavigate();
   const [stage, setStage] = useState('not_started');
+  const [kind, setKind] = useState('JO');
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -71,12 +80,19 @@ export default function AssignedJobOrders() {
   // Counted from every row, not from the filtered set, so each tab keeps showing its own
   // total while another one is selected.
   const counts = STAGES.reduce((acc, t) => ({ ...acc, [t.key]: rows.filter((r) => stageOf(r) === t.key).length }), {});
-  const stageRows = rows.filter((r) => stageOf(r) === stage);
+  const notStarted = rows.filter((r) => stageOf(r) === 'not_started');
+  const kindCounts = KINDS.reduce((acc, k) => ({ ...acc, [k.key]: notStarted.filter((r) => kindOf(r) === k.key).length }), {});
+  const stageRows = rows.filter((r) => stageOf(r) === stage && (stage !== 'not_started' || kindOf(r) === kind));
   const totalPages = Math.max(1, Math.ceil(stageRows.length / PAGE_SIZE));
   const pageRows = stageRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   function pickStage(key) {
     setStage(key);
+    setPage(1);
+  }
+
+  function pickKind(key) {
+    setKind(key);
     setPage(1);
   }
 
@@ -97,6 +113,20 @@ export default function AssignedJobOrders() {
           </button>
         ))}
       </div>
+
+      {stage === 'not_started' && (
+        <div className="status-tabs" style={{ marginTop: -4 }}>
+          {KINDS.map((k) => (
+            <button
+              key={k.key}
+              className={`status-tab ${kind === k.key ? 'active' : ''}`}
+              onClick={() => pickKind(k.key)}
+            >
+              {k.label} <span className="badge badge-muted">{kindCounts[k.key] ?? 0}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="card">
         {loading ? <LoadingSpinner /> : (
@@ -120,8 +150,10 @@ export default function AssignedJobOrders() {
                 </tr>
               </thead>
               <tbody>
-                {rows.length === 0 && (
-                  <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: 20 }}>Nothing in {(STAGES.find((t) => t.key === stage) || {}).label}.</td></tr>
+                {stageRows.length === 0 && (
+                  <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                    Nothing in {(STAGES.find((t) => t.key === stage) || {}).label}{stage === 'not_started' ? ` — ${kind}` : ''}.
+                  </td></tr>
                 )}
                 {/* Job Orders and Non-Standard Job Orders have independent id sequences,
                     so the key has to include the kind or the two can collide. */}
