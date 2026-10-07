@@ -259,7 +259,7 @@ export default function FormEdit() {
       {PAYMENT_TYPES.includes(type) && (
         <div className="card" style={{ marginTop: 16 }}>
           <h3>{TYPE_LABELS[type]}</h3>
-          {/* RFP (Fund Transfer): which bank the money leaves from and which it goes to -- the chart
+          {/* Fund Transfer Request Form: which bank the money leaves from and which it goes to -- the chart
               of accounts' Bank accounts only. */}
           {type === 'fund_transfer' && (
             <div className="field-row">

@@ -1,4 +1,4 @@
-// RFP (Fund Transfer): a Request for Payment that also names the bank the money leaves from and the
+// Fund Transfer Request Form: a Request for Payment that also names the bank the money leaves from and the
 // bank it goes to (asked 2026-10-07). It is the payment form plus two fields, so it keeps its
 // details in form_payment_details beside the payment form's, in two new columns pointing at the
 // chart of accounts (Bank accounts only -- enforced by the route). form_requests.type is a VARCHAR,

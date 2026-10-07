@@ -8,7 +8,7 @@ import { displayDate } from './dates';
 export const TYPE_LABELS = {
   liquidation: 'Liquidation',
   payment: 'Request for Payment',
-  fund_transfer: 'RFP (Fund Transfer)',
+  fund_transfer: 'Fund Transfer Request Form',
   business_trip: 'Business Trip',
   revolving_fund: 'Revolving Fund',
 };
@@ -33,7 +33,7 @@ export const PURPOSE_LABELS = {
   others: 'Others',
 };
 
-// Request for Payment, and RFP (Fund Transfer) -- the same form plus the From and To banks.
+// Request for Payment, and Fund Transfer Request Form -- the same form plus the From and To banks.
 export const PAYMENT_TYPES = ['payment', 'fund_transfer'];
 
 // A bank account as the From / To fields show it.

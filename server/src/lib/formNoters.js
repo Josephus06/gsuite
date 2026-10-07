@@ -30,7 +30,7 @@ const pool = require('../db');
 // A LIQUIDATION is no longer one of them (asked 2026-10-06): Accounts Payable notes every
 // liquidation, whatever department it came from, once it has given each item the COGS account it is
 // charged to -- see AP_NOTED_TYPES below and the Accounts Payable tick on the user.
-// An RFP (Fund Transfer) is a Request for Payment with banks named, so it is noted the same way.
+// A Fund Transfer Request Form is a Request for Payment with banks named, so it is noted the same way.
 const DEPARTMENT_NOTED_TYPES = ['payment', 'fund_transfer'];
 const AP_NOTED_TYPES = ['liquidation'];
 

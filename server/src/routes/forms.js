@@ -46,7 +46,7 @@ const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revo
 const TYPE_LABELS = {
   liquidation: 'Liquidation',
   payment: 'Request for Payment',
-  fund_transfer: 'RFP (Fund Transfer)',
+  fund_transfer: 'Fund Transfer Request Form',
   business_trip: 'Business Trip',
   revolving_fund: 'Revolving Fund',
 };
@@ -58,7 +58,7 @@ const PURPOSES = [
 ];
 
 // A form that has left the owner's hands. Everything an approver can act on.
-// RFP (Fund Transfer) is a Request for Payment plus the bank it is paid from and the bank it goes to
+// Fund Transfer Request Form is a Request for Payment plus the bank it is paid from and the bank it goes to
 // (2026-10-07): same details table, same approval path; only From and To are added.
 const PAYMENT_TYPES = ['payment', 'fund_transfer'];
 
@@ -381,7 +381,7 @@ router.get('/meta/options', requireAuth, requirePermission(ROUTE, 'can_view'), a
     // Departments come from the same list every other module uses, so a form's department is a
     // real one rather than whatever was typed that day.
     const [departments] = await pool.query('SELECT id, name FROM departments ORDER BY name');
-    // From / To on an RFP (Fund Transfer): the bank accounts under Cash in Bank (BANK_ACCOUNTS_SQL).
+    // From / To on a Fund Transfer Request Form: the bank accounts under Cash in Bank (BANK_ACCOUNTS_SQL).
     const [bankAccounts] = await pool.query(`${BANK_ACCOUNTS_SQL} ORDER BY a.account_code`);
     res.json({
       types: TYPES.map((t) => ({ key: t, label: TYPE_LABELS[t] })),
@@ -489,7 +489,7 @@ async function writeDetail(conn, docId, type, body, items) {
   return {};
 }
 
-// From and To on an RFP (Fund Transfer) must be Bank accounts in the chart of accounts -- the only
+// From and To on a Fund Transfer Request Form must be Bank accounts in the chart of accounts -- the only
 // ones the picker offers, checked here so a hand-made request cannot name any other account.
 async function badBanks(type, body) {
   if (type !== 'fund_transfer') return null;
