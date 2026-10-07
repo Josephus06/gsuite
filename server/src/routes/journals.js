@@ -138,17 +138,17 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
 // Edit a saved journal: header (date, location, currency, memo) and its lines, replaced as a set.
 // The GL is derived from the journal as it stands (lib/glImpact.js), so nothing needs re-posting.
-// Not for a void journal, nor for a REVERSAL a void wrote (it mirrors its document's GL and must
-// keep cancelling it exactly). Both the old and the new date must be in an open period.
+// Not for a void journal. A REVERSAL (one a void wrote, or the source's) and a journal written for a
+// document can be edited, with a warning on screen. Both the old and the new date must be in an
+// open period.
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[j]] = await conn.query('SELECT * FROM journals WHERE id = ?', [req.params.id]);
     if (!j) return res.status(404).json({ error: 'Not found' });
     if (String(j.status).toLowerCase() === 'void') return res.status(409).json({ error: 'A voided journal cannot be edited.' });
-    if (j.source_type || String(j.status).toUpperCase() === 'REVERSAL') {
-      return res.status(409).json({ error: 'This journal was written by the system when a document was voided; edit or restore that document instead.' });
-    }
+    // Reversals and system-written journals are editable too (asked 2026-10-07, "edit all") --
+    // the screen warns that a reversal then no longer exactly cancels its voided document.
     const { date_created: dateCreated, location_id: locationId, currency, conversion, memo, lines } = req.body;
     const rows = (Array.isArray(lines) ? lines : [])
       .filter((l) => l.account_id && (num(l.debit) > 0 || num(l.credit) > 0));

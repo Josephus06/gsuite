@@ -21,6 +21,9 @@ export default function JournalForm() {
   const { id: editId } = useParams();
   const replicateId = editId || searchParams.get('replicate');
   const [replicatedFrom, setReplicatedFrom] = useState('');
+  // Editing a REVERSAL, or a journal written for a document: allowed, but it stops mirroring that
+  // document's GL, so the screen says so and asks before saving.
+  const [systemKind, setSystemKind] = useState('');
   const [meta, setMeta] = useState(null);
   const [header, setHeader] = useState({ date_created: today(), location_id: '', currency: '', conversion: 1, memo: '' });
   const [lines, setLines] = useState([{ ...EMPTY_LINE }, { ...EMPTY_LINE }]);
@@ -32,6 +35,9 @@ export default function JournalForm() {
     if (!replicateId) return;
     api.get(`/journals/${replicateId}`).then(({ data: j }) => {
       setReplicatedFrom(j.journal_no);
+      if (editId) {
+        setSystemKind(String(j.status).toUpperCase() === 'REVERSAL' ? 'reversal' : j.source_type ? 'document' : '');
+      }
       setHeader((h) => ({
         ...h, location_id: j.location_id || '', currency: j.currency || '', conversion: j.conversion || 1, memo: j.memo || '',
         ...(editId ? { date_created: String(j.date_created).slice(0, 10) } : {}),
@@ -76,6 +82,7 @@ export default function JournalForm() {
       }));
     if (payload.length < 2) { setError('Enter at least two lines with an account and a debit or credit.'); return; }
     if (!balanced) { setError(`Journal is out of balance: debit ${money(totalDebit)} vs credit ${money(totalCredit)}.`); return; }
+    if (systemKind && !window.confirm(`${replicatedFrom} is ${systemKind === 'reversal' ? 'the reversal of a voided document' : 'a journal written for a document'}. Changing it means it no longer matches that document's GL. Save anyway?`)) return;
     setSaving(true);
     try {
       const { data } = editId
@@ -98,6 +105,13 @@ export default function JournalForm() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {systemKind && (
+        <div className="error-banner" style={{ background: '#fff7e6', borderColor: '#f0b429', color: '#7a4b00' }}>
+          {systemKind === 'reversal'
+            ? 'This is the reversal of a voided document. It exists to cancel that document\'s GL exactly -- if you change it, the two no longer cancel and the difference stays in the ledger.'
+            : 'This journal was written for a document. If you change it, it no longer matches that document\'s GL.'}
+        </div>
+      )}
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="filter-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>

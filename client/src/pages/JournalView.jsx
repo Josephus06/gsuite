@@ -84,7 +84,9 @@ export default function JournalView() {
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={'/journals'}>Back to Lists</Link>
           {/* Not on a void journal, nor on a reversal a void wrote (the server refuses both too). */}
-          {can('/journals', 'can_edit') && j.status !== 'void' && !j.source_type && String(j.status).toUpperCase() !== 'REVERSAL'
+          {/* Every journal but a void one -- reversals and system-written ones too; the edit
+              screen warns about those. */}
+          {can('/journals', 'can_edit') && String(j.status).toLowerCase() !== 'void'
             && <Link className="btn btn-sm" to={`/journals/${j.id}/edit`}>Edit</Link>}
           {can('/journals', 'can_add') && <Link className="btn btn-sm" title="Start a new journal with this one's lines" to={`/journals/new?replicate=${j.id}`}>Replicate</Link>}
           {can('/journals', 'can_void') && j.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
