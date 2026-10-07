@@ -56,12 +56,14 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
     units: l.units || '',
     price_per_unit: Number(l.price_per_unit || 0),
     disc_percent: Number(l.disc_percent || 0),
+    tax_code: l.tax_code || '',
     job_order_no: l.job_order_no || '',
     original: l,
   })));
   const [employees, setEmployees] = useState([]);
   const [locations, setLocations] = useState([]);
   const [departments, setDepartments] = useState([]);
+  const [taxes, setTaxes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -72,7 +74,9 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
       api.get('/lookups/locations'),
       api.get('/lookups/departments'),
       api.get('/lookups/payment-terms'),
-    ]).then(([empRes, locRes, deptRes, termRes]) => {
+      api.get('/lookups/taxes').catch(() => ({ data: [] })),
+    ]).then(([empRes, locRes, deptRes, termRes, taxRes]) => {
+      setTaxes((taxRes.data || []).filter((t) => t.is_active !== 0 && t.is_active !== false));
       setEmployees(empRes.data);
       setLocations(locRes.data);
       setDepartments(deptRes.data);
@@ -99,8 +103,12 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
     const subtotal = Number((price * qty).toFixed(2));
     const discAmount = Number((subtotal * (disc / 100)).toFixed(2));
     const net = Number((subtotal - discAmount).toFixed(2));
-    const rate = Number(it.original.net_of_tax) > 0
-      ? (Number(it.original.tax_amount) / Number(it.original.net_of_tax)) * 100 : 0;
+    // A Tax Code changed here sets the rate outright -- that code's rate, or 0% for none --
+    // exactly as the server prices it.
+    const rate = it.tax_code !== (it.original.tax_code || '')
+      ? Number(taxes.find((t) => t.code === it.tax_code)?.rate || 0)
+      : Number(it.original.net_of_tax) > 0
+        ? (Number(it.original.tax_amount) / Number(it.original.net_of_tax)) * 100 : 0;
     const tax = Number((net * (rate / 100)).toFixed(2));
     return { ...it, subtotal, discAmount, net, tax, gross: Number((net + tax).toFixed(2)) };
   });
@@ -144,13 +152,15 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
           .filter((it) => it.description !== (it.original.description || '')
             || Number(it.quantity) !== Number(it.original.quantity || 0)
             || Number(it.price_per_unit) !== Number(it.original.price_per_unit || 0)
-            || Number(it.disc_percent) !== Number(it.original.disc_percent || 0))
+            || Number(it.disc_percent) !== Number(it.original.disc_percent || 0)
+            || it.tax_code !== (it.original.tax_code || ''))
           .map((it) => ({
             id: it.id,
             description: it.description,
             quantity: Number(it.quantity),
             price_per_unit: Number(it.price_per_unit),
             disc_percent: Number(it.disc_percent),
+            tax_code: it.tax_code || null,
           })),
       });
       onSaved(data);
@@ -273,6 +283,7 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
                   <th>Unit</th>
                   <th style={{ textAlign: 'right' }}>Unit Price</th>
                   <th style={{ textAlign: 'right' }}>Disc %</th>
+                  <th>Tax Code</th>
                   <th style={{ textAlign: 'right' }}>Net</th>
                   <th style={{ textAlign: 'right' }}>Tax</th>
                   <th style={{ textAlign: 'right' }}>Gross</th>
@@ -280,7 +291,7 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
               </thead>
               <tbody>
                 {priced.length === 0 && (
-                  <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 16 }}>This invoice has no items.</td></tr>
+                  <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 16 }}>This invoice has no items.</td></tr>
                 )}
                 {priced.map((l) => (
                   <tr key={l.id}>
@@ -307,6 +318,17 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
                         onChange={(e) => setItem(l.id, { disc_percent: e.target.value })}
                         style={{ width: 80, textAlign: 'right' }}
                       />
+                    </td>
+                    <td>
+                      <select value={l.tax_code} onChange={(e) => setItem(l.id, { tax_code: e.target.value })} style={{ minWidth: 120 }}>
+                        <option value="">None</option>
+                        {/* A migrated line can carry the old system's code (VAT_PH:VATIN-12), which
+                            is not in the list -- kept as an option so it stays selected. */}
+                        {l.original.tax_code && !taxes.some((t) => t.code === l.original.tax_code) && (
+                          <option value={l.original.tax_code}>{l.original.tax_code}</option>
+                        )}
+                        {taxes.map((t) => <option key={t.id} value={t.code}>{t.code} ({Number(t.rate)}%)</option>)}
+                      </select>
                     </td>
                     <td style={{ textAlign: 'right' }}>{money(l.net)}</td>
                     <td style={{ textAlign: 'right' }}>{money(l.tax)}</td>

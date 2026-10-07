@@ -1518,6 +1518,9 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         [req.params.id],
       );
       const byId = new Map(existing.map((l) => [Number(l.id), l]));
+      // Tax Code is editable per line (asked 2026-10-07) -- one of the active codes, or none.
+      const [taxRows] = await conn.query('SELECT code, rate FROM taxes WHERE is_active = 1');
+      const taxByCode = new Map(taxRows.map((t) => [t.code, Number(t.rate || 0)]));
 
       for (const sub of submittedLines) {
         const cur = byId.get(Number(sub.id));
@@ -1557,15 +1560,25 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         // tax / net is the rate this line actually carries, exact for every rate in this data and
         // 0 for the zero-rated and exempt lines where there is nothing to recover. The table is
         // the fallback for a line with no net to divide by.
+        //
+        // A Tax Code CHANGED on the edit is the exception: the user is telling us the rate, so it
+        // is that code's rate from the taxes table (no code = 0%).
+        const taxCode = sub.tax_code === undefined ? cur.tax_code : (sub.tax_code || null);
+        const taxCodeChanged = String(taxCode ?? '') !== String(cur.tax_code ?? '');
+        if (taxCodeChanged && taxCode && !taxByCode.has(taxCode)) {
+          return res.status(400).json({ error: `Tax Code ${taxCode} is not an active tax code.` });
+        }
         const billedNet = Number(cur.net_of_tax || 0);
-        const taxRate = billedNet > 0
-          ? (Number(cur.tax_amount || 0) / billedNet) * 100
-          : Number(cur.tax_rate || 0);
+        const taxRate = taxCodeChanged
+          ? (taxCode ? taxByCode.get(taxCode) : 0)
+          : billedNet > 0
+            ? (Number(cur.tax_amount || 0) / billedNet) * 100
+            : Number(cur.tax_rate || 0);
         const amounts = computeBillableLineAmounts({
           pricePerUnit: price, discPercent: disc, taxRate, billableQty: qty,
         });
         const description = sub.description === undefined ? cur.description : (sub.description || null);
-        lineChanges.push({ cur, qty, price, disc, description, amounts, qtyDelta: qty - oldQty });
+        lineChanges.push({ cur, qty, price, disc, description, taxCode, amounts, qtyDelta: qty - oldQty });
       }
     }
 
@@ -1637,14 +1650,14 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       await conn.query(
         `UPDATE sales_invoice_lines
             SET description = ?, quantity = ?, price_per_unit = ?, subtotal = ?, disc_percent = ?,
-                disc_amount = ?, disc_price_per_unit = ?, net_of_tax = ?, tax_amount = ?, gross_amount = ?
+                disc_amount = ?, disc_price_per_unit = ?, net_of_tax = ?, tax_code = ?, tax_amount = ?, gross_amount = ?
           WHERE id = ?`,
         [
           ch.description, ch.qty, ch.price, ch.amounts.subtotal, ch.disc,
           ch.amounts.disc_amount,
           // The discounted per-unit price the printed invoice shows, kept in step with the rest.
           Number((ch.price * (1 - ch.disc / 100)).toFixed(4)),
-          ch.amounts.net_of_tax, ch.amounts.tax_amount, ch.amounts.gross_amount,
+          ch.amounts.net_of_tax, ch.taxCode, ch.amounts.tax_amount, ch.amounts.gross_amount,
           ch.cur.id,
         ],
       );
@@ -1665,6 +1678,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         ['quantity', Number(ch.cur.quantity || 0), ch.qty],
         ['price_per_unit', Number(ch.cur.price_per_unit || 0), ch.price],
         ['disc_percent', Number(ch.cur.disc_percent || 0), ch.disc],
+        ['tax_code', ch.cur.tax_code, ch.taxCode],
       ]) {
         if (String(before ?? '') === String(after ?? '')) continue;
         await logAudit(conn, {
