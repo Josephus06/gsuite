@@ -33,6 +33,9 @@ export default function CustomerView() {
   const [estimates, setEstimates] = useState([]);
   const [salesOrders, setSalesOrders] = useState([]);
   const [invoices, setInvoices] = useState([]);
+  // Lists this viewer has no rights to (the server refused them): shown as "no access", not as empty.
+  const [denied, setDenied] = useState({});
+  const [loadError, setLoadError] = useState('');
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState(searchParams.get('tab') || 'overview');
   const [loading, setLoading] = useState(true);
@@ -70,27 +73,41 @@ export default function CustomerView() {
 
   useEffect(() => {
     setLoading(true);
+    setLoadError('');
+    // Only the customer itself is required. Everything else is loaded on its own and may be refused
+    // -- a Treasury user can hold Customers without Estimates (Genalyn, 2026-10-07). With one
+    // Promise.all, a single refusal left the page spinning forever with nothing shown.
+    const optional = (key, req, fallback) => req.catch((err) => {
+      if (err.response?.status === 403) setDenied((d) => ({ ...d, [key]: true }));
+      return { data: fallback };
+    });
+    const noRows = { rows: [] };
     Promise.all([
       api.get(`/customers/${id}`),
-      api.get('/crm-pipeline', { params: { customer_id: id } }),
-      api.get('/crm-pipeline/meta/stages'),
-      api.get('/estimates', { params: { customer_id: id, limit: 100 } }),
-      api.get('/sales-orders', { params: { customer_id: id, limit: 100 } }),
-      api.get('/sales-invoices', { params: { customer_id: id, limit: 100 } }),
+      optional('pipeline', api.get('/crm-pipeline', { params: { customer_id: id } }), []),
+      optional('pipeline', api.get('/crm-pipeline/meta/stages'), { openStages: [] }),
+      optional('estimates', api.get('/estimates', { params: { customer_id: id, limit: 100 } }), noRows),
+      optional('salesOrders', api.get('/sales-orders', { params: { customer_id: id, limit: 100 } }), noRows),
+      optional('invoices', api.get('/sales-invoices', { params: { customer_id: id, limit: 100 } }), noRows),
     ]).then(([c, p, s, e, so, inv]) => {
       setCustomer(c.data);
-      setPipeline(p.data);
-      setStages(s.data);
-      setEstimates(e.data.rows);
-      setSalesOrders(so.data.rows);
-      setInvoices(inv.data.rows);
+      setPipeline(p.data || []);
+      setStages(s.data || { openStages: [] });
+      setEstimates(e.data?.rows || []);
+      setSalesOrders(so.data?.rows || []);
+      setInvoices(inv.data?.rows || []);
+      setLoading(false);
+    }).catch((err) => {
+      setLoadError(err.response?.data?.error || 'Could not load this customer.');
       setLoading(false);
     });
   }, [id]);
 
+  if (loadError) return <div className="error-banner" style={{ margin: 16 }}>{loadError}</div>;
   if (loading || !customer) return <LoadingSpinner />;
+  const noAccess = (cols) => <tr><td colSpan={cols} className="muted" style={{ textAlign: 'center', padding: 20 }}>You do not have access to these.</td></tr>;
 
-  const openDeals = pipeline.filter((r) => stages.openStages.includes(r.stage));
+  const openDeals = pipeline.filter((r) => (stages.openStages || []).includes(r.stage));
   const openPipelineValue = openDeals.reduce((s, r) => s + r.value, 0);
 
   return (
@@ -119,8 +136,8 @@ export default function CustomerView() {
             <div>Open Deals : <span className="hi">{openDeals.length}</span></div>
           </div>
           <div>
-            <div>Estimates : <span className="hi">{estimates.length}</span></div>
-            <div>Sales Orders : <span className="hi">{salesOrders.length}</span></div>
+            <div>Estimates : <span className="hi">{denied.estimates ? '—' : estimates.length}</span></div>
+            <div>Sales Orders : <span className="hi">{denied.salesOrders ? '—' : salesOrders.length}</span></div>
           </div>
         </div>
       </div>
@@ -233,7 +250,8 @@ export default function CustomerView() {
             <table>
               <thead><tr><th>Document #</th><th>Stage</th><th>Value</th><th>Date</th><th>Sales Rep</th></tr></thead>
               <tbody>
-                {pipeline.length === 0 && <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>No deals yet.</td></tr>}
+                {denied.pipeline && noAccess(5)}
+                {!denied.pipeline && pipeline.length === 0 && <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>No deals yet.</td></tr>}
                 {pipeline.map((r) => (
                   <tr key={r.estimate_id}>
                     <td>
@@ -268,7 +286,8 @@ export default function CustomerView() {
             <table>
               <thead><tr><th>Estimate #</th><th>Date</th><th>Status</th><th>Total</th></tr></thead>
               <tbody>
-                {estimates.length === 0 && <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>None yet.</td></tr>}
+                {denied.estimates && noAccess(4)}
+                {!denied.estimates && estimates.length === 0 && <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 20 }}>None yet.</td></tr>}
                 {estimates.map((e) => (
                   <tr key={e.id}>
                     <td><Link className="link-btn" to={`/estimates/${e.id}`}>{e.estimate_no}</Link></td>
@@ -283,7 +302,8 @@ export default function CustomerView() {
             <table>
               <thead><tr><th>Sales Order #</th><th>Date</th><th>Status</th></tr></thead>
               <tbody>
-                {salesOrders.length === 0 && <tr><td colSpan={3} className="muted" style={{ textAlign: 'center', padding: 20 }}>None yet.</td></tr>}
+                {denied.salesOrders && noAccess(3)}
+                {!denied.salesOrders && salesOrders.length === 0 && <tr><td colSpan={3} className="muted" style={{ textAlign: 'center', padding: 20 }}>None yet.</td></tr>}
                 {salesOrders.map((so) => (
                   <tr key={so.id}>
                     <td><Link className="link-btn" to={`/sales-orders/${so.id}`}>{so.sales_order_no}</Link></td>
@@ -298,7 +318,8 @@ export default function CustomerView() {
             <table>
               <thead><tr><th>Invoice #</th><th>Date</th><th>Status</th><th>Gross</th><th>Amount Due</th></tr></thead>
               <tbody>
-                {invoices.length === 0 && <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>None yet.</td></tr>}
+                {denied.invoices && noAccess(5)}
+                {!denied.invoices && invoices.length === 0 && <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>None yet.</td></tr>}
                 {invoices.map((inv) => (
                   <tr key={inv.id}>
                     <td><Link className="link-btn" to={`/sales-invoices/${inv.id}`}>{inv.invoice_no}</Link></td>
