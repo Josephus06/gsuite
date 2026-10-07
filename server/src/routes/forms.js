@@ -7,6 +7,7 @@ const {
   DEPARTMENT_NOTED_TYPES, isDepartmentNoter, departmentsHeadedBy, notersFor,
   AP_NOTED_TYPES, isAccountsPayable, notersForDoc,
 } = require('../lib/formNoters');
+const { notifyFormStatus } = require('../lib/approvalNotifications');
 
 const router = express.Router();
 
@@ -661,6 +662,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 
     const status = await restoreAfterRevision(conn, doc);
     await conn.commit();
+    // A rejected form the owner has just revised is back in somebody's queue.
+    if (doc.status === 'rejected') notifyFormStatus(doc.id, req.user.id);
     return res.json({ ok: true, status });
   } catch (err) {
     await conn.rollback();
@@ -700,6 +703,7 @@ router.post('/:id/submit', requireAuth, requirePermission(ROUTE, 'can_add'), asy
 
     await pool.query(
       "UPDATE form_requests SET status = 'submitted', submitted_at = NOW(), updated_at = NOW() WHERE id = ?", [doc.id]);
+    notifyFormStatus(doc.id, req.user.id);
     return res.json({ ok: true, status: 'submitted' });
   } catch (err) { return next(err); }
 });
@@ -727,6 +731,7 @@ router.post('/:id/note', requireAuth, async (req, res, next) => {
     await pool.query(
       "UPDATE form_requests SET status = 'noted', noted_at = NOW(), noted_by = ?, updated_at = NOW() WHERE id = ?",
       [req.user.id, doc.id]);
+    notifyFormStatus(doc.id, req.user.id);
     return res.json({ ok: true, status: 'noted' });
   } catch (err) { return next(err); }
 });
@@ -766,6 +771,7 @@ router.post('/:id/approve', requireAuth, requirePermission(APPROVAL_ROUTE, 'can_
     await pool.query(
       "UPDATE form_requests SET status = 'approved', approved_at = NOW(), approved_by = ?, updated_at = NOW() WHERE id = ?",
       [req.user.id, doc.id]);
+    notifyFormStatus(doc.id, req.user.id);
     return res.json({ ok: true, status: 'approved' });
   } catch (err) { return next(err); }
 });
@@ -801,6 +807,7 @@ router.post('/:id/reject', requireAuth, requirePermission(APPROVAL_ROUTE, 'can_a
     }
 
     await conn.commit();
+    notifyFormStatus(doc.id, req.user.id);
     return res.json({ ok: true, status: 'rejected' });
   } catch (err) {
     await conn.rollback();

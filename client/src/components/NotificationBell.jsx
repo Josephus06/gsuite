@@ -29,6 +29,13 @@ function notificationTypeLabel(type) {
     case 'feed_reaction': return 'Reaction';
     case 'feed_comment': return 'Comment';
     case 'feed_reply': return 'Reply';
+    case 'po_pending_approval': return 'PO Approval';
+    case 'po_approved': return 'PO Approved';
+    case 'form_pending_note': return 'For Noting';
+    case 'form_pending_approval': return 'Form Approval';
+    case 'form_noted': return 'Form Noted';
+    case 'form_approved': return 'Form Approved';
+    case 'form_rejected': return 'Form Rejected';
     default:
       if (!type) return '';
       return type.replace(/_/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase());
@@ -128,6 +135,8 @@ export default function NotificationBell() {
     // carry -- it opens the report that lists what is still parked. Without this the reminder
     // would say something needs attention and then do nothing when clicked.
     if (n.related_type === 'ParkedBankItems') navigate('/reports/parked-bank-items');
+    if (n.related_type === 'PurchaseOrder' && n.related_id) navigate(`/purchase-orders/${n.related_id}`);
+    if (n.related_type === 'Form' && n.related_id) navigate(`/forms/${n.related_id}`);
     // Design hand-off notifications. An artist told the work is theirs goes straight to the
     // run screen where they start the timer; everyone else (the supervisor who has to assign
     // it, Sales chasing an approval) goes to the order itself.

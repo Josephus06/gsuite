@@ -9,6 +9,17 @@ const { insertNumbered } = require('../lib/docNumber');
 const { isApproved, normalisePoStatus, statusNormSql } = require('../lib/poStatus');
 const { sendXlsx, day } = require('../lib/xlsxExport');
 const { parseDiscountChain } = require('../lib/discountChain');
+const { notifyPoPending, notifyPoApproved } = require('../lib/approvalNotifications');
+
+// Tells whoever acts next on a PO that has just been saved or approved (lib/approvalNotifications.js).
+function notifyPoNextStep(po, actorId) {
+  const st = normalisePoStatus(po.status);
+  if (st === 'pending_approval' || st === 'pending_approval_gm') {
+    return notifyPoPending({ id: po.id, poNo: po.po_no, status: st, total: po.total_amount }, actorId);
+  }
+  if (isApproved(po.status)) return notifyPoApproved({ id: po.id, poNo: po.po_no, createdBy: po.created_by_user_id }, actorId);
+  return null;
+}
 
 // A line's Discount % may be a chain ("10;5" -- 10% off, then 5% off the rest). Resolved here into
 // the one percent it comes to, which is what every calculation below and every document copied
@@ -774,6 +785,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
     await conn.commit();
     const [pos] = await pool.query('SELECT * FROM purchase_orders WHERE id IN (?)', [createdPOs]);
+    pos.forEach((p) => notifyPoNextStep(p, req.user.id));
     res.status(201).json(pos);
   } catch (err) {
     await conn.rollback();
@@ -861,6 +873,7 @@ router.put('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve'),
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
+    notifyPoNextStep(row, req.user.id);
     res.json(row);
   } catch (err) {
     await conn.rollback();
@@ -994,6 +1007,7 @@ router.post('/:id/landed-costs', requireAuth, requirePermission(ROUTE, 'can_add'
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM purchase_orders WHERE id = ?', [poId]);
+    notifyPoNextStep(row, req.user.id);
     res.status(201).json(row);
   } catch (err) {
     await conn.rollback();
@@ -1075,6 +1089,7 @@ router.post('/direct', requireAuth, requirePermission(ROUTE, 'can_add'), async (
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM purchase_orders WHERE id = ?', [poId]);
+    notifyPoNextStep(row, req.user.id);
     res.status(201).json(row);
   } catch (err) {
     await conn.rollback();
