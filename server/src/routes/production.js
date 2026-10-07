@@ -288,8 +288,12 @@ router.get('/:id', requireAuth, requireProductionView, async (req, res, next) =>
        LEFT JOIN job_orders pjo ON pjo.id = jo.parent_job_order_id
        LEFT JOIN sales_orders so ON so.id = COALESCE(jo.sales_order_id, pjo.sales_order_id)
        LEFT JOIN non_standard_sales_orders nsso ON nsso.id = COALESCE(jo.nsso_id, pjo.nsso_id)
+       -- An NSSO saved without a customer still has the one on what it nests to -- the Sample's
+       -- Estimate, the RMA's Sales Order -- so an NSJO falls back to it (NSJO-SAM-2447, 2026-10-07).
+       LEFT JOIN estimates nsest ON nsest.id = nsso.nested_estimate_id
+       LEFT JOIN sales_orders nsso_so ON nsso_so.id = nsso.nested_sales_order_id
        LEFT JOIN sales_order_lines sol ON sol.id = jo.sales_order_line_id
-       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, nsso.customer_id)
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, nsso.customer_id, nsest.customer_id, nsso_so.customer_id)
        LEFT JOIN customer_contacts cc ON cc.id = COALESCE(so.contact_person_id, nsso.contact_person_id)
        LEFT JOIN job_types jt ON jt.id = jo.job_type_id
        LEFT JOIN locations loc ON loc.id = jo.job_location_id
