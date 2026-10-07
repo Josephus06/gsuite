@@ -5,6 +5,7 @@ import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 import { displayDate } from '../utils/dates';
+import { lineDepartmentError } from '../utils/requireDepartment';
 
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'; }
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -149,6 +150,12 @@ export default function DepositForm() {
     if (!accountId) { setError('Select a bank account to deposit into.'); return; }
     if (!selectedIds.length && !(otherTotal > 0)) { setError('Tick at least one payment or add an Other Deposit.'); return; }
     if (!(total > 0)) { setError('Cash Back cannot be as much as the payments and Other Deposits together.'); return; }
+    // Department is required on every line the server keeps -- it drops rows left wholly blank.
+    const used = (l) => Number(l.amount) || l.account_id || l.party_key || l.payment_method_id || l.department_id || l.location_id || String(l.memo || '').trim();
+    for (const [label, ls] of [['Other Deposit', others], ['Cash Back', cashBacks]]) {
+      const deptError = lineDepartmentError(ls.filter(used));
+      if (deptError) { setError(`${label}: ${deptError}`); return; }
+    }
     setSaving(true);
     try {
       const body = {
@@ -212,7 +219,7 @@ export default function DepositForm() {
         {tab === 'other' && (
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Name</th><th>Amount</th><th>Account</th><th>Payment Method</th><th>Department</th><th>Location</th><th>Memo</th><th></th></tr></thead>
+              <thead><tr><th>Name</th><th>Amount</th><th>Account</th><th>Payment Method</th><th>Department *</th><th>Location</th><th>Memo</th><th></th></tr></thead>
               <tbody>
                 {others.map((l, i) => (
                   <tr key={i}>
@@ -251,7 +258,7 @@ export default function DepositForm() {
         {tab === 'cashback' && (
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Amount</th><th>Account</th><th>Department</th><th>Location</th><th>Memo</th><th></th></tr></thead>
+              <thead><tr><th>Amount</th><th>Account</th><th>Department *</th><th>Location</th><th>Memo</th><th></th></tr></thead>
               <tbody>
                 {cashBacks.map((l, i) => (
                   <tr key={i}>

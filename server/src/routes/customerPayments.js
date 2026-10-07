@@ -5,6 +5,7 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeCustomerPaymentGl } = require('../lib/glImpact');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { resolveDefaultLocation } = require('../lib/userLocation');
+const { headerDepartmentError } = require('../lib/requireDepartment');
 const ExcelJS = require('exceljs');
 
 const router = express.Router();
@@ -649,6 +650,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     } = req.body;
 
     if (!customerId) return res.status(400).json({ error: 'Customer is required.' });
+    const deptError = headerDepartmentError(departmentId);
+    if (deptError) return res.status(400).json({ error: deptError });
     const missing = await missingRequired(conn, req.body);
     if (missing) return res.status(400).json({ error: `${missing} is required.` });
     // Office Location is where the payment was TAKEN: the creating user's default location (the
@@ -966,6 +969,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       reference_no: referenceNo, bank_name: bankName, cheque_no: chequeNo, cheque_date: chequeDate,
       apply_lines: applyLines, credit_lines: creditLines,
     } = req.body;
+    const deptError = headerDepartmentError(departmentId);
+    if (deptError) return res.status(400).json({ error: deptError });
     const missing = await missingRequired(conn, req.body);
     if (missing) return res.status(400).json({ error: `${missing} is required.` });
 

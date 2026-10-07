@@ -5,6 +5,7 @@ import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 
 import { displayMonth } from '../utils/dates';
+import { headerDepartmentError } from '../utils/requireDepartment';
 
 function money(v) {
   const n = Number(v);
@@ -93,6 +94,9 @@ export default function CommissionPayableEdit() {
   async function handleSave() {
     setError('');
     if (!computed) { setError('Click Compute Commission first.'); return; }
+    // The department is the employee's own, read-only here -- fix it on the employee if missing.
+    const deptError = headerDepartmentError(computed.department_id, "Department on the employee's record");
+    if (deptError) { setError(deptError); return; }
     setSaving(true);
     try {
       const body = { date_created: date, month, memo: memo || null };
@@ -158,7 +162,7 @@ export default function CommissionPayableEdit() {
             <input value={emp?.office_location_name || ''} readOnly />
           </div>
           <div className="field">
-            <label>Department</label>
+            <label>Department *</label>
             <input value={emp?.department_name || ''} readOnly />
           </div>
           <div className="field" style={{ gridColumn: '1 / -1' }}>

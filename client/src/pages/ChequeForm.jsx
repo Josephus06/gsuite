@@ -4,6 +4,7 @@ import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
+import { lineDepartmentError } from '../utils/requireDepartment';
 
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'; }
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -114,6 +115,8 @@ export default function ChequeForm() {
         apply_withholding_tax: l.apply_withholding_tax, withholding_tax_amount: l.withholding_tax_amount,
       }));
     if (!payload.length) { setError('Add at least one expense line with an account and amount.'); return; }
+    const deptError = lineDepartmentError(payload);
+    if (deptError) { setError(deptError); return; }
     const creditPayload = credits.filter((x) => Number(x.applied) > 0).map((x) => ({ bill_credit_id: x.bill_credit_id, applied_amount: Number(x.applied) }));
     const over = credits.find((x) => Number(x.applied) > x.remaining + 0.001);
     if (over) { setError(`${over.bill_credit_no} has only ${money(over.remaining)} left to apply.`); setTab('credits'); return; }
@@ -245,7 +248,7 @@ export default function ChequeForm() {
           <table>
             <thead>
               <tr>
-                <th></th><th>Account</th><th>Description</th><th title="Required on income, expense and fixed-asset lines, so department budgets can be tracked">Department *</th><th style={{ textAlign: 'right' }}>Amount</th>
+                <th></th><th>Account</th><th>Description</th><th title="Required on every line">Department *</th><th style={{ textAlign: 'right' }}>Amount</th>
                 <th>Tax Code</th><th style={{ textAlign: 'right' }}>Tax Amount</th><th>Apply WTax</th>
                 <th style={{ textAlign: 'right' }}>Gross</th><th style={{ textAlign: 'right' }}>Withholding Tax</th><th style={{ textAlign: 'right' }}>Total</th>
               </tr>

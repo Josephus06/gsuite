@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import EntityPicker from './EntityPicker';
 import LoadingSpinner from './LoadingSpinner';
+import { lineDepartmentError } from '../utils/requireDepartment';
 
 function qty(v) {
   const n = Number(v);
@@ -141,6 +142,9 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
   async function handleSave() {
     setError('');
     if (!lines.length) { setError('Nothing to bill.'); return; }
+    // Only the lines being billed (Qty above 0), as the server counts them.
+    const deptError = lineDepartmentError(lines.filter((l) => Number(l.qty) > 0));
+    if (deptError) { setError(deptError); return; }
     setSaving(true);
     try {
       const { data: vb } = await api.post('/vendor-bills', {
@@ -252,7 +256,7 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
               <table>
                 <thead>
                   <tr>
-                    <th>Item Code</th><th>Purchase Desc.</th><th>Location</th><th>Department</th>
+                    <th>Item Code</th><th>Purchase Desc.</th><th>Location</th><th>Department *</th>
                     <th>RR Qty</th><th>Billed Qty</th><th>Qty to Bill</th><th>Purchase Unit</th>
                     <th>Rate</th><th>Unit Price</th><th>Discount %</th><th>Total Disc. Amt.</th>
                     <th>Total Amt. (Net of Tax)</th><th>Tax Code</th><th>Tax Amt.</th><th>Ext. Price</th>

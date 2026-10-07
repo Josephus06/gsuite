@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import EntityPicker from './EntityPicker';
 import LoadingSpinner from './LoadingSpinner';
+import { headerDepartmentError } from '../utils/requireDepartment';
 
 function money(v) {
   const n = Number(v);
@@ -165,6 +166,8 @@ export default function DeliveryTicketModal({ salesOrderId, ticket = null, onClo
     setError('');
     const payload = rows.filter((r) => Number(r.quantity) > 0);
     if (!payload.length) { setError('Include at least one item with a quantity.'); return; }
+    const deptError = headerDepartmentError(department?.id);
+    if (deptError) { setError(deptError); return; }
     setSaving(true);
     try {
       const save = ticket ? (body) => api.put(`/delivery-tickets/${ticket.id}`, body) : (body) => api.post('/delivery-tickets', body);
@@ -239,7 +242,7 @@ export default function DeliveryTicketModal({ salesOrderId, ticket = null, onClo
                 />
               </div>
               <div className="field">
-                <label>Department</label>
+                <label>Department *</label>
                 <EntityPicker
                   label="Department" items={departments} value={department?.id || ''} getLabel={(d) => d.name}
                   columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']}

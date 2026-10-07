@@ -9,6 +9,7 @@ const { computeDeliveryTicketGl } = require('../lib/glImpact');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { postReversalJournal, listReversalJournals } = require('../lib/reversalJournal');
 const { sendXlsx, day } = require('../lib/xlsxExport');
+const { headerDepartmentError } = require('../lib/requireDepartment');
 
 const router = express.Router();
 // Like Sales Invoices (and unlike Item Fulfillment/Receipt, which borrow their parent's
@@ -461,6 +462,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, 
       memo, lines,
     } = req.body;
     if (!salesOrderId) return res.status(400).json({ error: 'Sales Order is required.' });
+    const deptError = headerDepartmentError(departmentId);
+    if (deptError) return res.status(400).json({ error: deptError });
 
     const [[so]] = await conn.query('SELECT id FROM sales_orders WHERE id = ?', [salesOrderId]);
     if (!so) return res.status(404).json({ error: 'Sales Order not found.' });
@@ -543,6 +546,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         : 'This Delivery Ticket is void and cannot be edited.' });
     }
     const b = req.body || {};
+    const deptError = headerDepartmentError(b.department_id);
+    if (deptError) return res.status(400).json({ error: deptError });
     const day = (v) => (v ? String(v).slice(0, 10) : null);
     const oldDate = day(dt.date_created instanceof Date ? dt.date_created.toISOString() : dt.date_created);
     const newDate = day(b.date_created) || oldDate;

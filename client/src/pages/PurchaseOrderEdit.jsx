@@ -4,6 +4,7 @@ import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { parseDiscountChain, discountLabel } from '../utils/discountChain';
+import { lineDepartmentError } from '../utils/requireDepartment';
 
 function money(v) {
   const n = Number(v);
@@ -133,6 +134,8 @@ export default function PurchaseOrderEdit() {
     if (!lines.length) { setError('Add at least one Material.'); return; }
     const badDisc = lines.map((l) => parseDiscountChain(l.disc_percent)).find((d) => d.error);
     if (badDisc) { setError(badDisc.error); return; }
+    const deptError = lineDepartmentError(lines);
+    if (deptError) { setError(deptError); return; }
     setSaving(true);
     try {
       await api.put(`/purchase-orders/${id}`, {
@@ -224,7 +227,7 @@ export default function PurchaseOrderEdit() {
           <table>
             <thead>
               <tr>
-                <th>Item Code</th><th>Purchase Desc.</th><th>Location</th><th>Department</th>
+                <th>Item Code</th><th>Purchase Desc.</th><th>Location</th><th>Department *</th>
                 <th>PO Qty</th><th>Purchase Unit</th><th>Rate</th><th>Discount %</th>
                 <th>Tax Code</th><th>Ext. Price</th><th></th>
               </tr>

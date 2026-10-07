@@ -282,7 +282,7 @@ export default function VendorBillEdit() {
             <thead>
               <tr>
                 {isItemBill ? <><th>Item</th><th>Description</th></> : <><th style={{ minWidth: 150 }}>Account</th><th>Account Title</th><th style={{ minWidth: 180 }}>Description</th></>}
-                <th>Department</th><th>Qty</th><th>Unit Price</th>{isItemBill && <th>Disc %</th>}<th>Amount</th><th>Tax Code</th>
+                <th>Department *</th><th>Qty</th><th>Unit Price</th>{isItemBill && <th>Disc %</th>}<th>Amount</th><th>Tax Code</th>
                 <th style={{ textAlign: 'right' }}>Tax</th><th style={{ textAlign: 'right' }}>Gross</th><th>WTax</th>
                 <th style={{ textAlign: 'right' }}>WTax Amt</th><th style={{ textAlign: 'right' }}>Amount Due</th>{!isItemBill && !ro && <th></th>}
               </tr>

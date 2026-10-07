@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import EntityPicker from './EntityPicker';
 import LoadingSpinner from './LoadingSpinner';
+import { headerDepartmentError } from '../utils/requireDepartment';
 
 function money(v) {
   const n = Number(v);
@@ -168,6 +169,8 @@ export default function StandaloneInvoiceModal({ onClose, onSaved, replicateFrom
         price_per_unit: Number(l.price_per_unit || 0), disc_percent: Number(l.disc_percent || 0), tax_code_id: l.tax_code_id || null,
       }));
     if (!payloadLines.length) { setError('Add at least one item with a quantity.'); return; }
+    const deptError = headerDepartmentError(department?.id);
+    if (deptError) { setError(deptError); return; }
     setSaving(true);
     try {
       const { data: si } = await api.post('/sales-invoices', {
@@ -254,7 +257,7 @@ export default function StandaloneInvoiceModal({ onClose, onSaved, replicateFrom
                 />
               </div>
               <div className="field">
-                <label>Department</label>
+                <label>Department *</label>
                 <EntityPicker
                   label="Department" items={departments} value={department?.id || ''} getLabel={(d) => d.name}
                   columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']} onSelect={setDepartment}

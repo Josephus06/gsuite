@@ -9,6 +9,7 @@ const { insertNumbered } = require('../lib/docNumber');
 const { isApproved, normalisePoStatus, statusNormSql } = require('../lib/poStatus');
 const { sendXlsx, day } = require('../lib/xlsxExport');
 const { parseDiscountChain } = require('../lib/discountChain');
+const { lineDepartmentError } = require('../lib/requireDepartment');
 const { notifyPoPending, notifyPoApproved } = require('../lib/approvalNotifications');
 
 // Tells whoever acts next on a PO that has just been saved or approved (lib/approvalNotifications.js).
@@ -685,6 +686,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     if (!submitted.length) return res.status(400).json({ error: 'Add at least one line with a Supplier and Qty greater than 0.' });
     const discError = resolveLineDiscounts(submitted);
     if (discError) return res.status(400).json({ error: discError });
+    const deptError = lineDepartmentError(submitted);
+    if (deptError) return res.status(400).json({ error: deptError });
     await assertPeriodOpen(dateCreated, 'non_gl', conn);
 
     const prLineIds = [...new Set(submitted.map((l) => l.purchase_requisition_line_id).filter(Boolean))];
@@ -1030,6 +1033,8 @@ router.post('/direct', requireAuth, requirePermission(ROUTE, 'can_add'), async (
     if (!submitted.length) return res.status(400).json({ error: 'Add at least one line with a Qty greater than 0.' });
     const discError = resolveLineDiscounts(submitted);
     if (discError) return res.status(400).json({ error: discError });
+    const deptError = lineDepartmentError(submitted);
+    if (deptError) return res.status(400).json({ error: deptError });
 
     const taxCodeIds = [...new Set(submitted.map((l) => l.tax_code_id).filter(Boolean))];
     const taxRateById = new Map();
@@ -1477,6 +1482,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (!submitted.length) return res.status(400).json({ error: 'Add at least one line with a Qty greater than 0.' });
     const discError = resolveLineDiscounts(submitted);
     if (discError) return res.status(400).json({ error: discError });
+    const deptError = lineDepartmentError(submitted);
+    if (deptError) return res.status(400).json({ error: deptError });
 
     const [existingLines] = await conn.query('SELECT * FROM purchase_order_lines WHERE purchase_order_id = ?', [req.params.id]);
     const existingById = new Map(existingLines.map((l) => [l.id, l]));

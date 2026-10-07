@@ -6,6 +6,7 @@ import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { isBaseUnit } from '../utils/unitUsed';
 import { displayMonth } from '../utils/dates';
+import { lineDepartmentError } from '../utils/requireDepartment';
 
 // Mirrors the real system's "Inventory Adjustments" Add/Edit form: the Adjustments
 // section (Add Material / Upload Material) appears as soon as an Adjustment Account is
@@ -71,8 +72,11 @@ export default function InventoryAdjustmentEdit() {
     : '';
 
   async function handleSave() {
-    setSaving(true);
     setError('');
+    // Every line needs a Department; the server refuses the Save (and Approve) otherwise.
+    const deptError = lineDepartmentError(lines);
+    if (deptError) { setError(deptError); return; }
+    setSaving(true);
     try {
       // Save lands on the adjustment's own view, the way Transfer Order, Journal, Deposit and
       // Purchase Requisition all do. This form used to stay in the editor -- a new adjustment
@@ -211,7 +215,7 @@ export default function InventoryAdjustmentEdit() {
                 ),
               },
               {
-                key: 'department_name', label: 'Department',
+                key: 'department_name', label: 'Department *',
                 render: (l) => (
                   <EntityPicker
                     label="Department" items={departments} value={l.department_id} getLabel={(d) => d.name}

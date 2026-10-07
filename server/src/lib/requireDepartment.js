@@ -29,4 +29,31 @@ async function missingDepartmentError(lines, db = pool) {
   return null;
 }
 
-module.exports = { missingDepartmentError };
+// ---------------------------------------------------------------------------------------------
+// Department required on EVERY Sales, Purchasing, Accounting / Treasury and Inventory transaction
+// (asked 2026-10-07): a document with no department cannot be saved. One check used by every
+// create / edit route, so the refusal reads the same everywhere; the screens check first only so
+// the user hears it before the round trip (client/src/utils/requireDepartment.js mirrors these).
+//
+// On the sales documents the department is the "Sales Division" (sales_division_id); `label` names
+// it the way that screen does. The account-based rule above still applies to journal, cheque and
+// bill lines on top of this.
+const blank = (v) => v === undefined || v === null || v === '' || v === 0 || v === '0';
+
+// The document's own (header) department. Returns an error message, or null when it is set.
+function headerDepartmentError(value, label = 'Department') {
+  return blank(value) ? `Select a ${label} -- it is required.` : null;
+}
+
+// Every line's department; names the first line missing one by its position on screen.
+function lineDepartmentError(lines, { key = 'department_id', label = 'Department' } = {}) {
+  const list = Array.isArray(lines) ? lines : [];
+  const idx = list.findIndex((l) => blank(l?.[key]));
+  if (idx === -1) return null;
+  const missing = list.filter((l) => blank(l?.[key])).length;
+  return missing === 1
+    ? `Select a ${label} on line ${idx + 1} -- it is required.`
+    : `Select a ${label} on every line -- ${missing} lines have none (the first is line ${idx + 1}).`;
+}
+
+module.exports = { missingDepartmentError, headerDepartmentError, lineDepartmentError };

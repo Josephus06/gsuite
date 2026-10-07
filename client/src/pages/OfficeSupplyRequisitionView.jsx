@@ -121,6 +121,7 @@ export default function OfficeSupplyRequisitionView() {
           </div>
           <div>
             <div>Requestor : <span className="hi">{o.requestor_name || ''}</span></div>
+            <div>Department : <span className="hi">{o.department_name || ''}</span></div>
           </div>
           <div>
             <div>Memo : <span className="hi">{o.memo || ''}</span></div>

@@ -4,6 +4,7 @@ import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
+import { lineDepartmentError } from '../utils/requireDepartment';
 
 // Credit Memos > Add: a credit memo on its own, for a customer, with no source invoice -- the old
 // system's "CREDIT MEMO / Create" screen. Header (Date Created, Customer, Office Location, Memo,
@@ -142,6 +143,9 @@ export default function CreditMemoForm() {
     if (!customer) { setError('Choose the Customer.'); return; }
     const lines = importedTotals ? [] : rows.filter((r) => Number(r.quantity) > 0);
     if (!importedTotals && !lines.length) { setError('Add at least one item to credit.'); return; }
+    // Every line saved needs a department (an imported memo sends no lines, so nothing to check).
+    const deptError = lineDepartmentError(lines);
+    if (deptError) { setError(deptError); return; }
     if (applied > totals.grossAmount + 0.005) { setError(`Applied (${money(applied)}) exceeds this Credit Memo's total (${money(totals.grossAmount)}).`); return; }
     setSaving(true);
     try {
@@ -234,7 +238,7 @@ export default function CreditMemoForm() {
               <table>
                 <thead>
                   <tr>
-                    <th>#</th><th>JO #</th><th>Item</th><th>Description</th><th>Department</th><th>Qty</th><th>Unit</th><th>Price/Unit</th>
+                    <th>#</th><th>JO #</th><th>Item</th><th>Description</th><th>Department *</th><th>Qty</th><th>Unit</th><th>Price/Unit</th>
                     <th>Subtotal</th><th>Disc.%</th><th>Disc. / Unit</th><th>Disc. Amt</th><th>Disc. Price/Unit</th><th>Net of Tax</th>
                     <th>Tax Code</th><th>Tax Amt</th><th>Gross Amt</th><th />
                   </tr>

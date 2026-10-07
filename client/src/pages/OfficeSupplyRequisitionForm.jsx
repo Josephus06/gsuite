@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { headerDepartmentError } from '../utils/requireDepartment';
 
 const STATUS_LABELS = { open: 'Open', partially_served: 'Partially Served', served: 'Served', cancelled: 'Cancelled' };
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -16,7 +17,7 @@ export default function OfficeSupplyRequisitionForm() {
   const navigate = useNavigate();
   const [meta, setMeta] = useState(null);
   // A new requisition is needed the day it is raised unless someone says otherwise.
-  const [header, setHeader] = useState({ date_created: today(), date_needed: today(), location_id: '', transfer_to_location_id: '', requestor_id: '', memo: '' });
+  const [header, setHeader] = useState({ date_created: today(), date_needed: today(), location_id: '', transfer_to_location_id: '', requestor_id: '', department_id: '', memo: '' });
   const [osrNo, setOsrNo] = useState('New');
   const [status, setStatus] = useState('open');
   const [tab, setTab] = useState('materials');
@@ -29,12 +30,13 @@ export default function OfficeSupplyRequisitionForm() {
     (async () => {
       const { data: m } = await api.get('/office-supply-requisitions/meta');
       setMeta(m);
-      // New requisition: autofill Requestor with the logged-in user's employee, and withdraw from
-      // Warehouse - Central, where office supplies are issued from.
+      // New requisition: autofill Requestor with the logged-in user's employee (and Department with
+      // that employee's), and withdraw from Warehouse - Central, where office supplies are issued from.
       if (!id) {
         setHeader((h) => ({
           ...h,
           requestor_id: h.requestor_id || m.defaults?.requestor_id || '',
+          department_id: h.department_id || m.defaults?.department_id || '',
           location_id: h.location_id || m.defaults?.withdraw_from_location_id || '',
         }));
       }
@@ -43,7 +45,7 @@ export default function OfficeSupplyRequisitionForm() {
         setOsrNo(o.osr_no); setStatus(o.status);
         setHeader({
           date_created: String(o.date_created).slice(0, 10), date_needed: o.date_needed ? String(o.date_needed).slice(0, 10) : '',
-          location_id: o.location_id || '', transfer_to_location_id: o.transfer_to_location_id || '', requestor_id: o.requestor_id || '', memo: o.memo || '',
+          location_id: o.location_id || '', transfer_to_location_id: o.transfer_to_location_id || '', requestor_id: o.requestor_id || '', department_id: o.department_id || '', memo: o.memo || '',
         });
         setLines((o.lines || []).map((l) => ({
           item_id: l.item_id, item_label: `${l.item_code} — ${l.item_name}`, qty: Number(l.qty), uom: l.uom || '', unit: l.unit || '',
@@ -75,6 +77,8 @@ export default function OfficeSupplyRequisitionForm() {
 
   async function save() {
     setError('');
+    const deptError = headerDepartmentError(header.department_id);
+    if (deptError) { setError(deptError); return; }
     const payload = lines.filter((l) => l.item_id && Number(l.qty) > 0).map((l) => ({
       item_id: l.item_id, location_id: header.location_id || null, qty: Number(l.qty), uom: l.uom, unit: l.unit, remarks: l.remarks,
     }));
@@ -116,7 +120,9 @@ export default function OfficeSupplyRequisitionForm() {
           <div className="field">
             <label>Requestor</label>
             <EntityPicker label="Requestor" items={meta.employees} value={header.requestor_id} getLabel={(x) => x.name}
-              columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']} placeholder="--Select--" onSelect={(x) => setH({ requestor_id: x?.id || '' })} />
+              columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']} placeholder="--Select--"
+              // A Department not yet chosen follows the Requestor's own.
+              onSelect={(x) => setHeader((h) => ({ ...h, requestor_id: x?.id || '', department_id: h.department_id || x?.department_id || '' }))} />
           </div>
 
           <div className="field">
@@ -133,6 +139,11 @@ export default function OfficeSupplyRequisitionForm() {
             <label>Transfer To</label>
             <EntityPicker label="Transfer To" items={meta.locations} value={header.transfer_to_location_id} getLabel={(l) => l.location_name}
               columns={[{ key: 'location_name', label: 'Name' }]} searchKeys={['location_name']} placeholder="--Select--" onSelect={(l) => setH({ transfer_to_location_id: l?.id || '' })} />
+          </div>
+          <div className="field">
+            <label>Department *</label>
+            <EntityPicker label="Department" items={meta.departments} value={header.department_id} getLabel={(d) => d.name}
+              columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']} placeholder="--Select--" onSelect={(d) => setH({ department_id: d?.id || '' })} />
           </div>
         </div>
 

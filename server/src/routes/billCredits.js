@@ -5,6 +5,7 @@ const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeBillCreditGl } = require('../lib/glImpact');
+const { lineDepartmentError } = require('../lib/requireDepartment');
 
 const router = express.Router();
 // Reached from an Open Vendor Bill's "Bill Credit" button, confirmed against the real
@@ -38,6 +39,9 @@ function computeLineAmounts({ amount, taxRate, isWithhold, wtaxRate }) {
 // status-tagged error for a credit with no lines or one applied beyond its own total.
 async function buildCredit(conn, { expenseLines, applyLines, wtaxId, amount }) {
   const submittedExpenses = (Array.isArray(expenseLines) ? expenseLines : []).filter((l) => l.account_id && Number(l.amount) > 0);
+  // Every expense line needs a department (lib/requireDepartment.js); create and edit both build here.
+  const deptError = lineDepartmentError(submittedExpenses);
+  if (deptError) throw Object.assign(new Error(deptError), { status: 400 });
   // A credit may be saved with no expense lines (asked 2026-10-06) -- its total is then 0.00, so the
   // Total Applied check below still stops it applying anything until lines are added by Edit.
 

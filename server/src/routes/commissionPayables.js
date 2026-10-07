@@ -6,6 +6,7 @@ const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeCommissionPayableGl } = require('../lib/glImpact');
 const { buildCommissionReport } = require('../lib/commissionReport');
 const { releaseForPayable } = require('../lib/commissionRelease');
+const { headerDepartmentError } = require('../lib/requireDepartment');
 
 const router = express.Router();
 // Commission Payable (CP-####): books a sales employee's earned commission for a commission-month
@@ -286,6 +287,9 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     // Recompute server-side so the stored figures are authoritative.
     const computed = await computePayable(empId, month, month);
     if (computed.error) return res.status(400).json({ error: computed.error });
+    // The department is the employee's own (employees.department_id), so that is where to fix it.
+    const deptError = headerDepartmentError(computed.department_id, "Department on the employee's record");
+    if (deptError) return res.status(400).json({ error: deptError });
     await assertPeriodOpen(dateCreated, 'other_gl', conn);
 
     const [[exp]] = await conn.query('SELECT id FROM chart_of_accounts WHERE account_code = ?', [EXPENSE_CODE]);
@@ -370,6 +374,9 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     const { date_created: dateCreated, month, memo } = req.body;
     const computed = await computePayable(existing.employee_id, month, month);
     if (computed.error) return res.status(400).json({ error: computed.error });
+    // The department is the employee's own (employees.department_id), so that is where to fix it.
+    const deptError = headerDepartmentError(computed.department_id, "Department on the employee's record");
+    if (deptError) return res.status(400).json({ error: deptError });
 
     // Both the period it currently sits in and the one it is moving to must be open.
     await assertPeriodOpen(existing.date_created, 'other_gl', conn);

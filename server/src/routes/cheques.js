@@ -1,5 +1,5 @@
 const express = require('express');
-const { missingDepartmentError } = require('../lib/requireDepartment');
+const { lineDepartmentError } = require('../lib/requireDepartment');
 const pool = require('../db');
 const { CREDIT_STATUS_SQL, syncChequeForCredit } = require('../lib/billCreditStatus');
 const { assignDocNo } = require('../lib/docNumber');
@@ -371,7 +371,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const rows = normalizeLines(b.lines);
     if (!rows.length) return res.status(400).json({ error: 'Add at least one expense line with an account and amount.' });
     if (!b.account_id) return res.status(400).json({ error: 'Select the bank Account to draw the cheque against.' });
-    const deptError = await missingDepartmentError(rows);
+    const deptError = lineDepartmentError(rows); // every line (2026-10-07), not only budgeted accounts
     if (deptError) return res.status(400).json({ error: deptError });
     const credits = normalizeCredits(b.credits);
     const t = headerTotals(rows, credits);
@@ -428,18 +428,9 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     const rows = normalizeLines(b.lines);
     if (!rows.length) return res.status(400).json({ error: 'Add at least one expense line with an account and amount.' });
     if (!b.account_id) return res.status(400).json({ error: 'Select the bank Account to draw the cheque against.' });
-    // Department is required on lines the edit adds or changes -- not on lines carried over as they
-    // were: no migrated cheque has departments, and a memo fix must not demand them on every line.
-    const lineKey = (l) => `${l.account_id}|${round2(l.amount)}|${l.description || ''}|${l.department_id || ''}`;
-    const [existingLines] = await conn.query('SELECT account_id, amount, description, department_id FROM cheque_lines WHERE cheque_id = ?', [req.params.id]);
-    const untouched = new Map();
-    for (const l of existingLines) untouched.set(lineKey(l), (untouched.get(lineKey(l)) || 0) + 1);
-    const toCheck = rows.map((l) => {
-      const k = lineKey(l);
-      if (untouched.get(k)) { untouched.set(k, untouched.get(k) - 1); return { ...l, department_id: l.department_id || -1 }; }
-      return l;
-    });
-    const deptError = await missingDepartmentError(toCheck);
+    // Department is required on every line, carried-over ones included (2026-10-07): a migrated
+    // cheque with none must have them filled in before an edit can be saved.
+    const deptError = lineDepartmentError(rows);
     if (deptError) return res.status(400).json({ error: deptError });
     // A request that does not mention credits keeps the ones the cheque has.
     const credits = b.credits === undefined

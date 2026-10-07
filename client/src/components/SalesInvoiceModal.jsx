@@ -3,6 +3,7 @@ import api from '../api/client';
 import EntityPicker from './EntityPicker';
 import EstimatePicker from './EstimatePicker';
 import LoadingSpinner from './LoadingSpinner';
+import { headerDepartmentError } from '../utils/requireDepartment';
 
 function qty(v) {
   const n = Number(v);
@@ -219,6 +220,8 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
     setError('');
     if (fromEstimate && !estimate) { setError('Choose an Estimate first.'); return; }
     if (!includedLines.length) { setError('Include at least one item.'); return; }
+    const deptError = headerDepartmentError(department?.id);
+    if (deptError) { setError(deptError); return; }
     setSaving(true);
     try {
       const { data: si } = await api.post('/sales-invoices', {
@@ -351,7 +354,7 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
                 />
               </div>
               <div className="field">
-                <label>Department</label>
+                <label>Department *</label>
                 <EntityPicker
                   label="Department" items={departments} value={department?.id || ''} getLabel={(d) => d.name}
                   columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']}

@@ -4,6 +4,7 @@ const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { depositGlRows } = require('../lib/depositGl');
+const { lineDepartmentError } = require('../lib/requireDepartment');
 
 const router = express.Router();
 // Bank Deposit (BD-####): deposits one or more NOT-DEPOSITED customer payments into a bank account,
@@ -68,6 +69,16 @@ async function normaliseLines(conn, otherDeposits, cashBacks) {
     }
   }
   return out;
+}
+
+// Department is required on every Other Deposit and Cash Back line (2026-10-07). Each list is
+// checked on its own so the message names the line as the form numbers it.
+function depositLinesDepartmentError(lines) {
+  for (const [lineType, label] of [['other', 'Other Deposit'], ['cashback', 'Cash Back']]) {
+    const err = lineDepartmentError(lines.filter((l) => l.line_type === lineType));
+    if (err) return `${label}: ${err}`;
+  }
+  return null;
 }
 
 // Lookups for the create form: bank accounts (COA detail_type 'Bank') + not-yet-deposited payments,
@@ -193,6 +204,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
     const lines = await normaliseLines(conn, req.body.other_deposits, req.body.cash_backs);
     if (lines.error) return res.status(400).json({ error: lines.error });
+    const deptError = depositLinesDepartmentError(lines);
+    if (deptError) return res.status(400).json({ error: deptError });
     // A deposit of nothing but Other Deposit lines is still money going to the bank; a deposit of
     // nothing but Cash Back is not, which the net-total check below catches.
     if (!ids.length && !lines.some((l) => l.line_type === 'other')) {
@@ -274,6 +287,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     const ids = [...new Set((Array.isArray(paymentIds) ? paymentIds : []).map(Number).filter(Boolean))];
     const lines = await normaliseLines(conn, req.body.other_deposits, req.body.cash_backs);
     if (lines.error) return res.status(400).json({ error: lines.error });
+    const deptError = depositLinesDepartmentError(lines);
+    if (deptError) return res.status(400).json({ error: deptError });
     if (!ids.length && !lines.some((l) => l.line_type === 'other')) {
       return res.status(400).json({ error: 'Select at least one payment or add an Other Deposit.' });
     }

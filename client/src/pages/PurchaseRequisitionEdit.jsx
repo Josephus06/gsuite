@@ -6,6 +6,7 @@ import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../context/useAuth';
 import { useItemBalances, balanceColumns } from '../utils/itemBalances';
+import { headerDepartmentError } from '../utils/requireDepartment';
 
 function departmentLabel(d) { return d ? d.name : ''; }
 function employeeLabel(e) { return e ? `${e.first_name} ${e.last_name}` : ''; }
@@ -121,6 +122,8 @@ export default function PurchaseRequisitionEdit() {
 
   async function handleSave() {
     setError('');
+    const deptError = headerDepartmentError(form.department_id);
+    if (deptError) { setError(deptError); return; }
     if (!lines.length) { setError('Add at least one material.'); return; }
     setSaving(true);
     try {
@@ -170,7 +173,7 @@ export default function PurchaseRequisitionEdit() {
             <input type="date" value={form.date_needed} onChange={(e) => setForm({ ...form, date_needed: e.target.value })} />
           </div>
           <div className="field">
-            <label>Requested From</label>
+            <label>Requested From *</label>
             <EntityPicker
               label="Department" items={departments} value={form.department_id} getLabel={departmentLabel}
               columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']}

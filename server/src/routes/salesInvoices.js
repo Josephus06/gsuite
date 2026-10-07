@@ -12,6 +12,7 @@ const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { whyNotBillable } = require('../lib/estimateBilling');
 const { isHeadOfficeUser } = require('../lib/userLocation');
 const { postReversalJournal, mirror, listReversalJournals } = require('../lib/reversalJournal');
+const { headerDepartmentError } = require('../lib/requireDepartment');
 
 const router = express.Router();
 // Unlike Item Fulfillment/Receipt/Quality Inspection/Item Delivery (all reached only by
@@ -1285,6 +1286,10 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
       po_no: poNo, sales_rep_id: salesRepId, office_location_id: officeLocationId, department_id: departmentId,
       bill_to_address: billToAddress, memo, withholding_tax_pct: withholdingTaxPct, sales_order_line_ids: lineIds,
     } = req.body;
+    // Checked once here, ahead of the dispatch, because every billing path below (estimate, NSSO,
+    // standalone, delivery ticket, sales order) reads the same department_id.
+    const deptError = headerDepartmentError(departmentId);
+    if (deptError) return res.status(400).json({ error: deptError });
 
     // Each path below is AWAITED: a bare `return billX()` let its errors (a closed period) escape
     // the catch and crash the whole server, and released the connection while it was still in use.
@@ -1479,6 +1484,10 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (!si) return res.status(404).json({ error: 'Not found' });
     const refusal = await whyNotEditable(conn, si);
     if (refusal) return res.status(409).json({ error: refusal });
+    // An edit leaves out fields it is not changing, so the department checked is the one the
+    // invoice will have after this save.
+    const deptError = headerDepartmentError(req.body.department_id === undefined ? si.department_id : req.body.department_id);
+    if (deptError) return res.status(400).json({ error: deptError });
 
     // Both periods: the one it sits in now and the one it is being moved to. Moving an invoice out
     // of a closed month is as much a change to that month as posting into one.

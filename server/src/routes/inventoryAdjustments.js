@@ -4,6 +4,7 @@ const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeInventoryAdjustmentGl } = require('../lib/glImpact');
+const { lineDepartmentError } = require('../lib/requireDepartment');
 
 const router = express.Router();
 const ROUTE = '/inventory-adjustments';
@@ -180,6 +181,15 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (refusal) return res.status(409).json({ error: refusal });
     const { date_created: dateCreated, adjustment_account_id: adjustmentAccountId, memo } = req.body;
     await assertPeriodOpen([adj.date_created, dateCreated], 'non_gl');
+    // Department is required on every line. Lines are written one at a time as they are added and
+    // edited (a new line starts with none and the user picks it next), so the document's Save --
+    // and Approve below -- is where a line still missing one is refused.
+    const [deptLines] = await pool.query(
+      'SELECT department_id FROM inventory_adjustment_lines WHERE inventory_adjustment_id = ? ORDER BY line_no, id',
+      [req.params.id]
+    );
+    const deptError = lineDepartmentError(deptLines);
+    if (deptError) return res.status(400).json({ error: deptError });
     await pool.query(
       'UPDATE inventory_adjustments SET date_created = ?, adjustment_account_id = ?, memo = ?, updated_at = NOW() WHERE id = ?',
       [dateCreated, adjustmentAccountId || null, memo || null, req.params.id]
@@ -266,13 +276,18 @@ router.put('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_edit
     if (refusal) { return res.status(409).json({ error: refusal }); }
 
     const [[line]] = await conn.query(
-      'SELECT item_id, location_id, department_id, qty_on_hand, new_qty, est_unit_cost, adjust_qty_by, unit_used, memo FROM inventory_adjustment_lines WHERE id = ? AND inventory_adjustment_id = ?',
+      'SELECT line_no, item_id, location_id, department_id, qty_on_hand, new_qty, est_unit_cost, adjust_qty_by, unit_used, memo FROM inventory_adjustment_lines WHERE id = ? AND inventory_adjustment_id = ?',
       [req.params.lineId, req.params.id]
     );
     if (!line) { return res.status(404).json({ error: 'Line not found' }); }
 
     const locationId = req.body.location_id !== undefined ? (req.body.location_id || null) : line.location_id;
     const departmentId = req.body.department_id !== undefined ? (req.body.department_id || null) : line.department_id;
+    // Changing a line's Department may set it, never clear it (it is required; see PUT /:id).
+    if (req.body.department_id !== undefined) {
+      const deptError = lineDepartmentError([{ department_id: departmentId }]);
+      if (deptError) return res.status(400).json({ error: deptError.replace('line 1', `line ${line.line_no}`) });
+    }
     const locationChanged = Number(locationId || 0) !== Number(line.location_id || 0);
     // An approved line's stock has landed at its location; moving it is a delete and a new line.
     if (adj.status === 'approved' && locationChanged) {
@@ -389,9 +404,11 @@ router.put('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve'),
     if (!adj) { return res.status(404).json({ error: 'Not found' }); }
     if (adj.status !== 'pending_approval') { return res.status(409).json({ error: 'Only a Pending Approval adjustment can be approved.' }); }
 
-    const [lines] = await conn.query('SELECT item_id, location_id, new_qty FROM inventory_adjustment_lines WHERE inventory_adjustment_id = ?', [req.params.id]);
+    const [lines] = await conn.query('SELECT item_id, location_id, department_id, new_qty FROM inventory_adjustment_lines WHERE inventory_adjustment_id = ? ORDER BY line_no, id', [req.params.id]);
     if (lines.length === 0) { return res.status(409).json({ error: 'Add at least one material line before approving.' }); }
     if (lines.some((l) => !l.location_id)) { return res.status(409).json({ error: 'Every line needs a Location before this can be approved.' }); }
+    const deptError = lineDepartmentError(lines);
+    if (deptError) { return res.status(409).json({ error: deptError }); }
 
     await conn.beginTransaction();
     for (const line of lines) {

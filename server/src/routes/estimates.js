@@ -7,6 +7,7 @@ const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../m
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { isHeadOfficeUser } = require('../lib/userLocation');
 const { BILLABLE_ESTIMATE_SQL } = require('../lib/estimateBilling');
+const { headerDepartmentError } = require('../lib/requireDepartment');
 
 const router = express.Router();
 
@@ -582,6 +583,10 @@ router.post('/contacts', requireAuth, async (req, res, next) => {
 });
 
 router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
+  // The Sales Division is the estimate's department, required on every user save. Replicate,
+  // the live sync and website quote requests write estimates without passing through here.
+  const deptError = headerDepartmentError(req.body.sales_division_id, 'Sales Division');
+  if (deptError) return res.status(400).json({ error: deptError });
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -616,6 +621,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 // button is a suggestion and this is a rule -- the edit form is one way in, the endpoint is the
 // only one.
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), requireEditableEstimate, async (req, res, next) => {
+  const deptError = headerDepartmentError(req.body.sales_division_id, 'Sales Division');
+  if (deptError) return res.status(400).json({ error: deptError });
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();

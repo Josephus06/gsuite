@@ -4,6 +4,7 @@ import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { parseDiscountChain, discountLabel } from '../utils/discountChain';
+import { lineDepartmentError } from '../utils/requireDepartment';
 
 // The PO-3 Job Order picker: job orders proper, not RWIP rework orders, newest first. There are
 // 124k of them, so the picker opens on the newest 100 and searches the server as you type.
@@ -144,6 +145,8 @@ export default function PurchaseOrderCreate() {
     if (!lines.length) { setError('Add at least one Material.'); return; }
     const badDisc = lines.map((l) => parseDiscountChain(l.disc_percent)).find((d) => d.error);
     if (badDisc) { setError(badDisc.error); return; }
+    const deptError = lineDepartmentError(lines);
+    if (deptError) { setError(deptError); return; }
     setSaving(true);
     try {
       const { data } = await api.post('/purchase-orders/direct', {
@@ -245,7 +248,7 @@ export default function PurchaseOrderCreate() {
                 <th>Item Code</th><th>Purchase Desc.</th><th>Location</th>
                 {poCategory === 'PO3' && <th>JO #</th>}
                 <th>PO Qty</th><th>Purchase Unit</th><th>Rate</th><th>Discount %</th>
-                <th>Tax Code</th><th>Department</th><th>Memo</th><th>Ext. Price</th><th></th>
+                <th>Tax Code</th><th>Department *</th><th>Memo</th><th>Ext. Price</th><th></th>
               </tr>
             </thead>
             <tbody>

@@ -3,6 +3,7 @@ import api from '../api/client';
 import Modal from './Modal';
 import EntityPicker from './EntityPicker';
 import LoadingSpinner from './LoadingSpinner';
+import { headerDepartmentError } from '../utils/requireDepartment';
 
 // Editing an OPEN invoice: the header, and the items.
 //
@@ -140,6 +141,8 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
   async function save() {
     if (!pctValid) { setError('Withholding Tax % must be between 0 and 100.'); return; }
     if (!itemsValid) { setError('Check the item quantities, prices and discounts.'); return; }
+    const deptError = headerDepartmentError(department?.id);
+    if (deptError) { setError(deptError); return; }
     setSaving(true);
     setError('');
     try {
@@ -254,7 +257,7 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
               />
             </div>
             <div className="field">
-              <label>Department</label>
+              <label>Department *</label>
               <EntityPicker
                 label="Department" items={departments} value={department?.id || ''}
                 getLabel={(d) => d.name}

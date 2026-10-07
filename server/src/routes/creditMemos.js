@@ -7,6 +7,7 @@ const { computeCreditMemoGl } = require('../lib/glImpact');
 const ExcelJS = require('exceljs');
 
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
+const { lineDepartmentError } = require('../lib/requireDepartment');
 
 const router = express.Router();
 // Reached from an Open Invoice's "Credit Memo" button -- the AR mirror of Bill Credit,
@@ -457,6 +458,9 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
     const { prepared, totals: { subtotal, discountAmount, netOfTax, taxAmount, grossAmount } } = await prepareLines(conn, lines);
     if (!prepared.length) return res.status(400).json({ error: 'Add at least one item to credit.' });
+    // The department lives on the lines here (credit_memo_lines.department_id), not the header.
+    const deptError = lineDepartmentError(prepared);
+    if (deptError) return res.status(400).json({ error: deptError });
 
     // The memo can only offset as much as it's actually worth. The real system lets you
     // apply the source invoice's full total regardless of what ITEMS adds up to and saves
@@ -543,6 +547,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     } else {
       ({ prepared, totals } = await prepareLines(conn, lines));
       if (!prepared.length) return res.status(400).json({ error: 'Add at least one item to credit.' });
+      const deptError = lineDepartmentError(prepared);
+      if (deptError) return res.status(400).json({ error: deptError });
     }
 
     const submittedApply = (Array.isArray(applyLines) ? applyLines : []).filter((l) => l.sales_invoice_id && Number(l.applied_amount) > 0);

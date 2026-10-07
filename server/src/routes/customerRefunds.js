@@ -4,6 +4,7 @@ const { insertNumbered } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeCustomerRefundGl } = require('../lib/glImpact');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
+const { headerDepartmentError } = require('../lib/requireDepartment');
 
 const router = express.Router();
 // Customer Refund (CRFND-####): returns cash to a customer against one or more of their
@@ -138,6 +139,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     } = req.body;
 
     if (!customerId) return res.status(400).json({ error: 'Customer is required.' });
+    const deptError = headerDepartmentError(departmentId);
+    if (deptError) return res.status(400).json({ error: deptError });
 
     const submitted = (Array.isArray(lines) ? lines : []).filter((l) => l.customer_payment_id && Number(l.refund_amount) > 0);
     if (!submitted.length) return res.status(400).json({ error: 'Enter a refund amount for at least one payment.' });

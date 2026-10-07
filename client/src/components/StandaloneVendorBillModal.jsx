@@ -268,7 +268,7 @@ export default function StandaloneVendorBillModal({ onClose, onSaved, replicateF
                 <table>
                   <thead>
                     <tr>
-                      <th style={{ minWidth: 160 }}>Account Code</th><th>Account Title</th><th style={{ minWidth: 200 }}>Description</th><th>Department</th>
+                      <th style={{ minWidth: 160 }}>Account Code</th><th>Account Title</th><th style={{ minWidth: 200 }}>Description</th><th>Department *</th>
                       <th>Amount (net of VAT)</th><th>Tax Code</th><th>Tax Amount</th><th>Gross Amount</th>
                       <th>
                         Apply Withholding Tax{' '}

@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assignDocNo } = require('../lib/docNumber');
+const { headerDepartmentError } = require('../lib/requireDepartment');
 
 const router = express.Router();
 const ROUTE = '/purchase-requisitions';
@@ -171,6 +172,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
     const submitted = (Array.isArray(lines) ? lines : []).filter((l) => l.item_id && Number(l.qty) > 0);
     if (!submitted.length) return res.status(400).json({ error: 'Add at least one material with a Qty greater than 0.' });
+    const deptError = headerDepartmentError(departmentId);
+    if (deptError) return res.status(400).json({ error: deptError });
 
     await conn.beginTransaction();
     const [result] = await conn.query(
@@ -219,6 +222,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     } = req.body;
     const submitted = (Array.isArray(lines) ? lines : []).filter((l) => l.item_id && Number(l.qty) > 0);
     if (!submitted.length) return res.status(400).json({ error: 'Add at least one material with a Qty greater than 0.' });
+    const deptError = headerDepartmentError(departmentId);
+    if (deptError) return res.status(400).json({ error: deptError });
 
     await conn.beginTransaction();
     await conn.query(

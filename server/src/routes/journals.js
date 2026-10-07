@@ -1,5 +1,5 @@
 const express = require('express');
-const { missingDepartmentError } = require('../lib/requireDepartment');
+const { lineDepartmentError } = require('../lib/requireDepartment');
 const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
@@ -107,7 +107,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const totalCredit = round2(rows.reduce((s, l) => s + num(l.credit), 0));
     if (totalDebit !== totalCredit) return res.status(400).json({ error: `Journal is out of balance: debit ${totalDebit} vs credit ${totalCredit}.` });
     if (totalDebit === 0) return res.status(400).json({ error: 'Enter debit/credit amounts.' });
-    const deptError = await missingDepartmentError(rows);
+    const deptError = lineDepartmentError(rows); // every line (2026-10-07), not only budgeted accounts
     if (deptError) return res.status(400).json({ error: deptError });
     await assertPeriodOpen(dateCreated, 'other_gl');
 
@@ -157,7 +157,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     const totalCredit = round2(rows.reduce((s, l) => s + num(l.credit), 0));
     if (totalDebit !== totalCredit) return res.status(400).json({ error: `Journal is out of balance: debit ${totalDebit} vs credit ${totalCredit}.` });
     if (totalDebit === 0) return res.status(400).json({ error: 'Enter debit/credit amounts.' });
-    const deptError = await missingDepartmentError(rows);
+    const deptError = lineDepartmentError(rows); // every line (2026-10-07), not only budgeted accounts
     if (deptError) return res.status(400).json({ error: deptError });
     await assertPeriodOpen(j.date_created, 'other_gl', conn);
     if (dateCreated) await assertPeriodOpen(dateCreated, 'other_gl', conn);

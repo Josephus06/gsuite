@@ -3,6 +3,7 @@ import Pagination from '../components/Pagination';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
+import { lineDepartmentError } from '../utils/requireDepartment';
 
 function qty(v) {
   const n = Number(v);
@@ -118,6 +119,8 @@ export default function PlaceOrderForm() {
     setError('');
     const submitRows = rows.filter((r) => Number(r.po_qty_input) > 0 && r.supplier_id);
     if (!submitRows.length) { setError('Enter a Qty and pick a Supplier for at least one line.'); return; }
+    const deptError = lineDepartmentError(submitRows);
+    if (deptError) { setError(deptError); return; }
     setSaving(true);
     try {
       const { data } = await api.post('/purchase-orders', {
@@ -183,7 +186,7 @@ export default function PlaceOrderForm() {
           <table>
             <thead>
               <tr>
-                <th>PR #</th><th>Item</th><th>Location</th><th>Department</th><th>On Hand</th><th>PR Qty</th><th>POed Qty</th><th>PO Qty</th>
+                <th>PR #</th><th>Item</th><th>Location</th><th>Department *</th><th>On Hand</th><th>PR Qty</th><th>POed Qty</th><th>PO Qty</th>
                 <th>Unit</th><th>Supplier</th><th>Rate</th><th>Disc %</th><th>Tax Code</th><th>Ext. Price</th><th></th>
               </tr>
             </thead>

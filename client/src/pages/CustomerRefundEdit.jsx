@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import { displayDate } from '../utils/dates';
+import { headerDepartmentError } from '../utils/requireDepartment';
 
 function money(v) {
   const n = Number(v);
@@ -68,6 +69,8 @@ export default function CustomerRefundEdit() {
   async function handleSave() {
     setError('');
     if (!customer) { setError('Select a customer.'); return; }
+    const deptError = headerDepartmentError(department?.id);
+    if (deptError) { setError(deptError); return; }
     const lines = payments
       .map((p) => ({ customer_payment_id: p.customer_payment_id, refund_amount: Number(refunds[p.customer_payment_id]) || 0 }))
       .filter((l) => l.refund_amount > 0);
@@ -139,7 +142,7 @@ export default function CustomerRefundEdit() {
             <input value={accounts?.ar_account_name || 'Accounts Receivable Trade'} readOnly />
           </div>
           <div className="field">
-            <label>Department</label>
+            <label>Department *</label>
             <EntityPicker
               label="Department" items={departments} value={department?.id || ''} getLabel={(d) => d.name}
               columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']} placeholder="--Select--"

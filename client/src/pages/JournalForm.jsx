@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { lineDepartmentError } from '../utils/requireDepartment';
 
 function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'; }
 function today() { return new Date().toISOString().slice(0, 10); }
@@ -10,7 +11,7 @@ const PARTY_TYPES = [{ v: '', l: '—' }, { v: 'VENDOR', l: 'Vendor' }, { v: 'CU
 const EMPTY_LINE = { account_id: '', account_label: '', department_id: '', party_type: '', party_id: '', party_name: '', debit: '', credit: '', memo: '' };
 
 // Add New Journal: a header plus a balanced set of debit/credit lines. Each line picks an account
-// (required), an optional department + party (Vendor/Customer/Employee), and either a debit or a
+// (required), a department (required), an optional party (Vendor/Customer/Employee), and either a debit or a
 // credit. Total debit must equal total credit before it can be saved.
 export default function JournalForm() {
   const navigate = useNavigate();
@@ -82,6 +83,8 @@ export default function JournalForm() {
       }));
     if (payload.length < 2) { setError('Enter at least two lines with an account and a debit or credit.'); return; }
     if (!balanced) { setError(`Journal is out of balance: debit ${money(totalDebit)} vs credit ${money(totalCredit)}.`); return; }
+    const deptError = lineDepartmentError(payload);
+    if (deptError) { setError(deptError); return; }
     if (systemKind && !window.confirm(`${replicatedFrom} is ${systemKind === 'reversal' ? 'the reversal of a voided document' : 'a journal written for a document'}. Changing it means it no longer matches that document's GL. Save anyway?`)) return;
     setSaving(true);
     try {
@@ -144,7 +147,7 @@ export default function JournalForm() {
           <table>
             <thead>
               <tr>
-                <th></th><th>Account</th><th title="Required on income, expense and fixed-asset lines, so department budgets can be tracked">Department *</th><th>Type</th><th>Name</th>
+                <th></th><th>Account</th><th title="Required on every line">Department *</th><th>Type</th><th>Name</th>
                 <th style={{ textAlign: 'right' }}>Debit</th><th style={{ textAlign: 'right' }}>Credit</th><th>Memo</th>
               </tr>
             </thead>

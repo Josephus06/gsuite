@@ -11,6 +11,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
 
 import { displayDateTime } from '../utils/dates';
+import { headerDepartmentError } from '../utils/requireDepartment';
 
 const STEPS = ['Customer and Estimate', 'Job Orders', 'Billing', 'Completed'];
 
@@ -375,8 +376,13 @@ export default function EstimateWizard() {
     return payload;
   }
 
+  // The Sales Division is required on every header save (the server refuses one without it).
+  const divisionError = () => headerDepartmentError(header.sales_division_id, 'Sales Division');
+
+  // A background save on blur: with no division it would only be refused, and the step buttons
+  // already say why, so it is skipped rather than left to fail unseen.
   async function saveHeader() {
-    if (!estimateId) return;
+    if (!estimateId || divisionError()) return;
     await api.put(`/estimates/${estimateId}`, buildHeaderPayload());
   }
 
@@ -427,6 +433,8 @@ export default function EstimateWizard() {
   async function goNextFromStep1(e) {
     e.preventDefault();
     setError('');
+    const deptError = divisionError();
+    if (deptError) { setError(deptError); return; }
     try {
       if (!estimateId) {
         const { data } = await api.post('/estimates', buildHeaderPayload());
@@ -446,6 +454,8 @@ export default function EstimateWizard() {
 
   async function saveHeaderAndGoTo(nextStep) {
     setError('');
+    const deptError = divisionError();
+    if (deptError) { setError(deptError); return; }
     try {
       await api.put(`/estimates/${estimateId}`, buildHeaderPayload());
       if (nextStep === 4) {
@@ -1369,7 +1379,7 @@ export default function EstimateWizard() {
                   />
                 </div>
                 <div className="field">
-                  <label>Sales Division</label>
+                  <label>Sales Division *</label>
                   <EntityPicker
                     label="Sales Division" items={salesDivisions} value={header.sales_division_id} getLabel={(s) => s.name}
                     columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']}

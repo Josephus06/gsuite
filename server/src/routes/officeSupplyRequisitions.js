@@ -5,6 +5,7 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const { isNonStockItem } = require('../lib/itemTypes');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { deriveOnHand } = require('../lib/stockLedger');
+const { headerDepartmentError } = require('../lib/requireDepartment');
 
 const router = express.Router();
 // Office Supply Requisition (OSR-####): a transfer-order-like withdrawal restricted to items flagged
@@ -43,10 +44,14 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
        WHERE i.is_office_supply = 1 ORDER BY i.display_name`
     );
     const [locations] = await pool.query('SELECT id, location_name FROM locations ORDER BY location_name');
-    const [employees] = await pool.query("SELECT id, CONCAT(first_name, ' ', last_name) AS name FROM employees WHERE is_active = TRUE ORDER BY first_name, last_name");
+    // department_id rides along so the form can default Department from the Requestor.
+    const [employees] = await pool.query("SELECT id, CONCAT(first_name, ' ', last_name) AS name, department_id FROM employees WHERE is_active = TRUE ORDER BY first_name, last_name");
     const [departments] = await pool.query('SELECT id, name FROM departments WHERE is_active = TRUE ORDER BY name');
-    // Requestor defaults to the logged-in user's own employee.
-    const [[me]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
+    // Requestor defaults to the logged-in user's own employee, Department to that employee's.
+    const [[me]] = await pool.query(
+      'SELECT u.employee_id, e.department_id FROM users u LEFT JOIN employees e ON e.id = u.employee_id WHERE u.id = ?',
+      [req.user.id]
+    );
     // Office supplies are issued from Warehouse - Central, so a new requisition withdraws from it
     // unless changed, and the item picker shows what Warehouse - Central holds of each item.
     // Matched by name (ids differ between installs); prefix-matched as the importers do.
@@ -59,7 +64,7 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
     }
     res.json({
       items, locations, employees, departments,
-      defaults: { requestor_id: me?.employee_id || null, withdraw_from_location_id: central?.id || null },
+      defaults: { requestor_id: me?.employee_id || null, department_id: me?.department_id || null, withdraw_from_location_id: central?.id || null },
     });
   } catch (err) { next(err); }
 });
@@ -88,8 +93,9 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    // Transfer To is the receiving department, as the source's OSR list shows it. department_id
-    // is never set by the form, which is why the old Department column was always blank.
+    // Transfer To is the receiving department, as the source's OSR list shows it. (Requisitions
+    // saved before Department became required on the form have no department_id, so the list
+    // does not lean on it.)
     const [rows] = await pool.query(
       `SELECT o.id, o.osr_no, o.date_created, o.date_needed, o.status, o.memo,
               loc.location_name, tloc.location_name AS transfer_to_location_name,
@@ -194,6 +200,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   try {
     const { date_created: dateCreated, date_needed: dateNeeded, location_id: locationId, transfer_to_location_id: transferToId, requestor_id: requestorId, department_id: departmentId, memo, lines } = req.body;
     if (!(await assertOfficeSupplyItems(conn, lines || []))) return res.status(400).json({ error: 'Only office-supply items can be requisitioned here.' });
+    const deptError = headerDepartmentError(departmentId);
+    if (deptError) return res.status(400).json({ error: deptError });
     await assertPeriodOpen(dateCreated, 'non_gl', conn);
     await conn.beginTransaction();
     const [r] = await conn.query(
@@ -218,6 +226,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (o.status === 'served' || o.status === 'cancelled') return res.status(409).json({ error: 'This requisition can no longer be edited.' });
     const { date_created: dateCreated, date_needed: dateNeeded, location_id: locationId, transfer_to_location_id: transferToId, requestor_id: requestorId, department_id: departmentId, memo, lines } = req.body;
     if (!(await assertOfficeSupplyItems(conn, lines || []))) return res.status(400).json({ error: 'Only office-supply items can be requisitioned here.' });
+    const deptError = headerDepartmentError(departmentId);
+    if (deptError) return res.status(400).json({ error: deptError });
     await assertPeriodOpen([o.date_created, dateCreated], 'non_gl', conn);
     await conn.beginTransaction();
     await conn.query(

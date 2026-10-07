@@ -4,6 +4,7 @@ import EntityPicker from './EntityPicker';
 import LoadingSpinner from './LoadingSpinner';
 
 import { displayDate } from '../utils/dates';
+import { lineDepartmentError } from '../utils/requireDepartment';
 
 function money(v) {
   const n = Number(v);
@@ -146,6 +147,8 @@ export default function CreditMemoModal({ invoiceId, onClose, onSaved }) {
     setError('');
     const payload = rows.filter((r) => Number(r.quantity) > 0);
     if (!payload.length) { setError('Add at least one item to credit.'); return; }
+    const deptError = lineDepartmentError(payload);
+    if (deptError) { setError(deptError); return; }
     if (overApplied) {
       setError(`Applied Amount (${money(appliedTotal)}) exceeds this Credit Memo's own total (${money(totals.grossAmount)}).`);
       return;
@@ -223,7 +226,7 @@ export default function CreditMemoModal({ invoiceId, onClose, onSaved }) {
                 <table>
                   <thead>
                     <tr>
-                      <th>#</th><th>JO #</th><th>Item</th><th>Description</th><th>Department</th><th>Qty</th>
+                      <th>#</th><th>JO #</th><th>Item</th><th>Description</th><th>Department *</th><th>Qty</th>
                       <th>Unit</th><th>Price/Unit</th><th>Subtotal</th><th>Disc.%</th><th>Disc. / Unit</th>
                       <th>Disc. Amt</th><th>Disc. Price/Unit</th><th>Net of Tax</th><th>Tax Code</th>
                       <th>Tax Amt</th><th>Gross Amt</th><th></th>
