@@ -76,6 +76,9 @@ const BANK_ACCOUNTS_SQL = `
      AND (p.account_code = '11000' OR gp.account_code = '11000')`;
 
 const WORKFLOW_STATUSES = ['submitted', 'noted', 'approved', 'rejected'];
+// The owner may edit a form until somebody acts on it: a draft, a submitted one nobody has noted
+// yet, and a rejected one being revised.
+const EDITABLE_STATUSES = ['draft', 'submitted', 'rejected'];
 
 const trunc = (v, n) => (v == null || String(v).trim() === '' ? null : String(v).trim().slice(0, n));
 const num = (v) => (v === undefined || v === null || v === '' ? null : Number(v));
@@ -611,8 +614,10 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     const [[doc]] = await conn.query('SELECT * FROM form_requests WHERE id = ?', [req.params.id]);
     if (!doc) return res.status(404).json({ error: 'Not found' });
     if (doc.user_id !== req.user.id) return res.status(403).json({ error: 'Only the person who filed this form can edit it.' });
-    // Editing an approved form would change a document somebody has already signed off.
-    if (!['draft', 'rejected'].includes(doc.status)) {
+    // Editing an approved form would change a document somebody has already signed off. A
+    // SUBMITTED one is still editable (asked 2026-10-07) -- nobody has acted on it yet -- and stays
+    // submitted; once it is noted or approved it is locked.
+    if (!EDITABLE_STATUSES.includes(doc.status)) {
       return res.status(409).json({ error: `A ${doc.status} form cannot be edited.` });
     }
 
@@ -634,11 +639,23 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     // Lines are replaced wholesale rather than diffed. They carry nothing worth preserving across
     // an edit -- no id is referenced anywhere else, and the rejection remarks against them are
     // being cleared by this very revision.
+    // A submitted liquidation can be edited now (2026-10-07), and Accounts Payable may already have
+    // given some lines their COGS account. A line that comes back unchanged -- same date,
+    // particulars and amount -- keeps the account it had, so an edit elsewhere does not undo AP's work.
+    const [oldItems] = await conn.query(
+      'SELECT item_date, particulars, amount, cogs_account_id FROM form_request_items WHERE form_request_id = ? AND cogs_account_id IS NOT NULL',
+      [doc.id]);
+    const sameLine = (o, it) => String(o.item_date ? String(o.item_date instanceof Date ? o.item_date.toISOString() : o.item_date).slice(0, 10) : '')
+        === String(it.item_date || '').slice(0, 10)
+      && String(o.particulars || '') === String(it.particulars || '')
+      && Math.abs(Number(o.amount || 0) - Number(it.amount || 0)) < 0.005;
     await conn.query('DELETE FROM form_request_items WHERE form_request_id = ?', [doc.id]);
     for (const it of items) {
+      const kept = oldItems.findIndex((o) => sameLine(o, it));
+      const cogs = kept >= 0 ? oldItems.splice(kept, 1)[0].cogs_account_id : null;
       await conn.query(
-        'INSERT INTO form_request_items (form_request_id, item_date, particulars, amount) VALUES (?, ?, ?, ?)',
-        [doc.id, it.item_date, it.particulars, it.amount],
+        'INSERT INTO form_request_items (form_request_id, item_date, particulars, amount, cogs_account_id) VALUES (?, ?, ?, ?, ?)',
+        [doc.id, it.item_date, it.particulars, it.amount, cogs],
       );
     }
 
