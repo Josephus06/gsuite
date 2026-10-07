@@ -22,15 +22,31 @@ const QUALITIES = { draft: 'low', standard: 'medium', high: 'high' };
 const SIZES = { square: '1024x1024', landscape: '1536x1024', portrait: '1024x1536' };
 const IMAGE_TYPES = /^image\/(png|jpe?g|webp)$/i;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-// Wraps what the designer typed. The model is told to keep the photo as it is and add only what
-// was asked -- without this it tends to "improve" the whole scene.
-const INSTRUCTIONS = [
-  'You are a signage and display visualizer for a sign-making company.',
+// Wraps what the designer typed. The site photo is optional (asked 2026-10-07: "a build-up 3D
+// lighted signage using the logo, 12-inch letters, with dimensions" -- a design, no site yet):
+//   site photo (+ logo)  edit the photo: add only what was asked, keep the rest of the scene --
+//                        without that instruction the model tends to "improve" the whole photo
+//   logo only            a mock-up of the signage built from the logo
+//   neither              generated from the text alone
+const ROLE = 'You are a signage and display visualizer for a sign-making company.';
+const SITE_NOTE = [
   'The FIRST image is a real photo of the client\'s site. Edit that photo: add only what the request below describes,',
   'placed realistically -- correct perspective, scale, mounting, shadows, and lighting that matches the photo (lit signs glow appropriately).',
   'Keep everything else in the photo unchanged.',
 ].join(' ');
 const LOGO_NOTE = 'The SECOND image is the client\'s logo: reproduce it faithfully on the signage (same shapes, colours and lettering).';
+const LOGO_ONLY_NOTE = [
+  'The image is the client\'s logo. Create a photorealistic design mock-up of the signage the request describes,',
+  'reproducing the logo faithfully (same shapes, colours and lettering), shown in a fitting setting such as a building facade or wall unless the request says otherwise.',
+].join(' ');
+const DESIGN_NOTE = 'If the request asks for dimensions or measurements, add neat dimension lines with labels, like a sign shop\'s design proposal.';
+function buildPrompt(prompt, site, logo) {
+  const parts = [ROLE];
+  if (site) parts.push(SITE_NOTE, logo ? LOGO_NOTE : '');
+  else if (logo) parts.push(LOGO_ONLY_NOTE);
+  parts.push(DESIGN_NOTE);
+  return `${parts.filter(Boolean).join(' ')}\n\nRequest: ${prompt}`;
+}
 
 // One rendering at a time per user: they take 10-60 seconds, and a double-click should not buy two.
 const inFlight = new Set();
@@ -67,28 +83,33 @@ async function allowance(userId) {
   return { used, limit: unlimited ? null : DAILY_LIMIT, remaining: unlimited ? null : Math.max(0, DAILY_LIMIT - used) };
 }
 
-// Calls OpenAI's image edit. Returns { buf, mime, model, usage }.
+// Calls OpenAI: the image EDIT endpoint when there is a picture to work from, else GENERATIONS.
+// Returns { buf, mime, model, usage }.
 async function renderImage({ prompt, quality, size, site, logo }) {
   if (!process.env.OPENAI_API_KEY) {
     throw Object.assign(new Error('AI is not set up on this server (no OPENAI_API_KEY).'), { status: 503 });
   }
-  const fullPrompt = `${INSTRUCTIONS}${logo ? ` ${LOGO_NOTE}` : ''}\n\nRequest: ${prompt}`;
+  const fullPrompt = buildPrompt(prompt, site, logo);
   let lastError;
   for (const model of MODELS) {
-    const fd = new FormData();
-    fd.append('model', model);
-    fd.append('prompt', fullPrompt);
-    fd.append('size', size);
-    fd.append('quality', quality);
-    fd.append('output_format', 'jpeg');
-    fd.append('image[]', new Blob([site.buf], { type: site.mime }), `site.${site.mime.split('/')[1]}`);
-    if (logo) fd.append('image[]', new Blob([logo.buf], { type: logo.mime }), `logo.${logo.mime.split('/')[1]}`);
-    const res = await fetch('https://api.openai.com/v1/images/edits', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-      body: fd,
-      signal: AbortSignal.timeout(240000),
-    });
+    const params = { model, prompt: fullPrompt, size, quality, output_format: 'jpeg' };
+    let res;
+    if (site || logo) {
+      const fd = new FormData();
+      for (const [k, v] of Object.entries(params)) fd.append(k, v);
+      for (const [name, img] of [['site', site], ['logo', logo]]) {
+        if (img) fd.append('image[]', new Blob([img.buf], { type: img.mime }), `${name}.${img.mime.split('/')[1]}`);
+      }
+      res = await fetch('https://api.openai.com/v1/images/edits', {
+        method: 'POST', headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` }, body: fd, signal: AbortSignal.timeout(240000),
+      });
+    } else {
+      res = await fetch('https://api.openai.com/v1/images/generations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+        body: JSON.stringify(params), signal: AbortSignal.timeout(240000),
+      });
+    }
     const body = await res.json().catch(() => ({}));
     if (res.ok && body?.data?.[0]?.b64_json) {
       return { buf: Buffer.from(body.data[0].b64_json, 'base64'), mime: 'image/jpeg', model, usage: body.usage || {} };
@@ -126,7 +147,7 @@ async function saveRendering(req, res, { prompt, qualityKey, sizeKey, site, logo
        site_image, site_mime, logo_image, logo_mime, result_image, result_mime, result_bytes, input_tokens, output_tokens, created_by_user_id)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [customerId, estimateId, sourceId, prompt, qualityKey, sizeKey, result.model,
-      sourceId ? null : site.buf, sourceId ? null : site.mime, sourceId || !logo ? null : logo.buf, sourceId || !logo ? null : logo.mime,
+      sourceId || !site ? null : site.buf, sourceId || !site ? null : site.mime, sourceId || !logo ? null : logo.buf, sourceId || !logo ? null : logo.mime,
       result.buf, result.mime, result.buf.length, result.usage.input_tokens ?? null, result.usage.output_tokens ?? null, req.user.id],
   );
   const id = ins.insertId;
@@ -238,7 +259,6 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), generating(as
   const body = req.body || {};
   const opts = readOptions(body);
   const siteBuf = decodeImage(body.site_image, body.site_mime, 'site photo');
-  if (!siteBuf) throw Object.assign(new Error('Attach a photo of the site.'), { status: 400 });
   const logoBuf = decodeImage(body.logo_image, body.logo_mime, 'logo');
   const customerId = Number(body.customer_id) || null;
   if (!customerId) throw Object.assign(new Error('Choose the customer this rendering is for.'), { status: 400 });
@@ -252,20 +272,20 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), generating(as
   }
   await saveRendering(req, res, {
     ...opts,
-    site: { buf: siteBuf, mime: String(body.site_mime).toLowerCase().replace('jpg', 'jpeg') },
+    site: siteBuf ? { buf: siteBuf, mime: String(body.site_mime).toLowerCase().replace('jpg', 'jpeg') } : null,
     logo: logoBuf ? { buf: logoBuf, mime: String(body.logo_mime).toLowerCase().replace('jpg', 'jpeg') } : null,
     customerId, estimateId, sourceId: null,
   });
 }));
 
-// "Make a variation": the same site photo and logo, with the original or a revised request.
+// "Make a variation": the same site photo and logo (whichever it had), with the original or a revised request.
 router.post('/:id/variation', requireAuth, requirePermission(ROUTE, 'can_add'), generating(async (req, res) => {
   const src = await loadSources(req.params.id);
-  if (!src || !src.site_image) throw Object.assign(new Error('Rendering not found.'), { status: 404 });
+  if (!src) throw Object.assign(new Error('Rendering not found.'), { status: 404 });
   const opts = readOptions(req.body || {});
   await saveRendering(req, res, {
     ...opts,
-    site: { buf: src.site_image, mime: src.site_mime },
+    site: src.site_image ? { buf: src.site_image, mime: src.site_mime } : null,
     logo: src.logo_image ? { buf: src.logo_image, mime: src.logo_mime } : null,
     customerId: src.customer_id, estimateId: src.estimate_id, sourceId: src.id,
   });

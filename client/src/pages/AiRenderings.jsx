@@ -126,12 +126,12 @@ function RenderingModal({ row, onClose, onCreated, onDeleted, canAdd, canDelete,
           <div style={{ marginBottom: 6 }}><strong>Estimate:</strong> {row.estimate_no || '—'}{row.estimate_attachment_id ? ' (filed in its attachments)' : ''}</div>
           <div style={{ marginBottom: 6 }}><strong>By:</strong> {row.created_by_name}, {displayDate(String(row.created_at).slice(0, 10))}</div>
           <div style={{ marginBottom: 10 }}><strong>Model:</strong> {row.model}, {row.quality}{row.source_rendering_id ? ` · variation of #${row.source_rendering_id}` : ''}</div>
-          <div style={{ marginBottom: 4 }}><strong>Original photo</strong></div>
+          {site && <div style={{ marginBottom: 4 }}><strong>Original photo</strong></div>}
           {site ? <img src={site} alt="Site" style={{ width: '100%', borderRadius: 6, marginBottom: 10 }} /> : null}
           {canAdd && (
             <>
               <div className="field">
-                <label>Make a variation (same photo{row.has_logo ? ' and logo' : ''})</label>
+                <label>Make a variation{site || row.has_logo ? ` (same ${[site && 'photo', row.has_logo && 'logo'].filter(Boolean).join(' and ')})` : ''}</label>
                 <textarea rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
@@ -223,7 +223,6 @@ export default function AiRenderings() {
   const generate = async () => {
     setError('');
     if (!customer) { setError('Choose the customer this rendering is for.'); return; }
-    if (!site) { setError('Attach a photo of the site.'); return; }
     if (prompt.trim().length < 5) { setError('Describe what to render.'); return; }
     setBusy(true);
     try {
@@ -280,7 +279,7 @@ export default function AiRenderings() {
               </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              {[['Site photo *', site, setSite, true], ['Logo (optional)', logo, setLogo, false]].map(([label, value, setter, shrink]) => (
+              {[['Site photo (optional)', site, setSite, true], ['Logo (optional)', logo, setLogo, false]].map(([label, value, setter, shrink]) => (
                 <div className="field" key={label}>
                   <label>{label}</label>
                   <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 150, border: '2px dashed var(--border, #cbd5e1)', borderRadius: 8, cursor: 'pointer', overflow: 'hidden', background: 'var(--bg-subtle, #f8fafc)' }}>
@@ -294,6 +293,9 @@ export default function AiRenderings() {
           </div>
           <div className="field">
             <label>What should be rendered? *</label>
+            <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
+              {site ? 'The signage is placed into your site photo.' : logo ? 'No site photo: the AI designs the signage from the logo as a mock-up.' : 'No pictures: the AI creates the design from your description alone.'}
+            </div>
             <textarea rows={3} value={prompt} placeholder={EXAMPLE} onChange={(e) => setPrompt(e.target.value)} />
           </div>
           <button className="btn btn-primary" onClick={generate} disabled={busy || left === 0}>
