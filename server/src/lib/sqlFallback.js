@@ -75,7 +75,7 @@ sales_divisions(id, name, is_active)
 // observed in the data, not a guaranteed-exhaustive set.
 const OWNED_SCHEMA_DESCRIPTION = `
 estimates(id, estimate_no, date_created, customer_id -> customers.id, sales_division_id, contract_description, status [one of: pending_supervisor_approval, pending_customer_approval, approved, cancelled, disapproved], total_amount)
-sales_orders(id, sales_order_no, estimate_id -> estimates.id, date_created, customer_id -> customers.id, sales_division_id, status [one of: pending_for_jo, jo_in_process, pending_delivery, partially_delivered, pending_billing, pending_billing_partially_delivered, billed, cancelled], total_amount)
+sales_orders(id, sales_order_no, estimate_id -> estimates.id, date_created, customer_id -> customers.id, sales_division_id, status [one of: pending_for_jo, jo_in_process, pending_delivery, partially_delivered, pending_billing, pending_billing_partially_delivered, partially_billed, billed, cancelled], total_amount)
 job_orders(id, job_order_no, sales_order_id -> sales_orders.id, description, quantity, status [e.g. 'Planned - Pending for BOM', 'Released', 'Completed'], sub_status [e.g. 'For Artist', 'For Design Supervisor', 'Approved', 'For QI'], planned_start_at, planned_end_at, layout_started_at, layout_ended_at)
 tickets(id, ticket_no, department_id -> departments.id, subject, description, status [one of: open, in_progress, resolved, closed], priority [one of: low, normal, high], created_at, resolved_at)
 purchase_orders(id, po_no, date_created, supplier_id -> suppliers.id, status [e.g. 'pending_approval', 'pending_approval_gm', 'approved'], subtotal, net_of_tax, tax_amount)

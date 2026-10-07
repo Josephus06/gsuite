@@ -23,6 +23,7 @@ const STATUS_LABELS = {
   partially_delivered: 'Partially Delivered',
   pending_billing: 'Pending Billing',
   pending_billing_partially_delivered: 'Pending Billing / Partially Delivered',
+  partially_billed: 'Partially Billed',
   billed: 'Billed',
   cancelled: 'Cancelled',
 };

@@ -15,10 +15,28 @@
 // just waiting on the invoice.
 //
 // One rule sits above all of that: once the order has a billing document -- a Delivery Ticket
-// (not voided) or a Sales Invoice / Delivery Receipt (not cancelled) -- it is Billed, however much
-// of it the document covers. The lines carry that as has_billing_doc (see invoicedOrTicketedSql).
+// (not voided) or a Sales Invoice / Delivery Receipt (not cancelled) -- it is past billing: Billed
+// when every line is invoiced (or on an open ticket), PARTIALLY BILLED while some still is not
+// (asked 2026-10-07: SO-70419, 1 of 12 lines invoiced, read Billed). The lines carry that as
+// has_billing_doc (see invoicedOrTicketedSql).
+//
+// partially_billed is written only once the column takes it (db/add-so-partially-billed-status.js);
+// until then such an order reads Billed, as it did before, so code and schema deploy in either order.
+const pool = require('../db');
+let partialBilledSupported = false;
+// A script that computes a status right away awaits this first (statusRuleReady).
+const statusRuleReady = pool.query("SHOW COLUMNS FROM sales_orders LIKE 'status'")
+  .then(([rows]) => { partialBilledSupported = String(rows?.[0]?.Type || '').includes("'partially_billed'"); })
+  .catch(() => {});
+
+function everyLineInvoiced(lines) {
+  return lines.length > 0 && lines.every((l) => l.job_order_id && Number(l.quantity_invoiced || 0) >= Number(l.quantity || 0));
+}
+
 function computeSalesOrderStatus(lines) {
-  if (lines.some((l) => Number(l.has_billing_doc))) return 'billed';
+  if (lines.some((l) => Number(l.has_billing_doc))) {
+    return everyLineInvoiced(lines) || !partialBilledSupported ? 'billed' : 'partially_billed';
+  }
   let hasAnyJO = false;
   let allFullyInvoiced = true;
   let allFullyDelivered = true;
@@ -86,4 +104,4 @@ const hasBillingDocSql = (lineAlias = 'sol') => `(EXISTS (SELECT 1 FROM delivery
 const invoicedOrTicketedSql = (joAlias = 'jo', lineAlias = 'sol') => `(${joAlias}.quantity_invoiced + ${openDtQtySql(lineAlias)}) AS quantity_invoiced,
   ${hasBillingDocSql(lineAlias)} AS has_billing_doc`;
 
-module.exports = { computeSalesOrderStatus, openDtQtySql, invoicedOrTicketedSql, hasBillingDocSql };
+module.exports = { computeSalesOrderStatus, openDtQtySql, invoicedOrTicketedSql, hasBillingDocSql, statusRuleReady };

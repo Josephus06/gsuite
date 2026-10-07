@@ -3,6 +3,9 @@
 // "Partially Billed" as Billed and set every JO on the order to Invoiced -- lib/liveStatusSync.js no
 // longer does.
 //
+// With the Partially Billed status (db/add-so-partially-billed-status.js -- run it first), such an
+// order becomes Partially Billed.
+//
 // An order is corrected only when its own figures can be trusted -- at least one line has been
 // invoiced, and some line is invoiced short of its quantity -- so a migrated order whose Job Order
 // quantities were never filled in is not dragged backward. Its status becomes what the app's rule
@@ -15,7 +18,7 @@
 // Droplet and office replicate: run on ONE box (the droplet).
 require('dotenv').config();
 const pool = require('../db');
-const { computeSalesOrderStatus, invoicedOrTicketedSql } = require('../lib/salesOrderStatus');
+const { computeSalesOrderStatus, invoicedOrTicketedSql, statusRuleReady } = require('../lib/salesOrderStatus');
 
 const APPLY = process.argv.includes('--apply');
 const ONE = process.argv.slice(2).find((a) => !a.startsWith('--')) || null;
@@ -31,6 +34,7 @@ function stageFor(jo) {
 
 (async () => {
   console.log(`DB ${process.env.DB_NAME} on ${process.env.DB_HOST} -- ${APPLY ? 'APPLYING' : 'PREVIEW'}`);
+  await statusRuleReady;
   const [orders] = await pool.query(
     `SELECT so.id, so.sales_order_no, so.status FROM sales_orders so
       WHERE so.status = 'billed' ${ONE ? 'AND so.sales_order_no = ?' : ''}

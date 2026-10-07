@@ -9,7 +9,7 @@ const ROUTE = '/sales-orders';
 
 const STATUS_VALUES = [
   'pending_for_jo', 'jo_in_process', 'pending_delivery', 'partially_delivered',
-  'pending_billing', 'pending_billing_partially_delivered', 'billed', 'cancelled',
+  'pending_billing', 'pending_billing_partially_delivered', 'partially_billed', 'billed', 'cancelled',
 ];
 
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {

@@ -18,6 +18,7 @@ const STATUS_TABS = [
   { key: 'partially_delivered', label: 'Partially Delivered' },
   { key: 'pending_billing', label: 'Pending Billing' },
   { key: 'pending_billing_partially_delivered', label: 'Pending Billing / Partially Delivered' },
+  { key: 'partially_billed', label: 'Partially Billed' },
   { key: 'billed', label: 'Billed' },
   { key: 'cancelled', label: 'Cancelled' },
 ];

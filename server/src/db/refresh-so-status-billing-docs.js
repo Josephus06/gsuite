@@ -17,7 +17,9 @@ const APPLY = process.argv.includes('--apply');
   const [orders] = await pool.query(
     `SELECT so.id, so.sales_order_no, so.status
        FROM sales_orders so
-      WHERE so.status NOT IN ('billed', 'cancelled')
+      -- partially_billed (2026-10-07) is already past billing and must not be pushed on to Billed;
+      -- fix-so-partially-billed.js is what sets the right one of the two.
+      WHERE so.status NOT IN ('billed', 'partially_billed', 'cancelled')
         AND (EXISTS (SELECT 1 FROM delivery_tickets dt WHERE dt.sales_order_id = so.id AND dt.status <> 'void')
           OR EXISTS (SELECT 1 FROM sales_invoices si WHERE si.sales_order_id = so.id AND si.status <> 'cancelled'))
       ORDER BY so.id`
