@@ -42,6 +42,7 @@ export default function FormEdit() {
     driver_name: '', vehicle_plate_no: '', speedometer_begin: '', speedometer_end: '',
     total_mileage_km: '', trip_date: '', time_out: '', time_in: '', purpose: '',
     checked_by: '', noted_by: '',
+    remarks: '',
   });
   const [items, setItems] = useState([blankItem()]);
   const [departments, setDepartments] = useState([]);
@@ -62,7 +63,7 @@ export default function FormEdit() {
     setType(data.type);
     const d = data.detail || {};
     setForm({
-      department: data.department || '', name: data.name || '',
+      department: data.department || '', name: data.name || '', remarks: data.remarks || '',
       week_no: d.week_no || '', form_no: d.form_no || '',
       date_from: d.date_from ? String(d.date_from).slice(0, 10) : '',
       date_to: d.date_to ? String(d.date_to).slice(0, 10) : '',
@@ -415,6 +416,15 @@ export default function FormEdit() {
           </div>
         </div>
       )}
+
+      {/* The filer's own note on the request, on every form type -- shown on the form and printed. */}
+      <div className="card" style={{ marginTop: 16 }}>
+        <div className="field">
+          <label>Remarks</label>
+          <textarea rows={3} maxLength={2000} value={form.remarks} onChange={(e) => set('remarks', e.target.value)}
+            placeholder="Anything the approvers should know about this request" />
+        </div>
+      </div>
 
       <div className="modal-actions" style={{ marginTop: 16 }}>
         <Link className="btn" to={isNew ? '/forms' : `/forms/${id}`}>Cancel</Link>

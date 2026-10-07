@@ -299,6 +299,15 @@ export default function FormPrint() {
           </>
         )}
 
+        {/* The filer's remarks, on every form type. Left off the sheet when there are none rather
+            than printing an empty box on every pad. */}
+        {doc.remarks && (
+          <div className="rf-box">
+            <h4>Remarks</h4>
+            <div style={{ whiteSpace: 'pre-wrap' }}>{doc.remarks}</div>
+          </div>
+        )}
+
         <Signatures doc={doc} />
       </div>
     </div>

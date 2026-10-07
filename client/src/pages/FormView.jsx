@@ -225,6 +225,13 @@ export default function FormView() {
         <Line label="Approved">{doc.approved_at ? `${fmtDate(doc.approved_at)} by ${doc.approved_by_name || '—'}` : null}</Line>
       </div>
 
+      {doc.remarks && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3>Remarks</h3>
+          <div style={{ whiteSpace: 'pre-wrap' }}>{doc.remarks}</div>
+        </div>
+      )}
+
       {isFund && (
         <div className="card" style={{ marginTop: 16 }}>
           <h3>{doc.type === 'liquidation' ? 'Liquidation' : 'Revolving Fund'}</h3>

@@ -544,9 +544,9 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const { id, no } = await insertNumbered(conn, {
       table: 'form_requests', column: 'request_no', prefix: 'REQ-',
       run: (docNo) => conn.query(
-        `INSERT INTO form_requests (request_no, type, user_id, department, department_id, name, status)
-         VALUES (?, ?, ?, ?, ?, ?, 'draft')`,
-        [docNo, type, req.user.id, departmentName, departmentId, trunc(req.body.name, 255)],
+        `INSERT INTO form_requests (request_no, type, user_id, department, department_id, name, remarks, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'draft')`,
+        [docNo, type, req.user.id, departmentName, departmentId, trunc(req.body.name, 255), trunc(req.body.remarks, 2000)],
       ),
     });
 
@@ -627,8 +627,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 
     const departmentName = trunc(req.body.department, 255);
     await conn.query(
-      'UPDATE form_requests SET department = ?, department_id = ?, name = ?, updated_at = NOW() WHERE id = ?',
-      [departmentName, await resolveDepartmentId(conn, departmentName), trunc(req.body.name, 255), doc.id],
+      'UPDATE form_requests SET department = ?, department_id = ?, name = ?, remarks = ?, updated_at = NOW() WHERE id = ?',
+      [departmentName, await resolveDepartmentId(conn, departmentName), trunc(req.body.name, 255), trunc(req.body.remarks, 2000), doc.id],
     );
 
     // Lines are replaced wholesale rather than diffed. They carry nothing worth preserving across
