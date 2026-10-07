@@ -107,6 +107,30 @@ export default function CommissionJoDetail() {
     ]).then(([repRes, divRes]) => { setReps(repRes.data); setDivisions(divRes.data); }).catch(() => {});
   }, []);
 
+  // Extract: the job orders listed, as an Excel file -- the rep, month and division of the report
+  // on screen, not whatever the filters have since been changed to.
+  const [extracting, setExtracting] = useState(false);
+  async function extract() {
+    if (!report) return;
+    setExtracting(true);
+    setError('');
+    try {
+      const params = { employeeId: report.employee_id, year: report.year, month: report.month };
+      if (report.sales_division_id) params.salesDivisionId = report.sales_division_id;
+      const res = await api.get('/reports/commission/jo-detail/export', { params, responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `commission-jo-detail-${String(report.employee_name || 'rep').replace(/[^\w.-]+/g, '-')}-${report.year}-${String(report.month).padStart(2, '0')}.xlsx`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      setError('Could not extract the job orders.');
+    } finally {
+      setExtracting(false);
+    }
+  }
+
   async function generate() {
     if (!salesRep) { setError('Select a Sales Rep first.'); return; }
     setLoading(true);
@@ -115,7 +139,7 @@ export default function CommissionJoDetail() {
       const params = { employeeId: salesRep.id, year, month };
       if (division) params.salesDivisionId = division.id;
       const { data } = await api.get('/reports/commission/jo-detail', { params });
-      setReport(data);
+      setReport({ ...data, sales_division_id: division?.id || null });
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to generate report');
     } finally {
@@ -156,9 +180,16 @@ export default function CommissionJoDetail() {
             <input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} style={{ width: 110 }} />
           </div>
         </div>
-        <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={generate} disabled={loading}>
-          {loading ? 'Generating...' : 'Generate'}
-        </button>
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <button className="btn btn-primary" onClick={generate} disabled={loading}>
+            {loading ? 'Generating...' : 'Generate'}
+          </button>
+          {report && !loading && (
+            <button className="btn" onClick={extract} disabled={extracting || report.rows.length === 0}>
+              {extracting ? 'Extracting...' : 'Extract'}
+            </button>
+          )}
+        </div>
       </div>
 
       {error && <div className="card" style={{ color: '#b91c1c', marginBottom: 16 }}>{error}</div>}

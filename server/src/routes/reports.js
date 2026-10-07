@@ -511,6 +511,49 @@ router.get('/commission/jo-detail', requireAuth, requirePermission(COMMISSION_RO
   }
 });
 
+// Extract on the JO Detail screen: the job orders only, as listed (asked 2026-10-07) -- not the
+// Unpaid Commission derivation shown above them. Same scope check as the screen.
+router.get('/commission/jo-detail/export', requireAuth, requirePermission(COMMISSION_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const employeeId = Number(req.query.employeeId);
+    if (!employeeId) return res.status(400).json({ error: 'A Sales Rep is required.' });
+    const scope = await getCommissionScope(req.user.id);
+    if (!scope.all && !scope.allowedIds.has(employeeId)) {
+      return res.status(403).json({ error: 'You can only generate commission reports for yourself or your team.' });
+    }
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const month = Number(req.query.month) || (new Date().getMonth() + 1);
+    if (month < 1 || month > 12) return res.status(400).json({ error: 'Month must be 1-12.' });
+    const filters = { salesDivisionId: req.query.salesDivisionId ? Number(req.query.salesDivisionId) : null };
+    const data = await buildCommissionJoDetail(employeeId, year, month, filters);
+    if (!data) return res.status(404).json({ error: 'Sales Rep not found' });
+
+    const monthName = new Date(Date.UTC(year, month - 1, 1)).toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('JO Detail', { views: [{ state: 'frozen', ySplit: 3 }] });
+    ws.addRow([`Commission — JO Detail: ${data.employee_name}, ${monthName} ${year}`]).font = { bold: true, size: 13 };
+    ws.addRow([]);
+    const header = ws.addRow(['JO #', 'SO #', 'DT #', 'Invoice #', 'Customer', 'Sales Rep', 'Job Type',
+      'GP Rate %', 'Passing GP %', 'Net of Tax', 'Paid Invoice', 'GP Status']);
+    header.font = { bold: true };
+    header.eachCell((c) => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E7EB' } }; });
+    for (const r of data.rows) {
+      ws.addRow([
+        r.job_order_no, r.sales_order_no, r.dt_no || '', r.invoice_no || '', r.customer_name || '', r.rep_name || '', r.job_type || '',
+        r.gp_rate, r.passing_gp_rate, r.net_of_tax, r.paid_invoice,
+        r.is_passing ? (r.is_approved_low_gp && !r.meets_gp ? 'Passing (added to commission)' : 'Passing') : 'Below GP',
+      ]);
+    }
+    [14, 14, 12, 14, 36, 24, 28, 11, 13, 16, 16, 28].forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+    [8, 9].forEach((c) => { ws.getColumn(c).numFmt = '0.00'; });
+    [10, 11].forEach((c) => { ws.getColumn(c).numFmt = '#,##0.00'; });
+    const safe = String(data.employee_name || 'rep').replace(/[^\w.-]+/g, '-');
+    return sendWorkbook(res, wb, `commission-jo-detail-${safe}-${year}-${String(month).padStart(2, '0')}.xlsx`);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // "Add to Commission" on the JO Detail screen: count this job order toward the rep's
 // passing-GP total even though its GP rate is below the job type's threshold.
 //
