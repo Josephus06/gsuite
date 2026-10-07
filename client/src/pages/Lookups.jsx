@@ -160,6 +160,7 @@ export default function Lookups() {
   const [form, setForm] = useState({});
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
   const [approvers, setApprovers] = useState([]);
 
   const active = useMemo(() => CONFIG.find((c) => c.key === activeKey), [activeKey]);
@@ -305,6 +306,13 @@ export default function Lookups() {
             : undefined,
     }));
 
+  // Search box over whichever tab is open: matches any column as shown (a referenced name, not its id).
+  const q = search.trim().toLowerCase();
+  const shownRows = !q ? rows : rows.filter((r) => columns.some((c) => {
+    const v = c.render ? c.render(r) : r[c.key];
+    return (typeof v === 'string' || typeof v === 'number') && String(v).toLowerCase().includes(q);
+  }));
+
   return (
     <div>
       <div className="page-header">
@@ -315,7 +323,7 @@ export default function Lookups() {
       </div>
       <div className="tabs">
         {CONFIG.map((c) => (
-          <button key={c.key} className={c.key === activeKey ? 'active' : ''} onClick={() => setActiveKey(c.key)}>
+          <button key={c.key} className={c.key === activeKey ? 'active' : ''} onClick={() => { setActiveKey(c.key); setSearch(''); }}>
             {c.label}
           </button>
         ))}
@@ -350,10 +358,16 @@ export default function Lookups() {
             )}
           </div>
         ) : (
+          <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+            <input type="search" placeholder={`Search ${active.label}…`} value={search} onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 360 }} />
+            {q && <span className="muted" style={{ fontSize: 13 }}>{shownRows.length} of {rows.length}</span>}
+          </div>
           <DataTable
             paginate
             columns={columns}
-            rows={rows}
+            rows={shownRows}
+            emptyLabel={q ? 'No matches.' : undefined}
             actions={(row) => (
               <>
                 {can('/lookups', 'can_edit') && <button className="btn btn-sm" onClick={() => openEdit(row)}>Edit</button>}
@@ -361,6 +375,7 @@ export default function Lookups() {
               </>
             )}
           />
+          </>
         )}
       </div>
 
