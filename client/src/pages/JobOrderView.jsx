@@ -363,6 +363,10 @@ export default function JobOrderView() {
               options={[
                 { label: 'Job Order', hint: 'Production copy', onClick: () => window.open(`/job-orders/${id}/print`, '_blank') },
                 { label: 'PAR', hint: 'Project Accomplishment Report', onClick: () => window.open(`/job-orders/${id}/par`, '_blank') },
+                // The RMA slip, for an NSJO-RMA and the RFQC / RWIP rework job orders.
+                ...((jo.parent_job_order_id && /^(RFQC|RWIP)-/.test(jo.job_order_no || '')) || /^NSJO-RMA-/.test(jo.job_order_no || '') || /^NSSO-RMA-/.test(jo.nsso_no || '')
+                  ? [{ label: 'RMA', hint: 'Returned Material Authorization', onClick: () => window.open(`/rma-job-orders/${id}/print`, '_blank') }]
+                  : []),
               ]}
             />
           )}

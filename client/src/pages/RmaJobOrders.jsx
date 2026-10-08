@@ -167,7 +167,10 @@ export default function RmaJobOrders() {
                     <td data-label="Status">{statusLabel(row)}</td>
                     {/* Before production -> the Job Order view (approval lives there); once in production,
                         the Production view, where it is built and inspected. */}
-                    <td><Link className="btn btn-sm btn-primary" to={row.production_stage ? `/production/${row.id}` : `/job-orders/${row.id}`}>View</Link></td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <Link className="btn btn-sm btn-primary" to={row.production_stage ? `/production/${row.id}` : `/job-orders/${row.id}`}>View</Link>{' '}
+                      <a className="btn btn-sm" href={`/rma-job-orders/${row.id}/print`} target="_blank" rel="noreferrer" title="Print the RMA slip">Print</a>
+                    </td>
                   </tr>
                 ))}
               </tbody>

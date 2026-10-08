@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
-const { getJobLocationScope } = require('../lib/jobLocationVisibility');
+const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
+const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 const { sendXlsx, day } = require('../lib/xlsxExport');
 
 const router = express.Router();
@@ -111,6 +111,80 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
     if (res.headersSent) { res.destroy(err); return; }
     next(err);
   }
+});
+
+// The Returned Material Authorization slip (asked 2026-10-08, in the live system's format) for an
+// NSJO-RMA, an RFQC or an RWIP. Read by whoever can open any of those lists, Job Orders or
+// Production -- the slip is printed from the JO's own screen, which both modules reach.
+const PRINT_ROUTES = ['/rma-job-orders', '/rwip-job-orders', '/rfqc-job-orders', '/job-orders', '/production'];
+router.get('/:id/print', requireAuth, async (req, res, next) => {
+  try {
+    let allowed = false;
+    for (const r of PRINT_ROUTES) { if (await userCan(req.user.id, r, 'can_view')) { allowed = true; break; } }
+    if (!allowed) return res.status(403).json({ error: 'You do not have permission to perform this action' });
+
+    const [[jo]] = await pool.query(
+      `SELECT jo.id, jo.job_order_no, jo.description, jo.quantity, jo.units, jo.job_location_id, jo.reason, jo.action_to_be_taken,
+              jo.created_at, jo.parent_job_order_id, ${TYPE_SQL} AS rma_type,
+              c.name AS customer_name, COALESCE((SELECT ca.address_line FROM customer_addresses ca WHERE ca.customer_id = c.id ORDER BY ca.is_default DESC, ca.id LIMIT 1),
+                NULLIF(c.address, ''), NULLIF(c.bill_to_address, ''),
+                NULLIF(jo.shipping_address, ''), nsso.shipping_address) AS customer_address,
+              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name, CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name,
+              oloc.location_name AS office_location_name, loc.location_name AS job_location_name,
+              COALESCE(nsso.nsso_no, so.sales_order_no, pnsso.nsso_no, pso.sales_order_no) AS so_no, nsso.date_created AS nsso_date,
+              pjo.job_order_no AS parent_job_order_no, rc.name AS reason_code_name,
+              CONCAT(rap.first_name, ' ', rap.last_name) AS approved_by_name,
+              (SELECT u.display_name FROM audit_logs a JOIN users u ON u.id = a.set_by_user_id
+                WHERE a.auditable_type = 'JobOrder' AND a.auditable_id = jo.id AND a.event_type = 'Created'
+                ORDER BY a.id LIMIT 1) AS created_by_name,
+              COALESCE(CONCAT(npe.first_name, ' ', npe.last_name), ncu.display_name) AS nsso_requested_by
+         FROM job_orders jo
+         LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
+         LEFT JOIN non_standard_sales_orders nsso ON nsso.id = jo.nsso_id
+         LEFT JOIN sales_orders nsso_so ON nsso_so.id = nsso.nested_sales_order_id
+         LEFT JOIN estimates nsest ON nsest.id = nsso.nested_estimate_id
+         -- A rework JO raised before the SO / NSSO was copied onto it reads them off its mother JO.
+         LEFT JOIN job_orders pjo ON pjo.id = jo.parent_job_order_id
+         LEFT JOIN sales_orders pso ON pso.id = pjo.sales_order_id
+         LEFT JOIN non_standard_sales_orders pnsso ON pnsso.id = pjo.nsso_id
+         LEFT JOIN estimates pnsest ON pnsest.id = pnsso.nested_estimate_id
+         LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, nsso.customer_id, nsso_so.customer_id, nsest.customer_id,
+                                                  pso.customer_id, pnsso.customer_id, pnsest.customer_id)
+         LEFT JOIN employees sr ON sr.id = jo.sales_rep_id
+         LEFT JOIN employees ar ON ar.id = jo.artist_id
+         LEFT JOIN locations loc ON loc.id = jo.job_location_id
+         LEFT JOIN locations oloc ON oloc.id = COALESCE(so.office_location_id, nsso.office_location_id, pso.office_location_id, pnsso.office_location_id)
+         LEFT JOIN reasons rc ON rc.id = jo.reason_code_id
+         LEFT JOIN employees rap ON rap.id = jo.rma_approved_by_id
+         LEFT JOIN employees npe ON npe.id = nsso.prepared_by_id
+         LEFT JOIN users ncu ON ncu.id = nsso.created_by_user_id
+        WHERE jo.id = ?`,
+      [req.params.id],
+    );
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    const isRework = !!jo.parent_job_order_id && /^(RFQC|RWIP)-/.test(jo.job_order_no || '');
+    if (!isRework && !/^NSJO-RMA-/.test(jo.job_order_no || '') && !/^NSSO-RMA-/.test(jo.so_no || '')) {
+      return res.status(400).json({ error: 'The RMA slip is for NSJO-RMA, RFQC and RWIP job orders only.' });
+    }
+    if (!isJobLocationVisible(jo, await getJobLocationScope(req.user.id))) return res.status(404).json({ error: 'Not found' });
+
+    const [lines] = await pool.query(
+      `SELECT jop.line_no, pr.process_name, i.display_name AS item_name, jop.qty, jop.process_qty
+         FROM job_order_processes jop
+         LEFT JOIN processes pr ON pr.id = jop.process_id
+         LEFT JOIN inventories i ON i.id = jop.item_id
+        WHERE jop.job_order_id = ? ORDER BY jop.line_no, jop.id`,
+      [jo.id],
+    );
+    res.json({
+      ...jo,
+      // An imported RMA carries no reason of its own; the live slip printed the job description there.
+      reason_text: [jo.reason_code_name, jo.reason].filter(Boolean).join(' - ') || (isRework ? '' : jo.description) || '',
+      requested_by: jo.created_by_name || jo.nsso_requested_by || '',
+      date: jo.nsso_date || jo.created_at,
+      lines: lines.map((l) => ({ ...l, qty: l.qty ?? l.process_qty })),
+    });
+  } catch (err) { next(err); }
 });
 
 module.exports = router;
