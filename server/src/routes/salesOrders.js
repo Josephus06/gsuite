@@ -133,7 +133,11 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     const [lines] = await pool.query(
       `SELECT sol.*, jt.display_name AS job_type_name, loc.location_name AS job_location_name, t.code AS tax_code, t.rate AS tax_rate,
               jo.job_order_no, jo.status AS job_order_status,
-              jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, jo.quantity_invoiced
+              jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, jo.quantity_invoiced,
+              -- The JO's own process cost, so the line's GP reads as the JO screen works it out
+              -- (net less this JO's total process cost) rather than the rate the estimate stored.
+              (SELECT COUNT(*) FROM job_order_processes jop WHERE jop.job_order_id = sol.job_order_id) AS jo_process_count,
+              (SELECT COALESCE(SUM(jop.total_cost), 0) FROM job_order_processes jop WHERE jop.job_order_id = sol.job_order_id) AS jo_total_cost
        FROM sales_order_lines sol
        LEFT JOIN job_types jt ON jt.id = sol.job_type_id
        LEFT JOIN locations loc ON loc.id = sol.job_location_id

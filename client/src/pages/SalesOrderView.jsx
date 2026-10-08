@@ -55,7 +55,16 @@ const LINE_COLUMNS = [
   { key: 'memo', label: 'Memo' },
   { key: 'delivery_date', label: 'Delivery Date', render: (r) => (r.delivery_date ? String(r.delivery_date).slice(0, 10) : '') },
   { key: 'delivery_time', label: 'Delivery Time' },
-  { key: 'gp_rate', label: 'GP Rate', render: (r) => (r.gp_rate != null ? `${r.gp_rate}%` : '') },
+  // The same figure the Job Order screen shows (asked 2026-10-08: SO-193441 line 1 read 64.16%, its JO
+  // 52.14%): the line's net of discount less the JO's total process cost. The rate the estimate stored
+  // is shown only for a line whose JO has no process lines yet.
+  { key: 'gp_rate', label: 'GP Rate', render: (r) => {
+    if (r.job_order_id && Number(r.jo_process_count) > 0) {
+      const revenue = Number(r.subtotal || 0) - Number(r.disc_amount || 0);
+      return revenue ? `${(((revenue - Number(r.jo_total_cost || 0)) / revenue) * 100).toFixed(2)}%` : '';
+    }
+    return r.gp_rate != null ? `${r.gp_rate}%` : '';
+  } },
 ];
 
 function fileSize(bytes) {
