@@ -228,9 +228,9 @@ async function mayNote(userId, doc) {
           : 'This form has no department, so there is no head to note it. An approver can still approve it directly.',
       };
     }
-    if (await isDepartmentNoter(userId, doc.department_id)) return { allowed: true };
+    if (await isDepartmentNoter(userId, doc.department_id, pool, doc.type)) return { allowed: true };
 
-    const heads = await notersFor(doc.department_id);
+    const heads = await notersFor(doc.department_id, pool, doc.type);
     return {
       allowed: false,
       reason: heads.length
@@ -301,7 +301,13 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
     const params = [WORKFLOW_STATUSES];
     if (!canSeeAll) {
       const mine = [];
-      if (headOf.length) { mine.push('(f.department_id IN (?) AND f.type IN (?))'); params.push(headOf, DEPARTMENT_NOTED_TYPES); }
+      // Only the forms this head notes in that department (note_form_types; empty = all of them).
+      if (headOf.length) {
+        mine.push(`(f.type IN (?) AND EXISTS (SELECT 1 FROM department_ticket_approvers a
+                   WHERE a.department_id = f.department_id AND a.user_id = ? AND a.can_note_form = 1
+                     AND (a.note_form_types IS NULL OR a.note_form_types = '' OR FIND_IN_SET(f.type, a.note_form_types) > 0)))`);
+        params.push(DEPARTMENT_NOTED_TYPES, req.user.id);
+      }
       if (isAp) { mine.push('f.type IN (?)'); params.push(AP_NOTED_TYPES); }
       where.push(`(${mine.join(' OR ')})`);
     }

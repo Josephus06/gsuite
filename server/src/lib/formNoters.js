@@ -47,11 +47,17 @@ async function accountsPayableUsers(q = pool) {
 }
 
 // Does this user head the given department -- i.e. are they one of its ticket approvers?
-async function isDepartmentNoter(userId, departmentId, q = pool) {
+// Which forms each one notes (2026-10-08): note_form_types is a comma list of form types, and NULL
+// or empty means every department-noted form -- what "Note form" meant before the list existed.
+const TYPE_OK = "(a.note_form_types IS NULL OR a.note_form_types = '' OR FIND_IN_SET(?, a.note_form_types) > 0)";
+
+// `type` narrows it to heads who note that form; left out, any form at all counts.
+async function isDepartmentNoter(userId, departmentId, q = pool, type = null) {
   if (!departmentId) return false;
   const [[row]] = await q.query(
-    'SELECT 1 AS ok FROM department_ticket_approvers WHERE department_id = ? AND user_id = ? AND can_note_form = 1 LIMIT 1',
-    [departmentId, userId],
+    `SELECT 1 AS ok FROM department_ticket_approvers a
+      WHERE a.department_id = ? AND a.user_id = ? AND a.can_note_form = 1 ${type ? `AND ${TYPE_OK}` : ''} LIMIT 1`,
+    type ? [departmentId, userId, type] : [departmentId, userId],
   );
   return !!row;
 }
@@ -71,13 +77,13 @@ async function departmentsHeadedBy(userId, q = pool) {
 // Who the form is waiting on, in words -- so a form that nobody can note says WHY rather than
 // simply showing no button. Most departments have no ticket approver recorded yet, and a silent
 // dead end would read as the module being broken.
-async function notersFor(departmentId, q = pool) {
+async function notersFor(departmentId, q = pool, type = null) {
   if (!departmentId) return [];
   const [rows] = await q.query(
     `SELECT u.id, u.display_name FROM department_ticket_approvers a
        JOIN users u ON u.id = a.user_id
-      WHERE a.department_id = ? AND a.can_note_form = 1 ORDER BY u.display_name`,
-    [departmentId],
+      WHERE a.department_id = ? AND a.can_note_form = 1 ${type ? `AND ${TYPE_OK}` : ''} ORDER BY u.display_name`,
+    type ? [departmentId, type] : [departmentId],
   );
   return rows;
 }
@@ -86,11 +92,11 @@ async function notersFor(departmentId, q = pool) {
 // payment, nobody named for the rest (they go by permission).
 async function notersForDoc(doc, q = pool) {
   if (AP_NOTED_TYPES.includes(doc.type)) return accountsPayableUsers(q);
-  if (DEPARTMENT_NOTED_TYPES.includes(doc.type)) return notersFor(doc.department_id, q);
+  if (DEPARTMENT_NOTED_TYPES.includes(doc.type)) return notersFor(doc.department_id, q, doc.type);
   return [];
 }
 
 module.exports = {
-  DEPARTMENT_NOTED_TYPES, AP_NOTED_TYPES, isDepartmentNoter, departmentsHeadedBy, notersFor,
+  TYPE_OK, DEPARTMENT_NOTED_TYPES, AP_NOTED_TYPES, isDepartmentNoter, departmentsHeadedBy, notersFor,
   isAccountsPayable, accountsPayableUsers, notersForDoc,
 };

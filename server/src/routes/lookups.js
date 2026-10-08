@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { DEPARTMENT_NOTED_TYPES } = require('../lib/formNoters');
 
 const router = express.Router();
 
@@ -84,7 +85,7 @@ router.get('/departments/:id/ticket-approvers', requireAuth, requirePermission('
   try {
     const [rows] = await pool.query(
       `SELECT u.id, u.display_name, u.username,
-              dta.can_approve_ticket, dta.can_note_form
+              dta.can_approve_ticket, dta.can_note_form, dta.note_form_types
        FROM department_ticket_approvers dta
        JOIN users u ON u.id = dta.user_id
        WHERE dta.department_id = ? ORDER BY u.display_name`,
@@ -126,6 +127,14 @@ router.put('/departments/:id/ticket-approvers/:userId', requireAuth, requirePerm
     }
     if (req.body.can_note_form !== undefined) {
       fields.push('can_note_form = ?'); params.push(req.body.can_note_form ? 1 : 0);
+    }
+    // Which forms they note (2026-10-08): a list of department-noted form types; empty or every one
+    // of them is stored as NULL, meaning all -- so a form type added later is included by default.
+    if (req.body.note_form_types !== undefined) {
+      const picked = (Array.isArray(req.body.note_form_types) ? req.body.note_form_types : [])
+        .filter((t) => DEPARTMENT_NOTED_TYPES.includes(t));
+      fields.push('note_form_types = ?');
+      params.push(picked.length && picked.length < DEPARTMENT_NOTED_TYPES.length ? [...new Set(picked)].join(',') : null);
     }
     if (!fields.length) return res.json({ ok: true });
     params.push(req.params.id, req.params.userId);

@@ -150,6 +150,10 @@ function emptyForm(fields) {
 // /lookups/:ref path the 'ref' field type uses.
 
 
+// The forms a department head notes, and how a head's note_form_types reads: empty means all of them.
+const NOTED_FORM_TYPES = [['payment', 'Request for Payment'], ['fund_transfer', 'Fund Transfer'], ['attendance_adjustment', 'Attendance Adjustment']];
+const noteTypesOf = (a) => (a.note_form_types ? String(a.note_form_types).split(',') : NOTED_FORM_TYPES.map(([t]) => t));
+
 export default function Lookups() {
   const { can } = useAuth();
   const [activeKey, setActiveKey] = useState(CONFIG[0].key);
@@ -227,8 +231,11 @@ export default function Lookups() {
   // locally first so the box does not visibly lag the click, then reloaded from the server.
   async function setApproverRole(u, patch) {
     setApprovers((rows) => rows.map((r) => (r.id === u.id ? { ...r, ...patch } : r)));
+    // note_form_types is held here as the stored comma list; the server takes an array.
+    const body = patch.note_form_types === undefined ? patch
+      : { ...patch, note_form_types: patch.note_form_types ? patch.note_form_types.split(',') : [] };
     try {
-      await api.put(`/lookups/departments/${editing}/ticket-approvers/${u.id}`, patch);
+      await api.put(`/lookups/departments/${editing}/ticket-approvers/${u.id}`, body);
     } catch (err) {
       setError(err.response?.data?.error || 'Could not change that.');
     }
@@ -446,8 +453,9 @@ export default function Lookups() {
                     so the boxes make that explicit rather than letting one grant imply the other. */}
                 <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
                   Tickets: any ticket created by someone in this department needs sign-off from one of these people
-                  before the receiving department can assign it. Forms: a liquidation or request for payment filed
-                  from this department is noted by one of them. Leave empty for no approval gate.
+                  before the receiving department can assign it. Forms: a Request for Payment, Fund Transfer or Attendance
+                  Adjustment filed from this department is noted by one of them -- tick which forms each one notes.
+                  Leave empty for no approval gate.
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
                   {approvers.length === 0 && <div className="muted">No heads tagged.</div>}
@@ -460,7 +468,8 @@ export default function Lookups() {
                     </div>
                   )}
                   {approvers.map((a) => (
-                    <div key={a.id} style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                    <div key={a.id}>
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
                       <span style={{ flex: 1 }}>{a.display_name}</span>
                       <span style={{ width: 110, textAlign: 'center' }}>
                         <input
@@ -477,6 +486,29 @@ export default function Lookups() {
                         />
                       </span>
                       <button type="button" className="btn btn-sm btn-danger" style={{ width: 74 }} onClick={() => removeApprover(a)}>Remove</button>
+                    </div>
+                    {/* Which forms this head notes (asked 2026-10-08). None picked on the server means
+                        all, so unticking the last one turns Note form off instead. */}
+                    {!!a.can_note_form && (
+                      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12, margin: '4px 0 6px 12px' }}>
+                        <span className="muted">Notes:</span>
+                        {NOTED_FORM_TYPES.map(([type, label]) => {
+                          const current = noteTypesOf(a);
+                          return (
+                            <label key={type} style={{ display: 'inline-flex', gap: 5, alignItems: 'center', fontWeight: 400, margin: 0 }}>
+                              <input type="checkbox" checked={current.includes(type)}
+                                onChange={(e) => {
+                                  const next = e.target.checked ? [...current, type] : current.filter((t) => t !== type);
+                                  setApproverRole(a, next.length
+                                    ? { note_form_types: next.length === NOTED_FORM_TYPES.length ? null : next.join(',') }
+                                    : { can_note_form: false, note_form_types: null });
+                                }} />
+                              {label}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
                     </div>
                   ))}
                 </div>
