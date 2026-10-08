@@ -681,16 +681,57 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), requireEdi
 // estimate as the starting point for a new one instead of re-keying everything.
 // Called from the Replicate button and from the chatbot, which is why the work lives in a
 // function rather than only in the route handler: two implementations of this would drift.
-async function replicateEstimate(userId, sourceId) {
+// The replicator's own Sales Rep / Office Location / Sales Division, as a new estimate fills them
+// (EstimateWizard): their employee, their default branch's location, and the sales division whose
+// name matches their branch's department ignoring spaces, dashes and underscores ("Sales - 1" is
+// "Sales-1"). A field with nothing to go on is left out, so the source's value stands.
+async function replicatorDefaults(conn, userId) {
+  const [[u]] = await conn.query(
+    `SELECT u.employee_id, ub.location_id, d.name AS department_name
+       FROM users u
+       LEFT JOIN user_branches ub ON ub.user_id = u.id AND ub.is_default = TRUE
+       LEFT JOIN departments d ON d.id = ub.department_id
+      WHERE u.id = ?`, [userId]);
+  const out = {};
+  if (!u) return out;
+  if (u.employee_id) out.sales_rep_id = u.employee_id;
+  if (u.location_id) out.office_location_id = u.location_id;
+  if (u.department_name) {
+    const key = (v) => String(v || '').toLowerCase().replace(/[\s_-]+/g, '');
+    const [divs] = await conn.query('SELECT id, name FROM sales_divisions');
+    const match = divs.find((d) => key(d.name) === key(u.department_name));
+    if (match) out.sales_division_id = match.id;
+  }
+  return out;
+}
+
+// opts.cancelSource -- "Cancel & Replicate" (asked 2026-10-08): the source is cancelled in the SAME
+// transaction the copy is made in, so it is never one without the other, and the copy is the
+// replicator's: Sales Rep, Office Location and Sales Division are theirs (replicatorDefaults), not
+// the source's. A plain Replicate keeps the source's, as it always has.
+async function replicateEstimate(userId, sourceId, opts = {}) {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [[source]] = await conn.query('SELECT * FROM estimates WHERE id = ?', [sourceId]);
+    const [[source]] = await conn.query('SELECT * FROM estimates WHERE id = ? FOR UPDATE', [sourceId]);
     if (!source) {
       await conn.rollback();
       const err = new Error('Not found');
       err.status = 404;
       throw err;
+    }
+    let mine = {};
+    if (opts.cancelSource) {
+      const refuse = (status, message) => { const err = new Error(message); err.status = status; throw err; };
+      if (source.status === 'cancelled') refuse(409, `${source.estimate_no} is already cancelled -- use Replicate.`);
+      // Cancelling the estimate behind a live Sales Order would leave the order pointing at a
+      // cancelled estimate; the order has to be dealt with first.
+      const [[liveSo]] = await conn.query(
+        `SELECT sales_order_no FROM sales_orders
+          WHERE (id = ? OR estimate_id = ?) AND (status IS NULL OR status <> 'cancelled') LIMIT 1`,
+        [source.sales_order_id || 0, source.id]);
+      if (liveSo) refuse(409, `${source.estimate_no} already has Sales Order ${liveSo.sales_order_no} -- cancel that first, or use Replicate.`);
+      mine = await replicatorDefaults(conn, userId);
     }
     // Prepared By is whoever made THIS estimate -- the person replicating, not the source's author
     // (asked 2026-10-03). Kept from the source only when the replicating account has no employee.
@@ -704,6 +745,7 @@ async function replicateEstimate(userId, sourceId) {
       // the flow -- so carrying the source's approver across would put a supervisor's name on an
       // estimate they have never seen, which is the one thing that field must never say.
       if (f === 'approved_by_id') return null;
+      if (f in mine) return mine[f];
       return source[f];
     });
     const tempNo = `TMP-${Date.now()}`;
@@ -737,6 +779,18 @@ async function replicateEstimate(userId, sourceId) {
       estimateId: newEstimateId, userId, eventType: 'Created',
       fieldName: 'replicated_from', newValue: source.estimate_no,
     });
+    if (opts.cancelSource) {
+      const newNo = `EST-${100000 + newEstimateId}`;
+      await conn.query("UPDATE estimates SET status = 'cancelled', updated_at = NOW() WHERE id = ?", [source.id]);
+      await logAudit(conn, {
+        estimateId: source.id, userId, eventType: 'Status Change',
+        fieldName: 'status', oldValue: source.status, newValue: 'cancelled',
+      });
+      await logAudit(conn, {
+        estimateId: source.id, userId, eventType: 'Cancelled',
+        fieldName: 'replaced_by', newValue: newNo,
+      });
+    }
     await conn.commit();
     // The copied header totals are the SOURCE's; the copy's lines are what count from here on.
     await refreshEstimateTotals(newEstimateId);
@@ -755,6 +809,22 @@ async function replicateEstimate(userId, sourceId) {
 router.post('/:id/replicate', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
   try {
     res.status(201).json(await replicateEstimate(req.user.id, req.params.id));
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+// Cancel & Replicate: cancels this estimate and makes a new one from it, as the person doing it
+// (see replicateEstimate's cancelSource). Needs both halves' rights -- Add to replicate, Edit to
+// cancel -- and the same scope as a status change.
+router.post('/:id/cancel-and-replicate', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
+  try {
+    if (await isOutOfScope(req.user.id, req.params.id)) return res.status(404).json({ error: 'Not found' });
+    if (!(await userCan(req.user.id, ROUTE, 'can_edit'))) {
+      return res.status(403).json({ error: 'Cancelling an estimate needs Edit rights on Estimates.' });
+    }
+    res.status(201).json(await replicateEstimate(req.user.id, req.params.id, { cancelSource: true }));
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
     next(err);

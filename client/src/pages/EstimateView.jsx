@@ -189,6 +189,24 @@ export default function EstimateView() {
     }
   }
 
+  // Cancel & Replicate: this estimate is cancelled and a new one made from it, as the person doing
+  // it -- Sales Rep, Office Location and Sales Division become theirs. One server call, one
+  // transaction: never one half without the other.
+  async function handleCancelAndReplicate() {
+    if (!confirm(`Cancel ${estimate.estimate_no} and replicate it into a new estimate?
+
+${estimate.estimate_no} will be CANCELLED. The new estimate will have you as its Sales Rep.`)) return;
+    setBusy(true);
+    try {
+      const { data } = await api.post(`/estimates/${id}/cancel-and-replicate`);
+      navigate(`/estimates/${data.id}`);
+    } catch (err) {
+      alert(err.response?.data?.error || 'Could not cancel and replicate this estimate.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (loading || !estimate) return <LoadingSpinner />;
 
   const jobOrders = estimate.jobOrders || [];
@@ -313,6 +331,11 @@ export default function EstimateView() {
             </button>
           )}
           {canAdd && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleReplicate}>Replicate</button>}
+          {/* Not on a cancelled estimate (nothing left to cancel), nor one already turned into a Sales
+              Order -- the server refuses both. Needs Edit as well as Add: it cancels. */}
+          {canAdd && can('/estimates', 'can_edit') && estimate.status !== 'cancelled' && !estimate.sales_order_id && (
+            <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancelAndReplicate}>Cancel &amp; Replicate</button>
+          )}
         </div>
       </div>
 
