@@ -53,7 +53,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     // An artist filed under a production department only sees that warehouse's layout work. Two
     // fragments because the worklist unions job_orders (jo) with non_standard_job_orders (n), and
     // each carries its own job_location_id.
-    const scopeLocationId = await getJobLocationScope(req.user.id);
+    const scopeLocationId = await getJobLocationScope(req.user.id, ROUTE);
     const joLocationClause = scopeLocationId ? ' AND jo.job_location_id = ?' : '';
     const nstdjoLocationClause = scopeLocationId ? ' AND n.job_location_id = ?' : '';
     const locationParams = scopeLocationId ? [scopeLocationId] : [];
@@ -375,7 +375,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     }
     // Out of this user's department -- 404 rather than 403, matching the JO detail views: an
     // out-of-department job order should read as one that isn't there.
-    if (!isJobLocationVisible(row, await getJobLocationScope(req.user.id))) {
+    if (!isJobLocationVisible(row, await getJobLocationScope(req.user.id, ROUTE))) {
       return res.status(404).json({ error: 'Not found' });
     }
 

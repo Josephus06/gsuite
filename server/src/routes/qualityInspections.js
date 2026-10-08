@@ -46,7 +46,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const params = [];
     // An inspection is scoped by the warehouse of the job order it inspects, so a production
     // department sees only its own -- same rule as the Job Orders and Production lists.
-    const scopeLocationId = await getJobLocationScope(req.user.id);
+    const scopeLocationId = await getJobLocationScope(req.user.id, ROUTE);
     if (scopeLocationId) { where.push('jo.job_location_id = ?'); params.push(scopeLocationId); }
     if (jobLocationId) { where.push('jo.job_location_id = ?'); params.push(jobLocationId); }
     if (customerId) { where.push('so.customer_id = ?'); params.push(customerId); }
@@ -105,7 +105,7 @@ router.get('/for-job-order/:jobOrderId', requireAuth, requirePermission(PRODUCTI
     );
     if (!jo) return res.status(404).json({ error: 'Not found' });
     // Out of this user's department -- 404 rather than 403, matching the JO detail views.
-    if (!isJobLocationVisible(jo, await getJobLocationScope(req.user.id))) {
+    if (!isJobLocationVisible(jo, await getJobLocationScope(req.user.id, ROUTE))) {
       return res.status(404).json({ error: 'Not found' });
     }
 
@@ -149,7 +149,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     );
     if (!qi) return res.status(404).json({ error: 'Not found' });
     // Out of this user's department -- 404 rather than 403, matching the JO detail views.
-    if (!isJobLocationVisible(qi, await getJobLocationScope(req.user.id))) {
+    if (!isJobLocationVisible(qi, await getJobLocationScope(req.user.id, ROUTE))) {
       return res.status(404).json({ error: 'Not found' });
     }
 

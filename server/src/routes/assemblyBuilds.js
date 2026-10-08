@@ -34,7 +34,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const params = [];
     // An assembly build belongs to its job order's warehouse, so a production department sees
     // only its own builds -- same rule as the Job Orders and Production lists.
-    const scopeLocationId = await getJobLocationScope(req.user.id);
+    const scopeLocationId = await getJobLocationScope(req.user.id, ROUTE);
     if (scopeLocationId) { where.push('jo.job_location_id = ?'); params.push(scopeLocationId); }
     if (salesRepId) { where.push('so.sales_rep_id = ?'); params.push(salesRepId); }
     if (jobLocationId) { where.push('jo.job_location_id = ?'); params.push(jobLocationId); }
@@ -103,7 +103,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     );
     if (!ab) return res.status(404).json({ error: 'Not found' });
     // Out of this user's department -- 404 rather than 403, matching the JO detail views.
-    if (!isJobLocationVisible(ab, await getJobLocationScope(req.user.id))) {
+    if (!isJobLocationVisible(ab, await getJobLocationScope(req.user.id, ROUTE))) {
       return res.status(404).json({ error: 'Not found' });
     }
 

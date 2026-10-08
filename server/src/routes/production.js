@@ -87,7 +87,7 @@ const STAGE_VALUES = [
 // by pasting an id. Answers 404 and returns false when it refuses, matching the detail view;
 // callers do `if (!(await assertJobOrderInScope(req, res))) return;`.
 async function assertJobOrderInScope(req, res) {
-  const scopeLocationId = await getJobLocationScope(req.user.id);
+  const scopeLocationId = await getJobLocationScope(req.user.id, ROUTE);
   if (!scopeLocationId) return true;
   const [[row]] = await pool.query('SELECT job_location_id FROM job_orders WHERE id = ?', [req.params.id]);
   if (row && isJobLocationVisible(row, scopeLocationId)) return true;
@@ -142,7 +142,7 @@ router.get('/', requireAuth, requireProductionView, async (req, res, next) => {
     // this and ~12x slower than the old department-only filter. Each branch of the UNION uses its
     // own index instead, and UNION (not UNION ALL) dedupes, so a job order both filed here AND
     // carrying a line here still joins to exactly one row.
-    const scopeLocationId = await getJobLocationScope(req.user.id);
+    const scopeLocationId = await getJobLocationScope(req.user.id, ROUTE);
     const visibleJoin = scopeLocationId
       ? `JOIN (SELECT id FROM job_orders WHERE job_location_id = ?
                UNION
@@ -320,7 +320,7 @@ router.get('/:id', requireAuth, requireProductionView, async (req, res, next) =>
       return res.status(404).json({ error: 'Not found' });
     }
 
-    const scopeLocationId = await getJobLocationScope(req.user.id);
+    const scopeLocationId = await getJobLocationScope(req.user.id, ROUTE);
     if (scopeLocationId && !isJobLocationVisible(jo, scopeLocationId)) {
       const [[lineHere]] = await pool.query(
         'SELECT 1 AS ok FROM job_order_processes WHERE job_order_id = ? AND location_id = ? LIMIT 1',
@@ -871,7 +871,7 @@ router.put('/:id/processes/:processId/complete', requireAuth, requireProductionF
     // job order -- a SIGN job routinely carries a Design or an LFP line. So it is the LINE's
     // location that decides, not the job order's. 403 rather than 404 because the line is visible
     // on the Processes table, just not this user's to record output on.
-    const scopeLocationId = await getJobLocationScope(req.user.id);
+    const scopeLocationId = await getJobLocationScope(req.user.id, ROUTE);
     if (scopeLocationId && Number(proc.effective_location_id) !== Number(scopeLocationId)) {
       return res.status(403).json({ error: 'That process line is worked at another location.' });
     }

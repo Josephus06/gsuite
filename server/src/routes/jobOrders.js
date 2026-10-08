@@ -91,7 +91,7 @@ async function jobOrderEditGrant(userId, jobOrderId) {
       const [[jo]] = await pool.query('SELECT production_stage, job_location_id FROM job_orders WHERE id = ?', [jobOrderId]);
       if (jo?.production_stage !== 'in_process') return null;
       // ...and only their own department's warehouse, the same ceiling the list applies.
-      const scopeLocationId = await getJobLocationScope(userId);
+      const scopeLocationId = await getJobLocationScope(userId, ROUTE);
       if (scopeLocationId && String(scopeLocationId) !== String(jo.job_location_id)) return null;
       return 'production';
     }
@@ -152,7 +152,7 @@ async function listFilter(req) {
   // A production department only sees its own warehouse's job orders. This is a ceiling, not
   // one more scope to choose between: it stacks with the design-queue/artist rules below rather
   // than replacing them, and it goes into `where` so the status tab counts inherit it too.
-  const scopeLocationId = await getJobLocationScope(req.user.id);
+  const scopeLocationId = await getJobLocationScope(req.user.id, ROUTE);
   if (scopeLocationId) { where.push('jo.job_location_id = ?'); params.push(scopeLocationId); }
   if (salesRepId) { where.push('so.sales_rep_id = ?'); params.push(salesRepId); }
   // Scoped on the job order's OWN rep, not the sales order's. The two agree on every one of
@@ -358,7 +358,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     }
     // Same defense in depth as the design-queue check below, for the department's warehouse:
     // 404, so an out-of-department JO reads as one that isn't there.
-    if (!isJobLocationVisible(jo, await getJobLocationScope(req.user.id))) {
+    if (!isJobLocationVisible(jo, await getJobLocationScope(req.user.id, ROUTE))) {
       return res.status(404).json({ error: 'Not found' });
     }
     // Defense in depth -- a Design Supervisor can't view a JO outside their design

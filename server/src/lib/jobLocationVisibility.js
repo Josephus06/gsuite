@@ -26,10 +26,15 @@ const pool = require('../db');
 //   null   -> unrestricted (System Admin; a user with no default branch; or a department with no
 //             job location mapped). Callers must not filter at all in this case.
 //   number -> the locations.id whose job orders this user may see.
-async function getJobLocationScope(userId) {
+//
+// viewAllRoute: the page asking (e.g. '/job-orders'). Holding View All on it lifts the warehouse
+// rule (asked 2026-10-08: Velbeth, Production-SIGNAGE, was given View All on Job Orders and still
+// could not open a DPOD job order) -- the same way View All already does on Non-Standard Job Orders.
+async function getJobLocationScope(userId, viewAllRoute = null) {
   const [[user]] = await pool.query('SELECT account_type, is_account_officer, is_supervisor FROM users WHERE id = ?', [userId]);
   if (!user) return null;
   if (user.account_type === 'System Admin') return null;
+  if (viewAllRoute && await require('../middleware/auth').userCan(userId, viewAllRoute, 'can_view_all')) return null;
   // Sales accounts are scoped by WHOSE job order it is (lib/salesVisibility.js), never by where it
   // is built. A branch rep's job is often made at a Head Office warehouse -- about a fifth of the
   // branch reps' 2026 job orders -- so once a branch department got its own warehouse (2026-10-03,
