@@ -83,7 +83,8 @@ export default function CustomerView() {
     });
     const noRows = { rows: [] };
     Promise.all([
-      api.get(`/customers/${id}`),
+      // with=balance: what the customer owes today (AR Aging's figure), for the header.
+      api.get(`/customers/${id}`, { params: { with: 'balance' } }),
       optional('pipeline', api.get('/crm-pipeline', { params: { customer_id: id } }), []),
       optional('pipeline', api.get('/crm-pipeline/meta/stages'), { openStages: [] }),
       optional('estimates', api.get('/estimates', { params: { customer_id: id, limit: 100 } }), noRows),
@@ -126,16 +127,37 @@ export default function CustomerView() {
           {customer.company_name || ''}
           {!customer.is_active && <span style={{ opacity: 0.7 }}> · Inactive</span>}
         </div>
-        <div className="estimate-detail-grid">
+        {/* The customer record's own details, grouped as the source's customer header (2026-10-08),
+            then the sales picture. BALANCE is what they owe today -- AR Aging's figure. */}
+        <div className="estimate-detail-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
           <div>
+            <div>Customer ID : <span className="hi">{customer.customer_code || '—'}</span></div>
+            <div>Address : <span className="hi">{customer.address || '—'}</span></div>
+            <div>Tax Code : <span className="hi">{customer.tax_code || '—'}</span></div>
             <div>TIN : <span className="hi">{customer.tin || '—'}</span></div>
+            <div style={{ marginTop: 6, fontSize: '1.1em', fontWeight: 700 }}>
+              BALANCE : <span className="hi">{customer.balance === undefined ? '—' : money(customer.balance)}</span>
+            </div>
+          </div>
+          <div>
+            <div>Birthdate : <span className="hi">{customer.birthdate ? formatDate(customer.birthdate) : '—'}</span></div>
+            <div>Gender : <span className="hi">{customer.gender || '—'}</span></div>
+            <div>Contact No : <span className="hi">{customer.contact_no || '—'}</span></div>
+            <div>Customer Type : <span className="hi">{customer.customer_type || '—'}</span></div>
+            <div>Is Charge To Location : <span className="hi">{Number(customer.is_charge_to_location) ? 'Yes' : 'No'}</span></div>
+            <div>Is Charge To : <span className="hi">{Number(customer.is_charge_to) ? 'Yes' : 'No'}</span></div>
+            <div>Include in 90% Commission : <span className="hi">{Number(customer.include_90_commission) ? 'Yes' : 'No'}</span></div>
+          </div>
+          <div>
             <div>Credit Limit : <span className="hi">{money(customer.credit_limit)}</span></div>
+            <div>Credit Term : <span className="hi">{customer.payment_term_name || '—'}</span></div>
+            <div>Bill To Name : <span className="hi">{customer.bill_to_name || '—'}</span></div>
+            <div>Bill To Address : <span className="hi">{customer.bill_to_address || '—'}</span></div>
+            <div>Bill To Contact No : <span className="hi">{customer.bill_to_contact_no || '—'}</span></div>
           </div>
           <div>
             <div>Open Pipeline : <span className="hi">{money(openPipelineValue)}</span></div>
             <div>Open Deals : <span className="hi">{openDeals.length}</span></div>
-          </div>
-          <div>
             <div>Estimates : <span className="hi">{denied.estimates ? '—' : estimates.length}</span></div>
             <div>Sales Orders : <span className="hi">{denied.salesOrders ? '—' : salesOrders.length}</span></div>
           </div>

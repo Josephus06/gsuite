@@ -85,9 +85,18 @@ router.get('/check-name', requireAuth, requirePermission(ROUTE, 'can_view'), asy
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[customer]] = await pool.query(
-      `SELECT c.*, pt.term_name AS payment_term_name FROM customers c
-         LEFT JOIN payment_terms pt ON pt.id = c.payment_term_id WHERE c.id = ?`, [req.params.id]);
+      `SELECT c.*, pt.term_name AS payment_term_name, tx.code AS tax_code FROM customers c
+         LEFT JOIN payment_terms pt ON pt.id = c.payment_term_id
+         LEFT JOIN taxes tx ON tx.id = c.tax_id WHERE c.id = ?`, [req.params.id]);
     if (!customer) return res.status(404).json({ error: 'Not found' });
+    // ?with=balance -- the customer page's BALANCE (2026-10-08): what they owe today, from the same
+    // open items as AR Aging and the Statement of Account. Only on request, because other screens
+    // load a customer through here and should not pay for it.
+    if (req.query.with === 'balance') {
+      const { collectOpenItems } = require('../lib/arAging');
+      const items = await collectOpenItems(new Date().toISOString().slice(0, 10), { customerId: customer.id });
+      customer.balance = Math.round(items.reduce((sum, i) => sum + Number(i.balance || 0), 0) * 100) / 100;
+    }
     const [contacts] = await pool.query('SELECT * FROM customer_contacts WHERE customer_id = ? ORDER BY id', [req.params.id]);
     const [addresses] = await pool.query('SELECT * FROM customer_addresses WHERE customer_id = ? ORDER BY id', [req.params.id]);
     const [relationships] = await pool.query('SELECT * FROM customer_relationships WHERE customer_id = ? ORDER BY id', [req.params.id]);
