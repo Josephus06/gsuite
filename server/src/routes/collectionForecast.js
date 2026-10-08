@@ -14,6 +14,10 @@ const ROUTE = '/treasury/collection-forecast';
 // putting those on a collection worklist would have Treasury chasing invoices their own screen
 // calls Paid In Full. See lib/arAging.js for why that report is right to differ.
 const OPEN_INVOICE = 'si.amount_due > 0 AND si.cancelled_at IS NULL';
+// WHOSE INVOICE: the customer it was billed to (sales_invoices.customer_id) first, and only then
+// its Sales Order's / Estimate's / NSSO's -- an invoice can be billed to someone other than the
+// order's customer (INV-81555..81558: Filinvest, for Mactan Seascapes orders), and AR Aging already
+// files it under the billed-to customer (2026-10-08).
 // What is still to be COLLECTED, on the gross (VAT-inclusive) amount the customer pays: the stored
 // amount_due is Gross - EWT less payments, so the EWT is added back (asked 2026-10-02; the Invoice
 // screen's Amount Due reads the same way).
@@ -65,7 +69,7 @@ router.get('/open', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
        LEFT JOIN sales_orders so ON so.id = si.sales_order_id
        LEFT JOIN estimates e ON e.id = si.estimate_id
        LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-       JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
+       JOIN customers c ON c.id = COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id)
        LEFT JOIN users fu ON fu.id = si.collection_forecast_set_by_user_id`;
     const whereSql = `WHERE ${where.join(' AND ')}`;
 
@@ -108,7 +112,7 @@ router.get('/customers', requireAuth, requirePermission(ROUTE, 'can_view'), asyn
          LEFT JOIN sales_orders so ON so.id = si.sales_order_id
          LEFT JOIN estimates e ON e.id = si.estimate_id
          LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-         JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
+         JOIN customers c ON c.id = COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id)
         WHERE ${OPEN_INVOICE}
         GROUP BY c.id, c.name
         ORDER BY c.name`,
@@ -187,7 +191,7 @@ router.get('/calendar', requireAuth, requirePermission(ROUTE, 'can_view'), async
          LEFT JOIN sales_orders so ON so.id = si.sales_order_id
          LEFT JOIN estimates e ON e.id = si.estimate_id
          LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-         JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
+         JOIN customers c ON c.id = COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id)
         WHERE ${where.join(' AND ')}
         ORDER BY c.name, si.date_due IS NULL, si.date_due, si.id`,
       params,
