@@ -90,13 +90,14 @@ export default function NonStandardSalesOrderWizard() {
     }
   }, [step, header.type, header.nested_sales_order_id]);
 
-  // Sample nests to an approved Estimate: load the picker list, then its job-type lines on step 2.
+  // Sample nests to an Estimate of the chosen customer (asked 2026-10-08: that customer's estimates
+  // only, all of them), then its job-type lines on step 2. No customer yet, no list.
   useEffect(() => {
-    if (nestsToEstimate(header.type)) {
-      api.get('/non-standard-sales-orders/nestable-estimates')
-        .then(({ data }) => setNestableEstimates(data)).catch(() => setNestableEstimates([]));
-    }
-  }, [header.type]);
+    if (!nestsToEstimate(header.type)) return;
+    if (!header.customer_id) { setNestableEstimates([]); return; }
+    api.get('/non-standard-sales-orders/nestable-estimates', { params: { customer_id: header.customer_id } })
+      .then(({ data }) => setNestableEstimates(data)).catch(() => setNestableEstimates([]));
+  }, [header.type, header.customer_id]);
   useEffect(() => {
     if (step === 2 && nestsToEstimate(header.type) && header.nested_estimate_id) {
       api.get(`/non-standard-sales-orders/source-estimate-jobs/${header.nested_estimate_id}`)
@@ -141,7 +142,9 @@ export default function NonStandardSalesOrderWizard() {
   }, [header.customer_id]);
 
   function onCustomerSelect(c) {
-    setH({ customer_id: c?.id || '', contact_person_id: '', contact_email: '', contact_title: '', contact_phone: '' });
+    // A different customer: an Estimate picked for the previous one no longer belongs (its list is that customer's).
+    const changed = String(c?.id || '') !== String(header.customer_id || '');
+    setH({ customer_id: c?.id || '', contact_person_id: '', contact_email: '', contact_title: '', contact_phone: '', ...(changed ? { nested_estimate_id: '' } : {}) });
   }
   function onSalesOrderSelect(so) {
     setH({ nested_sales_order_id: so?.id || '' });

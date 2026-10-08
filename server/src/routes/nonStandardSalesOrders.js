@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { releaseIfDirectToProduction } = require('../lib/directToProduction');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan, isSystemAdmin } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
@@ -183,6 +184,9 @@ router.get('/nestable-estimates', requireAuth, requirePermission(ROUTE, 'can_vie
     const where = [];
     const params = [];
     if (search) { where.push('(e.estimate_no LIKE ? OR c.name LIKE ?)'); params.push(search, search); }
+    // The chosen customer's estimates only, every one of them (asked 2026-10-08): a Sample is
+    // raised for that customer, so another customer's estimate has no business in the list.
+    if (req.query.customer_id) { where.push('e.customer_id = ?'); params.push(Number(req.query.customer_id)); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(
       // No small LIMIT: the picker searches the loaded list client-side (like the customers picker),
@@ -823,9 +827,15 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
     await conn.query('UPDATE non_standard_sales_order_lines SET created_job_order_id = ? WHERE id = ?', [joId, line.id]);
     if (nsso.status === 'pending_for_jo') await conn.query("UPDATE non_standard_sales_orders SET status = 'jo_in_process' WHERE id = ?", [nsso.id]);
     await logAudit(conn, { id: nsso.id, userId: req.user.id, eventType: 'Updated', fieldName: 'created_job_order', newValue: jobOrderNo });
-    // It lands in the design queue with no artist on it -- tell the supervisors, the same
+    // A Direct to Production job type skips Design (lib/directToProduction.js) -- and then there is
+    // no artist to find, so the supervisors are not told.
+    const released = await releaseIfDirectToProduction(conn, {
+      jobOrderId: joId, jobTypeId: line.job_type_id, userId: req.user.id,
+      fromStatus: initialStatus, fromSubStatus: initialSubStatus,
+    });
+    // Otherwise it lands in the design queue with no artist on it -- tell the supervisors, the same
     // hand-off as a standard JO's Forward to Design Supervisor.
-    await notifyDesignSupervisors(conn, {
+    if (!released) await notifyDesignSupervisors(conn, {
       title: `${jobOrderNo} needs an artist assigned`,
       message: line.description ? String(line.description).slice(0, 500) : null,
       relatedType: 'JobOrder', relatedId: joId, excludeUserId: req.user.id,
