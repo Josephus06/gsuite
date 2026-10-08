@@ -7,8 +7,9 @@ import EntityPicker from '../components/EntityPicker';
 // Edit a Sales Order -- System Admin only (PUT /sales-orders/:id). Header details and every line:
 // description, qty, price, Disc Amt PER PIECE (Disc Price/Unit = Price/Unit - Disc Amt, Net of Tax =
 // Qty x Disc Price/Unit -- the estimate's rule), tax code, sizes, delivery date/time, remarks.
-// The server recomputes every amount; this only previews them. The customer can be changed until the
-// SO has an invoice or delivery ticket (customer_locked); the contact follows the customer.
+// The server recomputes every amount; this only previews them. The customer can be changed at any
+// status (2026-10-08); the contact follows the customer, and so do the order's invoices and delivery
+// tickets -- payments already applied stay with the old customer, which the screen says.
 const money = (v) => Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const day = (v) => (v ? String(v).slice(0, 10) : '');
 
@@ -119,6 +120,13 @@ export default function SalesOrderEdit() {
                     placeholder="--Select--" onSelect={pickCustomer} />
                 )}
               {String(head.customer_id) !== String(so.customer_id) && <div className="muted" style={{ fontSize: 12 }}>Changed from {so.customer_name}. Blanket PO will be cleared.</div>}
+              {String(head.customer_id) !== String(so.customer_id) && (so.billed_invoices > 0 || so.billed_tickets > 0) && (
+                <div style={{ fontSize: 12, color: '#92400e', marginTop: 4 }}>
+                  {[so.billed_invoices ? `${so.billed_invoices} invoice(s)` : '', so.billed_tickets ? `${so.billed_tickets} delivery ticket(s)` : ''].filter(Boolean).join(' and ')}
+                  {' '}of this Sales Order will show under the new customer.
+                  {so.applied_payments > 0 && ` ${so.applied_payments} customer payment(s) already applied to them stay under ${so.customer_name}.`}
+                </div>
+              )}
             </div>
             <div className="field">
               <label>Contact Person</label>

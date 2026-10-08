@@ -143,12 +143,20 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
 
-    // Whether the Edit screen may offer a different customer (see PUT /:id).
+    // The customer can be changed at any status (PUT /:id). What already hangs off the order is
+    // counted so the Edit screen can say what the change moves -- invoices and delivery tickets follow
+    // the new customer -- and what it does not: payments already applied stay with the old one.
     const [[billed]] = await pool.query(
-      `SELECT (SELECT COUNT(*) FROM sales_invoices WHERE sales_order_id = ?) + (SELECT COUNT(*) FROM delivery_tickets WHERE sales_order_id = ?) AS n`,
-      [so.id, so.id],
+      `SELECT (SELECT COUNT(*) FROM sales_invoices WHERE sales_order_id = ? AND status <> 'cancelled') AS invoices,
+              (SELECT COUNT(*) FROM delivery_tickets WHERE sales_order_id = ? AND status <> 'void') AS tickets,
+              (SELECT COUNT(DISTINCT cpl.customer_payment_id) FROM customer_payment_lines cpl
+                 JOIN sales_invoices si ON si.id = cpl.sales_invoice_id WHERE si.sales_order_id = ?) AS payments`,
+      [so.id, so.id, so.id],
     );
-    res.json({ ...so, lines, customer_locked: Number(billed.n) > 0 });
+    res.json({
+      ...so, lines, customer_locked: false,
+      billed_invoices: Number(billed.invoices), billed_tickets: Number(billed.tickets), applied_payments: Number(billed.payments),
+    });
   } catch (err) {
     next(err);
   }
@@ -362,22 +370,17 @@ router.put('/:id', requireAuth, async (req, res, next) => {
     const [taxRows] = taxIds.length ? await conn.query('SELECT id, rate FROM taxes WHERE id IN (?)', [taxIds]) : [[]];
     const rate = new Map(taxRows.map((t) => [Number(t.id), Number(t.rate)]));
 
-    // Customer change (asked 2026-10-07). Allowed only while nothing has been billed or delivered:
-    // invoices and delivery tickets read their customer through the SO, so once one exists the
-    // customer is fixed. The contact, its details and the Blanket PO belong to the customer, so
-    // they move with it: a contact from the old customer is refused, and the Blanket PO is cleared.
+    // Customer change (asked 2026-10-07), at ANY status since 2026-10-08. Invoices and delivery tickets
+    // raised from the SO read their customer through it, so they move with it; an invoice carrying its
+    // own copy of the old customer is moved too, below. Customer payments already applied stay with
+    // the customer who paid -- the edit screen warns about that. The contact, its details and the
+    // Blanket PO belong to the customer, so they move with it: a contact from the old customer is
+    // refused, and the Blanket PO is cleared.
     const newCustomerId = b.customer_id === undefined || b.customer_id === '' ? null : Number(b.customer_id);
     const customerChanged = newCustomerId != null && newCustomerId !== Number(so.customer_id);
     if (customerChanged) {
       const [[cust]] = await conn.query('SELECT id FROM customers WHERE id = ?', [newCustomerId]);
       if (!cust) return res.status(400).json({ error: 'Customer not found.' });
-      const [[used]] = await conn.query(
-        `SELECT (SELECT COUNT(*) FROM sales_invoices WHERE sales_order_id = ?) AS inv,
-                (SELECT COUNT(*) FROM delivery_tickets WHERE sales_order_id = ?) AS dt`, [so.id, so.id],
-      );
-      if (used.inv || used.dt) {
-        return res.status(409).json({ error: 'The customer cannot be changed: this Sales Order already has invoices or delivery tickets.' });
-      }
     }
     const customerId = customerChanged ? newCustomerId : so.customer_id;
     const contactId = b.contact_person_id === undefined ? so.contact_person_id : blank(b.contact_person_id);
@@ -389,6 +392,11 @@ router.put('/:id', requireAuth, async (req, res, next) => {
     await conn.beginTransaction();
     if (customerChanged) {
       await conn.query('UPDATE sales_orders SET customer_id = ?, blanket_po_id = NULL WHERE id = ?', [customerId, so.id]);
+      // An invoice of this SO that stores the old customer itself (one first raised from the estimate)
+      // follows the SO too, so the order's billing never splits across two customers.
+      const [movedInv] = await conn.query(
+        'UPDATE sales_invoices SET customer_id = ? WHERE sales_order_id = ? AND customer_id = ?', [customerId, so.id, so.customer_id]);
+      if (movedInv.affectedRows) await soAudit(conn, so.id, req.user.id, 'invoices moved to new customer', null, String(movedInv.affectedRows));
       const [names] = await conn.query('SELECT id, name FROM customers WHERE id IN (?)', [[so.customer_id || 0, customerId]]);
       const nameOf = (cid) => names.find((n) => Number(n.id) === Number(cid))?.name ?? cid;
       await soAudit(conn, so.id, req.user.id, 'customer', nameOf(so.customer_id), nameOf(customerId));
