@@ -169,6 +169,27 @@ export default function NotificationBell() {
     }
   }
 
+  // Deleting is for good, unlike Mark all read -- so Clear all asks first; a single delete does not.
+  async function deleteNotification(n) {
+    try {
+      await api.delete(`/notifications/${n.id}`);
+      setNotifications((prev) => prev.filter((x) => x.id !== n.id));
+      if (!n.is_read) setUnreadCount((c) => Math.max(0, c - 1));
+    } catch {
+      // Non-critical.
+    }
+  }
+  async function clearAll() {
+    if (!window.confirm('Delete all your notifications?')) return;
+    try {
+      await api.delete('/notifications');
+      setNotifications([]);
+      setUnreadCount(0);
+    } catch {
+      // Non-critical.
+    }
+  }
+
   function dismissToast(id) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }
@@ -239,6 +260,9 @@ export default function NotificationBell() {
                 {unreadCount > 0 && (
                   <button type="button" className="btn btn-sm" onClick={markAllRead}>Mark all read</button>
                 )}
+                {notifications.length > 0 && (
+                  <button type="button" className="btn btn-sm btn-danger" onClick={clearAll} title="Delete all your notifications">Clear all</button>
+                )}
               </div>
             </div>
             {voiceNote && (
@@ -263,9 +287,17 @@ export default function NotificationBell() {
                   background: n.is_read ? 'transparent' : 'var(--panel-2, #f3f4f6)',
                 }}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
                   <div style={{ fontSize: 13, fontWeight: n.is_read ? 400 : 600 }}>{n.title}</div>
-                  <div className="muted" style={{ fontSize: 11 }}>{notificationTypeLabel(n.type)}</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                    <div className="muted" style={{ fontSize: 11 }}>{notificationTypeLabel(n.type)}</div>
+                    {/* Its own click, so deleting does not also open the notification. */}
+                    <button type="button" title="Delete this notification" aria-label="Delete notification"
+                      onClick={(e) => { e.stopPropagation(); deleteNotification(n); }}
+                      style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--danger, #e05252)', fontSize: 14, lineHeight: 1, padding: '0 2px' }}>
+                      🗑
+                    </button>
+                  </div>
                 </div>
                 {n.message && <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{n.message}</div>}
                 <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{formatTime(n.created_at)}</div>

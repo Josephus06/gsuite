@@ -93,4 +93,24 @@ router.put('/read-all', requireAuth, async (req, res, next) => {
   }
 });
 
+// Delete one, or clear them all (asked 2026-10-08). Own notifications only -- the user_id in the
+// WHERE is what stops anyone deleting somebody else's by id.
+router.delete('/:id', requireAuth, async (req, res, next) => {
+  try {
+    await pool.query('DELETE FROM notifications WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/', requireAuth, async (req, res, next) => {
+  try {
+    const [r] = await pool.query('DELETE FROM notifications WHERE user_id = ?', [req.user.id]);
+    res.json({ ok: true, deleted: r.affectedRows });
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
