@@ -72,7 +72,8 @@ export default function RmaPrint() {
           html, body, #root, .rma { background: #fff !important; }
           .rma { padding: 0; }
           .rma-no-print { display: none !important; }
-          .rma-sheet { box-shadow: none; margin: 0; }
+          /* Ends where its content does: a full 297mm plus rounding spills a blank second page. */
+          .rma-sheet { box-shadow: none; margin: 0; min-height: 0; }
           @page { size: A4 portrait; margin: 0; }
         }
       `}</style>

@@ -116,8 +116,13 @@ export default function JobOrderPrint() {
           .jo-print { background: none; padding: 0; }
           .jo-no-print { display: none !important; }
           @page { size: A4 portrait; margin: 0; }
-          .jo-sheet { box-shadow: none; margin: 0; page-break-after: always; }
-          .jo-sheet:last-child { page-break-after: auto; }
+          html, body, #root { background: #fff !important; }
+          /* No forced 297mm when printing (asked 2026-10-08): a full A4 height plus the padding and
+             rounding is a hair over one page, so the first sheet spilled onto a blank page and the
+             Ship Confirmations sheet printed on a third. Each sheet now ends where its content does,
+             and the break after it is what starts the next one on a fresh page. */
+          .jo-sheet { box-shadow: none; margin: 0; min-height: 0; box-sizing: border-box; page-break-after: always; break-after: page; }
+          .jo-sheet:last-child { page-break-after: auto; break-after: auto; }
         }
       `}</style>
 
