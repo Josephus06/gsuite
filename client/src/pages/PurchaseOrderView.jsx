@@ -312,7 +312,9 @@ export default function PurchaseOrderView() {
 
       <div className="status-tabs" style={{ marginTop: 20 }}>
         <button className={`status-tab ${tab === 'items' ? 'active' : ''}`} onClick={() => setTab('items')}>Items</button>
-        {po.type !== 'PO2' && po.status === 'approved' && (
+        {/* Any approved status, in either vocabulary -- an imported 'Approved by General Manager' PO
+            (PO-20583) had no Landed Cost tab because only the app's own 'approved' was checked. */}
+        {po.type !== 'PO2' && isApprovedPo(po.status) && (
           <button className={`status-tab ${tab === 'landed' ? 'active' : ''}`} onClick={() => setTab('landed')}>Landed Cost</button>
         )}
         <button className={`status-tab ${tab === 'related' ? 'active' : ''}`} onClick={() => setTab('related')}>Related Records</button>
