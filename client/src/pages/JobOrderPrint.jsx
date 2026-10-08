@@ -123,6 +123,20 @@ export default function JobOrderPrint() {
              and the break after it is what starts the next one on a fresh page. */
           .jo-sheet { box-shadow: none; margin: 0; min-height: 0; box-sizing: border-box; page-break-after: always; break-after: page; }
           .jo-sheet:last-child { page-break-after: auto; break-after: auto; }
+          /* Tighter on paper than on screen (asked 2026-10-08): JO-71588-1-2's first sheet, seven
+             processes, measured ~330mm against A4's 297mm, so its last lines and the "FOR LOGISTICS"
+             band spilled onto a second sheet and the Ship Confirmations sheet printed on a third.
+             Smaller margins, line height and row spacing save ~50mm; a job with many more processes
+             still runs on to a second page, as it must. */
+          .jo-sheet { padding: 9mm 14mm; line-height: 1.32; }
+          .jo-head { margin-bottom: 8px; }
+          .jo-title { margin: 2px 0 8px; }
+          .jo-band { margin: 10px 0 4px; }
+          .jo-table th { padding: 4px 6px; }
+          .jo-table td { padding: 3px 6px; }
+          .jo-table tr.jo-sub td { padding-bottom: 5px; }
+          /* A process row is never split from its Sales Remarks / Memo row across two pages. */
+          .jo-table tr { break-inside: avoid; }
         }
       `}</style>
 
