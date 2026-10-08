@@ -16,6 +16,7 @@ import { displayDateTime } from '../utils/dates';
 import ButtonMenu from '../components/ButtonMenu';
 import { CustomerLink } from '../components/PartyLink';
 import JoGpComputation from '../components/JoGpComputation';
+import RmaDetailsTab, { isRmaJobOrder } from '../components/RmaDetailsTab';
 
 // Deliberately minimal Job Order detail -- mirrors the real system's layout (banner +
 // grouped info fields + Processes/RWIP JO/Sub Con/Related Records/System Info tabs +
@@ -511,6 +512,8 @@ export default function JobOrderView() {
 
       <div className="status-tabs" style={{ marginTop: 20 }}>
         <button className={`status-tab ${tab === 'processes' ? 'active' : ''}`} onClick={() => setTab('processes')}>Processes</button>
+        {/* RWIP / RFQC / NSSO RMA only: why it is being redone, and what is being done about it. */}
+        {isRmaJobOrder(jo) && <button className={`status-tab ${tab === 'rma' ? 'active' : ''}`} onClick={() => setTab('rma')}>RMA Additional Details</button>}
         <button className={`status-tab ${tab === 'gp' ? 'active' : ''}`} onClick={() => setTab('gp')}>GP Computation</button>
         <button className={`status-tab ${tab === 'rwip' ? 'active' : ''}`} onClick={() => setTab('rwip')}>RWIP JO</button>
         <button className={`status-tab ${tab === 'subcon' ? 'active' : ''}`} onClick={() => setTab('subcon')}>Sub Con</button>
@@ -523,6 +526,7 @@ export default function JobOrderView() {
 
       {/* How the footer's Estimated GP Rate / Amount are worked out (asked 2026-10-08). */}
       {tab === 'gp' && <JoGpComputation jo={jo} processes={processes} />}
+      {tab === 'rma' && isRmaJobOrder(jo) && <RmaDetailsTab jobOrderId={jo.id} />}
 
       {tab === 'processes' && (
         <div className="card">

@@ -18,6 +18,7 @@ import { displayDateTime } from '../utils/dates';
 import ButtonMenu from '../components/ButtonMenu';
 import { CustomerLink } from '../components/PartyLink';
 import JoGpComputation from '../components/JoGpComputation';
+import RmaDetailsTab, { isRmaJobOrder } from '../components/RmaDetailsTab';
 
 // Mirrors the real system's "Production > Production" detail screen -- same underlying
 // Job Order as JobOrderView.jsx, but reached once the JO is Released and viewed for
@@ -820,6 +821,8 @@ export default function ProductionJobOrderView() {
 
       <div className="status-tabs" style={{ marginTop: 20 }}>
         <button className={`status-tab ${tab === 'processes' ? 'active' : ''}`} onClick={() => setTab('processes')}>Processes</button>
+        {/* RWIP / RFQC / NSSO RMA only: why it is being redone, and what is being done about it. */}
+        {isRmaJobOrder(jo) && <button className={`status-tab ${tab === 'rma' ? 'active' : ''}`} onClick={() => setTab('rma')}>RMA Additional Details</button>}
         <button className={`status-tab ${tab === 'gp' ? 'active' : ''}`} onClick={() => setTab('gp')}>GP Computation</button>
         <button className={`status-tab ${tab === 'related' ? 'active' : ''}`} onClick={() => setTab('related')}>Related Records</button>
         <button className={`status-tab ${tab === 'prodfiles' ? 'active' : ''}`} onClick={() => setTab('prodfiles')}>Production Attachment</button>
@@ -830,6 +833,7 @@ export default function ProductionJobOrderView() {
 
       {/* How the footer's Estimated GP Rate / Amount are worked out (asked 2026-10-08). */}
       {tab === 'gp' && <JoGpComputation jo={jo} processes={processes} />}
+      {tab === 'rma' && isRmaJobOrder(jo) && <RmaDetailsTab jobOrderId={jo.id} />}
 
       {tab === 'processes' && (
         <div className="card">

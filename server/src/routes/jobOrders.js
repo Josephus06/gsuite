@@ -1455,4 +1455,78 @@ router.get('/:id/par', requireAuth, async (req, res, next) => {
   }
 });
 
+// ---- RMA Additional Details (asked 2026-10-08) ----
+//
+// Reason Code, Reason and Action/s to be taken on a rework job order -- an RWIP, an RFQC, or the job
+// order of an RMA / RMA-Installation NSSO -- shown in their own tab on the Job Order and Production
+// screens, as live does. Entered when the job order is raised (RWIP / NSSO Create JO, or Quality
+// Inspection for an RFQC); after that only a System Admin may correct them.
+async function rmaKind(db, jobOrderId) {
+  const [[jo]] = await db.query(
+    `SELECT jo.id, jo.job_order_no, jo.reason_code_id, jo.reason, jo.action_to_be_taken, r.name AS reason_code_name, n.type AS nsso_type
+       FROM job_orders jo
+       LEFT JOIN reasons r ON r.id = jo.reason_code_id
+       LEFT JOIN non_standard_sales_orders n ON n.id = jo.nsso_id
+      WHERE jo.id = ?`, [jobOrderId]);
+  if (!jo) return null;
+  const no = String(jo.job_order_no || '');
+  jo.kind = no.startsWith('RWIP-') ? 'RWIP' : no.startsWith('RFQC-') ? 'RFQC'
+    : ['rma', 'rma_installation'].includes(jo.nsso_type) ? 'RMA' : null;
+  return jo;
+}
+
+router.get('/:id/rma-details', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await userCan(req.user.id, ROUTE, 'can_view')) && !(await userCan(req.user.id, '/production', 'can_view'))) {
+      return res.status(403).json({ error: 'You do not have permission to view this job order.' });
+    }
+    const jo = await rmaKind(pool, req.params.id);
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    const canEdit = !!jo.kind && (await isSystemAdmin(req.user.id));
+    const [reasons] = canEdit
+      ? await pool.query('SELECT id, name, reason_type FROM reasons WHERE is_active = TRUE ORDER BY name')
+      : [[]];
+    res.json({
+      kind: jo.kind, reason_code_id: jo.reason_code_id, reason_code_name: jo.reason_code_name,
+      reason: jo.reason, action_to_be_taken: jo.action_to_be_taken, can_edit: canEdit, reasons,
+    });
+  } catch (err) { next(err); }
+});
+
+router.put('/:id/rma-details', requireAuth, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!(await isSystemAdmin(req.user.id))) return res.status(403).json({ error: 'Only a System Admin can edit the RMA details.' });
+    const jo = await rmaKind(conn, req.params.id);
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!jo.kind) return res.status(409).json({ error: 'This is not an RWIP, RFQC or RMA job order.' });
+    const reasonCodeId = req.body?.reason_code_id ? Number(req.body.reason_code_id) : null;
+    const reason = String(req.body?.reason || '').trim();
+    const action = String(req.body?.action_to_be_taken || '').trim();
+    // Required, as they are when the job order is raised.
+    const missing = [!reason && 'Reason', !action && 'Action/s to be taken'].filter(Boolean);
+    if (missing.length) return res.status(400).json({ error: `${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} required.` });
+    let codeName = null;
+    if (reasonCodeId) {
+      const [[rc]] = await conn.query('SELECT name FROM reasons WHERE id = ? AND is_active = TRUE', [reasonCodeId]);
+      if (!rc) return res.status(400).json({ error: 'Choose an active Reason Code.' });
+      codeName = rc.name;
+    }
+    await conn.beginTransaction();
+    await conn.query(
+      'UPDATE job_orders SET reason_code_id = ?, reason = ?, action_to_be_taken = ?, updated_at = NOW() WHERE id = ?',
+      [reasonCodeId, reason.slice(0, 500), action.slice(0, 500), jo.id]);
+    for (const [field, before, after] of [
+      ['reason_code', jo.reason_code_name, codeName],
+      ['reason', jo.reason, reason.slice(0, 500)],
+      ['action_to_be_taken', jo.action_to_be_taken, action.slice(0, 500)],
+    ]) {
+      if (String(before ?? '') === String(after ?? '')) continue;
+      await logAudit(conn, { jobOrderId: jo.id, userId: req.user.id, eventType: 'Updated', fieldName: field, oldValue: before, newValue: after });
+    }
+    await conn.commit();
+    res.json({ ok: true });
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
 module.exports = router;
