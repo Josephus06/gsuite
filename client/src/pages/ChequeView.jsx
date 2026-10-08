@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import BillCreditModal from '../components/BillCreditModal';
+import ReversalJournalModal from '../components/ReversalJournalModal';
 import { CustomerLink, SupplierLink } from '../components/PartyLink';
 import { displayDate, displayDateTime } from '../utils/dates';
 
@@ -55,12 +56,12 @@ export default function ChequeView() {
   // a voided cheque's reversal journal is the first thing anyone opens this record to find.
   useEffect(() => { api.get(`/cheques/${id}/related`).then(({ data }) => setRelated(data)).catch(() => setRelated([])); }, [id]);
 
-  async function handleVoid() {
-    if (!confirm('Void this Cheque?')) return;
-    setBusy(true); setError('');
-    try { await api.put(`/cheques/${id}/void`); await load(); }
-    catch (err) { setError(err.response?.data?.error || 'Void failed'); }
-    finally { setBusy(false); }
+  // Void opens the Reversal Journal popup, as live does (asked 2026-10-08): the entry the void will
+  // post, with its date, location and memo to choose. Nothing is voided until its Save.
+  const [showReversal, setShowReversal] = useState(false);
+  function handleVoid() {
+    setError('');
+    setShowReversal(true);
   }
 
   if (loading || !c) return <LoadingSpinner />;
@@ -292,6 +293,19 @@ export default function ChequeView() {
             emptyLabel="No audit history yet."
           />
         </div>
+      )}
+      {showReversal && (
+        <ReversalJournalModal
+          previewPath={`/cheques/${id}/reversal-preview`}
+          voidPath={`/cheques/${id}/void`}
+          docLabel="cheque"
+          onClose={() => setShowReversal(false)}
+          onSaved={async () => {
+            setShowReversal(false);
+            await load();
+            api.get(`/cheques/${id}/related`).then(({ data }) => setRelated(data)).catch(() => {});
+          }}
+        />
       )}
     </div>
   );

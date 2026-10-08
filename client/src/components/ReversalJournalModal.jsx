@@ -17,7 +17,14 @@ function longDate(v) { return v ? displayDate(`${v}T00:00:00`) : ''; }
 // the same code the void posts with. The user picks the reversal date, location and memo; each
 // line's Department is the invoice's own and is shown, not chosen. PUT /sales-invoices/:id/cancel
 // does the rest.
-export default function ReversalJournalModal({ invoiceId, onClose, onSaved }) {
+//
+// Shared with Cheques (2026-10-08): pass previewPath / voidPath (and docLabel) for any document whose
+// server answers the same way -- GET preview { doc_no, doc_date, location, rows[] } and PUT void
+// { reversal_date, location_id, memo }. A row may carry its own department_name (a cheque's lines
+// each have one); otherwise the document's department is shown on every line.
+export default function ReversalJournalModal({ invoiceId, previewPath, voidPath, docLabel = 'invoice', onClose, onSaved }) {
+  const previewUrl = previewPath || `/sales-invoices/${invoiceId}/reversal-preview`;
+  const voidUrl = voidPath || `/sales-invoices/${invoiceId}/cancel`;
   const [preview, setPreview] = useState(null);
   const [date, setDate] = useState(today());
   const [location, setLocation] = useState(null);
@@ -29,14 +36,14 @@ export default function ReversalJournalModal({ invoiceId, onClose, onSaved }) {
   useEffect(() => {
     const pick = (d) => (Array.isArray(d) ? d : (d?.rows || []));
     Promise.all([
-      api.get(`/sales-invoices/${invoiceId}/reversal-preview`),
+      api.get(previewUrl),
       api.get('/lookups/locations'),
     ]).then(([p, l]) => {
       setPreview(p.data);
       setLocation(p.data.location);
       setLocations(pick(l.data));
     }).catch((e) => setError(e.response?.data?.error || 'Could not load the reversal.'));
-  }, [invoiceId]);
+  }, [previewUrl]);
 
   async function save() {
     setError('');
@@ -44,7 +51,7 @@ export default function ReversalJournalModal({ invoiceId, onClose, onSaved }) {
     if (!location) { setError('Location is required.'); return; }
     setSaving(true);
     try {
-      const { data } = await api.put(`/sales-invoices/${invoiceId}/cancel`, {
+      const { data } = await api.put(voidUrl, {
         reversal_date: date, location_id: location.id, memo,
       });
       onSaved(data);
@@ -55,6 +62,8 @@ export default function ReversalJournalModal({ invoiceId, onClose, onSaved }) {
   }
 
   const rows = preview?.rows || [];
+  const docNo = preview?.doc_no || preview?.invoice_no;
+  const docDate = preview?.doc_date || preview?.invoice_date;
   const totalDebit = rows.reduce((s, r) => s + Number(r.debit || 0), 0);
   const totalCredit = rows.reduce((s, r) => s + Number(r.credit || 0), 0);
 
@@ -74,9 +83,9 @@ export default function ReversalJournalModal({ invoiceId, onClose, onSaved }) {
                 <div>
                   <div className="field">
                     <label>Date <span className="req">*</span></label>
-                    <input type="date" value={date} min={String(preview.invoice_date || '').slice(0, 10) || undefined} onChange={(e) => setDate(e.target.value)} />
+                    <input type="date" value={date} min={String(docDate || '').slice(0, 10) || undefined} onChange={(e) => setDate(e.target.value)} />
                   </div>
-                  <div>Reversal # : <span className="hi">{preview.invoice_no}</span></div>
+                  <div>Reversal # : <span className="hi">{docNo}</span></div>
                   <div>Reversal Date : <span className="hi">{longDate(date)}</span></div>
                 </div>
                 <div>
@@ -99,14 +108,15 @@ export default function ReversalJournalModal({ invoiceId, onClose, onSaved }) {
                     <tr><th>Account Code</th><th>Account Title</th><th>Department</th><th>Memo</th><th style={{ textAlign: 'right' }}>Debit</th><th style={{ textAlign: 'right' }}>Credit</th></tr>
                   </thead>
                   <tbody>
-                    {rows.length === 0 && <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>This invoice posted nothing, so there is nothing to reverse.</td></tr>}
+                    {rows.length === 0 && <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>This {docLabel} posted nothing, so there is nothing to reverse.</td></tr>}
                     {rows.map((r, i) => (
                       <tr key={i}>
                         <td>{r.account_code}</td>
                         <td>{r.account_name}</td>
-                        {/* The invoice's own department, on every line. "—" when the invoice has none. */}
-                        <td>{preview.department?.name || '—'}</td>
-                        <td>Voided from {preview.invoice_no}</td>
+                        {/* The line's own department where it has one (a cheque's expense lines), else the
+                            document's, on every line. "—" when there is none. */}
+                        <td>{r.department_name || preview.department?.name || '—'}</td>
+                        <td>Voided from {docNo}</td>
                         <td style={{ textAlign: 'right' }}>{money(r.debit)}</td>
                         <td style={{ textAlign: 'right' }}>{money(r.credit)}</td>
                       </tr>

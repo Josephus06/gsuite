@@ -6,7 +6,7 @@ const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeChequeGl, chequeCreditsByCheque } = require('../lib/glImpact');
-const { postReversalJournal } = require('../lib/reversalJournal');
+const { postReversalJournal, mirror } = require('../lib/reversalJournal');
 const { sendXlsx, day } = require('../lib/xlsxExport');
 
 const router = express.Router();
@@ -508,6 +508,46 @@ router.put('/:id/date-released', requireAuth, requirePermission(ROUTE, 'can_edit
   } catch (err) { next(err); } finally { conn.release(); }
 });
 
+// The cheque's GL Impact as its void will post it -- the same rows the void reverses below.
+async function chequeGlRows(db, chequeId) {
+  const [[fullCheque]] = await db.query(
+    `SELECT c.*, coa.account_code AS bank_code, coa.account_name AS bank_name, loc.location_name AS office_location_name
+       FROM cheques c
+       LEFT JOIN chart_of_accounts coa ON coa.id = c.account_id
+       LEFT JOIN locations loc ON loc.id = c.office_location_id
+      WHERE c.id = ?`, [chequeId]);
+  if (!fullCheque) return null;
+  const [chequeLines] = await db.query(
+    `SELECT cl.amount, cl.department_id, coa.account_code, coa.account_name
+       FROM cheque_lines cl LEFT JOIN chart_of_accounts coa ON coa.id = cl.account_id
+      WHERE cl.cheque_id = ? ORDER BY cl.line_no`, [chequeId]);
+  const credits = await chequeCredits(db, chequeId);
+  return { fullCheque, credits, glRows: await computeChequeGl(fullCheque, chequeLines, credits) };
+}
+
+// The Reversal Journal popup shown before a cheque is voided (asked 2026-10-08, as live shows it):
+// the entry the void will post -- the cheque's GL Impact with debits and credits swapped, by the
+// same mirror() the void posts with -- and the cheque's location to default the picker to.
+router.get('/:id/reversal-preview', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const gl = await chequeGlRows(pool, req.params.id);
+    if (!gl) return res.status(404).json({ error: 'Not found' });
+    const rows = mirror(gl.glRows);
+    const deptIds = [...new Set(rows.map((r) => r.department_id).filter(Boolean))];
+    const [depts] = deptIds.length ? await pool.query('SELECT id, name FROM departments WHERE id IN (?)', [deptIds]) : [[]];
+    const deptName = new Map(depts.map((d) => [Number(d.id), d.name]));
+    const c = gl.fullCheque;
+    res.json({
+      doc_no: c.cheque_no,
+      doc_date: c.date_created,
+      location: c.office_location_id ? { id: c.office_location_id, location_name: c.office_location_name } : null,
+      rows: rows.map((r) => ({ ...r, department_name: r.department_id ? deptName.get(Number(r.department_id)) || null : null })),
+    });
+  } catch (err) { next(err); }
+});
+
+// Void: from the Reversal Journal popup, which sends the reversal's date, location and memo
+// (reversal_date / location_id / memo). Without them it behaves as it always has.
 router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
@@ -515,27 +555,32 @@ router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async
     if (!c) return res.status(404).json({ error: 'Not found' });
     if (c.status === 'void') return res.status(409).json({ error: 'Already voided.' });
     await assertPeriodOpen(c.date_created, 'other_gl', conn);
+    // The reversal's own date: never before the cheque's, and in an open period.
+    const body = req.body || {};
+    const reversalDateIn = /^\d{4}-\d{2}-\d{2}$/.test(String(body.reversal_date || '')) ? String(body.reversal_date) : null;
+    if (reversalDateIn) {
+      if (reversalDateIn < String(c.date_created).slice(0, 10)) {
+        return res.status(400).json({ error: 'The reversal date cannot be before the cheque date.' });
+      }
+      await assertPeriodOpen(reversalDateIn, 'other_gl', conn);
+    }
     await conn.beginTransaction();
     await conn.query("UPDATE cheques SET status = 'void', voided_at = NOW(), voided_by_user_id = ? WHERE id = ?", [req.user.id, req.params.id]);
     // The reversal the imported cheques always had, now written by the app that voids them rather
     // than only ever arriving from the live system. A void cheque keeps posting its own entry
     // (lib/glImpact.js) and this cancels it.
-    const [[fullCheque]] = await conn.query(
-      `SELECT c.*, coa.account_code AS bank_code, coa.account_name AS bank_name FROM cheques c
-       LEFT JOIN chart_of_accounts coa ON coa.id = c.account_id WHERE c.id = ?`, [req.params.id]);
-    const [chequeLines] = await conn.query(
-      `SELECT cl.amount, cl.department_id, coa.account_code, coa.account_name
-         FROM cheque_lines cl LEFT JOIN chart_of_accounts coa ON coa.id = cl.account_id
-        WHERE cl.cheque_id = ? ORDER BY cl.line_no`, [req.params.id]);
     // Its bill credits are reversed with the rest of its entry and go back to the vendor. The
-    // rows stay, so the voided cheque's GL Impact still shows what it had used.
-    const credits = await chequeCredits(conn, req.params.id);
+    // rows stay, so the voided cheque's GL Impact still shows what it had used. Read BEFORE the
+    // credits are given back, so the reversal mirrors exactly what the cheque posted.
+    const { fullCheque, credits, glRows } = await chequeGlRows(conn, req.params.id);
     for (const cr of credits) { await conn.query(`UPDATE bill_credits SET applied_amount = GREATEST(applied_amount - ?, 0), ${CREDIT_STATUS_SQL} WHERE id = ?`, [Number(cr.applied_amount), cr.bill_credit_id]); await syncChequeForCredit(conn, cr.bill_credit_id); }
     const reversal = await postReversalJournal(conn, {
       sourceType: 'cheque', sourceId: Number(req.params.id), sourceNo: fullCheque.cheque_no,
-      glRows: await computeChequeGl(fullCheque, chequeLines, credits),
+      glRows,
       documentDate: fullCheque.date_created, voidedAt: new Date(),
-      reason: req.body?.reason || null, userId: req.user.id, locationId: fullCheque.office_location_id || null,
+      reason: String(body.memo || body.reason || '').trim() || null, userId: req.user.id,
+      locationId: body.location_id ? Number(body.location_id) : (fullCheque.office_location_id || null),
+      date: reversalDateIn,
     });
     await logAudit(conn, { chequeId: req.params.id, userId: req.user.id, eventType: 'Cancelled', fieldName: 'status', oldValue: c.status, newValue: 'void' });
     if (reversal) {
