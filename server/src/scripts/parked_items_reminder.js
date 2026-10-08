@@ -13,9 +13,11 @@ const { parkedReport } = require('../lib/parkedBankItems');
 // When the document turns up and the statement line is matched to it, the journal is voided and the
 // item leaves by itself. Nothing here needs chasing except what stays.
 //
-// WHO. Whoever can approve a bank reconciliation -- they are the ones who sign these off and can
-// act on it. Not everyone who can read the module: a notification that is not yours to act on
-// trains people to ignore notifications.
+// WHO. Accounting users who can approve a bank reconciliation -- they are the ones who sign these
+// off and can act on it. Not everyone who can read the module: a notification that is not yours to
+// act on trains people to ignore notifications. And only the Accounting department (asked
+// 2026-10-08): the General Manager and System Admins hold every permission, so the permission
+// alone was sending it to them too.
 //
 // ONCE A DAY, NOT ONCE A RUN. Re-notifying the same person about the same unchanged balance every
 // night is how a reminder becomes noise. One unread notification per person per day is enough, and
@@ -24,14 +26,18 @@ const { parkedReport } = require('../lib/parkedBankItems');
 const NOTIFICATION_TYPE = 'parked_bank_items';
 const RECON_ROUTE = '/accounting/bank-reconciliation';
 
+const ACCOUNTING_DEPARTMENT = 'Accounting';
+
 async function approvers(q = pool) {
   const [rows] = await q.query(
     `SELECT u.id, u.display_name
        FROM user_page_permissions upp
        JOIN pages p ON p.id = upp.page_id
        JOIN users u ON u.id = upp.user_id
-      WHERE p.route = ? AND upp.can_approve = 1 AND u.is_active = 1`,
-    [RECON_ROUTE]);
+       JOIN employees e ON e.id = u.employee_id
+       JOIN departments d ON d.id = e.department_id
+      WHERE p.route = ? AND upp.can_approve = 1 AND u.is_active = 1 AND d.name = ?`,
+    [RECON_ROUTE, ACCOUNTING_DEPARTMENT]);
   return rows;
 }
 
@@ -72,7 +78,7 @@ async function sendParkedItemReminders() {
     return {
       notified: 0,
       items: report.total_items,
-      reason: `nobody holds can_approve on ${RECON_ROUTE}, so there is nobody to tell`,
+      reason: `nobody in the ${ACCOUNTING_DEPARTMENT} department holds can_approve on ${RECON_ROUTE}, so there is nobody to tell`,
     };
   }
 
