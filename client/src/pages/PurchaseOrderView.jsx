@@ -47,7 +47,13 @@ function statusLabel(po) {
     if (po.receipt_status === 'fully_received') {
       return po.bill_status === 'fully_billed' ? 'Billed' : 'Pending Billing';
     }
-    return po.approved_by_gm_user_id ? 'Approved by General Manager' : 'Approved by Supervisor';
+    // Who approved: a GM approval here, or the source's own label -- an imported PO reads 'Approved by
+    // General Manager' with no approver id, and read "Approved by Supervisor" (PO-20380, 2026-10-08).
+    const byGm = po.approved_by_gm_user_id || /general.?manager|\bgm\b/i.test(String(po.status || ''));
+    // Plus where it is now, the same stage the list files it under -- the list said Pending Receipt
+    // while this said only who approved it.
+    const stage = po.receipt_status === 'partially_received' ? 'Partially Received' : 'Pending Receipt';
+    return `${byGm ? 'Approved by General Manager' : 'Approved by Supervisor'} · ${stage}`;
   }
   // The source's settled states say more than receipt_status ever will for an imported PO, so they
   // are shown as they are -- and they are now what the LIST says too.
