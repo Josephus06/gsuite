@@ -437,7 +437,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     const [[estimate]] = await pool.query(
       `SELECT e.*, c.name AS customer_name, cc.contact_name,
               sd.name AS sales_division_name, loc.location_name AS office_location_name,
-              bp.po_number AS blanket_po_no, so.sales_order_no,
+              bp.po_number AS blanket_po_no, so.sales_order_no, so.id AS linked_sales_order_id,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               CONCAT(pb.first_name, ' ', pb.last_name) AS prepared_by_name,
               CONCAT(ap.first_name, ' ', ap.last_name) AS approved_by_name
@@ -450,11 +450,18 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
        LEFT JOIN employees sr ON sr.id = e.sales_rep_id
        LEFT JOIN employees pb ON pb.id = e.prepared_by_id
        LEFT JOIN employees ap ON ap.id = e.approved_by_id
-       LEFT JOIN sales_orders so ON so.id = e.sales_order_id
+       -- The estimate's own sales_order_id, or -- for the ~70,800 migrated estimates whose order
+       -- points at them but which were never pointed back (2026-10-08, EST-107678 / SO-71152) --
+       -- the order that names this estimate: the latest one not cancelled, else the latest.
+       LEFT JOIN sales_orders so ON so.id = COALESCE(e.sales_order_id,
+         (SELECT so2.id FROM sales_orders so2 WHERE so2.estimate_id = e.id
+           ORDER BY (so2.status = 'cancelled'), so2.id DESC LIMIT 1))
        WHERE e.id = ?`,
       [req.params.id]
     );
     if (!estimate) return res.status(404).json({ error: 'Not found' });
+    if (!estimate.sales_order_id && estimate.linked_sales_order_id) estimate.sales_order_id = estimate.linked_sales_order_id;
+    delete estimate.linked_sales_order_id;
     // Defense in depth -- a scoped user (Account Officer/Supervisor) can't view someone
     // else's estimate just by guessing/pasting its URL, even though the list already
     // filters it out.
