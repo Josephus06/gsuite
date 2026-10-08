@@ -133,7 +133,11 @@ export default function StatementOfAccount() {
             <h2 style={{ textAlign: 'center', margin: '8px 0 12px' }}>Statement of Account</h2>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
               <div><strong>{soa.party.name}</strong>{soa.party.address ? <div>{soa.party.address}</div> : null}</div>
-              <div>Statement Date: <strong>{displayDate(soa.as_of)}</strong></div>
+              {/* The total owed sits under the date, so the first thing the reader sees is what to pay. */}
+              <div style={{ textAlign: 'right' }}>
+                <div>Statement Date: <strong>{displayDate(soa.as_of)}</strong></div>
+                <div>Amount Due: <strong>{money(soa.aging.total)}</strong></div>
+              </div>
             </div>
           </div>
 
