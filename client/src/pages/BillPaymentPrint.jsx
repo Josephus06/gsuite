@@ -109,8 +109,10 @@ export default function BillPaymentPrint({ kind = 'bill-payment' }) {
         .bpp-table th, .bpp-table td { border: 1px solid #cbd5e1; padding: 4px 3px; font-weight: 400; background: none; white-space: normal; overflow-wrap: anywhere; }
         .bpp-table th { color: #334155; text-align: left; }
         .bpp-num { text-align: right !important; }
-        .bpp-total { margin-top: auto; text-align: right; padding: 4mm 18mm 8mm 0; }
-        .bpp-sign { display: flex; justify-content: space-between; gap: 6mm; padding: 0 4mm 6mm; }
+        /* The total sits directly under the lines, flush with the table's right edge; the sign-off
+           block keeps to the foot of the page but clear of the edge (asked 2026-10-08). */
+        .bpp-total { margin-top: 2mm; text-align: right; padding: 0 3px; font-weight: 600; }
+        .bpp-sign { display: flex; justify-content: space-between; gap: 6mm; padding: 0 4mm 18mm; margin-top: auto; }
         .bpp-sign div { flex: 1; text-align: center; }
         .bpp-sign .bpp-line { margin-top: 12mm; border-top: 1px dashed #64748b; }
         .bpp-void { position: absolute; top: 40%; left: 0; right: 0; text-align: center; font-size: 64pt; font-weight: 800;
