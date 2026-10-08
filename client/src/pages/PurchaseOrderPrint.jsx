@@ -44,7 +44,7 @@ function Row({ label, children }) {
 function Signature({ image, name, role }) {
   return (
     <div className="po-sig">
-      <div className="po-sig-ink">{image ? <img src={image} alt="" /> : null}</div>
+      <div className="po-sig-ink sig-ink" style={{ '--sig-h': '16mm' }}>{image ? <img src={image} alt="" /> : null}</div>
       <div className="po-sig-name">{name || ''}</div>
       <div className="po-line">{role}</div>
     </div>
@@ -128,8 +128,7 @@ export default function PurchaseOrderPrint() {
         .po-sign { display: flex; justify-content: space-between; gap: 14px; margin-top: 16mm; break-inside: avoid; }
         .po-sig { flex: 1; min-width: 0; }
         /* Room for a drawn signature, kept even when there is none so the three lines stay level. */
-        .po-sig-ink { height: 16mm; display: flex; align-items: flex-end; justify-content: center; }
-        .po-sig-ink img { max-height: 16mm; max-width: 100%; object-fit: contain; }
+        /* Drawn twice its box's height and over the name: the shared .sig-ink (index.css). */
         .po-sig-name { text-align: center; font-weight: 600; min-height: 1.5em; }
         .po-sign .po-line { border-top: 1px solid #94a3b8; padding-top: 4px; font-size: 8pt; color: #64748b; text-align: center; }
         @media print {

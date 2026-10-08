@@ -172,13 +172,13 @@ export default function EstimatePrint() {
         <div className="print-signatures">
           <div>
             <div className="print-sig-label" style={estimate.prepared_signature ? { marginBottom: 0 } : undefined}>Prepared By:</div>
-            {estimate.prepared_signature && <img src={estimate.prepared_signature} alt="" style={{ display: 'block', height: 32, maxWidth: '100%', objectFit: 'contain' }} />}
+            {estimate.prepared_signature && <div className="sig-ink" style={{ '--sig-h': '32px' }}><img src={estimate.prepared_signature} alt="" /></div>}
             <div className="print-sig-name">{estimate.prepared_by_name}</div>
             <div className="print-sig-line">___________________</div>
           </div>
           <div>
             <div className="print-sig-label" style={estimate.approved_signature ? { marginBottom: 0 } : undefined}>Approved By:</div>
-            {estimate.approved_signature && <img src={estimate.approved_signature} alt="" style={{ display: 'block', height: 32, maxWidth: '100%', objectFit: 'contain' }} />}
+            {estimate.approved_signature && <div className="sig-ink" style={{ '--sig-h': '32px' }}><img src={estimate.approved_signature} alt="" /></div>}
             <div className="print-sig-name">{estimate.approved_by_name}</div>
             <div className="print-sig-line">___________________</div>
           </div>

@@ -37,8 +37,8 @@ export default function FundTransferPrint() {
   const sign = (label, i) => (
     <div key={label}>
       <div>{label}</div>
-      <div style={{ height: '8mm', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-        {i === 0 && ft.prepared_signature ? <img src={ft.prepared_signature} alt="" style={{ maxHeight: '8mm' }} /> : null}
+      <div className="sig-ink" style={{ '--sig-h': '8mm' }}>
+        {i === 0 && ft.prepared_signature ? <img src={ft.prepared_signature} alt="" /> : null}
       </div>
       <div className="ftp-line" />
       <div style={{ minHeight: '1.4em' }}>{i === 0 ? (ft.prepared_by_name || '') : ''}</div>

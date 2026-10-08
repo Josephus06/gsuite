@@ -44,7 +44,7 @@ function Field({ label, value, width }) {
 function Signature({ image, name, role }) {
   return (
     <div className="rf-sign">
-      <div className="rf-sign-ink">
+      <div className="rf-sign-ink sig-ink" style={{ '--sig-h': '38px' }}>
         {image ? <img src={image} alt="" /> : null}
       </div>
       <div className="rf-sign-name">{name || ''}</div>
@@ -164,8 +164,7 @@ export default function FormPrint() {
         .rf-sign { flex: 1; text-align: center; }
         /* A fixed height whether or not there is ink, so the three lines stay level when only
            some of the signers have a signature on file. */
-        .rf-sign-ink { height: 38px; display: flex; align-items: flex-end; justify-content: center; }
-        .rf-sign-ink img { max-height: 38px; max-width: 100%; object-fit: contain; }
+        /* Drawn twice its box's height and over the name: the shared .sig-ink (index.css). */
         .rf-sign-name { font-size: 11px; min-height: 15px; }
         .rf-sign-rule { border-top: 1px solid #333; margin-top: 2px; }
         .rf-sign-role { font-size: 10px; text-transform: uppercase; color: #444; margin-top: 3px; }

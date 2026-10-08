@@ -215,8 +215,8 @@ export default function BillPaymentPrint({ kind = 'bill-payment' }) {
             {['Prepared By:', 'Checked By:', 'Approved By:', 'Received BY:'].map((r, i) => (
               <div key={r}>
                 <div>{r}</div>
-                <div style={{ height: '8mm', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-                  {i === 0 && bp.prepared_signature ? <img src={bp.prepared_signature} alt="" style={{ maxHeight: '8mm' }} /> : null}
+                <div className="sig-ink" style={{ '--sig-h': '8mm' }}>
+                  {i === 0 && bp.prepared_signature ? <img src={bp.prepared_signature} alt="" /> : null}
                 </div>
                 <div className="bpp-line" style={{ marginTop: '2mm' }} />
                 <div style={{ minHeight: '1.4em' }}>{i === 0 ? (bp.created_by_name || '') : ''}</div>
