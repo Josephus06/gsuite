@@ -1556,13 +1556,16 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .print-sig-line { border-top: 1px solid #999; padding-top: 4px; color: #777; }
 /* A drawn signature on any printout, twice the height of the space it is given (asked 2026-10-08),
    hanging down over the name and rule beneath it the way a hand signature crosses its line. The
-   box keeps its original height (--sig-h), so nothing else on the page moves; the image starts at
-   the top of that box and grows DOWN only, never up into the "Prepared By:" label. multiply keeps a
+   box keeps its original height (--sig-h), so nothing else on the page moves; the image starts a
+   little ABOVE that box (0.4 of its height -- the label or table above every printout's signatures
+   is further away than that) so it sits just over the name rather than across it. multiply keeps a
    white-backed (JPEG) signature from blanking out the name it lies on. */
 .sig-ink { position: relative; height: var(--sig-h); }
 .sig-ink > img {
   position: absolute; left: 50%; transform: translateX(-50%);
-  top: 0; height: calc(var(--sig-h) * 2);
+  /* Raised a little (asked 2026-10-08) so the signature sits just above the name instead of
+     across it; its foot still touches the name line, as ink would. */
+  top: calc(var(--sig-h) * -0.4); height: calc(var(--sig-h) * 2);
   width: auto; max-width: 100%; object-fit: contain;
   mix-blend-mode: multiply; z-index: 1; pointer-events: none;
 }
