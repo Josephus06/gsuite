@@ -27,7 +27,7 @@ async function loadRows(req) {
   const where = ["jo.production_stage IN ('completed', 'partially_completed')", "(jo.status IS NULL OR jo.status <> 'Cancelled')"];
   const params = [];
   if (!(includeNsjo === '1' || includeNsjo === 'true')) where.push('jo.nsso_id IS NULL');
-  const scope = await getSalesRepEmployeeScope(req.user.id);
+  const scope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
   if (scope) { where.push('COALESCE(so.sales_rep_id, ns.sales_rep_id, jo.sales_rep_id) IN (?)'); params.push(scope.length ? scope : [0]); }
   if (rep) { where.push('COALESCE(so.sales_rep_id, ns.sales_rep_id, jo.sales_rep_id) = ?'); params.push(rep); }
   if (customerId) { where.push('COALESCE(so.customer_id, ns.customer_id) = ?'); params.push(customerId); }

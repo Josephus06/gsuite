@@ -363,7 +363,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     }
     // Account Officers only ever see their own estimates; Supervisors see their own plus
     // their direct reports' -- everyone else (System Admin, non-sales roles) is unrestricted.
-    const scope = await getSalesRepEmployeeScope(req.user.id);
+    const scope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
     if (scope) { commonWhere.push('e.sales_rep_id IN (?)'); commonParams.push(scope); }
 
     const where = [...commonWhere];
@@ -465,7 +465,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // Defense in depth -- a scoped user (Account Officer/Supervisor) can't view someone
     // else's estimate just by guessing/pasting its URL, even though the list already
     // filters it out.
-    const scope = await getSalesRepEmployeeScope(req.user.id);
+    const scope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
     if (scope && !scope.includes(estimate.sales_rep_id)) return res.status(404).json({ error: 'Not found' });
 
     const [shippingAddresses] = await pool.query('SELECT * FROM estimate_shipping_addresses WHERE estimate_id = ? ORDER BY id', [req.params.id]);
@@ -906,7 +906,7 @@ async function mayActAsOwner(userId, estimateId) {
 // does. The detail view and the email route already answer 404 the same way; this endpoint never
 // asked, which mattered little while it wanted can_edit and matters now that can_update opens it.
 async function isOutOfScope(userId, estimateId) {
-  const scope = await getSalesRepEmployeeScope(userId);
+  const scope = await getSalesRepEmployeeScope(userId, ROUTE);
   if (!scope) return false;
   const [[row]] = await pool.query('SELECT sales_rep_id FROM estimates WHERE id = ?', [estimateId]);
   return !scope.includes(row?.sales_rep_id);
@@ -1693,7 +1693,7 @@ router.post('/:id/email', requireAuth, requireEmailSend, async (req, res, next) 
 
     // Same scoping the detail view applies -- an account officer cannot email out somebody
     // else's estimate by posting to its id.
-    const scope = await getSalesRepEmployeeScope(req.user.id);
+    const scope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
     if (scope && !scope.includes(est.sales_rep_id)) return res.status(404).json({ error: 'Not found' });
 
     if (est.status !== 'pending_customer_approval') {

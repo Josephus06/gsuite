@@ -35,7 +35,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     }
     // Account Officers only ever see their own sales orders; Supervisors see their own
     // plus their direct reports' -- everyone else is unrestricted.
-    const scope = await getSalesRepEmployeeScope(req.user.id);
+    const scope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
     if (scope) { commonWhere.push('so.sales_rep_id IN (?)'); commonParams.push(scope); }
 
     const where = [...commonWhere];
@@ -127,7 +127,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     if (!so) return res.status(404).json({ error: 'Not found' });
     // Defense in depth -- a scoped user can't view someone else's sales order just by
     // guessing/pasting its URL, even though the list already filters it out.
-    const scope = await getSalesRepEmployeeScope(req.user.id);
+    const scope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
     if (scope && !scope.includes(so.sales_rep_id)) return res.status(404).json({ error: 'Not found' });
 
     const [lines] = await pool.query(
@@ -605,7 +605,7 @@ async function estimateIdForSalesOrder(req) {
   if (!so) return null;
   // Same defense in depth as the detail route -- a scoped user must not reach another rep's
   // paperwork by pasting an id.
-  const scope = await getSalesRepEmployeeScope(req.user.id);
+  const scope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
   if (scope && !scope.includes(so.sales_rep_id)) return null;
   return so.estimate_id;
 }
@@ -666,7 +666,7 @@ async function salesOrderForAttachment(req) {
     'SELECT id, estimate_id, sales_rep_id FROM sales_orders WHERE id = ?', [req.params.id]
   );
   if (!so) return null;
-  const scope = await getSalesRepEmployeeScope(req.user.id);
+  const scope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
   if (scope && !scope.includes(so.sales_rep_id)) return null;
 
   const [[me]] = await pool.query('SELECT employee_id, account_type FROM users WHERE id = ?', [req.user.id]);

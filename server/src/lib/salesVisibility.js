@@ -1,4 +1,5 @@
 const pool = require('../db');
+const { userCan } = require('../middleware/auth');
 const { isHeadOfficeName } = require('./userLocation');
 
 // Sales-rep-scoped visibility for Estimates/Sales Orders: an Account Officer only ever
@@ -38,14 +39,23 @@ const { isHeadOfficeName } = require('./userLocation');
 // work, which a straight replacement would quietly have taken away. Every one of the six
 // reports on file is a branch user today, so the union is a no-op now; it is there so the
 // first cross-location report does not silently narrow somebody's list.
-async function getSalesRepEmployeeScope(userId) {
+// WHO SEES WHAT (asked 2026-10-08):
+//   - can_view_all ticked on the page (`route`) -> everything, whatever their role. Jocelyn Ybanez
+//     is an Account Officer; ticking View All on Estimates for her shows her every estimate.
+//   - SBU or Supervisor -> their own plus EVERYONE under them, all the way down the
+//     user_supervisors chain (an SBU's supervisors' reps included), not just direct reports.
+//   - Account Officer -> their own only.
+// The branch pool below still applies on top of these.
+async function getSalesRepEmployeeScope(userId, route = null) {
   const [[user]] = await pool.query(
-    'SELECT account_type, is_account_officer, is_supervisor, employee_id FROM users WHERE id = ?',
+    'SELECT account_type, is_account_officer, is_supervisor, is_sales_business_unit, employee_id FROM users WHERE id = ?',
     [userId]
   );
   if (!user || !user.employee_id) return null;
   if (user.account_type === 'System Admin') return null;
-  if (!user.is_account_officer && !user.is_supervisor) return null;
+  if (route && await userCan(userId, route, 'can_view_all')) return null;
+  const isSbu = !!user.is_sales_business_unit;
+  if (!user.is_account_officer && !user.is_supervisor && !isSbu) return null;
 
   const ids = [user.employee_id];
 
@@ -72,19 +82,27 @@ async function getSalesRepEmployeeScope(userId) {
     people.filter((r) => r.employee_id && !atHeadOffice(r)).forEach((r) => ids.push(r.employee_id));
   }
 
-  if (user.is_supervisor) {
+  if (user.is_supervisor || isSbu) {
     // Read from user_supervisors, not users.supervisor_id: a rep may report to several
     // supervisors, and the column only holds the primary -- using it would hide every
     // secondary report's transactions from the supervisor who also owns them.
-    const [reports] = await pool.query(
-      `SELECT DISTINCT e.id
-         FROM user_supervisors us
-         JOIN users u ON u.id = us.user_id
-         JOIN employees e ON e.id = u.employee_id
-        WHERE us.supervisor_id = ?`,
-      [userId]
+    // Walked level by level so a supervisor's supervisor (an SBU) sees the whole tree.
+    const [links] = await pool.query(
+      `SELECT us.supervisor_id, us.user_id, u.employee_id
+         FROM user_supervisors us JOIN users u ON u.id = us.user_id`
     );
-    reports.forEach((r) => ids.push(r.id));
+    const seen = new Set([Number(userId)]);
+    let frontier = [Number(userId)];
+    while (frontier.length) {
+      const next = [];
+      for (const l of links) {
+        if (!frontier.includes(Number(l.supervisor_id)) || seen.has(Number(l.user_id))) continue;
+        seen.add(Number(l.user_id));
+        next.push(Number(l.user_id));
+        if (l.employee_id) ids.push(l.employee_id);
+      }
+      frontier = next;
+    }
   }
   // Deduped because the three sources overlap -- a branch supervisor is in the pool, and so are
   // their branch reports.

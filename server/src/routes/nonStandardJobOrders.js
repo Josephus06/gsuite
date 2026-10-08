@@ -261,7 +261,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       // Otherwise a user sees their own orders; a Supervisor also sees their direct
       // reports'. Shared with Estimates/Sales Orders so "my transactions" means the same
       // thing across Sales.
-      const scope = await getSalesRepEmployeeScope(req.user.id);
+      const scope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
       const artistEmployeeId = await getArtistEmployeeScope(req.user.id);
       if (scope) {
         conditions.push('n.sales_rep_id IN (?)');
@@ -381,7 +381,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
         return res.status(404).json({ error: 'Non-standard job order not found.' });
       }
     } else {
-      const scope = await getSalesRepEmployeeScope(req.user.id);
+      const scope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
       const artistEmployeeId = await getArtistEmployeeScope(req.user.id);
       if (scope && !scope.map(String).includes(String(row.sales_rep_id))) {
         return res.status(404).json({ error: 'Non-standard job order not found.' });

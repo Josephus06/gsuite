@@ -22,7 +22,7 @@ async function loadVisible(req, res) {
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const status = ['draft', 'sent', 'discarded'].includes(req.query.status) ? req.query.status : 'draft';
-    const scope = await getSalesRepEmployeeScope(req.user.id);
+    const scope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
     const where = ['d.status = ?'];
     const params = [status];
     if (scope) {

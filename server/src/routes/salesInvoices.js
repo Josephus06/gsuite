@@ -77,7 +77,7 @@ async function listFilter(query, userId) {
   // An Account Officer sees only their own invoices; a Supervisor sees theirs plus their
   // reports'. Same rule Estimates and Sales Orders already apply -- see lib/salesVisibility.js,
   // which returns null (and so changes nothing) for every account that is neither.
-  const salesScope = await getSalesRepEmployeeScope(userId);
+  const salesScope = await getSalesRepEmployeeScope(userId, ROUTE);
   if (salesScope) { where.push('si.sales_rep_id IN (?)'); params.push(salesScope); }
   if (search) {
     // BS/SI # is the number printed on the paper the customer holds -- the one most often quoted.
@@ -488,7 +488,7 @@ router.get('/for-estimate/:estimateId', requireAuth, requirePermission(ROUTE, 'c
 
     // Same visibility rule the estimate list applies -- an Account Officer cannot invoice an
     // estimate they are not allowed to see.
-    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    const salesScope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
     if (salesScope && !salesScope.includes(est.sales_rep_id)) {
       return res.status(404).json({ error: 'Not found' });
     }
@@ -738,7 +738,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     if (!si) return res.status(404).json({ error: 'Not found' });
     // Defence in depth for the list filter above: hiding a document from the list while still
     // serving it to anyone who types its id is not a restriction. See lib/salesVisibility.js.
-    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    const salesScope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
     if (salesScope && !salesScope.includes(si.sales_rep_id)) {
       return res.status(404).json({ error: 'Not found' });
     }
@@ -954,7 +954,7 @@ async function billEstimate(req, res, conn) {
   // The same visibility rule as everywhere else: an Account Officer cannot bill an estimate they
   // are not allowed to see. Checked on the server because the picker being filtered is not a
   // restriction.
-  const salesScope = await getSalesRepEmployeeScope(req.user.id);
+  const salesScope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
   if (salesScope && !salesScope.includes(est.sales_rep_id)) {
     return res.status(404).json({ error: 'That Estimate no longer exists.' });
   }

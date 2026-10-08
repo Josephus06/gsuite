@@ -158,7 +158,7 @@ async function listFilter(req) {
   // Scoped on the job order's OWN rep, not the sales order's. The two agree on every one of
   // the 124,300 rows, but a job order can exist without a sales order at all (NSJO, RWIP), and
   // scoping through the join would make those invisible to everyone rather than to nobody.
-  const salesScope = await getSalesRepEmployeeScope(req.user.id);
+  const salesScope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
   if (salesScope) { where.push('jo.sales_rep_id IN (?)'); params.push(salesScope); }
   if (jobLocationId) { where.push('jo.job_location_id = ?'); params.push(jobLocationId); }
   if (officeLocationId) { where.push('so.office_location_id = ?'); params.push(officeLocationId); }
@@ -352,7 +352,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     if (!jo) return res.status(404).json({ error: 'Not found' });
     // Defence in depth for the list filter above: hiding a document from the list while still
     // serving it to anyone who types its id is not a restriction. See lib/salesVisibility.js.
-    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    const salesScope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
     if (salesScope && !salesScope.includes(jo.sales_rep_id)) {
       return res.status(404).json({ error: 'Not found' });
     }

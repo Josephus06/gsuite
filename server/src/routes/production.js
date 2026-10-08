@@ -162,7 +162,7 @@ router.get('/', requireAuth, requireProductionView, async (req, res, next) => {
     // changes nothing for production, planners, accounting or admins -- the people this module
     // is for. Scoped on the job order's own rep for the same reason the Job Orders list is:
     // an NSJO or RWIP has no sales order to reach through.
-    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    const salesScope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
     if (salesScope) {
       const floorLoc = await branchFloorLocationId(req.user.id);
       if (floorLoc) {
@@ -314,7 +314,7 @@ router.get('/:id', requireAuth, requireProductionView, async (req, res, next) =>
     // shows would 404 on being opened.
     // Same 404 the list's filter implies: hiding a job order from the list while still serving
     // it to anyone who types its id is decoration, not a restriction.
-    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    const salesScope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
     if (salesScope && !salesScope.map(String).includes(String(jo.sales_rep_id))
         && Number(jo.job_location_id) !== Number(await branchFloorLocationId(req.user.id))) {
       return res.status(404).json({ error: 'Not found' });

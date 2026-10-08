@@ -83,7 +83,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const scoreParams = [jobTypeId, jobTypeId, quantity, quantity || 1, units, units];
 
     // --- the rows this user may see ------------------------------------------------------
-    const scope = await getSalesRepEmployeeScope(req.user.id);
+    const scope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
     const where = [];
     const params = [...scoreParams, description];
     if (scope) {

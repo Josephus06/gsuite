@@ -163,7 +163,7 @@ router.get('/attention', requireAuth, requirePermission(DASHBOARD, 'can_view'), 
   try {
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
     const offset = Math.max(0, Number(req.query.offset) || 0);
-    const scope = await getSalesRepEmployeeScope(req.user.id);
+    const scope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
     const [[me]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
 
     const where = [];

@@ -275,7 +275,7 @@ async function listFilter(req) {
   // An Account Officer sees only their own credit memos; a Supervisor sees theirs plus their
   // reports'. Same rule Estimates and Sales Orders already apply -- see lib/salesVisibility.js,
   // which returns null (and so changes nothing) for every account that is neither.
-  const salesScope = await getSalesRepEmployeeScope(req.user.id);
+  const salesScope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
   if (salesScope) { where.push('cm.sales_rep_id IN (?)'); params.push(salesScope); }
   if (search) {
     where.push('(cm.credit_memo_no LIKE ? OR c.name LIKE ? OR si.invoice_no LIKE ?)');
@@ -379,7 +379,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     if (!cm) return res.status(404).json({ error: 'Not found' });
     // Defence in depth for the list filter above: hiding a document from the list while still
     // serving it to anyone who types its id is not a restriction. See lib/salesVisibility.js.
-    const salesScope = await getSalesRepEmployeeScope(req.user.id);
+    const salesScope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
     if (salesScope && !salesScope.includes(cm.sales_rep_id)) {
       return res.status(404).json({ error: 'Not found' });
     }
