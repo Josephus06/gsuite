@@ -3,6 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { computeSalesOrderStatus, invoicedOrTicketedSql } = require('../lib/salesOrderStatus');
+const { releaseIfDirectToProduction } = require('../lib/directToProduction');
 
 const router = express.Router();
 const ROUTE = '/sales-orders';
@@ -557,6 +558,12 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
        VALUES ('JobOrder', ?, 'Created', 'status', NULL, ?, ?)`,
       [jobOrderId, 'Planned - Pending for BOM', req.user.id]
     );
+    // A job type marked Direct to Production (installation, mobilization, ...) has no layout to make:
+    // the JO skips Design and goes straight to Production, Pending for Scheduling.
+    await releaseIfDirectToProduction(conn, {
+      jobOrderId, jobTypeId: line.job_type_id, userId: req.user.id,
+      fromStatus: 'Planned - Pending for BOM', fromSubStatus: 'Pending',
+    });
     await conn.commit();
     const [[jobOrder]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [jobOrderId]);
     res.status(201).json(jobOrder);
