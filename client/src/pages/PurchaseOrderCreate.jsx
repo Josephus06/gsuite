@@ -125,8 +125,11 @@ export default function PurchaseOrderCreate() {
     const discAmount = cents(subtotal * ((parseDiscountChain(l.disc_percent).pct || 0) / 100));
     const netOfTax = cents(subtotal - discAmount);
     const tax = taxes.find((t) => t.id === l.tax_code_id);
-    const taxAmount = cents(netOfTax * (Number(tax?.rate || 0) / 100));
-    return { extPrice: cents(netOfTax + taxAmount) };
+    const taxRate = Number(tax?.rate || 0);
+    // As the server: Ext. Price is the gross from the unrounded figures, Tax the rest over Net of Tax.
+    const pct = parseDiscountChain(l.disc_percent).pct || 0;
+    const extPrice = taxRate ? cents(qty * rate * (1 - pct / 100) * (1 + taxRate / 100)) : netOfTax;
+    return { extPrice };
   }
 
   const grandTotal = lines.reduce((s, l) => s + lineCalc(l).extPrice, 0);

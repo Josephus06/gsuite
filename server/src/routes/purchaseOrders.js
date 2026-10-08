@@ -797,8 +797,11 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
         const lineDiscAmount = cents(lineSubtotal * (discPercent / 100));
         const lineNetOfTax = cents(lineSubtotal - lineDiscAmount);
         const taxRatePct = l.tax_code_id ? (taxRateById.get(l.tax_code_id) || 0) : 0;
-        const lineTaxAmount = cents(lineNetOfTax * (taxRatePct / 100));
-        const extPrice = cents(lineNetOfTax + lineTaxAmount);
+        // Ext. Price is the gross the supplier bills, from the unrounded figures; Tax is what is left
+        // over Net of Tax, so the rounded Net + Tax always equals it (PO-20586: 28,828.12 + 3,459.38 =
+        // 32,287.50, not 3,459.37 and a total a centavo short).
+        const extPrice = taxRatePct ? cents(qty * rate * (1 - discPercent / 100) * (1 + taxRatePct / 100)) : lineNetOfTax;
+        const lineTaxAmount = cents(extPrice - lineNetOfTax);
         subtotal += lineSubtotal; discountAmount += lineDiscAmount; netOfTax += lineNetOfTax; taxAmount += lineTaxAmount;
         return { ...l, lineSubtotal, lineDiscAmount, lineNetOfTax, lineTaxAmount, extPrice };
       });
@@ -1032,8 +1035,11 @@ router.post('/:id/landed-costs', requireAuth, requirePermission(ROUTE, 'can_add'
       const lineDiscAmount = cents(lineSubtotal * (discPercent / 100));
       const lineNetOfTax = cents(lineSubtotal - lineDiscAmount);
       const taxRatePct = l.tax_code_id ? (taxRateById.get(l.tax_code_id) || 0) : 0;
-      const lineTaxAmount = cents(lineNetOfTax * (taxRatePct / 100));
-      const extPrice = cents(lineNetOfTax + lineTaxAmount);
+      // Ext. Price is the gross the supplier bills, from the unrounded figures; Tax is what is left
+      // over Net of Tax, so the rounded Net + Tax always equals it (PO-20586: 28,828.12 + 3,459.38 =
+      // 32,287.50, not 3,459.37 and a total a centavo short).
+      const extPrice = taxRatePct ? cents(qty * rate * (1 - discPercent / 100) * (1 + taxRatePct / 100)) : lineNetOfTax;
+      const lineTaxAmount = cents(extPrice - lineNetOfTax);
       subtotal += lineSubtotal; discountAmount += lineDiscAmount; netOfTax += lineNetOfTax; taxAmount += lineTaxAmount;
       return { ...l, lineDiscAmount, lineNetOfTax, lineTaxAmount, extPrice };
     });
@@ -1114,8 +1120,11 @@ router.post('/direct', requireAuth, requirePermission(ROUTE, 'can_add'), async (
       const lineDiscAmount = cents(lineSubtotal * (discPercent / 100));
       const lineNetOfTax = cents(lineSubtotal - lineDiscAmount);
       const taxRatePct = l.tax_code_id ? (taxRateById.get(l.tax_code_id) || 0) : 0;
-      const lineTaxAmount = cents(lineNetOfTax * (taxRatePct / 100));
-      const extPrice = cents(lineNetOfTax + lineTaxAmount);
+      // Ext. Price is the gross the supplier bills, from the unrounded figures; Tax is what is left
+      // over Net of Tax, so the rounded Net + Tax always equals it (PO-20586: 28,828.12 + 3,459.38 =
+      // 32,287.50, not 3,459.37 and a total a centavo short).
+      const extPrice = taxRatePct ? cents(qty * rate * (1 - discPercent / 100) * (1 + taxRatePct / 100)) : lineNetOfTax;
+      const lineTaxAmount = cents(extPrice - lineNetOfTax);
       subtotal += lineSubtotal; discountAmount += lineDiscAmount; netOfTax += lineNetOfTax; taxAmount += lineTaxAmount;
       return { ...l, lineDiscAmount, lineNetOfTax, lineTaxAmount, extPrice };
     });
@@ -1282,8 +1291,11 @@ router.post('/:id/receipts', requireAuth, requireReceiveRight, async (req, res, 
       const lineDiscAmount = cents(lineSubtotal * (discPercent / 100));
       const lineNetOfTax = cents(lineSubtotal - lineDiscAmount);
       const taxRatePct = l.tax_code_id ? (taxRateById.get(l.tax_code_id) || 0) : 0;
-      const lineTaxAmount = cents(lineNetOfTax * (taxRatePct / 100));
-      const extPrice = cents(lineNetOfTax + lineTaxAmount);
+      // Ext. Price is the gross the supplier bills, from the unrounded figures; Tax is what is left
+      // over Net of Tax, so the rounded Net + Tax always equals it (PO-20586: 28,828.12 + 3,459.38 =
+      // 32,287.50, not 3,459.37 and a total a centavo short).
+      const extPrice = taxRatePct ? cents(qty * rate * (1 - discPercent / 100) * (1 + taxRatePct / 100)) : lineNetOfTax;
+      const lineTaxAmount = cents(extPrice - lineNetOfTax);
       subtotal += lineSubtotal; discountAmount += lineDiscAmount; netOfTax += lineNetOfTax; taxAmount += lineTaxAmount;
       return {
         purchase_order_line_id: l.purchase_order_line_id, tax_code_id: l.tax_code_id || null,
@@ -1443,8 +1455,11 @@ router.post('/:id/returns', requireAuth, requirePermission(ROUTE, 'can_edit'), a
       const lineDiscAmount = cents(lineSubtotal * (discPercent / 100));
       const lineNetOfTax = cents(lineSubtotal - lineDiscAmount);
       const taxRatePct = l.tax_code_id ? (taxRateById.get(l.tax_code_id) || 0) : 0;
-      const lineTaxAmount = cents(lineNetOfTax * (taxRatePct / 100));
-      const extPrice = cents(lineNetOfTax + lineTaxAmount);
+      // Ext. Price is the gross the supplier bills, from the unrounded figures; Tax is what is left
+      // over Net of Tax, so the rounded Net + Tax always equals it (PO-20586: 28,828.12 + 3,459.38 =
+      // 32,287.50, not 3,459.37 and a total a centavo short).
+      const extPrice = taxRatePct ? cents(qty * rate * (1 - discPercent / 100) * (1 + taxRatePct / 100)) : lineNetOfTax;
+      const lineTaxAmount = cents(extPrice - lineNetOfTax);
       subtotal += lineSubtotal; discountAmount += lineDiscAmount; netOfTax += lineNetOfTax; taxAmount += lineTaxAmount;
       return {
         purchase_order_line_id: l.purchase_order_line_id, tax_code_id: l.tax_code_id || null,
@@ -1613,8 +1628,11 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       const lineDiscAmount = cents(lineSubtotal * (discPercent / 100));
       const lineNetOfTax = cents(lineSubtotal - lineDiscAmount);
       const taxRatePct = l.tax_code_id ? (taxRateById.get(l.tax_code_id) || 0) : 0;
-      const lineTaxAmount = cents(lineNetOfTax * (taxRatePct / 100));
-      const extPrice = cents(lineNetOfTax + lineTaxAmount);
+      // Ext. Price is the gross the supplier bills, from the unrounded figures; Tax is what is left
+      // over Net of Tax, so the rounded Net + Tax always equals it (PO-20586: 28,828.12 + 3,459.38 =
+      // 32,287.50, not 3,459.37 and a total a centavo short).
+      const extPrice = taxRatePct ? cents(qty * rate * (1 - discPercent / 100) * (1 + taxRatePct / 100)) : lineNetOfTax;
+      const lineTaxAmount = cents(extPrice - lineNetOfTax);
       subtotal += lineSubtotal; discountAmount += lineDiscAmount; netOfTax += lineNetOfTax; taxAmount += lineTaxAmount;
       return { ...l, lineDiscAmount, lineNetOfTax, lineTaxAmount, extPrice };
     });
