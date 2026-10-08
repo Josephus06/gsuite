@@ -95,7 +95,7 @@ export default function FormsApproval() {
                     <td data-label="Filed By">{r.owner_name || '—'}</td>
                     <td data-label="Department">{r.department || '—'}</td>
                     <td data-label="Submitted">{fmtDate(r.submitted_at)}</td>
-                    <td data-label="Amount">{r.type === 'business_trip' ? '—' : money(r.total_amount)}</td>
+                    <td data-label="Amount">{['business_trip', 'attendance_adjustment'].includes(r.type) ? '—' : money(r.total_amount)}</td>
                     <td data-label="Status">
                       <span className={`badge ${STATUS_BADGE[r.status] || 'badge-muted'}`}>{pretty(r.status)}</span>
                     </td>

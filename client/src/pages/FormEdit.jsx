@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../context/useAuth';
-import { FUND_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, TYPE_LABELS, money } from '../utils/requestForms';
+import { ADJ_REASON_LABELS, ADJ_TIMES, FUND_TYPES, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, TYPE_LABELS, money } from '../utils/requestForms';
 import EntityPicker from '../components/EntityPicker';
 
 // Filling out a form, and revising one. The same page does both: an edit is the same boxes with
@@ -42,6 +42,8 @@ export default function FormEdit() {
     driver_name: '', vehicle_plate_no: '', speedometer_begin: '', speedometer_end: '',
     total_mileage_km: '', trip_date: '', time_out: '', time_in: '', purpose: '',
     checked_by: '', noted_by: '',
+    adjustment_date: '', am_in: '', am_out: '', pm_in: '', pm_out: '', ot_in: '', ot_out: '',
+    reason: '', reason_other: '',
     remarks: '',
   });
   const [items, setItems] = useState([blankItem()]);
@@ -82,6 +84,9 @@ export default function FormEdit() {
       time_out: d.time_out ? String(d.time_out).slice(0, 5) : '',
       time_in: d.time_in ? String(d.time_in).slice(0, 5) : '',
       purpose: d.purpose || '', checked_by: d.checked_by || '', noted_by: d.noted_by_name || '',
+      adjustment_date: d.adjustment_date ? String(d.adjustment_date).slice(0, 10) : '',
+      ...Object.fromEntries(ADJ_TIMES.map(([k]) => [k, d[k] ? String(d[k]).slice(0, 5) : ''])),
+      reason: d.reason || '', reason_other: d.reason_other || '',
     });
     setItems((data.items || []).length
       ? data.items.map((i) => ({
@@ -100,7 +105,7 @@ export default function FormEdit() {
   }, [isNew, load]);
 
   const isFund = FUND_TYPES.includes(type);
-  const hasItems = type && type !== 'business_trip';
+  const hasItems = type && !NO_ITEM_TYPES.includes(type);
   const itemsTotal = items.reduce((s, r) => s + (Number(r.amount) || 0), 0);
   // Shown live while typing, because the printed form carries these two and somebody filling it in
   // wants to see the balance land where they expect before they commit to it.
@@ -300,6 +305,43 @@ export default function FormEdit() {
             <label>Address</label>
             <input value={form.address} onChange={(e) => set('address', e.target.value)} />
           </div>
+        </div>
+      )}
+
+      {type === 'attendance_adjustment' && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3>Attendance Adjustment</h3>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 10 }}>
+            For a day the biometric has no record of your time in or out. Fill in only the times you are claiming.
+          </div>
+          <div className="field" style={{ maxWidth: 260 }}>
+            <label>Date *</label>
+            <input type="date" value={form.adjustment_date} onChange={(e) => set('adjustment_date', e.target.value)} />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0 16px' }}>
+            {ADJ_TIMES.map(([k, label]) => (
+              <div className="field" key={k}>
+                <label>{label}</label>
+                <input type="time" value={form[k]} onChange={(e) => set(k, e.target.value)} />
+              </div>
+            ))}
+          </div>
+          <div className="field">
+            <label>Reason *</label>
+            <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+              {Object.entries(ADJ_REASON_LABELS).map(([k, label]) => (
+                <label key={k} style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontWeight: 400 }}>
+                  <input type="radio" name="adj-reason" checked={form.reason === k} onChange={() => set('reason', k)} /> {label}
+                </label>
+              ))}
+            </div>
+          </div>
+          {form.reason === 'others' && (
+            <div className="field">
+              <label>Others, specify *</label>
+              <input value={form.reason_other} placeholder="e.g. Biometric error" onChange={(e) => set('reason_other', e.target.value)} />
+            </div>
+          )}
         </div>
       )}
 

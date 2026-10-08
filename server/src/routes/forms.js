@@ -43,14 +43,21 @@ const router = express.Router();
 const ROUTE = '/forms';
 const APPROVAL_ROUTE = '/forms/approval';
 
-const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund'];
+const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund', 'attendance_adjustment'];
 const TYPE_LABELS = {
   liquidation: 'Liquidation',
   payment: 'Request for Payment',
   fund_transfer: 'Fund Transfer Request Form',
   business_trip: 'Business Trip',
   revolving_fund: 'Revolving Fund',
+  attendance_adjustment: 'Attendance Adjustment Form',
 };
+// Forms with no expense lines: a trip sheet, and the attendance adjustment slip.
+const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment'];
+// Attendance Adjustment (asked 2026-10-08): why the biometric has no time-in / time-out. The three
+// reasons printed on the paper slip; 'others' carries the free text (e.g. "biometric error").
+const ADJ_REASONS = ['field_work', 'business_trip', 'others'];
+const ADJ_TIMES = ['am_in', 'am_out', 'pm_in', 'pm_out', 'ot_in', 'ot_out'];
 
 // The six purposes printed on the liquidation form. 'others' is the one that carries free text.
 const PURPOSES = [
@@ -174,6 +181,9 @@ async function loadFull(id) {
     doc.detail = d || null;
   } else if (doc.type === 'business_trip') {
     const [[d]] = await pool.query('SELECT * FROM form_business_trip_details WHERE form_request_id = ?', [id]);
+    doc.detail = d || null;
+  } else if (doc.type === 'attendance_adjustment') {
+    const [[d]] = await pool.query('SELECT * FROM form_attendance_adjustment_details WHERE form_request_id = ?', [id]);
     doc.detail = d || null;
   }
   return doc;
@@ -482,6 +492,18 @@ async function writeDetail(conn, docId, type, body, items) {
     return { total_amount: total };
   }
 
+  if (type === 'attendance_adjustment') {
+    const reason = ADJ_REASONS.includes(body.reason) ? body.reason : 'others';
+    await conn.query(
+      `INSERT INTO form_attendance_adjustment_details
+         (form_request_id, adjustment_date, am_in, am_out, pm_in, pm_out, ot_in, ot_out, reason, reason_other)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [docId, date(body.adjustment_date), ...ADJ_TIMES.map((k) => time(body[k])), reason,
+        reason === 'others' ? trunc(body.reason_other, 255) : null],
+    );
+    return {};
+  }
+
   // business_trip
   await conn.query(
     `INSERT INTO form_business_trip_details
@@ -518,7 +540,13 @@ function validate(type, body, items) {
     if (!trunc(body.vehicle_plate_no, 255)) return 'Vehicle plate number is required.';
     if (!date(body.trip_date)) return 'Trip date is required.';
   }
-  if (type !== 'business_trip' && items.length === 0) return 'Add at least one line.';
+  if (type === 'attendance_adjustment') {
+    if (!date(body.adjustment_date)) return 'The date being adjusted is required.';
+    if (!ADJ_TIMES.some((k) => time(body[k]))) return 'Enter at least one time to adjust (AM / PM / OT, In or Out).';
+    if (!ADJ_REASONS.includes(body.reason)) return 'Choose the reason: Field Work, Business Trip or Others.';
+    if (body.reason === 'others' && !trunc(body.reason_other, 255)) return 'Say what the other reason is (e.g. biometric error).';
+  }
+  if (!NO_ITEM_TYPES.includes(type) && items.length === 0) return 'Add at least one line.';
   return null;
 }
 
@@ -526,7 +554,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   const { type } = req.body;
   if (badType(type)) return res.status(400).json({ error: 'Choose which form this is.' });
 
-  const parsed = readItems(req.body, { required: type !== 'business_trip' });
+  const parsed = readItems(req.body, { required: !NO_ITEM_TYPES.includes(type) });
   if (parsed.error) return res.status(400).json({ error: parsed.error });
   const items = parsed.items;
 
@@ -621,7 +649,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       return res.status(409).json({ error: `A ${doc.status} form cannot be edited.` });
     }
 
-    const parsed = readItems(req.body, { required: doc.type !== 'business_trip' });
+    const parsed = readItems(req.body, { required: !NO_ITEM_TYPES.includes(doc.type) });
     if (parsed.error) return res.status(400).json({ error: parsed.error });
     const items = parsed.items;
 
@@ -665,6 +693,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       fund_transfer: 'form_payment_details',
       revolving_fund: 'form_revolving_fund_details',
       business_trip: 'form_business_trip_details',
+      attendance_adjustment: 'form_attendance_adjustment_details',
     }[doc.type];
     await conn.query(`DELETE FROM ${detailTable} WHERE form_request_id = ?`, [doc.id]);
     await writeDetail(conn, doc.id, doc.type, req.body, items);
@@ -937,11 +966,13 @@ router.get('/:id/print', requireAuth, requirePermission(ROUTE, 'can_print'), asy
     if (!doc) return res.status(404).json({ error: 'Not found' });
     if (!(await maySee(req.user.id, doc))) return res.status(403).json({ error: 'This form is not yours to view.' });
 
-    const allowed = doc.type === 'business_trip' ? ['noted', 'approved'] : ['approved'];
+    // An attendance adjustment prints once its superior has noted it, like the trip sheet.
+    const printsWhenNoted = ['business_trip', 'attendance_adjustment'].includes(doc.type);
+    const allowed = printsWhenNoted ? ['noted', 'approved'] : ['approved'];
     if (!allowed.includes(doc.status)) {
       return res.status(403).json({
-        error: doc.type === 'business_trip'
-          ? 'A business trip can be printed once it has been noted.'
+        error: printsWhenNoted
+          ? `${TYPE_LABELS[doc.type]} can be printed once it has been noted.`
           : 'Only an approved form can be printed.',
       });
     }

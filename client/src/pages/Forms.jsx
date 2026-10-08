@@ -122,7 +122,7 @@ export default function Forms() {
                     <td data-label="Department">{r.department || '—'}</td>
                     {/* A business trip has no lines, so it has no amount -- a 0.00 there would
                         read as "this trip cost nothing" rather than "this form is not about money". */}
-                    <td data-label="Amount">{r.type === 'business_trip' ? '—' : money(r.total_amount)}</td>
+                    <td data-label="Amount">{['business_trip', 'attendance_adjustment'].includes(r.type) ? '—' : money(r.total_amount)}</td>
                     <td data-label="Status">
                       <span className={`badge ${STATUS_BADGE[r.status] || 'badge-muted'}`}>{pretty(r.status)}</span>
                     </td>

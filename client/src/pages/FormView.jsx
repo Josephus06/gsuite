@@ -6,7 +6,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
 import { useAuth } from '../context/useAuth';
-import { PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, fmtDate, money, pretty } from '../utils/requestForms';
+import { ADJ_REASON_LABELS, ADJ_TIMES, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, money, pretty } from '../utils/requestForms';
 
 // One form, and whatever the viewer is allowed to do to it.
 //
@@ -112,12 +112,12 @@ export default function FormView() {
 
   const d = doc.detail || {};
   const isFund = doc.type === 'liquidation' || doc.type === 'revolving_fund';
-  const hasItems = doc.type !== 'business_trip';
+  const hasItems = !NO_ITEM_TYPES.includes(doc.type);
   const itemsTotal = (doc.items || []).reduce((s, r) => s + Number(r.amount || 0), 0);
 
   // A business trip prints once noted; everything else needs approval. The server enforces this --
   // repeated here only so the button is not offered when it would be refused.
-  const printable = doc.type === 'business_trip'
+  const printable = ['business_trip', 'attendance_adjustment'].includes(doc.type)
     ? ['noted', 'approved'].includes(doc.status)
     : doc.status === 'approved';
 
@@ -264,6 +264,15 @@ export default function FormView() {
           <Line label="Address">{d.address}</Line>
           <Line label="Date">{fmtDate(d.doc_date)}</Line>
           <Line label="Total Amount">{d.total_amount != null ? money(d.total_amount) : null}</Line>
+        </div>
+      )}
+
+      {doc.type === 'attendance_adjustment' && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3>Attendance Adjustment</h3>
+          <Line label="Date">{fmtDate(d.adjustment_date)}</Line>
+          {ADJ_TIMES.map(([k, label]) => <Line key={k} label={label}>{d[k] ? clock(d[k]) : null}</Line>)}
+          <Line label="Reason">{d.reason ? `${ADJ_REASON_LABELS[d.reason] || d.reason}${d.reason === 'others' && d.reason_other ? `: ${d.reason_other}` : ''}` : null}</Line>
         </div>
       )}
 

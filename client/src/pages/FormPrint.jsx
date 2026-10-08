@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { PAYMENT_TYPES, PURPOSE_LABELS, bankLabel } from '../utils/requestForms';
+import { ADJ_REASON_LABELS, PAYMENT_TYPES, PURPOSE_LABELS, bankLabel, clock } from '../utils/requestForms';
 import letterhead from '../assets/graphicstar-letterhead.png';
 import { displayDate } from '../utils/dates';
 
@@ -61,7 +61,7 @@ function Signatures({ doc }) {
       <Signature
         image={doc.noted_signature}
         name={doc.noted_by_name || doc.detail?.noted_by_name}
-        role="Noted By"
+        role={doc.type === 'attendance_adjustment' ? 'Noted By (Immediate Superior)' : 'Noted By'}
       />
       <Signature image={doc.approved_signature} name={doc.approved_by_name} role="Approved By" />
     </div>
@@ -268,6 +268,44 @@ export default function FormPrint() {
               <Field label="Name" value={doc.name} />
             </div>
             <ItemsTable doc={doc} />
+          </>
+        )}
+
+        {/* Attendance Adjustment Form (asked 2026-10-08), after the paper slip: who and which day,
+            the IN / OUT times claimed for AM, PM and overtime, and the reason ticked. */}
+        {doc.type === 'attendance_adjustment' && (
+          <>
+            <div className="rf-row">
+              <Field label="Name" value={doc.name} />
+              <Field label="Department" value={doc.department} />
+              <Field label="Date" value={fmtDate(d.adjustment_date)} />
+            </div>
+            <table className="rf-table" style={{ marginTop: 14 }}>
+              <thead>
+                <tr><th style={{ width: '20%' }} /><th>In</th><th>Out</th></tr>
+              </thead>
+              <tbody>
+                {['am', 'pm', 'ot'].map((p) => (
+                  <tr key={p}>
+                    <td style={{ fontWeight: 700, textAlign: 'center' }}>{p.toUpperCase()}</td>
+                    <td style={{ textAlign: 'center', height: 24 }}>{clock(d[`${p}_in`])}</td>
+                    <td style={{ textAlign: 'center' }}>{clock(d[`${p}_out`])}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="rf-box">
+              <h4>Reason</h4>
+              <div className="rf-purposes" style={{ flexDirection: 'column', gap: 6 }}>
+                {Object.entries(ADJ_REASON_LABELS).map(([k, label]) => (
+                  <span className="rf-check" key={k}>
+                    <span className="rf-mark">{d.reason === k ? '×' : ' '}</span>
+                    {label}
+                    {k === 'others' && d.reason === 'others' && d.reason_other ? <>: <u>{d.reason_other}</u></> : ''}
+                  </span>
+                ))}
+              </div>
+            </div>
           </>
         )}
 

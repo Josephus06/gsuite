@@ -31,7 +31,8 @@ const pool = require('../db');
 // liquidation, whatever department it came from, once it has given each item the COGS account it is
 // charged to -- see AP_NOTED_TYPES below and the Accounts Payable tick on the user.
 // A Fund Transfer Request Form is a Request for Payment with banks named, so it is noted the same way.
-const DEPARTMENT_NOTED_TYPES = ['payment', 'fund_transfer'];
+// An attendance adjustment is noted by the immediate superior -- the department's head (2026-10-08).
+const DEPARTMENT_NOTED_TYPES = ['payment', 'fund_transfer', 'attendance_adjustment'];
 const AP_NOTED_TYPES = ['liquidation'];
 
 // Is this user Accounts Payable (users.is_accounts_payable)? Read fresh, like the rest of this file.
