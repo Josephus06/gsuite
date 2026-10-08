@@ -29,6 +29,8 @@ export default function VendorBills() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('');
   const [search, setSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
 
   async function load() {
@@ -36,12 +38,14 @@ export default function VendorBills() {
     const params = {};
     if (status) params.status = status;
     if (search) params.search = search;
+    if (dateFrom) params.date_from = dateFrom;
+    if (dateTo) params.date_to = dateTo;
     const { data } = await api.get('/vendor-bills', { params });
     setRows(data);
     setLoading(false);
   }
 
-  useEffect(() => { setPage(1); load(); }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); load(); }, [status, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function runSearch() {
     setPage(1);
@@ -82,6 +86,15 @@ export default function VendorBills() {
               <option value="paid_in_full">Paid in Full</option>
               <option value="cancelled">Cancelled</option>
             </select>
+          </div>
+          {/* The bill's date, inclusive at both ends. */}
+          <div className="field">
+            <label>Date From</label>
+            <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Date To</label>
+            <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} />
           </div>
         </div>
         <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>

@@ -216,6 +216,11 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const where = [];
     const params = [];
     if (status) { where.push('vb.status = ?'); params.push(status); }
+    // Date From / Date To on the bill date, inclusive (asked 2026-10-08). Only a real yyyy-mm-dd is
+    // used, so a half-typed year does not turn into a query.
+    const day = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
+    if (day(req.query.date_from)) { where.push('vb.date_created >= ?'); params.push(day(req.query.date_from)); }
+    if (day(req.query.date_to)) { where.push('vb.date_created <= ?'); params.push(day(req.query.date_to)); }
     if (search) {
       where.push('(vb.bill_no LIKE ? OR po.po_no LIKE ? OR s.name LIKE ? OR vb.reference_no LIKE ?)');
       params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
