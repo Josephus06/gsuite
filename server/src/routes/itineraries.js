@@ -128,20 +128,17 @@ router.delete('/drivers/:id', requireAuth, requirePermission(ROUTE, 'can_delete'
 // Deliberately NOT here: 'pending_billing_partially_delivered', which means deliveries have caught
 // up with everything ready and the rest simply is not produced yet, and 'billed'/'pending_billing',
 // which are finished as far as the warehouse is concerned.
-const PENDING_DELIVERY_STATUSES = ['pending_delivery', 'partially_delivered'];
+// What a run may carry (asked 2026-10-08): Sales Orders that are Pending Billing or Partially
+// Billed -- ALL of them, whether or not anything is still built-and-undelivered, which is what the
+// picker used to require (35 orders qualified that way; 6,205 hold these statuses).
+const SCHEDULABLE_STATUSES = ['pending_billing', 'partially_billed'];
+// The order's own total, for a stop whose order has no ready quantity left to count.
+const ORDER_QTY_SQL = '(SELECT COALESCE(SUM(sol.quantity), 0) FROM sales_order_lines sol WHERE sol.sales_order_id = so.id)';
 
 router.get('/schedulable', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const where = ["so.status <> 'cancelled'", `${READY_QTY_SQL} > 0`];
-    const params = [];
-
-    // Restricted to orders whose status says a delivery is owed. `all=1` lifts it, because a
-    // handful of orders read 'billed' while still holding undelivered stock -- an inconsistency
-    // worth being able to see rather than one the run sheet hides forever.
-    if (req.query.all !== '1') {
-      where.push(`so.status IN (${PENDING_DELIVERY_STATUSES.map(() => '?').join(', ')})`);
-      params.push(...PENDING_DELIVERY_STATUSES);
-    }
+    const where = [`so.status IN (${SCHEDULABLE_STATUSES.map(() => '?').join(', ')})`];
+    const params = [...SCHEDULABLE_STATUSES];
     if (req.query.search) {
       where.push('(so.sales_order_no LIKE ? OR c.name LIKE ?)');
       params.push(`%${req.query.search}%`, `%${req.query.search}%`);
@@ -151,7 +148,7 @@ router.get('/schedulable', requireAuth, requirePermission(ROUTE, 'can_view'), as
     const [rows] = await pool.query(
       `SELECT so.id, so.sales_order_no, so.date_created, so.status, so.shipping_address,
               c.name AS customer_name, cc.contact_name,
-              ${READY_QTY_SQL} AS qty_ready,
+              ${READY_QTY_SQL} AS qty_ready, ${ORDER_QTY_SQL} AS order_qty,
               (SELECT GROUP_CONCAT(DISTINCT i.itinerary_no)
                  FROM delivery_itinerary_stops s
                  JOIN delivery_itineraries i ON i.id = s.itinerary_id
@@ -160,7 +157,8 @@ router.get('/schedulable', requireAuth, requirePermission(ROUTE, 'can_view'), as
          LEFT JOIN customers c ON c.id = so.customer_id
          LEFT JOIN customer_contacts cc ON cc.id = so.contact_person_id
         WHERE ${where.join(' AND ')}
-        ORDER BY so.date_created, so.id
+        -- Newest first: 6,000+ orders hold these statuses, most of them years old; search reaches those.
+        ORDER BY so.date_created DESC, so.id DESC
         LIMIT 300`,
       params,
     );
@@ -784,7 +782,7 @@ router.post('/:id/stops', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
 
     const [orders] = await conn.query(
       `SELECT so.id, so.shipping_address, c.name AS customer_name, cc.contact_name,
-              ${READY_QTY_SQL} AS qty_ready
+              ${READY_QTY_SQL} AS qty_ready, ${ORDER_QTY_SQL} AS order_qty
          FROM sales_orders so
          LEFT JOIN customers c ON c.id = so.customer_id
          LEFT JOIN customer_contacts cc ON cc.id = so.contact_person_id
@@ -815,7 +813,7 @@ router.post('/:id/stops', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
            (itinerary_id, sequence_no, sales_order_id, delivery_date, customer_name, qty_to_deliver,
             fulfillment_type, delivery_address, person_in_charge)
          VALUES (?,?,?,?,?,?,?,?,?)`,
-        [req.params.id, next, soId, it.itinerary_date, trunc(o.customer_name, 255), o.qty_ready,
+        [req.params.id, next, soId, it.itinerary_date, trunc(o.customer_name, 255), Number(o.qty_ready) > 0 ? o.qty_ready : o.order_qty,
           'full', trunc(o.shipping_address, 500), trunc(o.contact_name, 150)],
       );
       added.push(r.insertId);

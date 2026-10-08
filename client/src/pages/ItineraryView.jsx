@@ -41,22 +41,19 @@ function AddStopsModal({ itineraryId, onClose, onSaved }) {
   const [rows, setRows] = useState([]);
   const [picked, setPicked] = useState(new Set());
   const [search, setSearch] = useState('');
-  const [showAll, setShowAll] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const load = useCallback(async (q, all) => {
+  const load = useCallback(async (q) => {
     setLoading(true);
     try {
-      const { data } = await api.get('/itineraries/schedulable', {
-        params: { search: q || undefined, all: all ? 1 : undefined },
-      });
+      const { data } = await api.get('/itineraries/schedulable', { params: { search: q || undefined } });
       setRows(data);
     } catch (e) { setError(e.response?.data?.error || 'Could not load Sales Orders.'); }
     setLoading(false);
   }, []);
-  useEffect(() => { load(search, showAll); }, [load, showAll]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(search); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function toggle(id) {
     setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
@@ -78,30 +75,23 @@ function AddStopsModal({ itineraryId, onClose, onSaved }) {
         <label>Search</label>
         <input value={search} placeholder="SO number or customer"
           onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && load(search, showAll)} />
+          onKeyDown={(e) => e.key === 'Enter' && load(search)} />
+        {/* Pending Billing and Partially Billed orders only (asked 2026-10-08), newest first. */}
         <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-          {showAll
-            ? 'Every Sales Order holding quantity that is built, QI-passed and not yet delivered — whatever its status.'
-            : 'Sales Orders awaiting delivery, with quantity that is built, QI-passed and not yet delivered.'}
+          Sales Orders that are Pending Billing or Partially Billed, newest first. Press Enter to search older ones.
         </div>
-        {/* A few orders read 'billed' while still holding undelivered stock. They are out of the
-            way by default, but reachable -- otherwise that stock could never be put on a run. */}
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, fontWeight: 400 }}>
-          <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
-          <span style={{ fontSize: 13 }}>Also show orders already billed or invoiced that still hold stock</span>
-        </label>
       </div>
 
       {loading ? <LoadingSpinner /> : (
         <div className="table-wrap" style={{ maxHeight: 420, overflowY: 'auto' }}>
           <table className="responsive-cards">
             <thead>
-              <tr><th /><th>SO #</th><th>Customer</th><th>Qty Ready</th><th>Status</th><th>Address</th></tr>
+              <tr><th /><th>SO #</th><th>Customer</th><th>Qty</th><th>Status</th><th>Address</th></tr>
             </thead>
             <tbody>
               {rows.length === 0 && (
                 <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>
-                  Nothing is ready to deliver.
+                  No Pending Billing or Partially Billed Sales Orders{search ? ' match' : ''}.
                 </td></tr>
               )}
               {rows.map((r) => (
@@ -116,8 +106,11 @@ function AddStopsModal({ itineraryId, onClose, onSaved }) {
                     )}
                   </td>
                   <td data-label="Customer">{r.customer_name}</td>
-                  <td data-label="Qty Ready">{qty(r.qty_ready)}</td>
-                  <td data-label="Status"><span className="badge badge-muted">{r.status}</span></td>
+                  {/* Ready (built, QI-passed, undelivered) when there is any, else the order's quantity. */}
+                  <td data-label="Qty" title={Number(r.qty_ready) > 0 ? 'Ready to deliver' : 'Order quantity'}>
+                    {qty(Number(r.qty_ready) > 0 ? r.qty_ready : r.order_qty)}
+                  </td>
+                  <td data-label="Status"><span className="badge badge-muted">{r.status === 'partially_billed' ? 'Partially Billed' : r.status === 'pending_billing' ? 'Pending Billing' : r.status}</span></td>
                   <td data-label="Address" style={{ maxWidth: 260, fontSize: 12 }}>{r.shipping_address || '—'}</td>
                 </tr>
               ))}
