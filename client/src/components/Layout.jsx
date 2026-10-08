@@ -255,6 +255,8 @@ const NAV_STRUCTURE = [
           // Its own permission, not AR Aging's -- see the note on the route in routes/reports.js.
           { route: '/reports/ar-aging-details', label: 'AR Aging Details' },
           { route: '/reports/ap-aging', label: 'AP Aging' },
+          // One customer's or vendor's open documents and aging, from AR / AP Aging's own figures.
+          { route: '/statement-of-accounts', label: 'Statement of Account' },
           { route: '/reports/general-ledger', label: 'General Ledger' },
           // Reads Sales' own documents (orders, job orders, invoices, builds) but answers an
           // Accounting question -- what each job earned against what it cost -- so it sits with
