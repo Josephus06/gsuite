@@ -215,7 +215,10 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const { search, status } = req.query;
     const where = [];
     const params = [];
-    if (status) { where.push('vb.status = ?'); params.push(status); }
+    // Paid in Full is two codes: 'paid_in_full' on bills made here, 'paid' on the 20,008 imported --
+    // filtering on the first alone hid every imported paid bill, i.e. nearly all of 2025 (2026-10-08).
+    if (status === 'paid_in_full' || status === 'paid') where.push("vb.status IN ('paid_in_full', 'paid')");
+    else if (status) { where.push('vb.status = ?'); params.push(status); }
     // Date From / Date To on the bill date, inclusive (asked 2026-10-08). Only a real yyyy-mm-dd is
     // used, so a half-typed year does not turn into a query.
     const day = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
@@ -235,7 +238,9 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN suppliers s ON s.id = COALESCE(po.supplier_id, vb.supplier_id)
        LEFT JOIN locations loc ON loc.id = vb.office_location_id
        ${whereSql}
-       ORDER BY vb.id DESC`,
+       -- Newest BILL DATE first. Ids do not follow the date on imported bills (2026's run 2 to 32,251),
+       -- so ordering by id scattered the years through the pages.
+       ORDER BY vb.date_created DESC, vb.id DESC`,
       params
     );
     res.json(rows);
