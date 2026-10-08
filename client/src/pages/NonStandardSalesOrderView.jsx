@@ -260,7 +260,7 @@ export default function NonStandardSalesOrderView() {
 
       {joModalLine && (
         <NsjoCreateModal
-          nssoId={id} lineId={joModalLine}
+          nssoId={id} lineId={joModalLine} nssoType={n.type}
           onClose={() => setJoModalLine(null)}
           onSaved={() => { setJoModalLine(null); load(); }}
         />

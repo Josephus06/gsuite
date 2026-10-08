@@ -37,7 +37,12 @@ export default function RwipCreateModal({ jobOrderId, onClose, onSaved }) {
   const delRow = (i) => setRows((r) => r.filter((_, idx) => idx !== i));
 
   async function save() {
-    setError(''); setSaving(true);
+    setError('');
+    // Both required (2026-10-08): an RWIP that does not say why, or what will be done, tells
+    // Production nothing. The server refuses one without them too.
+    const missing = [!reason.trim() && 'Reason', !action.trim() && 'Action/s to be taken'].filter(Boolean);
+    if (missing.length) { setError(`${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} required.`); return; }
+    setSaving(true);
     try {
       const processes = rows.map((r) => ({
         process_id: r.process_id || null, process_qty: r.process_qty, process_uom: r.process_uom, category: r.category,
@@ -88,11 +93,11 @@ export default function RwipCreateModal({ jobOrderId, onClose, onSaved }) {
                 columns={[{ key: 'name', label: 'Name' }, { key: 'reason_type', label: 'Type' }]} searchKeys={['name']} placeholder="--Select--" onSelect={setReasonCode} />
             </div>
             <div className="field">
-              <label>Reason</label>
+              <label>Reason *</label>
               <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} />
             </div>
             <div className="field">
-              <label>Action/s to be taken</label>
+              <label>Action/s to be taken *</label>
               <textarea value={action} onChange={(e) => setAction(e.target.value)} rows={2} />
             </div>
           </div>

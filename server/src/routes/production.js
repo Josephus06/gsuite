@@ -275,7 +275,7 @@ router.get('/:id', requireAuth, requireProductionView, async (req, res, next) =>
               nsso.nsso_no,
               sol.subtotal AS line_subtotal, sol.disc_amount AS line_disc_amount,
               c.id AS customer_id, c.name AS customer_name, cc.contact_name,
-              jt.display_name AS job_type_name, loc.location_name AS job_location_name,
+              jt.display_name AS job_type_name, jt.gp_rate_head AS passing_gp_rate, loc.location_name AS job_location_name,
               oloc.location_name AS office_location_name, sd.name AS sales_division_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name,
@@ -1129,6 +1129,10 @@ router.post('/:id/rwip', requireAuth, async (req, res, next) => {
       return res.status(409).json({ error: 'RWIP can only be raised while the Job Order is In-Process.' });
     }
     const { reason_code_id: reasonCodeId, reason, action_to_be_taken: actionTaken, delivery_date: deliveryDate, delivery_time: deliveryTime, processes } = req.body;
+    // Why the job is being redone, and what will be done about it, are required (asked 2026-10-08) --
+    // an RWIP without them tells Production nothing. The RFQC's are required at Quality Inspection.
+    const missingWhy = [!String(reason || '').trim() && 'Reason', !String(actionTaken || '').trim() && 'Action to be Taken'].filter(Boolean);
+    if (missingWhy.length) return res.status(400).json({ error: `${missingWhy.join(' and ')} ${missingWhy.length > 1 ? 'are' : 'is'} required.` });
     await conn.beginTransaction();
     // RWIP-### -- next number after the highest existing RWIP, odd on the droplet and even on the
     // office box (lib/docNumber.js), so the two boxes never issue the same one.

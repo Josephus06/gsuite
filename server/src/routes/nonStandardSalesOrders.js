@@ -767,6 +767,12 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
     if (line.source_job_order_id && !src) return res.status(409).json({ error: 'This item has no source job order to base the JO on.' });
 
     const { reason_code_id: reasonCodeId, reason, action_to_be_taken: actionTaken, processes } = req.body;
+    // An RMA (RMA or RMA-Installation) must say why the job is being redone and what will be done
+    // about it (asked 2026-10-08). Sample and Internal JOs are not redos, so they stay optional.
+    if (['rma', 'rma_installation'].includes(nsso.type)) {
+      const missingWhy = [!String(reason || '').trim() && 'Reason', !String(actionTaken || '').trim() && 'Action to be Taken'].filter(Boolean);
+      if (missingWhy.length) return res.status(400).json({ error: `${missingWhy.join(' and ')} ${missingWhy.length > 1 ? 'are' : 'is'} required for an RMA.` });
+    }
     // Every type -- RMA, RMA-Installation, Sample, Internal -- goes through the same chain as a
     // standard JO (2026-10-02, "all NSJO treat it like a standard JO"): straight into the Design
     // Supervisor's queue to be assigned an artist, then layout, Sales Approval and Production.

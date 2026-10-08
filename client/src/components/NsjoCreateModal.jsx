@@ -10,7 +10,10 @@ function fmtDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 // The "Create JO" modal for a Non-Standard Sales Order item: shows the job-order header, lets the
 // user enter Reason Code / Reason / Action to be taken, and edit the process/material rows (qty,
 // sizes, item), then Save JO creates the production job order (NSJO-<type>-<nsso>-<seq>-<total>).
-export default function NsjoCreateModal({ nssoId, lineId, onClose, onSaved }) {
+// Reason and Action/s to be taken are required for an RMA (RMA / RMA-Installation) -- 2026-10-08,
+// the server refuses one without them; a Sample or Internal JO is not a redo, so they stay optional.
+export default function NsjoCreateModal({ nssoId, lineId, nssoType, onClose, onSaved }) {
+  const whyRequired = ['rma', 'rma_installation'].includes(nssoType);
   const [draft, setDraft] = useState(null);
   const [meta, setMeta] = useState(null);
   const [reasonCode, setReasonCode] = useState(null);
@@ -36,7 +39,12 @@ export default function NsjoCreateModal({ nssoId, lineId, onClose, onSaved }) {
   const delRow = (i) => setRows((r) => r.filter((_, idx) => idx !== i));
 
   async function save() {
-    setError(''); setSaving(true);
+    setError('');
+    if (whyRequired) {
+      const missing = [!reason.trim() && 'Reason', !action.trim() && 'Action/s to be taken'].filter(Boolean);
+      if (missing.length) { setError(`${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} required for an RMA.`); return; }
+    }
+    setSaving(true);
     try {
       const processes = rows.map((r) => ({
         process_id: r.process_id || null, process_qty: r.process_qty, process_uom: r.process_uom, category: r.category,
@@ -82,11 +90,11 @@ export default function NsjoCreateModal({ nssoId, lineId, onClose, onSaved }) {
                 columns={[{ key: 'name', label: 'Name' }, { key: 'reason_type', label: 'Type' }]} searchKeys={['name']} placeholder="--Select--" onSelect={setReasonCode} />
             </div>
             <div className="field">
-              <label>Reason</label>
+              <label>Reason{whyRequired ? ' *' : ''}</label>
               <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} />
             </div>
             <div className="field">
-              <label>Action/s to be taken</label>
+              <label>Action/s to be taken{whyRequired ? ' *' : ''}</label>
               <textarea value={action} onChange={(e) => setAction(e.target.value)} rows={2} />
             </div>
           </div>
