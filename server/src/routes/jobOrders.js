@@ -585,7 +585,7 @@ router.put('/:id', requireAuth, requireJobOrderEdit, async (req, res, next) => {
     if (requestedArtistId !== currentArtistId) {
       if (!await mayAssignArtist(req.user.id)) {
         await conn.rollback();
-        return res.status(403).json({ error: 'You do not have permission to assign an artist to a Job Order.' });
+        return res.status(403).json({ error: 'Only a Design Supervisor can assign the artist on a Job Order.' });
       }
       // Same cutoff as the dedicated assign-design endpoint -- once Released, the
       // design/artist stage is over, so this generic edit form can't be used as a
@@ -760,7 +760,7 @@ router.put('/:id/forward-to-design', requireAuth, async (req, res, next) => {
 // it), the design/artist stage is over and this closes; Cancelled is likewise final.
 router.put('/:id/assign-design', requireAuth, async (req, res, next) => {
   if (!await mayAssignArtist(req.user.id)) {
-    return res.status(403).json({ error: 'You do not have permission to assign layout job type and artist.' });
+    return res.status(403).json({ error: 'Only a Design Supervisor can assign the layout job type and artist.' });
   }
 
   const { layout_job_type_id, artist_id, planned_start_at, layout_qty: layoutQtyRaw } = req.body;

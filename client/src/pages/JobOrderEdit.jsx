@@ -58,8 +58,9 @@ export default function JobOrderEdit() {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { can } = useAuth();
-  const canAssignArtist = can('/job-orders/assign-artist', 'can_edit');
+  const { can, user } = useAuth();
+  // Design Supervisors only -- the server's rule (lib/artistAssignment.js mayAssignArtist).
+  const canAssignArtist = !!user?.is_design_supervisor;
   // Edit is reachable from both Sales > Job Orders and Production > Production --
   // Cancel/Save should return wherever the user actually came from instead of always
   // landing on the Sales-side view, which used to strand Production users on a

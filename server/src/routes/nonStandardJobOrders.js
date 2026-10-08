@@ -1086,7 +1086,7 @@ router.put('/:id/assign-artist', requireAuth, async (req, res, next) => {
   // the artist wherever that choice is made, rather than a second, separate switch for
   // non-standard orders that an admin would have to know to find.
   if (!await mayAssignArtist(req.user.id)) {
-    return res.status(403).json({ error: 'You do not have permission to assign an artist.' });
+    return res.status(403).json({ error: 'Only a Design Supervisor can assign the artist.' });
   }
 
   const { artist_employee_id: artistId, layout_job_type_id: layoutJobTypeId, planned_start_at: plannedStartAt } = req.body || {};

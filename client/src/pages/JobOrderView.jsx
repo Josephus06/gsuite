@@ -309,9 +309,8 @@ export default function JobOrderView() {
   // managers, matching the backend's own dual-check on these two routes.
   // The JO's rep, or that rep's supervisor.
   const isOwningSalesRep = isRepOrSupervisorOf(user, jo.sales_rep_id);
-  // "May I pick who draws this?" -- its own permission row, not the design-supervisor flag and
-  // not generic can_edit on Job Orders. Same check the server makes (lib/artistAssignment.js).
-  const canAssignArtist = can('/job-orders/assign-artist', 'can_edit');
+  // Design Supervisors only -- the server's rule (lib/artistAssignment.js mayAssignArtist).
+  const canAssignArtist = !!user?.is_design_supervisor;
   // The Design/Layout/Artist workflow is pre-release ONLY and applies to standard JOs alone.
   // Once a JO has a production_stage it's been released into production (design/layout is done --
   // it already has its artist + PMS job type), and RWIPs and NSJOs left on the old RMA step skip

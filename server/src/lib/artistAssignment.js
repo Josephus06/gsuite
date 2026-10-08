@@ -33,27 +33,16 @@ async function canEditPage(userId, route) {
   return !!perm?.allowed;
 }
 
+// DESIGN SUPERVISORS ONLY (asked 2026-10-08). Assigning or reassigning the artist is the design
+// supervisor's call and nobody else's: the "JO Assign Artist" grant above had spread to Production
+// and Sales accounts (Velbeth could reassign the artist on JO-72206-1-3), so it is no longer
+// consulted -- nor is System Admin, nor can_edit on Job Orders. canEditPage and the routes stay
+// exported for anything still reading the grant row.
 async function mayAssignArtist(userId) {
   const [[user]] = await pool.query(
-    'SELECT account_type, is_design_supervisor FROM users WHERE id = ?', [userId],
+    'SELECT is_design_supervisor FROM users WHERE id = ? AND is_active = 1', [userId],
   );
-  if (!user) return false;
-  // System Admin is full access by definition, and unlike requirePermission this does not depend
-  // on the seeding having reached this row on this install.
-  if (user.account_type === 'System Admin') return true;
-
-  const granted = await canEditPage(userId, ASSIGN_ARTIST_ROUTE);
-  if (granted !== null) return granted;
-
-  // The page row is not registered on this install yet. requirePermission answers a missing row
-  // with a 500 and that is what makes its deploy order so unforgiving -- push the code before the
-  // registration script runs and every endpoint in the module dies. This is the same situation
-  // read the other way: until the row exists, fall back to exactly the rule this replaced
-  // (the flag, or generic can_edit on Job Orders), so the code may ship before the migration and
-  // nobody is locked out in between. Once add-assign-artist-page.js has run, the grant above is
-  // the only thing consulted and this branch never runs again.
-  if (user.is_design_supervisor) return true;
-  return (await canEditPage(userId, JOB_ORDERS_ROUTE)) === true;
+  return !!user?.is_design_supervisor;
 }
 
-module.exports = { mayAssignArtist, ASSIGN_ARTIST_ROUTE };
+module.exports = { mayAssignArtist, ASSIGN_ARTIST_ROUTE, JOB_ORDERS_ROUTE, canEditPage };

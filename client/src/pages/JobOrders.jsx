@@ -45,7 +45,7 @@ const STATUS_TABS = [
 // waiting at once.
 export default function JobOrders() {
   const navigate = useNavigate();
-  const { can, permissions } = useAuth();
+  const { can, permissions, user } = useAuth();
 
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
@@ -78,8 +78,9 @@ export default function JobOrders() {
   const [bulkError, setBulkError] = useState('');
   const [bulkBusy, setBulkBusy] = useState(false);
 
-  // The bulk "Assign Artist" action, on the same grant the single-order button uses.
-  const canAssignArtist = can('/job-orders/assign-artist', 'can_edit');
+  // The bulk "Assign Artist" action, on the same rule the single-order button uses:
+  // Design Supervisors only -- the server's rule (lib/artistAssignment.js mayAssignArtist).
+  const canAssignArtist = !!user?.is_design_supervisor;
 
   function listParams() {
     const params = {};
