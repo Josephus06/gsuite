@@ -1,3 +1,4 @@
+import { rate6 } from '../utils/rate';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
@@ -378,7 +379,7 @@ export default function PurchaseOrderView() {
                         becomes once received rather than the one it was ordered in. Falls back to
                         unit_title for rows saved before purchase_unit was recorded properly. */}
                     <td>{l.purchase_unit || l.unit_title}</td>
-                    <td>{money(l.rate)}</td>
+                    <td>{rate6(l.rate)}</td>
                     <td>{discountLabel(l)}</td>
                     {/* The peso amount the discount takes off this line (asked 2026-10-08). */}
                     <td>{money(l.disc_amount)}</td>
@@ -511,7 +512,7 @@ export default function PurchaseOrderView() {
           <div className="estimate-detail-grid" style={{ marginBottom: 16 }}>
             <div>
               <div>Item : <span className="hi">{compareLine.item_code}{compareLine.item_name ? ` — ${compareLine.item_name}` : ''}</span></div>
-              <div>Rate on this PO : <span className="hi">{money(compareLine.rate)}</span> {compareLine.purchase_unit || compareLine.unit_title || ''}</div>
+              <div>Rate on this PO : <span className="hi">{rate6(compareLine.rate)}</span> {compareLine.purchase_unit || compareLine.unit_title || ''}</div>
             </div>
             <div>
               <div>Supplier : <span className="hi"><SupplierLink id={po.supplier_id} name={po.supplier_name} /></span></div>
@@ -550,7 +551,7 @@ export default function PurchaseOrderView() {
                             <SupplierLink id={sp.supplier_id} name={sp.supplier_name} />
                             {isThisSupplier && <span className="muted"> · this PO’s supplier</span>}
                           </td>
-                          <td>{money(sp.rate)}</td>
+                          <td>{rate6(sp.rate)}</td>
                           <td style={{ color: diff === null || Math.abs(diff) < 0.005 ? undefined : diff < 0 ? '#16a34a' : '#dc2626' }}>
                             {diff === null ? '—' : Math.abs(diff) < 0.005 ? 'same' : `${diff > 0 ? '+' : ''}${diff.toFixed(1)}%`}
                           </td>
@@ -608,7 +609,7 @@ export default function PurchaseOrderView() {
                         <td><SupplierLink id={h.supplier_id} name={h.supplier_name} /></td>
                         <td>{qty(h.qty)}</td>
                         <td>{h.unit || '—'}</td>
-                        <td>{money(h.rate)}</td>
+                        <td>{rate6(h.rate)}</td>
                         <td>{h.disc_percent}</td>
                       </tr>
                     ))}

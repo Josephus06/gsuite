@@ -1,3 +1,4 @@
+import { rate6 } from '../utils/rate';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
@@ -102,7 +103,7 @@ export default function PurchaseReturnView() {
                     </td>
                     <td>{l.location_name || '—'}</td>
                     <td>{qty(l.qty_returned)}</td>
-                    <td>{money(l.rate)}</td>
+                    <td>{rate6(l.rate)}</td>
                     <td>{l.disc_percent}</td>
                     <td>{money(l.net_of_tax)}</td>
                     <td>{l.tax_code}</td>

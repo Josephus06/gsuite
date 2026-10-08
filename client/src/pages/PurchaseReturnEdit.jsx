@@ -152,7 +152,7 @@ export default function PurchaseReturnEdit() {
                         value={l.qty_returned} onChange={(e) => updateLine(l.purchase_order_line_id, { qty_returned: e.target.value })}
                       />
                     </td>
-                    <td><input type="number" step="0.01" style={{ width: 90 }} value={l.rate} onChange={(e) => updateLine(l.purchase_order_line_id, { rate: e.target.value })} /></td>
+                    <td><input type="number" step="0.000001" style={{ width: 90 }} value={l.rate} onChange={(e) => updateLine(l.purchase_order_line_id, { rate: e.target.value })} /></td>
                     <td><input type="number" step="0.01" style={{ width: 70 }} value={l.disc_percent} onChange={(e) => updateLine(l.purchase_order_line_id, { disc_percent: e.target.value })} /></td>
                     <td>
                       <EntityPicker

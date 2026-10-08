@@ -1,3 +1,4 @@
+import { rate6 } from '../utils/rate';
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
 import EntityPicker from './EntityPicker';
@@ -133,7 +134,7 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
         const q = Number(next.qty) || 0;
         const d = Number(next.disc_percent) || 0;
         const sub = d > 0 && d < 100 ? Number(patch.amount || 0) / (1 - d / 100) : Number(patch.amount || 0);
-        if (q > 0) next.unit_price = Number((sub / q).toFixed(4));
+        if (q > 0) next.unit_price = Number((sub / q).toFixed(6));
       }
       return next;
     }));
@@ -285,13 +286,13 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
                       <td>{qty(l.billed_qty)}</td>
                       <td>
                         <input
-                          type="number" step="0.0001" style={{ width: 90 }}
+                          type="number" step="0.000001" style={{ width: 90 }}
                           value={l.qty}
                           onChange={(e) => updateLine(l.purchase_order_line_id, { qty: e.target.value })}
                         />
                       </td>
                       <td>{l.purchase_unit || l.unit_title}</td>
-                      <td>{money(l.rate)}</td>
+                      <td>{rate6(l.rate)}</td>
                       <td>
                         <input
                           type="number" step="0.00001" style={{ width: 100 }}

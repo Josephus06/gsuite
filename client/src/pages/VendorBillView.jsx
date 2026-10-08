@@ -1,3 +1,4 @@
+import { rate6 } from '../utils/rate';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
@@ -171,8 +172,8 @@ export default function VendorBillView() {
                     <td>{l.department_name}</td>
                     <td>{qty(l.qty)}</td>
                     <td>{l.purchase_unit || l.unit_title}</td>
-                    <td>{money(l.rate)}</td>
-                    <td>{money(l.unit_price)}</td>
+                    <td>{rate6(l.rate)}</td>
+                    <td>{rate6(l.unit_price)}</td>
                     <td>{l.disc_percent}</td>
                     <td>{money(l.disc_amount)}</td>
                     <td>{money(l.net_of_tax)}</td>

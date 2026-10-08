@@ -1,3 +1,4 @@
+import { rate6 } from '../utils/rate';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
@@ -129,7 +130,7 @@ export default function VendorBillEdit() {
     if ('amount' in patch) {
       const q = Number(next.qty) || 0; const d = Number(next.disc_percent) || 0;
       const sub = d > 0 && d < 100 ? Number(patch.amount || 0) / (1 - d / 100) : Number(patch.amount || 0);
-      next.unit_price = q > 0 ? Number((sub / q).toFixed(4)) : sub;
+      next.unit_price = q > 0 ? Number((sub / q).toFixed(6)) : sub;
     } else if ('qty' in patch || 'unit_price' in patch || 'disc_percent' in patch) {
       next.amount = amountOf(next);
     }
@@ -315,7 +316,7 @@ export default function VendorBillEdit() {
                     </select>
                   </td>
                   <td>{isItemBill || ro ? l.qty : <input type="number" min="0" step="any" style={{ width: 70 }} value={l.qty} onChange={(e) => setLine(l.key, { qty: e.target.value })} />}</td>
-                  <td>{ro ? money(l.unit_price) : <input type="number" step="any" style={{ width: 110 }} value={l.unit_price} onChange={(e) => setLine(l.key, { unit_price: e.target.value })} />}</td>
+                  <td>{ro ? rate6(l.unit_price) : <input type="number" step="any" style={{ width: 110 }} value={l.unit_price} onChange={(e) => setLine(l.key, { unit_price: e.target.value })} />}</td>
                   {isItemBill && <td>{ro ? l.disc_percent : <input type="number" min="0" max="100" step="any" style={{ width: 60 }} value={l.disc_percent} onChange={(e) => setLine(l.key, { disc_percent: e.target.value })} />}</td>}
                   <td><input type="number" step="0.01" style={{ width: 120 }} disabled={ro} value={l.amount} title="Amount net of VAT; Unit Price follows" onChange={(e) => setLine(l.key, { amount: e.target.value })} /></td>
                   <td>

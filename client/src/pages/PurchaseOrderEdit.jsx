@@ -262,7 +262,7 @@ export default function PurchaseOrderEdit() {
                         : <input type="number" step="0.0001" style={{ width: 80 }} value={l.qty} onChange={(e) => updateLine(l._key, { qty: e.target.value })} />}
                     </td>
                     <td>{l.purchase_unit}</td>
-                    <td><input type="number" step="0.01" style={{ width: 90 }} value={l.rate} onChange={(e) => updateLine(l._key, { rate: e.target.value })} /></td>
+                    <td><input type="number" step="0.000001" style={{ width: 90 }} value={l.rate} onChange={(e) => updateLine(l._key, { rate: e.target.value })} /></td>
                     <td><input type="text" inputMode="decimal" style={{ width: 80 }} value={l.disc_percent} placeholder="10;5" title="One discount (10) or a discount after discount (10;5 = 10% off, then 5% off the rest)" onChange={(e) => updateLine(l._key, { disc_percent: e.target.value })} /></td>
                     <td>
                       <EntityPicker

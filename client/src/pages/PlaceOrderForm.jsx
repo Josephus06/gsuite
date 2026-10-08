@@ -234,7 +234,7 @@ export default function PlaceOrderForm() {
                       />
                     </td>
                     <td>
-                      <input type="number" step="0.01" style={{ width: 90 }} value={r.rate} onChange={(e) => updateRow(r.purchase_requisition_line_id, { rate: e.target.value })} />
+                      <input type="number" step="0.000001" style={{ width: 90 }} value={r.rate} onChange={(e) => updateRow(r.purchase_requisition_line_id, { rate: e.target.value })} />
                     </td>
                     <td>
                       <input type="number" step="0.01" style={{ width: 70 }} value={r.disc_percent} onChange={(e) => updateRow(r.purchase_requisition_line_id, { disc_percent: e.target.value })} />
