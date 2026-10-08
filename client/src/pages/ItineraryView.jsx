@@ -76,9 +76,9 @@ function AddStopsModal({ itineraryId, onClose, onSaved }) {
         <input value={search} placeholder="SO number or customer"
           onChange={(e) => setSearch(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && load(search)} />
-        {/* Pending Billing and Partially Billed orders only (asked 2026-10-08), newest first. */}
+        {/* Pending Delivery, Pending Billing, Partially Billed and Billed orders only (asked 2026-10-08), newest first. */}
         <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-          Sales Orders that are Pending Billing or Partially Billed, newest first. Press Enter to search older ones.
+          Sales Orders that are Pending Delivery, Pending Billing, Partially Billed or Billed, newest first. Press Enter to search older ones.
         </div>
       </div>
 
@@ -91,7 +91,7 @@ function AddStopsModal({ itineraryId, onClose, onSaved }) {
             <tbody>
               {rows.length === 0 && (
                 <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>
-                  No Pending Billing or Partially Billed Sales Orders{search ? ' match' : ''}.
+                  No Pending Delivery, Pending Billing, Partially Billed or Billed Sales Orders{search ? ' match' : ''}.
                 </td></tr>
               )}
               {rows.map((r) => (
@@ -110,7 +110,7 @@ function AddStopsModal({ itineraryId, onClose, onSaved }) {
                   <td data-label="Qty" title={Number(r.qty_ready) > 0 ? 'Ready to deliver' : 'Order quantity'}>
                     {qty(Number(r.qty_ready) > 0 ? r.qty_ready : r.order_qty)}
                   </td>
-                  <td data-label="Status"><span className="badge badge-muted">{r.status === 'partially_billed' ? 'Partially Billed' : r.status === 'pending_billing' ? 'Pending Billing' : r.status}</span></td>
+                  <td data-label="Status"><span className="badge badge-muted">{({ pending_delivery: 'Pending Delivery', pending_billing: 'Pending Billing', partially_billed: 'Partially Billed', billed: 'Billed' })[r.status] || r.status}</span></td>
                   <td data-label="Address" style={{ maxWidth: 260, fontSize: 12 }}>{r.shipping_address || '—'}</td>
                 </tr>
               ))}

@@ -128,10 +128,10 @@ router.delete('/drivers/:id', requireAuth, requirePermission(ROUTE, 'can_delete'
 // Deliberately NOT here: 'pending_billing_partially_delivered', which means deliveries have caught
 // up with everything ready and the rest simply is not produced yet, and 'billed'/'pending_billing',
 // which are finished as far as the warehouse is concerned.
-// What a run may carry (asked 2026-10-08): Sales Orders that are Pending Billing or Partially
-// Billed -- ALL of them, whether or not anything is still built-and-undelivered, which is what the
-// picker used to require (35 orders qualified that way; 6,205 hold these statuses).
-const SCHEDULABLE_STATUSES = ['pending_billing', 'partially_billed'];
+// What a run may carry (asked 2026-10-08): Sales Orders that are Pending Delivery, Pending Billing,
+// Partially Billed or Billed -- ALL of them, whether or not anything is still built-and-undelivered,
+// which is what the picker used to require (35 orders qualified that way).
+const SCHEDULABLE_STATUSES = ['pending_delivery', 'pending_billing', 'partially_billed', 'billed'];
 // The order's own total, for a stop whose order has no ready quantity left to count.
 const ORDER_QTY_SQL = '(SELECT COALESCE(SUM(sol.quantity), 0) FROM sales_order_lines sol WHERE sol.sales_order_id = so.id)';
 
