@@ -32,11 +32,19 @@ function computeLine(l, wtaxRate) {
   const taxRate = Number(l.tax_rate) || 0;
   // A typed Amount (net of VAT) stands as typed; otherwise it is qty x unit price less discount.
   const typed = l.amount !== undefined && l.amount !== '' && Number.isFinite(Number(l.amount));
-  const netOfTax = typed ? Number(l.amount) : q * unitPrice * (1 - discPercent / 100);
-  const discAmount = typed ? (discPercent > 0 && discPercent < 100 ? netOfTax / (1 - discPercent / 100) - netOfTax : 0) : q * unitPrice * (discPercent / 100);
+  // Billed at the PO line's own unit price and discount: the PO line's figures, in proportion to
+  // the qty billed -- what the server saves (vendorBills.js computeLineFromPoLine), so the bill
+  // cannot come out a centavo off the PO it was billed from.
+  const same = (a, b) => Math.abs(Number(a || 0) - Number(b || 0)) < 0.000001;
+  const share = Number(l.po_qty) > 0 && l.po_net_of_tax != null && same(unitPrice, l.rate) && same(discPercent, l.po_disc_percent)
+    ? q / Number(l.po_qty) : null;
+  const r2 = (v) => Number((Number(v || 0) * share).toFixed(2));
+  const netOfTax = typed ? Number(l.amount) : (share != null ? r2(l.po_net_of_tax) : q * unitPrice * (1 - discPercent / 100));
+  const discAmount = typed ? (discPercent > 0 && discPercent < 100 ? netOfTax / (1 - discPercent / 100) - netOfTax : 0)
+    : (share != null ? r2(l.po_disc_amount) : q * unitPrice * (discPercent / 100));
   // A typed Tax Amount (tax_typed) stands; otherwise Net x the line's tax rate.
   const taxTyped = l.tax_typed !== undefined && l.tax_typed !== '' && Number.isFinite(Number(l.tax_typed));
-  const taxAmount = taxTyped ? Number(l.tax_typed) : netOfTax * (taxRate / 100);
+  const taxAmount = taxTyped ? Number(l.tax_typed) : (share != null && !typed ? r2(l.po_tax_amount) : netOfTax * (taxRate / 100));
   const extPrice = netOfTax + taxAmount;
   // A typed withholding (wtax_typed) stands; otherwise Net x the bill's rate.
   const wtTyped = l.wtax_typed !== undefined && l.wtax_typed !== '' && Number.isFinite(Number(l.wtax_typed));
@@ -91,7 +99,9 @@ export default function VendorBillModal({ purchaseOrderId, onClose, onSaved }) {
       // The PO's own term and the location its lines use (asked 2026-10-03).
       setTerm({ name: d.term_name || '', days: Number(d.no_of_days) || 0 });
       if (d.default_office_location) setOfficeLocation(d.default_office_location);
-      setLines(d.lines.map((l) => ({ ...l, is_withhold: false })));
+      // po_disc_percent: the PO line's own discount, kept aside so a line billed on the PO's terms
+      // can be told from one whose discount was changed here (computeLine).
+      setLines(d.lines.map((l) => ({ ...l, po_disc_percent: l.disc_percent, is_withhold: false })));
       setLoading(false);
     });
   }, [purchaseOrderId]);

@@ -35,6 +35,31 @@ function computeLineAmounts({ unitPrice, discPercent, taxRate, qty }) {
   return { subtotal, disc_amount: discAmount, net_of_tax: netOfTax, tax_amount: taxAmount, ext_price: extPrice };
 }
 
+// A bill line billed AT THE PO'S OWN TERMS -- the PO line's unit price and discount, untouched --
+// takes its amounts from the PO line itself, in proportion to the quantity billed, instead of
+// re-pricing qty x rate from scratch. The two used to round differently: the PO works a line out
+// unrounded and rounds once when it stores it, computeLineAmounts rounds the subtotal, then the
+// discount, then the net, then the tax. So billing a whole PO line could come out a centavo or more
+// off the PO it was billed from (7 x 1,234.5678 less 12.5%: net 7,561.73 on the PO, 7,561.72 on the
+// bill), and a chained discount (10;5;3 = 17.065%) made it likelier. Billing the whole line now
+// gives exactly the PO's figures; a part of it gives that share, rounded to the centavo.
+// Returns null when the line is not on the PO's own terms, or the PO line carries no stored amounts.
+function computeLineFromPoLine(poLine, { unitPrice, discPercent, qty }) {
+  const poQty = Number(poLine.qty);
+  if (!(poQty > 0) || poLine.net_of_tax == null) return null;
+  const same = (a, b) => Math.abs(Number(a || 0) - Number(b || 0)) < 0.000001;
+  if (!same(unitPrice, poLine.rate) || !same(discPercent, poLine.disc_percent)) return null;
+  const share = Number(qty) / poQty;
+  const r2 = (v) => Number((Number(v || 0) * share).toFixed(2));
+  const netOfTax = r2(poLine.net_of_tax);
+  const discAmount = r2(poLine.disc_amount);
+  const taxAmount = r2(poLine.tax_amount);
+  return {
+    subtotal: Number((netOfTax + discAmount).toFixed(2)), disc_amount: discAmount, net_of_tax: netOfTax,
+    tax_amount: taxAmount, ext_price: Number((netOfTax + taxAmount).toFixed(2)),
+  };
+}
+
 // A line priced from the Amount the user typed (net of VAT, after discount) rather than from
 // qty x unit price: the Amount is kept exactly and Unit Price follows (Amount / Qty, before the
 // discount), so a 4-decimal unit price cannot drift the line by centavos. A line with no quantity
@@ -113,6 +138,7 @@ router.get('/for-purchase-order/:poId', requireAuth, requirePermission(ROUTE, 'c
       `SELECT pol.id AS purchase_order_line_id, pol.item_id, i.item_code, i.display_name AS item_name,
               pol.purchase_description, pol.location_id, loc.location_name, pol.department_id, d.name AS department_name,
               pol.received_qty, pol.billed_qty, pol.unit_title, pol.purchase_unit, pol.rate, pol.disc_percent,
+              pol.qty AS po_qty, pol.disc_amount AS po_disc_amount, pol.net_of_tax AS po_net_of_tax, pol.tax_amount AS po_tax_amount,
               pol.tax_code_id, t.code AS tax_code, t.rate AS tax_rate
        FROM purchase_order_lines pol
        LEFT JOIN inventories i ON i.id = pol.item_id
@@ -154,7 +180,8 @@ router.get('/for-purchase-order/:poId', requireAuth, requirePermission(ROUTE, 'c
         billed_qty: l.billed_qty,
         qty,
         unit_price: l.rate,
-        ...computeLineAmounts({ unitPrice: l.rate, discPercent: l.disc_percent, taxRate: l.tax_rate, qty }),
+        ...(computeLineFromPoLine({ qty: l.po_qty, rate: l.rate, disc_percent: l.disc_percent, disc_amount: l.po_disc_amount, net_of_tax: l.po_net_of_tax, tax_amount: l.po_tax_amount }, { unitPrice: l.rate, discPercent: l.disc_percent, qty })
+          || computeLineAmounts({ unitPrice: l.rate, discPercent: l.disc_percent, taxRate: l.tax_rate, qty })),
       };
     });
 
@@ -458,7 +485,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const lineIds = submitted.map((l) => Number(l.purchase_order_line_id));
     const [poLines] = await conn.query(
       `SELECT pol.id, pol.item_id, pol.location_id, pol.department_id, pol.received_qty, pol.billed_qty,
-              pol.rate, pol.tax_code_id, t.rate AS tax_rate
+              pol.rate, pol.tax_code_id, t.rate AS tax_rate,
+              pol.qty, pol.disc_percent, pol.disc_amount, pol.net_of_tax, pol.tax_amount
        FROM purchase_order_lines pol
        LEFT JOIN taxes t ON t.id = pol.tax_code_id
        WHERE pol.purchase_order_id = ? AND pol.id IN (?)`,
@@ -488,7 +516,9 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       // A typed Amount wins; Unit Price follows it (computeLineFromAmount).
       const fromAmount = hasAmount(s) ? computeLineFromAmount({ amount: s.amount, discPercent, taxRate: poLine.tax_rate, qty }) : null;
       const unitPrice = fromAmount ? fromAmount.unit_price : (s.unit_price !== undefined ? Number(s.unit_price) : Number(poLine.rate));
-      const amounts = withTypedTax(s, fromAmount || computeLineAmounts({ unitPrice, discPercent, taxRate: poLine.tax_rate, qty }));
+      const amounts = withTypedTax(s, fromAmount
+        || computeLineFromPoLine(poLine, { unitPrice, discPercent, qty })
+        || computeLineAmounts({ unitPrice, discPercent, taxRate: poLine.tax_rate, qty }));
       const w = lineWtax({ ...s, is_withhold: isWithhold }, amounts.net_of_tax, wtaxRate);
       const lineWtaxAmount = w.wtax_amount;
       computedLines.push({
@@ -655,11 +685,15 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         if (!wt) return res.status(400).json({ error: 'Choose a valid withholding tax.' });
         wtaxRate = Number(wt.rate) || 0; wtaxDescription = wt.name || null;
       }
-      const price = (l, qty, unitPrice) => {
+      // poLine: the PO line a PO bill's line came from, so an unchanged line keeps the PO's own
+      // figures (computeLineFromPoLine) -- only on the PO line's own tax code.
+      const price = (l, qty, unitPrice, poLine = null) => {
         const rate = taxRate.get(Number(l.tax_code_id)) || 0;
+        const fromPo = poLine && Number(poLine.tax_code_id) === Number(l.tax_code_id)
+          ? computeLineFromPoLine(poLine, { unitPrice, discPercent: l.disc_percent, qty }) : null;
         const amounts = withTypedTax(l, hasAmount(l)
           ? computeLineFromAmount({ amount: l.amount, discPercent: l.disc_percent, taxRate: rate, qty })
-          : { ...computeLineAmounts({ unitPrice, discPercent: l.disc_percent, taxRate: rate, qty }), unit_price: unitPrice });
+          : { ...(fromPo || computeLineAmounts({ unitPrice, discPercent: l.disc_percent, taxRate: rate, qty })), unit_price: unitPrice });
         const w = lineWtax(l, amounts.net_of_tax, wtaxRate);
         return { ...amounts, ...w, amount_due: Number((amounts.ext_price - w.wtax_amount).toFixed(2)) };
       };
@@ -670,6 +704,11 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       if (hasItemLines) {
         // Same lines, same items and quantities: only their pricing and coding move.
         const byId = new Map(b.lines.map((l) => [Number(l.id), l]));
+        const polIds = existing.map((l) => l.purchase_order_line_id).filter(Boolean);
+        const [polRows] = polIds.length
+          ? await conn.query('SELECT id, qty, rate, disc_percent, disc_amount, net_of_tax, tax_amount, tax_code_id FROM purchase_order_lines WHERE id IN (?)', [polIds])
+          : [[]];
+        const polById = new Map(polRows.map((p) => [Number(p.id), p]));
         if (existing.some((l) => !byId.has(l.id)) || b.lines.length !== existing.length) {
           return res.status(400).json({ error: 'A Purchase Order bill keeps its lines -- they can be re-priced, not added or removed.' });
         }
@@ -682,7 +721,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
           newLines.push({
             id: old.id, account_id: old.account_id, description: old.description, department_id: departmentId,
             qty: Number(old.qty), rate: old.rate, disc_percent: Number(l.disc_percent || 0),
-            tax_code_id: Number(l.tax_code_id) || null, ...price(l, Number(old.qty), unitPrice),
+            tax_code_id: Number(l.tax_code_id) || null, ...price(l, Number(old.qty), unitPrice, polById.get(Number(old.purchase_order_line_id)) || null),
           });
         }
       } else {
