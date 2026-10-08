@@ -12,6 +12,12 @@ import letterhead from '../assets/graphicstar-letterhead.png';
 // Read from GET /rma-job-orders/:id/print -- see server/src/routes/rmaJobOrders.js.
 
 const qty = (v) => (v == null || v === '' ? '' : Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }));
+// "950 x 2450" -- blank when the line has no size (stored as 0 on unsized lines), as on the JO printout.
+const size = (l) => {
+  const a = Number(l.length) || 0; const b = Number(l.width) || 0;
+  const f = (v) => v.toLocaleString('en-US', { maximumFractionDigits: 2 });
+  return a || b ? `${f(a)} x ${f(b)}` : '';
+};
 const longDate = (v) => (v ? new Date(`${String(v).slice(0, 10)}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '');
 
 export default function RmaPrint() {
@@ -115,16 +121,18 @@ export default function RmaPrint() {
 
         <table className="rma-table">
           <thead>
-            <tr><th style={{ width: '5%' }}>#</th><th style={{ width: '32%' }}>Process</th><th>Item</th><th className="rma-num" style={{ width: '10%' }}>Qty</th></tr>
+            <tr><th style={{ width: '5%' }}>#</th><th style={{ width: '28%' }}>Process</th><th>Item</th><th className="rma-num" style={{ width: '8%' }}>Qty</th><th style={{ width: '14%', textAlign: 'center' }}>Size</th><th style={{ width: '8%', textAlign: 'center' }}>UOM</th></tr>
           </thead>
           <tbody>
-            {(jo.lines || []).length === 0 && <tr><td colSpan={4} style={{ textAlign: 'center' }}>No processes.</td></tr>}
+            {(jo.lines || []).length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center' }}>No processes.</td></tr>}
             {(jo.lines || []).map((l, i) => (
               <tr key={i}>
                 <td>{i + 1}</td>
                 <td>{l.process_name || ''}</td>
                 <td>{l.item_name || ''}</td>
                 <td className="rma-num">{Number(l.qty || 0).toLocaleString('en-US', { maximumFractionDigits: 4 })}</td>
+                <td style={{ textAlign: 'center' }}>{size(l)}</td>
+                <td style={{ textAlign: 'center' }}>{l.uom || ''}</td>
               </tr>
             ))}
           </tbody>

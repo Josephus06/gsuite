@@ -169,7 +169,7 @@ router.get('/:id/print', requireAuth, async (req, res, next) => {
     if (!isJobLocationVisible(jo, await getJobLocationScope(req.user.id))) return res.status(404).json({ error: 'Not found' });
 
     const [lines] = await pool.query(
-      `SELECT jop.line_no, pr.process_name, i.display_name AS item_name, jop.qty, jop.process_qty
+      `SELECT jop.line_no, pr.process_name, i.display_name AS item_name, jop.qty, jop.process_qty, jop.length, jop.width, jop.uom
          FROM job_order_processes jop
          LEFT JOIN processes pr ON pr.id = jop.process_id
          LEFT JOIN inventories i ON i.id = jop.item_id
