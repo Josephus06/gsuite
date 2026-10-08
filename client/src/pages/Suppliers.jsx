@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import MergePartyModal from '../components/MergePartyModal';
 
 const EMPTY = {
   supplier_code: '', name: '', company_name: '', tin: '', payment_term_id: '', is_active: true,
@@ -16,7 +17,8 @@ const EMPTY_CONTACT = { contact_name: '', title: '', email: '', phone: '', is_pr
 const EMPTY_ADDRESS = { address_line: '', is_default: false };
 
 export default function Suppliers() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
+  const [merging, setMerging] = useState(false);
   const [rows, setRows] = useState([]);
   const [paymentTerms, setPaymentTerms] = useState([]);
   const [editing, setEditing] = useState(null);
@@ -177,7 +179,15 @@ export default function Suppliers() {
       <div className="page-header">
         <h1>Suppliers</h1>
         {can('/suppliers', 'can_add') && <button className="btn btn-primary" onClick={openCreate}>Add Supplier</button>}
+        {/* System Admin only, as the server is: a merge cannot be undone. */}
+        {user?.account_type === 'System Admin' && (
+          <button type="button" className="btn" style={{ marginLeft: 8 }} onClick={() => setMerging(true)}>Merge Suppliers</button>
+        )}
       </div>
+      {merging && (
+        <MergePartyModal kind="supplier" items={rows} onClose={() => setMerging(false)}
+          onMerged={() => { setMerging(false); load(); }} />
+      )}
       <div className="card">
         {/* The filters apply as you type; Search (or Enter) re-reads the list from the server so
             suppliers added elsewhere since the page opened show up too. */}

@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
+const { mergeParty } = require('../lib/partyMerge');
 const { sendXlsx, day } = require('../lib/xlsxExport');
 
 const router = express.Router();
@@ -51,6 +52,20 @@ function listFilter(req) {
 const LIST_SELECT = `SELECT s.*, pt.term_name AS payment_term_name
        FROM suppliers s
        LEFT JOIN payment_terms pt ON pt.id = s.payment_term_id`;
+
+// Merge two suppliers (asked 2026-10-08): retain_id keeps its record, delete_id's transactions move
+// onto it and its record is removed -- see lib/partyMerge.js. dry_run reports what would move.
+// System Admin only: it cannot be undone.
+router.post('/merge', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await isSystemAdmin(req.user.id))) return res.status(403).json({ error: 'Only a System Admin can merge suppliers.' });
+    const out = await mergeParty('supplier', req.body?.retain_id, req.body?.delete_id, { dryRun: !!req.body?.dry_run, userId: req.user.id });
+    res.json(out);
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
 
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {

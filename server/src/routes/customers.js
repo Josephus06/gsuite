@@ -1,7 +1,8 @@
 const express = require('express');
 const pool = require('../db');
 const { findCustomerByName, duplicateMessage, nameKey } = require('../lib/customerDuplicates');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
+const { mergeParty } = require('../lib/partyMerge');
 const { upperCustomerName, CUSTOMER_NAME_FIELDS } = require('../lib/customerName');
 
 const router = express.Router();
@@ -35,6 +36,20 @@ const withUpperNames = (body) => FIELDS.map((f) => {
   return CUSTOMER_NAME_FIELDS.includes(f) ? upperCustomerName(raw) : raw;
 });
 const contactValues = (c) => CONTACT_FIELDS.map((f) => (CONTACT_FLAGS.includes(f) ? (c[f] ? 1 : 0) : (blank(c[f]) ?? null)));
+
+// Merge two customers (asked 2026-10-08): retain_id keeps its record, delete_id's transactions move
+// onto it and its record is removed -- see lib/partyMerge.js. dry_run reports what would move.
+// System Admin only: it cannot be undone.
+router.post('/merge', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await isSystemAdmin(req.user.id))) return res.status(403).json({ error: 'Only a System Admin can merge customers.' });
+    const out = await mergeParty('customer', req.body?.retain_id, req.body?.delete_id, { dryRun: !!req.body?.dry_run, userId: req.user.id });
+    res.json(out);
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
 
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {

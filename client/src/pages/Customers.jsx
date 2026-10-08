@@ -4,11 +4,13 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
+import MergePartyModal from '../components/MergePartyModal';
 
 // Adding and editing a customer happen on their own page (CustomerForm.jsx), laid out as the old
 // system's "Setup Your Customer" screen.
 export default function Customers() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
+  const [merging, setMerging] = useState(false);
   const navigate = useNavigate();
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -58,7 +60,15 @@ export default function Customers() {
       <div className="page-header">
         <h1>Customers</h1>
         {can('/customers', 'can_add') && <Link className="btn btn-primary" to={'/customers/new'}>Add Customer</Link>}
+        {/* System Admin only, as the server is: a merge cannot be undone. */}
+        {user?.account_type === 'System Admin' && (
+          <button type="button" className="btn" style={{ marginLeft: 8 }} onClick={() => setMerging(true)}>Merge Customers</button>
+        )}
       </div>
+      {merging && (
+        <MergePartyModal kind="customer" items={rows} onClose={() => setMerging(false)}
+          onMerged={() => { setMerging(false); load(); }} />
+      )}
       {!loading && (
         <div className="card" style={{ marginBottom: 16 }}>
           <div className="filter-grid">
