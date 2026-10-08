@@ -66,6 +66,9 @@ export default function JobOrderEdit() {
   const backTo = location.state?.from === 'production' ? `/production/${id}` : `/job-orders/${id}`;
 
   const [jo, setJo] = useState(null);
+  // A rework JO (RWIP / RFQC) sizes each material in the MOTHER's UOM for that item (asked
+  // 2026-10-08; the server refuses anything else): item_id -> UOM, read off the mother's lines.
+  const [motherUoms, setMotherUoms] = useState(new Map());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -97,6 +100,13 @@ export default function JobOrderEdit() {
     ]).then(([joRes, locRes, empRes, artistRes, procRes, invRes, unitRes]) => {
       setJo(joRes.data);
       setProcesses(joRes.data.processes || []);
+      if (joRes.data.parent_job_order_id) {
+        api.get(`/job-orders/${joRes.data.parent_job_order_id}`).then(({ data }) => {
+          const m = new Map();
+          for (const p of data.processes || []) if (p.item_id && p.uom && !m.has(p.item_id)) m.set(p.item_id, p.uom);
+          setMotherUoms(m);
+        }).catch(() => {});
+      }
       setForm({
         job_location_id: joRes.data.job_location_id || '', description: joRes.data.description || '',
         artist_id: joRes.data.artist_id || '', memo: joRes.data.memo || '',
@@ -220,7 +230,7 @@ export default function JobOrderEdit() {
           columns={[{ key: 'item_code', label: 'Code' }, { key: 'display_name', label: 'Name' }, { key: 'category_name', label: 'Category' }]}
           searchKeys={['item_code', 'display_name']}
           // UOM starts at the item's base unit CODE, as on the Estimate, and is then changeable.
-          onSelect={(i) => { ensureUomsLoaded(i.id); recalcAndCommitMaterial(row.id, { item_id: i.id, uom: i.base_unit_code || '', unit: unitLabel(i.base_unit_id) }); }}
+          onSelect={(i) => { ensureUomsLoaded(i.id); recalcAndCommitMaterial(row.id, { item_id: i.id, uom: motherUoms.get(i.id) || i.base_unit_code || '', unit: unitLabel(i.base_unit_id) }); }}
         />
       );
     }
@@ -243,6 +253,10 @@ export default function JobOrderEdit() {
       );
     }
     if (col.type === 'select-uom') {
+      // Fixed to the mother's UOM on a rework JO, for an item the mother uses.
+      if (motherUoms.has(row.item_id)) {
+        return <input value={motherUoms.get(row.item_id)} readOnly tabIndex={-1} title="A rework job order uses the mother JO's UOM" />;
+      }
       const options = row.item_id ? (uomsByItem[row.item_id] || []) : [];
       return (
         <select value={val} disabled={!row.item_id}

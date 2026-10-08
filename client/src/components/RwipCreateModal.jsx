@@ -16,6 +16,7 @@ export default function RwipCreateModal({ jobOrderId, onClose, onSaved }) {
   const [deliveryDate, setDeliveryDate] = useState('');
   const [deliveryTime, setDeliveryTime] = useState('');
   const [rows, setRows] = useState([]);
+  const [motherUoms, setMotherUoms] = useState(new Map());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -29,6 +30,10 @@ export default function RwipCreateModal({ jobOrderId, onClose, onSaved }) {
       setDeliveryDate(d.data.jo.delivery_date ? String(d.data.jo.delivery_date).slice(0, 10) : '');
       setDeliveryTime(d.data.jo.delivery_time || '');
       setRows((d.data.processes || []).map((p) => ({ ...p })));
+      // The mother's UOM per item: an RWIP line for the same item keeps it (asked 2026-10-08).
+      const byItem = new Map();
+      for (const p of d.data.processes || []) if (p.item_id && p.uom && !byItem.has(p.item_id)) byItem.set(p.item_id, p.uom);
+      setMotherUoms(byItem);
     }).catch((e) => setError(e.response?.data?.error || 'Failed to load.'));
   }, [jobOrderId]);
 
@@ -125,11 +130,13 @@ export default function RwipCreateModal({ jobOrderId, onClose, onSaved }) {
                     <td style={{ minWidth: 200 }}>
                       <EntityPicker label="Item" items={meta?.items || []} value={r.item_id || ''} getLabel={(x) => x.display_name}
                         columns={[{ key: 'item_code', label: 'Code' }, { key: 'display_name', label: 'Name' }]} searchKeys={['item_code', 'display_name']}
-                        placeholder={r.item_name || '--Select--'} onSelect={(x) => setRow(i, { item_id: x?.id || null, item_name: x?.display_name || '' })} />
+                        placeholder={r.item_name || '--Select--'} onSelect={(x) => setRow(i, { item_id: x?.id || null, item_name: x?.display_name || '', ...(motherUoms.has(x?.id) ? { uom: motherUoms.get(x.id) } : {}) })} />
                     </td>
                     <td><input type="number" value={r.length ?? ''} onChange={(e) => setRow(i, { length: e.target.value })} style={{ width: 60 }} /></td>
                     <td><input type="number" value={r.width ?? ''} onChange={(e) => setRow(i, { width: e.target.value })} style={{ width: 60 }} /></td>
-                    <td><input value={r.uom || ''} onChange={(e) => setRow(i, { uom: e.target.value })} style={{ width: 60 }} /></td>
+                    <td>{motherUoms.has(r.item_id)
+                      ? <input value={motherUoms.get(r.item_id)} readOnly tabIndex={-1} title="The mother JO's UOM" style={{ width: 60 }} />
+                      : <input value={r.uom || ''} onChange={(e) => setRow(i, { uom: e.target.value })} style={{ width: 60 }} />}</td>
                     <td><input type="number" value={r.qty ?? 0} onChange={(e) => setRow(i, { qty: e.target.value })} style={{ width: 60 }} /></td>
                     <td><input value={r.unit || ''} onChange={(e) => setRow(i, { unit: e.target.value })} style={{ width: 60 }} /></td>
                     <td><input value={r.remarks || ''} onChange={(e) => setRow(i, { remarks: e.target.value })} style={{ width: 120 }} /></td>

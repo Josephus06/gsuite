@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { completeDesignProcesses } = require('../lib/designAutoComplete');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
+const { motherUom } = require('../lib/reworkUom');
 const { isPlannerUser, isPlanner, PLANNER_COLUMNS } = require('../lib/plannerRoles');
 const { isAdvanceCopy } = require('../lib/advanceCopy');
 const { isScopedToDesignQueue, DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } = require('../lib/designSupervisorVisibility');
@@ -1041,6 +1042,15 @@ router.post('/:id/processes', requireAuth, requireJobOrderEdit, async (req, res,
       'SELECT COALESCE(MAX(line_no), 0) + 1 AS nextLine FROM job_order_processes WHERE job_order_id = ?',
       [req.params.id]
     );
+    // A rework JO's line is sized in the mother's UOM for the same item (lib/reworkUom.js).
+    {
+      const itemId = req.body.item_id === undefined ? null : req.body.item_id;
+      const required = await motherUom(conn, req.params.id, itemId);
+      if (required && req.body.uom !== undefined && String(req.body.uom || '') !== String(required)) {
+        await conn.rollback();
+        return res.status(400).json({ error: `This is a rework of another job order: the UOM must be the mother JO's (${required}).` });
+      }
+    }
     const values = PROCESS_FIELDS.map((f) => (req.body[f] === undefined || req.body[f] === '' ? null : req.body[f]));
     const [result] = await conn.query(
       `INSERT INTO job_order_processes (job_order_id, line_no, ${PROCESS_FIELDS.join(', ')})
@@ -1068,6 +1078,15 @@ router.put('/:id/processes/:procId', requireAuth, requireJobOrderEdit, async (re
       [req.params.procId, req.params.id]
     );
     if (!oldRow) { await conn.rollback(); return res.status(404).json({ error: 'Not found' }); }
+    // A rework JO's line is sized in the mother's UOM for the same item (lib/reworkUom.js).
+    {
+      const itemId = req.body.item_id === undefined ? oldRow.item_id : req.body.item_id;
+      const required = await motherUom(conn, req.params.id, itemId);
+      if (required && req.body.uom !== undefined && String(req.body.uom || '') !== String(required)) {
+        await conn.rollback();
+        return res.status(400).json({ error: `This is a rework of another job order: the UOM must be the mother JO's (${required}).` });
+      }
+    }
     const values = PROCESS_FIELDS.map((f) => (req.body[f] === undefined || req.body[f] === '' ? null : req.body[f]));
     await conn.query(
       `UPDATE job_order_processes SET ${PROCESS_FIELDS.map((f) => `${f} = ?`).join(', ')} WHERE id = ?`,

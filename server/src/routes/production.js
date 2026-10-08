@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { assignDocNo, nextDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
+const { motherUomOf } = require('../lib/reworkUom');
 const { isHeadOfficeUser, resolveDefaultLocation, isHeadOfficeName } = require('../lib/userLocation');
 const { isNonStockItem } = require('../lib/itemTypes');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
@@ -1153,6 +1154,8 @@ router.post('/:id/rwip', requireAuth, async (req, res, next) => {
       let ln = 0;
       for (const pr of processes) {
         ln += 1;
+        // The mother's UOM for the same item, whatever was typed (lib/reworkUom.js).
+        pr.uom = (await motherUomOf(conn, jo.id, pr.item_id)) || pr.uom;
         await conn.query(
           `INSERT INTO job_order_processes (job_order_id, line_no, process_id, process_qty, process_uom, category, parts, item_id, length, width, uom, qty, unit, remarks)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
