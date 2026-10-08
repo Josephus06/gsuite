@@ -336,7 +336,7 @@ export default function PurchaseOrderView() {
                       freight charge belonged to. */}
                   <th>Location</th><th>Department</th>
                   {po.type === 'PO3' && <th>JO #</th>}
-                  <th>Qty</th><th>Unit</th><th>Rate</th><th>Disc %</th>
+                  <th>Qty</th><th>Unit</th><th>Rate</th><th>Disc %</th><th>Disc Amt</th>
                   <th>Net of Tax</th><th>Tax Code</th><th>Tax Amt</th><th>Ext. Price</th><th>Received</th>
                 </tr>
               </thead>
@@ -380,6 +380,8 @@ export default function PurchaseOrderView() {
                     <td>{l.purchase_unit || l.unit_title}</td>
                     <td>{money(l.rate)}</td>
                     <td>{discountLabel(l)}</td>
+                    {/* The peso amount the discount takes off this line (asked 2026-10-08). */}
+                    <td>{money(l.disc_amount)}</td>
                     <td>{money(l.net_of_tax)}</td>
                     <td>{l.tax_code}</td>
                     <td>{money(l.tax_amount)}</td>
