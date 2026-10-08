@@ -12,6 +12,9 @@ function money(v) {
 // Mirrors the real Purchase Order's "Landed Cost" tab > Create PO -- a sub-PO for
 // freight/customs/etc. tied back to an already-Approved parent PO. Not sourced from any
 // Purchase Requisition line, so items are picked straight from Inventory.
+// Rounded to the centavo at each step, exactly as the server does (routes/purchaseOrders.js cents).
+const cents = (n) => Math.round(Number((Number(n) * 100).toFixed(6))) / 100;
+
 export default function LandedCostEdit() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -90,12 +93,12 @@ export default function LandedCostEdit() {
   function lineCalc(l) {
     const qty = Number(l.qty || 0);
     const rate = Number(l.rate || 0);
-    const subtotal = qty * rate;
-    const discAmount = subtotal * (Number(l.disc_percent || 0) / 100);
-    const netOfTax = subtotal - discAmount;
+    const subtotal = cents(qty * rate);
+    const discAmount = cents(subtotal * (Number(l.disc_percent || 0) / 100));
+    const netOfTax = cents(subtotal - discAmount);
     const tax = taxes.find((t) => t.id === l.tax_code_id);
-    const taxAmount = netOfTax * (Number(tax?.rate || 0) / 100);
-    return { extPrice: netOfTax + taxAmount };
+    const taxAmount = cents(netOfTax * (Number(tax?.rate || 0) / 100));
+    return { extPrice: cents(netOfTax + taxAmount) };
   }
 
   const grandTotal = lines.reduce((s, l) => s + lineCalc(l).extPrice, 0);

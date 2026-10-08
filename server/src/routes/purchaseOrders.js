@@ -36,6 +36,12 @@ function resolveLineDiscounts(lines) {
   return null;
 }
 
+// A PO line's amounts are rounded to the centavo at each step (asked 2026-10-08, PO-20099): Subtotal,
+// then Discount on it, then Net of Tax = Subtotal - Discount, then Tax on that, then Ext. Price.
+// Rounding only at the end gave 2 x 4,696.4285 at 5% off as 8,923.21 (8,923.21415); the
+// figures on the page -- 9,392.86 less 469.64 -- say 8,923.22. Rates keep their 6 decimals.
+// toFixed(6) first, so a binary float like 1.005 does not round to 1.00.
+const cents = (n) => Math.round(Number((Number(n) * 100).toFixed(6))) / 100;
 const router = express.Router();
 const ROUTE = '/purchase-orders';
 const APPROVAL_THRESHOLD = 10000;
@@ -787,12 +793,12 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
         const qty = Number(l.qty);
         const rate = Number(l.rate || 0);
         const discPercent = Number(l.disc_percent || 0);
-        const lineSubtotal = qty * rate;
-        const lineDiscAmount = lineSubtotal * (discPercent / 100);
-        const lineNetOfTax = lineSubtotal - lineDiscAmount;
+        const lineSubtotal = cents(qty * rate);
+        const lineDiscAmount = cents(lineSubtotal * (discPercent / 100));
+        const lineNetOfTax = cents(lineSubtotal - lineDiscAmount);
         const taxRatePct = l.tax_code_id ? (taxRateById.get(l.tax_code_id) || 0) : 0;
-        const lineTaxAmount = lineNetOfTax * (taxRatePct / 100);
-        const extPrice = lineNetOfTax + lineTaxAmount;
+        const lineTaxAmount = cents(lineNetOfTax * (taxRatePct / 100));
+        const extPrice = cents(lineNetOfTax + lineTaxAmount);
         subtotal += lineSubtotal; discountAmount += lineDiscAmount; netOfTax += lineNetOfTax; taxAmount += lineTaxAmount;
         return { ...l, lineSubtotal, lineDiscAmount, lineNetOfTax, lineTaxAmount, extPrice };
       });
@@ -1022,12 +1028,12 @@ router.post('/:id/landed-costs', requireAuth, requirePermission(ROUTE, 'can_add'
       const qty = Number(l.qty);
       const rate = Number(l.rate || 0);
       const discPercent = Number(l.disc_percent || 0);
-      const lineSubtotal = qty * rate;
-      const lineDiscAmount = lineSubtotal * (discPercent / 100);
-      const lineNetOfTax = lineSubtotal - lineDiscAmount;
+      const lineSubtotal = cents(qty * rate);
+      const lineDiscAmount = cents(lineSubtotal * (discPercent / 100));
+      const lineNetOfTax = cents(lineSubtotal - lineDiscAmount);
       const taxRatePct = l.tax_code_id ? (taxRateById.get(l.tax_code_id) || 0) : 0;
-      const lineTaxAmount = lineNetOfTax * (taxRatePct / 100);
-      const extPrice = lineNetOfTax + lineTaxAmount;
+      const lineTaxAmount = cents(lineNetOfTax * (taxRatePct / 100));
+      const extPrice = cents(lineNetOfTax + lineTaxAmount);
       subtotal += lineSubtotal; discountAmount += lineDiscAmount; netOfTax += lineNetOfTax; taxAmount += lineTaxAmount;
       return { ...l, lineDiscAmount, lineNetOfTax, lineTaxAmount, extPrice };
     });
@@ -1104,12 +1110,12 @@ router.post('/direct', requireAuth, requirePermission(ROUTE, 'can_add'), async (
       const qty = Number(l.qty);
       const rate = Number(l.rate || 0);
       const discPercent = Number(l.disc_percent || 0);
-      const lineSubtotal = qty * rate;
-      const lineDiscAmount = lineSubtotal * (discPercent / 100);
-      const lineNetOfTax = lineSubtotal - lineDiscAmount;
+      const lineSubtotal = cents(qty * rate);
+      const lineDiscAmount = cents(lineSubtotal * (discPercent / 100));
+      const lineNetOfTax = cents(lineSubtotal - lineDiscAmount);
       const taxRatePct = l.tax_code_id ? (taxRateById.get(l.tax_code_id) || 0) : 0;
-      const lineTaxAmount = lineNetOfTax * (taxRatePct / 100);
-      const extPrice = lineNetOfTax + lineTaxAmount;
+      const lineTaxAmount = cents(lineNetOfTax * (taxRatePct / 100));
+      const extPrice = cents(lineNetOfTax + lineTaxAmount);
       subtotal += lineSubtotal; discountAmount += lineDiscAmount; netOfTax += lineNetOfTax; taxAmount += lineTaxAmount;
       return { ...l, lineDiscAmount, lineNetOfTax, lineTaxAmount, extPrice };
     });
@@ -1272,12 +1278,12 @@ router.post('/:id/receipts', requireAuth, requireReceiveRight, async (req, res, 
       const qty = Number(l.qty_received);
       const rate = Number(l.rate || 0);
       const discPercent = Number(l.disc_percent || 0);
-      const lineSubtotal = qty * rate;
-      const lineDiscAmount = lineSubtotal * (discPercent / 100);
-      const lineNetOfTax = lineSubtotal - lineDiscAmount;
+      const lineSubtotal = cents(qty * rate);
+      const lineDiscAmount = cents(lineSubtotal * (discPercent / 100));
+      const lineNetOfTax = cents(lineSubtotal - lineDiscAmount);
       const taxRatePct = l.tax_code_id ? (taxRateById.get(l.tax_code_id) || 0) : 0;
-      const lineTaxAmount = lineNetOfTax * (taxRatePct / 100);
-      const extPrice = lineNetOfTax + lineTaxAmount;
+      const lineTaxAmount = cents(lineNetOfTax * (taxRatePct / 100));
+      const extPrice = cents(lineNetOfTax + lineTaxAmount);
       subtotal += lineSubtotal; discountAmount += lineDiscAmount; netOfTax += lineNetOfTax; taxAmount += lineTaxAmount;
       return {
         purchase_order_line_id: l.purchase_order_line_id, tax_code_id: l.tax_code_id || null,
@@ -1433,12 +1439,12 @@ router.post('/:id/returns', requireAuth, requirePermission(ROUTE, 'can_edit'), a
       const qty = Number(l.qty_returned);
       const rate = Number(l.rate || 0);
       const discPercent = Number(l.disc_percent || 0);
-      const lineSubtotal = qty * rate;
-      const lineDiscAmount = lineSubtotal * (discPercent / 100);
-      const lineNetOfTax = lineSubtotal - lineDiscAmount;
+      const lineSubtotal = cents(qty * rate);
+      const lineDiscAmount = cents(lineSubtotal * (discPercent / 100));
+      const lineNetOfTax = cents(lineSubtotal - lineDiscAmount);
       const taxRatePct = l.tax_code_id ? (taxRateById.get(l.tax_code_id) || 0) : 0;
-      const lineTaxAmount = lineNetOfTax * (taxRatePct / 100);
-      const extPrice = lineNetOfTax + lineTaxAmount;
+      const lineTaxAmount = cents(lineNetOfTax * (taxRatePct / 100));
+      const extPrice = cents(lineNetOfTax + lineTaxAmount);
       subtotal += lineSubtotal; discountAmount += lineDiscAmount; netOfTax += lineNetOfTax; taxAmount += lineTaxAmount;
       return {
         purchase_order_line_id: l.purchase_order_line_id, tax_code_id: l.tax_code_id || null,
@@ -1603,12 +1609,12 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       const qty = Number(l.qty);
       const rate = Number(l.rate || 0);
       const discPercent = Number(l.disc_percent || 0);
-      const lineSubtotal = qty * rate;
-      const lineDiscAmount = lineSubtotal * (discPercent / 100);
-      const lineNetOfTax = lineSubtotal - lineDiscAmount;
+      const lineSubtotal = cents(qty * rate);
+      const lineDiscAmount = cents(lineSubtotal * (discPercent / 100));
+      const lineNetOfTax = cents(lineSubtotal - lineDiscAmount);
       const taxRatePct = l.tax_code_id ? (taxRateById.get(l.tax_code_id) || 0) : 0;
-      const lineTaxAmount = lineNetOfTax * (taxRatePct / 100);
-      const extPrice = lineNetOfTax + lineTaxAmount;
+      const lineTaxAmount = cents(lineNetOfTax * (taxRatePct / 100));
+      const extPrice = cents(lineNetOfTax + lineTaxAmount);
       subtotal += lineSubtotal; discountAmount += lineDiscAmount; netOfTax += lineNetOfTax; taxAmount += lineTaxAmount;
       return { ...l, lineDiscAmount, lineNetOfTax, lineTaxAmount, extPrice };
     });

@@ -19,6 +19,9 @@ function money(v) {
 // everything else (rate, discount, tax, description, location, department) stays
 // editable, and brand-new lines can be added/removed freely, same restrictions the
 // backend enforces server-side regardless of what this form allows client-side.
+// Rounded to the centavo at each step, exactly as the server does (routes/purchaseOrders.js cents).
+const cents = (n) => Math.round(Number((Number(n) * 100).toFixed(6))) / 100;
+
 export default function PurchaseOrderEdit() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -117,13 +120,13 @@ export default function PurchaseOrderEdit() {
   function lineCalc(l) {
     const qty = Number(l.qty || 0);
     const rate = Number(l.rate || 0);
-    const subtotal = qty * rate;
+    const subtotal = cents(qty * rate);
     // Discount % may be a chain ("10;5": 10% off, then 5% off the rest) -- utils/discountChain.js.
-    const discAmount = subtotal * ((parseDiscountChain(l.disc_percent).pct || 0) / 100);
-    const netOfTax = subtotal - discAmount;
+    const discAmount = cents(subtotal * ((parseDiscountChain(l.disc_percent).pct || 0) / 100));
+    const netOfTax = cents(subtotal - discAmount);
     const tax = taxes.find((t) => t.id === l.tax_code_id);
-    const taxAmount = netOfTax * (Number(tax?.rate || 0) / 100);
-    return { extPrice: netOfTax + taxAmount };
+    const taxAmount = cents(netOfTax * (Number(tax?.rate || 0) / 100));
+    return { extPrice: cents(netOfTax + taxAmount) };
   }
 
   const grandTotal = lines.reduce((s, l) => s + lineCalc(l).extPrice, 0);
