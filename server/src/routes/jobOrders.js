@@ -315,7 +315,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
               so.production_lead_time,
               sol.subtotal AS line_subtotal, sol.disc_amount AS line_disc_amount,
               c.name AS customer_name, c.id AS customer_id, cc.contact_name,
-              jt.display_name AS job_type_name, loc.location_name AS job_location_name,
+              jt.display_name AS job_type_name, jt.gp_rate_head AS passing_gp_rate, loc.location_name AS job_location_name,
               oloc.location_name AS office_location_name, sd.name AS sales_division_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name,

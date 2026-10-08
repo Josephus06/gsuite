@@ -17,6 +17,7 @@ import { maySalesRevise, awaitingDateDecision } from '../utils/salesRevision';
 import { displayDateTime } from '../utils/dates';
 import ButtonMenu from '../components/ButtonMenu';
 import { CustomerLink } from '../components/PartyLink';
+import JoGpComputation from '../components/JoGpComputation';
 
 // Mirrors the real system's "Production > Production" detail screen -- same underlying
 // Job Order as JobOrderView.jsx, but reached once the JO is Released and viewed for
@@ -819,12 +820,16 @@ export default function ProductionJobOrderView() {
 
       <div className="status-tabs" style={{ marginTop: 20 }}>
         <button className={`status-tab ${tab === 'processes' ? 'active' : ''}`} onClick={() => setTab('processes')}>Processes</button>
+        <button className={`status-tab ${tab === 'gp' ? 'active' : ''}`} onClick={() => setTab('gp')}>GP Computation</button>
         <button className={`status-tab ${tab === 'related' ? 'active' : ''}`} onClick={() => setTab('related')}>Related Records</button>
         <button className={`status-tab ${tab === 'prodfiles' ? 'active' : ''}`} onClick={() => setTab('prodfiles')}>Production Attachment</button>
         <button className={`status-tab ${tab === 'subcon' ? 'active' : ''}`} onClick={() => setTab('subcon')}>Sub Con</button>
         <button className={`status-tab ${tab === 'rwip' ? 'active' : ''}`} onClick={() => setTab('rwip')}>RWIP JO</button>
         <button className={`status-tab ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}>System Info</button>
       </div>
+
+      {/* How the footer's Estimated GP Rate / Amount are worked out (asked 2026-10-08). */}
+      {tab === 'gp' && <JoGpComputation jo={jo} processes={processes} />}
 
       {tab === 'processes' && (
         <div className="card">
