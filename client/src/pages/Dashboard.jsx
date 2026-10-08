@@ -840,6 +840,25 @@ const PROD_DEPARTMENTS = [
   { key: 'cnc', label: 'CNC' },
   { key: 'lfp', label: 'LFP' },
 ];
+// Status filter on the GM card (asked 2026-10-08, as a dropdown): the job's production stage, plus
+// On Hold, which is a flag over any stage rather than a stage of its own.
+const PROD_STATUSES = [
+  { key: '', label: 'All statuses' },
+  { key: 'pending_for_scheduling', label: 'Pending for Scheduling' },
+  { key: 'for_revision', label: 'For Revision' },
+  { key: 'in_process_with_revision', label: 'In-Process w/ Revision' },
+  { key: 'in_process', label: 'In-Process' },
+  { key: 'for_qi', label: 'For QI' },
+  { key: 'partially_completed', label: 'Partially Completed' },
+  { key: 'completed', label: 'Completed' },
+  { key: 'invoiced', label: 'Invoiced' },
+  { key: 'on_hold', label: 'On Hold' },
+];
+const matchesStatus = (j, status) => {
+  if (!status) return true;
+  if (status === 'on_hold') return !!Number(j.onHold);
+  return j.stage === status;
+};
 const jobDepartment = (j) => {
   const m = String(j.jobLocationName || '').toLowerCase().match(/warehouse\s*-\s*(sign|dpod|cnc|lfp)\b/);
   return m ? m[1] : null;
@@ -875,6 +894,16 @@ function ForecastCalendarCard({ navigate, embedded = false, range = 'month' }) {
     setDept(key);
     try { localStorage.setItem('gm-production-dept', key); } catch { /* storage unavailable */ }
   };
+  const [status, setStatus] = useState(() => {
+    if (!embedded) return '';
+    let saved = '';
+    try { saved = localStorage.getItem('gm-production-status') || ''; } catch { /* storage unavailable */ }
+    return PROD_STATUSES.some((st) => st.key === saved) ? saved : '';
+  });
+  const chooseStatus = (key) => {
+    setStatus(key);
+    try { localStorage.setItem('gm-production-status', key); } catch { /* storage unavailable */ }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -894,7 +923,7 @@ function ForecastCalendarCard({ navigate, embedded = false, range = 'month' }) {
   // A job occupies every day of its forecast window, not just the start -- that span is the
   // whole point of the calendar, so the walk happens here rather than the server sending the
   // same job once per day it covers.
-  const jobs = dept ? allJobs.filter((j) => jobDepartment(j) === dept) : allJobs;
+  const jobs = allJobs.filter((j) => (!dept || jobDepartment(j) === dept) && matchesStatus(j, status));
   const byDay = new Map();
   for (const j of jobs) {
     const start = String(j.plannedStart || '').slice(0, 10);
@@ -945,6 +974,12 @@ function ForecastCalendarCard({ navigate, embedded = false, range = 'month' }) {
           <span className="muted artist-calendar-count">
             {loading ? 'Loading...' : `${shownJobs.length} scheduled · ${money2(shownAmount)}`}
           </span>
+          {embedded && (
+            <select value={status} onChange={(e) => chooseStatus(e.target.value)} title="Filter by production status"
+              style={{ width: 'auto', minWidth: 170 }}>
+              {PROD_STATUSES.map((st) => <option key={st.key || 'all'} value={st.key}>{st.label}</option>)}
+            </select>
+          )}
           {embedded && (
             <div className="status-tabs" style={{ margin: 0 }}>
               {PROD_DEPARTMENTS.map((d) => (
