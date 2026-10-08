@@ -1452,6 +1452,28 @@ router.post('/:id/returns', requireAuth, requirePermission(ROUTE, 'can_edit'), a
 // else (rate, discount, tax code, description, location, department) is always
 // editable, and lines can be added/removed as long as nothing's been received/billed
 // against them yet.
+// A line's Purchase Description, at ANY status and on every type, PO1 to PO4 (asked 2026-10-08:
+// "purchase description must be editable"). Unlike the full edit below, which stops at approval,
+// this touches nothing that receiving, billing or the totals rest on -- it is the wording only.
+router.put('/:id/lines/:lineId/description', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const [[line]] = await pool.query(
+      'SELECT id, purchase_description FROM purchase_order_lines WHERE id = ? AND purchase_order_id = ?',
+      [req.params.lineId, req.params.id],
+    );
+    if (!line) return res.status(404).json({ error: 'Line not found on this Purchase Order.' });
+    const value = String(req.body?.purchase_description ?? '').trim().slice(0, 1000) || null;
+    if ((value ?? '') !== (line.purchase_description ?? '')) {
+      await pool.query('UPDATE purchase_order_lines SET purchase_description = ? WHERE id = ?', [value, line.id]);
+      await logAudit(pool, {
+        poId: req.params.id, userId: req.user.id, eventType: 'Updated',
+        fieldName: `line ${line.id} purchase_description`, oldValue: line.purchase_description, newValue: value,
+      });
+    }
+    res.json({ id: line.id, purchase_description: value });
+  } catch (err) { next(err); }
+});
+
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
