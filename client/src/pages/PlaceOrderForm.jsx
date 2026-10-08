@@ -186,13 +186,13 @@ export default function PlaceOrderForm() {
           <table>
             <thead>
               <tr>
-                <th>PR #</th><th>Item</th><th>Location</th><th>Department *</th><th>On Hand</th><th>PR Qty</th><th>POed Qty</th><th>PO Qty</th>
+                <th>PR #</th><th>Item</th><th>Purchase Desc.</th><th>Location</th><th>Department *</th><th>On Hand</th><th>PR Qty</th><th>POed Qty</th><th>PO Qty</th>
                 <th>Unit</th><th>Supplier</th><th>Rate</th><th>Disc %</th><th>Tax Code</th><th>Ext. Price</th><th></th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={15} className="muted" style={{ textAlign: 'center', padding: 20 }}>Select Purchase Requisitions to start canvassing.</td></tr>
+                <tr><td colSpan={16} className="muted" style={{ textAlign: 'center', padding: 20 }}>Select Purchase Requisitions to start canvassing.</td></tr>
               )}
               {rows.map((r) => {
                 const calc = lineCalc(r);
@@ -200,6 +200,8 @@ export default function PlaceOrderForm() {
                   <tr key={r.purchase_requisition_line_id}>
                     <td>{r.pr_no}</td>
                     <td>{r.item_code} — {r.item_name}</td>
+                    {/* Starts as the PR line's description; editable here as on Create / Edit PO. */}
+                    <td><input style={{ width: 150 }} value={r.purchase_description || ''} onChange={(e) => updateRow(r.purchase_requisition_line_id, { purchase_description: e.target.value })} /></td>
                     <td>
                       <EntityPicker
                         label="Location" items={locations} value={r.location_id} getLabel={(loc) => loc?.location_name}
