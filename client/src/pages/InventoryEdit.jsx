@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -7,12 +7,20 @@ import LoadingSpinner from '../components/LoadingSpinner';
 // Full-page Add/Edit form for Inventory items -- mirrors JobOrderEdit.jsx's pattern:
 // EntityPicker (searchable modal) for Category/Unit/Chart-of-Accounts fields instead of
 // plain <select> dropdowns, since those lists are too long to scan without search.
-const ITEM_TYPES = ['Inventory', 'Non-Inventory', 'Service'];
+// Type, as the source's item screen offers it (2026-10-08):
+//   INVENTORY  kept on the shelf -- replenished from Purchasing > Inventory Replenishment when
+//              stock will not cover the job orders in production;
+//   JIT        just in time -- bought for the job that needs it, never stocked.
+// Stored upper-case, as the 4,200 migrated items carry them. An item already of another type
+// (Service, or the app's older 'Inventory') keeps it and shows it; Service Items > Add New opens
+// this form with ?type=Service.
+const ITEM_TYPES = [{ value: 'INVENTORY', label: 'Inventory' }, { value: 'JIT', label: 'JIT' }];
+const normType = (t) => (String(t || '').toUpperCase() === 'INVENTORY' ? 'INVENTORY' : (t || ''));
 
 const EMPTY = {
   item_code: '', display_name: '', sales_description: '', purchase_description: '',
   category_id: '', base_unit_id: '', purchase_unit_id: '', stock_unit_id: '', sales_unit_id: '',
-  conversion_factor: 1, item_type: 'Inventory', reorder_point: 0, is_active: true,
+  conversion_factor: 1, item_type: '', reorder_point: 0, is_active: true,
   to_type: '', is_office_supply: false, is_to_item: true,
   is_with_jo: false, is_po: false, is_jo: false,
   is_length_based: false, is_width_based: false, last_purchase_price: '', last_purchase_date: '',
@@ -48,10 +56,11 @@ function computePricing(f) {
 
 export default function InventoryEdit() {
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
   const isNew = !id;
   const navigate = useNavigate();
 
-  const [form, setForm] = useState(EMPTY);
+  const [form, setForm] = useState(() => ({ ...EMPTY, item_type: isNew ? (searchParams.get('type') || '') : '' }));
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -77,7 +86,7 @@ export default function InventoryEdit() {
           sales_description: data.sales_description || '', purchase_description: data.purchase_description || '',
           category_id: data.category_id || '', base_unit_id: data.base_unit_id || '',
           purchase_unit_id: data.purchase_unit_id || '', stock_unit_id: data.stock_unit_id || '', sales_unit_id: data.sales_unit_id || '',
-          conversion_factor: data.conversion_factor ?? 1, item_type: data.item_type || 'Inventory',
+          conversion_factor: data.conversion_factor ?? 1, item_type: normType(data.item_type),
           reorder_point: data.reorder_point || 0, is_active: !!data.is_active,
           to_type: data.to_type || '', is_office_supply: !!data.is_office_supply, is_to_item: !!data.is_to_item,
           is_with_jo: !!data.is_with_jo, is_po: !!data.is_po, is_jo: !!data.is_jo,
@@ -102,6 +111,7 @@ export default function InventoryEdit() {
   }
 
   async function handleSave() {
+    if (!form.item_type) { setError('Select a Type -- Inventory (stocked) or JIT (bought per job).'); return; }
     setSaving(true);
     setError('');
     const payload = { ...form };
@@ -159,7 +169,11 @@ export default function InventoryEdit() {
           <div className="field">
             <label>Type</label>
             <select value={form.item_type} onChange={(e) => setForm({ ...form, item_type: e.target.value })}>
-              {ITEM_TYPES.map((t) => <option key={t}>{t}</option>)}
+              <option value="">--Select--</option>
+              {ITEM_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              {form.item_type && !ITEM_TYPES.some((t) => t.value === form.item_type) && (
+                <option value={form.item_type}>{form.item_type}</option>
+              )}
             </select>
           </div>
 

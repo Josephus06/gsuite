@@ -46,7 +46,7 @@ export default function ServiceItems() {
     <div>
       <div className="page-header">
         <h1>Service Items</h1>
-        {can('/service-items', 'can_add') && <Link className="btn btn-primary" to={'/inventory/new'}>Add New</Link>}
+        {can('/service-items', 'can_add') && <Link className="btn btn-primary" to={'/inventory/new?type=Service'}>Add New</Link>}
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>

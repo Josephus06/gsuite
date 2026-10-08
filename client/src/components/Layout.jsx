@@ -181,6 +181,8 @@ const NAV_STRUCTURE = [
       { route: '/purchase-requisitions', label: 'Purchase Requisitions' },
       { route: '/place-order-form', label: 'Place Order Form' },
       { route: '/purchase-orders', label: 'Purchase Orders' },
+      // INVENTORY items short against the job orders in production -- the Purchasing Supervisor's buy list.
+      { route: '/purchasing/replenishment', label: 'Inventory Replenishment' },
       { route: '/receiving-reports', label: 'Receiving Report' },
     ],
   },
