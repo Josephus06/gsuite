@@ -3,7 +3,9 @@ import { useState } from 'react';
 // The Day / Week / Month switch shared by the General Manager's dashboard calendars (asked
 // 2026-10-06). One anchor date, three ways to look around it:
 //   month  the anchor's month, Sunday-first grid with blank leading cells (what they always showed)
-//   week   the seven days, Sunday to Saturday, around the anchor -- may straddle two months
+//   week   the Sunday-to-Saturday week around the anchor, CUT TO THE ANCHOR'S MONTH (asked 2026-10-08):
+//          October's first week is Oct 1-3 alone, with Sep 27-30 left as blank cells, never shown
+//          as part of October. The arrows walk the month's own weeks, then into the next month's.
 //   day    the anchor alone
 // `months` is every YYYY-MM the visible days fall in: the calendar endpoints are monthly, so a week
 // across a month end asks for both. Day keys are built from local dates, never toISOString(), which
@@ -31,10 +33,17 @@ export function useCalendarRange(range = 'month') {
     title = a.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   } else if (range === 'week') {
     const start = new Date(a.getFullYear(), a.getMonth(), a.getDate() - a.getDay());
-    for (let i = 0; i < 7; i += 1) cells.push(dayKey(new Date(start.getFullYear(), start.getMonth(), start.getDate() + i)));
-    const end = parse(cells[6]);
+    for (let i = 0; i < 7; i += 1) {
+      const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+      // A day of the neighbouring month is a blank cell, as the month grid's leading cells are.
+      cells.push(d.getMonth() === a.getMonth() ? dayKey(d) : null);
+    }
+    const inMonth = cells.filter(Boolean);
+    const first = parse(inMonth[0]); const end = parse(inMonth[inMonth.length - 1]);
     const short = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    title = `${short(start)} – ${short(end)}, ${end.getFullYear()}`;
+    title = first.getTime() === end.getTime()
+      ? `${short(first)}, ${end.getFullYear()}`
+      : `${short(first)} – ${end.getDate()}, ${end.getFullYear()}`;
   } else {
     const y = a.getFullYear(); const m = a.getMonth();
     const leading = new Date(y, m, 1).getDay();
@@ -48,7 +57,12 @@ export function useCalendarRange(range = 'month') {
 
   const shift = (delta) => {
     if (range === 'day') setAnchor(dayKey(new Date(a.getFullYear(), a.getMonth(), a.getDate() + delta)));
-    else if (range === 'week') setAnchor(dayKey(new Date(a.getFullYear(), a.getMonth(), a.getDate() + 7 * delta)));
+    // The day after this (month-cut) week, or the day before it -- which is how Oct 1-3 steps back
+    // to Sep 27-30 rather than skipping it.
+    else if (range === 'week') {
+      const edge = parse(delta > 0 ? days[days.length - 1] : days[0]);
+      setAnchor(dayKey(new Date(edge.getFullYear(), edge.getMonth(), edge.getDate() + (delta > 0 ? 1 : -1))));
+    }
     else setAnchor(dayKey(new Date(a.getFullYear(), a.getMonth() + delta, 1)));
   };
 
