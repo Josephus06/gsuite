@@ -654,6 +654,36 @@ async function resolveOpeningIds(opening) {
   }));
 }
 
+// A document dated BEFORE the books start but entered in T1S after the opening snapshot was loaded
+// -- so the source's snapshot cannot contain it (INV-83549: dated 2026-09-30, keyed 2026-10-03, the
+// 2026-09-30 snapshot loaded that evening). Dropping every pre-start document as "history" lost it
+// from the aging entirely, leaving only the customer's unapplied advance (asked 2026-10-08). These
+// are kept: dated pre-start, keyed in T1S after the snapshot was loaded, and not among its items.
+const LATE_TABLES = {
+  Invoice: ['sales_invoices', 'invoice_no'],
+  'Credit Memo': ['credit_memos', 'credit_memo_no'],
+  'Unapplied Payment': ['customer_payments', 'customer_payment_no'],
+};
+async function lateEnteredKeys(books) {
+  const keys = new Set();
+  const [[snap]] = await pool.query('SELECT MIN(created_at) AS loaded FROM opening_ar_items WHERE as_of = ?', [books.asOf]);
+  if (!snap || !snap.loaded) return keys;
+  for (const [type, [table, col]] of Object.entries(LATE_TABLES)) {
+    const [rows] = await pool.query(
+      `SELECT d.id FROM ${table} d
+        WHERE d.date_created < ? AND d.created_at > ?
+          -- Keyed by a person in T1S. Imported documents have no creator, and the ones imported after the
+          -- snapshot (backfills) are closed in the source -- that is why the snapshot does not list them.
+          AND d.created_by_user_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM opening_ar_items o
+                           WHERE o.as_of = ? AND o.doc_no = d.${col} COLLATE utf8mb4_unicode_ci)`,
+      [books.start, snap.loaded, books.asOf]);
+    rows.forEach((r) => keys.add(`${type}|${r.id}`));
+  }
+  return keys;
+}
+const keepAfterStart = (books, late) => (i) => String(i.date).slice(0, 10) >= books.start || late.has(`${i.type}|${i.id}`);
+
 async function collectOpenItems(asOf, filters = {}) {
   const items = await collectOpenItemsFromDocs(asOf, filters);
   const books = await agingAnchor('ar', asOf);
@@ -684,7 +714,7 @@ async function collectOpenItems(asOf, filters = {}) {
       sales_rep: o.sales_rep || (o.type === 'Invoice' ? invById.get(o.id) : null)?.sales_rep || null,
       marked_paid_unevidenced: false, opening: true,
     })),
-    ...items.filter((i) => String(i.date).slice(0, 10) >= books.start),
+    ...items.filter(keepAfterStart(books, await lateEnteredKeys(books))),
   ];
 }
 
@@ -700,7 +730,7 @@ async function buildArAgingCustomerDetails(customerId, asOf) {
       original_amount: o.original_amount, balance: o.balance,
       days_overdue: Math.max(daysBetween(o.due_date || o.date, asOf), 0), opening: true,
     })),
-    ...result.items.filter((i) => String(i.date).slice(0, 10) >= books.start),
+    ...result.items.filter(keepAfterStart(books, await lateEnteredKeys(books))),
   ].sort((a, b) => new Date(a.date) - new Date(b.date));
   return { ...result, items, total_balance: round2(items.reduce((sum, i) => sum + i.balance, 0)) };
 }
