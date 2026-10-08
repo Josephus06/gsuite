@@ -1374,6 +1374,9 @@ export default function EstimateWizard() {
                   <label>Sales Rep.</label>
                   <EntityPicker
                     label="Sales Rep" items={employees} value={header.sales_rep_id} getLabel={employeeLabel}
+                    // Active employees only -- an inactive duplicate record (no login) hid a rep's
+                    // estimates from her own account. The rep already on the estimate still shows.
+                    isSelectable={(e) => !!Number(e.is_active)}
                     columns={employeeColumns} searchKeys={['first_name', 'last_name', 'employee_code']}
                     onSelect={(e) => setHeaderField('sales_rep_id', e.id)}
                   />

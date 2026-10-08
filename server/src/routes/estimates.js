@@ -645,6 +645,18 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), requireEdi
     // signed it off by round-tripping a null over it.
     const approvedIdx = HEADER_FIELDS.indexOf('approved_by_id');
     if (approvedIdx >= 0) values[approvedIdx] = oldRow.approved_by_id;
+    // A NEWLY chosen Sales Rep must be an active employee. An inactive duplicate record (Vanessa
+    // Garcia's #277, no login) was picked and her estimates vanished from her own account -- she is
+    // seen through her active #69 (2026-10-08). An existing rep who has since left still re-saves.
+    const repIdx = HEADER_FIELDS.indexOf('sales_rep_id');
+    const newRep = repIdx >= 0 ? values[repIdx] : undefined;
+    if (newRep && String(newRep) !== String(oldRow.sales_rep_id ?? '')) {
+      const [[emp]] = await conn.query('SELECT is_active FROM employees WHERE id = ?', [newRep]);
+      if (!emp || !Number(emp.is_active)) {
+        await conn.rollback();
+        return res.status(400).json({ error: 'That Sales Rep is an inactive employee record. Choose the active one.' });
+      }
+    }
     await conn.query(
       `UPDATE estimates SET ${HEADER_FIELDS.map((f) => `${f} = ?`).join(', ')}, updated_at = NOW() WHERE id = ?`,
       [...values, req.params.id]

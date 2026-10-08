@@ -249,8 +249,10 @@ router.put('/:id/sales-rep', requireAuth, async (req, res, next) => {
     if (REP_LOCKED_STATUSES.includes(so.status)) {
       return res.status(409).json({ error: `This Sales Order is ${so.status === 'billed' ? 'Billed' : 'Cancelled'}; its Sales Rep can no longer be changed.` });
     }
-    const [[rep]] = await conn.query("SELECT id, CONCAT(first_name, ' ', last_name) AS name FROM employees WHERE id = ?", [repId]);
+    const [[rep]] = await conn.query("SELECT id, CONCAT(first_name, ' ', last_name) AS name, is_active FROM employees WHERE id = ?", [repId]);
     if (!rep) return res.status(400).json({ error: 'That employee no longer exists.' });
+    // An inactive record (e.g. a duplicate with no login) would hide the order from the real rep.
+    if (!Number(rep.is_active)) return res.status(400).json({ error: 'That Sales Rep is an inactive employee record. Choose the active one.' });
     const allowed = await assignableRepIds(req.user.id);
     if (allowed && !allowed.includes(Number(rep.id))) {
       return res.status(403).json({ error: 'You can only give the order to one of your own subordinates.' });
@@ -394,6 +396,10 @@ router.put('/:id', requireAuth, async (req, res, next) => {
     // header
     const head = {};
     for (const f of SO_HEADER_EDIT) head[f] = b[f] === undefined ? so[f] : blank(b[f]);
+    if (head.sales_rep_id && String(head.sales_rep_id) !== String(so.sales_rep_id ?? '')) {
+      const [[emp]] = await conn.query('SELECT is_active FROM employees WHERE id = ?', [head.sales_rep_id]);
+      if (!emp || !Number(emp.is_active)) throw Object.assign(new Error('That Sales Rep is an inactive employee record. Choose the active one.'), { status: 400 });
+    }
     head.date_created = day(head.date_created) || day(so.date_created);
     await conn.query(`UPDATE sales_orders SET ${SO_HEADER_EDIT.map((f) => `${f} = ?`).join(', ')}, updated_at = NOW() WHERE id = ?`,
       [...SO_HEADER_EDIT.map((f) => head[f]), req.params.id]);

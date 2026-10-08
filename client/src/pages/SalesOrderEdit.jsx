@@ -139,7 +139,8 @@ export default function SalesOrderEdit() {
               <label>Sales Rep</label>
               <select {...h('sales_rep_id')}>
                 <option value="">—</option>
-                {lk.reps.map((r) => <option key={r.id} value={r.id}>{r.first_name} {r.last_name}</option>)}
+                {lk.reps.filter((r) => Number(r.is_active) || String(r.id) === String(so.sales_rep_id))
+                  .map((r) => <option key={r.id} value={r.id}>{r.first_name} {r.last_name}</option>)}
               </select>
             </div>
             <div className="field">
