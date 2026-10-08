@@ -4,6 +4,7 @@ import api from '../api/client';
 import DataTable from '../components/DataTable';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
+import RmaDetailsTab, { isRmaJobOrder } from '../components/RmaDetailsTab';
 import { useAuth } from '../context/useAuth';
 
 import { displayDateTime } from '../utils/dates';
@@ -358,8 +359,13 @@ export default function JobOrderEdit() {
 
       <div className="status-tabs" style={{ marginTop: 20 }}>
         <button className={`status-tab ${tab === 'materials' ? 'active' : ''}`} onClick={() => setTab('materials')}>Materials</button>
+        {/* RWIP / RFQC / NSSO RMA: the Cause of Error (Reason Code / Reason) and Action/s to be taken,
+            saved by the tab's own Save -- a System Admin's, as on the view screens. */}
+        {isRmaJobOrder(jo) && <button className={`status-tab ${tab === 'rma' ? 'active' : ''}`} onClick={() => setTab('rma')}>RMA Additional Details</button>}
         <button className={`status-tab ${tab === 'logs' ? 'active' : ''}`} onClick={() => setTab('logs')}>Logs</button>
       </div>
+
+      {tab === 'rma' && isRmaJobOrder(jo) && <RmaDetailsTab jobOrderId={jo.id} />}
 
       {tab === 'materials' && (
         <div className="card">
