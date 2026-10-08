@@ -3,7 +3,6 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
-import SignaturePad from '../components/SignaturePad';
 import { PLANNER_FLAGS } from '../utils/plannerRoles';
 import { ACCOUNT_TYPE_OPTIONS } from '../utils/accountTypes';
 
@@ -52,6 +51,32 @@ const EMPTY_ACCOUNT_TYPE = {
 };
 
 const EMPTY_BRANCH = { location_id: '', department_id: '', can_override_date: false, remarks: '', is_default: false };
+
+// A signature photo can be several MB straight off a phone; printed it is a few centimetres wide.
+// Scaled to at most 900 x 360 px here (PNG keeps a transparent background; a JPG stays JPG), which
+// keeps it well under the server's 2 MB cap for signature_data.
+function signatureFromFile(file) {
+  return new Promise((resolve, reject) => {
+    if (!['image/png', 'image/jpeg'].includes(String(file.type).toLowerCase())) { reject(new Error('Upload a PNG or JPG picture of the signature.')); return; }
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Could not read that file.'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('That file is not a picture this browser can open.'));
+      img.onload = () => {
+        const scale = Math.min(1, 900 / img.width, 360 / img.height);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        const png = /png$/i.test(file.type);
+        resolve(canvas.toDataURL(png ? 'image/png' : 'image/jpeg', 0.92));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function UserWizard() {
   const { id } = useParams();
@@ -304,13 +329,33 @@ export default function UserWizard() {
             </div>
             <div className="field">
               <label>Signature</label>
-              {/* Captured once and reused wherever this person signs off -- the Requested By /
-                  Noted By / Approved By lines on printed documents. Drawing here is for an admin
-                  registering somebody; each person can also redraw their own under Profile. */}
-              <SignaturePad
-                value={account.signature_data}
-                onChange={(data) => setAccount((a) => ({ ...a, signature_data: data }))}
-              />
+              {/* The person's assigned signature, reused wherever they sign off -- the Requested By /
+                  Noted By / Approved By lines on printed documents. An admin UPLOADS a picture of it
+                  here (asked 2026-10-08) rather than drawing one; nobody sets their own. */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ width: 260, height: 100, border: '1px dashed var(--border, #cbd5e1)', borderRadius: 6, background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                  {account.signature_data
+                    ? <img src={account.signature_data} alt="Signature" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                    : <span className="muted" style={{ fontSize: 12 }}>No signature uploaded</span>}
+                </div>
+                <label className="btn btn-sm" style={{ cursor: 'pointer', margin: 0 }}>
+                  {account.signature_data ? 'Replace picture' : 'Upload picture'}
+                  <input type="file" accept="image/png,image/jpeg" style={{ display: 'none' }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = '';
+                      if (!file) return;
+                      try {
+                        const data = await signatureFromFile(file);
+                        setAccount((a) => ({ ...a, signature_data: data }));
+                      } catch (err) { alert(err.message); }
+                    }} />
+                </label>
+                {account.signature_data && (
+                  <button type="button" className="btn btn-sm btn-danger" onClick={() => setAccount((a) => ({ ...a, signature_data: null }))}>Remove</button>
+                )}
+              </div>
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>A PNG or JPG of the signature, ideally on a white or transparent background.</div>
               {account.signature_set_at && (
                 <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
                   On file since {String(account.signature_set_at).slice(0, 10)}.
