@@ -380,12 +380,68 @@ async function printRefusal(userId, po, verb = 'print') {
   return null;
 }
 
+// The document trail printed under the PO (asked 2026-10-08, the live system's box): every Receiving
+// Report, Vendor Bill, Bill Credit, Journal and Bill Payment that followed the order, plus PAY, the
+// release of each bill payment's check. Each row: date, reference, who processed it and that user's
+// signature on file. Voided / cancelled documents are left out.
+//   RR    purchase_order_receipts of this PO
+//   VB    vendor_bills of this PO
+//   BC    bill_credits on those bills, directly or applied to them
+//   BPAY  bill_payments paying those bills
+//   JRNL  journals raised from those bill payments
+//   PAY   those bill payments' release -- Date Released and Check No.
+async function loadDocumentTrail(poId) {
+  const userCols = 'u.display_name AS processed_by, u.signature_data AS signature';
+  const [rr] = await pool.query(
+    `SELECT 'RR' AS type, r.date_created AS date, r.receipt_no AS ref, ${userCols}
+       FROM purchase_order_receipts r LEFT JOIN users u ON u.id = r.created_by_user_id
+      WHERE r.purchase_order_id = ? ORDER BY r.date_created, r.id`, [poId]);
+  const [vb] = await pool.query(
+    `SELECT 'VB' AS type, vb.id, vb.date_created AS date, COALESCE(NULLIF(vb.bill_no, ''), vb.reference_no) AS ref, ${userCols}
+       FROM vendor_bills vb LEFT JOIN users u ON u.id = vb.created_by_user_id
+      WHERE vb.purchase_order_id = ? AND vb.cancelled_at IS NULL AND LOWER(COALESCE(vb.status, '')) NOT LIKE '%cancel%'
+      ORDER BY vb.date_created, vb.id`, [poId]);
+  const billIds = vb.map((b) => b.id);
+  let bc = []; let bpay = []; let jrnl = [];
+  if (billIds.length) {
+    [bc] = await pool.query(
+      `SELECT DISTINCT 'BC' AS type, bc.date_created AS date, bc.bill_credit_no AS ref, ${userCols}
+         FROM bill_credits bc LEFT JOIN users u ON u.id = bc.created_by_user_id
+        WHERE (bc.vendor_bill_id IN (?) OR bc.id IN (SELECT bca.bill_credit_id FROM bill_credit_applications bca WHERE bca.vendor_bill_id IN (?)))
+          AND bc.voided_at IS NULL AND LOWER(COALESCE(bc.status, '')) NOT LIKE '%void%'
+        ORDER BY bc.date_created`, [billIds, billIds]);
+    [bpay] = await pool.query(
+      `SELECT DISTINCT bp.id, bp.date_created AS date, bp.bill_payment_no AS ref, bp.date_released, bp.check_no, ${userCols}
+         FROM bill_payments bp
+         JOIN bill_payment_lines bpl ON bpl.bill_payment_id = bp.id
+         LEFT JOIN users u ON u.id = bp.created_by_user_id
+        WHERE bpl.vendor_bill_id IN (?) AND bp.voided_at IS NULL AND LOWER(COALESCE(bp.status, '')) NOT LIKE '%void%'
+        ORDER BY bp.date_created, bp.id`, [billIds]);
+    if (bpay.length) {
+      [jrnl] = await pool.query(
+        `SELECT 'JRNL' AS type, j.date_created AS date, j.journal_no AS ref, ${userCols}
+           FROM journals j LEFT JOIN users u ON u.id = j.created_by_user_id
+          WHERE j.source_type = 'bill_payment' AND j.source_id IN (?) AND j.voided_at IS NULL
+          ORDER BY j.date_created, j.id`, [bpay.map((p) => p.id)]);
+    }
+  }
+  const strip = ({ id, date_released: dr, check_no: cn, ...row }) => row;
+  return {
+    RR: rr, VB: vb.map(strip), BC: bc, JRNL: jrnl,
+    BPAY: bpay.map((p) => strip({ ...p, type: 'BPAY' })),
+    PAY: bpay.filter((p) => p.date_released || p.check_no).map((p) => ({
+      type: 'PAY', date: p.date_released, ref: p.check_no || p.ref, processed_by: p.processed_by, signature: p.signature,
+    })),
+  };
+}
+
 router.get('/:id/print', requireAuth, async (req, res, next) => {
   try {
     const po = await loadPrintablePo(req.params.id);
     if (!po) return res.status(404).json({ error: 'Not found' });
     const refused = await printRefusal(req.user.id, po);
     if (refused) return res.status(refused.status).json(refused.body);
+    po.trail = await loadDocumentTrail(po.id);
     res.json(po);
   } catch (err) {
     next(err);

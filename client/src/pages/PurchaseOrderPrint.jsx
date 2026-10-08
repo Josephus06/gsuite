@@ -26,6 +26,9 @@ function money(v) {
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
 
+// The document-trail rows, in the order the live system's box prints them.
+const TRAIL_TYPES = ['RR', 'VB', 'BC', 'JRNL', 'BPAY', 'PAY'];
+
 // The PO Category, spelled out. The column stores the live system's code.
 const TYPE_LABELS = {
   PO1: 'Inventory with JO', PO2: 'Inventory without JO',
@@ -125,6 +128,12 @@ export default function PurchaseOrderPrint() {
         .po-totals .po-row { justify-content: space-between; }
         .po-totals .po-lbl { min-width: 0; }
         .po-grand { border-top: 1px solid #cbd5e1; margin-top: 6px; padding-top: 6px; font-weight: 600; }
+        .po-trail { width: 100%; border-collapse: collapse; margin-top: 10mm; font-size: 8pt; break-inside: avoid; }
+        .po-trail th, .po-trail td { border: 1px solid #cbd5e1; padding: 3px 6px; text-align: center; font-weight: 400; height: 7mm; }
+        .po-trail th { color: #334155; }
+        .po-trail .po-trail-type { color: #1e3a8a; }
+        .po-trail img { max-height: 9mm; max-width: 34mm; object-fit: contain; display: block; margin: 0 auto; }
+        .po-trail .po-trail-remarks { text-align: left; height: 14mm; vertical-align: top; }
         .po-sign { display: flex; justify-content: space-between; gap: 14px; margin-top: 16mm; break-inside: avoid; }
         .po-sig { flex: 1; min-width: 0; }
         /* Room for a drawn signature, kept even when there is none so the three lines stay level. */
@@ -222,6 +231,31 @@ export default function PurchaseOrderPrint() {
           <div className="po-row"><span className="po-lbl">Tax</span><span className="po-val">{money(po.tax_amount)}</span></div>
           <div className="po-row po-grand"><span className="po-lbl">Total Amount</span><span className="po-val">{money(po.total_amount)}</span></div>
         </div>
+
+        {/* The document trail (asked 2026-10-08, the live system's box): each Receiving Report,
+            Vendor Bill, Bill Credit, Journal, Bill Payment and check release that followed this
+            order, filled from T1S -- who processed it and their signature on file. A type with
+            nothing yet still prints its empty row. */}
+        <table className="po-trail">
+          <thead>
+            <tr><th style={{ width: '17%' }}>Date</th><th style={{ width: '23%' }}>Transaction Type</th><th style={{ width: '17%' }}>Ref. No.</th><th style={{ width: '21%' }}>Processed By</th><th>Signature</th></tr>
+          </thead>
+          <tbody>
+            {TRAIL_TYPES.flatMap((type) => {
+              const docs = po.trail?.[type] || [];
+              return (docs.length ? docs : [{}]).map((d, i) => (
+                <tr key={`${type}-${i}`}>
+                  <td>{d.date ? fmtDate(d.date) : ''}</td>
+                  <td className="po-trail-type">{type}</td>
+                  <td>{d.ref || ''}</td>
+                  <td>{d.processed_by || ''}</td>
+                  <td>{d.signature ? <img src={d.signature} alt="" /> : ''}</td>
+                </tr>
+              ));
+            })}
+            <tr><td className="po-trail-remarks">Remarks:</td><td className="po-trail-remarks" colSpan={4} /></tr>
+          </tbody>
+        </table>
 
         {/* Signature above the name, then the rule and the role -- the way a hand-signed order
             reads, and the same layout as the Form printouts. The approver is always named: the
