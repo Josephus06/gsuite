@@ -5,7 +5,7 @@ const mailer = require('../lib/mailer');
 const { buildPurchaseOrderPdf, purchaseOrderPdfFilename } = require('../lib/purchaseOrderPdf');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
-const { insertNumbered } = require('../lib/docNumber');
+const { insertNumbered, insertSuffixed } = require('../lib/docNumber');
 const { isApproved, normalisePoStatus, statusNormSql } = require('../lib/poStatus');
 const { sendXlsx, day } = require('../lib/xlsxExport');
 const { parseDiscountChain } = require('../lib/discountChain');
@@ -1007,7 +1007,7 @@ router.get('/:id/landed-costs', requireAuth, requirePermission(ROUTE, 'can_view'
 router.post('/:id/landed-costs', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[parent]] = await conn.query('SELECT type, status FROM purchase_orders WHERE id = ?', [req.params.id]);
+    const [[parent]] = await conn.query('SELECT po_no, type, status FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!parent) return res.status(404).json({ error: 'Not found' });
     if (parent.type === 'PO2') return res.status(409).json({ error: 'A Landed Cost PO cannot itself have a Landed Cost.' });
     // isApproved, not a literal compare: an imported PO says 'Approved by General Manager'.
@@ -1046,10 +1046,12 @@ router.post('/:id/landed-costs', requireAuth, requirePermission(ROUTE, 'can_add'
     const totalAmount = netOfTax + taxAmount;
 
     await conn.beginTransaction();
-    const { id: poId, no: poNo } = await insertNumbered(conn, {
+    // Numbered after the mother PO -- PO-20604-1, -2, ... -- not from the PO sequence (asked
+    // 2026-10-09, as on the real system: PO-20169-1 under PO-20169). See insertSuffixed.
+    const { id: poId, no: poNo } = await insertSuffixed(conn, {
       table: 'purchase_orders',
       column: 'po_no',
-      prefix: 'PO-',
+      base: parent.po_no,
       run: (no) => conn.query(
         `INSERT INTO purchase_orders (po_no, type, parent_purchase_order_id, date_created, supplier_id, term_id, memo,
            subtotal, discount_amount, net_of_tax, tax_amount, total_amount, status, created_by_user_id)

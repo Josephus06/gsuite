@@ -151,4 +151,32 @@ async function assignDocNo(conn, { table, column, prefix, id }) {
   }
 }
 
-module.exports = { nextDocNo, insertNumbered, assignDocNo, docNoParity, nextOnThisBox, docNoPattern };
+// A child document numbered after its parent: `${base}-1`, `${base}-2`, ... (a Landed Cost PO under
+// its mother PO: PO-20604-1, asked 2026-10-09). The suffix follows the same per-box split as
+// nextDocNo, for the same reason -- two boxes each issuing PO-20604-1 while out of touch is a
+// duplicate on a UNIQUE column, and that stops replication. So a box skips the other boxes' suffixes
+// (on three boxes the droplet issues -1, -4, ..., the office -2, -5, ...), as top-level numbers do.
+// Found on the pool AND the caller's connection, and retried on a clash, like insertNumbered.
+async function insertSuffixed(conn, { table, column, base, run }) {
+  const suffixRe = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-([0-9]+)$`);
+  const highestOn = async (q) => {
+    const [rows] = await q.query('SELECT ?? AS no FROM ?? WHERE ?? LIKE ?', [column, table, column, `${base}-%`]);
+    return rows.reduce((max, r) => {
+      const m = suffixRe.exec(r.no);
+      return m ? Math.max(max, Number(m[1])) : max;
+    }, 0);
+  };
+  const share = await docNoParity();
+  for (let attempt = 0; ; attempt += 1) {
+    const highest = Math.max(await highestOn(pool), await highestOn(conn));
+    const no = `${base}-${nextOnThisBox(highest, share)}`;
+    try {
+      const [result] = await run(no);
+      return { id: result.insertId, no };
+    } catch (err) {
+      if (err.code !== 'ER_DUP_ENTRY' || attempt >= 4) throw err;
+    }
+  }
+}
+
+module.exports = { nextDocNo, insertNumbered, insertSuffixed, assignDocNo, docNoParity, nextOnThisBox, docNoPattern };
