@@ -121,6 +121,7 @@ const CONFIG = [
     { name: 'process_code', label: 'Process Code', type: 'text', required: true },
     { name: 'process_name', label: 'Process Name', type: 'text', required: true },
     { name: 'base_unit_id', label: 'Base Unit', type: 'ref', ref: 'units-of-measure', refLabel: 'title', required: true },
+    { name: 'default_location_id', label: 'Default Location', type: 'ref', ref: 'locations', refLabel: 'location_name' },
     { name: 'minutes_per_unit', label: 'Minutes per Unit', type: 'number' },
     { name: 'is_active', label: 'Active', type: 'checkbox' },
   ] },

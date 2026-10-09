@@ -30,7 +30,7 @@ const TABLES = {
   'landed-costs': { table: 'landed_costs', columns: ['name', 'allocation_method', 'item_id', 'is_active'] },
   'non-inventories': { table: 'non_inventories', columns: ['item_code', 'display_name', 'unit_price', 'is_active'] },
   'service-items': { table: 'service_items', columns: ['item_code', 'display_name', 'unit_price', 'is_active'] },
-  processes: { table: 'processes', columns: ['process_code', 'process_name', 'base_unit_id', 'minutes_per_unit', 'is_active'] },
+  processes: { table: 'processes', columns: ['process_code', 'process_name', 'base_unit_id', 'default_location_id', 'minutes_per_unit', 'is_active'] },
   'user-groups': { table: 'user_groups', columns: ['name', 'is_active'] },
   // The precise spots an asset can sit in -- '2nd Floor Server Room', 'Rack 3'. Deliberately its
   // own list rather than the locations master: locations drive transfers, branches and the rest
