@@ -161,6 +161,17 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       where.push('(t.to_no LIKE ? OR jo.job_order_no LIKE ?)');
       params.push(`%${search}%`, `%${search}%`);
     }
+    if (req.query.withdraw_from) { where.push('t.withdraw_from_location_id = ?'); params.push(req.query.withdraw_from); }
+    if (req.query.transfer_to) { where.push('t.transfer_to_location_id = ?'); params.push(req.query.transfer_to); }
+    // Date Created and Delivery Date (date_needed), each "As of" a day (on or before it) or a
+    // "Period from" one day to another -- the old system's two filters. A bound left blank is no
+    // bound, so an As of filter only ever sends the _to side.
+    const dateRange = (column, from, to) => {
+      if (from) { where.push(`${column} >= ?`); params.push(from); }
+      if (to) { where.push(`${column} <= ?`); params.push(to); }
+    };
+    dateRange('t.date_created', req.query.created_from, req.query.created_to);
+    dateRange('t.date_needed', req.query.needed_from, req.query.needed_to);
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const [rows] = await pool.query(
