@@ -28,6 +28,10 @@ const ROUTE = '/reports/pending-billing';
 //      other JOs: first to one whose outstanding quantity is exactly that amount, then in JO order.
 // Every live JO on the order takes its share, completed or not, so billing a JO still in production
 // is not handed to a completed sibling.
+//
+// An OPEN Delivery Ticket bills too (2026-10-09): DT-6339 billed SO-71070's nine completed JOs and they
+// still read pending. Only open ones -- a converted DT's billing is already on its invoice, and a
+// void one bills nothing. Their lines name no JO, so they are shared out the same way.
 async function invoicedByJobOrder(jos) {
   const joIds = jos.map((j) => j.id);
   const soIds = [...new Set(jos.map((j) => j.sales_order_id).filter(Boolean))];
@@ -36,10 +40,14 @@ async function invoicedByJobOrder(jos) {
       `SELECT id, sales_order_id, quantity FROM job_orders
         WHERE sales_order_id IN (?) AND (status IS NULL OR status <> 'Cancelled')`, [soIds.concat(0)]),
     pool.query(
-      `SELECT l.id, l.job_order_id, l.quantity, si.invoice_no, si.sales_order_id
+      `SELECT l.job_order_id, l.quantity, si.invoice_no, si.sales_order_id
          FROM sales_invoice_lines l JOIN sales_invoices si ON si.id = l.sales_invoice_id
-        WHERE si.status <> 'cancelled' AND (l.job_order_id IN (?) OR si.sales_order_id IN (?))`,
-      [joIds, soIds.concat(0)]),
+        WHERE si.status <> 'cancelled' AND (l.job_order_id IN (?) OR si.sales_order_id IN (?))
+       UNION ALL
+       SELECT l.job_order_id, l.quantity, d.dt_no, d.sales_order_id
+         FROM delivery_ticket_lines l JOIN delivery_tickets d ON d.id = l.delivery_ticket_id
+        WHERE d.status = 'open' AND (l.job_order_id IN (?) OR d.sales_order_id IN (?))`,
+      [joIds, soIds.concat(0), joIds, soIds.concat(0)]),
   ]);
   const jo = new Map();
   for (const j of [...siblings, ...jos]) {
