@@ -177,6 +177,7 @@ import ApAging from './pages/reports/ApAging';
 import BirSalesReport from './pages/reports/BirSalesReport';
 import BirPurchaseReport from './pages/reports/BirPurchaseReport';
 import CollectionForecast from './pages/treasury/CollectionForecast';
+import CollectionAgingReport from './pages/treasury/CollectionAgingReport';
 import CommissionSchemes from './pages/CommissionSchemes';
 import CommissionSchemeView from './pages/CommissionSchemeView';
 import EmployeeQuotas from './pages/EmployeeQuotas';
@@ -463,6 +464,7 @@ function App() {
         <Route path="/reports/bir-purchase" element={<BirPurchaseReport />} />
         {/* Treasury -- when the money is expected in. */}
         <Route path="/treasury/collection-forecast" element={<CollectionForecast />} />
+        <Route path="/treasury/collection-aging" element={<CollectionAgingReport />} />
         <Route path="/commission-schemes" element={<CommissionSchemes />} />
         <Route path="/commission-schemes/:id" element={<CommissionSchemeView />} />
         <Route path="/employee-quotas" element={<EmployeeQuotas />} />

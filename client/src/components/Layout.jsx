@@ -296,6 +296,7 @@ const NAV_STRUCTURE = [
     alignRight: true,
     children: [
       { route: '/treasury/collection-forecast', label: 'Collection Forecast' },
+      { route: '/treasury/collection-aging', label: 'Collection Report with Aging' },
     ],
   },
 ];
