@@ -19,6 +19,66 @@ const router = express.Router();
 // so Unbilled Amount = uninvoiced qty x that line's gross per unit.
 const ROUTE = '/reports/pending-billing';
 
+// How much of each JO has been invoiced, worked out per SALES ORDER (2026-10-09). The migration hung
+// a multi-JO order's invoice lines on one of its JOs -- INV-80490 billed JO-69846-2-2's 50
+// certificates but names JO-69846-1-2 -- so counting only the lines that name a JO listed ~30,000
+// JOs whose order was already fully billed. Now:
+//   1. a line that names a JO counts for it, up to that JO's quantity;
+//   2. what is left -- a line naming no JO, or more than its JO's quantity -- goes to the order's
+//      other JOs: first to one whose outstanding quantity is exactly that amount, then in JO order.
+// Every live JO on the order takes its share, completed or not, so billing a JO still in production
+// is not handed to a completed sibling.
+async function invoicedByJobOrder(jos) {
+  const joIds = jos.map((j) => j.id);
+  const soIds = [...new Set(jos.map((j) => j.sales_order_id).filter(Boolean))];
+  const [[siblings], [lines]] = await Promise.all([
+    pool.query(
+      `SELECT id, sales_order_id, quantity FROM job_orders
+        WHERE sales_order_id IN (?) AND (status IS NULL OR status <> 'Cancelled')`, [soIds.concat(0)]),
+    pool.query(
+      `SELECT l.id, l.job_order_id, l.quantity, si.invoice_no, si.sales_order_id
+         FROM sales_invoice_lines l JOIN sales_invoices si ON si.id = l.sales_invoice_id
+        WHERE si.status <> 'cancelled' AND (l.job_order_id IN (?) OR si.sales_order_id IN (?))`,
+      [joIds, soIds.concat(0)]),
+  ]);
+  const jo = new Map();
+  for (const j of [...siblings, ...jos]) {
+    if (!jo.has(Number(j.id))) jo.set(Number(j.id), { so: j.sales_order_id ? Number(j.sales_order_id) : null, qty: Number(j.quantity || 0), got: 0, invoices: new Set() });
+  }
+  const pool_ = new Map(); // so id -> [{ qty, invoice_no }]
+  const toPool = (so, qty, invoiceNo) => {
+    if (!so || qty <= 0.0001) return;
+    if (!pool_.has(so)) pool_.set(so, []);
+    pool_.get(so).push({ qty, invoice_no: invoiceNo });
+  };
+  for (const l of lines) {
+    const q = Number(l.quantity || 0);
+    const j = l.job_order_id ? jo.get(Number(l.job_order_id)) : null;
+    if (!j) { toPool(l.sales_order_id ? Number(l.sales_order_id) : null, q, l.invoice_no); continue; }
+    const take = Math.min(q, Math.max(j.qty - j.got, 0));
+    if (take > 0) { j.got += take; j.invoices.add(l.invoice_no); }
+    toPool(j.so || (l.sales_order_id ? Number(l.sales_order_id) : null), q - take, l.invoice_no);
+  }
+  const bySo = new Map();
+  for (const [id, j] of jo) { if (j.so) { if (!bySo.has(j.so)) bySo.set(j.so, []); bySo.get(j.so).push([id, j]); } }
+  for (const [so, chunks] of pool_) {
+    const mine = (bySo.get(so) || []).sort((a, b) => a[0] - b[0]);
+    for (const c of chunks) {
+      const exact = mine.find(([, j]) => Math.abs(j.qty - j.got - c.qty) < 0.0001);
+      for (const [, j] of exact ? [exact] : mine) {
+        if (c.qty <= 0.0001) break;
+        const take = Math.min(c.qty, Math.max(j.qty - j.got, 0));
+        if (take <= 0) continue;
+        j.got += take; c.qty -= take; j.invoices.add(c.invoice_no);
+      }
+    }
+  }
+  return new Map(joIds.map((id) => {
+    const j = jo.get(Number(id));
+    return [Number(id), { qty: j.got, invoice_nos: j.invoices.size ? [...j.invoices].sort().join(', ') : null }];
+  }));
+}
+
 // Batched rather than one big query with per-row subqueries (that took ~30 s): pick the completed
 // JOs first -- a few thousand at most -- then read their invoices, QIs, deliveries and order lines
 // in one keyed query each (indexes added by register-pending-billing-page.js).
@@ -53,10 +113,8 @@ async function loadRows(req) {
   if (!jos.length) return [];
   const ids = jos.map((j) => j.id);
   const byJo = (rows) => new Map(rows.map((r) => [Number(r.job_order_id), r]));
-  const [[inv], [qis], [dels], [solRows], [nslRows]] = await Promise.all([
-    pool.query(`SELECT l.job_order_id, SUM(l.quantity) qty, GROUP_CONCAT(DISTINCT si.invoice_no ORDER BY si.invoice_no SEPARATOR ', ') invoice_nos
-                  FROM sales_invoice_lines l JOIN sales_invoices si ON si.id = l.sales_invoice_id
-                 WHERE l.job_order_id IN (?) AND si.status <> 'cancelled' GROUP BY l.job_order_id`, [ids]),
+  const [invM, [qis], [dels], [solRows], [nslRows]] = await Promise.all([
+    invoicedByJobOrder(jos),
     pool.query(`SELECT job_order_id, MAX(date_created) d FROM quality_inspections
                  WHERE job_order_id IN (?) AND (status IS NULL OR status <> 'cancelled') GROUP BY job_order_id`, [ids]),
     pool.query(`SELECT dl.job_order_id, MAX(d.date_created) d FROM item_delivery_lines dl JOIN item_deliveries d ON d.id = dl.item_delivery_id
@@ -66,7 +124,7 @@ async function loadRows(req) {
     pool.query('SELECT id, quantity, gross_amount FROM non_standard_sales_order_lines WHERE id IN (?)',
       [[...new Set(jos.map((j) => j.nsso_line_id).filter(Boolean))].concat(0)]),
   ]);
-  const invM = byJo(inv); const qiM = byJo(qis); const delM = byJo(dels);
+  const qiM = byJo(qis); const delM = byJo(dels);
   const solById = new Map(solRows.map((l) => [Number(l.id), l]));
   const solByJo = new Map(solRows.filter((l) => l.job_order_id).map((l) => [Number(l.job_order_id), l]));
   const solBySoLine = new Map(solRows.map((l) => [`${l.sales_order_id}|${l.line_no}`, l]));
