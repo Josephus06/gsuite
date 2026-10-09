@@ -2534,3 +2534,10 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .dept-head .check { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-weight: 400;
   font-size: 12px; white-space: nowrap; cursor: pointer; }
 .dept-head input[type="checkbox"] { width: 16px; height: 16px; flex: none; margin: 0; padding: 0; }
+
+/* An Edit link beside one field on a document's blue banner (Job Order > Shipping Address), and the
+   inline row it opens. */
+.banner-inline-edit { background: none; border: 0; padding: 0; margin-left: 6px; color: inherit;
+  font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
+.banner-inline-form { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 2px 0; }
+.banner-inline-form input { flex: 1; min-width: 180px; height: 28px; padding: 2px 8px; }

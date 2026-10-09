@@ -652,6 +652,32 @@ router.put('/:id', requireAuth, requireJobOrderEdit, async (req, res, next) => {
   }
 });
 
+// The Shipping Address on its own, from the Edit link beside it on the view (asked 2026-10-09, as
+// on the real system). PUT /:id above writes every EDIT_FIELDS column and nulls what the body
+// leaves out, so it cannot take one field. Same gate as the full Edit -- shipping_address is not a
+// REWORK_PROTECTED_FIELDS column, so every grant opens it.
+router.put('/:id/shipping-address', requireAuth, requireJobOrderEdit, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[oldRow]] = await conn.query('SELECT shipping_address, status FROM job_orders WHERE id = ? FOR UPDATE', [req.params.id]);
+    if (!oldRow) { await conn.rollback(); return res.status(404).json({ error: 'Not found' }); }
+    if (oldRow.status === 'Cancelled') { await conn.rollback(); return res.status(409).json({ error: 'A cancelled Job Order cannot be edited' }); }
+    const newAddress = String(req.body.shipping_address ?? '').trim() || null;
+    if (newAddress !== oldRow.shipping_address) {
+      await conn.query('UPDATE job_orders SET shipping_address = ?, updated_at = NOW() WHERE id = ?', [newAddress, req.params.id]);
+      await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'shipping_address', oldValue: oldRow.shipping_address, newValue: newAddress });
+    }
+    await conn.commit();
+    res.json({ shipping_address: newAddress });
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
 // Hold/Resume are a toggle pair on the real system (only one shows at a time, based on
 // IsOnHold) -- pausing/resuming production on a JO that isn't Completed or Cancelled.
 router.put('/:id/hold', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {

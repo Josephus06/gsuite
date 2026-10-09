@@ -94,6 +94,9 @@ export default function JobOrderView() {
   // Approval button is disabled without one, and neither can wait for the tab to be opened.
   const [attachmentCount, setAttachmentCount] = useState(0);
   const [actionError, setActionError] = useState('');
+  // The inline Edit beside Shipping Address -- null while not editing, else the draft text.
+  const [shipDraft, setShipDraft] = useState(null);
+  const [shipSaving, setShipSaving] = useState(false);
 
   const [showAssign, setShowAssign] = useState(false);
   const [pmsJobTypes, setPmsJobTypes] = useState([]);
@@ -339,6 +342,22 @@ export default function JobOrderView() {
   // whatever its can_edit -- the server's jobOrderEditGrant applies the same rule. A Sales account
   // tagged Production Supervisor keeps the Sales rules.
   const isProductionFloor = user?.account_type === 'Production' && (isPlanner(user) || !!user?.is_production_supervisor);
+  // Who sees Edit -- the page's button and the Shipping Address link beside the field alike.
+  const canOpenEdit = (isProductionFloor ? jo.production_stage === 'in_process' : (canEdit || canRework || canEditOwn)) && jo.status !== 'Cancelled';
+
+  async function saveShippingAddress() {
+    setShipSaving(true);
+    setActionError('');
+    try {
+      const { data } = await api.put(`/job-orders/${id}/shipping-address`, { shipping_address: shipDraft });
+      setJo((prev) => ({ ...prev, shipping_address: data.shipping_address }));
+      setShipDraft(null);
+    } catch (err) {
+      setActionError(err.response?.data?.error || 'Could not save the shipping address.');
+    } finally {
+      setShipSaving(false);
+    }
+  }
 
   const processes = jo.processes || [];
   const totalCost = processes.reduce((s, p) => s + num(p.total_cost), 0);
@@ -371,7 +390,7 @@ export default function JobOrderView() {
               ]}
             />
           )}
-          {(isProductionFloor ? jo.production_stage === 'in_process' : (canEdit || canRework || canEditOwn)) && jo.status !== 'Cancelled' && (
+          {canOpenEdit && (
             <Link className="btn btn-sm btn-primary"
               title={canRework && !canEdit && !canEditOwn ? 'Change the materials and processes Production asked about' : undefined}
               to={`/job-orders/${id}/edit`}>Edit</Link>
@@ -485,7 +504,25 @@ export default function JobOrderView() {
             <div>Date Created : <span className="hi">{jo.created_at ? String(jo.created_at).slice(0, 10) : ''}</span></div>
             <div>Office Location : <span className="hi">{jo.office_location_name}</span></div>
             <div>Sales Division : <span className="hi">{jo.sales_division_name}</span></div>
-            <div>Shipping Address : <span className="hi">{jo.shipping_address}</span></div>
+            {shipDraft === null ? (
+              <div>
+                Shipping Address : <span className="hi">{jo.shipping_address}</span>
+                {canOpenEdit && (
+                  <button type="button" className="banner-inline-edit" onClick={() => setShipDraft(jo.shipping_address || '')}>Edit</button>
+                )}
+              </div>
+            ) : (
+              <div className="banner-inline-form">
+                <span>Shipping Address :</span>
+                <input
+                  value={shipDraft} autoFocus disabled={shipSaving} aria-label="Shipping Address"
+                  onChange={(e) => setShipDraft(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveShippingAddress(); if (e.key === 'Escape') setShipDraft(null); }}
+                />
+                <button type="button" className="btn btn-sm btn-primary" disabled={shipSaving} onClick={saveShippingAddress}>Save</button>
+                <button type="button" className="btn btn-sm" disabled={shipSaving} onClick={() => setShipDraft(null)}>Cancel</button>
+              </div>
+            )}
             <div>Delivery Date : <span className="hi">{jo.delivery_date ? String(jo.delivery_date).slice(0, 10) : ''}</span></div>
             <div>Delivery Time : <span className="hi">{jo.delivery_time}</span></div>
             <div>Sales Rep. : <span className="hi">{jo.sales_rep_name}</span></div>
