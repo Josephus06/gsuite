@@ -293,7 +293,7 @@ export default function PurchaseOrderView() {
           <div>
             <div>Memo : <span className="hi">{po.memo || ''}</span></div>
             {po.type === 'PO2' && po.parent_po_no && (
-              <div>Landed Cost of : <Link className="link-btn" to={`/purchase-orders/${po.parent_purchase_order_id}`}>{po.parent_po_no}</Link></div>
+              <div>Landed Cost of : <Link className="link-btn" to={`/purchase-orders/${po.parent_po_id}`}>{po.parent_po_no}</Link></div>
             )}
           </div>
           <div>
@@ -436,7 +436,7 @@ export default function PurchaseOrderView() {
                 {po.type === 'PO2' && po.parent_po_no && (
                   <tr>
                     <td>Purchase Order</td>
-                    <td><Link className="link-btn" to={`/purchase-orders/${po.parent_purchase_order_id}`}>{po.parent_po_no}</Link></td>
+                    <td><Link className="link-btn" to={`/purchase-orders/${po.parent_po_id}`}>{po.parent_po_no}</Link></td>
                     <td>—</td>
                     <td>—</td>
                     <td>Parent</td>

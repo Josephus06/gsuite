@@ -245,16 +245,22 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
   }
 });
 
+// A Landed Cost PO's mother. Linked by parent_purchase_order_id when made here, but the PO2s that
+// came over from the real system carry no link -- only the number: PO-20594-1 is PO-20594's. So an
+// unlinked PO2 falls back on its number, and the mother's Landed Cost tab matches the same way.
+const PARENT_PO_JOIN = `LEFT JOIN purchase_orders parent ON parent.id = po.parent_purchase_order_id
+         OR (po.parent_purchase_order_id IS NULL AND po.type = 'PO2' AND parent.po_no = SUBSTRING_INDEX(po.po_no, '-', 2))`;
+
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[po]] = await pool.query(
       `SELECT po.*, s.name AS supplier_name, s.supplier_code, u.display_name AS created_by_name,
-              ${PO_TERM_SELECT}, parent.po_no AS parent_po_no
+              ${PO_TERM_SELECT}, parent.po_no AS parent_po_no, parent.id AS parent_po_id
        FROM purchase_orders po
        LEFT JOIN suppliers s ON s.id = po.supplier_id
        LEFT JOIN users u ON u.id = po.created_by_user_id
        ${PO_TERM_JOINS}
-       LEFT JOIN purchase_orders parent ON parent.id = po.parent_purchase_order_id
+       ${PARENT_PO_JOIN}
        WHERE po.id = ?`,
       [req.params.id]
     );
@@ -312,7 +318,7 @@ async function loadPrintablePo(id) {
          LEFT JOIN users sup ON sup.id = po.approved_by_supervisor_user_id
          LEFT JOIN users gm ON gm.id = po.approved_by_gm_user_id
          LEFT JOIN payment_terms pt ON pt.id = po.term_id
-         LEFT JOIN purchase_orders parent ON parent.id = po.parent_purchase_order_id
+         ${PARENT_PO_JOIN}
         WHERE po.id = ?`,
       [id]
     );
@@ -994,9 +1000,12 @@ router.get('/:id/landed-costs', requireAuth, requirePermission(ROUTE, 'can_view'
        FROM purchase_orders po
        LEFT JOIN suppliers s ON s.id = po.supplier_id
        LEFT JOIN payment_terms pt ON pt.id = po.term_id
-       WHERE po.parent_purchase_order_id = ? AND po.type = 'PO2'
+       WHERE po.type = 'PO2'
+         AND (po.parent_purchase_order_id = ?
+              OR (po.parent_purchase_order_id IS NULL
+                  AND po.po_no LIKE CONCAT((SELECT m.po_no FROM purchase_orders m WHERE m.id = ?), '-%')))
        ORDER BY po.id DESC`,
-      [req.params.id]
+      [req.params.id, req.params.id]
     );
     res.json(rows);
   } catch (err) {
