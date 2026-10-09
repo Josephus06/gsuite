@@ -162,7 +162,7 @@ export default function InventoryView() {
 
       <div className="estimate-banner">
         <div className="estimate-banner-title">
-          <h1>Inventory Item</h1>
+          <h1>{isNonInventory ? 'Non-Inventory Item' : 'Inventory Item'}</h1>
           <span className="estimate-no">{item.item_code}</span>
         </div>
         <div className="estimate-status">
