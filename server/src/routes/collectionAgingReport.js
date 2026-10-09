@@ -51,6 +51,14 @@ async function fetchRows(query) {
   const params = [from, to];
   if (query.include_generated !== '1') where.push(REAL_PAYMENT);
   if (Number(query.customer_id) > 0) { where.push('cp.customer_id = ?'); params.push(Number(query.customer_id)); }
+  // Location of the Customer Payment (2026-10-09; the page starts on Head Office). A payment with no
+  // location counts as Head Office's, as the dashboard's Head Office Collection card reads it.
+  if (Number(query.location_id) > 0) {
+    const [[loc]] = await pool.query('SELECT location_name FROM locations WHERE id = ?', [Number(query.location_id)]);
+    const isHeadOffice = /^head office/i.test(String(loc?.location_name || '').trim());
+    where.push(isHeadOffice ? '(cp.office_location_id = ? OR cp.office_location_id IS NULL)' : 'cp.office_location_id = ?');
+    params.push(Number(query.location_id));
+  }
   if (query.search) {
     where.push('(cp.customer_payment_no LIKE ? OR si.invoice_no LIKE ? OR cp.or_no LIKE ? OR c.name LIKE ?)');
     const like = `%${query.search}%`;

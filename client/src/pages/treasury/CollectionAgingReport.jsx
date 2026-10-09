@@ -15,12 +15,14 @@ function lastMonth() {
   const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const last = new Date(now.getFullYear(), now.getMonth(), 0);
   const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  return { from: iso(first), to: iso(last), customer: null, bucket: '', search: '', includeGenerated: false };
+  // locationId starts null: the first load waits for the locations, so it is already Head Office's.
+  return { from: iso(first), to: iso(last), customer: null, locationId: null, bucket: '', search: '', includeGenerated: false };
 }
 
 const filterParams = (r) => ({
   from: r.from, to: r.to,
   ...(r.customer ? { customer_id: r.customer.id } : {}),
+  ...(r.locationId ? { location_id: r.locationId } : {}),
   ...(r.bucket ? { bucket: r.bucket } : {}),
   ...(r.search.trim() ? { search: r.search.trim() } : {}),
   ...(r.includeGenerated ? { include_generated: '1' } : {}),
@@ -35,6 +37,23 @@ export default function CollectionAgingReport() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [customers, setCustomers] = useState([]);
+  const [locations, setLocations] = useState([]);
+
+  // Location of the Customer Payment, Head Office by default (2026-10-09).
+  useEffect(() => {
+    const pick = (id) => {
+      setRange((r) => (r.locationId === null ? { ...r, locationId: id } : r));
+      setApplied((r) => (r.locationId === null ? { ...r, locationId: id } : r));
+    };
+    api.get('/lookups/locations')
+      .then(({ data: d }) => {
+        const locs = Array.isArray(d) ? d : (d?.rows || []);
+        setLocations(locs);
+        const ho = locs.find((l) => String(l.location_name || '').trim().toLowerCase() === 'head office');
+        pick(ho ? String(ho.id) : '');
+      })
+      .catch(() => pick(''));
+  }, []);
 
   useEffect(() => {
     api.get('/reports/collection-aging/customers').then(({ data: d }) => setCustomers(d || [])).catch(() => setCustomers([]));
@@ -51,7 +70,7 @@ export default function CollectionAgingReport() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(applied); }, [load, applied]);
+  useEffect(() => { if (applied.locationId !== null) load(applied); }, [load, applied]);
 
   async function download() {
     const res = await api.get('/reports/collection-aging/export', { params: filterParams(applied), responseType: 'blob' });
@@ -100,6 +119,13 @@ export default function CollectionAgingReport() {
               onSelect={(x) => setRange({ ...range, customer: x })}
               onClear={() => setRange({ ...range, customer: null })}
             />
+          </div>
+          <div className="field">
+            <label>Location</label>
+            <select value={range.locationId ?? ''} onChange={(e) => setRange({ ...range, locationId: e.target.value })}>
+              <option value="">All locations</option>
+              {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
+            </select>
           </div>
           <div className="field">
             <label>Aging</label>
