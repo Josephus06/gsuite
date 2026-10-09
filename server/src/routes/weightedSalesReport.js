@@ -3,6 +3,7 @@ const ExcelJS = require('exceljs');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { salesScope, scopeWhere } = require('../lib/salesReportScope');
+const { getSbuGroups } = require('../lib/sbuGroups');
 
 // Sales > Weighted Sales per Month (asked 2026-10-03): every Sales Order line created in a month,
 // with its Net of Tax -- which is what Weighted Sales is (lib/commissionReport.js: the net of tax
@@ -116,6 +117,135 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   } catch (err) { next(err); }
 });
 
+// The org chart the whole-company extract is laid out by (asked 2026-10-09, Accounting's own
+// weighted-sales sheet): each SBU head, the supervisors under them with their sales group, each
+// supervisor's account officers, then Marketing. Built from data -- the SBU groups
+// (lib/sbuGroups.js), the reporting tree (user_supervisors) and each person's department -- so a
+// new rep or a moved supervisor shows up without a code change. Anyone with sales in the month who
+// sits nowhere in the chart (the branches, a rep with no supervisor on file) is listed under
+// Others, so the summary still adds up to the month's total.
+//
+// Returns [{ role, group, name, employeeId, weighted, team }], in print order; blank rows between
+// blocks are { gap: true }.
+async function orgChartRows(repTotals, repNames) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/[\s_-]+/g, '');
+  const [users] = await pool.query(
+    `SELECT u.id, u.display_name, u.employee_id, u.is_supervisor, u.is_account_officer, u.is_sales_business_unit,
+            d.name AS department
+       FROM users u LEFT JOIN employees e ON e.id = u.employee_id LEFT JOIN departments d ON d.id = e.department_id
+      WHERE u.is_active = TRUE AND (u.account_type IS NULL OR u.account_type <> 'System Admin')`);
+  const [links] = await pool.query('SELECT supervisor_id, user_id FROM user_supervisors');
+  const byId = new Map(users.map((u) => [Number(u.id), u]));
+  const reportsOf = (userId) => links.filter((l) => Number(l.supervisor_id) === Number(userId))
+    .map((l) => byId.get(Number(l.user_id))).filter(Boolean);
+  const placed = new Set();
+  const out = [];
+  const own = (u) => (u && u.employee_id ? repTotals.get(Number(u.employee_id)) || 0 : 0);
+  const nameOf = (u) => (u.employee_id && repNames.get(Number(u.employee_id))) || u.display_name;
+  const place = (u) => { if (u.employee_id) placed.add(Number(u.employee_id)); placed.add(`u${u.id}`); };
+  const isPlaced = (u) => placed.has(`u${u.id}`) || (u.employee_id && placed.has(Number(u.employee_id)));
+
+  // One supervisor and their account officers; returns the team's total.
+  const supervisorBlock = (sup) => {
+    place(sup);
+    const row = { role: 'Supervisor', group: sup.department || '', name: nameOf(sup), weighted: own(sup), team: 0 };
+    out.push(row);
+    let team = own(sup);
+    const officers = reportsOf(sup.id).filter((u) => !isPlaced(u) && !u.is_supervisor && !u.is_sales_business_unit)
+      .sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+    for (const ao of officers) {
+      place(ao);
+      out.push({ role: 'Account Officer', group: '', name: nameOf(ao), weighted: own(ao) });
+      team += own(ao);
+    }
+    row.team = team;
+    return team;
+  };
+
+  for (const sbu of await getSbuGroups()) {
+    const head = byId.get(Number(sbu.userId));
+    if (!head) continue;
+    place(head);
+    const headRow = { role: sbu.label, group: nameOf(head), name: '', weighted: own(head), team: 0 };
+    out.push(headRow);
+    const groupKeys = new Set(sbu.departmentNames.map(norm));
+    // Supervisors reporting to the head, plus any supervisor of the SBU's own groups not linked to them.
+    const sups = [...reportsOf(head.id).filter((u) => u.is_supervisor),
+      ...users.filter((u) => u.is_supervisor && groupKeys.has(norm(u.department)))]
+      .filter((u, i, all) => all.findIndex((x) => x.id === u.id) === i && !isPlaced(u))
+      .sort((a, b) => String(a.department || '').localeCompare(String(b.department || '')));
+    let team = own(head);
+    for (const sup of sups) team += supervisorBlock(sup);
+    headRow.team = team;
+    out.push({ gap: true });
+  }
+
+  // Marketing: its head (SBU flag or supervisor) and the people in or reporting to it.
+  const marketing = users.filter((u) => norm(u.department) === 'marketing' && !isPlaced(u));
+  const mHeads = marketing.filter((u) => u.is_sales_business_unit || u.is_supervisor);
+  for (const head of mHeads) {
+    place(head);
+    const headRow = { role: 'Marketing', group: nameOf(head), name: '', weighted: own(head), team: 0 };
+    out.push(headRow);
+    let team = own(head);
+    const members = [...reportsOf(head.id), ...marketing]
+      .filter((u, i, all) => all.findIndex((x) => x.id === u.id) === i && !isPlaced(u))
+      .sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+    for (const m of members) {
+      place(m);
+      out.push({ role: '', group: '', name: nameOf(m), weighted: own(m) });
+      team += own(m);
+    }
+    headRow.team = team;
+    out.push({ gap: true });
+  }
+
+  // Everyone else with sales this month.
+  const others = [...repTotals.entries()].filter(([emp, v]) => !placed.has(emp) && Math.abs(v) >= 0.005)
+    .sort((a, b) => b[1] - a[1]);
+  if (others.length) {
+    const headRow = { role: 'Others', group: 'Branches / not in the chart', name: '', weighted: null, team: 0 };
+    out.push(headRow);
+    for (const [emp, v] of others) {
+      out.push({ role: '', group: '', name: repNames.get(emp) || '(no sales rep)', weighted: v });
+      headRow.team += v;
+    }
+  }
+  return out;
+}
+
+// The lines of one sales group on a sheet of its own, in the same columns as the full list.
+function addLinesSheet(wb, name, rows, money, passingFn) {
+  const ws = wb.addWorksheet(name.replace(/[\\/?*[\]:]/g, '-').slice(0, 31), { views: [{ state: 'frozen', ySplit: 1 }] });
+  ws.columns = [
+    { header: 'SO Date', key: 'date', width: 12 }, { header: 'SO #', key: 'so', width: 14 },
+    { header: 'Customer', key: 'customer', width: 36 }, { header: 'Sales Rep', key: 'rep', width: 26 },
+    { header: 'Sales Division', key: 'division', width: 16 }, { header: 'Office Location', key: 'office', width: 18 },
+    { header: 'JO #', key: 'jo', width: 18 }, { header: 'Job Type', key: 'job_type', width: 26 },
+    { header: 'Description', key: 'description', width: 44 }, { header: 'Qty', key: 'qty', width: 9 },
+    { header: 'Unit', key: 'unit', width: 8 }, { header: 'Weighted Sales (Net of Tax)', key: 'net', width: 18, style: money },
+    { header: 'GP Rate %', key: 'gp', width: 10, style: money }, { header: 'Passing GP %', key: 'pass_gp', width: 12, style: money },
+    { header: 'Passing', key: 'passing', width: 9 }, { header: 'SO Status', key: 'status', width: 18 },
+  ];
+  const day = (v) => (v ? String(v instanceof Date ? v.toISOString() : v).slice(0, 10) : '');
+  let total = 0;
+  for (const r of rows) {
+    ws.addRow({
+      date: day(r.date_created), so: r.sales_order_no, customer: r.customer_name || '', rep: r.sales_rep || '',
+      division: r.division_name || '', office: r.office_location || '', jo: r.job_order_no || '', job_type: r.job_type || '',
+      description: r.description || '', qty: Number(r.quantity || 0), unit: r.units || '', net: Number(r.net_of_tax || 0),
+      gp: r.gp_rate == null ? null : Number(r.gp_rate), pass_gp: r.passing_gp_rate == null ? null : Number(r.passing_gp_rate),
+      passing: passingFn(r) ? 'Yes' : 'No', status: r.status || '',
+    });
+    total += Number(r.net_of_tax || 0);
+  }
+  const t = ws.addRow({ description: 'TOTAL', net: total });
+  t.font = { bold: true };
+  ws.autoFilter = 'A1:P1';
+  ws.getRow(1).font = { bold: true };
+  return ws;
+}
+
 // The month as a workbook: a Summary sheet (one row per rep) and every line behind it.
 router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
@@ -125,6 +255,68 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
 
     const wb = new ExcelJS.Workbook();
     const money = { numFmt: '#,##0.00' };
+
+    // ALL groups and ALL reps: Accounting's org-chart layout (asked 2026-10-09) -- a Summary laid
+    // out SBU > Supervisor > Account Officer > Marketing, and one sheet of lines per sales group.
+    // A narrowed extract keeps the plain per-rep summary below: a chart of one group is not one.
+    if (!req.query.sales_rep_id && !req.query.sales_division_id) {
+      const repTotals = new Map(reps.filter((r) => r.sales_rep_id).map((r) => [Number(r.sales_rep_id), r.weighted_sales]));
+      const repNames = new Map(reps.filter((r) => r.sales_rep_id).map((r) => [Number(r.sales_rep_id), r.sales_rep]));
+      const chart = await orgChartRows(repTotals, repNames);
+      const noRep = reps.filter((r) => !r.sales_rep_id).reduce((s, r) => s + r.weighted_sales, 0);
+
+      const sum = wb.addWorksheet('Summary');
+      // Columns E-H as on Accounting's sheet (role, group/head, name, weighted sales), I the team total.
+      sum.columns = [{ width: 3 }, { width: 3 }, { width: 3 }, { width: 3 }, { width: 18 }, { width: 22 }, { width: 30 }, { width: 18 }, { width: 18 }];
+      const [y, m] = month.split('-').map(Number);
+      const monthLabel = new Date(Date.UTC(y, m - 1, 1)).toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+      sum.mergeCells('E2:I2');
+      sum.getCell('E2').value = `Weighted Sales -- ${monthLabel}`;
+      sum.getCell('E2').font = { bold: true, size: 13 };
+      const head = sum.getRow(3);
+      head.getCell(8).value = 'Weighted sales'; head.getCell(9).value = 'Team total';
+      head.font = { bold: true };
+      head.getCell(8).alignment = { horizontal: 'right' }; head.getCell(9).alignment = { horizontal: 'right' };
+      let r = 4;
+      for (const row of chart) {
+        if (row.gap) { r += 1; continue; }
+        const x = sum.getRow(r);
+        x.getCell(5).value = row.role || null;
+        x.getCell(6).value = row.group || null;
+        x.getCell(7).value = row.name || null;
+        if (row.weighted != null) { x.getCell(8).value = row.weighted; x.getCell(8).numFmt = money.numFmt; }
+        if (row.team != null) { x.getCell(9).value = row.team; x.getCell(9).numFmt = money.numFmt; x.getCell(9).font = { bold: true }; }
+        if (/^(SBU|Marketing|Others)/.test(row.role || '')) { x.getCell(5).font = { bold: true }; x.getCell(6).font = { bold: true }; }
+        r += 1;
+      }
+      if (Math.abs(noRep) >= 0.005) {
+        const x = sum.getRow(r); x.getCell(5).value = '(no sales rep)'; x.getCell(8).value = noRep; x.getCell(8).numFmt = money.numFmt; r += 1;
+      }
+      r += 1;
+      const tot = sum.getRow(r);
+      tot.getCell(5).value = 'TOTAL';
+      tot.getCell(8).value = reps.reduce((s, x) => s + x.weighted_sales, 0);
+      tot.getCell(8).numFmt = money.numFmt;
+      tot.font = { bold: true };
+
+      // One sheet per sales group: Marketing first, then Sales - 1..4, then any other group.
+      const groups = new Map();
+      for (const row of rows) {
+        const k = row.division_name || '(no sales group)';
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(row);
+      }
+      const rank = (n) => (/^marketing$/i.test(n) ? 0 : /^sales\s*-?\s*\d+$/i.test(n) ? 1 : 2);
+      const names = [...groups.keys()].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, undefined, { numeric: true }));
+      for (const n of names) addLinesSheet(wb, n, groups.get(n), money, passing);
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="weighted-sales-${month}.xlsx"`);
+      await wb.xlsx.write(res);
+      res.end();
+      return;
+    }
+
     const sum = wb.addWorksheet('Summary', { views: [{ state: 'frozen', ySplit: 1 }] });
     sum.columns = [
       { header: 'Sales Rep', key: 'rep', width: 30 }, { header: 'Sales Orders', key: 'orders', width: 13 },
