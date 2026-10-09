@@ -538,6 +538,14 @@ router.get('/commission/released-detail', requireAuth, requirePermission(COMMISS
 
 // Per-JO detail for one rep + month: JO#, GP rate, net of tax, paid invoice, split into
 // passing-GP and below-GP.
+// Who sees the Unpaid Commission derivation on Commission > JO Detail: System Admin and the
+// Accounting account types. Read fresh, like every other account-type rule.
+const COMMISSION_WORKING_TYPES = ['System Admin', 'Accounting', 'Accounting Manager', 'Accounting Supervisor'];
+async function mayViewCommissionWorking(userId) {
+  const [[u]] = await pool.query('SELECT account_type FROM users WHERE id = ?', [userId]);
+  return COMMISSION_WORKING_TYPES.includes(u?.account_type);
+}
+
 router.get('/commission/jo-detail', requireAuth, requirePermission(COMMISSION_ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const employeeId = Number(req.query.employeeId);
@@ -555,9 +563,17 @@ router.get('/commission/jo-detail', requireAuth, requirePermission(COMMISSION_RO
     // The month's row of the Commission report itself, so the detail can show how its Unpaid
     // Commission is derived (Expected -> Confirmed -> Unpaid) with the very figures the report
     // shows, rather than re-adding them here and risking a different answer.
-    const report = await buildCommissionReport(employeeId, year, filters);
-    const row = report?.rows?.find((r) => r.month === month);
-    data.month_summary = row ? { ...row, scheme_name: report.scheme_name } : null;
+    //
+    // ADMINS AND ACCOUNTING ONLY (asked 2026-10-09). The derivation spells out Expected, Confirmed,
+    // Released and Unpaid commission; reps and their supervisors see the job orders, not the
+    // working. Left out of the response rather than hidden on the page, so it is not merely a
+    // view-source away.
+    data.month_summary = null;
+    if (await mayViewCommissionWorking(req.user.id)) {
+      const report = await buildCommissionReport(employeeId, year, filters);
+      const row = report?.rows?.find((r) => r.month === month);
+      data.month_summary = row ? { ...row, scheme_name: report.scheme_name } : null;
+    }
     res.json(data);
   } catch (err) {
     next(err);
