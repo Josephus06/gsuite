@@ -27,6 +27,7 @@
 //   node src/db/import-transfer-chain.js
 //   node src/db/import-transfer-chain.js --only=to        (or =if / =ir)
 const pool = require('../db');
+const { raiseTransferTotals } = require('../lib/transferTotals');
 require('dotenv').config();
 
 const SITE = 'http://gsuite.graphicstar.com.ph';
@@ -87,6 +88,10 @@ async function api(token, ep, payload, attempts = 5) {
 async function main() {
   console.log(`Local DB: ${process.env.DB_NAME} on ${process.env.DB_HOST}`);
   console.log(DRY_RUN ? 'DRY RUN -- fetch + report only.\n' : 'APPLYING.\n');
+  // Transfer Orders a Fulfillment or Receipt was imported against this run. Their running totals
+  // are raised to the documents at the end (lib/transferTotals.js) -- inserting a document adds
+  // to nothing on its own, which left TO-38777 at a fulfilled figure two days stale.
+  const postedTo = new Set();
 
   // ---- local lookups -------------------------------------------------------------------
   const [locs] = await pool.query('SELECT id, location_name FROM locations');
@@ -364,6 +369,7 @@ async function main() {
         }
         await conn.commit();
         ifByNo.set(ifNo, r.insertId);
+        postedTo.add(toId);
         stats.if += 1; stats.ifLines += lines.length;
       } catch (e) {
         await conn.rollback(); skipped.failed += 1;
@@ -428,6 +434,7 @@ async function main() {
         }
         await conn.commit();
         irByNo.add(irNo);
+        postedTo.add(toId);
         stats.ir += 1; stats.irLines += lines.length;
       } catch (e) {
         await conn.rollback(); skipped.failed += 1;
@@ -436,6 +443,12 @@ async function main() {
       if (stats.ir % 2000 === 0) console.log(`  ...${seen} seen, ${stats.ir} imported`);
     }, ['transaction_transactionto', 'transaction_transactionsl']);
     console.log(`Item Receipts: ${stats.ir} imported (${stats.irLines} lines) of ${seen} seen.\n`);
+  }
+
+  if (!DRY_RUN && postedTo.size) {
+    const t = await raiseTransferTotals(pool, { toIds: [...postedTo] });
+    console.log(`Running totals raised to the documents on ${postedTo.size} TO(s): ${t.fulfilled} line fulfilled, `
+      + `${t.received} line received, ${t.ifl} fulfillment-line received; ${t.statuses.length} status change(s).\n`);
   }
 
   console.log('=== Summary ===');

@@ -6,6 +6,7 @@ const { isNonStockItem } = require('../lib/itemTypes');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { deriveOnHand } = require('../lib/stockLedger');
 const { insertNumbered } = require('../lib/docNumber');
+const { computeTOStatus } = require('../lib/transferTotals');
 const { sendXlsx, day } = require('../lib/xlsxExport');
 
 const router = express.Router();
@@ -100,26 +101,7 @@ async function logAudit(conn, { toId, userId, eventType, fieldName = null, oldVa
   );
 }
 
-// The Transfer Order's status is entirely derived from its lines' own running totals --
-// never set directly except for the one manual, terminal exception ('cancelled'). Sums
-// (not per-line comparisons) are what distinguish "partially fulfilled" from "pending
-// receipt / partially fulfilled": some lines can already be fully received while others
-// still haven't been fulfilled at all, and it's the aggregate position across the whole
-// order that decides which of the real system's six tabs a TO sits in.
-function computeTOStatus(lines) {
-  const totalTarget = lines.reduce((s, l) => s + Number(l.adjusted_qty ?? l.qty), 0);
-  const totalFulfilled = lines.reduce((s, l) => s + Number(l.fulfilled || 0), 0);
-  const totalReceived = lines.reduce((s, l) => s + Number(l.received || 0), 0);
-  if (totalFulfilled <= 0) return 'pending_fulfillment';
-  // What separates the two partial states is stock *in transit*, not stock already
-  // received: a partly-fulfilled order whose fulfillments are still unreceived is
-  // "Pending Receipt / Partially Fulfilled" (it has something to receive), while one
-  // whose every fulfillment has landed is plain "Partially Fulfilled" (nothing to
-  // receive -- only more to fulfill). Keying off totalReceived > 0 instead gets the
-  // very first partial fulfillment wrong and hides the Receive button on it.
-  if (totalFulfilled < totalTarget) return totalReceived < totalFulfilled ? 'pending_receipt_partially_fulfilled' : 'partially_fulfilled';
-  return totalReceived < totalFulfilled ? 'pending_receipt' : 'received';
-}
+// Status is derived from the lines' running totals -- see lib/transferTotals.js.
 
 const OPEN_TO_STATUSES = ['pending_fulfillment', 'partially_fulfilled', 'pending_receipt_partially_fulfilled'];
 
