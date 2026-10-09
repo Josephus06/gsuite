@@ -528,6 +528,7 @@ router.get('/:id', requireAuth, async (req, res, next) => {
     }
 
     doc.can_approve = await userCan(req.user.id, APPROVAL_ROUTE, 'can_approve');
+    doc.can_reject = await mayReject(req.user.id, doc);
     return res.json(doc);
   } catch (err) { return next(err); }
 });
@@ -929,13 +930,25 @@ router.post('/:id/approve', requireAuth, requirePermission(APPROVAL_ROUTE, 'can_
 
 // Rejecting carries per-line remarks as well as a reason, so the owner is told WHICH expense is the
 // problem rather than only that something is.
-router.post('/:id/reject', requireAuth, requirePermission(APPROVAL_ROUTE, 'can_approve'), async (req, res, next) => {
+// Who may reject: an approver, at SUBMITTED or NOTED; and whoever may note the form (its department
+// head, Accounts Payable for a liquidation), while it is waiting on them at SUBMITTED (2026-10-09)
+// -- a head who cannot accept a request has to be able to send it back, not just leave it sitting.
+async function mayReject(userId, doc) {
+  if (!['submitted', 'noted'].includes(doc.status)) return false;
+  if (await userCan(userId, APPROVAL_ROUTE, 'can_approve')) return true;
+  return doc.status === 'submitted' && (await mayNote(userId, doc)).allowed;
+}
+
+router.post('/:id/reject', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[doc]] = await conn.query('SELECT id, status FROM form_requests WHERE id = ?', [req.params.id]);
+    const [[doc]] = await conn.query('SELECT id, type, status, department_id, department FROM form_requests WHERE id = ?', [req.params.id]);
     if (!doc) return res.status(404).json({ error: 'Not found' });
     if (!['submitted', 'noted'].includes(doc.status)) {
       return res.status(409).json({ error: 'Only a submitted or noted form can be rejected.' });
+    }
+    if (!(await mayReject(req.user.id, doc))) {
+      return res.status(403).json({ error: 'You do not have permission to reject this form.' });
     }
 
     await conn.beginTransaction();

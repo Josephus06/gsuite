@@ -138,7 +138,9 @@ export default function FormView() {
   // Approving reads only from NOTED -- the head's sign-off is a gate, not a step to skip. Rejecting
   // still works from SUBMITTED: sending something back does not need the head to have seen it first.
   const mayApprove = doc.can_approve && doc.status === 'noted';
-  const mayReject = doc.can_approve && ['submitted', 'noted'].includes(doc.status);
+  // Decided by the server: an approver at submitted or noted, and the noter (department head, or
+  // Accounts Payable for a liquidation) while the form is waiting on them.
+  const mayReject = !!doc.can_reject;
   // Said plainly to the approver looking at a form they cannot yet act on, so a missing Approve
   // button reads as "waiting on the head" rather than as something broken.
   const awaitingNote = doc.can_approve && doc.status === 'submitted';
