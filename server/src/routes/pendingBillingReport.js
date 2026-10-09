@@ -90,12 +90,13 @@ async function invoicedByJobOrder(jos) {
 // Batched rather than one big query with per-row subqueries (that took ~30 s): pick the completed
 // JOs first -- a few thousand at most -- then read their invoices, QIs, deliveries and order lines
 // in one keyed query each (indexes added by register-pending-billing-page.js).
-async function loadRows(req) {
+// allReps: the whole company, whoever is asking -- the General Manager's dashboard card.
+async function loadRows(req, { allReps = false } = {}) {
   const { search, sales_rep_id: rep, customer_id: customerId, from, to, delivered, include_nsjo: includeNsjo, location_id: locationId } = req.query;
   const where = ["jo.production_stage IN ('completed', 'partially_completed')", "(jo.status IS NULL OR jo.status <> 'Cancelled')"];
   const params = [];
   if (!(includeNsjo === '1' || includeNsjo === 'true')) where.push('jo.nsso_id IS NULL');
-  const scope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
+  const scope = allReps ? null : await getSalesRepEmployeeScope(req.user.id, ROUTE);
   if (scope) { where.push('COALESCE(so.sales_rep_id, ns.sales_rep_id, jo.sales_rep_id) IN (?)'); params.push(scope.length ? scope : [0]); }
   if (rep) { where.push('COALESCE(so.sales_rep_id, ns.sales_rep_id, jo.sales_rep_id) = ?'); params.push(rep); }
   if (customerId) { where.push('COALESCE(so.customer_id, ns.customer_id) = ?'); params.push(customerId); }
@@ -225,4 +226,18 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
   }
 });
 
+// The dashboard's Pending Billing card (2026-10-09): the same JOs and amount as this report with no
+// filters, so the two can never disagree. It used to run its own query, which counted only invoice
+// lines naming the JO and read P56M over 20,717 JOs whose orders were already billed. Held for five
+// minutes -- the report takes a few seconds and every GM dashboard load asks for it.
+let summaryCache = { at: 0, value: null };
+async function pendingBillingSummary() {
+  if (summaryCache.value && Date.now() - summaryCache.at < 5 * 60 * 1000) return summaryCache.value;
+  const rows = await loadRows({ user: { id: 0 }, query: {} }, { allReps: true });
+  const value = { count: rows.length, amount: Number(rows.reduce((t, r) => t + r.unbilled_amount, 0).toFixed(2)) };
+  summaryCache = { at: Date.now(), value };
+  return value;
+}
+
 module.exports = router;
+module.exports.pendingBillingSummary = pendingBillingSummary;

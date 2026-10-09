@@ -5,6 +5,7 @@ const { requireAuth } = require('../middleware/auth');
 const { DESIGN_QUEUE_STATUS } = require('../lib/designSupervisorVisibility');
 const { isPlannerUser } = require('../lib/plannerRoles');
 const { businessToday } = require('../lib/crmCadence');
+const { pendingBillingSummary } = require('./pendingBillingReport');
 const { buildIncomeStatement } = require('../lib/reportsEngine');
 // Shared with the Artist Incentive report and the Assigned JO list, so the calendar cannot
 // quote a different figure for the same job than the other two do.
@@ -915,20 +916,9 @@ async function isGeneralManager(userId) {
 async function generalManagerCards() {
   const today = businessToday();
   const monthStart = `${today.slice(0, 7)}-01`;
-  const [[[billing]], [[sales]], [[tickets]], [[collection]]] = await Promise.all([
-    pool.query(
-      `SELECT COUNT(*) AS count, COALESCE(SUM(sol.net_of_tax), 0) AS amount
-         FROM job_orders jo
-         JOIN sales_orders so ON so.id = jo.sales_order_id
-         LEFT JOIN sales_order_lines sol ON sol.id = jo.sales_order_line_id
-        WHERE jo.production_stage = 'completed'
-          AND so.status NOT IN ('billed', 'cancelled')
-          AND LOWER(COALESCE(jo.status, '')) NOT LIKE '%cancel%'
-          AND NOT EXISTS (
-            SELECT 1 FROM sales_invoice_lines il
-              JOIN sales_invoices si ON si.id = il.sales_invoice_id AND si.cancelled_at IS NULL
-             WHERE il.job_order_id = jo.id)`,
-    ),
+  // Pending Billing is the Sales > Pending Billing report's own figure, all offices and reps.
+  const [billing, [[sales]], [[tickets]], [[collection]]] = await Promise.all([
+    pendingBillingSummary(),
     pool.query(
       `SELECT COUNT(*) AS count, COALESCE(SUM(net_of_tax), 0) AS amount
          FROM sales_orders WHERE date_created >= ? AND status <> 'cancelled'`, [monthStart],
