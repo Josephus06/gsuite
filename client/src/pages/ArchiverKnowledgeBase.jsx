@@ -164,6 +164,10 @@ export default function ArchiverKnowledgeBase() {
                         textAlign: 'left', cursor: 'pointer', padding: 14, borderRadius: 10,
                         border: '1px solid var(--border, #e2e8f0)', background: 'transparent', color: 'inherit',
                         width: '100%', height: '100%',
+                        // A link, not the button it used to be (2026-10-06): an <a> is inline, so
+                        // without these its border wrapped each text line instead of the card, and
+                        // the title came out underlined (2026-10-09).
+                        display: 'block', boxSizing: 'border-box', textDecoration: 'none',
                       }}
                     >
                       {/* Room kept clear at the top right so a long name does not run under the

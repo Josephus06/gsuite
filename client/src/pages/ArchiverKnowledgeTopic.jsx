@@ -305,6 +305,8 @@ export default function ArchiverKnowledgeTopic() {
                     textAlign: 'left', cursor: 'pointer', padding: 14, borderRadius: 10,
                     border: '1px solid var(--border, #e2e8f0)', background: 'transparent', color: 'inherit',
                     width: '100%', height: '100%',
+                    // A link, not a button: block, so the border draws the card (2026-10-09).
+                    display: 'block', boxSizing: 'border-box', textDecoration: 'none',
                   }}
                 >
                   <div style={{ fontWeight: 600, fontSize: 15, paddingRight: canEditCards ? 40 : 0 }}>{c.name}</div>

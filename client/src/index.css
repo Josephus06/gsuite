@@ -1366,6 +1366,7 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
   align-items: center;
   gap: 6px;
   font-family: var(--sans);
+  text-decoration: none; /* also used on links (a.status-tab), which would otherwise underline */
 }
 .status-tab:hover { color: var(--accent); }
 .status-tab.active { color: var(--accent); border-bottom-color: var(--accent); }

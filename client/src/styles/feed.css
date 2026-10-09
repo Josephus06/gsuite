@@ -877,6 +877,8 @@
   color: var(--fb-text);
   font-weight: 600; font-size: 15px;
   cursor: pointer; font-family: inherit;
+  /* Also a link (a.fb-btn-secondary): keep it a button-shaped box, not underlined inline text. */
+  display: inline-block; text-decoration: none;
 }
 .fb-btn-secondary:hover { background: var(--fb-input-hover); }
 
