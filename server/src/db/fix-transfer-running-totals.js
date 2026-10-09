@@ -10,6 +10,9 @@ const pool = require('../db');
 const { raiseTransferTotals } = require('../lib/transferTotals');
 
 const APPLY = process.argv.includes('--apply');
+// Who the status-change audit rows name -- audit_logs.set_by_user_id is NOT NULL. Defaults to user
+// #1, the admin who asked for this repair.
+const BY = Number((process.argv.find((a) => a.startsWith('--by=')) || '').split('=')[1]) || 1;
 
 async function main() {
   console.log(`Database: ${process.env.DB_NAME} on ${process.env.DB_HOST}`);
@@ -17,7 +20,7 @@ async function main() {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const r = await raiseTransferTotals(conn, { dryRun: !APPLY });
+    const r = await raiseTransferTotals(conn, { dryRun: !APPLY, userId: BY });
     await conn.commit();
     console.log(`TO lines, Fulfilled raised : ${r.fulfilled}`);
     console.log(`TO lines, Received raised  : ${r.received}`);

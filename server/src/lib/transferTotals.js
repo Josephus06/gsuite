@@ -39,7 +39,9 @@ const STAGE = { pending_fulfillment: 0, partially_fulfilled: 1, pending_receipt_
 
 // toIds: limit to these Transfer Orders (an importer run), or null for every one (the repair).
 // Returns what changed (or, with dryRun, what would): counts, and every status change.
-async function raiseTransferTotals(conn, { toIds = null, dryRun = false, userId = null } = {}) {
+// userId: who the status-change audit rows name (audit_logs.set_by_user_id is NOT NULL); user #1,
+// the admin, when a script runs it.
+async function raiseTransferTotals(conn, { toIds = null, dryRun = false, userId = 1 } = {}) {
   if (Array.isArray(toIds) && !toIds.length) return { ifl: 0, fulfilled: 0, received: 0, statuses: [] };
   const scope = Array.isArray(toIds) ? 'AND tol.transfer_order_id IN (?)' : '';
   const sp = Array.isArray(toIds) ? [toIds] : [];
