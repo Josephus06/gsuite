@@ -171,6 +171,7 @@ import GeneralLedger from './pages/reports/GeneralLedger';
 import ArAging from './pages/reports/ArAging';
 import Profitability from './pages/reports/Profitability';
 import ArAgingDetails from './pages/reports/ArAgingDetails';
+import ApAgingDetails from './pages/reports/ApAgingDetails';
 import StatementOfAccount from './pages/StatementOfAccount';
 import ApAging from './pages/reports/ApAging';
 import BirSalesReport from './pages/reports/BirSalesReport';
@@ -454,6 +455,7 @@ function App() {
         <Route path="/reports/ar-aging" element={<ArAging />} />
         <Route path="/reports/profitability" element={<Profitability />} />
         <Route path="/reports/ar-aging-details" element={<ArAgingDetails />} />
+        <Route path="/reports/ap-aging-details" element={<ApAgingDetails />} />
         <Route path="/statement-of-accounts" element={<StatementOfAccount />} />
         <Route path="/reports/ap-aging" element={<ApAging />} />
         {/* BIR Reports -- its own module on the bar, mirroring the live system's menu. */}

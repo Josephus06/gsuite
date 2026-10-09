@@ -429,4 +429,91 @@ function detailsOf(items, asOf, supplierId, supplierName) {
   };
 }
 
-module.exports = { buildApAging, buildApAgingSupplierDetails, buildApAgingUnmatchedDetails, collectOpenApItems };
+// ---- AP Aging Details (Accounting > Reports, 2026-10-09) -- AR Aging Details' twin ----
+//
+// Every vendor's open documents, grouped by vendor the way AP Aging groups them (rowKey), so a
+// vendor's rows always add up to its Total Balance there. Paged by vendor; totals are over the whole
+// filtered set, never just the page.
+const DETAILS_DEFAULT_PAGE_SIZE = 25;
+const DETAILS_MAX_PAGE_SIZE = 200;
+
+function groupApItems(items, asOf) {
+  const byVendor = new Map();
+  for (const item of items) {
+    const key = rowKey(item);
+    if (!byVendor.has(key)) {
+      byVendor.set(key, { row_key: key, supplier_id: item.supplier_id ?? null, supplier_name: item.supplier_name || '', items: [], total_balance: 0 });
+    }
+    const g = byVendor.get(key);
+    g.items.push({
+      type: item.type, trans_date: item.date, trans_no: item.reference, id: item.id ?? null,
+      ref_no: item.ref_no || null, memo: item.memo || null, po_no: item.po_no || null,
+      date_due: item.due_date || null, age: daysBetween(item.aging_date, asOf),
+      original_amount: round2(item.original_amount || 0), open_balance: round2(item.balance),
+      location_name: item.location_name || null, marked_paid_unevidenced: !!item.marked_paid_unevidenced,
+    });
+    g.total_balance += Number(item.balance || 0);
+  }
+  return [...byVendor.values()]
+    .map((g) => ({
+      ...g,
+      total_balance: round2(g.total_balance),
+      items: g.items.sort((x, y) => String(x.trans_date).localeCompare(String(y.trans_date)) || String(x.trans_no).localeCompare(String(y.trans_no))),
+    }))
+    .filter((g) => g.items.length > 0)
+    .sort((x, y) => String(x.supplier_name).localeCompare(String(y.supplier_name)));
+}
+
+async function buildApAgingDetails(asOf, filters = {}) {
+  const { items } = await collectOpenApItems(asOf, filters);
+  const groups = groupApItems(items, asOf);
+  const limit = Math.min(DETAILS_MAX_PAGE_SIZE, Math.max(1, Number(filters.limit) || DETAILS_DEFAULT_PAGE_SIZE));
+  const page = Math.max(1, Number(filters.page) || 1);
+  const pageGroups = groups.slice((page - 1) * limit, page * limit);
+  return {
+    as_of: asOf,
+    rows: pageGroups,
+    page,
+    limit,
+    total_pages: Math.max(1, Math.ceil(groups.length / limit)),
+    page_total: round2(pageGroups.reduce((sum, g) => sum + g.total_balance, 0)),
+    totals: {
+      open_balance: round2(groups.reduce((sum, g) => sum + g.total_balance, 0)),
+      vendor_count: groups.length,
+      item_count: groups.reduce((sum, g) => sum + g.items.length, 0),
+      unevidenced_count: items.filter((i) => i.marked_paid_unevidenced).length,
+      // A vendor whose open documents cancel out exactly has no AP Aging row; it keeps its rows here.
+      zero_net_vendor_count: groups.filter((g) => Math.abs(g.total_balance) < 0.005).length,
+    },
+  };
+}
+
+// The whole filtered set, flat -- one row per document with its vendor repeated, for a spreadsheet.
+async function buildApAgingDetailsCsv(asOf, filters = {}) {
+  const { items } = await collectOpenApItems(asOf, filters);
+  const groups = groupApItems(items, asOf);
+  const esc = (v) => {
+    const t = v == null ? '' : String(v);
+    return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+  };
+  const lines = [['Vendor', 'Type', 'Trans Date', 'Trans #', 'Ref #', 'Memo', 'PO #', 'Date Due', 'Age', 'Original', 'Open Balance', 'Location'].join(',')];
+  for (const g of groups) {
+    for (const it of g.items) {
+      lines.push([g.supplier_name, it.type, String(it.trans_date || '').slice(0, 10), it.trans_no, it.ref_no, it.memo, it.po_no,
+        String(it.date_due || '').slice(0, 10), it.age, it.original_amount.toFixed(2), it.open_balance.toFixed(2), it.location_name].map(esc).join(','));
+    }
+  }
+  return { csv: lines.join('\r\n') };
+}
+
+// The Vendor picker: suppliers whose name matches, a page at a time.
+async function searchApSuppliers(term) {
+  const q = `%${String(term || '').trim()}%`;
+  const [rows] = await pool.query('SELECT id, name FROM suppliers WHERE name LIKE ? ORDER BY name LIMIT 50', [q]);
+  return rows;
+}
+
+module.exports = {
+  buildApAging, buildApAgingSupplierDetails, buildApAgingUnmatchedDetails, collectOpenApItems,
+  buildApAgingDetails, buildApAgingDetailsCsv, searchApSuppliers,
+};

@@ -7,7 +7,10 @@ const {
   buildArAgingDetails, buildArAgingDetailsCsv, searchArCustomers,
   buildArAgingDetailsGroups,
 } = require('../lib/arAging');
-const { buildApAging, buildApAgingSupplierDetails, buildApAgingUnmatchedDetails, collectOpenApItems } = require('../lib/apAging');
+const {
+  buildApAging, buildApAgingSupplierDetails, buildApAgingUnmatchedDetails, collectOpenApItems,
+  buildApAgingDetails, buildApAgingDetailsCsv, searchApSuppliers,
+} = require('../lib/apAging');
 const {
   arAgingWorkbook, apAgingWorkbook, arAgingDetailsWorkbook, apAgingDetailsWorkbook, sendWorkbook,
 } = require('../lib/agingWorkbook');
@@ -411,6 +414,47 @@ router.get('/ar-aging-details', requireAuth, requirePermission(AR_AGING_DETAILS_
 router.get('/ar-aging-details/customers', requireAuth, requirePermission(AR_AGING_DETAILS_ROUTE, 'can_view'), async (req, res, next) => {
   try {
     return res.json(await searchArCustomers(req.query.q));
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// ---- Accounting > Reports > AP Aging Details (2026-10-09) ----
+//
+// AR Aging Details' twin for payables: every vendor's open documents, grouped as AP Aging groups
+// them and counted by AP Aging's own rules (apAgingFilters), so a vendor's rows add up to its AP
+// Aging balance. Its own pages row, for the same reason AR Aging Details has one.
+const AP_AGING_DETAILS_ROUTE = '/reports/ap-aging-details';
+
+router.get('/ap-aging-details', requireAuth, requirePermission(AP_AGING_DETAILS_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const asOf = String(req.query.asOf || today()).slice(0, 10);
+    const filters = {
+      ...apAgingFilters(req.query),
+      supplierId: req.query.supplierId && Number(req.query.supplierId) > 0 ? Number(req.query.supplierId) : null,
+      page: req.query.page, limit: req.query.limit,
+    };
+    if (req.query.format === 'xlsx') {
+      const { items } = await collectOpenApItems(asOf, filters);
+      const asOfMs = Date.parse(`${asOf}T00:00:00Z`);
+      const daysOverdue = (i) => Math.max(Math.floor((asOfMs - Date.parse(`${String(i.aging_date || i.due_date || i.date).slice(0, 10)}T00:00:00Z`)) / 86400000), 0) || 0;
+      return sendWorkbook(res, apAgingDetailsWorkbook(items, asOf, daysOverdue), `ap-aging-details-${asOf}.xlsx`);
+    }
+    if (req.query.format === 'csv') {
+      const { csv } = await buildApAgingDetailsCsv(asOf, filters);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="ap-aging-details-${asOf}.csv"`);
+      return res.send(csv);
+    }
+    return res.json(await buildApAgingDetails(asOf, filters));
+  } catch (err) {
+    return next(err);
+  }
+});
+
+router.get('/ap-aging-details/suppliers', requireAuth, requirePermission(AP_AGING_DETAILS_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    return res.json(await searchApSuppliers(req.query.q));
   } catch (err) {
     return next(err);
   }
