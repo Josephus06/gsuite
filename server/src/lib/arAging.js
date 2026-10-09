@@ -275,20 +275,32 @@ async function collectOpenItemsFromDocs(asOf, filters = {}) {
   return items;
 }
 
+// Which row an item belongs to: its customer, or -- for an opening item whose source customer
+// matched no T1S customer, so carries no customer_id -- its own name. Keyed on the id alone, every
+// such item fell into ONE row under whichever name came first (lib/apAging.js has the same rule
+// and the case that found it: six unmatched vendors folded into Mandaue Foam on 2026-09-30).
+function rowKey(item) {
+  return item.customer_id != null ? `id:${item.customer_id}` : `name:${String(item.customer_name || '').trim().toUpperCase()}`;
+}
+
 async function buildArAging(asOf, filters = {}) {
   const items = await collectOpenItems(asOf, filters);
 
   // Accumulate every contribution into per-customer buckets.
   const byCustomer = new Map();
-  function customerRow(id, name) {
-    if (!byCustomer.has(id)) {
-      byCustomer.set(id, { customer_id: id, customer_name: name, ...emptyBuckets(), unevidenced_count: 0, unevidenced_amount: 0 });
+  function customerRow(item) {
+    const key = rowKey(item);
+    if (!byCustomer.has(key)) {
+      byCustomer.set(key, {
+        row_key: key, customer_id: item.customer_id ?? null, customer_name: item.customer_name || '',
+        ...emptyBuckets(), unevidenced_count: 0, unevidenced_amount: 0,
+      });
     }
-    return byCustomer.get(id);
+    return byCustomer.get(key);
   }
 
   for (const item of items) {
-    const row = customerRow(item.customer_id, item.customer_name);
+    const row = customerRow(item);
     addToBucket(row, item.balance, item.aging_date, asOf);
     if (item.marked_paid_unevidenced) {
       row.unevidenced_count += 1;
@@ -304,7 +316,7 @@ async function buildArAging(asOf, filters = {}) {
       };
       const total = round2(buckets.current + buckets.d1_30 + buckets.d31_60 + buckets.d61_90 + buckets.over_90);
       return {
-        customer_id: r.customer_id, customer_name: r.customer_name, ...buckets, total_balance: total,
+        row_key: r.row_key, customer_id: r.customer_id, customer_name: r.customer_name, ...buckets, total_balance: total,
         unevidenced_count: r.unevidenced_count,
         unevidenced_amount: round2(r.unevidenced_amount),
       };
@@ -313,7 +325,7 @@ async function buildArAging(asOf, filters = {}) {
     // real report only listing customers with a balance.
     .filter((r) => Math.abs(r.total_balance) >= 0.005
       || [r.current, r.d1_30, r.d31_60, r.d61_90, r.over_90].some((v) => Math.abs(v) >= 0.005))
-    .sort((a, b) => a.customer_name.localeCompare(b.customer_name));
+    .sort((a, b) => String(a.customer_name).localeCompare(String(b.customer_name)));
 
   const totals = rows.reduce((t, r) => ({
     current: t.current + r.current, d1_30: t.d1_30 + r.d1_30, d31_60: t.d31_60 + r.d31_60,
@@ -344,12 +356,13 @@ const DETAILS_MAX_PAGE_SIZE = 200;
 function groupItemsByCustomer(items, asOf) {
   const byCustomer = new Map();
   for (const item of items) {
-    if (!byCustomer.has(item.customer_id)) {
-      byCustomer.set(item.customer_id, {
-        customer_id: item.customer_id, customer_name: item.customer_name, items: [], total_balance: 0,
+    const key = rowKey(item);
+    if (!byCustomer.has(key)) {
+      byCustomer.set(key, {
+        row_key: key, customer_id: item.customer_id ?? null, customer_name: item.customer_name || '', items: [], total_balance: 0,
       });
     }
-    const group = byCustomer.get(item.customer_id);
+    const group = byCustomer.get(key);
     group.items.push({
       type: item.type,
       trans_date: item.date,
@@ -379,7 +392,7 @@ function groupItemsByCustomer(items, asOf) {
     // when the items themselves are non-zero, so a customer holding an invoice and an equal
     // credit still shows both rows rather than vanishing.
     .filter((g) => Math.abs(g.total_balance) >= 0.005 || g.items.length > 0)
-    .sort((a, b) => a.customer_name.localeCompare(b.customer_name));
+    .sort((a, b) => String(a.customer_name).localeCompare(String(b.customer_name)));
 }
 
 async function buildArAgingDetails(asOf, filters = {}) {

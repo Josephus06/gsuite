@@ -168,7 +168,7 @@ export default function ArAging() {
                   <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>No outstanding balances as of this date.</td></tr>
                 )}
                 {report.rows.map((row) => (
-                  <tr key={row.customer_id}>
+                  <tr key={row.row_key || row.customer_id}>
                     <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                     <td data-label="Current" style={{ textAlign: 'right' }}>{money(row.current)}</td>
                     <td data-label="1-30 days" style={{ textAlign: 'right' }}>{money(row.d1_30)}</td>
@@ -188,8 +188,14 @@ export default function ArAging() {
                       )}
                     </td>
                     <td style={{ whiteSpace: 'nowrap' }}>
-                      <button className="btn btn-sm btn-primary" style={{ marginRight: 4 }} onClick={() => openDrill('details', row)}>Details</button>
-                      <button className="btn btn-sm btn-primary" onClick={() => openDrill('ledger', row)}>Ledger</button>
+                      {/* An opening balance whose source customer matched none in T1S has no customer to
+                          open; its documents are listed in AR Aging Details. */}
+                      {row.customer_id ? (
+                        <>
+                          <button className="btn btn-sm btn-primary" style={{ marginRight: 4 }} onClick={() => openDrill('details', row)}>Details</button>
+                          <button className="btn btn-sm btn-primary" onClick={() => openDrill('ledger', row)}>Ledger</button>
+                        </>
+                      ) : <span className="muted" style={{ fontSize: 11 }}>Not a T1S customer</span>}
                     </td>
                   </tr>
                 ))}

@@ -323,21 +323,34 @@ async function collectOpenApItems(asOf, filters = {}) {
   return { ...res, items };
 }
 
+// Which summary row an item belongs to. A supplier when it has one; otherwise its own name. Opening
+// items whose source name matched no T1S supplier carry no supplier_id, and keying on the id alone
+// put every one of them in ONE row under whichever name came first -- the 2026-09-30 AP aging showed
+// Mandaue Foam at 9,235.31 because six unmatched vendors (Cebu Air, Tianjin, MR DIY, ...) and two
+// unnamed lines were folded into it. The total was right; the rows were not.
+function rowKey(item) {
+  return item.supplier_id != null ? `id:${item.supplier_id}` : `name:${String(item.supplier_name || '').trim().toUpperCase()}`;
+}
+
 async function buildApAging(asOf, filters = {}) {
   const {
     items, unevidenced, unlinked_payments: unlinkedPayments, header_disagreement: headerDisagreement,
   } = await collectOpenApItems(asOf, filters);
 
   const bySupplier = new Map();
-  function supplierRow(id, name) {
-    if (!bySupplier.has(id)) {
-      bySupplier.set(id, { supplier_id: id, supplier_name: name, ...emptyBuckets(), unevidenced_count: 0, unevidenced_amount: 0 });
+  function supplierRow(item) {
+    const key = rowKey(item);
+    if (!bySupplier.has(key)) {
+      bySupplier.set(key, {
+        row_key: key, supplier_id: item.supplier_id ?? null, supplier_name: item.supplier_name || '',
+        ...emptyBuckets(), unevidenced_count: 0, unevidenced_amount: 0,
+      });
     }
-    return bySupplier.get(id);
+    return bySupplier.get(key);
   }
 
   for (const item of items) {
-    const row = supplierRow(item.supplier_id, item.supplier_name);
+    const row = supplierRow(item);
     addToBucket(row, item.balance, item.aging_date, asOf);
     if (item.marked_paid_unevidenced) {
       row.unevidenced_count += 1;
@@ -353,13 +366,13 @@ async function buildApAging(asOf, filters = {}) {
       };
       const total = round2(buckets.current + buckets.d1_30 + buckets.d31_60 + buckets.d61_90 + buckets.over_90);
       return {
-        supplier_id: r.supplier_id, supplier_name: r.supplier_name, ...buckets, total_balance: total,
+        row_key: r.row_key, supplier_id: r.supplier_id, supplier_name: r.supplier_name, ...buckets, total_balance: total,
         unevidenced_count: r.unevidenced_count, unevidenced_amount: round2(r.unevidenced_amount),
       };
     })
     .filter((r) => Math.abs(r.total_balance) >= 0.005
       || [r.current, r.d1_30, r.d31_60, r.d61_90, r.over_90].some((v) => Math.abs(v) >= 0.005))
-    .sort((a, b) => a.supplier_name.localeCompare(b.supplier_name));
+    .sort((a, b) => String(a.supplier_name).localeCompare(String(b.supplier_name)));
 
   const totals = rows.reduce((t, r) => ({
     current: t.current + r.current, d1_30: t.d1_30 + r.d1_30, d31_60: t.d31_60 + r.d31_60,
@@ -384,8 +397,19 @@ async function buildApAging(asOf, filters = {}) {
 async function buildApAgingSupplierDetails(supplierId, asOf, filters = {}) {
   const [[supplier]] = await pool.query('SELECT id, name FROM suppliers WHERE id = ?', [supplierId]);
   if (!supplier) return null;
-
   const { items } = await collectOpenApItems(asOf, { ...filters, supplierId });
+  return detailsOf(items, asOf, supplier.id, supplier.name);
+}
+
+// The Details of a row with no T1S supplier -- an opening item whose source vendor matched none --
+// found the way the summary grouped it: by name, among the items with no supplier_id.
+async function buildApAgingUnmatchedDetails(name, asOf, filters = {}) {
+  const key = rowKey({ supplier_id: null, supplier_name: name });
+  const { items } = await collectOpenApItems(asOf, filters);
+  return detailsOf(items.filter((i) => i.supplier_id == null && rowKey(i) === key), asOf, null, name);
+}
+
+function detailsOf(items, asOf, supplierId, supplierName) {
   const sorted = items
     .map((i) => ({
       type: i.type, reference: i.reference, id: i.id, date: i.date, due_date: i.due_date,
@@ -397,12 +421,12 @@ async function buildApAgingSupplierDetails(supplierId, asOf, filters = {}) {
     .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.reference).localeCompare(String(b.reference)));
 
   return {
-    supplier_id: supplier.id,
-    supplier_name: supplier.name,
+    supplier_id: supplierId,
+    supplier_name: supplierName,
     as_of: asOf,
     items: sorted,
     total_balance: round2(sorted.reduce((s, i) => s + i.balance, 0)),
   };
 }
 
-module.exports = { buildApAging, buildApAgingSupplierDetails, collectOpenApItems };
+module.exports = { buildApAging, buildApAgingSupplierDetails, buildApAgingUnmatchedDetails, collectOpenApItems };

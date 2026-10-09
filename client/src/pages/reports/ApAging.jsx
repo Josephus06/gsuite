@@ -81,7 +81,10 @@ export default function ApAging() {
     setDrill({ vendor, data: null });
     setDrillLoading(true);
     try {
-      const { data } = await api.get(`/reports/ap-aging/supplier/${vendor.supplier_id}/details`, { params: queryParams() });
+      // A row whose source vendor matched no T1S supplier has no id; its Details are found by name.
+      const { data } = vendor.supplier_id
+        ? await api.get(`/reports/ap-aging/supplier/${vendor.supplier_id}/details`, { params: queryParams() })
+        : await api.get('/reports/ap-aging/unmatched/details', { params: { ...queryParams(), name: vendor.supplier_name } });
       setDrill({ vendor, data });
     } catch (err) {
       setDrill({ vendor, data: null, error: err.response?.data?.error || 'Failed to load' });
@@ -204,7 +207,7 @@ export default function ApAging() {
                   <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>No outstanding payables as of this date.</td></tr>
                 )}
                 {report.rows.map((row) => (
-                  <tr key={row.supplier_id}>
+                  <tr key={row.row_key || row.supplier_id}>
                     <td data-label="Vendor"><SupplierLink id={row.supplier_id} name={row.supplier_name} /></td>
                     <td data-label="Current" style={{ textAlign: 'right' }}>{money(row.current)}</td>
                     <td data-label="1-30 days" style={{ textAlign: 'right' }}>{money(row.d1_30)}</td>

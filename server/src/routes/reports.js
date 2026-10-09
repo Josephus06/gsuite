@@ -7,7 +7,7 @@ const {
   buildArAgingDetails, buildArAgingDetailsCsv, searchArCustomers,
   buildArAgingDetailsGroups,
 } = require('../lib/arAging');
-const { buildApAging, buildApAgingSupplierDetails, collectOpenApItems } = require('../lib/apAging');
+const { buildApAging, buildApAgingSupplierDetails, buildApAgingUnmatchedDetails, collectOpenApItems } = require('../lib/apAging');
 const {
   arAgingWorkbook, apAgingWorkbook, arAgingDetailsWorkbook, apAgingDetailsWorkbook, sendWorkbook,
 } = require('../lib/agingWorkbook');
@@ -345,6 +345,15 @@ router.get('/ap-aging/details', requireAuth, requirePermission(AP_AGING_ROUTE, '
     const asOfMs = Date.parse(`${asOf}T00:00:00Z`);
     const daysOverdue = (i) => Math.max(Math.floor((asOfMs - Date.parse(`${String(i.aging_date || i.due_date || i.date).slice(0, 10)}T00:00:00Z`)) / 86400000), 0) || 0;
     return sendWorkbook(res, apAgingDetailsWorkbook(items, asOf, daysOverdue), `ap-aging-details-${asOf}.xlsx`);
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// A row whose source vendor matched no T1S supplier has no id to open by; it is found by its name.
+router.get('/ap-aging/unmatched/details', requireAuth, requirePermission(AP_AGING_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    return res.json(await buildApAgingUnmatchedDetails(String(req.query.name || ''), req.query.asOf || today(), apAgingFilters(req.query)));
   } catch (err) {
     return next(err);
   }

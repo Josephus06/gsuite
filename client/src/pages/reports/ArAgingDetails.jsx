@@ -285,7 +285,7 @@ export default function ArAgingDetails() {
                   </td></tr>
                 )}
                 {rows.map((g) => [
-                  <tr key={`c-${g.customer_id}`} style={{ background: 'var(--color-neutral-bg)' }}>
+                  <tr key={`c-${g.row_key || g.customer_id}`} style={{ background: 'var(--color-neutral-bg)' }}>
                     <td colSpan={8} style={{ fontWeight: 600 }}>
                       <span style={{ color: 'var(--color-accent, #14b8a6)', marginRight: 8 }}>●</span>
                       <CustomerLink id={g.customer_id} name={g.customer_name} />
