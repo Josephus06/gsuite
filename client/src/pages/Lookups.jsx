@@ -151,7 +151,7 @@ function emptyForm(fields) {
 
 
 // The forms a department head notes, and how a head's note_form_types reads: empty means all of them.
-const NOTED_FORM_TYPES = [['payment', 'Request for Payment'], ['fund_transfer', 'Fund Transfer'], ['attendance_adjustment', 'Attendance Adjustment']];
+const NOTED_FORM_TYPES = [['payment', 'Request for Payment'], ['fund_transfer', 'Fund Transfer'], ['revolving_fund', 'Revolving Fund'], ['attendance_adjustment', 'Attendance Adjustment']];
 const noteTypesOf = (a) => (a.note_form_types ? String(a.note_form_types).split(',') : NOTED_FORM_TYPES.map(([t]) => t));
 
 export default function Lookups() {

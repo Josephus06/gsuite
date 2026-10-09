@@ -23,16 +23,18 @@ const pool = require('../db');
 // ticketVisibility.js uses, and for the same reason: an approver list changes after a token is
 // issued, and a stale token must not carry authority somebody has since been removed from.
 
-// The two forms whose noting is a departmental act. A business trip and a revolving fund keep the
-// plain permission gate (can_edit on /forms/approval): they are not an expense claim against one
-// department's budget, so there is no departmental head whose sign-off they need.
+// The forms whose noting is a departmental act. A business trip keeps the plain permission gate
+// (can_edit on /forms/approval): it is not an expense claim against one department's budget, so
+// there is no departmental head whose sign-off it needs.
 //
 // A LIQUIDATION is no longer one of them (asked 2026-10-06): Accounts Payable notes every
 // liquidation, whatever department it came from, once it has given each item the COGS account it is
 // charged to -- see AP_NOTED_TYPES below and the Accounts Payable tick on the user.
 // A Fund Transfer Request Form is a Request for Payment with banks named, so it is noted the same way.
 // An attendance adjustment is noted by the immediate superior -- the department's head (2026-10-08).
-const DEPARTMENT_NOTED_TYPES = ['payment', 'fund_transfer', 'attendance_adjustment'];
+// A revolving fund is noted by the department's head too (asked 2026-10-09), ticked per head in
+// Lookups > Departments like the others.
+const DEPARTMENT_NOTED_TYPES = ['payment', 'fund_transfer', 'revolving_fund', 'attendance_adjustment'];
 const AP_NOTED_TYPES = ['liquidation'];
 
 // Is this user Accounts Payable (users.is_accounts_payable)? Read fresh, like the rest of this file.

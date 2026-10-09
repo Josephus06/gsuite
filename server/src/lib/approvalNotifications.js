@@ -1,5 +1,5 @@
 const pool = require('../db');
-const { notersForDoc } = require('./formNoters');
+const { notersForDoc, DEPARTMENT_NOTED_TYPES, AP_NOTED_TYPES } = require('./formNoters');
 
 // The bell for documents waiting on somebody's decision -- Purchase Orders and the request Forms.
 // Until 2026-10-07 neither wrote a notification at all, so an approver only found a PO or a form
@@ -80,8 +80,9 @@ const FORM_LABEL = {
 };
 
 // A form has just changed status. Who acts next is routes/forms.js:
-//   submitted  noted by Accounts Payable (liquidation), the department's heads (payment / fund
-//              transfer), or whoever holds can_edit on the approval page (business trip, revolving fund)
+//   submitted  noted by Accounts Payable (liquidation), the department's heads (payment, fund
+//              transfer, revolving fund, attendance adjustment), or whoever holds can_edit on the
+//              approval page (business trip)
 //   noted      approved by whoever holds can_approve on the approval page; the owner is told too
 //   approved / rejected   the owner
 function notifyFormStatus(formId, actorId) {
@@ -96,7 +97,7 @@ function notifyFormStatus(formId, actorId) {
 
     if (doc.status === 'submitted') {
       let to = (await notersForDoc(doc)).map((u) => u.id);
-      if (!['liquidation', 'payment', 'fund_transfer'].includes(doc.type)) to = await usersWithPermission('/forms/approval', 'can_edit');
+      if (!AP_NOTED_TYPES.includes(doc.type) && !DEPARTMENT_NOTED_TYPES.includes(doc.type)) to = await usersWithPermission('/forms/approval', 'can_edit');
       await insertFor(to, { ...base, type: 'form_pending_note', title: `${what} needs your noting`, message: `${what}${doc.department ? ` from ${doc.department}` : ''} is waiting to be noted.` }, actorId);
     } else if (doc.status === 'noted') {
       await insertFor(await usersWithPermission('/forms/approval', 'can_approve'), {
