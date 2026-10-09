@@ -19,10 +19,10 @@ async function rollupJoQuantities() {
      WHERE (jo.quantity_inspected IS NULL OR jo.quantity_inspected = 0)
        AND EXISTS (SELECT 1 FROM quality_inspections qi WHERE qi.job_order_id = jo.id AND qi.status <> 'cancelled')`
   );
-  const [fallback] = await pool.query(
-    `UPDATE job_orders SET quantity_built = quantity, quantity_inspected = quantity
-     WHERE production_stage IN ('completed', 'invoiced') AND (quantity_built IS NULL OR quantity_built = 0) AND quantity > 0`
-  );
+  // NO FALLBACK to the full quantity (removed 2026-10-09). It used to set built = inspected =
+  // quantity on any completed/invoiced JO without a build, which put figures on the Sales Order the
+  // source never had -- SO-60582 showed every line Built and QI'd where the source shows one -- and
+  // raised an Item Delivery button the source does not offer. No build at the source means none here.
   const [delivered] = await pool.query(
     `UPDATE job_orders jo
      JOIN (SELECT idl.job_order_id, SUM(idl.qty_delivered) AS qd
@@ -32,7 +32,7 @@ async function rollupJoQuantities() {
   );
   return {
     built: built.affectedRows,
-    inspected: inspected.affectedRows + fallback.affectedRows,
+    inspected: inspected.affectedRows,
     delivered: delivered.affectedRows,
   };
 }

@@ -43,15 +43,8 @@ async function main() {
   );
   console.log(`Set quantity_inspected on ${inspected.affectedRows} JO(s).`);
 
-  // Fallback for Completed / Invoiced JOs that carry no Assembly Build at all: being fully done,
-  // their built and inspected quantity is the full order quantity.
-  const [fallback] = await pool.query(
-    `UPDATE job_orders
-     SET quantity_built = quantity, quantity_inspected = quantity
-     WHERE production_stage IN ('completed', 'invoiced')
-       AND (quantity_built IS NULL OR quantity_built = 0) AND quantity > 0`
-  );
-  console.log(`Fallback (completed JOs with no Assembly Build): ${fallback.affectedRows} JO(s) set to full quantity.`);
+  // No fallback to the full quantity for completed JOs without a build (removed 2026-10-09) -- it
+  // invented figures the source never had. See lib/joProductionRollup.js.
 
   // quantity_delivered from the JO's Item Delivery lines (non-cancelled deliveries). Until this is
   // set the Sales Order keeps offering "Item Delivery" instead of the "Bill" button.

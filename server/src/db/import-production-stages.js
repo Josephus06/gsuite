@@ -327,6 +327,32 @@ async function main() {
        SET jo.quantity_delivered = x.qd WHERE jo.quantity_delivered IS NULL OR jo.quantity_delivered = 0`
     );
     console.log(`Rolled up JO qty: built ${b.affectedRows}, inspected ${i.affectedRows}, delivered ${dd.affectedRows}.`);
+
+    // --only: match the named orders to the source EXACTLY. The rollup above only fills zeros, so a
+    // JO carrying an invented quantity (the old completed-JO fallback put built = QI = qty on lines
+    // with no build at all -- SO-60582) kept it. For these orders only, every JO's built / inspected
+    // / delivered is set to what its records add up to, 0 where it has none. Invoiced is untouched.
+    const fetched = new Set(targetSos.map((t) => t.soNo));
+    const missed = [...ONLY].filter((no) => !fetched.has(no));
+    if (missed.length) console.log(`--only: not found at the source in ${FROM}..${TO}, left as they were: ${missed.join(', ')}`);
+    const onlyIds = [...ONLY].filter((no) => fetched.has(no)).map((no) => soByNo.get(no)).filter(Boolean);
+    if (onlyIds.length) {
+      const [x] = await pool.query(
+        `UPDATE job_orders jo
+         LEFT JOIN (SELECT job_order_id, SUM(quantity_built) AS qb, SUM(passed_qty) AS pq
+                      FROM assembly_builds WHERE status <> 'cancelled' GROUP BY job_order_id) a ON a.job_order_id = jo.id
+         LEFT JOIN (SELECT idl.job_order_id, SUM(idl.qty_delivered) AS qd
+                      FROM item_delivery_lines idl JOIN item_deliveries d ON d.id = idl.item_delivery_id
+                     WHERE d.status <> 'cancelled' GROUP BY idl.job_order_id) dl ON dl.job_order_id = jo.id
+         SET jo.quantity_built = COALESCE(a.qb, 0),
+             jo.quantity_inspected = CASE WHEN EXISTS (SELECT 1 FROM quality_inspections qi WHERE qi.job_order_id = jo.id AND qi.status <> 'cancelled')
+                                          THEN COALESCE(a.pq, 0) ELSE 0 END,
+             jo.quantity_delivered = COALESCE(dl.qd, 0)
+         WHERE jo.sales_order_id IN (?)`,
+        [onlyIds]
+      );
+      console.log(`--only: set built / inspected / delivered exactly on ${x.affectedRows} JO(s) of ${onlyIds.length} order(s).`);
+    }
   } else console.log('DRY RUN -- nothing written.');
   await pool.end();
 }
