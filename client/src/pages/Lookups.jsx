@@ -453,62 +453,54 @@ export default function Lookups() {
                     so the boxes make that explicit rather than letting one grant imply the other. */}
                 <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
                   Tickets: any ticket created by someone in this department needs sign-off from one of these people
-                  before the receiving department can assign it. Forms: a Request for Payment, Fund Transfer or Attendance
-                  Adjustment filed from this department is noted by one of them -- tick which forms each one notes.
+                  before the receiving department can assign it. Forms: a Request for Payment, Fund Transfer, Revolving Fund or
+                  Attendance Adjustment filed from this department is noted by one of them -- tick which forms each one notes.
                   Leave empty for no approval gate.
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+                <div className="dept-heads">
                   {approvers.length === 0 && <div className="muted">No heads tagged.</div>}
-                  {approvers.length > 0 && (
-                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', fontSize: 11 }} className="muted">
-                      <span style={{ flex: 1 }}></span>
-                      <span style={{ width: 110, textAlign: 'center' }}>Approve ticket</span>
-                      <span style={{ width: 110, textAlign: 'center' }}>Note form</span>
-                      <span style={{ width: 74 }}></span>
-                    </div>
-                  )}
                   {approvers.map((a) => (
-                    <div key={a.id}>
-                    <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                      <span style={{ flex: 1 }}>{a.display_name}</span>
-                      <span style={{ width: 110, textAlign: 'center' }}>
-                        <input
-                          type="checkbox" checked={!!a.can_approve_ticket}
-                          aria-label={`${a.display_name} can approve tickets`}
-                          onChange={(e) => setApproverRole(a, { can_approve_ticket: e.target.checked })}
-                        />
-                      </span>
-                      <span style={{ width: 110, textAlign: 'center' }}>
-                        <input
-                          type="checkbox" checked={!!a.can_note_form}
-                          aria-label={`${a.display_name} can note a request form`}
-                          onChange={(e) => setApproverRole(a, { can_note_form: e.target.checked })}
-                        />
-                      </span>
-                      <button type="button" className="btn btn-sm btn-danger" style={{ width: 74 }} onClick={() => removeApprover(a)}>Remove</button>
-                    </div>
-                    {/* Which forms this head notes (asked 2026-10-08). None picked on the server means
-                        all, so unticking the last one turns Note form off instead. */}
-                    {!!a.can_note_form && (
-                      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12, margin: '4px 0 6px 12px' }}>
-                        <span className="muted">Notes:</span>
-                        {NOTED_FORM_TYPES.map(([type, label]) => {
-                          const current = noteTypesOf(a);
-                          return (
-                            <label key={type} style={{ display: 'inline-flex', gap: 5, alignItems: 'center', fontWeight: 400, margin: 0 }}>
-                              <input type="checkbox" checked={current.includes(type)}
-                                onChange={(e) => {
-                                  const next = e.target.checked ? [...current, type] : current.filter((t) => t !== type);
-                                  setApproverRole(a, next.length
-                                    ? { note_form_types: next.length === NOTED_FORM_TYPES.length ? null : next.join(',') }
-                                    : { can_note_form: false, note_form_types: null });
-                                }} />
-                              {label}
-                            </label>
-                          );
-                        })}
+                    <div key={a.id} className="dept-head">
+                      <div className="dept-head-top">
+                        <span className="dept-head-name">{a.display_name}</span>
+                        <label className="check">
+                          <input
+                            type="checkbox" checked={!!a.can_approve_ticket}
+                            onChange={(e) => setApproverRole(a, { can_approve_ticket: e.target.checked })}
+                          />
+                          Approve ticket
+                        </label>
+                        <label className="check">
+                          <input
+                            type="checkbox" checked={!!a.can_note_form}
+                            onChange={(e) => setApproverRole(a, { can_note_form: e.target.checked })}
+                          />
+                          Note form
+                        </label>
+                        <button type="button" className="btn btn-sm btn-danger" onClick={() => removeApprover(a)}>Remove</button>
                       </div>
-                    )}
+                      {/* Which forms this head notes (asked 2026-10-08). None picked on the server means
+                          all, so unticking the last one turns Note form off instead. */}
+                      {!!a.can_note_form && (
+                        <div className="dept-head-forms">
+                          <span className="muted dept-head-forms-label">Notes these forms:</span>
+                          {NOTED_FORM_TYPES.map(([type, label]) => {
+                            const current = noteTypesOf(a);
+                            return (
+                              <label key={type} className="check">
+                                <input type="checkbox" checked={current.includes(type)}
+                                  onChange={(e) => {
+                                    const next = e.target.checked ? [...current, type] : current.filter((t) => t !== type);
+                                    setApproverRole(a, next.length
+                                      ? { note_form_types: next.length === NOTED_FORM_TYPES.length ? null : next.join(',') }
+                                      : { can_note_form: false, note_form_types: null });
+                                  }} />
+                                {label}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

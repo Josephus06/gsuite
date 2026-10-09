@@ -2520,3 +2520,17 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
    the surrounding colour -- banner text stays banner-coloured -- and shows it is a link on hover. */
 .party-link { color: inherit; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; }
 .party-link:hover { text-decoration-style: solid; }
+
+/* Lookups > Departments > Department Heads. One compact card per head. The checkboxes here sat in
+   flex rows inside the modal, so the global `input { width: 100%; height: ... }` blew them up to
+   36px slabs; pinned back to 16px and kept from flexing. */
+.dept-heads { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.dept-head { border: 1px solid rgba(128, 128, 128, 0.3); border-radius: 8px; padding: 8px 10px; }
+.dept-head-top { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.dept-head-name { flex: 1; min-width: 140px; font-weight: 500; }
+.dept-head-forms { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; padding-top: 8px;
+  border-top: 1px dashed rgba(128, 128, 128, 0.3); font-size: 12px; }
+.dept-head-forms-label { width: 100%; font-size: 11px; }
+.dept-head .check { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-weight: 400;
+  font-size: 12px; white-space: nowrap; cursor: pointer; }
+.dept-head input[type="checkbox"] { width: 16px; height: 16px; flex: none; margin: 0; padding: 0; }
