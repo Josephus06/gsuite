@@ -39,6 +39,9 @@ const PROCESS_COLUMNS = [
   { key: 'unit', label: 'Unit', type: 'text', readOnly: true },
   { key: 'location_id', label: 'Location', type: 'picker-location' },
   { key: 'artist_remarks', label: 'Artist Remarks', type: 'text' },
+  // Printed on the Job Order under the line, when filled in (2026-10-09).
+  { key: 'remarks', label: 'Sales Remarks', type: 'text' },
+  { key: 'production_remarks', label: 'Production Remarks', type: 'text' },
 ];
 
 function num(v) { return v === null || v === undefined || v === '' ? 0 : Number(v); }

@@ -213,11 +213,19 @@ export default function JobOrderPrint() {
                   <td className="jo-mid jo-size">{dims(p.length, p.width)}</td>
                   <td className="jo-mid jo-uom">{p.uom || p.unit}</td>
                 </tr>
-                <tr className="jo-sub">
-                  <td />
-                  <td colSpan={2}>Sales Remarks : {p.remarks || ''}</td>
-                  <td colSpan={3}>Memo : {p.memo || ''}</td>
-                </tr>
+                {/* The line's remarks, only those filled in (2026-10-09) -- no row of empty labels. */}
+                {(p.remarks || p.production_remarks || p.memo) && (
+                  <tr className="jo-sub">
+                    <td />
+                    <td colSpan={5}>
+                      {[
+                        p.remarks && `Sales Remarks : ${p.remarks}`,
+                        p.production_remarks && `Production Remarks : ${p.production_remarks}`,
+                        p.memo && `Memo : ${p.memo}`,
+                      ].filter(Boolean).join('   ·   ')}
+                    </td>
+                  </tr>
+                )}
               </Fragment>
             ))}
           </tbody>

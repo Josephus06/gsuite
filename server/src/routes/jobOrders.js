@@ -62,6 +62,15 @@ const EDIT_FIELDS = [
   'delivery_date', 'delivery_time', 'planned_start_date', 'planned_end_date', 'sales_rep_id',
 ];
 
+// Production Remarks (2026-10-09) is written only when the request carries it -- see
+// saveProductionRemarks -- because the add/update below set EVERY field in this list, and a screen
+// that does not send one would otherwise blank it.
+async function saveProductionRemarks(conn, procId, body) {
+  if (!body || !Object.prototype.hasOwnProperty.call(body, 'production_remarks')) return;
+  const v = body.production_remarks == null ? '' : String(body.production_remarks).trim();
+  await conn.query('UPDATE job_order_processes SET production_remarks = ? WHERE id = ?', [v ? v.slice(0, 500) : null, procId]);
+}
+
 // Fields editable per row on the Materials tab.
 const PROCESS_FIELDS = [
   'process_id', 'process_qty', 'process_uom', 'category', 'parts', 'item_id', 'location_id',
@@ -1083,6 +1092,7 @@ router.post('/:id/processes', requireAuth, requireJobOrderEdit, async (req, res,
        VALUES (?, ?, ${PROCESS_FIELDS.map(() => '?').join(', ')})`,
       [req.params.id, nextLine, ...values]
     );
+    await saveProductionRemarks(conn, result.insertId, req.body);
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Created', fieldName: `material[${nextLine}]` });
     await conn.commit();
     const [[row]] = await pool.query('SELECT * FROM job_order_processes WHERE id = ?', [result.insertId]);
@@ -1118,6 +1128,7 @@ router.put('/:id/processes/:procId', requireAuth, requireJobOrderEdit, async (re
       `UPDATE job_order_processes SET ${PROCESS_FIELDS.map((f) => `${f} = ?`).join(', ')} WHERE id = ?`,
       [...values, req.params.procId]
     );
+    await saveProductionRemarks(conn, req.params.procId, req.body);
     await conn.commit();
     const [[row]] = await pool.query('SELECT * FROM job_order_processes WHERE id = ?', [req.params.procId]);
     res.json(row);
@@ -1427,7 +1438,7 @@ router.get('/:id/print', requireAuth, async (req, res, next) => {
 
     const [processes] = await pool.query(
       `SELECT jop.line_no, jop.qty, jop.length, jop.width, jop.uom, jop.unit,
-              jop.remarks, jop.memo, jop.artist_remarks,
+              jop.remarks, jop.memo, jop.artist_remarks, jop.production_remarks,
               pr.process_name,
               i.display_name AS item_name
          FROM job_order_processes jop
