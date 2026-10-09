@@ -40,15 +40,39 @@ export default function GmDocumentCalendar({ type, range = 'month' }) {
   const [openDay, setOpenDay] = useState(null);
   const monthsKey = months.join(',');
 
+  // Weighted Sales only: Location and Department filters (asked 2026-10-09). Location starts on Head
+  // Office, Department on all. locationId stays null until the locations have loaded and Head Office
+  // is chosen, so the first fetch is already the Head Office one rather than all locations, then it.
+  const withFilters = type === 'sales';
+  const [locations, setLocations] = useState([]);
+  const [divisions, setDivisions] = useState([]);
+  const [locationId, setLocationId] = useState(withFilters ? null : '');
+  const [divisionId, setDivisionId] = useState('');
   useEffect(() => {
+    if (!withFilters) return;
+    const rows = (d) => (Array.isArray(d) ? d : (d?.rows || []));
+    Promise.all([api.get('/lookups/locations'), api.get('/lookups/sales-divisions')])
+      .then(([l, d]) => {
+        const locs = rows(l.data);
+        setLocations(locs);
+        setDivisions(rows(d.data).filter((x) => x.is_active === undefined || Number(x.is_active)));
+        const ho = locs.find((x) => String(x.location_name || x.name || '').trim().toLowerCase() === 'head office');
+        setLocationId((cur) => (cur === null ? (ho ? String(ho.id) : '') : cur));
+      })
+      .catch(() => setLocationId((cur) => (cur === null ? '' : cur)));
+  }, [withFilters]);
+
+  useEffect(() => {
+    if (locationId === null) return;
     let cancelled = false;
     setLoading(true);
-    Promise.all(monthsKey.split(',').map((month) => api.get('/dashboard/gm-calendar', { params: { type, month } })))
+    const filters = withFilters ? { location_id: locationId || undefined, sales_division_id: divisionId || undefined } : {};
+    Promise.all(monthsKey.split(',').map((month) => api.get('/dashboard/gm-calendar', { params: { type, month, ...filters } })))
       .then((rs) => { if (!cancelled) setData({ calendar: rs.flatMap((r) => r.data.calendar || []) }); })
       .catch(() => { if (!cancelled) setData(EMPTY); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [type, monthsKey]);
+  }, [type, monthsKey, withFilters, locationId, divisionId]);
 
   const byDay = new Map((data.calendar || []).map((d) => [d.day, d]));
   // The header speaks for the days on screen -- a week's or a day's, not the whole month's.
@@ -64,6 +88,18 @@ export default function GmDocumentCalendar({ type, range = 'month' }) {
         <button type="button" className="btn btn-sm" onClick={() => shift(-1)} disabled={loading}>&lsaquo;</button>
         <strong>{title}</strong>
         <button type="button" className="btn btn-sm" onClick={() => shift(1)} disabled={loading}>&rsaquo;</button>
+        {withFilters && (
+          <>
+            <select value={locationId ?? ''} onChange={(e) => setLocationId(e.target.value)} title="Location" style={{ width: 'auto', minWidth: 140 }}>
+              <option value="">All locations</option>
+              {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name || l.name}</option>)}
+            </select>
+            <select value={divisionId} onChange={(e) => setDivisionId(e.target.value)} title="Department" style={{ width: 'auto', minWidth: 140 }}>
+              <option value="">All departments</option>
+              {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </>
+        )}
         <span className="muted artist-calendar-count">
           {loading ? 'Loading...' : `${plural(shownCount, cfg.noun)} · ${money(shownTotal)}`}
         </span>

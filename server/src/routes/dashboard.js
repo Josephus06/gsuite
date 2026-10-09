@@ -1026,8 +1026,16 @@ router.get('/gm-calendar', requireAuth, async (req, res, next) => {
     const bounds = monthBounds(req.query.month);
     // The Invoice calendar counts the month's Delivery Tickets alongside its invoices -- see GM_DT_SQL.
     const withDts = req.query.type === 'invoices';
+    // Weighted Sales: Location (the order's office location) and Department (its sales division)
+    // filters (asked 2026-10-09). Blank means all.
+    let extraSql = '';
+    const extraParams = [];
+    if (req.query.type === 'sales') {
+      if (Number(req.query.location_id) > 0) { extraSql += ' AND so.office_location_id = ?'; extraParams.push(Number(req.query.location_id)); }
+      if (Number(req.query.sales_division_id) > 0) { extraSql += ' AND so.sales_division_id = ?'; extraParams.push(Number(req.query.sales_division_id)); }
+    }
     const [[invRows], [dtRows]] = await Promise.all([
-      pool.query(`${sql} ORDER BY day, customer_name, doc_no`, GM_CALENDAR_PARAMS[req.query.type](bounds)),
+      pool.query(`${sql}${extraSql} ORDER BY day, customer_name, doc_no`, [...GM_CALENDAR_PARAMS[req.query.type](bounds), ...extraParams]),
       withDts ? pool.query(GM_DT_SQL, [bounds.start, bounds.end]) : [[]],
     ]);
     const rows = [
