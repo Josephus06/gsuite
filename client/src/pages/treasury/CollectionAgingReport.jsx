@@ -172,14 +172,14 @@ export default function CollectionAgingReport() {
                 <thead>
                   <tr>
                     <th>CPAY #</th><th>Payment Date</th><th>OR #</th><th>Invoice #</th>
-                    <th>Invoice Date</th><th>Invoice Due Date</th><th>Customer</th>
+                    <th>Invoice Date</th><th>Invoice Due Date</th><th>Term</th><th>Customer</th>
                     <th style={{ textAlign: 'right' }}>Age at Collection</th><th style={{ textAlign: 'right' }}>Days Past Due</th>
                     <th>Aging</th><th style={{ textAlign: 'right' }}>Amount Collected</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.length === 0 && (
-                    <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: 20 }}>No collections in this range.</td></tr>
+                    <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: 20 }}>No collections in this range.</td></tr>
                   )}
                   {rows.map((r, i) => (
                     <tr key={`${r.payment_id}-${r.invoice_id}-${i}`}>
@@ -189,6 +189,7 @@ export default function CollectionAgingReport() {
                       <td><Link className="link-btn" to={`/sales-invoices/${r.invoice_id}`}>{r.invoice_no}</Link></td>
                       <td>{day(r.invoice_date)}</td>
                       <td>{day(r.date_due) || '—'}</td>
+                      <td>{r.term || '—'}</td>
                       <td>{r.customer_name || '—'}</td>
                       <td style={{ textAlign: 'right' }}>{r.age_days ?? '—'}</td>
                       <td style={{ textAlign: 'right', color: r.days_past_due > 0 ? 'var(--danger, #b91c1c)' : undefined }}>

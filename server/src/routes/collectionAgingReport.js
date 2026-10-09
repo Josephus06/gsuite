@@ -59,7 +59,7 @@ async function fetchRows(query) {
   const [rows] = await pool.query(
     `SELECT cp.id AS payment_id, cp.customer_payment_no, cp.date_created AS payment_date, cp.or_no,
             c.name AS customer_name, si.id AS invoice_id, si.invoice_no, si.date_created AS invoice_date,
-            si.date_due, cpl.applied_amount,
+            si.date_due, si.term, cpl.applied_amount,
             DATEDIFF(cp.date_created, si.date_created) AS age_days,
             DATEDIFF(cp.date_created, si.date_due) AS days_past_due
        FROM customer_payment_lines cpl
@@ -119,6 +119,7 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
       { header: 'Invoice #', key: 'invoice_no', width: 15 },
       { header: 'Invoice Date', key: 'invoice_date', width: 13 },
       { header: 'Invoice Due Date', key: 'date_due', width: 15 },
+      { header: 'Term', key: 'term', width: 12 },
       { header: 'Customer', key: 'customer', width: 38 },
       { header: 'Age at Collection (days)', key: 'age', width: 14 },
       { header: 'Days Past Due', key: 'past_due', width: 12 },
@@ -129,11 +130,11 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
     rows.forEach((r) => ws.addRow({
       cpay: r.customer_payment_no, payment_date: day(r.payment_date), or_no: r.or_no || '',
       customer: r.customer_name || '', invoice_no: r.invoice_no, invoice_date: day(r.invoice_date),
-      date_due: day(r.date_due), age: r.age_days, past_due: r.days_past_due,
+      date_due: day(r.date_due), term: r.term || '', age: r.age_days, past_due: r.days_past_due,
       bucket: bucketLabel(r.bucket), amount: r.applied_amount,
     }));
     ws.getColumn('amount').numFmt = '#,##0.00';
-    ws.autoFilter = { from: 'A1', to: `K${rows.length + 1}` };
+    ws.autoFilter = { from: 'A1', to: `L${rows.length + 1}` };
     ws.views = [{ state: 'frozen', ySplit: 1 }];
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="collection-aging-${from}-to-${to}.xlsx"`);
