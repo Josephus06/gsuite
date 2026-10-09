@@ -90,6 +90,10 @@ export default function StatementOfAccount() {
     <div className="soa-page">
       <style>{`
         .soa-table td.num, .soa-table th.num { text-align: right; white-space: nowrap; }
+        /* The rows scroll inside their own box with the column headings frozen on top, so a long
+           statement never loses its headings (asked 2026-10-09). */
+        .soa-scroll { max-height: calc(100vh - 230px); overflow: auto; }
+        .soa-table thead th { position: sticky; top: 0; z-index: 2; background: var(--bg); box-shadow: inset 0 -1px 0 var(--border, #ccc); }
         .soa-aging { width: 100%; border-collapse: collapse; margin-top: 28px; }
         .soa-aging th, .soa-aging td { border: 1px solid var(--border, #ccc); padding: 6px 10px; }
         .soa-aging th { text-align: center; font-weight: 600; }
@@ -100,6 +104,8 @@ export default function StatementOfAccount() {
           .soa-print-head { display: block; margin-bottom: 14px; }
           .soa-page .card { box-shadow: none; border: none; padding: 0; }
           .soa-table th, .soa-table td { font-size: 10.5px; padding: 4px 6px; }
+          .soa-scroll { max-height: none; overflow: visible; }
+          .soa-table thead th { position: static; box-shadow: none; }
         }
       `}</style>
 
@@ -141,7 +147,7 @@ export default function StatementOfAccount() {
             </div>
           </div>
 
-          <div className="table-wrap">
+          <div className="table-wrap soa-scroll">
             <table className="soa-table">
               <thead>
                 <tr>
