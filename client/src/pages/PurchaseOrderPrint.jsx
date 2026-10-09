@@ -48,7 +48,7 @@ function Row({ label, children }) {
 function Signature({ image, name, role }) {
   return (
     <div className="po-sig">
-      <div className="po-sig-ink sig-ink" style={{ '--sig-h': '16mm' }}>{image ? <img src={image} alt="" /> : null}</div>
+      <div className="po-sig-ink sig-ink" style={{ '--sig-h': '12mm' }}>{image ? <img src={image} alt="" /> : null}</div>
       <div className="po-sig-name">{name || ''}</div>
       <div className="po-line">{role}</div>
     </div>
@@ -88,21 +88,21 @@ export default function PurchaseOrderPrint() {
       <style>{`
         .po-print { background: #f1f5f9; padding: 16px 0 40px; }
         .po-sheet {
-          width: 210mm; min-height: 297mm; margin: 0 auto 16px; padding: 14mm 16mm;
+          width: 210mm; min-height: 279mm; margin: 0 auto 16px; padding: 10mm 12mm;
           background: #fff; color: #1f2937; font-family: system-ui, 'Segoe UI', sans-serif;
           font-size: 9pt; line-height: 1.5; box-shadow: 0 1px 6px rgba(0,0,0,.25);
         }
         .po-toolbar { max-width: 210mm; margin: 0 auto 12px; display: flex; justify-content: flex-end; gap: 8px; }
-        .po-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }
-        .po-logo { width: 50mm; height: auto; display: block; }
+        .po-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+        .po-logo { width: 46mm; height: auto; display: block; }
         .po-addr { text-align: right; font-size: 7.5pt; color: #64748b; line-height: 1.45; }
-        .po-title { text-align: center; font-size: 15pt; color: #1e3a8a; font-weight: 600; margin: 6px 0 4px; }
-        .po-no { text-align: center; color: #1e3a8a; font-weight: 600; letter-spacing: .3px; margin-bottom: 18px; }
+        .po-title { text-align: center; font-size: 14pt; color: #1e3a8a; font-weight: 600; margin: 2px 0 2px; }
+        .po-no { text-align: center; color: #1e3a8a; font-weight: 600; letter-spacing: .3px; margin-bottom: 10px; }
         .po-cols { display: flex; justify-content: space-between; gap: 20px; }
-        .po-row { display: flex; gap: 6px; }
+        .po-row { display: flex; gap: 6px; line-height: 1.4; }
         .po-lbl { min-width: 32mm; color: #334155; }
         .po-val { font-weight: 500; }
-        .po-band { text-align: center; color: #1e3a8a; margin: 20px 0 10px; letter-spacing: .5px; }
+        .po-band { text-align: center; color: #1e3a8a; margin: 10px 0 4px; letter-spacing: .5px; }
         /* FIXED layout, so the table can never grow wider than the sheet. It used to size itself to
            its content: one long item code that will not break (LFP-STKR-VINYL-...-1.37MX50M) pushed
            it past 210mm, and Chrome then shrank the WHOLE page to fit -- the order printed at about
@@ -111,31 +111,35 @@ export default function PurchaseOrderPrint() {
         /* The app's own table rules (index.css) keep every cell on one line and set a 13px font;
            both are overridden here, or text spills across the neighbouring columns. */
         .po-table { width: 100%; border-collapse: collapse; margin-top: 6px; table-layout: fixed; font-size: 8.5pt; }
-        .po-table th { text-align: left; font-weight: 600; color: #334155; border-bottom: 1px solid #cbd5e1; padding: 6px 4px; font-size: 8.5pt; white-space: normal; background: none; }
-        .po-table td { padding: 6px 4px; vertical-align: top; border: none; white-space: normal; overflow-wrap: anywhere; word-break: break-word; }
+        .po-table th { text-align: left; font-weight: 600; color: #334155; border-bottom: 1px solid #cbd5e1; padding: 4px 4px; font-size: 8.5pt; white-space: normal; background: none; }
+        .po-table td { padding: 4px 4px; vertical-align: top; border: none; white-space: normal; overflow-wrap: anywhere; word-break: break-word; line-height: 1.35; }
         .po-table th.po-num, .po-table td.po-num, .po-table th.po-qty, .po-table td.po-qty { white-space: nowrap; }
         .po-table tbody tr:hover { background: none; }
-        .po-code { width: 36mm; font-size: 8pt; }
-        .po-jo { width: 20mm; }
+        .po-code { width: 28mm; font-size: 8pt; }
+        .po-jo { width: 18mm; }
         .po-table tbody tr { border-bottom: 1px solid #e2e8f0; }
-        .po-idx { color: #ea580c; width: 8mm; }
+        .po-idx { color: #ea580c; width: 6mm; }
         /* Fixed widths on the numeric tail so Description keeps the slack and the figures never
            wrap -- the same reason JobOrderPrint pins its trailing columns. */
-        .po-num { text-align: right; white-space: nowrap; width: 20mm; }
-        .po-disc { width: 12mm; }
-        .po-qty { text-align: right; white-space: nowrap; width: 13mm; }
+        .po-num { text-align: right; white-space: nowrap; width: 19mm; }
+        .po-disc { width: 11mm; }
+        .po-qty { text-align: right; white-space: nowrap; width: 14mm; }
         .po-unit { width: 13mm; }
-        .po-totals { margin-top: 14px; margin-left: auto; width: 70mm; }
+        .po-totals { margin-top: 6px; margin-left: auto; width: 70mm; }
         .po-totals .po-row { justify-content: space-between; }
         .po-totals .po-lbl { min-width: 0; }
-        .po-grand { border-top: 1px solid #cbd5e1; margin-top: 6px; padding-top: 6px; font-weight: 600; }
-        .po-trail { width: 100%; border-collapse: collapse; margin-top: 10mm; font-size: 8pt; break-inside: avoid; }
-        .po-trail th, .po-trail td { border: 1px solid #cbd5e1; padding: 3px 6px; text-align: center; font-weight: 400; height: 7mm; }
+        .po-grand { border-top: 1px solid #cbd5e1; margin-top: 4px; padding-top: 4px; font-weight: 600; }
+        /* The trail box and the signatures are ONE block that never splits: when the items leave no
+           room for it -- about six ordinary lines on Letter -- the whole block moves to the next
+           page together, rather than the box on one page and the signatures on the other. */
+        .po-foot { break-inside: avoid; page-break-inside: avoid; padding-top: 6mm; }
+        .po-trail { width: 100%; border-collapse: collapse; font-size: 8pt; break-inside: avoid; }
+        .po-trail th, .po-trail td { border: 1px solid #cbd5e1; padding: 2px 6px; text-align: center; font-weight: 400; height: 5.5mm; }
         .po-trail th { color: #334155; }
         .po-trail .po-trail-type { color: #1e3a8a; }
-        .po-trail img { max-height: 9mm; max-width: 34mm; object-fit: contain; display: block; margin: 0 auto; }
-        .po-trail .po-trail-remarks { text-align: left; height: 14mm; vertical-align: top; }
-        .po-sign { display: flex; justify-content: space-between; gap: 14px; margin-top: 16mm; break-inside: avoid; }
+        .po-trail img { max-height: 7mm; max-width: 34mm; object-fit: contain; display: block; margin: 0 auto; }
+        .po-trail .po-trail-remarks { text-align: left; height: 9mm; vertical-align: top; }
+        .po-sign { display: flex; justify-content: space-between; gap: 14px; margin-top: 6mm; break-inside: avoid; }
         .po-sig { flex: 1; min-width: 0; }
         /* Room for a drawn signature, kept even when there is none so the three lines stay level. */
         /* Drawn twice its box's height and over the name: the shared .sig-ink (index.css). */
@@ -146,7 +150,8 @@ export default function PurchaseOrderPrint() {
           html, body, #root, .po-print { background: #fff !important; }
           .po-print { padding: 0; }
           .po-no-print { display: none !important; }
-          @page { size: A4 portrait; margin: 0; }
+          /* No fixed paper size: the printer's own (Letter at the office, or A4) -- the sheet fits both. */
+          @page { margin: 0; }
           /* No forced full-page height when printing: 297mm plus rounding is what spills an empty
              second page. The sheet ends where its content does. */
           .po-sheet { box-shadow: none; margin: 0; min-height: 0; }
@@ -237,6 +242,7 @@ export default function PurchaseOrderPrint() {
             Vendor Bill, Bill Credit, Journal, Bill Payment and check release that followed this
             order, filled from T1S -- who processed it and their signature on file. A type with
             nothing yet still prints its empty row. */}
+        <div className="po-foot">
         <table className="po-trail">
           <thead>
             <tr><th style={{ width: '17%' }}>Date</th><th style={{ width: '23%' }}>Transaction Type</th><th style={{ width: '17%' }}>Ref. No.</th><th style={{ width: '21%' }}>Processed By</th><th>Signature</th></tr>
@@ -269,6 +275,7 @@ export default function PurchaseOrderPrint() {
             role={`Pre-Approved by${approvedAt ? ` — ${fmtDate(approvedAt)}` : ''}`} />
           <Signature image={po.final_approver_signature} name={po.final_approver_name} role="Approved by" />
           <Signature name="" role="Received by (Supplier)" />
+        </div>
         </div>
       </div>
     </div>
