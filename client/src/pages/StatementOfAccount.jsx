@@ -145,7 +145,7 @@ export default function StatementOfAccount() {
             <table className="soa-table">
               <thead>
                 <tr>
-                  <th>Date</th><th>Document #</th><th>Terms</th><th>{soa.type === 'vendor' ? 'Reference #' : 'BS/DR #'}</th>
+                  <th>Date</th><th>Document #</th><th>Terms</th><th>{soa.type === 'vendor' ? 'Reference #' : 'BS/DR #'}</th>{soa.type !== 'vendor' && <th>PO #</th>}
                   <th className="num">{soa.type === 'vendor' ? 'Bill Amount' : 'Invoice Amount'}</th>
                   <th className="num">Amount Due</th><th className="num">{soa.type === 'vendor' ? 'Payment Amount' : 'Receipt Amount'}</th>
                   <th className="num">Balance Due</th>
@@ -153,7 +153,7 @@ export default function StatementOfAccount() {
               </thead>
               <tbody>
                 {soa.rows.length === 0 && (
-                  <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>Nothing outstanding as of {displayDate(soa.as_of)}.</td></tr>
+                  <tr><td colSpan={soa.type === 'vendor' ? 8 : 9} className="muted" style={{ textAlign: 'center', padding: 20 }}>Nothing outstanding as of {displayDate(soa.as_of)}.</td></tr>
                 )}
                 {soa.rows.map((r) => (
                   <tr key={`${r.type}-${r.id}-${r.document_no}`}>
@@ -161,6 +161,7 @@ export default function StatementOfAccount() {
                     <td>{r.document_no}{r.type !== 'Invoice' && r.type !== 'Vendor Bill' ? <span className="muted" style={{ fontSize: 11 }}> ({r.type})</span> : null}</td>
                     <td>{r.terms || ''}</td>
                     <td>{r.bs_no || ''}</td>
+                    {soa.type !== 'vendor' && <td>{r.po_no || ''}</td>}
                     <td className="num">{money(r.invoice_amount)}</td>
                     <td className="num">{money(r.amount_due)}</td>
                     <td className="num">{money(r.receipt_amount)}</td>

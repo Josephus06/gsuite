@@ -54,7 +54,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       if (!c) return res.status(404).json({ error: 'Customer not found.' });
       party = c;
       items = (await collectOpenItems(asOf, { customerId: id })).map((i) => ({
-        type: i.type, id: i.id, date: i.date, document_no: i.reference, bs_no: i.bs_no || null,
+        type: i.type, id: i.id, date: i.date, document_no: i.reference, bs_no: i.bs_no || null, po_no: i.po_no || null,
         due_date: i.due_date || null, aging_date: i.aging_date || i.due_date || i.date,
         original_amount: Number(i.original_amount || 0), balance: Number(i.balance || 0),
       }));
@@ -101,6 +101,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
         type: i.type, id: i.id, date: i.date, document_no: i.document_no,
         terms: isDoc ? (termOf.get(Number(i.id)) || null) : null,
         bs_no: i.bs_no,
+        po_no: i.po_no || null,
         // An open credit or unapplied payment is not an invoice: only what is still open of it shows,
         // in Amount Due (negative -- it reduces the balance). Its full original size would read as
         // if that much were still owed back.
