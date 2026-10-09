@@ -83,7 +83,7 @@ async function invoicedByJobOrder(jos) {
 // JOs first -- a few thousand at most -- then read their invoices, QIs, deliveries and order lines
 // in one keyed query each (indexes added by register-pending-billing-page.js).
 async function loadRows(req) {
-  const { search, sales_rep_id: rep, customer_id: customerId, from, to, delivered, include_nsjo: includeNsjo } = req.query;
+  const { search, sales_rep_id: rep, customer_id: customerId, from, to, delivered, include_nsjo: includeNsjo, location_id: locationId } = req.query;
   const where = ["jo.production_stage IN ('completed', 'partially_completed')", "(jo.status IS NULL OR jo.status <> 'Cancelled')"];
   const params = [];
   if (!(includeNsjo === '1' || includeNsjo === 'true')) where.push('jo.nsso_id IS NULL');
@@ -91,6 +91,8 @@ async function loadRows(req) {
   if (scope) { where.push('COALESCE(so.sales_rep_id, ns.sales_rep_id, jo.sales_rep_id) IN (?)'); params.push(scope.length ? scope : [0]); }
   if (rep) { where.push('COALESCE(so.sales_rep_id, ns.sales_rep_id, jo.sales_rep_id) = ?'); params.push(rep); }
   if (customerId) { where.push('COALESCE(so.customer_id, ns.customer_id) = ?'); params.push(customerId); }
+  // Office Location (2026-10-09): the SO's (or NSSO's) office -- the page starts on Head Office.
+  if (locationId) { where.push('COALESCE(so.office_location_id, ns.office_location_id) = ?'); params.push(locationId); }
   if (search) {
     where.push('(jo.job_order_no LIKE ? OR so.sales_order_no LIKE ? OR ns.nsso_no LIKE ? OR c.name LIKE ? OR jo.description LIKE ?)');
     const q = `%${String(search).trim()}%`; params.push(q, q, q, q, q);

@@ -13,20 +13,34 @@ const money = (v) => Number(v || 0).toLocaleString('en-US', { minimumFractionDig
 const qty = (v) => Number(v || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
 
 export default function PendingBilling() {
-  const [f, setF] = useState({ search: '', sales_rep_id: '', from: '', to: '', delivered: '', include_nsjo: false });
+  // location_id starts null: the first load waits for the locations so it is already Head Office's.
+  const [f, setF] = useState({ search: '', sales_rep_id: '', location_id: null, from: '', to: '', delivered: '', include_nsjo: false });
+  const [locations, setLocations] = useState([]);
   const [reps, setReps] = useState([]);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [exporting, setExporting] = useState(false);
 
   useEffect(() => { api.get('/employees').then((r) => setReps(r.data)).catch(() => {}); }, []);
+  useEffect(() => {
+    api.get('/lookups/locations')
+      .then(({ data: d }) => {
+        const locs = Array.isArray(d) ? d : (d?.rows || []);
+        setLocations(locs);
+        const ho = locs.find((l) => String(l.location_name || '').trim().toLowerCase() === 'head office');
+        setF((x) => (x.location_id === null ? { ...x, location_id: ho ? String(ho.id) : '' } : x));
+      })
+      .catch(() => setF((x) => (x.location_id === null ? { ...x, location_id: '' } : x)));
+  }, []);
 
   const params = () => ({
-    search: f.search || undefined, sales_rep_id: f.sales_rep_id || undefined, from: f.from || undefined, to: f.to || undefined,
+    search: f.search || undefined, sales_rep_id: f.sales_rep_id || undefined, location_id: f.location_id || undefined,
+    from: f.from || undefined, to: f.to || undefined,
     delivered: f.delivered || undefined, include_nsjo: f.include_nsjo ? 1 : undefined,
   });
 
   useEffect(() => {
+    if (f.location_id === null) return undefined;
     const t = setTimeout(() => {
       setError('');
       api.get('/reports/pending-billing', { params: params() })
@@ -67,6 +81,13 @@ export default function PendingBilling() {
             <select value={f.sales_rep_id} onChange={(e) => upd('sales_rep_id', e.target.value)}>
               <option value="">All</option>
               {reps.map((r) => <option key={r.id} value={r.id}>{r.first_name} {r.last_name}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label>Office Location</label>
+            <select value={f.location_id ?? ''} onChange={(e) => upd('location_id', e.target.value)}>
+              <option value="">All</option>
+              {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
             </select>
           </div>
           <div className="field"><label>Completed From</label><input type="date" value={f.from} onChange={(e) => upd('from', e.target.value)} /></div>
