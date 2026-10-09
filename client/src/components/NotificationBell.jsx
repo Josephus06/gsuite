@@ -3,7 +3,7 @@ import {
   announce, chime, speak, soundEnabled, setSoundEnabled, primeSpeech,
   desktopNotify, requestDesktopPermission, availableVoice,
 } from '../utils/notificationSound';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import api from '../api/client';
 import { parseUtc } from '../utils/datetime';
 
@@ -119,41 +119,54 @@ export default function NotificationBell() {
 
   // Opening one marks it read; it stays in the list until a newer notification pushes it out,
   // so what was just looked at can be found again.
-  async function openNotification(n) {
-    setOpen(false);
-    if (!n.is_read) {
-      try {
-        await api.put(`/notifications/${n.id}/read`);
-        setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)));
-        setUnreadCount((c) => Math.max(0, c - 1));
-      } catch {
-        // Non-critical -- worst case it just stays "unread" until the next poll settles it.
-      }
-    }
-    if (n.related_type === 'Ticket' && n.related_id) navigate(`/tickets/${n.related_id}`);
+  // Where a notification leads, or null when it is not about a record. One place, so the list's
+  // links (which can open in a new tab -- asked 2026-10-09) and the toast's click agree.
+  function notificationUrl(n) {
+    if (n.related_type === 'Ticket' && n.related_id) return `/tickets/${n.related_id}`;
     // The unidentified-bank-items reminder is about a BALANCE, not a record, so there is no id to
-    // carry -- it opens the report that lists what is still parked. Without this the reminder
-    // would say something needs attention and then do nothing when clicked.
-    if (n.related_type === 'ParkedBankItems') navigate('/reports/parked-bank-items');
-    if (n.related_type === 'PurchaseOrder' && n.related_id) navigate(`/purchase-orders/${n.related_id}`);
-    if (n.related_type === 'Form' && n.related_id) navigate(`/forms/${n.related_id}`);
+    // carry -- it opens the report that lists what is still parked.
+    if (n.related_type === 'ParkedBankItems') return '/reports/parked-bank-items';
+    if (n.related_type === 'PurchaseOrder' && n.related_id) return `/purchase-orders/${n.related_id}`;
+    if (n.related_type === 'Form' && n.related_id) return `/forms/${n.related_id}`;
     // Design hand-off notifications. An artist told the work is theirs goes straight to the
-    // run screen where they start the timer; everyone else (the supervisor who has to assign
-    // it, Sales chasing an approval) goes to the order itself.
+    // run screen where they start the timer; everyone else goes to the order itself.
     if (n.related_type === 'JobOrder' && n.related_id) {
-      navigate(n.type === 'design_artist_assigned' ? `/assigned-jo/${n.related_id}` : `/job-orders/${n.related_id}`);
+      return n.type === 'design_artist_assigned' ? `/assigned-jo/${n.related_id}` : `/job-orders/${n.related_id}`;
     }
     if (n.related_type === 'NonStandardJobOrder' && n.related_id) {
-      navigate(n.type === 'design_artist_assigned'
-        ? `/assigned-jo/nstdjo/${n.related_id}`
-        : `/non-standard-job-orders/${n.related_id}`);
+      return n.type === 'design_artist_assigned' ? `/assigned-jo/nstdjo/${n.related_id}` : `/non-standard-job-orders/${n.related_id}`;
     }
-    // Feed posts live on the dashboard's Feed tab; the hash is what Feed.jsx anchors each
-    // post card with, so the browser scrolls straight to it.
-    if (n.related_type === 'FeedPost' && n.related_id) {
-      localStorage.setItem('dashboard.tab', 'feed');
-      navigate(`/dashboard#post-${n.related_id}`);
-    }
+    // Feed posts live on the dashboard's Feed tab; the hash is what Feed.jsx anchors each post with.
+    if (n.related_type === 'FeedPost' && n.related_id) return `/dashboard#post-${n.related_id}`;
+    return null;
+  }
+
+  // Marks it read -- not awaited, so opening (here or in a new tab) never waits on it.
+  function markRead(n) {
+    if (n.is_read) return;
+    api.put(`/notifications/${n.id}/read`).then(() => {
+      setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)));
+      setUnreadCount((c) => Math.max(0, c - 1));
+    }).catch(() => {
+      // Non-critical -- worst case it just stays "unread" until the next poll settles it.
+    });
+  }
+
+  function openNotification(n) {
+    setOpen(false);
+    markRead(n);
+    if (n.related_type === 'FeedPost') localStorage.setItem('dashboard.tab', 'feed');
+    const url = notificationUrl(n);
+    if (url) navigate(url);
+  }
+
+  // A click on a notification link. A plain click opens it here (and closes the panel); Ctrl/Cmd/
+  // Shift or a middle click is left to the browser, which opens it in a new tab. Either way it is
+  // marked read.
+  function onLinkClick(e, n) {
+    if (n.related_type === 'FeedPost') localStorage.setItem('dashboard.tab', 'feed');
+    markRead(n);
+    if (e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey) setOpen(false);
   }
 
   // Clears the badge. The rows stay -- the server keeps the five most recent either way -- so
@@ -278,31 +291,34 @@ export default function NotificationBell() {
             {notifications.length === 0 && (
               <div className="muted" style={{ padding: 16, textAlign: 'center' }}>No notifications yet.</div>
             )}
-            {notifications.map((n) => (
-              <div
-                key={n.id}
-                onClick={() => openNotification(n)}
-                style={{
-                  padding: '10px 14px', borderBottom: '1px solid var(--border)', cursor: 'pointer',
-                  background: n.is_read ? 'transparent' : 'var(--panel-2, #f3f4f6)',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
-                  <div style={{ fontSize: 13, fontWeight: n.is_read ? 400 : 600 }}>{n.title}</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-                    <div className="muted" style={{ fontSize: 11 }}>{notificationTypeLabel(n.type)}</div>
-                    {/* Its own click, so deleting does not also open the notification. */}
-                    <button type="button" title="Delete this notification" aria-label="Delete notification"
-                      onClick={(e) => { e.stopPropagation(); deleteNotification(n); }}
-                      style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--danger, #e05252)', fontSize: 14, lineHeight: 1, padding: '0 2px' }}>
-                      🗑
-                    </button>
-                  </div>
+            {notifications.map((n) => {
+              const url = notificationUrl(n);
+              const body = (
+                <>
+                  {/* Title, message, then type and time -- stacked, so a long title or type label never runs into the other or under the delete button. */}
+                  <div style={{ fontSize: 13, fontWeight: n.is_read ? 400 : 600, overflowWrap: 'anywhere' }}>{n.title}</div>
+                  {n.message && <div className="muted" style={{ fontSize: 12, marginTop: 2, overflowWrap: 'anywhere' }}>{n.message}</div>}
+                  <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{notificationTypeLabel(n.type)} · {formatTime(n.created_at)}</div>
+                </>
+              );
+              const rowStyle = { display: 'block', padding: '10px 34px 10px 14px', color: 'inherit', textDecoration: 'none', cursor: url ? 'pointer' : 'default' };
+              return (
+                <div key={n.id} style={{ position: 'relative', borderBottom: '1px solid var(--border)', background: n.is_read ? 'transparent' : 'var(--panel-2, #f3f4f6)' }}>
+                  {/* A real link, so it can be opened in a new tab (Ctrl/middle click, right-click). */}
+                  {url ? (
+                    <Link to={url} style={rowStyle} onClick={(e) => onLinkClick(e, n)} onAuxClick={(e) => onLinkClick(e, n)}>{body}</Link>
+                  ) : (
+                    <div style={rowStyle} onClick={() => { setOpen(false); markRead(n); }}>{body}</div>
+                  )}
+                  {/* Outside the link, so deleting never opens the notification. */}
+                  <button type="button" title="Delete this notification" aria-label="Delete notification"
+                    onClick={() => deleteNotification(n)}
+                    style={{ position: 'absolute', top: 9, right: 10, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--danger, #e05252)', fontSize: 14, lineHeight: 1, padding: '0 2px' }}>
+                    🗑
+                  </button>
                 </div>
-                {n.message && <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{n.message}</div>}
-                <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>{formatTime(n.created_at)}</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
