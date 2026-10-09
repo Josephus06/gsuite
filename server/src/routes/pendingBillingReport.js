@@ -104,13 +104,14 @@ async function loadRows(req) {
             jo.production_stage, jo.delivery_date, jo.units, jo.nsso_id, jo.sales_order_line_id, jo.nsso_line_id,
             so.id AS sales_order_id, so.sales_order_no, so.date_created AS so_date, ns.nsso_no, ns.type AS nsso_type,
             COALESCE(so.customer_id, ns.customer_id) AS customer_id, c.name AS customer_name,
-            CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
+            CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name, sd.name AS department_name,
             CASE WHEN jo.production_stage = 'completed' THEN jo.quantity ELSE COALESCE(jo.quantity_inspected, 0) END AS completed_qty
        FROM job_orders jo
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
        LEFT JOIN non_standard_sales_orders ns ON ns.id = jo.nsso_id
        LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, ns.customer_id)
        LEFT JOIN employees sr ON sr.id = COALESCE(so.sales_rep_id, ns.sales_rep_id, jo.sales_rep_id)
+       LEFT JOIN sales_divisions sd ON sd.id = COALESCE(so.sales_division_id, ns.sales_division_id)
       WHERE ${where.join(' AND ')}`, params);
   if (!jos.length) return [];
   const ids = jos.map((j) => j.id);
@@ -185,6 +186,7 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
       { header: 'SO / NSSO', key: 'order', width: 16 },
       { header: 'Customer', key: 'customer_name', width: 36 },
       { header: 'Sales Rep', key: 'sales_rep_name', width: 24 },
+      { header: 'Department', key: 'department_name', width: 18 },
       { header: 'Description', key: 'description', width: 44 },
       { header: 'Completed', key: 'completed_date', width: 12 },
       { header: 'Days Pending', key: 'days_pending', width: 10 },

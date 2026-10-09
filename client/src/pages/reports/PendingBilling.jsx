@@ -119,20 +119,21 @@ export default function PendingBilling() {
               <table>
                 <thead>
                   <tr>
-                    <th>Job Order</th><th>SO / NSSO</th><th>Customer</th><th>Sales Rep</th><th>Description</th>
+                    <th>Job Order</th><th>SO / NSSO</th><th>Customer</th><th>Sales Rep</th><th>Department</th><th>Description</th>
                     <th>Completed</th><th className="text-right">Days Pending</th><th className="text-right">Qty</th>
                     <th className="text-right">Delivered</th><th className="text-right">Invoiced</th><th className="text-right">To Bill</th>
                     <th className="text-right">Unit Price</th><th className="text-right">Unbilled Amount</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.rows.length === 0 && <tr><td colSpan={13} className="muted" style={{ textAlign: 'center', padding: 16 }}>Nothing pending billing.</td></tr>}
+                  {data.rows.length === 0 && <tr><td colSpan={14} className="muted" style={{ textAlign: 'center', padding: 16 }}>Nothing pending billing.</td></tr>}
                   {data.rows.map((r) => (
                     <tr key={r.id}>
                       <td style={{ whiteSpace: 'nowrap' }}><Link to={`/job-orders/${r.id}`}>{r.job_order_no}</Link></td>
                       <td style={{ whiteSpace: 'nowrap' }}>{r.sales_order_id ? <Link to={`/sales-orders/${r.sales_order_id}`}>{r.sales_order_no}</Link> : (r.nsso_no || '')}</td>
                       <td><CustomerLink id={r.customer_id} name={r.customer_name} /></td>
                       <td>{r.sales_rep_name || ''}</td>
+                      <td>{r.department_name || ''}</td>
                       <td style={{ maxWidth: 320 }}>{r.description}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>{displayDate(r.completed_date || r.so_date)}</td>
                       <td className="text-right" style={r.days_pending > 30 ? { color: 'var(--danger, #b91c1c)', fontWeight: 600 } : undefined}>{r.days_pending ?? ''}</td>
@@ -146,7 +147,7 @@ export default function PendingBilling() {
                   ))}
                   {data.rows.length > 0 && (
                     <tr style={{ fontWeight: 700, borderTop: '2px solid var(--border)' }}>
-                      <td colSpan={10}>Total</td><td className="text-right">{qty(t.qty)}</td><td /><td className="text-right">{money(t.amount)}</td>
+                      <td colSpan={11}>Total</td><td className="text-right">{qty(t.qty)}</td><td /><td className="text-right">{money(t.amount)}</td>
                     </tr>
                   )}
                 </tbody>
