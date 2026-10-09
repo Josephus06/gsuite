@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
+import Modal from '../components/Modal';
 import { displayDateTime, displayDate } from '../utils/dates';
 import { CustomerLink } from '../components/PartyLink';
 
@@ -32,6 +33,24 @@ export default function AssemblyBuildView() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [auditLogs, setAuditLogs] = useState([]);
+  // Edit (2026-10-09): Date, Quantity Built and Memo. A new quantity moves the materials, the
+  // process lines' Total Built and the JO's Qty Built by the difference (server: PUT /assembly-builds/:id).
+  const [editing, setEditing] = useState(null);
+  const [editError, setEditError] = useState('');
+
+  async function saveEdit() {
+    setBusy(true); setEditError('');
+    try {
+      await api.put(`/assembly-builds/${id}`, editing);
+      setEditing(null);
+      await load();
+      if (tab === 'system') api.get(`/assembly-builds/${id}/audit-logs`).then(({ data }) => setAuditLogs(data));
+    } catch (err) {
+      setEditError(err.response?.data?.error || 'Could not save the Assembly Build.');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   function load() {
     return api.get(`/assembly-builds/${id}`).then(({ data }) => { setAb(data); setLoading(false); });
@@ -72,7 +91,12 @@ export default function AssemblyBuildView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={'/assembly-builds'}>Back to Lists</Link>
-          {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Assembly Build isn't implemented in this build">Edit</button>}
+          {canEdit && !isCancelled && (
+            <button className="btn btn-sm" disabled={busy}
+              onClick={() => { setEditError(''); setEditing({ date_created: String(ab.date_created || '').slice(0, 10), quantity_built: Number(ab.quantity_built || 0), memo: ab.memo || '' }); }}>
+              Edit
+            </button>
+          )}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           {canVoid && !isCancelled && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
         </div>
@@ -106,6 +130,8 @@ export default function AssemblyBuildView() {
             <div>Date Created : <span className="hi">{formatDate(ab.date_created)}</span></div>
             <div>Sales Rep : <span className="hi">{ab.sales_rep_name}</span></div>
             <div>Created By : <span className="hi">{ab.created_by_name}</span></div>
+            <div>Qty Built : <span className="hi">{qty(ab.quantity_built)} {ab.units}</span></div>
+            <div>AB Memo : <span className="hi">{ab.memo}</span></div>
           </div>
           <div>
             <div>Job Location : <span className="hi">{ab.job_location_name}</span></div>
@@ -237,6 +263,31 @@ export default function AssemblyBuildView() {
             emptyLabel="No audit history yet."
           />
         </div>
+      )}
+      {editing && (
+        <Modal title={`Edit ${ab.ab_no}`} onClose={() => setEditing(null)}>
+          {editError && <div className="error-banner">{editError}</div>}
+          <div className="field">
+            <label>Date</label>
+            <input type="date" value={editing.date_created} onChange={(e) => setEditing({ ...editing, date_created: e.target.value })} />
+          </div>
+          <div className="field">
+            <label>Quantity Built</label>
+            <input type="number" min="0" step="any" value={editing.quantity_built}
+              onChange={(e) => setEditing({ ...editing, quantity_built: e.target.value })} />
+            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+              Changing it moves the materials used, each process line&apos;s Total Built and the Job Order&apos;s Qty Built by the difference.
+            </div>
+          </div>
+          <div className="field">
+            <label>Memo</label>
+            <textarea rows={3} value={editing.memo} onChange={(e) => setEditing({ ...editing, memo: e.target.value })} />
+          </div>
+          <div className="modal-actions">
+            <button className="btn" onClick={() => setEditing(null)}>Cancel</button>
+            <button className="btn btn-primary" disabled={busy} onClick={saveEdit}>{busy ? 'Saving...' : 'Save'}</button>
+          </div>
+        </Modal>
       )}
     </div>
   );

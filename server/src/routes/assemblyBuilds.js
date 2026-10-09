@@ -4,6 +4,8 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeAssemblyBuildGl } = require('../lib/glImpact');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
+const { isNonStockItem } = require('../lib/itemTypes');
+const { deriveOnHand } = require('../lib/stockLedger');
 
 const router = express.Router();
 const ROUTE = '/assembly-builds';
@@ -138,6 +140,120 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
     res.json(rows);
   } catch (err) {
     next(err);
+  }
+});
+
+// Editing a saved build (asked 2026-10-09): its Date, Memo and Quantity Built. A new quantity rescales
+// every line by the same factor -- each line consumed (its JO process Total / JO Qty) x Qty Built when
+// it was saved -- and moves on-hand, the process lines' Total Built and the JO's Qty Built by the
+// difference, exactly as building or cancelling that difference would. The stock card and GL Impact
+// read the lines, so they follow.
+//
+// Refused: a cancelled build; more than the JO can still build (the same Available Qty to Build the
+// Production screen offers); less than this build has already been inspected for; material short
+// for an increase; a date in a locked period (old or new).
+const isIsoDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+const dayOf = (v) => (v ? String(v instanceof Date ? v.toISOString() : v).slice(0, 10) : null);
+
+router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[ab]] = await conn.query(
+      `SELECT ab.*, jo.quantity AS jo_qty, jo.quantity_built AS jo_built, jo.quantity_inspected AS jo_inspected,
+              jo.production_stage, jo.job_location_id
+         FROM assembly_builds ab JOIN job_orders jo ON jo.id = ab.job_order_id WHERE ab.id = ?`, [req.params.id]);
+    if (!ab) return res.status(404).json({ error: 'Not found' });
+    if (!isJobLocationVisible(ab, await getJobLocationScope(req.user.id, ROUTE))) return res.status(404).json({ error: 'Not found' });
+    if (ab.status === 'cancelled') return res.status(409).json({ error: 'A cancelled Assembly Build cannot be edited.' });
+
+    const oldQty = Number(ab.quantity_built || 0);
+    const newQty = req.body.quantity_built === undefined || req.body.quantity_built === '' ? oldQty : Number(req.body.quantity_built);
+    if (!Number.isFinite(newQty) || newQty <= 0) return res.status(400).json({ error: 'Enter a Quantity Built greater than 0.' });
+    const oldDate = dayOf(ab.date_created);
+    const newDate = req.body.date_created ? String(req.body.date_created).slice(0, 10) : oldDate;
+    if (!isIsoDay(newDate)) return res.status(400).json({ error: 'Enter a valid date.' });
+    const newMemo = req.body.memo === undefined ? ab.memo : (String(req.body.memo || '').trim().slice(0, 2000) || null);
+
+    if (newDate !== oldDate || newQty !== oldQty) {
+      await assertPeriodOpen(oldDate, 'non_gl', conn);
+      if (newDate !== oldDate) await assertPeriodOpen(newDate, 'non_gl', conn);
+    }
+
+    const delta = newQty - oldQty;
+    const jobQty = Number(ab.jo_qty || 0);
+    if (delta !== 0) {
+      // Not below what has already been inspected -- on this build, or on the JO as a whole.
+      const inspectedHere = Number(ab.passed_qty || 0) + Number(ab.rma_qty || 0);
+      if (newQty < inspectedHere) return res.status(409).json({ error: `This build has already been inspected for ${inspectedHere}; Quantity Built cannot go below that.` });
+      if (Number(ab.jo_built || 0) + delta < Number(ab.jo_inspected || 0)) {
+        return res.status(409).json({ error: `The Job Order has ${Number(ab.jo_inspected)} inspected; its Qty Built cannot go below that.` });
+      }
+      if (delta > 0) {
+        // The same Available Qty to Build the Production screen works out.
+        const [procs] = await conn.query(
+          `SELECT jop.id, jop.total, jop.total_completed, pr.process_name, pr.process_code
+             FROM job_order_processes jop LEFT JOIN processes pr ON pr.id = jop.process_id WHERE jop.job_order_id = ?`, [ab.job_order_id]);
+        const inProduction = !!ab.production_stage && ab.production_stage !== 'for_revision';
+        const isFilePrep = (x) => {
+          const name = String(x.process_name || '').trim().toUpperCase(); const code = String(x.process_code || '').trim().toUpperCase();
+          return name.startsWith('FILE PREPARATION') || name.startsWith('LAYOUT') || code.startsWith('LYT-');
+        };
+        const fractions = procs.map((x) => ((inProduction && isFilePrep(x)) ? 1 : Number(x.total) > 0 ? Number(x.total_completed) / Number(x.total) : 1));
+        const minFraction = fractions.length ? Math.min(...fractions) : 0;
+        const available = Math.max(Math.floor(minFraction * jobQty) - Number(ab.jo_built || 0), 0);
+        if (delta > available) return res.status(409).json({ error: `Only ${available} more can be built on this Job Order (Available Qty to Build).` });
+      }
+    }
+
+    const [lines] = await conn.query(
+      `SELECT abl.id, abl.job_order_process_id, abl.item_id, abl.location_id, abl.total_qty_to_build, i.display_name AS item_name, i.item_type
+         FROM assembly_build_lines abl LEFT JOIN inventories i ON i.id = abl.item_id WHERE abl.assembly_build_id = ?`, [ab.id]);
+    const moves = lines.map((l) => {
+      const oldTotal = Number(l.total_qty_to_build || 0);
+      const newTotal = oldQty ? (oldTotal / oldQty) * newQty : oldTotal;
+      return { ...l, newTotal, diff: newTotal - oldTotal, stock: !!(l.item_id && l.location_id), nonStock: isNonStockItem(l.item_type) };
+    });
+    if (delta > 0) {
+      const onHand = await deriveOnHand(conn, moves.filter((m) => m.stock && !m.nonStock).map((m) => m.item_id));
+      for (const m of moves) {
+        if (!m.stock || m.nonStock || m.diff <= 0) continue;
+        const have = Number(onHand.get(`${m.item_id}|${m.location_id}`) || 0);
+        if (m.diff > have + 1e-9) return res.status(409).json({ error: `Not enough on hand for ${m.item_name}: need ${m.diff.toFixed(4)} more, only ${have.toFixed(4)} on hand.` });
+      }
+    }
+
+    await conn.beginTransaction();
+    if (delta !== 0) {
+      for (const m of moves) {
+        await conn.query('UPDATE assembly_build_lines SET total_qty_to_build = ?, total_build = total_build + ? WHERE id = ?',
+          [m.newTotal, m.stock ? m.diff : 0, m.id]);
+        if (!m.stock) continue;
+        if (!m.nonStock) {
+          await conn.query('UPDATE inventory_locations SET qty_on_hand = qty_on_hand - ? WHERE inventory_id = ? AND location_id = ?',
+            [m.diff, m.item_id, m.location_id]);
+        }
+        await conn.query('UPDATE job_order_processes SET total_built = total_built + ? WHERE id = ?', [m.diff, m.job_order_process_id]);
+      }
+      await conn.query('UPDATE job_orders SET quantity_built = quantity_built + ?, updated_at = NOW() WHERE id = ?', [delta, ab.job_order_id]);
+      await conn.query(
+        `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+         VALUES ('JobOrder', ?, 'Updated', 'quantity_built', ?, ?, ?)`,
+        [ab.job_order_id, String(Number(ab.jo_built || 0)), String(Number(ab.jo_built || 0) + delta), req.user.id]);
+    }
+    await conn.query('UPDATE assembly_builds SET quantity_built = ?, date_created = ?, memo = ?, updated_at = NOW() WHERE id = ?',
+      [newQty, newDate, newMemo, ab.id]);
+    const audit = (field, a, b) => logAudit(conn, { assemblyBuildId: ab.id, userId: req.user.id, eventType: 'Updated', fieldName: field, oldValue: a, newValue: b });
+    if (delta !== 0) await audit('quantity_built', oldQty, newQty);
+    if (newDate !== oldDate) await audit('date_created', oldDate, newDate);
+    if ((newMemo || '') !== (ab.memo || '')) await audit('memo', ab.memo, newMemo);
+    await conn.commit();
+    const [[row]] = await pool.query('SELECT * FROM assembly_builds WHERE id = ?', [ab.id]);
+    res.json(row);
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
   }
 });
 
