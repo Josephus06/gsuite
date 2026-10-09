@@ -5,6 +5,7 @@ import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Pagination from '../components/Pagination';
 import { displayDate } from '../utils/dates';
+import { downloadFile } from '../utils/downloadFile';
 import useAutoSearch from '../utils/useAutoSearch';
 
 function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
@@ -29,6 +30,9 @@ export default function ItemReceipts() {
   const [transferTo, setTransferTo] = useState(null);
   const [requestor, setRequestor] = useState(null);
   const [asOf, setAsOf] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [extracting, setExtracting] = useState(false);
 
   const [locations, setLocations] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -54,18 +58,38 @@ export default function ItemReceipts() {
   }
   useAutoSearch(search, runSearch);
 
-  async function load() {
-    setLoading(true);
-    const params = { page, limit };
+  // The filters as the server takes them -- shared by the list and the Extract.
+  function filterParams() {
+    const params = {};
     if (search) params.search = search;
     if (withdrawFrom) params.withdraw_from = withdrawFrom.id;
     if (transferTo) params.transfer_to = transferTo.id;
     if (requestor) params.requestor_id = requestor.id;
     if (asOf) params.as_of = asOf;
+    if (dateFrom) params.date_from = dateFrom;
+    if (dateTo) params.date_to = dateTo;
+    return params;
+  }
+
+  async function load() {
+    setLoading(true);
+    const params = { page, limit, ...filterParams() };
     const { data } = await api.get('/transfer-orders/item-receipts', { params });
     setRows(data.rows);
     setTotal(data.total);
     setLoading(false);
+  }
+
+  // Extract: every row under the current filters (not just this page) as an Excel workbook.
+  async function extract() {
+    setExtracting(true);
+    try {
+      await downloadFile('/transfer-orders/item-receipts', { ...filterParams(), format: 'xlsx' }, `item-receipts-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch {
+      alert('Extract failed. Please try again.');
+    } finally {
+      setExtracting(false);
+    }
   }
 
   return (
@@ -74,6 +98,7 @@ export default function ItemReceipts() {
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 16 }}>
           <h1 style={{ fontSize: 16, textTransform: 'uppercase', margin: 0 }}>Saved Item Receipts</h1>
         </div>
+        <button type="button" className="btn" onClick={extract} disabled={extracting}>{extracting ? 'Extracting...' : 'Extract'}</button>
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
@@ -124,6 +149,14 @@ export default function ItemReceipts() {
           <div className="field">
             <label>Date (As of)</label>
             <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Date From</label>
+            <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Date To</label>
+            <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} />
           </div>
         </div>
         <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>

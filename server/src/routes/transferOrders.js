@@ -6,6 +6,7 @@ const { isNonStockItem } = require('../lib/itemTypes');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { deriveOnHand } = require('../lib/stockLedger');
 const { insertNumbered } = require('../lib/docNumber');
+const { sendXlsx, day } = require('../lib/xlsxExport');
 
 const router = express.Router();
 const ROUTE = '/transfer-orders';
@@ -206,16 +207,34 @@ function locationRequestorFilters(where, params, query, toAlias) {
   return asOf;
 }
 
+// Date From / Date To on the saved fulfilment and receipt lists (2026-10-09); either may be left out.
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+function dateRangeFilter(where, params, query, column) {
+  const { date_from: from, date_to: to } = query;
+  if (from && YMD.test(from)) { where.push(`${column} >= ?`); params.push(from); }
+  if (to && YMD.test(to)) { where.push(`${column} <= ?`); params.push(to); }
+}
+
+// format=xlsx on either list: every row under the current filters (no paging), as a workbook.
+const LIST_COLUMNS = [
+  { header: 'TO No.', key: 'to_no', width: 16 },
+  { header: 'Withdraw From', key: 'withdraw_from_name', width: 24 },
+  { header: 'Transfer To', key: 'transfer_to_name', width: 24 },
+  { header: 'Requestor', key: 'requestor_name', width: 26 },
+];
+
 // Paginated: this list holds 41,001 fulfilments after the transfer-order migration, and it
 // used to return every one of them, with a second query fanning out to all their lines to
 // derive a status.
 router.get('/item-fulfillments', requireAuth, requirePermission(FULFILLMENT_ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const { search, page = '1', limit = '10' } = req.query;
+    const xlsx = req.query.format === 'xlsx';
     const where = [];
     const params = [];
     const asOf = locationRequestorFilters(where, params, req.query, 't');
     if (asOf) { where.push('f.date_created <= ?'); params.push(asOf); }
+    dateRangeFilter(where, params, req.query, 'f.date_created');
     if (search) { where.push('(f.fulfillment_no LIKE ? OR t.to_no LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -237,15 +256,20 @@ router.get('/item-fulfillments', requireAuth, requirePermission(FULFILLMENT_ROUT
        LEFT JOIN employees e ON e.id = t.requestor_id
        ${whereSql}
        ORDER BY f.id DESC
-       LIMIT ? OFFSET ?`,
-      [...params, limitNum, offset]
+       ${xlsx ? '' : 'LIMIT ? OFFSET ?'}`,
+      xlsx ? params : [...params, limitNum, offset]
     );
 
     if (rows.length) {
-      const [lineRows] = await pool.query(
-        'SELECT item_fulfillment_id, qty_fulfilled, received FROM item_fulfillment_lines WHERE item_fulfillment_id IN (?)',
-        [rows.map((r) => r.id)]
-      );
+      const lineRows = [];
+      const ids = rows.map((r) => r.id);
+      for (let i = 0; i < ids.length; i += 5000) {
+        const [chunk] = await pool.query(
+          'SELECT item_fulfillment_id, qty_fulfilled, received FROM item_fulfillment_lines WHERE item_fulfillment_id IN (?)',
+          [ids.slice(i, i + 5000)]
+        );
+        lineRows.push(...chunk);
+      }
       const linesByFulfillment = new Map();
       for (const l of lineRows) {
         if (!linesByFulfillment.has(l.item_fulfillment_id)) linesByFulfillment.set(l.item_fulfillment_id, []);
@@ -255,6 +279,21 @@ router.get('/item-fulfillments', requireAuth, requirePermission(FULFILLMENT_ROUT
         const lines = linesByFulfillment.get(r.id) || [];
         r.status = lines.length && lines.every((l) => Number(l.received || 0) >= Number(l.qty_fulfilled || 0)) ? 'CLOSED' : 'OPEN';
       }
+    }
+    if (xlsx) {
+      await sendXlsx(res, {
+        filename: 'item-fulfillments.xlsx',
+        sheet: 'Item Fulfillments',
+        columns: [
+          { header: 'Item Fulfillment #', key: 'fulfillment_no', width: 18 },
+          { header: 'Date Created', key: 'date', width: 13 },
+          ...LIST_COLUMNS,
+          { header: 'Status', key: 'status', width: 10 },
+          { header: 'Memo', key: 'memo', width: 50 },
+        ],
+        rows: rows.map((r) => ({ ...r, date: day(r.date_created), memo: r.memo || '' })),
+      });
+      return;
     }
     res.json({ rows, total, page: pageNum, limit: limitNum });
   } catch (err) {
@@ -266,10 +305,12 @@ router.get('/item-fulfillments', requireAuth, requirePermission(FULFILLMENT_ROUT
 router.get('/item-receipts', requireAuth, requirePermission(RECEIPT_ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const { search, page = '1', limit = '10' } = req.query;
+    const xlsx = req.query.format === 'xlsx';
     const where = [];
     const params = [];
     const asOf = locationRequestorFilters(where, params, req.query, 't');
     if (asOf) { where.push('r.date_created <= ?'); params.push(asOf); }
+    dateRangeFilter(where, params, req.query, 'r.date_created');
     if (search) { where.push('(r.receipt_no LIKE ? OR t.to_no LIKE ? OR f.fulfillment_no LIKE ?)'); params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -292,9 +333,24 @@ router.get('/item-receipts', requireAuth, requirePermission(RECEIPT_ROUTE, 'can_
        LEFT JOIN employees e ON e.id = t.requestor_id
        ${whereSql}
        ORDER BY r.id DESC
-       LIMIT ? OFFSET ?`,
-      [...params, limitNum, offset]
+       ${xlsx ? '' : 'LIMIT ? OFFSET ?'}`,
+      xlsx ? params : [...params, limitNum, offset]
     );
+    if (xlsx) {
+      await sendXlsx(res, {
+        filename: 'item-receipts.xlsx',
+        sheet: 'Item Receipts',
+        columns: [
+          { header: 'Item Receipt #', key: 'receipt_no', width: 18 },
+          { header: 'Date Created', key: 'date', width: 13 },
+          { header: 'Item Fulfillment #', key: 'fulfillment_no', width: 18 },
+          ...LIST_COLUMNS,
+          { header: 'Memo', key: 'memo', width: 50 },
+        ],
+        rows: rows.map((r) => ({ ...r, date: day(r.date_created), memo: r.memo || '' })),
+      });
+      return;
+    }
     res.json({ rows, total, page: pageNum, limit: limitNum });
   } catch (err) {
     next(err);
