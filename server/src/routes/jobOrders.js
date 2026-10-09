@@ -1428,7 +1428,12 @@ router.get('/:id/print', requireAuth, async (req, res, next) => {
       // "assign an artist first" are different problems with different fixes.
       // An NSJO never goes through artist assignment (RMA / INST / Internal redo or raise the
       // work directly), so it is printable without one -- and so is a rework order (above).
-      if (!jo.artist_id && !jo.nsso_id && !isRework) {
+      // So is a RELEASED job order (asked 2026-10-09: Joyce Go could not print JO-70955-1-1, a
+      // Picklist): the rule guards printing before design is done, and Released is past design --
+      // no artist can be assigned any more (assign-design refuses a Released JO), so the block
+      // there would be permanent. Installation, mobilization, picklist and many CNC jobs are
+      // released without layout work; hundreds since September had become unprintable.
+      if (!jo.artist_id && !jo.nsso_id && !isRework && jo.status !== 'Released') {
         return res.status(403).json({
           error: 'This Job Order has no artist assigned yet, so it cannot be printed.',
           reason: 'no_artist',
