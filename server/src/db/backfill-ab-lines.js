@@ -16,7 +16,7 @@ async function main() {
 
   // Assembly builds that have no lines but whose JO does have processes to build them from.
   const [abs] = await pool.query(
-    `SELECT ab.id, ab.job_order_id, ab.quantity_built
+    `SELECT ab.id, ab.job_order_id, ab.quantity_built, jo.quantity AS jo_qty
        FROM assembly_builds ab
        JOIN job_orders jo ON jo.id = ab.job_order_id
       WHERE ab.status <> 'cancelled'
@@ -29,7 +29,7 @@ async function main() {
   const joIds = [...new Set(abs.map((a) => a.job_order_id))];
   const procsByJo = new Map();
   const [procs] = await pool.query(
-    `SELECT job_order_id, id, process_id, item_id, location_id, category, parts, process_qty, qty, unit,
+    `SELECT job_order_id, id, process_id, item_id, location_id, category, parts, process_qty, qty, total, unit,
             process_cost, material_cost, total_cost
        FROM job_order_processes WHERE job_order_id IN (?)`, [joIds]);
   for (const p of procs) { if (!procsByJo.has(p.job_order_id)) procsByJo.set(p.job_order_id, []); procsByJo.get(p.job_order_id).push(p); }
@@ -39,9 +39,12 @@ async function main() {
     const jps = procsByJo.get(ab.job_order_id) || [];
     if (!jps.length) continue;
     const qty = Number(ab.quantity_built) || 0;
+    // Total Qty to Build is the material used: the line's Total spread over the JO's quantity, times
+    // what was built -- not the piece count (fix-ab-line-material-qty.js).
+    const used = (p) => (Number(ab.jo_qty) > 0 ? (Number(p.total) || 0) / Number(ab.jo_qty) * qty : qty);
     const rows = jps.map((p) => [
       ab.id, p.id, p.process_id, p.item_id, p.location_id, p.category, p.parts, p.process_qty, p.qty,
-      qty, qty, qty, p.unit, p.process_cost, p.material_cost, p.total_cost,
+      used(p), qty, used(p), p.unit, p.process_cost, p.material_cost, p.total_cost,
     ]);
     const conn = await pool.getConnection();
     try {

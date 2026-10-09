@@ -93,12 +93,12 @@ async function main() {
 
   // Local lookups.
   const [jos] = await pool.query(
-    `SELECT jo.id, jo.job_order_no, jo.sales_order_id, so.sales_order_no
+    `SELECT jo.id, jo.job_order_no, jo.sales_order_id, so.sales_order_no, jo.quantity
        FROM job_orders jo LEFT JOIN sales_orders so ON so.id = jo.sales_order_id`);
   const joByNo = new Map(jos.map((j) => [j.job_order_no, j]));
   const [sos] = await pool.query('SELECT id, sales_order_no FROM sales_orders');
   const soByNo = new Map(sos.map((s) => [s.sales_order_no, s.id]));
-  const [procs] = await pool.query('SELECT id, job_order_id, process_id, item_id, location_id, category, parts, process_qty, qty, unit, process_cost, material_cost, total_cost FROM job_order_processes');
+  const [procs] = await pool.query('SELECT id, job_order_id, process_id, item_id, location_id, category, parts, process_qty, qty, total, unit, process_cost, material_cost, total_cost FROM job_order_processes');
   const procsByJo = new Map();
   for (const p of procs) { if (!procsByJo.has(p.job_order_id)) procsByJo.set(p.job_order_id, []); procsByJo.get(p.job_order_id).push(p); }
   const [[u]] = await pool.query("SELECT id FROM users WHERE is_active=TRUE ORDER BY id LIMIT 1");
@@ -203,13 +203,16 @@ async function main() {
               // lines: link the AB to each of the JO's process rows
               const jps = procsByJo.get(localJo.id) || [];
               let ln = 0;
+              const lineQty = (p) => (num(localJo.quantity) > 0 ? num(p.total) / num(localJo.quantity) * num(ab.Quantity_TransH) : num(ab.Quantity_TransH));
               for (const p of jps) {
                 ln += 1;
                 await conn.query(
                   `INSERT INTO assembly_build_lines (assembly_build_id, job_order_process_id, process_id, item_id, location_id, category, parts, process_qty, qty, total_qty_to_build, total_completed, total_build, unit, process_cost, material_cost, total_cost)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                  // Total Qty to Build is the MATERIAL this build used -- the line's Total spread over the JO's
+                  // quantity, times what was built -- not the piece count (fix-ab-line-material-qty.js).
                   [r.insertId, p.id, p.process_id, p.item_id, p.location_id, p.category, p.parts, p.process_qty, p.qty,
-                   num(ab.Quantity_TransH), num(ab.Quantity_TransH), num(ab.Quantity_TransH), p.unit, p.process_cost, p.material_cost, p.total_cost]);
+                   lineQty(p), num(ab.Quantity_TransH), lineQty(p), p.unit, p.process_cost, p.material_cost, p.total_cost]);
                 abLines += 1;
               }
             }
