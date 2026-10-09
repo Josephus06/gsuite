@@ -43,7 +43,13 @@ const blankLine = () => ({ key: Math.random().toString(36).slice(2), account: nu
 // is created through the ordinary POST /vendor-bills, which stamps created_by_user_id from the
 // session, so a replica is prepared by whoever replicated it rather than by whoever raised the
 // original.
-export default function StandaloneVendorBillModal({ onClose, onSaved, replicateFrom }) {
+//
+// `fromLiquidation` is an approved Liquidation (the form as GET /forms/:id returns it) -- Create
+// Vendor Bill on the form. Its items become the expense lines (each item's account, particulars and
+// amount, under the form's department), the form's credit account is the header Account (13305
+// Advances To Employees - For Liquidation unless AP chose another) and the filer is the vendor. The
+// bill is saved with form_request_id so the form shows it and cannot be billed twice.
+export default function StandaloneVendorBillModal({ onClose, onSaved, replicateFrom, fromLiquidation }) {
   const [replicatedFrom, setReplicatedFrom] = useState('');
   const [meta, setMeta] = useState(null);
   const [locations, setLocations] = useState([]);
@@ -71,9 +77,38 @@ export default function StandaloneVendorBillModal({ onClose, onSaved, replicateF
         setPaymentTerms(terms.data || []);
         if (m.data.ap_account) setApAccount(m.data.ap_account);
         if (replicateFrom) prefillFrom(m.data, loc.data, terms.data || []);
+        else if (fromLiquidation) prefillFromLiquidation(m.data, loc.data, terms.data || []);
       })
       .catch((err) => setError(err.response?.data?.error || 'Could not load the form.'));
-  }, [replicateFrom]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [replicateFrom, fromLiquidation]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function prefillFromLiquidation(metaData, locs, terms) {
+    const f = fromLiquidation;
+    const findAcct = (id) => (metaData.accounts || []).find((a) => String(a.id) === String(id)) || null;
+    const sup = (metaData.suppliers || []).find((x) => String(x.id) === String(f.vendor_bill_supplier_id)) || null;
+    if (sup) {
+      setSupplier(sup);
+      const t = terms.find((x) => x.term_name === sup.term_name) || null;
+      setPaymentTerm(t);
+      setTerm(t ? t.term_name : (sup.term_name || ''));
+      const days = t ? Number(t.no_of_days) : (sup.no_of_days != null ? Number(sup.no_of_days) : null);
+      if (days != null) setDateDue(addDays(new Date().toISOString().slice(0, 10), days || 0));
+    }
+    setApAccount((f.credit_account_id && findAcct(f.credit_account_id))
+      || (metaData.accounts || []).find((a) => a.account_code === '13305') || metaData.ap_account || null);
+    setOfficeLocation(locs.find((l) => /head office/i.test(l.location_name || '')) || null);
+    setMemo(`Liquidation ${f.request_no}${f.name ? ` -- ${f.name}` : ''}`);
+    const deptOk = (metaData.departments || []).some((d) => String(d.id) === String(f.department_id));
+    const copied = (f.items || []).filter((it) => Number(it.amount)).map((it) => ({
+      ...blankLine(),
+      account: findAcct(it.cogs_account_id)
+        || (it.cogs_account_id ? { id: it.cogs_account_id, account_code: it.cogs_account_code, account_name: it.cogs_account_name } : null),
+      description: it.particulars || '',
+      department_id: deptOk ? String(f.department_id) : '',
+      amount: String(Number(it.amount)),
+    }));
+    if (copied.length) setLines(copied);
+  }
 
   // Run only once the lookups are in hand: the pickers hold whole records, not ids, so each one
   // has to be found in the list it is chosen from.
@@ -167,6 +202,7 @@ export default function StandaloneVendorBillModal({ onClose, onSaved, replicateF
         office_location_id: officeLocation?.id || null,
         memo,
         wtax_id: wtaxId || null,
+        form_request_id: fromLiquidation?.id || null,
         lines: payload.map((l) => ({
           account_id: l.account.id, description: l.description, department_id: Number(l.department_id),
           qty: 1, unit_price: Number(l.amount || 0), tax_code_id: l.tax_code_id || null, is_withhold: l.is_withhold,
@@ -189,6 +225,7 @@ export default function StandaloneVendorBillModal({ onClose, onSaved, replicateF
           <h2 style={{ margin: 0, color: '#fff' }}>
             Vendor Bill — Create
             {replicatedFrom && <span style={{ fontSize: '0.6em', opacity: 0.85, marginLeft: 10 }}>replicated from {replicatedFrom}</span>}
+            {fromLiquidation && <span style={{ fontSize: '0.6em', opacity: 0.85, marginLeft: 10 }}>from {fromLiquidation.request_no}</span>}
           </h2>
           <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 24, lineHeight: 1, cursor: 'pointer' }}>×</button>
         </div>

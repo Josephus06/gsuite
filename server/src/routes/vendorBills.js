@@ -282,7 +282,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       `SELECT vb.*, po.po_no, s.name AS supplier_name, s.id AS vendor_id,
               coa.account_code, coa.account_name,
               loc.location_name AS office_location_name,
-              wt.code AS wtax_code, u.display_name AS created_by_name
+              wt.code AS wtax_code, u.display_name AS created_by_name, fr.request_no AS form_request_no
        FROM vendor_bills vb
        LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
        LEFT JOIN suppliers s ON s.id = COALESCE(po.supplier_id, vb.supplier_id)
@@ -290,6 +290,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
        LEFT JOIN locations loc ON loc.id = vb.office_location_id
        LEFT JOIN withholding_taxes wt ON wt.id = vb.wtax_id
        LEFT JOIN users u ON u.id = vb.created_by_user_id
+       LEFT JOIN form_requests fr ON fr.id = vb.form_request_id
        WHERE vb.id = ?`,
       [req.params.id]
     );
@@ -379,6 +380,17 @@ async function createStandaloneBill(req, res, conn) {
   if (!submitted.length) return res.status(400).json({ error: 'Add at least one line with a quantity.' });
   await assertPeriodOpen(dateCreated, 'ap', conn);
 
+  // Raised from a Liquidation (Create Vendor Bill on the form): only an approved one, and only once
+  // -- a second bill would post the same expenses twice. A cancelled bill frees the form again.
+  const formRequestId = Number(req.body.form_request_id) || null;
+  if (formRequestId) {
+    const [[form]] = await conn.query('SELECT type, status, request_no FROM form_requests WHERE id = ?', [formRequestId]);
+    if (!form || form.type !== 'liquidation') return res.status(400).json({ error: 'That form is not a liquidation.' });
+    if (form.status !== 'approved') return res.status(409).json({ error: `${form.request_no} is not approved yet.` });
+    const [[dup]] = await conn.query("SELECT bill_no FROM vendor_bills WHERE form_request_id = ? AND status <> 'cancelled' LIMIT 1", [formRequestId]);
+    if (dup) return res.status(409).json({ error: `${form.request_no} is already billed on ${dup.bill_no}.` });
+  }
+
   const accountIds = [...new Set(submitted.map((l) => Number(l.account_id)).filter(Boolean))];
   const [accts] = accountIds.length ? await conn.query('SELECT id FROM chart_of_accounts WHERE id IN (?)', [accountIds]) : [[]];
   const knownAcct = new Set(accts.map((a) => a.id));
@@ -428,12 +440,12 @@ async function createStandaloneBill(req, res, conn) {
     prefix: 'VB-',
     run: (no) => conn.query(
       `INSERT INTO vendor_bills
-         (bill_no, purchase_order_id, supplier_id, date_created, date_due, term, reference_no, account_id, office_location_id,
+         (bill_no, purchase_order_id, supplier_id, form_request_id, date_created, date_due, term, reference_no, account_id, office_location_id,
           memo, subtotal, discount_amount, net_of_tax, tax_amount, gross_amount, wtax_id, wtax_description,
           wtax_amount, amount_due, created_by_user_id)
-       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        no, supplier.id, dateCreated || new Date().toISOString().slice(0, 10), dateDue || null, term || null,
+        no, supplier.id, formRequestId, dateCreated || new Date().toISOString().slice(0, 10), dateDue || null, term || null,
         referenceNo || null, apAcct ? apAcct.id : null, officeLocationId || null, memo || null,
         subtotal, discountAmount, netOfTax, taxAmount, grossAmount, wtaxId || null, wtaxDescription,
         wtaxAmount, amountDue, req.user.id,

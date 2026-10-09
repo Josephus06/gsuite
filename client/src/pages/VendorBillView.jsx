@@ -126,7 +126,9 @@ export default function VendorBillView() {
           <div>
             <div>Created From : {vb.purchase_order_id
               ? <Link className="link-btn" to={`/purchase-orders/${vb.purchase_order_id}`}>{vb.po_no}</Link>
-              : <span className="hi">Direct (no PO)</span>}</div>
+              : vb.form_request_id
+                ? <Link className="link-btn" to={`/forms/${vb.form_request_id}`}>{vb.form_request_no || 'Liquidation'}</Link>
+                : <span className="hi">Direct (no PO)</span>}</div>
             <div>Reference # : <span className="hi">{vb.reference_no || ''}</span></div>
             <div>Memo : <span className="hi">{vb.memo || ''}</span></div>
           </div>

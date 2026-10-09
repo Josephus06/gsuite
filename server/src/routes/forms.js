@@ -521,10 +521,23 @@ router.get('/:id', requireAuth, async (req, res, next) => {
     doc.needs_cogs = AP_NOTED_TYPES.includes(doc.type);
     doc.cogs_missing = doc.needs_cogs ? doc.items.filter((i) => !i.cogs_account_id).length : 0;
     doc.can_set_cogs = doc.needs_cogs && note.allowed && doc.status === 'submitted';
-    // The entry it posts on approval (lib/glImpact.js computeLiquidationGl), shown as it stands now.
+    // The entry its Vendor Bill will post (lib/glImpact.js computeLiquidationGl), shown as it stands
+    // now. The liquidation itself posts nothing (2026-10-09): Accounts Payable raises a Vendor Bill
+    // from it once approved, and that bill is what reaches the books.
     if (doc.needs_cogs) {
       doc.gl_impact = await computeLiquidationGl(doc, doc.items);
-      doc.gl_posts = doc.status === 'approved';
+      const [[bill]] = await pool.query(
+        "SELECT id, bill_no FROM vendor_bills WHERE form_request_id = ? AND status <> 'cancelled' ORDER BY id DESC LIMIT 1", [doc.id]);
+      doc.vendor_bill = bill || null;
+      doc.gl_posts = !!bill;
+      // What Create Vendor Bill starts from. The vendor is the filer, matched by name among the
+      // suppliers (employees who liquidate are set up as suppliers to be paid).
+      if (doc.status === 'approved' && !bill) {
+        const [[sup]] = await pool.query(
+          'SELECT id FROM suppliers WHERE is_active = 1 AND LOWER(TRIM(name)) IN (LOWER(TRIM(?)), LOWER(TRIM(?))) LIMIT 1',
+          [doc.owner_name || '', doc.name || '']);
+        doc.vendor_bill_supplier_id = sup ? sup.id : null;
+      }
     }
 
     doc.can_approve = await userCan(req.user.id, APPROVAL_ROUTE, 'can_approve');

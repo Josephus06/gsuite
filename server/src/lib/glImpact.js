@@ -1316,24 +1316,10 @@ async function computePostedGlLines({ toDate, fromDate }) {
     }
   }
 
-  // Liquidations (Forms) post on the day they are APPROVED -- noted by AP with every item's COGS
-  // assigned, then approved. Each line keeps its own memo and department (no memo/department in meta).
-  {
-    const [tbl] = await pool.query("SHOW COLUMNS FROM form_request_items LIKE 'cogs_account_id'");
-    if (tbl.length) {
-      const { sql, params } = dateFilter('DATE(f.approved_at)');
-      const [headers] = await pool.query(
-        `SELECT f.id, f.request_no, f.department_id, f.credit_account_id, f.approved_at
-           FROM form_requests f WHERE f.type = 'liquidation' AND f.status = 'approved' AND f.approved_at IS NOT NULL AND ${sql}`, params);
-      const linesBy = await linesByParent(
-        'SELECT form_request_id, particulars, amount, cogs_account_id FROM form_request_items WHERE form_request_id IN (?) ORDER BY id',
-        'form_request_id', headers.map((h) => h.id));
-      for (const f of headers) {
-        const rows = await computeLiquidationGl(f, linesBy.get(f.id) || []);
-        push(rows, { entry_date: f.approved_at, source_type: 'liquidation', source_no: f.request_no, source_id: f.id, location_id: null });
-      }
-    }
-  }
+  // Liquidations (Forms) post NOTHING here (2026-10-09). Accounts Payable raises a Vendor Bill from
+  // an approved one (Create Vendor Bill on the form, vendor_bills.form_request_id) and the bill
+  // posts the same entry -- each item's account debited, the liquidation's credit account credited.
+  // Posting the form as well would put every liquidation on the books twice.
 
   // Cheques -- computeChequeGl above has the entry.
   //

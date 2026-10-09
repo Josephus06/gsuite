@@ -6,6 +6,7 @@ import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
+import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 import { useAuth } from '../context/useAuth';
 import { ADJ_REASON_LABELS, ADJ_TIMES, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, money, pretty } from '../utils/requestForms';
 
@@ -41,6 +42,7 @@ export default function FormView() {
   // Accounts Payable assigns each liquidation item its COGS account before noting it.
   const [cogsAccounts, setCogsAccounts] = useState([]);
   const [creditAccounts, setCreditAccounts] = useState([]);
+  const [billing, setBilling] = useState(false);
 
   const load = useCallback(() => api.get(`/forms/${id}`).then(({ data }) => {
     setDoc(data);
@@ -144,6 +146,8 @@ export default function FormView() {
   // Said plainly to the approver looking at a form they cannot yet act on, so a missing Approve
   // button reads as "waiting on the head" rather than as something broken.
   const awaitingNote = doc.can_approve && doc.status === 'submitted';
+  // An approved liquidation goes to the books through a Vendor Bill raised from it, once.
+  const mayBill = doc.type === 'liquidation' && doc.status === 'approved' && !doc.vendor_bill && can('/vendor-bills', 'can_add');
 
   async function discard() {
     if (!confirm(`Discard ${doc.request_no}? This cannot be undone.`)) return;
@@ -179,6 +183,12 @@ export default function FormView() {
             <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setRejecting(true)}>Reject</button>
           )}
           {mayDiscard && <button className="btn btn-sm btn-danger" disabled={busy} onClick={discard}>Discard</button>}
+          {mayBill && (
+            <button className="btn btn-sm btn-primary" onClick={() => setBilling(true)}>Create Vendor Bill</button>
+          )}
+          {doc.vendor_bill && (
+            <Link className="btn btn-sm" to={`/vendor-bills/${doc.vendor_bill.id}`}>{doc.vendor_bill.bill_no}</Link>
+          )}
         </div>
       </div>
 
@@ -385,8 +395,8 @@ export default function FormView() {
           <h3>GL Impact</h3>
           <p className="muted" style={{ marginTop: 0 }}>
             {doc.gl_posts
-              ? 'Posted to the books on the day this liquidation was approved.'
-              : 'What this liquidation will post once it is approved: each item\'s account is debited, and the credit account below is credited.'}
+              ? <>Posted to the books through {doc.vendor_bill.bill_no}. The liquidation itself posts nothing.</>
+              : 'Not posted. This liquidation posts nothing on its own: once approved, Accounts Payable creates a Vendor Bill from it, and that bill debits each item\'s account and credits the credit account below.'}
           </p>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
             <span className="muted">Credit Account :</span>
@@ -438,6 +448,14 @@ export default function FormView() {
       )}
 
       <FormSystemInfo formId={doc.id} version={`${doc.updated_at}|${doc.status}`} />
+
+      {billing && (
+        <StandaloneVendorBillModal
+          fromLiquidation={doc}
+          onClose={() => setBilling(false)}
+          onSaved={(vb) => navigate(`/vendor-bills/${vb.id}`)}
+        />
+      )}
 
       {rejecting && (
         <Modal title={`Reject ${doc.request_no}`} onClose={() => setRejecting(false)} large>
