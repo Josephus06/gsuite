@@ -1254,7 +1254,7 @@ router.post('/:id/receipts', requireAuth, requireReceiveRight, async (req, res, 
     // Base Unit, so it has to be scaled by the item's own Purchase Unit -> Base Unit
     // factor (e.g. 5 ROLL x 1344.8 = 6,724 SQFT).
     const [poLines] = await conn.query(
-      `SELECT pol.id, pol.item_id, pol.qty, pol.received_qty, pol.location_id, COALESCE(i.conversion_factor, 1) AS conversion_factor
+      `SELECT pol.id, pol.item_id, pol.qty, pol.received_qty, pol.location_id, pol.rate, pol.disc_percent, pol.tax_code_id, pol.disc_amount, pol.net_of_tax, pol.tax_amount, pol.ext_price, COALESCE(i.conversion_factor, 1) AS conversion_factor
        FROM purchase_order_lines pol
        LEFT JOIN inventories i ON i.id = pol.item_id
        WHERE pol.id IN (?) AND pol.purchase_order_id = ?`,
@@ -1281,21 +1281,51 @@ router.post('/:id/receipts', requireAuth, requireReceiveRight, async (req, res, 
       taxRows.forEach((t) => taxRateById.set(t.id, Number(t.rate)));
     }
 
+    // What earlier receipts already took of each PO line -- for the "rest of the line" rule below.
+    const [priorRows] = await conn.query(
+      `SELECT purchase_order_line_id AS id, SUM(qty_received) AS qty, SUM(disc_amount) AS disc, SUM(net_of_tax) AS net,
+              SUM(tax_amount) AS tax, SUM(ext_price) AS ext
+         FROM purchase_order_receipt_lines WHERE purchase_order_line_id IN (?) GROUP BY purchase_order_line_id`,
+      [submitted.map((l) => l.purchase_order_line_id)]);
+    const priorOf = new Map(priorRows.map((r) => [Number(r.id), r]));
+    const same = (a, b) => Math.abs(Number(a || 0) - Number(b || 0)) < 1e-9;
+
     let subtotal = 0; let discountAmount = 0; let netOfTax = 0; let taxAmount = 0;
     const computed = submitted.map((l) => {
       const poLine = poLineById.get(l.purchase_order_line_id);
       const qty = Number(l.qty_received);
       const rate = Number(l.rate || 0);
       const discPercent = Number(l.disc_percent || 0);
-      const lineSubtotal = cents(qty * rate);
-      const lineDiscAmount = cents(lineSubtotal * (discPercent / 100));
-      const lineNetOfTax = cents(lineSubtotal - lineDiscAmount);
+      let lineSubtotal = cents(qty * rate);
+      let lineDiscAmount = cents(lineSubtotal * (discPercent / 100));
+      let lineNetOfTax = cents(lineSubtotal - lineDiscAmount);
       const taxRatePct = l.tax_code_id ? (taxRateById.get(l.tax_code_id) || 0) : 0;
       // Ext. Price is the gross the supplier bills, from the unrounded figures; Tax is what is left
       // over Net of Tax, so the rounded Net + Tax always equals it (PO-20586: 28,828.12 + 3,459.38 =
       // 32,287.50, not 3,459.37 and a total a centavo short).
-      const extPrice = taxRatePct ? cents(qty * rate * (1 - discPercent / 100) * (1 + taxRatePct / 100)) : lineNetOfTax;
-      const lineTaxAmount = cents(extPrice - lineNetOfTax);
+      let extPrice = taxRatePct ? cents(qty * rate * (1 - discPercent / 100) * (1 + taxRatePct / 100)) : lineNetOfTax;
+      let lineTaxAmount = cents(extPrice - lineNetOfTax);
+      // Received at the PO line's own terms (rate, discount, tax code): its amounts come FROM the PO
+      // line rather than being recomputed from the rate, so receipts add up to the PO exactly
+      // (2026-10-09: PO-20604 730.00, its RR priced from a rate migrated to 4 decimals came to
+      // 730.02). The rest of the line takes what earlier receipts left; a partial one, its share.
+      // Earlier receipts are trusted for the remainder only while their quantities still account
+      // for what is received (no vendor return in between); otherwise the share is pro-rated.
+      const poQty = Number(poLine.qty);
+      if (poQty > 0 && same(rate, poLine.rate) && same(discPercent, poLine.disc_percent)
+        && String(l.tax_code_id || '') === String(poLine.tax_code_id || '')) {
+        const prior = priorOf.get(Number(poLine.id));
+        const priorQty = Number(prior?.qty || 0);
+        const isRest = Math.abs(priorQty + qty - poQty) < 1e-9 && Math.abs(priorQty - Number(poLine.received_qty)) < 1e-9;
+        const part = (field, priorField) => (isRest
+          ? cents(Number(poLine[field] || 0) - Number(prior?.[priorField] || 0))
+          : cents(Number(poLine[field] || 0) * (qty / poQty)));
+        lineDiscAmount = part('disc_amount', 'disc');
+        lineNetOfTax = part('net_of_tax', 'net');
+        extPrice = part('ext_price', 'ext');
+        lineTaxAmount = cents(extPrice - lineNetOfTax);
+        lineSubtotal = cents(lineNetOfTax + lineDiscAmount);
+      }
       subtotal += lineSubtotal; discountAmount += lineDiscAmount; netOfTax += lineNetOfTax; taxAmount += lineTaxAmount;
       return {
         purchase_order_line_id: l.purchase_order_line_id, tax_code_id: l.tax_code_id || null,
