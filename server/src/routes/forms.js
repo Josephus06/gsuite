@@ -239,9 +239,9 @@ async function mayNote(userId, doc) {
     };
   }
 
-  // Business trip and revolving fund keep the plain permission gate.
-  if (await userCan(userId, APPROVAL_ROUTE, 'can_edit')) return { allowed: true };
-  return { allowed: false, reason: 'You do not have permission to note this form.' };
+  // Every type is noted by a ticked noter above. An approver does not note (2026-10-09) -- the
+  // Forms Approval page permission used to let one note a business trip.
+  return { allowed: false, reason: 'Only those ticked to note forms can note this.' };
 }
 
 /* -------------------------------------------------------------------------- */

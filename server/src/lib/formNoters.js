@@ -34,7 +34,9 @@ const pool = require('../db');
 // An attendance adjustment is noted by the immediate superior -- the department's head (2026-10-08).
 // A revolving fund is noted by the department's head too (asked 2026-10-09), ticked per head in
 // Lookups > Departments like the others.
-const DEPARTMENT_NOTED_TYPES = ['payment', 'fund_transfer', 'revolving_fund', 'attendance_adjustment'];
+// A business trip too (2026-10-09): noting belongs only to those ticked to note forms, never to an
+// approver by way of a page permission.
+const DEPARTMENT_NOTED_TYPES = ['payment', 'fund_transfer', 'revolving_fund', 'attendance_adjustment', 'business_trip'];
 const AP_NOTED_TYPES = ['liquidation'];
 
 // Is this user Accounts Payable (users.is_accounts_payable)? Read fresh, like the rest of this file.
