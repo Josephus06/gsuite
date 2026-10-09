@@ -77,32 +77,36 @@ async function main() {
   }
   const [invoices] = await pool.query(
     `SELECT si.id, si.invoice_no, si.date_created, si.gross_amount, si.amount_due,
-            so.customer_id, si.office_location_id,
+            COALESCE(so.customer_id, ns.customer_id, si.customer_id) AS customer_id, si.office_location_id,
             COALESCE((SELECT SUM(ca.applied_amount) FROM credit_memo_applications ca
                        WHERE ca.sales_invoice_id = si.id), 0) AS credited
      FROM sales_invoices si
-     JOIN sales_orders so ON so.id = si.sales_order_id
-     WHERE ${where.join(' AND ')}`,
+     LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+     LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
+     WHERE ${where.join(' AND ')}
+       AND COALESCE(so.customer_id, ns.customer_id, si.customer_id) IS NOT NULL`,
     params
   );
   console.log(`${invoices.length} paid invoice(s) to record a payment for` +
     `${ALL_REPS ? ' (all reps)' : ` (${REP_IDS.length} preset reps)`}` +
     `${MISSING_ONLY ? ', none of them settled by any payment yet' : ''}${FROM && TO ? ` in ${FROM}..${TO}` : ''}.`);
 
-  // Counted and named, not silently dropped: the customer comes from the sales order, so an
-  // invoice whose sales_order_id resolves to nothing cannot be given a payment by this script
-  // at all. There is one such invoice locally. It needs its sales order repaired first.
+  // Counted and named, not silently dropped. The customer is the sales order's, else the NSSO's,
+  // else the invoice's own (2026-10-09: a standalone invoice -- rent, INV-83455 -- has no order but
+  // does name its customer; 599 paid ones had no settlement and read open on AR Aging). Only one
+  // with no customer anywhere cannot be given a payment.
   if (MISSING_ONLY) {
     const [orphans] = await pool.query(
       `SELECT si.invoice_no, ROUND(si.gross_amount - si.amount_due, 2) AS paid
          FROM sales_invoices si
          LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+         LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
         WHERE si.status <> 'cancelled' AND (si.gross_amount - si.amount_due) > 0.005
           AND NOT EXISTS (SELECT 1 FROM customer_payment_lines l WHERE l.sales_invoice_id = si.id)
-          AND so.id IS NULL`
+          AND COALESCE(so.customer_id, ns.customer_id, si.customer_id) IS NULL`
     );
     if (orphans.length) {
-      console.log(`  ${orphans.length} NOT fixable here -- no sales order, so no customer: ` +
+      console.log(`  ${orphans.length} NOT fixable here -- no customer on the invoice or its order: ` +
         orphans.slice(0, 5).map((o) => `${o.invoice_no} (${o.paid})`).join(', ') +
         (orphans.length > 5 ? ', ...' : ''));
     }
