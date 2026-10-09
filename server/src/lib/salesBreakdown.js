@@ -32,12 +32,15 @@ function monthBounds(ym) {
   return { month: `${y}-${pad2(m)}`, start: `${y}-${pad2(m)}-01`, end: `${ny}-${pad2(nm)}-01` };
 }
 
-// Weighted sales for a month inside a viewer's scope, one row per (group, rep).
-async function salesRows(userId, start, end) {
+// Weighted sales for a month inside a viewer's scope, one row per (group, rep). officeLocationId
+// narrows to one office, for Sales > Weighted Sales per Month's extract (the dashboard has no
+// office filter and passes none).
+async function salesRows(userId, start, end, { officeLocationId } = {}) {
   const scope = await salesScope(userId);
   const where = ["(so.status IS NULL OR so.status <> 'cancelled')", 'so.date_created >= ? AND so.date_created < ?'];
   const params = [start, end];
   scopeWhere(scope, where, params);
+  if (officeLocationId) { where.push('so.office_location_id = ?'); params.push(Number(officeLocationId)); }
   const [rows] = await pool.query(
     `SELECT so.sales_division_id AS division_id, sd.name AS division_name, so.sales_rep_id AS employee_id,
             CONCAT(e.first_name, ' ', e.last_name) AS rep_name, SUM(COALESCE(sol.net_of_tax, 0)) AS amount
@@ -90,9 +93,9 @@ function buildGroup(divisionId, name, reps, people) {
   };
 }
 
-async function buildSalesBreakdown(userId, ym) {
+async function buildSalesBreakdown(userId, ym, filters = {}) {
   const { month, start, end } = monthBounds(ym);
-  const { scope, rows } = await salesRows(userId, start, end);
+  const { scope, rows } = await salesRows(userId, start, end, filters);
 
   // Everyone's user account and supervisors, once.
   const [users] = await pool.query(

@@ -3,7 +3,7 @@ const ExcelJS = require('exceljs');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { salesScope, scopeWhere } = require('../lib/salesReportScope');
-const { getSbuGroups } = require('../lib/sbuGroups');
+const { buildSalesBreakdown } = require('../lib/salesBreakdown');
 
 // Sales > Weighted Sales per Month (asked 2026-10-03): every Sales Order line created in a month,
 // with its Net of Tax -- which is what Weighted Sales is (lib/commissionReport.js: the net of tax
@@ -118,98 +118,31 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 });
 
 // The org chart the whole-company extract is laid out by (asked 2026-10-09, Accounting's own
-// weighted-sales sheet): each SBU head, the supervisors under them with their sales group, each
-// supervisor's account officers, then Marketing. Built from data -- the SBU groups
-// (lib/sbuGroups.js), the reporting tree (user_supervisors) and each person's department -- so a
-// new rep or a moved supervisor shows up without a code change. Anyone with sales in the month who
-// sits nowhere in the chart (the branches, a rep with no supervisor on file) is listed under
-// Others, so the summary still adds up to the month's total.
+// weighted-sales sheet): SBU, then each of its sales groups' supervisors with their account
+// officers, then the groups that belong to no SBU (Marketing, the branches). It is the dashboard's
+// Sales Performance per Group -- lib/salesBreakdown.js, called here with the report's office filter
+// -- laid out in rows, so the extract and the dashboard cannot disagree: a sale sits in the sales
+// group on its ORDER and under the rep on it, a supervisor's figure is their team's in that group.
 //
-// Returns [{ role, group, name, employeeId, weighted, team }], in print order; blank rows between
-// blocks are { gap: true }.
-async function orgChartRows(repTotals, repNames) {
-  const norm = (s) => String(s || '').toLowerCase().replace(/[\s_-]+/g, '');
-  const [users] = await pool.query(
-    `SELECT u.id, u.display_name, u.employee_id, u.is_supervisor, u.is_account_officer, u.is_sales_business_unit,
-            d.name AS department
-       FROM users u LEFT JOIN employees e ON e.id = u.employee_id LEFT JOIN departments d ON d.id = e.department_id
-      WHERE u.is_active = TRUE AND (u.account_type IS NULL OR u.account_type <> 'System Admin')`);
-  const [links] = await pool.query('SELECT supervisor_id, user_id FROM user_supervisors');
-  const byId = new Map(users.map((u) => [Number(u.id), u]));
-  const reportsOf = (userId) => links.filter((l) => Number(l.supervisor_id) === Number(userId))
-    .map((l) => byId.get(Number(l.user_id))).filter(Boolean);
-  const placed = new Set();
+// Returns [{ role, group, name, weighted, team }] in print order; { gap: true } between blocks.
+function breakdownRows(b) {
   const out = [];
-  const own = (u) => (u && u.employee_id ? repTotals.get(Number(u.employee_id)) || 0 : 0);
-  const nameOf = (u) => (u.employee_id && repNames.get(Number(u.employee_id))) || u.display_name;
-  const place = (u) => { if (u.employee_id) placed.add(Number(u.employee_id)); placed.add(`u${u.id}`); };
-  const isPlaced = (u) => placed.has(`u${u.id}`) || (u.employee_id && placed.has(Number(u.employee_id)));
-
-  // One supervisor and their account officers; returns the team's total.
-  const supervisorBlock = (sup) => {
-    place(sup);
-    const row = { role: 'Supervisor', group: sup.department || '', name: nameOf(sup), weighted: own(sup), team: 0 };
-    out.push(row);
-    let team = own(sup);
-    const officers = reportsOf(sup.id).filter((u) => !isPlaced(u) && !u.is_supervisor && !u.is_sales_business_unit)
-      .sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
-    for (const ao of officers) {
-      place(ao);
-      out.push({ role: 'Account Officer', group: '', name: nameOf(ao), weighted: own(ao) });
-      team += own(ao);
+  const groupRows = (g, roleForSupervisor) => {
+    for (const sup of g.supervisors) {
+      out.push({ role: roleForSupervisor, group: g.name, name: sup.name, weighted: sup.own, team: sup.team });
+      for (const m of sup.members) out.push({ role: 'Account Officer', group: '', name: m.name, weighted: m.amount });
     }
-    row.team = team;
-    return team;
+    for (const o of g.others) out.push({ role: 'Account Officer', group: g.supervisors.length ? '' : g.name, name: o.name, weighted: o.amount });
   };
-
-  for (const sbu of await getSbuGroups()) {
-    const head = byId.get(Number(sbu.userId));
-    if (!head) continue;
-    place(head);
-    const headRow = { role: sbu.label, group: nameOf(head), name: '', weighted: own(head), team: 0 };
-    out.push(headRow);
-    const groupKeys = new Set(sbu.departmentNames.map(norm));
-    // Supervisors reporting to the head, plus any supervisor of the SBU's own groups not linked to them.
-    const sups = [...reportsOf(head.id).filter((u) => u.is_supervisor),
-      ...users.filter((u) => u.is_supervisor && groupKeys.has(norm(u.department)))]
-      .filter((u, i, all) => all.findIndex((x) => x.id === u.id) === i && !isPlaced(u))
-      .sort((a, b) => String(a.department || '').localeCompare(String(b.department || '')));
-    let team = own(head);
-    for (const sup of sups) team += supervisorBlock(sup);
-    headRow.team = team;
+  for (const sbu of b.sbus) {
+    out.push({ role: sbu.label, group: sbu.owner, name: '', weighted: null, team: sbu.total });
+    for (const g of sbu.groups) groupRows(g, 'Supervisor');
     out.push({ gap: true });
   }
-
-  // Marketing: its head (SBU flag or supervisor) and the people in or reporting to it.
-  const marketing = users.filter((u) => norm(u.department) === 'marketing' && !isPlaced(u));
-  const mHeads = marketing.filter((u) => u.is_sales_business_unit || u.is_supervisor);
-  for (const head of mHeads) {
-    place(head);
-    const headRow = { role: 'Marketing', group: nameOf(head), name: '', weighted: own(head), team: 0 };
-    out.push(headRow);
-    let team = own(head);
-    const members = [...reportsOf(head.id), ...marketing]
-      .filter((u, i, all) => all.findIndex((x) => x.id === u.id) === i && !isPlaced(u))
-      .sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
-    for (const m of members) {
-      place(m);
-      out.push({ role: '', group: '', name: nameOf(m), weighted: own(m) });
-      team += own(m);
-    }
-    headRow.team = team;
+  for (const g of b.otherGroups) {
+    out.push({ role: g.name, group: '', name: '', weighted: null, team: g.total, heading: true });
+    groupRows(g, 'Supervisor');
     out.push({ gap: true });
-  }
-
-  // Everyone else with sales this month.
-  const others = [...repTotals.entries()].filter(([emp, v]) => !placed.has(emp) && Math.abs(v) >= 0.005)
-    .sort((a, b) => b[1] - a[1]);
-  if (others.length) {
-    const headRow = { role: 'Others', group: 'Branches / not in the chart', name: '', weighted: null, team: 0 };
-    out.push(headRow);
-    for (const [emp, v] of others) {
-      out.push({ role: '', group: '', name: repNames.get(emp) || '(no sales rep)', weighted: v });
-      headRow.team += v;
-    }
   }
   return out;
 }
@@ -260,10 +193,8 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
     // out SBU > Supervisor > Account Officer > Marketing, and one sheet of lines per sales group.
     // A narrowed extract keeps the plain per-rep summary below: a chart of one group is not one.
     if (!req.query.sales_rep_id && !req.query.sales_division_id) {
-      const repTotals = new Map(reps.filter((r) => r.sales_rep_id).map((r) => [Number(r.sales_rep_id), r.weighted_sales]));
-      const repNames = new Map(reps.filter((r) => r.sales_rep_id).map((r) => [Number(r.sales_rep_id), r.sales_rep]));
-      const chart = await orgChartRows(repTotals, repNames);
-      const noRep = reps.filter((r) => !r.sales_rep_id).reduce((s, r) => s + r.weighted_sales, 0);
+      const breakdown = await buildSalesBreakdown(req.user.id, month, { officeLocationId: req.query.office_location_id });
+      const chart = breakdownRows(breakdown);
 
       const sum = wb.addWorksheet('Summary');
       // Columns E-H as on Accounting's sheet (role, group/head, name, weighted sales), I the team total.
@@ -286,17 +217,14 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
         x.getCell(7).value = row.name || null;
         if (row.weighted != null) { x.getCell(8).value = row.weighted; x.getCell(8).numFmt = money.numFmt; }
         if (row.team != null) { x.getCell(9).value = row.team; x.getCell(9).numFmt = money.numFmt; x.getCell(9).font = { bold: true }; }
-        if (/^(SBU|Marketing|Others)/.test(row.role || '')) { x.getCell(5).font = { bold: true }; x.getCell(6).font = { bold: true }; }
+        if (row.heading || /^SBU/.test(row.role || '')) { x.getCell(5).font = { bold: true }; x.getCell(6).font = { bold: true }; }
         r += 1;
-      }
-      if (Math.abs(noRep) >= 0.005) {
-        const x = sum.getRow(r); x.getCell(5).value = '(no sales rep)'; x.getCell(8).value = noRep; x.getCell(8).numFmt = money.numFmt; r += 1;
       }
       r += 1;
       const tot = sum.getRow(r);
       tot.getCell(5).value = 'TOTAL';
-      tot.getCell(8).value = reps.reduce((s, x) => s + x.weighted_sales, 0);
-      tot.getCell(8).numFmt = money.numFmt;
+      tot.getCell(9).value = breakdown.total;
+      tot.getCell(9).numFmt = money.numFmt;
       tot.font = { bold: true };
 
       // One sheet per sales group: Marketing first, then Sales - 1..4, then any other group.
