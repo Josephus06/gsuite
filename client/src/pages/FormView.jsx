@@ -1,4 +1,5 @@
 import FormAttachments from '../components/FormAttachments';
+import FormSystemInfo from '../components/FormSystemInfo';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
@@ -122,7 +123,8 @@ export default function FormView() {
     : doc.status === 'approved';
 
   // Until somebody acts on it: draft, submitted (not yet noted) or rejected. Same list as the server.
-  const mayEdit = doc.is_owner && ['draft', 'submitted', 'rejected'].includes(doc.status) && can('/forms', 'can_edit');
+  // Decided by the server: the owner while the form is still open, a System Admin always.
+  const mayEdit = !!doc.can_edit;
   const maySubmit = doc.is_owner && doc.status === 'draft' && can('/forms', 'can_add');
   const mayDiscard = doc.is_owner && doc.status === 'draft' && can('/forms', 'can_delete');
   // Noting a liquidation or a payment belongs to the head of the department it came from, not to a
@@ -432,6 +434,8 @@ export default function FormView() {
           </div>
         </div>
       )}
+
+      <FormSystemInfo formId={doc.id} version={`${doc.updated_at}|${doc.status}`} />
 
       {rejecting && (
         <Modal title={`Reject ${doc.request_no}`} onClose={() => setRejecting(false)} large>

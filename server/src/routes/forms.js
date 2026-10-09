@@ -364,7 +364,14 @@ router.put('/:id/credit-account', requireAuth, async (req, res, next) => {
         'SELECT id FROM chart_of_accounts WHERE id = ? AND COALESCE(is_summary, 0) = 0', [accountId]);
       if (!acct) return res.status(400).json({ error: 'Choose an active account from the Chart of Accounts.' });
     }
+    const [[before]] = await pool.query(
+      `SELECT CONCAT(c.account_code, ' — ', c.account_name) AS label FROM form_requests f
+         LEFT JOIN chart_of_accounts c ON c.id = f.credit_account_id WHERE f.id = ?`, [doc.id]);
     await pool.query('UPDATE form_requests SET credit_account_id = ?, updated_at = NOW() WHERE id = ?', [accountId, doc.id]);
+    const [[after]] = accountId
+      ? await pool.query("SELECT CONCAT(account_code, ' — ', account_name) AS label FROM chart_of_accounts WHERE id = ?", [accountId])
+      : [[{ label: null }]];
+    await logFormAudit(pool, doc.id, req.user.id, 'Updated', 'Credit Account', before?.label || 'Default', after?.label || 'Default');
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -395,6 +402,10 @@ router.put('/:id/items/:itemId/cogs', requireAuth, async (req, res, next) => {
       'UPDATE form_request_items SET cogs_account_id = ? WHERE id = ? AND form_request_id = ?',
       [accountId, req.params.itemId, doc.id]);
     if (!r.affectedRows) return res.status(404).json({ error: 'Item not found' });
+    const [[line]] = await pool.query(
+      `SELECT i.particulars, CONCAT(c.account_code, ' — ', c.account_name) AS label FROM form_request_items i
+         LEFT JOIN chart_of_accounts c ON c.id = i.cogs_account_id WHERE i.id = ?`, [req.params.itemId]);
+    await logFormAudit(pool, doc.id, req.user.id, 'Updated', `COGS Account (${String(line?.particulars || 'item').slice(0, 100)})`, null, line?.label || 'None');
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -423,6 +434,70 @@ router.get('/meta/options', requireAuth, requirePermission(ROUTE, 'can_view'), a
 // Opening one form. Gated by maySee ALONE, not by can_view on /forms as well: the head of a
 // department has to be able to open the forms only they can note, and heading a department is not
 // a page grant. Requiring both would leave a head able to note a form they cannot read.
+/* -------------------------------------------------------------------------- */
+/* System Information (every form type, asked 2026-10-09)                     */
+/* -------------------------------------------------------------------------- */
+
+// One row per thing that happened to a form, in the shared audit_logs table. Its event_type is an
+// enum, so a submit or a note is a 'Status Change' and a rejection is 'Disapproved'.
+async function logFormAudit(db, formId, userId, eventType, fieldName = null, oldValue = null, newValue = null) {
+  await db.query(
+    `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+     VALUES ('FormRequest', ?, ?, ?, ?, ?, ?)`,
+    [formId, eventType, fieldName,
+      oldValue === null || oldValue === undefined ? null : String(oldValue),
+      newValue === null || newValue === undefined ? null : String(newValue), userId || null]);
+}
+
+const STATUS_LABEL = { draft: 'Draft', submitted: 'Submitted', noted: 'Noted', approved: 'Approved', rejected: 'Rejected' };
+
+// Who made it and when, who last changed it, and its history. Forms filed before the history was
+// kept get theirs from the form's own dates (created, submitted, noted, approved, rejected) -- any
+// event the log already holds is not repeated.
+router.get('/:id/system-info', requireAuth, async (req, res, next) => {
+  try {
+    const [[doc]] = await pool.query(
+      `SELECT f.id, f.type, f.status, f.user_id, f.department_id, f.created_at, f.updated_at, f.submitted_at,
+              f.noted_at, f.approved_at, f.rejected_at, f.rejection_reason, f.noted_by, f.approved_by, f.rejected_by,
+              u.display_name AS owner_name, nu.display_name AS noted_by_name,
+              au.display_name AS approved_by_name, ru.display_name AS rejected_by_name
+         FROM form_requests f
+         LEFT JOIN users u ON u.id = f.user_id
+         LEFT JOIN users nu ON nu.id = f.noted_by
+         LEFT JOIN users au ON au.id = f.approved_by
+         LEFT JOIN users ru ON ru.id = f.rejected_by
+        WHERE f.id = ?`, [req.params.id]);
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    if (!(await maySee(req.user.id, doc))) return res.status(403).json({ error: 'This form is not yours to view.' });
+
+    const [logged] = await pool.query(
+      `SELECT a.id, a.event_type, a.field_name, a.old_value, a.new_value, a.set_at, a.set_by_user_id, u.display_name AS set_by_name
+         FROM audit_logs a LEFT JOIN users u ON u.id = a.set_by_user_id
+        WHERE a.auditable_type = 'FormRequest' AND a.auditable_id = ?`, [doc.id]);
+    const has = (event, value) => logged.some((l) => l.event_type === event && (value === undefined || l.new_value === value));
+    const derived = [];
+    const add = (when, by, byName, event, field, oldValue, newValue) => {
+      if (when) derived.push({ id: `d-${derived.length}`, event_type: event, field_name: field, old_value: oldValue, new_value: newValue, set_at: when, set_by_user_id: by, set_by_name: byName, derived: true });
+    };
+    if (!has('Created')) add(doc.created_at, doc.user_id, doc.owner_name, 'Created', null, null, null);
+    if (!has('Status Change', 'Submitted')) add(doc.submitted_at, doc.user_id, doc.owner_name, 'Status Change', 'Status', 'Draft', 'Submitted');
+    if (!has('Status Change', 'Noted')) add(doc.noted_at, doc.noted_by, doc.noted_by_name, 'Status Change', 'Status', 'Submitted', 'Noted');
+    if (!has('Approved')) add(doc.approved_at, doc.approved_by, doc.approved_by_name, 'Approved', 'Status', 'Noted', 'Approved');
+    if (!has('Disapproved')) add(doc.rejected_at, doc.rejected_by, doc.rejected_by_name, 'Disapproved', 'Reason', null, doc.rejection_reason);
+
+    const history = [...logged, ...derived].sort((a, b) => String(b.set_at).localeCompare(String(a.set_at)) || String(b.id).localeCompare(String(a.id)));
+    const lastChange = history.find((h) => h.event_type !== 'Created');
+    res.json({
+      created_at: doc.created_at,
+      created_by_name: doc.owner_name || null,
+      updated_at: doc.updated_at,
+      updated_by_name: lastChange?.set_by_name || doc.owner_name || null,
+      status: STATUS_LABEL[doc.status] || doc.status,
+      history,
+    });
+  } catch (err) { next(err); }
+});
+
 router.get('/:id', requireAuth, async (req, res, next) => {
   try {
     const doc = await loadFull(req.params.id);
@@ -431,6 +506,9 @@ router.get('/:id', requireAuth, async (req, res, next) => {
 
     doc.type_label = TYPE_LABELS[doc.type] || doc.type;
     doc.is_owner = doc.user_id === req.user.id;
+    // The owner while it is still open; a System Admin always.
+    doc.can_edit = (await userCan(req.user.id, ROUTE, 'can_edit'))
+      && ((doc.is_owner && EDITABLE_STATUSES.includes(doc.status)) || await isSystemAdmin(req.user.id));
 
     const note = await mayNote(req.user.id, doc);
     doc.can_note = note.allowed;
@@ -595,6 +673,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     }
 
     await writeDetail(conn, id, type, req.body, items);
+    await logFormAudit(conn, id, req.user.id, 'Created');
 
     if (type === 'liquidation') {
       const chosen = (Array.isArray(req.body.purposes) ? req.body.purposes : []).filter((p) => PURPOSES.includes(p));
@@ -647,11 +726,14 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
   try {
     const [[doc]] = await conn.query('SELECT * FROM form_requests WHERE id = ?', [req.params.id]);
     if (!doc) return res.status(404).json({ error: 'Not found' });
-    if (doc.user_id !== req.user.id) return res.status(403).json({ error: 'Only the person who filed this form can edit it.' });
+    // A System Admin may edit any form, whoever filed it and whatever its status (asked 2026-10-09);
+    // the edit is recorded in its System Information like any other.
+    const admin = await isSystemAdmin(req.user.id);
+    if (!admin && doc.user_id !== req.user.id) return res.status(403).json({ error: 'Only the person who filed this form can edit it.' });
     // Editing an approved form would change a document somebody has already signed off. A
     // SUBMITTED one is still editable (asked 2026-10-07) -- nobody has acted on it yet -- and stays
-    // submitted; once it is noted or approved it is locked.
-    if (!EDITABLE_STATUSES.includes(doc.status)) {
+    // submitted; once it is noted or approved it is locked -- except to a System Admin.
+    if (!admin && !EDITABLE_STATUSES.includes(doc.status)) {
       return res.status(409).json({ error: `A ${doc.status} form cannot be edited.` });
     }
 
@@ -665,6 +747,16 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     await conn.beginTransaction();
 
     const departmentName = trunc(req.body.department, 255);
+    const [[{ oldTotal }]] = await conn.query(
+      'SELECT COALESCE(SUM(amount), 0) AS oldTotal FROM form_request_items WHERE form_request_id = ?', [doc.id]);
+    const changes = [
+      ['Department', doc.department, departmentName],
+      ['Name', doc.name, trunc(req.body.name, 255)],
+      ['Remarks', doc.remarks, trunc(req.body.remarks, 2000)],
+      ['Total Amount', Number(oldTotal).toFixed(2), items.reduce((t, it) => t + Number(it.amount || 0), 0).toFixed(2)],
+    ].filter(([, a, b]) => String(a ?? '') !== String(b ?? ''));
+    for (const [field, a, b] of changes) await logFormAudit(conn, doc.id, req.user.id, 'Updated', field, a || null, b || null);
+    if (!changes.length) await logFormAudit(conn, doc.id, req.user.id, 'Updated', 'Details');
     await conn.query(
       'UPDATE form_requests SET department = ?, department_id = ?, name = ?, remarks = ?, updated_at = NOW() WHERE id = ?',
       [departmentName, await resolveDepartmentId(conn, departmentName), trunc(req.body.name, 255), trunc(req.body.remarks, 2000), doc.id],
@@ -716,6 +808,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     }
 
     const status = await restoreAfterRevision(conn, doc);
+    if (status !== doc.status) await logFormAudit(conn, doc.id, req.user.id, 'Status Change', 'Status', STATUS_LABEL[doc.status], STATUS_LABEL[status]);
     await conn.commit();
     // A rejected form the owner has just revised is back in somebody's queue.
     if (doc.status === 'rejected') notifyFormStatus(doc.id, req.user.id);
@@ -758,6 +851,7 @@ router.post('/:id/submit', requireAuth, requirePermission(ROUTE, 'can_add'), asy
 
     await pool.query(
       "UPDATE form_requests SET status = 'submitted', submitted_at = NOW(), updated_at = NOW() WHERE id = ?", [doc.id]);
+    await logFormAudit(pool, doc.id, req.user.id, 'Status Change', 'Status', 'Draft', 'Submitted');
     notifyFormStatus(doc.id, req.user.id);
     return res.json({ ok: true, status: 'submitted' });
   } catch (err) { return next(err); }
@@ -786,6 +880,7 @@ router.post('/:id/note', requireAuth, async (req, res, next) => {
     await pool.query(
       "UPDATE form_requests SET status = 'noted', noted_at = NOW(), noted_by = ?, updated_at = NOW() WHERE id = ?",
       [req.user.id, doc.id]);
+    await logFormAudit(pool, doc.id, req.user.id, 'Status Change', 'Status', 'Submitted', 'Noted');
     notifyFormStatus(doc.id, req.user.id);
     return res.json({ ok: true, status: 'noted' });
   } catch (err) { return next(err); }
@@ -826,6 +921,7 @@ router.post('/:id/approve', requireAuth, requirePermission(APPROVAL_ROUTE, 'can_
     await pool.query(
       "UPDATE form_requests SET status = 'approved', approved_at = NOW(), approved_by = ?, updated_at = NOW() WHERE id = ?",
       [req.user.id, doc.id]);
+    await logFormAudit(pool, doc.id, req.user.id, 'Approved', 'Status', 'Noted', 'Approved');
     notifyFormStatus(doc.id, req.user.id);
     return res.json({ ok: true, status: 'approved' });
   } catch (err) { return next(err); }
@@ -850,6 +946,7 @@ router.post('/:id/reject', requireAuth, requirePermission(APPROVAL_ROUTE, 'can_a
               rejection_reason = ?, updated_at = NOW() WHERE id = ?`,
       [req.user.id, trunc(req.body.reason, 2000) || 'Rejected', doc.id],
     );
+    await logFormAudit(conn, doc.id, req.user.id, 'Disapproved', 'Reason', null, trunc(req.body.reason, 2000) || 'Rejected');
 
     const remarks = req.body.line_remarks && typeof req.body.line_remarks === 'object' ? req.body.line_remarks : {};
     for (const [itemId, remark] of Object.entries(remarks)) {
@@ -927,6 +1024,7 @@ router.post('/:id/attachments', requireAuth, async (req, res, next) => {
       `INSERT INTO form_request_attachments (form_request_id, file_name, mime_type, size_bytes, file_data, uploaded_by_user_id)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [doc.id, String(fileName).slice(0, 255), safeMime, buf.length, buf, req.user.id]);
+    await logFormAudit(pool, doc.id, req.user.id, 'Updated', 'Attachment', null, String(fileName).slice(0, 255));
     res.status(201).json({ id: r.insertId });
   } catch (err) { next(err); }
 });
@@ -953,7 +1051,7 @@ router.delete('/:id/attachments/:attachmentId', requireAuth, async (req, res, ne
     const doc = await formForAttachments(req.params.id);
     if (!doc) return res.status(404).json({ error: 'Not found' });
     const [[att]] = await pool.query(
-      'SELECT uploaded_by_user_id FROM form_request_attachments WHERE id = ? AND form_request_id = ?',
+      'SELECT uploaded_by_user_id, file_name FROM form_request_attachments WHERE id = ? AND form_request_id = ?',
       [req.params.attachmentId, doc.id]);
     if (!att) return res.status(404).json({ error: 'Not found' });
     const own = Number(att.uploaded_by_user_id) === Number(req.user.id);
@@ -962,6 +1060,7 @@ router.delete('/:id/attachments/:attachmentId', requireAuth, async (req, res, ne
       if (doc.status === 'approved') return res.status(409).json({ error: 'This form is approved -- its attachments stay as they were.' });
     }
     await pool.query('DELETE FROM form_request_attachments WHERE id = ? AND form_request_id = ?', [req.params.attachmentId, doc.id]);
+    await logFormAudit(pool, doc.id, req.user.id, 'Updated', 'Attachment', att.file_name, null);
     res.status(204).send();
   } catch (err) { next(err); }
 });
