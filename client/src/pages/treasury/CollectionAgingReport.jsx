@@ -105,7 +105,7 @@ export default function CollectionAgingReport() {
             <label>Aging</label>
             <select value={range.bucket} onChange={(e) => setRange({ ...range, bucket: e.target.value })}>
               <option value="">All</option>
-              {(summary.length ? summary : [{ key: '0-30', label: '0–30 days' }, { key: '31-60', label: '31–60 days' }, { key: '61-90', label: '61–90 days' }, { key: '91-120', label: '91–120 days' }, { key: '120+', label: 'Over 120 days' }])
+              {(summary.length ? summary : [{ key: 'current', label: 'Current' }, { key: '1-30', label: '1-30' }, { key: '31-60', label: '31-60' }, { key: '61-90', label: '61-90' }, { key: '90+', label: 'Over 90' }])
                 .map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}
             </select>
           </div>
@@ -132,11 +132,11 @@ export default function CollectionAgingReport() {
       {loading ? <LoadingSpinner /> : (
         <>
           <div className="card" style={{ marginBottom: 16 }}>
-            <h3 style={{ marginTop: 0 }}>Collected by Age of Invoice</h3>
+            <h3 style={{ marginTop: 0 }}>Collected by Days Past Due</h3>
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Age at Collection</th><th style={{ textAlign: 'right' }}>Invoices</th><th style={{ textAlign: 'right' }}>Amount Collected</th><th style={{ textAlign: 'right' }}>% of Total</th></tr>
+                  <tr><th>Aging</th><th style={{ textAlign: 'right' }}>Invoices</th><th style={{ textAlign: 'right' }}>Amount Collected</th><th style={{ textAlign: 'right' }}>% of Total</th></tr>
                 </thead>
                 <tbody>
                   {summary.map((b) => (
@@ -171,8 +171,8 @@ export default function CollectionAgingReport() {
               <table>
                 <thead>
                   <tr>
-                    <th>CPAY #</th><th>Payment Date</th><th>OR #</th><th>Customer</th><th>Invoice #</th>
-                    <th>Invoice Date</th><th>Invoice Due Date</th>
+                    <th>CPAY #</th><th>Payment Date</th><th>OR #</th><th>Invoice #</th>
+                    <th>Invoice Date</th><th>Invoice Due Date</th><th>Customer</th>
                     <th style={{ textAlign: 'right' }}>Age at Collection</th><th style={{ textAlign: 'right' }}>Days Past Due</th>
                     <th>Aging</th><th style={{ textAlign: 'right' }}>Amount Collected</th>
                   </tr>
@@ -186,10 +186,10 @@ export default function CollectionAgingReport() {
                       <td><Link className="link-btn" to={`/customer-payments/${r.payment_id}`}>{r.customer_payment_no}</Link></td>
                       <td>{day(r.payment_date)}</td>
                       <td>{r.or_no || '—'}</td>
-                      <td>{r.customer_name || '—'}</td>
                       <td><Link className="link-btn" to={`/sales-invoices/${r.invoice_id}`}>{r.invoice_no}</Link></td>
                       <td>{day(r.invoice_date)}</td>
                       <td>{day(r.date_due) || '—'}</td>
+                      <td>{r.customer_name || '—'}</td>
                       <td style={{ textAlign: 'right' }}>{r.age_days ?? '—'}</td>
                       <td style={{ textAlign: 'right', color: r.days_past_due > 0 ? 'var(--danger, #b91c1c)' : undefined }}>
                         {r.days_past_due == null ? '—' : r.days_past_due > 0 ? r.days_past_due : 'On time'}

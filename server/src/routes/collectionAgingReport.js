@@ -9,8 +9,11 @@ const router = express.Router();
 // range, one row per invoice each payment settled, with how old the invoice was when the money
 // came in -- so Treasury can see what was collected inside 30 days and what was chased for months.
 //
-//   Age at Collection   payment date - invoice date. What the buckets are on.
+//   Age at Collection   payment date - invoice date.
 //   Days Past Due       payment date - invoice due date; 0 or less means collected on time.
+//
+// Aging is on DAYS PAST DUE (2026-10-09): Current (paid by the due date), 1-30, 31-60, 61-90 and Over 90
+// days late. An invoice with no due date ages from its own date instead.
 //
 // Its own permission page, like the Disbursement Report: reading collections across customers is
 // Treasury's question, not the same right as raising a Customer Payment.
@@ -26,11 +29,11 @@ const ROUTE = '/treasury/collection-aging';
 const REAL_PAYMENT = "cp.customer_payment_no NOT LIKE 'CPAY-INV-%'";
 
 const BUCKETS = [
-  { key: '0-30', label: '0–30 days', min: -Infinity, max: 30 },
-  { key: '31-60', label: '31–60 days', min: 31, max: 60 },
-  { key: '61-90', label: '61–90 days', min: 61, max: 90 },
-  { key: '91-120', label: '91–120 days', min: 91, max: 120 },
-  { key: '120+', label: 'Over 120 days', min: 121, max: Infinity },
+  { key: 'current', label: 'Current', min: -Infinity, max: 0 },
+  { key: '1-30', label: '1-30', min: 1, max: 30 },
+  { key: '31-60', label: '31-60', min: 31, max: 60 },
+  { key: '61-90', label: '61-90', min: 61, max: 90 },
+  { key: '90+', label: 'Over 90', min: 91, max: Infinity },
 ];
 const bucketOf = (age) => (age == null ? null : BUCKETS.find((b) => age >= b.min && age <= b.max).key);
 
@@ -72,7 +75,7 @@ async function fetchRows(query) {
     age_days: r.age_days == null ? null : Number(r.age_days),
     days_past_due: r.days_past_due == null ? null : Number(r.days_past_due),
     applied_amount: Number(r.applied_amount || 0),
-    bucket: bucketOf(r.age_days == null ? null : Number(r.age_days)),
+    bucket: bucketOf(r.days_past_due != null ? Number(r.days_past_due) : (r.age_days == null ? null : Number(r.age_days))),
   }));
   // The summary is over the whole range; the bucket filter only narrows the rows listed.
   const summary = BUCKETS.map((b) => {
@@ -113,10 +116,10 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
       { header: 'CPAY #', key: 'cpay', width: 16 },
       { header: 'Payment Date', key: 'payment_date', width: 13 },
       { header: 'OR #', key: 'or_no', width: 12 },
-      { header: 'Customer', key: 'customer', width: 38 },
       { header: 'Invoice #', key: 'invoice_no', width: 15 },
       { header: 'Invoice Date', key: 'invoice_date', width: 13 },
       { header: 'Invoice Due Date', key: 'date_due', width: 15 },
+      { header: 'Customer', key: 'customer', width: 38 },
       { header: 'Age at Collection (days)', key: 'age', width: 14 },
       { header: 'Days Past Due', key: 'past_due', width: 12 },
       { header: 'Aging', key: 'bucket', width: 14 },
