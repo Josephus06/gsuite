@@ -5,6 +5,7 @@ const { insertNumbered } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeVendorBillGl } = require('../lib/glImpact');
+const { liquidationPostError } = require('../lib/liquidationPosting');
 
 const router = express.Router();
 // Reached from a Received Purchase Order's "Bill" button, confirmed against the real
@@ -381,14 +382,11 @@ async function createStandaloneBill(req, res, conn) {
   await assertPeriodOpen(dateCreated, 'ap', conn);
 
   // Raised from a Liquidation (Create Vendor Bill on the form): only an approved one, and only once
-  // -- a second bill would post the same expenses twice. A cancelled bill frees the form again.
+  // -- by this bill or by a Journal (lib/liquidationPosting.js), or the expenses post twice.
   const formRequestId = Number(req.body.form_request_id) || null;
   if (formRequestId) {
-    const [[form]] = await conn.query('SELECT type, status, request_no FROM form_requests WHERE id = ?', [formRequestId]);
-    if (!form || form.type !== 'liquidation') return res.status(400).json({ error: 'That form is not a liquidation.' });
-    if (form.status !== 'approved') return res.status(409).json({ error: `${form.request_no} is not approved yet.` });
-    const [[dup]] = await conn.query("SELECT bill_no FROM vendor_bills WHERE form_request_id = ? AND status <> 'cancelled' LIMIT 1", [formRequestId]);
-    if (dup) return res.status(409).json({ error: `${form.request_no} is already billed on ${dup.bill_no}.` });
+    const why = await liquidationPostError(conn, formRequestId);
+    if (why) return res.status(409).json({ error: why });
   }
 
   const accountIds = [...new Set(submitted.map((l) => Number(l.account_id)).filter(Boolean))];

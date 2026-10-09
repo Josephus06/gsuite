@@ -4,6 +4,7 @@ const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
+const { liquidationPostError } = require('../lib/liquidationPosting');
 
 const router = express.Router();
 // Journal (JRNL-####): a manual general-journal entry. Balanced debit/credit lines posted straight
@@ -72,6 +73,12 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
     if (!j) return res.status(404).json({ error: 'Not found' });
+    // The liquidation it posts, if raised from one. A separate lookup so a database without the
+    // column yet (db/add-journal-liquidation-link.js) still opens journals.
+    if (j.form_request_id) {
+      const [[fr]] = await pool.query('SELECT request_no FROM form_requests WHERE id = ?', [j.form_request_id]);
+      j.form_request_no = fr ? fr.request_no : null;
+    }
     const [lines] = await pool.query(
       `SELECT jl.*, coa.account_code, coa.account_name, d.name AS department_name
        FROM journal_lines jl
@@ -110,12 +117,20 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const deptError = lineDepartmentError(rows); // every line (2026-10-07), not only budgeted accounts
     if (deptError) return res.status(400).json({ error: deptError });
     await assertPeriodOpen(dateCreated, 'other_gl');
+    // Raised from a Liquidation (Create Journal on the form): an approved one that no Vendor Bill or
+    // Journal has posted yet (lib/liquidationPosting.js).
+    const formRequestId = Number(req.body.form_request_id) || null;
+    if (formRequestId) {
+      const why = await liquidationPostError(conn, formRequestId);
+      if (why) return res.status(409).json({ error: why });
+    }
 
     await conn.beginTransaction();
     const [r] = await conn.query(
-      `INSERT INTO journals (journal_no, date_created, location_id, currency, conversion, memo, status, total_debit, total_credit, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?, ?, 'SAVED', ?, ?, ?)`,
-      [dateCreated || new Date().toISOString().slice(0, 10), locationId || null, trunc(currency, 10), num(conversion) || 1, trunc(memo, 1000), totalDebit, totalCredit, req.user.id]
+      `INSERT INTO journals (journal_no, date_created, location_id, currency, conversion, memo, status, total_debit, total_credit, created_by_user_id${formRequestId ? ', form_request_id' : ''})
+       VALUES ('', ?, ?, ?, ?, ?, 'SAVED', ?, ?, ?${formRequestId ? ', ?' : ''})`,
+      [dateCreated || new Date().toISOString().slice(0, 10), locationId || null, trunc(currency, 10), num(conversion) || 1, trunc(memo, 1000), totalDebit, totalCredit, req.user.id,
+        ...(formRequestId ? [formRequestId] : [])]
     );
     const journalId = r.insertId;
     const journalNo = await assignDocNo(conn, { table: 'journals', column: 'journal_no', prefix: 'JRNL-', id: journalId });

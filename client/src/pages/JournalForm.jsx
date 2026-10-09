@@ -52,6 +52,38 @@ export default function JournalForm() {
     }).catch((e) => setError(e.response?.data?.error || 'Could not load the journal to replicate.'));
   }, [replicateId]);
 
+  // ?liquidation=<form id>: Create Journal on an approved Liquidation. Its GL Impact becomes the
+  // lines -- each item's account debited for its amount (memo: its particulars), the form's credit
+  // account (13305 unless AP chose another) credited for the total -- all under the form's
+  // department with the filer as Employee. Saved with form_request_id, so the form shows this
+  // journal and cannot be posted a second time by journal or Vendor Bill.
+  const liquidationId = editId ? null : searchParams.get('liquidation');
+  const [liquidation, setLiquidation] = useState(null);
+  useEffect(() => {
+    if (!liquidationId || !meta) return;
+    api.get(`/forms/${liquidationId}`).then(({ data: f }) => {
+      setLiquidation(f);
+      const acct = (id) => meta.accounts.find((a) => String(a.id) === String(id));
+      const label = (a) => (a ? `${a.account_code} — ${a.account_name}` : '');
+      const dept = meta.departments.some((d) => String(d.id) === String(f.department_id)) ? f.department_id : '';
+      const emp = f.journal_employee;
+      const party = emp ? { party_type: 'EMPLOYEE', party_id: emp.id, party_name: emp.name } : {};
+      const items = (f.items || []).filter((it) => Number(it.amount) && it.cogs_account_id);
+      const total = items.reduce((s, it) => s + Number(it.amount), 0);
+      const credit = (f.credit_account_id && acct(f.credit_account_id)) || meta.accounts.find((a) => a.account_code === '13305');
+      const ho = meta.locations.find((l) => /head office/i.test(l.location_name || ''));
+      setHeader((h) => ({ ...h, location_id: ho ? ho.id : h.location_id, memo: `Liquidation ${f.request_no}${f.name ? ` -- ${f.name}` : ''}` }));
+      const next = items.map((it) => ({
+        ...EMPTY_LINE, ...party, account_id: it.cogs_account_id, account_label: label(acct(it.cogs_account_id)),
+        department_id: dept, debit: String(Number(it.amount)), memo: it.particulars || '',
+      }));
+      if (credit && total) {
+        next.push({ ...EMPTY_LINE, ...party, account_id: credit.id, account_label: label(credit), department_id: dept, credit: total.toFixed(2), memo: f.request_no });
+      }
+      if (next.length) setLines(next);
+    }).catch((e) => setError(e.response?.data?.error || 'Could not load the liquidation.'));
+  }, [liquidationId, meta]);
+
   useEffect(() => {
     api.get('/journals/meta').then(({ data }) => { setMeta(data); setLoading(false); }).catch((e) => { setError(e.response?.data?.error || 'Failed to load.'); setLoading(false); });
   }, []);
@@ -90,7 +122,7 @@ export default function JournalForm() {
     try {
       const { data } = editId
         ? await api.put(`/journals/${editId}`, { ...header, lines: payload })
-        : await api.post('/journals', { ...header, lines: payload });
+        : await api.post('/journals', { ...header, lines: payload, ...(liquidation ? { form_request_id: liquidation.id } : {}) });
       navigate(`/journals/${data.id}`);
     } catch (e) { setError(e.response?.data?.error || 'Save failed.'); setSaving(false); }
   }
@@ -100,9 +132,9 @@ export default function JournalForm() {
   return (
     <div>
       <div className="page-header">
-        <h1>{editId ? `Edit ${replicatedFrom || 'Journal'}` : 'New Journal'}{!editId && replicatedFrom && <span className="muted" style={{ fontSize: "0.6em", marginLeft: 10 }}>replicated from {replicatedFrom}</span>}</h1>
+        <h1>{editId ? `Edit ${replicatedFrom || 'Journal'}` : 'New Journal'}{!editId && replicatedFrom && <span className="muted" style={{ fontSize: "0.6em", marginLeft: 10 }}>replicated from {replicatedFrom}</span>}{liquidation && <span className="muted" style={{ fontSize: '0.6em', marginLeft: 10 }}>from {liquidation.request_no}</span>}</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <Link className="btn btn-sm" to={editId ? `/journals/${editId}` : '/journals'}>{editId ? 'Cancel' : 'Back'}</Link>
+          <Link className="btn btn-sm" to={editId ? `/journals/${editId}` : liquidationId ? `/forms/${liquidationId}` : '/journals'}>{editId ? 'Cancel' : 'Back'}</Link>
           <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
         </div>
       </div>

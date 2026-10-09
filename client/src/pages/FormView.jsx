@@ -146,8 +146,10 @@ export default function FormView() {
   // Said plainly to the approver looking at a form they cannot yet act on, so a missing Approve
   // button reads as "waiting on the head" rather than as something broken.
   const awaitingNote = doc.can_approve && doc.status === 'submitted';
-  // An approved liquidation goes to the books through a Vendor Bill raised from it, once.
-  const mayBill = doc.type === 'liquidation' && doc.status === 'approved' && !doc.vendor_bill && can('/vendor-bills', 'can_add');
+  // An approved liquidation goes to the books through a Vendor Bill OR a Journal raised from it, once.
+  const unposted = doc.type === 'liquidation' && doc.status === 'approved' && !doc.gl_posts;
+  const mayBill = unposted && can('/vendor-bills', 'can_add');
+  const mayJournal = unposted && can('/journals', 'can_add');
 
   async function discard() {
     if (!confirm(`Discard ${doc.request_no}? This cannot be undone.`)) return;
@@ -186,8 +188,14 @@ export default function FormView() {
           {mayBill && (
             <button className="btn btn-sm btn-primary" onClick={() => setBilling(true)}>Create Vendor Bill</button>
           )}
+          {mayJournal && (
+            <Link className="btn btn-sm btn-primary" to={`/journals/new?liquidation=${doc.id}`}>Create Journal</Link>
+          )}
           {doc.vendor_bill && (
             <Link className="btn btn-sm" to={`/vendor-bills/${doc.vendor_bill.id}`}>{doc.vendor_bill.bill_no}</Link>
+          )}
+          {doc.journal && (
+            <Link className="btn btn-sm" to={`/journals/${doc.journal.id}`}>{doc.journal.journal_no}</Link>
           )}
         </div>
       </div>
@@ -395,8 +403,8 @@ export default function FormView() {
           <h3>GL Impact</h3>
           <p className="muted" style={{ marginTop: 0 }}>
             {doc.gl_posts
-              ? <>Posted to the books through {doc.vendor_bill.bill_no}. The liquidation itself posts nothing.</>
-              : 'Not posted. This liquidation posts nothing on its own: once approved, Accounts Payable creates a Vendor Bill from it, and that bill debits each item\'s account and credits the credit account below.'}
+              ? <>Posted to the books through {doc.vendor_bill ? doc.vendor_bill.bill_no : doc.journal.journal_no}. The liquidation itself posts nothing.</>
+              : 'Not posted. This liquidation posts nothing on its own: once approved, Accounts Payable creates a Vendor Bill or a Journal from it, which debits each item\'s account and credits the credit account below.'}
           </p>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
             <span className="muted">Credit Account :</span>

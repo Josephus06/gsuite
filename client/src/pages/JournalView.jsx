@@ -112,6 +112,9 @@ export default function JournalView() {
           </div>
           <div>
             <div>Memo : <span className="hi">{j.memo || ''}</span></div>
+            {j.form_request_id && (
+              <div>Created From : <Link className="link-btn" to={`/forms/${j.form_request_id}`}>{j.form_request_no || 'Liquidation'}</Link></div>
+            )}
           </div>
         </div>
       </div>

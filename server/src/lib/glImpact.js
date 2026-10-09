@@ -1316,10 +1316,10 @@ async function computePostedGlLines({ toDate, fromDate }) {
     }
   }
 
-  // Liquidations (Forms) post NOTHING here (2026-10-09). Accounts Payable raises a Vendor Bill from
-  // an approved one (Create Vendor Bill on the form, vendor_bills.form_request_id) and the bill
-  // posts the same entry -- each item's account debited, the liquidation's credit account credited.
-  // Posting the form as well would put every liquidation on the books twice.
+  // Liquidations (Forms) post NOTHING here (2026-10-09). Accounts Payable raises a Vendor Bill or a
+  // Journal from an approved one (Create Vendor Bill / Create Journal on the form; form_request_id on
+  // either, lib/liquidationPosting.js) and that posts the same entry -- each item's account debited,
+  // the liquidation's credit account credited. Posting the form as well would count it twice.
 
   // Cheques -- computeChequeGl above has the entry.
   //
