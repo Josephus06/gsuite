@@ -203,7 +203,17 @@ export default function InventoryEdit() {
           </div>
 
           <div className="field"><label>Reorder Point</label><input type="number" step="0.0001" value={form.reorder_point} onChange={(e) => setForm({ ...form, reorder_point: e.target.value })} /></div>
-          <div className="field"><label>TO Type</label><input value={form.to_type} onChange={(e) => setForm({ ...form, to_type: e.target.value })} /></div>
+          {/* A dropdown, as the source has it (2026-10-12): as free text it took browser autofill --
+              a whole description landed here and the 30-character column refused every save. */}
+          <div className="field">
+            <label>TO Type</label>
+            <select value={form.to_type} onChange={(e) => setForm({ ...form, to_type: e.target.value })}>
+              <option value="">--Select--</option>
+              <option value="Count">Count</option>
+              <option value="Whole">Whole</option>
+              {form.to_type && !['Count', 'Whole'].includes(form.to_type) && <option value={form.to_type}>{form.to_type}</option>}
+            </select>
+          </div>
         </div>
         <div className="field-row" style={{ marginTop: 12 }}>
           <div className="field field-checkbox">
