@@ -463,6 +463,35 @@ export default function FormView() {
         </div>
       )}
 
+      {/* Related Records (2026-10-12): the Vendor Bills and Journal raised from this liquidation. */}
+      {doc.type === 'liquidation' && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3>Related Records</h3>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Type</th><th>Document #</th><th>Date</th><th>Vendor</th><th>Status</th><th style={{ textAlign: 'right' }}>Amount</th></tr>
+              </thead>
+              <tbody>
+                {(doc.related_records || []).length === 0 && (
+                  <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>No Vendor Bill or Journal yet.</td></tr>
+                )}
+                {(doc.related_records || []).map((r) => (
+                  <tr key={`${r.type}-${r.id}`}>
+                    <td>{r.type}</td>
+                    <td><Link to={r.type === 'Journal' ? `/journals/${r.id}` : `/vendor-bills/${r.id}`}>{r.doc_no}</Link></td>
+                    <td>{fmtDate(r.date_created)}</td>
+                    <td>{r.party || ''}</td>
+                    <td>{pretty(r.status)}</td>
+                    <td style={{ textAlign: 'right' }}>{money(r.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <FormSystemInfo formId={doc.id} version={`${doc.updated_at}|${doc.status}`} />
 
       {billing && (

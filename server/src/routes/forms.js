@@ -535,6 +535,16 @@ router.get('/:id', requireAuth, async (req, res, next) => {
       doc.gl_posts = billing.fullyPosted;
       doc.partly_billed = billing.bills.length > 0 && !billing.fullyPosted;
       doc.billed_items = Object.fromEntries(billing.billOfItem);
+      // Related Records (2026-10-12): every Vendor Bill and Journal raised from it, cancelled and
+      // voided ones too, so the history shows.
+      const [rvb] = await pool.query(
+        `SELECT 'Vendor Bill' AS type, vb.id, vb.bill_no AS doc_no, vb.date_created, vb.status, vb.gross_amount AS amount, s.name AS party
+           FROM vendor_bills vb LEFT JOIN suppliers s ON s.id = vb.supplier_id
+          WHERE vb.form_request_id = ? ORDER BY vb.id`, [doc.id]);
+      const [rj] = await pool.query(
+        `SELECT 'Journal' AS type, j.id, j.journal_no AS doc_no, j.date_created, j.status, j.total_debit AS amount, NULL AS party
+           FROM journals j WHERE j.form_request_id = ? ORDER BY j.id`, [doc.id]);
+      doc.related_records = [...rvb, ...rj];
       if (doc.status === 'approved' && !doc.gl_posts) {
         // Create Vendor Bill's vendor: the filer, matched by name among the suppliers (employees who
         // liquidate are set up as suppliers to be paid).
