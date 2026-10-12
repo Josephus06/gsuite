@@ -61,6 +61,7 @@ import JobOrderView from './pages/JobOrderView';
 import JobOrderEdit from './pages/JobOrderEdit';
 import PmsJobTypes from './pages/PmsJobTypes';
 import JobTypes from './pages/JobTypes';
+import UnitOfMeasures from './pages/UnitOfMeasures';
 import JobTypeEdit from './pages/JobTypeEdit';
 import AssignedJobOrders from './pages/AssignedJobOrders';
 import ArtistIncentiveReport from './pages/reports/ArtistIncentiveReport';
@@ -333,6 +334,7 @@ function App() {
         <Route path="/job-orders/:id/edit" element={<JobOrderEdit />} />
         <Route path="/pms-job-types" element={<PmsJobTypes />} />
         <Route path="/job-types" element={<JobTypes />} />
+        <Route path="/unit-of-measures" element={<UnitOfMeasures />} />
         <Route path="/job-types/new" element={<JobTypeEdit />} />
         <Route path="/job-types/:id/edit" element={<JobTypeEdit />} />
         <Route path="/assigned-jo" element={<AssignedJobOrders />} />

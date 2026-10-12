@@ -92,6 +92,7 @@ const budgetRoutes = require('./routes/budgets');
 const birReportRoutes = require('./routes/birReports');
 const collectionForecastRoutes = require('./routes/collectionForecast');
 const collectionAgingReportRoutes = require('./routes/collectionAgingReport');
+const unitOfMeasuresRoutes = require('./routes/unitOfMeasures');
 const itineraryRoutes = require('./routes/itineraries');
 const artistIncentiveReportRoutes = require('./routes/artistIncentiveReport');
 const notificationRoutes = require('./routes/notifications');
@@ -310,6 +311,7 @@ app.use('/api/reports/bir', birReportRoutes);
 // Treasury > Collection Forecast -- when Treasury expects to collect each open invoice.
 app.use('/api/collection-forecast', collectionForecastRoutes);
 app.use('/api/reports/collection-aging', collectionAgingReportRoutes);
+app.use('/api/unit-of-measures', unitOfMeasuresRoutes);
 app.use('/api/itineraries', itineraryRoutes);
 app.use('/api/tickets/report', ticketReportRoutes);
 app.use('/api/tickets', ticketRoutes);

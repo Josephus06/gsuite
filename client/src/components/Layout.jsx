@@ -90,6 +90,7 @@ const NAV_STRUCTURE = [
       { route: '/job-types', label: 'Job Types' },
       { route: '/pms-job-types', label: 'PMS Job Types' },
       { route: '/inventory', label: 'Inventory Items' },
+      { route: '/unit-of-measures', label: 'Unit of Measures' },
       { route: '/service-items', label: 'Service Items' },
       { route: '/non-inventories', label: 'Non-Inventories' },
       { route: '/web-products', label: 'Website Products' },
