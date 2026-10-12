@@ -1223,15 +1223,26 @@ router.post('/:id/item-fulfillments', requireAuth, requirePermission(FULFILLMENT
   }
 });
 
-router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+// Cancelling (asked 2026-10-12): while Pending Fulfillment, by whoever raised the TO -- everyone may
+// cancel their own -- or by anyone with Can Edit on Transfer Orders. Once anything is fulfilled, by a
+// System Admin only, as with editing (toEditBlocked). Never a Received or Cancelled one.
+router.put('/:id/cancel', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[t]] = await conn.query('SELECT status, date_created FROM transfer_orders WHERE id = ?', [req.params.id]);
+    const [[t]] = await conn.query('SELECT status, date_created, created_by_user_id FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
-    await assertPeriodOpen(t.date_created, 'non_gl', conn);
     if (t.status === 'received' || t.status === 'cancelled') {
       return res.status(409).json({ error: `A transfer order that's already ${t.status === 'received' ? 'Received' : 'Cancelled'} can't be cancelled.` });
     }
+    if (t.status === 'pending_fulfillment') {
+      const own = Number(t.created_by_user_id) === Number(req.user.id);
+      if (!own && !(await userCan(req.user.id, ROUTE, 'can_edit'))) {
+        return res.status(403).json({ error: 'Only the person who raised this transfer order can cancel it.' });
+      }
+    } else if (!(await isSystemAdmin(req.user.id))) {
+      return res.status(409).json({ error: 'This transfer order has been fulfilled already -- only a System Admin can cancel it now.' });
+    }
+    await assertPeriodOpen(t.date_created, 'non_gl', conn);
 
     await conn.beginTransaction();
     await conn.query("UPDATE transfer_orders SET status = 'cancelled', updated_at = NOW() WHERE id = ?", [req.params.id]);

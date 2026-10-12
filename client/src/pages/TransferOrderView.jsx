@@ -111,6 +111,11 @@ export default function TransferOrderView() {
   const canStillFulfill = CAN_STILL_FULFILL.includes(to.status);
   const canReceive = CAN_RECEIVE.includes(to.status);
   const canCancel = to.status !== 'received' && to.status !== 'cancelled';
+  // Who may cancel (asked 2026-10-12; the server's PUT /:id/cancel): while Pending Fulfillment, the
+  // person who raised it or anyone with Can Edit; once fulfilled, a System Admin only.
+  const ownTo = Number(to?.created_by_user_id) === Number(user?.id);
+  const mayCancel = !periodLocked && canCancel
+    && (isPending ? (ownTo || can('/transfer-orders', 'can_edit')) : isAdmin);
 
   return (
     <div>
@@ -121,7 +126,7 @@ export default function TransferOrderView() {
           {canEdit && editableStatus && <Link className="btn btn-sm btn-primary" to={`/transfer-orders/${id}/edit`}>Edit</Link>}
           {mayFulfill && canStillFulfill && lines.length > 0 && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfillModal(true)}>Fulfill</button>}
           {mayReceive && canReceive && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfillmentsPicker(true)}>Receive</button>}
-          {(can('/transfer-orders', 'can_edit') && !periodLocked) && canCancel && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
+          {mayCancel && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
           <button className="btn btn-sm" onClick={() => window.open(`/transfer-orders/${id}/print`, '_blank')}>Print</button>
         </div>
       </div>
