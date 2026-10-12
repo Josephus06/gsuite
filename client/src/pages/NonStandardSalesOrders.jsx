@@ -145,20 +145,23 @@ export default function NonStandardSalesOrders() {
               <option value="internal">Internal</option>
             </select>
           </div>
-          <div className="field">
+          {/* Period puts two dates beside the mode picker -- more than one grid cell holds, so the
+              field takes two cells then, and each date may shrink (min-width 0) rather than spill
+              under Sales Rep. */}
+          <div className="field" style={dateMode === 'range' ? { gridColumn: 'span 2' } : undefined}>
             <label>Date</label>
             <div style={{ display: 'flex', gap: 6 }}>
-              <select value={dateMode} onChange={(e) => setDateMode(e.target.value)} style={{ width: 'auto' }}>
+              <select value={dateMode} onChange={(e) => setDateMode(e.target.value)} style={{ width: 'auto', flex: '0 0 auto' }}>
                 <option value="as_of">As of</option>
                 <option value="range">Period</option>
               </select>
               {dateMode === 'range' ? (
                 <>
-                  <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} title="From" />
-                  <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} title="To" />
+                  <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} title="From" style={{ flex: 1, minWidth: 0 }} />
+                  <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} title="To" style={{ flex: 1, minWidth: 0 }} />
                 </>
               ) : (
-                <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+                <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
               )}
             </div>
           </div>
