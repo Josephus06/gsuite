@@ -228,7 +228,11 @@ function ChatBox({ box, meId, onClose, onToggle, onSent, onOlder, isTyping, seen
           <Avatar user={box.user} size={28} />
           {box.user.online && <span className="chat-online-dot" />}
         </span>
-        <span className="chat-box-name">{box.user.display_name}</span>
+        <span className="chat-box-name">
+          {box.user.display_name}
+          {/* Minimized, the typing bubble inside the box cannot be seen -- say it on the header. */}
+          {box.minimized && isTyping && <span className="chat-head-typing">typing…</span>}
+        </span>
         {box.minimized && box.unread > 0 && (
           <span className="chat-unread" title={`${box.unread} unread message${box.unread === 1 ? '' : 's'}`}>
             {box.unread > 99 ? '99+' : box.unread}
