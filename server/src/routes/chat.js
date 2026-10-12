@@ -1,4 +1,5 @@
 const express = require('express');
+const { EventEmitter } = require('events');
 const pool = require('../db');
 const { requireAuth, userCan } = require('../middleware/auth');
 
@@ -14,6 +15,23 @@ const ONLINE_MINUTES = 5; // the newsfeed's Contacts rail uses the same window
 const MAX_BODY = 4000;
 
 const canChat = (userId) => userCan(userId, ROUTE, 'can_view');
+
+// Long poll (see GET /poll): a waiting request is woken the moment a message for its user is saved
+// through this server, and otherwise re-checks the table every RECHECK_MS for one saved through
+// another server. LONG_POLL_MS stays well under the proxy's 60 s read timeout.
+const LONG_POLL_MS = 25000;
+const RECHECK_MS = 1000;
+const bus = new EventEmitter();
+bus.setMaxListeners(0); // one listener per waiting browser tab
+const wake = (userId) => bus.emit(`u${userId}`);
+function waitForWake(userId, ms) {
+  return new Promise((resolve) => {
+    const ev = `u${userId}`;
+    const done = () => { clearTimeout(timer); bus.off(ev, done); resolve(); };
+    const timer = setTimeout(done, Math.max(0, ms));
+    bus.on(ev, done);
+  });
+}
 
 async function requireChat(req, res, next) {
   try {
@@ -72,16 +90,37 @@ router.get('/poll', requireAuth, requireChat, async (req, res, next) => {
           WHERE m.recipient_user_id = ? AND m.read_at IS NULL`, [me]);
       return res.json({ last_id: Number(last), messages: [], unread: Number(unread), pending });
     }
-    const [messages] = await pool.query(
+    const fetchNew = async () => (await pool.query(
       `SELECT m.id, m.sender_user_id, m.recipient_user_id, m.body, m.created_at, m.read_at,
               o.id AS other_id, o.display_name AS other_name, o.avatar_data AS other_avatar
          FROM chat_messages m
          JOIN users o ON o.id = IF(m.sender_user_id = ?, m.recipient_user_id, m.sender_user_id)
         WHERE m.id > ? AND (m.recipient_user_id = ? OR m.sender_user_id = ?)
-        ORDER BY m.id LIMIT 200`, [me, after, me, me]);
+        ORDER BY m.id LIMIT 200`, [me, after, me, me]))[0];
+
+    // LONG POLL (?wait=1; 2026-10-12 -- a 4-second poll made every message up to 4 seconds late).
+    // Nothing new yet: hold the request until something is, up to LONG_POLL_MS. A message sent
+    // through THIS server wakes it at once (bus); one sent through another server (cloud / office /
+    // SM, joined by replication) is caught by re-checking the table every RECHECK_MS. Given up early
+    // if the browser goes away, so a closed tab does not keep checking.
+    let messages = await fetchNew();
+    if (!messages.length && req.query.wait === '1') {
+      let gone = false;
+      res.on('close', () => { if (!res.writableEnded) gone = true; });
+      const deadline = Date.now() + LONG_POLL_MS;
+      while (!messages.length && !gone && Date.now() < deadline) {
+        await waitForWake(me, Math.min(RECHECK_MS, deadline - Date.now()));
+        if (gone) return undefined;
+        messages = await fetchNew();
+      }
+      if (gone) return undefined;
+    }
+    const [[{ unread: unreadNow }]] = messages.length
+      ? await pool.query('SELECT COUNT(*) AS unread FROM chat_messages WHERE recipient_user_id = ? AND read_at IS NULL', [me])
+      : [[{ unread }]];
     const lastId = messages.length ? messages[messages.length - 1].id : after;
-    res.json({ last_id: lastId, messages, unread: Number(unread) });
-  } catch (err) { next(err); }
+    return res.json({ last_id: lastId, messages, unread: Number(unreadNow) });
+  } catch (err) { return next(err); }
 });
 
 // One conversation, newest 50 (or the 50 before `before`), oldest first.
@@ -115,6 +154,8 @@ router.post('/send', requireAuth, requireChat, async (req, res, next) => {
     if (!u || !u.is_active) return res.status(404).json({ error: 'That user is not available.' });
     if (!(await canChat(to))) return res.status(403).json({ error: 'That user does not have Chat.' });
     const [r] = await pool.query('INSERT INTO chat_messages (sender_user_id, recipient_user_id, body) VALUES (?, ?, ?)', [me, to, body]);
+    // Deliver now to anyone waiting on this server -- the recipient, and the sender's other tabs.
+    wake(to); wake(me);
     const [[row]] = await pool.query(
       'SELECT id, sender_user_id, recipient_user_id, body, created_at, read_at FROM chat_messages WHERE id = ?', [r.insertId]);
     res.status(201).json(row);

@@ -9,7 +9,7 @@ import Avatar from './Avatar';
 // screen wherever you are, with a chime. Only for users with the Chat permission (/chat).
 //
 // Open a box from anywhere with openChat(user) -- the Dashboard's people list does.
-const POLL_MS = 4000;
+const RETRY_MS = 3000; // wait after a failed poll before trying again
 const MAX_BOXES = 3;
 
 export function openChat(user) {
@@ -63,20 +63,25 @@ export default function ChatDock() {
   }, [enabled, open]);
 
   // The poll: new messages to or from me. A message from someone opens their box.
+  //
+  // LONG POLL (2026-10-12): each request waits on the server until a message arrives (up to 25 s)
+  // and the next one goes out the moment it returns, so a message shows as soon as it is sent --
+  // not up to 4 seconds later, as the old interval had it. After an error it backs off.
   useEffect(() => {
     if (!enabled) return undefined;
     let stopped = false;
+    const ctrl = new AbortController();
     async function poll() {
       try {
         if (lastIdRef.current === null) {
-          const { data } = await api.get('/chat/poll');
+          const { data } = await api.get('/chat/poll', { signal: ctrl.signal });
           lastIdRef.current = data.last_id;
           // Unread waiting from before this page loaded: open those boxes, minimized.
           for (const p of data.pending || []) open(p, { focus: false });
-          return;
+          return true;
         }
-        const { data } = await api.get('/chat/poll', { params: { after: lastIdRef.current } });
-        if (stopped) return;
+        const { data } = await api.get('/chat/poll', { params: { after: lastIdRef.current, wait: 1 }, signal: ctrl.signal, timeout: 40000 });
+        if (stopped) return true;
         lastIdRef.current = data.last_id;
         let incoming = false;
         for (const m of data.messages || []) {
@@ -94,11 +99,18 @@ export default function ChatDock() {
           if (!mine) incoming = true;
         }
         if (incoming) chime();
-      } catch { /* a missed beat is retried on the next */ }
+        return true;
+      } catch {
+        return false; // offline, server restarting, or the tab is closing
+      }
     }
-    poll();
-    const t = setInterval(poll, POLL_MS);
-    return () => { stopped = true; clearInterval(t); };
+    (async () => {
+      while (!stopped) {
+        const ok = await poll();
+        if (!ok && !stopped) await new Promise((r) => setTimeout(r, RETRY_MS));
+      }
+    })();
+    return () => { stopped = true; ctrl.abort(); };
   }, [enabled, user?.id, open, markRead]);
 
   if (!enabled || !boxes.length) return null;
