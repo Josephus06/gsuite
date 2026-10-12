@@ -449,6 +449,11 @@ if (crmAttentionJobEnabled()) {
   );
 }
 
+// Chat keeps only today's messages (lib/chatPurge.js): yesterday's are deleted just after midnight
+// business time. OFF unless CHAT_PURGE_JOB=1 -- set it on ONE box of the replicated pair.
+const { chatPurgeJobEnabled, scheduleChatPurge } = require('./lib/chatPurge');
+if (chatPurgeJobEnabled()) scheduleChatPurge();
+
 // In production (Railway) the client is built into client/dist and this server
 // serves it directly -- single deployable service, same origin as /api so the
 // client's relative baseURL('/api') keeps working with no config.
