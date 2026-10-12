@@ -44,7 +44,8 @@ const blankLine = () => ({ key: Math.random().toString(36).slice(2), account: nu
 // session, so a replica is prepared by whoever replicated it rather than by whoever raised the
 // original.
 //
-// `fromLiquidation` is an approved Liquidation (the form as GET /forms/:id returns it) -- Create
+// `fromLiquidation` is an approved Liquidation or Request for Payment (the form as GET /forms/:id
+// returns it; an RFP's items carry no account, so Accounting picks each line's) -- Create
 // Vendor Bill on the form. Its items become the expense lines (each item's account, particulars and
 // amount, under the form's department), the form's credit account is the header Account (13305
 // Advances To Employees - For Liquidation unless AP chose another) and the filer is the vendor. The
@@ -94,10 +95,18 @@ export default function StandaloneVendorBillModal({ onClose, onSaved, replicateF
       const days = t ? Number(t.no_of_days) : (sup.no_of_days != null ? Number(sup.no_of_days) : null);
       if (days != null) setDateDue(addDays(new Date().toISOString().slice(0, 10), days || 0));
     }
-    setApAccount((f.credit_account_id && findAcct(f.credit_account_id))
-      || (metaData.accounts || []).find((a) => a.account_code === '13305') || metaData.ap_account || null);
+    // A Request for Payment (2026-10-12) is an ordinary payable: Accounts Payable - Trade, with its
+    // Payable To in the memo. A liquidation clears the employee's advance (13305 unless AP chose
+    // another credit account on the form).
+    const isRfp = f.type === 'payment';
+    setApAccount(isRfp
+      ? (metaData.ap_account || null)
+      : ((f.credit_account_id && findAcct(f.credit_account_id))
+        || (metaData.accounts || []).find((a) => a.account_code === '13305') || metaData.ap_account || null));
     setOfficeLocation(locs.find((l) => /head office/i.test(l.location_name || '')) || null);
-    setMemo(`Liquidation ${f.request_no}${f.name ? ` -- ${f.name}` : ''}`);
+    setMemo(isRfp
+      ? `Request for Payment ${f.request_no}${f.detail?.payable_to ? ` -- ${f.detail.payable_to}` : ''}`
+      : `Liquidation ${f.request_no}${f.name ? ` -- ${f.name}` : ''}`);
     const deptOk = (metaData.departments || []).some((d) => String(d.id) === String(f.department_id));
     // Only the items not on a bill yet: a liquidation can be split across bills by item (2026-10-12).
     // Each line remembers its item, so removing a line leaves that item for another bill.

@@ -148,9 +148,10 @@ export default function FormView() {
   const awaitingNote = doc.can_approve && doc.status === 'submitted';
   // An approved liquidation goes to the books through Vendor Bills -- one, or several split by item
   // (2026-10-12), each item on one bill -- OR through one Journal while nothing has posted it yet.
-  const unposted = doc.type === 'liquidation' && doc.status === 'approved' && !doc.gl_posts;
+  // A Request for Payment is billed the same way, by Vendor Bill only -- no Journal (2026-10-12).
+  const unposted = !!doc.billable && doc.status === 'approved' && !doc.gl_posts;
   const mayBill = unposted && can('/vendor-bills', 'can_add');
-  const mayJournal = unposted && !(doc.vendor_bills || []).length && can('/journals', 'can_add');
+  const mayJournal = unposted && doc.type === 'liquidation' && !(doc.vendor_bills || []).length && can('/journals', 'can_add');
 
   async function discard() {
     if (!confirm(`Discard ${doc.request_no}? This cannot be undone.`)) return;
@@ -463,8 +464,8 @@ export default function FormView() {
         </div>
       )}
 
-      {/* Related Records (2026-10-12): the Vendor Bills and Journal raised from this liquidation. */}
-      {doc.type === 'liquidation' && (
+      {/* Related Records (2026-10-12): the Vendor Bills (and a liquidation's Journal) raised from it. */}
+      {doc.billable && (
         <div className="card" style={{ marginTop: 16 }}>
           <h3>Related Records</h3>
           <div className="table-wrap">
@@ -474,7 +475,7 @@ export default function FormView() {
               </thead>
               <tbody>
                 {(doc.related_records || []).length === 0 && (
-                  <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>No Vendor Bill or Journal yet.</td></tr>
+                  <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>{doc.type === 'payment' ? 'No Vendor Bill yet.' : 'No Vendor Bill or Journal yet.'}</td></tr>
                 )}
                 {(doc.related_records || []).map((r) => (
                   <tr key={`${r.type}-${r.id}`}>

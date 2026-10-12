@@ -3,7 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission, userCan, isSystemAdmin } = require('../middleware/auth');
 const { insertNumbered } = require('../lib/docNumber');
 const { computeLiquidationGl } = require('../lib/glImpact');
-const { liquidationBilling } = require('../lib/liquidationPosting');
+const { BILLABLE_FORM_TYPES, liquidationBilling } = require('../lib/liquidationPosting');
 const {
   DEPARTMENT_NOTED_TYPES, isDepartmentNoter, departmentsHeadedBy, notersFor,
   AP_NOTED_TYPES, isAccountsPayable, notersForDoc,
@@ -525,8 +525,12 @@ router.get('/:id', requireAuth, async (req, res, next) => {
     // The entry its Vendor Bill or Journal will post (lib/glImpact.js computeLiquidationGl), shown as
     // it stands now. The liquidation itself posts nothing (2026-10-09): once approved, Accounts
     // Payable raises a Vendor Bill or a Journal from it, and that is what reaches the books.
-    if (doc.needs_cogs) {
-      doc.gl_impact = await computeLiquidationGl(doc, doc.items);
+    if (doc.needs_cogs) doc.gl_impact = await computeLiquidationGl(doc, doc.items);
+    // A Request for Payment is billed too, by Vendor Bill only (2026-10-12): the same split by item,
+    // no Journal, and no GL Impact of its own -- its items carry no accounts; Accounting picks them on
+    // the bill.
+    doc.billable = BILLABLE_FORM_TYPES.includes(doc.type);
+    if (doc.billable) {
       // Its Vendor Bills -- one or several, each item on one (2026-10-12) -- or its Journal.
       const billing = await liquidationBilling(pool, doc.id);
       doc.vendor_bills = billing.bills;
@@ -546,11 +550,15 @@ router.get('/:id', requireAuth, async (req, res, next) => {
            FROM journals j WHERE j.form_request_id = ? ORDER BY j.id`, [doc.id]);
       doc.related_records = [...rvb, ...rj];
       if (doc.status === 'approved' && !doc.gl_posts) {
-        // Create Vendor Bill's vendor: the filer, matched by name among the suppliers (employees who
-        // liquidate are set up as suppliers to be paid).
+        // Create Vendor Bill's vendor, matched by name among the suppliers: for a Request for Payment
+        // its Payable To; for a liquidation the filer (employees who liquidate are set up as
+        // suppliers to be paid).
+        const names = doc.type === 'payment'
+          ? [doc.detail?.payable_to || '', doc.detail?.payable_to || '']
+          : [doc.owner_name || '', doc.name || ''];
         const [[sup]] = await pool.query(
           'SELECT id FROM suppliers WHERE is_active = 1 AND LOWER(TRIM(name)) IN (LOWER(TRIM(?)), LOWER(TRIM(?))) LIMIT 1',
-          [doc.owner_name || '', doc.name || '']);
+          names);
         doc.vendor_bill_supplier_id = sup ? sup.id : null;
         // Create Journal's Employee on each line: the filer's own employee record, else by name.
         const [[emp]] = await pool.query(

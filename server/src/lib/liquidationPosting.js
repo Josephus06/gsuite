@@ -7,6 +7,9 @@
 // the rest goes on bills too: a Journal is only for a liquidation nothing has posted yet. A bill
 // raised before the split existed has no item rows and is read as posting every item, as it did.
 
+// The form types Create Vendor Bill raises bills from (each item on one bill, as above).
+const BILLABLE_FORM_TYPES = ['liquidation', 'payment'];
+
 async function liquidationBilling(conn, formId) {
   const [bills] = await conn.query(
     "SELECT id, bill_no FROM vendor_bills WHERE form_request_id = ? AND status <> 'cancelled' ORDER BY id", [formId]);
@@ -45,7 +48,10 @@ async function liquidationPostedBy(conn, formId) {
 //   via 'bill', itemIds: no Journal posted it, and every item named is its own and not on a live bill.
 async function liquidationPostError(conn, formId, { via = 'journal', itemIds = null } = {}) {
   const [[form]] = await conn.query('SELECT type, status, request_no FROM form_requests WHERE id = ?', [formId]);
-  if (!form || form.type !== 'liquidation') return 'That form is not a liquidation.';
+  // A Request for Payment is billed the same way, item by item -- by Vendor Bill only, never a
+  // Journal (2026-10-12).
+  if (!form || !BILLABLE_FORM_TYPES.includes(form.type)) return 'That form is not a liquidation or a request for payment.';
+  if (form.type === 'payment' && via !== 'bill') return `${form.request_no} is a Request for Payment, which is posted by Vendor Bill only.`;
   if (form.status !== 'approved') return `${form.request_no} is not approved yet.`;
   const b = await liquidationBilling(conn, formId);
   if (b.journal) return `${form.request_no} is already posted on ${b.journal.journal_no}.`;
@@ -63,4 +69,4 @@ async function liquidationPostError(conn, formId, { via = 'journal', itemIds = n
   return null;
 }
 
-module.exports = { liquidationBilling, liquidationPostedBy, liquidationPostError };
+module.exports = { BILLABLE_FORM_TYPES, liquidationBilling, liquidationPostedBy, liquidationPostError };
