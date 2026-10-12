@@ -104,6 +104,10 @@ export default function TransferOrderView() {
   const mayFulfill = can('/item-fulfillments', 'can_add');
   const mayReceive = can('/item-receipts', 'can_add');
   const isPending = to.status === 'pending_fulfillment';
+  // Editable while Pending Fulfillment; past that by a System Admin only, never once Cancelled
+  // (asked 2026-10-12 -- the server's toEditBlocked).
+  const isAdmin = user?.account_type === 'System Admin';
+  const editableStatus = isPending || (isAdmin && to.status !== 'cancelled');
   const canStillFulfill = CAN_STILL_FULFILL.includes(to.status);
   const canReceive = CAN_RECEIVE.includes(to.status);
   const canCancel = to.status !== 'received' && to.status !== 'cancelled';
@@ -114,7 +118,7 @@ export default function TransferOrderView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={'/transfer-orders'}>Back</Link>
-          {canEdit && isPending && <Link className="btn btn-sm btn-primary" to={`/transfer-orders/${id}/edit`}>Edit</Link>}
+          {canEdit && editableStatus && <Link className="btn btn-sm btn-primary" to={`/transfer-orders/${id}/edit`}>Edit</Link>}
           {mayFulfill && canStillFulfill && lines.length > 0 && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfillModal(true)}>Fulfill</button>}
           {mayReceive && canReceive && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfillmentsPicker(true)}>Receive</button>}
           {(can('/transfer-orders', 'can_edit') && !periodLocked) && canCancel && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}

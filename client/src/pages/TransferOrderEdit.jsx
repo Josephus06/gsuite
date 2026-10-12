@@ -182,9 +182,12 @@ export default function TransferOrderEdit() {
   if (loading) return <LoadingSpinner />;
 
   const isPending = !to || to.status === 'pending_fulfillment';
+  // Past Pending Fulfillment a System Admin may still edit (asked 2026-10-12), never once Cancelled --
+  // except Withdraw From / Transfer To, which stay as they are once stock has moved (toEditBlocked).
+  const adminPastPending = !isPending && user?.account_type === 'System Admin' && to?.status !== 'cancelled';
   // Can Edit on Transfer Orders; or, with Can Add, a NEW TO or one you created yourself (the server
   // allows the same -- requireToEdit in routes/transferOrders.js).
-  const canEdit = isPending && (can('/transfer-orders', 'can_edit')
+  const canEdit = (isPending || adminPastPending) && (can('/transfer-orders', 'can_edit')
     || (can('/transfer-orders', 'can_add') && (isNew || Number(to?.created_by_user_id) === Number(user?.id))));
 
   return (
@@ -216,7 +219,7 @@ export default function TransferOrderEdit() {
               label="Withdraw From" items={locations} value={form.withdraw_from_location_id} getLabel={locationLabel}
               columns={[{ key: 'location_name', label: 'Name' }, { key: 'location_code', label: 'Code' }]}
               searchKeys={['location_name', 'location_code']}
-              disabled={!canEdit && !isNew}
+              disabled={(!canEdit && !isNew) || adminPastPending}
               onSelect={(l) => setForm({ ...form, withdraw_from_location_id: l.id })}
             />
           </div>
@@ -236,7 +239,7 @@ export default function TransferOrderEdit() {
               label="Transfer To" items={locations} value={form.transfer_to_location_id} getLabel={locationLabel}
               columns={[{ key: 'location_name', label: 'Name' }, { key: 'location_code', label: 'Code' }]}
               searchKeys={['location_name', 'location_code']}
-              disabled={!canEdit && !isNew}
+              disabled={(!canEdit && !isNew) || adminPastPending}
               onSelect={(l) => setForm({ ...form, transfer_to_location_id: l.id })}
             />
           </div>

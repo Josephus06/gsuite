@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
+const { requireAuth, requirePermission, userCan, isSystemAdmin } = require('../middleware/auth');
 const { computeTransitGl } = require('../lib/glImpact');
 const { isNonStockItem } = require('../lib/itemTypes');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
@@ -918,17 +918,34 @@ async function requireToEdit(req, res, next) {
   } catch (err) { return next(err); }
 }
 
+// Editable while Pending Fulfillment; past that, by a System Admin only (asked 2026-10-12) -- and
+// never once Cancelled. Returns the refusal, or null.
+async function toEditBlocked(req, t) {
+  if (t.status === 'pending_fulfillment') return null;
+  if (t.status !== 'cancelled' && await isSystemAdmin(req.user.id)) return null;
+  return t.status === 'cancelled'
+    ? 'A cancelled transfer order cannot be edited.'
+    : 'Only a transfer order with nothing fulfilled yet can be edited -- past that, only a System Admin can edit it.';
+}
+
 router.put('/:id', requireAuth, requireToEdit, async (req, res, next) => {
   try {
-    const [[t]] = await pool.query('SELECT status, date_created FROM transfer_orders WHERE id = ?', [req.params.id]);
+    const [[t]] = await pool.query('SELECT status, date_created, withdraw_from_location_id, transfer_to_location_id FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
-    if (t.status !== 'pending_fulfillment') return res.status(409).json({ error: 'Only a transfer order with nothing fulfilled yet can be edited.' });
+    const blocked = await toEditBlocked(req, t);
+    if (blocked) return res.status(409).json({ error: blocked });
 
     const {
       date_created: dateCreated, date_needed: dateNeeded,
       withdraw_from_location_id: withdrawFromId, transfer_to_location_id: transferToId,
       requestor_id: requestorId, memo,
     } = req.body;
+    // Once anything is fulfilled the stock has moved out of Withdraw From toward Transfer To, so the
+    // two locations stay as they are; a System Admin edits the rest.
+    if (t.status !== 'pending_fulfillment'
+      && (Number(withdrawFromId) !== Number(t.withdraw_from_location_id) || Number(transferToId) !== Number(t.transfer_to_location_id))) {
+      return res.status(409).json({ error: 'Withdraw From and Transfer To cannot change once the transfer order has been fulfilled.' });
+    }
     // Both dates: you can't edit out of a closed period, nor move a document into one.
     await assertPeriodOpen([t.date_created, dateCreated], 'non_gl');
     await pool.query(
@@ -948,7 +965,8 @@ router.post('/:id/lines', requireAuth, requireToEdit, async (req, res, next) => 
   try {
     const [[t]] = await conn.query('SELECT status, date_created, withdraw_from_location_id, job_order_id FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
-    if (t.status !== 'pending_fulfillment') return res.status(409).json({ error: 'Only a transfer order with nothing fulfilled yet can be edited.' });
+    const blocked = await toEditBlocked(req, t);
+    if (blocked) return res.status(409).json({ error: blocked });
     await assertPeriodOpen(t.date_created, 'non_gl', conn);
 
     const { item_id: itemId, qty, uom, unit, unit_used: unitUsedIn, memo } = req.body;
@@ -988,11 +1006,12 @@ router.put('/:id/lines/:lineId', requireAuth, requireToEdit, async (req, res, ne
   try {
     const [[t]] = await pool.query('SELECT status, date_created FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
-    if (t.status !== 'pending_fulfillment') return res.status(409).json({ error: 'Only a transfer order with nothing fulfilled yet can be edited.' });
+    const blocked = await toEditBlocked(req, t);
+    if (blocked) return res.status(409).json({ error: blocked });
     await assertPeriodOpen(t.date_created, 'non_gl');
 
     const [[line]] = await pool.query(
-      'SELECT item_id, qty, adjusted_qty, unit, unit_used, memo FROM transfer_order_lines WHERE id = ? AND transfer_order_id = ?',
+      'SELECT item_id, qty, adjusted_qty, unit, unit_used, memo, fulfilled FROM transfer_order_lines WHERE id = ? AND transfer_order_id = ?',
       [req.params.lineId, req.params.id]
     );
     if (!line) return res.status(404).json({ error: 'Line not found' });
@@ -1007,6 +1026,11 @@ router.put('/:id/lines/:lineId', requireAuth, requireToEdit, async (req, res, ne
       ? (req.body.adjusted_qty === '' || req.body.adjusted_qty === null ? null : req.body.adjusted_qty)
       : line.adjusted_qty;
     const memo = has('memo') ? (req.body.memo || null) : line.memo;
+    // What has already been fulfilled off this line cannot be un-asked for.
+    const target = adjustedQty != null && adjustedQty !== '' ? Number(adjustedQty) : Number(qty);
+    if (Number(line.fulfilled || 0) > 0 && target < Number(line.fulfilled) - 1e-9) {
+      return res.status(409).json({ error: `This line has ${Number(line.fulfilled)} fulfilled already; its quantity cannot go below that.` });
+    }
 
     // Picking a unit is what rewrites `unit`; it is never recomputed from a stored unit_used,
     // so the 65,933 lines that predate the toggle keep the unit they were migrated with even
@@ -1035,9 +1059,12 @@ router.delete('/:id/lines/:lineId', requireAuth, requireToEdit, async (req, res,
   try {
     const [[t]] = await pool.query('SELECT status, date_created FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
-    if (t.status !== 'pending_fulfillment') return res.status(409).json({ error: 'Only a transfer order with nothing fulfilled yet can be edited.' });
+    const blocked = await toEditBlocked(req, t);
+    if (blocked) return res.status(409).json({ error: blocked });
     await assertPeriodOpen(t.date_created, 'non_gl');
 
+    const [[dl]] = await pool.query('SELECT fulfilled FROM transfer_order_lines WHERE id = ? AND transfer_order_id = ?', [req.params.lineId, req.params.id]);
+    if (dl && Number(dl.fulfilled || 0) > 0) return res.status(409).json({ error: 'This line has already been fulfilled, so it cannot be removed.' });
     await pool.query('DELETE FROM transfer_order_lines WHERE id = ? AND transfer_order_id = ?', [req.params.lineId, req.params.id]);
     res.status(204).send();
   } catch (err) {
