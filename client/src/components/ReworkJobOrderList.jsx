@@ -8,6 +8,7 @@ import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
 import { downloadFile } from '../utils/downloadFile';
 import { CustomerLink } from './PartyLink';
+import FilterPicker from './FilterPicker';
 
 const PAGE_SIZE = 10;
 const STAGE_LABELS = {
@@ -117,10 +118,8 @@ export default function ReworkJobOrderList({ prefix }) {
           </div>
           <div className="field">
             <label>Location</label>
-            <select value={locationId ?? ''} onChange={(e) => setLocationId(e.target.value)}>
-              <option value="">--ALL--</option>
-              {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
-            </select>
+            <FilterPicker label="Location" items={locations} value={locationId ?? ''} onChange={(v) => setLocationId(v)}
+              getLabel={(l) => l.location_name} allLabel="--ALL--" />
           </div>
           <div className="field">
             <label>Date</label>

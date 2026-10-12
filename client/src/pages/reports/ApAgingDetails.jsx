@@ -6,6 +6,7 @@ import EntityPicker from '../../components/EntityPicker';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import { REPORT_TIMING } from '../../utils/reportTiming';
 import { downloadFile } from '../../utils/downloadFile';
+import FilterPicker from '../../components/FilterPicker';
 
 // Accounting > Reports > AP Aging Details (2026-10-09) -- AR Aging Details' twin for payables: the
 // documents behind AP Aging, grouped by vendor: every vendor bill still carrying a balance, every bill
@@ -173,14 +174,8 @@ export default function ApAgingDetails() {
           </div>
           <div className="field">
             <label>Location</label>
-            <select
-              value={filters.locationId}
-              disabled={filters.noLocation}
-              onChange={(e) => setFilters({ ...filters, locationId: e.target.value })}
-            >
-              <option value="">--ALL--</option>
-              {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
-            </select>
+            <FilterPicker label="Location" items={locations} value={filters.locationId} onChange={(v) => setFilters({ ...filters, locationId: v })}
+              getLabel={(l) => l.location_name} allLabel="--ALL--" disabled={filters.noLocation} />
           </div>
           <div className="field">
             <label>Name Starts (eg. ABCD)</label>

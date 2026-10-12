@@ -7,6 +7,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import SyncFromSourceButton from '../components/SyncFromSourceButton';
 import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
+import FilterPicker from '../components/FilterPicker';
 
 // Mirrors Estimates.jsx / the real system's "Saved Sales Orders" list -- Sales Orders
 // are only ever generated automatically (when an estimate reaches Approved), so there
@@ -95,17 +96,13 @@ export default function SalesOrders() {
             </div>
             <div className="field">
               <label>Sales Rep</label>
-              <select value={salesRepId} onChange={(e) => setSalesRepId(e.target.value)}>
-                <option value="">All</option>
-                {employees.map((e) => <option key={e.id} value={e.id}>{e.first_name} {e.last_name}</option>)}
-              </select>
+              <FilterPicker label="Sales Rep" items={employees} value={salesRepId} onChange={(v) => setSalesRepId(v)}
+              getLabel={(e) => `${e.first_name} ${e.last_name}`} allLabel="All" />
             </div>
             <div className="field">
               <label>Location</label>
-              <select value={officeLocationId} onChange={(e) => setOfficeLocationId(e.target.value)}>
-                <option value="">All</option>
-                {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
-              </select>
+              <FilterPicker label="Location" items={locations} value={officeLocationId} onChange={(v) => setOfficeLocationId(v)}
+              getLabel={(l) => l.location_name} allLabel="All" />
             </div>
             <div className="field">
               <label>Date Created (As of)</label>

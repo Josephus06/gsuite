@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Modal from './Modal';
 import { useCalendarRange } from '../utils/calendarRange';
+import FilterPicker from './FilterPicker';
 
 // The General Manager dashboard's Weighted Sales and Invoice calendars: one month of sales orders
 // or invoices by the day they were created, as customer chips with the day's total -- laid out
@@ -90,14 +91,14 @@ export default function GmDocumentCalendar({ type, range = 'month' }) {
         <button type="button" className="btn btn-sm" onClick={() => shift(1)} disabled={loading}>&rsaquo;</button>
         {withFilters && (
           <>
-            <select value={locationId ?? ''} onChange={(e) => setLocationId(e.target.value)} title="Location" style={{ width: 'auto', minWidth: 140 }}>
-              <option value="">All locations</option>
-              {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name || l.name}</option>)}
-            </select>
-            <select value={divisionId} onChange={(e) => setDivisionId(e.target.value)} title="Department" style={{ width: 'auto', minWidth: 140 }}>
-              <option value="">All departments</option>
-              {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
+            <div style={{ minWidth: 200 }}>
+              <FilterPicker label="Location" items={locations} value={locationId ?? ''} onChange={(v) => setLocationId(v)}
+                getLabel={(l) => l.location_name || l.name} allLabel="All locations" />
+            </div>
+            <div style={{ minWidth: 200 }}>
+              <FilterPicker label="Department" items={divisions} value={divisionId} onChange={(v) => setDivisionId(v)}
+                getLabel={(d) => d.name} allLabel="All departments" />
+            </div>
           </>
         )}
         <span className="muted artist-calendar-count">

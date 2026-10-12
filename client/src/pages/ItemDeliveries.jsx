@@ -5,6 +5,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
+import FilterPicker from '../components/FilterPicker';
 
 // Mirrors the real system's "Production > Item Delivery" ("Saved Item Delivery") list --
 // a flat filterable table (no status tabs), same pattern as Assembly Build's list.
@@ -65,10 +66,8 @@ export default function ItemDeliveries() {
             </div>
             <div className="field">
               <label>Customer</label>
-              <select value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-                <option value="">All</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <FilterPicker label="Customer" items={customers} value={customerId} onChange={(v) => setCustomerId(v)}
+              getLabel={(c) => c.name} allLabel="All" />
             </div>
             <div className="field">
               <label>Date Created (As of)</label>

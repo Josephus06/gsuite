@@ -10,6 +10,7 @@ import { useAuth } from '../context/useAuth';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
+import FilterPicker from '../components/FilterPicker';
 
 const PAGE_SIZE = 10;
 const NO_FILTERS = { search: '', status: '', departmentId: '', locationId: '', dateFrom: '', dateTo: '' };
@@ -181,17 +182,13 @@ export default function CustomerPayments() {
           </div>
           <div className="field">
             <label>Location</label>
-            <select value={form.locationId} onChange={(e) => apply({ ...form, locationId: e.target.value })}>
-              <option value="">--ALL--</option>
-              {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name || l.name}</option>)}
-            </select>
+            <FilterPicker label="Location" items={locations} value={form.locationId} onChange={(v) => apply({ ...form, locationId: v })}
+              getLabel={(l) => l.location_name || l.name} allLabel="--ALL--" />
           </div>
           <div className="field">
             <label>Department</label>
-            <select value={form.departmentId} onChange={(e) => apply({ ...form, departmentId: e.target.value })}>
-              <option value="">--ALL--</option>
-              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
+            <FilterPicker label="Department" items={departments} value={form.departmentId} onChange={(v) => apply({ ...form, departmentId: v })}
+              getLabel={(d) => d.name} allLabel="--ALL--" />
           </div>
           <div className="field">
             <label>Date From</label>

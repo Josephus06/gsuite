@@ -7,6 +7,7 @@ import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
+import FilterPicker from '../components/FilterPicker';
 
 // Mirrors server/src/lib/designSupervisorVisibility.js's own DESIGN_QUEUE_STATUS/
 // DESIGN_QUEUE_SUB_STATUSES -- a JO is eligible for (re)assignment here only while
@@ -250,31 +251,23 @@ export default function JobOrders() {
             </div>
             <div className="field">
               <label>Sales Rep</label>
-              <select value={salesRepId} onChange={(e) => setSalesRepId(e.target.value)}>
-                <option value="">All</option>
-                {employees.map((e) => <option key={e.id} value={e.id}>{e.first_name} {e.last_name}</option>)}
-              </select>
+              <FilterPicker label="Sales Rep" items={employees} value={salesRepId} onChange={(v) => setSalesRepId(v)}
+              getLabel={(e) => `${e.first_name} ${e.last_name}`} allLabel="All" />
             </div>
             <div className="field">
               <label>JO Location</label>
-              <select value={jobLocationId} onChange={(e) => setJobLocationId(e.target.value)}>
-                <option value="">All</option>
-                {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
-              </select>
+              <FilterPicker label="JO Location" items={locations} value={jobLocationId} onChange={(v) => setJobLocationId(v)}
+              getLabel={(l) => l.location_name} allLabel="All" />
             </div>
             <div className="field">
               <label>Office Location</label>
-              <select value={officeLocationId} onChange={(e) => setOfficeLocationId(e.target.value)}>
-                <option value="">All</option>
-                {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
-              </select>
+              <FilterPicker label="Office Location" items={locations} value={officeLocationId} onChange={(v) => setOfficeLocationId(v)}
+              getLabel={(l) => l.location_name} allLabel="All" />
             </div>
             <div className="field">
               <label>Customer</label>
-              <select value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-                <option value="">All</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <FilterPicker label="Customer" items={customers} value={customerId} onChange={(v) => setCustomerId(v)}
+              getLabel={(c) => c.name} allLabel="All" />
             </div>
             <div className="field">
               <label>Period From</label>

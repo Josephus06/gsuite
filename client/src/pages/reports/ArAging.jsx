@@ -11,6 +11,7 @@ import { displayDate } from '../../utils/dates';
 
 function today() { return new Date().toISOString().slice(0, 10); }
 import { downloadFile } from '../../utils/downloadFile';
+import FilterPicker from '../../components/FilterPicker';
 function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 // Mirrors the real system's Accounting > Reports > AR Aging: a Location / Name Starts /
@@ -102,10 +103,8 @@ export default function ArAging() {
         <div className="filter-grid">
           <div className="field">
             <label>Location</label>
-            <select value={locationId} onChange={(e) => setLocationId(e.target.value)} disabled={noLocation}>
-              <option value="">--ALL--</option>
-              {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
-            </select>
+            <FilterPicker label="Location" items={locations} value={locationId} onChange={(v) => setLocationId(v)}
+              getLabel={(l) => l.location_name} allLabel="--ALL--" disabled={noLocation} />
           </div>
           <div className="field">
             <label>Name Starts (eg. ABCD)</label>

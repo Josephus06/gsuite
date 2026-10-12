@@ -7,6 +7,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { TRANSFER_STATUS_LABELS } from '../utils/assetLabels';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import FilterPicker from '../components/FilterPicker';
 
 const PAGE_SIZE = 15;
 
@@ -85,10 +86,8 @@ export default function AssetTransfers() {
           </div>
           <div className="field">
             <label>Transfer To</label>
-            <select value={filters.to_location_id} onChange={(e) => setF({ to_location_id: e.target.value })}>
-              <option value="">--ALL--</option>
-              {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
-            </select>
+            <FilterPicker label="Transfer To" items={locations} value={filters.to_location_id} onChange={(v) => setF({ to_location_id: v })}
+              getLabel={(l) => l.location_name} allLabel="--ALL--" />
           </div>
           <div className="field">
             <label>Approval</label>

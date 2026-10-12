@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EntityPicker from '../../components/EntityPicker';
+import FilterPicker from '../../components/FilterPicker';
 
 function money(v) {
   const n = Number(v);
@@ -131,10 +132,8 @@ export default function CollectionAgingReport() {
           </div>
           <div className="field">
             <label>Location</label>
-            <select value={range.locationId ?? ''} onChange={(e) => setRange({ ...range, locationId: e.target.value })}>
-              <option value="">All locations</option>
-              {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
-            </select>
+            <FilterPicker label="Location" items={locations} value={range.locationId ?? ''} onChange={(v) => setRange({ ...range, locationId: v })}
+              getLabel={(l) => l.location_name} allLabel="All locations" />
           </div>
           <div className="field">
             <label>Aging</label>

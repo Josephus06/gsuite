@@ -5,6 +5,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
+import FilterPicker from '../components/FilterPicker';
 
 // Mirrors the real system's "Production > Assembly Build" ("Saved Assembly Build")
 // list -- a flat filterable table (no status tabs), same pattern as Saved Job Orders.
@@ -73,24 +74,18 @@ export default function AssemblyBuilds() {
             </div>
             <div className="field">
               <label>Sales Rep</label>
-              <select value={salesRepId} onChange={(e) => setSalesRepId(e.target.value)}>
-                <option value="">All</option>
-                {employees.map((e) => <option key={e.id} value={e.id}>{e.first_name} {e.last_name}</option>)}
-              </select>
+              <FilterPicker label="Sales Rep" items={employees} value={salesRepId} onChange={(v) => setSalesRepId(v)}
+              getLabel={(e) => `${e.first_name} ${e.last_name}`} allLabel="All" />
             </div>
             <div className="field">
               <label>JO Location</label>
-              <select value={jobLocationId} onChange={(e) => setJobLocationId(e.target.value)}>
-                <option value="">All</option>
-                {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
-              </select>
+              <FilterPicker label="JO Location" items={locations} value={jobLocationId} onChange={(v) => setJobLocationId(v)}
+              getLabel={(l) => l.location_name} allLabel="All" />
             </div>
             <div className="field">
               <label>Customer</label>
-              <select value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-                <option value="">All</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <FilterPicker label="Customer" items={customers} value={customerId} onChange={(v) => setCustomerId(v)}
+              getLabel={(c) => c.name} allLabel="All" />
             </div>
             <div className="field">
               <label>Date Created (As of)</label>

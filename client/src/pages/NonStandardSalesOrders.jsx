@@ -9,6 +9,7 @@ import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
 import EntityPicker from '../components/EntityPicker';
 import { downloadFile } from '../utils/downloadFile';
+import FilterPicker from '../components/FilterPicker';
 
 const PAGE_SIZE = 10;
 const TYPE_LABELS = { rma: 'RMA', rma_installation: 'RMA - Installation', sample: 'Sample', internal: 'Internal' };
@@ -130,10 +131,8 @@ export default function NonStandardSalesOrders() {
           </div>
           <div className="field">
             <label>Location</label>
-            <select value={locationId ?? ''} onChange={(e) => setLocationId(e.target.value)}>
-              <option value="">--ALL--</option>
-              {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
-            </select>
+            <FilterPicker label="Location" items={locations} value={locationId ?? ''} onChange={(v) => setLocationId(v)}
+              getLabel={(l) => l.location_name} allLabel="--ALL--" />
           </div>
           <div className="field">
             <label>Type</label>

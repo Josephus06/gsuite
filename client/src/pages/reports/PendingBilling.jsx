@@ -4,6 +4,7 @@ import api from '../../api/client';
 import { CustomerLink } from '../../components/PartyLink';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import { displayDate } from '../../utils/dates';
+import FilterPicker from '../../components/FilterPicker';
 
 // Sales > Pending Billing: Job Orders production has completed but that are not yet (fully)
 // invoiced -- the work that is done and waiting for its bill. Oldest first, because the longer a
@@ -78,17 +79,13 @@ export default function PendingBilling() {
           <div className="field"><label>General Searching</label><input value={f.search} placeholder="JO, SO, customer or description..." onChange={(e) => upd('search', e.target.value)} /></div>
           <div className="field">
             <label>Sales Rep</label>
-            <select value={f.sales_rep_id} onChange={(e) => upd('sales_rep_id', e.target.value)}>
-              <option value="">All</option>
-              {reps.map((r) => <option key={r.id} value={r.id}>{r.first_name} {r.last_name}</option>)}
-            </select>
+            <FilterPicker label="Sales Rep" items={reps} value={f.sales_rep_id} onChange={(v) => upd('sales_rep_id', v)}
+              getLabel={(r) => `${r.first_name} ${r.last_name}`} allLabel="All" />
           </div>
           <div className="field">
             <label>Office Location</label>
-            <select value={f.location_id ?? ''} onChange={(e) => upd('location_id', e.target.value)}>
-              <option value="">All</option>
-              {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
-            </select>
+            <FilterPicker label="Office Location" items={locations} value={f.location_id ?? ''} onChange={(v) => upd('location_id', v)}
+              getLabel={(l) => l.location_name} allLabel="All" />
           </div>
           <div className="field"><label>Completed From</label><input type="date" value={f.from} onChange={(e) => upd('from', e.target.value)} /></div>
           <div className="field"><label>Completed To</label><input type="date" value={f.to} onChange={(e) => upd('to', e.target.value)} /></div>

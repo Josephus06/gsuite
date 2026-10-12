@@ -7,6 +7,7 @@ import Modal from '../../components/Modal';
 import { money } from './CoaTreeRows';
 import { displayDate } from '../../utils/dates';
 import { downloadFile } from '../../utils/downloadFile';
+import FilterPicker from '../../components/FilterPicker';
 
 // Accounting > Reports > AP Aging -- the payables mirror of AR Aging, vendor by vendor, in the
 // same five buckets and the same layout so the two read as a pair. DETAILS opens the bills,
@@ -112,10 +113,8 @@ export default function ApAging() {
         <div className="filter-grid">
           <div className="field">
             <label>Location</label>
-            <select value={locationId} onChange={(e) => setLocationId(e.target.value)} disabled={noLocation}>
-              <option value="">--ALL--</option>
-              {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
-            </select>
+            <FilterPicker label="Location" items={locations} value={locationId} onChange={(v) => setLocationId(v)}
+              getLabel={(l) => l.location_name} allLabel="--ALL--" disabled={noLocation} />
           </div>
           <div className="field">
             <label>Name Starts (eg. ABCD)</label>

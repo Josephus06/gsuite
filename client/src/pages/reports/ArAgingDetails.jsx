@@ -6,6 +6,7 @@ import EntityPicker from '../../components/EntityPicker';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import { REPORT_TIMING } from '../../utils/reportTiming';
 import { downloadFile } from '../../utils/downloadFile';
+import FilterPicker from '../../components/FilterPicker';
 
 // Accounting > Reports > AR Aging Details -- the documents behind AR Aging, grouped by customer:
 // every invoice still carrying a balance, every credit memo not yet used up, every payment with
@@ -194,14 +195,8 @@ export default function ArAgingDetails() {
           </div>
           <div className="field">
             <label>Location</label>
-            <select
-              value={filters.locationId}
-              disabled={filters.noLocation}
-              onChange={(e) => setFilters({ ...filters, locationId: e.target.value })}
-            >
-              <option value="">--ALL--</option>
-              {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
-            </select>
+            <FilterPicker label="Location" items={locations} value={filters.locationId} onChange={(v) => setFilters({ ...filters, locationId: v })}
+              getLabel={(l) => l.location_name} allLabel="--ALL--" disabled={filters.noLocation} />
           </div>
           <div className="field">
             <label>Name Starts (eg. ABCD)</label>

@@ -10,6 +10,7 @@ import { useAuth } from '../context/useAuth';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
+import FilterPicker from '../components/FilterPicker';
 
 const PAGE_SIZE = 10;
 const STATUS_LABELS = { saved: 'Open', cancelled: 'Void' };
@@ -188,17 +189,13 @@ export default function SalesInvoices() {
           </div>
           <div className="field">
             <label>Department</label>
-            <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
-              <option value="">--ALL--</option>
-              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
+            <FilterPicker label="Department" items={departments} value={departmentId} onChange={(v) => setDepartmentId(v)}
+              getLabel={(d) => d.name} allLabel="--ALL--" />
           </div>
           <div className="field">
             <label>Location</label>
-            <select value={locationId} onChange={(e) => setLocationId(e.target.value)}>
-              <option value="">--ALL--</option>
-              {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-            </select>
+            <FilterPicker label="Location" items={locations} value={locationId} onChange={(v) => setLocationId(v)}
+              getLabel={(l) => l.name} allLabel="--ALL--" />
           </div>
           <div className="field">
             <label>Date From</label>
