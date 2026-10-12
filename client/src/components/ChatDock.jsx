@@ -3,6 +3,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { chime } from '../utils/notificationSound';
 import Avatar from './Avatar';
+import { parseUtc } from '../utils/datetime';
 
 // Messenger-style chat (2026-10-12; routes/chat.js). Mounted once in Layout, so it lives on every
 // page: chatboxes dock at the bottom right, and a message from someone opens their box on your
@@ -20,8 +21,10 @@ export function openChat(user) {
   window.dispatchEvent(new CustomEvent('chat:open', { detail: user }));
 }
 
-const timeOf = (v) => (v ? new Date(v).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '');
-const dayOf = (v) => (v ? new Date(v).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '');
+// chat_messages.created_at is written by the server in UTC (2026-10-12: a 3:40 PM message read
+// "7:40 AM"), so it is read as UTC and shown in Philippine time, whatever the computer's own zone.
+const timeOf = (v) => (v ? parseUtc(v).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Manila' }) : '');
+const dayOf = (v) => (v ? parseUtc(v).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'Asia/Manila' }) : '');
 
 export default function ChatDock() {
   const { user, can } = useAuth();
