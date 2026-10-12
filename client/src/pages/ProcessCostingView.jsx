@@ -5,7 +5,7 @@ import { useAuth } from '../context/useAuth';
 import { computeProcessCosting } from '../utils/costing';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { displayDateTime } from '../utils/dates';
+import { displayAuditTime } from '../utils/dates';
 import { PROCESS_COSTING_COLUMNS, processCostingHeaderGroups, fmt2 } from '../utils/processCostingColumns';
 
 // One process's costing brackets, read-only, as the source's process cost view: the process name
@@ -105,7 +105,7 @@ export default function ProcessCostingView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'Date Time', render: (r) => displayDateTime(r.set_at) },
+              { key: 'set_at', label: 'Date Time', render: (r) => displayAuditTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

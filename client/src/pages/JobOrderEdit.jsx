@@ -7,7 +7,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import RmaDetailsTab, { isRmaJobOrder } from '../components/RmaDetailsTab';
 import { useAuth } from '../context/useAuth';
 
-import { displayDateTime } from '../utils/dates';
+import { displayAuditTime } from '../utils/dates';
 import { convertAreaToBaseUnit, convertLengthToBaseUnit } from '../utils/costing';
 
 // Mirrors the real system's full-page Job Order Edit form (not a modal): a 3-column
@@ -398,7 +398,7 @@ export default function JobOrderEdit() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'When', render: (r) => displayDateTime(r.set_at) },
+              { key: 'set_at', label: 'When', render: (r) => displayAuditTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

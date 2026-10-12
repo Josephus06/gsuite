@@ -7,7 +7,7 @@ import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import ItemTransactions from '../components/ItemTransactions';
 import { SupplierLink } from '../components/PartyLink';
-import { displayDateTime } from '../utils/dates';
+import { displayDateTime, displayAuditTime } from '../utils/dates';
 
 // Full-page read-only Inventory item view, mirroring the real system's Inventory View
 // screen -- banner + info grid + tabs. "Related Records" (Item Receipts/Invoices/
@@ -462,7 +462,7 @@ export default function InventoryView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'When', render: (r) => displayDateTime(r.set_at) },
+              { key: 'set_at', label: 'When', render: (r) => displayAuditTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

@@ -12,7 +12,7 @@ import Modal from '../components/Modal';
 import { SupplierLink } from '../components/PartyLink';
 import { isApprovedPo, isSettledPo, normalisePoStatus } from '../utils/poStatus';
 
-import { displayDate, displayDateTime } from '../utils/dates';
+import { displayDate, displayDateTime, displayAuditTime } from '../utils/dates';
 
 // Keyed on the NORMALISED status, so the source's own settled states have a label here rather than
 // being printed raw -- and so this screen names a purchase order exactly as the list does.
@@ -491,7 +491,7 @@ export default function PurchaseOrderView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'Date Time', render: (r) => displayDateTime(r.set_at) },
+              { key: 'set_at', label: 'Date Time', render: (r) => displayAuditTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

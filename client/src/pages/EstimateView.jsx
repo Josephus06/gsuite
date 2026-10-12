@@ -9,7 +9,7 @@ import EstimateApprovalModal from '../components/EstimateApprovalModal';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
 
-import { displayDateTime } from '../utils/dates';
+import { displayDateTime, displayAuditTime } from '../utils/dates';
 import { CustomerLink } from '../components/PartyLink';
 
 // Read-only counterpart to EstimateWizard (which stays the create/edit form): mirrors
@@ -460,7 +460,7 @@ ${estimate.estimate_no} will be CANCELLED. The new estimate will have you as its
           <h3 className="subsection">Audit Trail</h3>
           <DataTable
             columns={[
-              { key: 'set_at', label: 'When', render: (r) => displayDateTime(r.set_at) },
+              { key: 'set_at', label: 'When', render: (r) => displayAuditTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

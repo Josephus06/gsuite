@@ -14,7 +14,7 @@ import { isAdvanceCopy } from '../utils/advanceCopy';
 import SalesRevisionModal from '../components/SalesRevisionModal';
 import RevisionNotice from '../components/RevisionNotice';
 import { maySalesRevise, awaitingDateDecision } from '../utils/salesRevision';
-import { displayDateTime } from '../utils/dates';
+import { displayAuditTime } from '../utils/dates';
 import ButtonMenu from '../components/ButtonMenu';
 import { CustomerLink } from '../components/PartyLink';
 import JoGpComputation from '../components/JoGpComputation';
@@ -1030,7 +1030,7 @@ export default function ProductionJobOrderView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'When', render: (r) => displayDateTime(r.set_at) },
+              { key: 'set_at', label: 'When', render: (r) => displayAuditTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

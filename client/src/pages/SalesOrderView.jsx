@@ -8,7 +8,7 @@ import DeliveryTicketModal from '../components/DeliveryTicketModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
-import { displayDateTime } from '../utils/dates';
+import { displayDateTime, displayAuditTime } from '../utils/dates';
 import { CustomerLink } from '../components/PartyLink';
 
 // Read-only Sales Order detail -- mirrors EstimateView.jsx's layout (banner + 4-column
@@ -90,7 +90,7 @@ function SoHistory({ id }) {
     <div className="table-wrap" style={{ marginTop: 12 }}>
       <table>
         <thead><tr><th>Date Time</th><th>Set By</th><th>Field</th><th>Old Value</th><th>New Value</th></tr></thead>
-        <tbody>{rows.map((r) => <tr key={r.id}><td>{displayDateTime(r.set_at)}</td><td>{r.set_by_name}</td><td>{r.field_name}</td><td>{r.old_value}</td><td>{r.new_value}</td></tr>)}</tbody>
+        <tbody>{rows.map((r) => <tr key={r.id}><td>{displayAuditTime(r.set_at)}</td><td>{r.set_by_name}</td><td>{r.field_name}</td><td>{r.old_value}</td><td>{r.new_value}</td></tr>)}</tbody>
       </table>
     </div>
   );

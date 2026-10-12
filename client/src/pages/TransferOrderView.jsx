@@ -10,7 +10,7 @@ import ItemReceiptModal from '../components/ItemReceiptModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { isNonStockItem } from '../utils/itemTypes';
 
-import { displayDate, displayDateTime } from '../utils/dates';
+import { displayDate, displayAuditTime } from '../utils/dates';
 
 // Mirrors the real "Transfer Order" view screen: banner + Items/Related Records/System
 // Info tabs. Adjusted Qty is the one field that stays live-editable right here (not
@@ -277,7 +277,7 @@ export default function TransferOrderView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'Date Time', render: (r) => displayDateTime(r.set_at) },
+              { key: 'set_at', label: 'Date Time', render: (r) => displayAuditTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

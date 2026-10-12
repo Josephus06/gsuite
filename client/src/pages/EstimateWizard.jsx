@@ -10,7 +10,7 @@ import { computeAutoPricing } from '../utils/costing';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
 
-import { displayDateTime } from '../utils/dates';
+import { displayAuditTime } from '../utils/dates';
 import { headerDepartmentError } from '../utils/requireDepartment';
 
 const STEPS = ['Customer and Estimate', 'Job Orders', 'Billing', 'Completed'];
@@ -1757,7 +1757,7 @@ export default function EstimateWizard() {
             <h3 className="subsection">Audit Trail</h3>
             <DataTable
               columns={[
-                { key: 'set_at', label: 'When', render: (r) => displayDateTime(r.set_at) },
+                { key: 'set_at', label: 'When', render: (r) => displayAuditTime(r.set_at) },
                 { key: 'set_by_name', label: 'Set By' },
                 { key: 'event_type', label: 'Type' },
                 { key: 'field_name', label: 'Field' },

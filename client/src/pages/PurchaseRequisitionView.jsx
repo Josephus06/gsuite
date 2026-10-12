@@ -5,7 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { SupplierLink } from '../components/PartyLink';
-import { displayDate, displayDateTime } from '../utils/dates';
+import { displayDate, displayAuditTime } from '../utils/dates';
 
 const STATUS_LABELS = {
   pending_request: 'Pending Request',
@@ -187,7 +187,7 @@ export default function PurchaseRequisitionView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'Date Time', render: (r) => displayDateTime(r.set_at) },
+              { key: 'set_at', label: 'Date Time', render: (r) => displayAuditTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

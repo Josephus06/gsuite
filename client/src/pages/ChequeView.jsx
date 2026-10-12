@@ -8,7 +8,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import BillCreditModal from '../components/BillCreditModal';
 import ReversalJournalModal from '../components/ReversalJournalModal';
 import { CustomerLink, SupplierLink } from '../components/PartyLink';
-import { displayDate, displayDateTime } from '../utils/dates';
+import { displayDate, displayAuditTime } from '../utils/dates';
 
 // The Payee opens its Master List record when it is a supplier or a customer; an employee (or a
 // cheque with no linked payee) stays plain text.
@@ -294,7 +294,7 @@ export default function ChequeView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'When', render: (r) => displayDateTime(r.set_at) },
+              { key: 'set_at', label: 'When', render: (r) => displayAuditTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' }, { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' }, { key: 'old_value', label: 'Old Value' }, { key: 'new_value', label: 'New Value' },
             ]}

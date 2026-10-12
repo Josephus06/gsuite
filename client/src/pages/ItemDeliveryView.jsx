@@ -5,7 +5,7 @@ import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { displayDateTime, displayDate } from '../utils/dates';
+import { displayDate, displayAuditTime } from '../utils/dates';
 import { CustomerLink } from '../components/PartyLink';
 
 // Mirrors the real system's "Item Delivery" detail screen: banner + Details grid +
@@ -317,7 +317,7 @@ export default function ItemDeliveryView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'When', render: (r) => displayDateTime(r.set_at) },
+              { key: 'set_at', label: 'When', render: (r) => displayAuditTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

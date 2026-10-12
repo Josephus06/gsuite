@@ -5,7 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { computeMaterialCosting } from '../utils/costing';
-import { displayDateTime } from '../utils/dates';
+import { displayDateTime, displayAuditTime } from '../utils/dates';
 
 // Costing > Material Costing > Update -- the source's MATERIAL COST screen, not the Inventory
 // item form: the item's identity and purchase costs read-only on the left, the costing chain on
@@ -151,7 +151,7 @@ export default function MaterialCostEdit() {
         </div>
         <DataTable
           columns={[
-            { key: 'set_at', label: 'When', render: (r) => displayDateTime(r.set_at) },
+            { key: 'set_at', label: 'When', render: (r) => displayAuditTime(r.set_at) },
             { key: 'set_by_name', label: 'Set By' },
             { key: 'event_type', label: 'Type' },
             { key: 'field_name', label: 'Field' },

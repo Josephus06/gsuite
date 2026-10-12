@@ -7,7 +7,7 @@ import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { DEPRECIATION_STATUS_LABELS, formatMoney, formatMonth } from '../utils/assetLabels';
-import { displayDateTime } from '../utils/dates';
+import { displayDateTime, displayAuditTime } from '../utils/dates';
 
 function VoidModal({ run, onClose, onDone }) {
   const [reason, setReason] = useState('');
@@ -225,7 +225,7 @@ export default function AssetDepreciationView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'When', render: (r) => displayDateTime(r.set_at) },
+              { key: 'set_at', label: 'When', render: (r) => displayAuditTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' }, { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' }, { key: 'old_value', label: 'Old Value' }, { key: 'new_value', label: 'New Value' },
             ]}

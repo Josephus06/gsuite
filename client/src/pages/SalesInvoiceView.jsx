@@ -13,7 +13,7 @@ import ReversalJournalModal from '../components/ReversalJournalModal';
 import SalesInvoiceEditModal from '../components/SalesInvoiceEditModal';
 import StandaloneInvoiceModal from '../components/StandaloneInvoiceModal';
 
-import { displayDate, displayDateTime } from '../utils/dates';
+import { displayDate, displayAuditTime } from '../utils/dates';
 import { billingAddress } from '../utils/invoicePrint';
 import { CustomerLink } from '../components/PartyLink';
 
@@ -426,7 +426,7 @@ export default function SalesInvoiceView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'Date Time', render: (r) => displayDateTime(r.set_at) },
+              { key: 'set_at', label: 'Date Time', render: (r) => displayAuditTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

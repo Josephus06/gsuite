@@ -7,7 +7,7 @@ import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import NsjoCreateModal from '../components/NsjoCreateModal';
 import SalesInvoiceModal from '../components/SalesInvoiceModal';
-import { displayDate, displayDateTime } from '../utils/dates';
+import { displayDate, displayAuditTime } from '../utils/dates';
 import { CustomerLink } from '../components/PartyLink';
 
 const TYPE_LABELS = { rma: 'RMA', rma_installation: 'RMA - Installation', sample: 'Sample', internal: 'Internal' };
@@ -248,7 +248,7 @@ export default function NonStandardSalesOrderView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'Date Time', render: (r) => displayDateTime(r.set_at) },
+              { key: 'set_at', label: 'Date Time', render: (r) => displayAuditTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' }, { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' }, { key: 'old_value', label: 'Old Value' }, { key: 'new_value', label: 'New Value' },
             ]}

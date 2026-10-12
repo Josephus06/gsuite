@@ -10,7 +10,7 @@ import BillCreditModal from '../components/BillCreditModal';
 import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { SupplierLink } from '../components/PartyLink';
-import { displayDate, displayDateTime } from '../utils/dates';
+import { displayDate, displayAuditTime } from '../utils/dates';
 
 function qty(v) {
   const n = Number(v);
@@ -281,7 +281,7 @@ export default function VendorBillView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'Date Time', render: (r) => displayDateTime(r.set_at) },
+              { key: 'set_at', label: 'Date Time', render: (r) => displayAuditTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

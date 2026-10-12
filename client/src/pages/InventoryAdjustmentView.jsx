@@ -6,7 +6,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { isBaseUnit } from '../utils/unitUsed';
-import { displayDateTime, displayDate } from '../utils/dates';
+import { displayDate, displayAuditTime } from '../utils/dates';
 
 // Mirrors the real system's Inventory Adjustment detail screen: banner + Details +
 // Items/GL Impact/System Info tabs. GL Impact is derived on the fly from
@@ -227,7 +227,7 @@ export default function InventoryAdjustmentView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'Date Time', render: (r) => displayDateTime(r.set_at) },
+              { key: 'set_at', label: 'Date Time', render: (r) => displayAuditTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },

@@ -7,7 +7,7 @@ import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import AssetAccountingPanel from '../components/AssetAccountingPanel';
 import { CONDITION_LABELS, MOVEMENT_LABELS, STATUS_LABELS } from '../utils/assetLabels';
-import { displayDate, displayDateTime } from '../utils/dates';
+import { displayDate, displayDateTime, displayAuditTime } from '../utils/dates';
 
 function formatDate(v) { return v ? displayDate(v) : ''; }
 function formatDateTime(v) { return v ? displayDateTime(v) : ''; }
@@ -309,7 +309,7 @@ export default function AssetView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'When', render: (r) => displayDateTime(r.set_at) },
+              { key: 'set_at', label: 'When', render: (r) => displayAuditTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' }, { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' }, { key: 'old_value', label: 'Old Value' }, { key: 'new_value', label: 'New Value' },
             ]}

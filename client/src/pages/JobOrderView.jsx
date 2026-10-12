@@ -12,7 +12,7 @@ import RevisionNotice from '../components/RevisionNotice';
 import { isRepOrSupervisorOf, maySalesRevise, mayReworkJobOrder, mayEditOwnJobOrder, awaitingDateDecision } from '../utils/salesRevision';
 import { isAdvanceCopy, canForwardAdvanceCopy } from '../utils/advanceCopy';
 
-import { displayDateTime } from '../utils/dates';
+import { displayAuditTime } from '../utils/dates';
 import ButtonMenu from '../components/ButtonMenu';
 import { CustomerLink } from '../components/PartyLink';
 import JoGpComputation from '../components/JoGpComputation';
@@ -673,7 +673,7 @@ export default function JobOrderView() {
         <div className="card">
           <DataTable
             columns={[
-              { key: 'set_at', label: 'When', render: (r) => displayDateTime(r.set_at) },
+              { key: 'set_at', label: 'When', render: (r) => displayAuditTime(r.set_at) },
               { key: 'set_by_name', label: 'Set By' },
               { key: 'event_type', label: 'Type' },
               { key: 'field_name', label: 'Field' },
