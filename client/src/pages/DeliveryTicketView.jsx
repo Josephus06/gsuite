@@ -108,7 +108,10 @@ export default function DeliveryTicketView() {
           <button className="btn btn-sm" disabled title="Credit Memos aren't implemented in this build">Credit Memo</button>
           {/* Bill on a Delivery Ticket raises the official Sales Invoice from it and
               converts the ticket -- so it's offered only while the ticket is still open. */}
-          {canEdit && canBillSI && isOpen && (
+          {/* Not held back by a closed period (asked 2026-10-12): converting writes nothing dated in the
+              ticket's month -- it raises a Sales Invoice / DR dated today, and the server checks THAT
+              date's period (salesInvoices.js). Edit and Void, which change the ticket itself, stay locked. */}
+          {can('/delivery-tickets', 'can_edit') && canBillSI && isOpen && (
             <div style={{ position: 'relative' }}>
               <button className="btn btn-sm btn-primary" onClick={() => setShowBillMenu((s) => !s)}>Bill ▾</button>
               {showBillMenu && (
@@ -127,7 +130,8 @@ export default function DeliveryTicketView() {
       {error && <div className="error-banner">{error}</div>}
       {periodLocked && (
         <div className="warning-banner" style={{ marginBottom: 12 }}>
-          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited or voided.
+          It can still be billed: the Sales Invoice or DR raised from it is dated today.
         </div>
       )}
 

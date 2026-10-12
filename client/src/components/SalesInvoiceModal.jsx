@@ -64,7 +64,9 @@ const SHOW_ESTIMATE_FIELD = false;
 
 export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicketId, fromEstimate, invoiceType = 'SI', onClose, onSaved }) {
   const [data, setData] = useState(null);
-  const [dateCreated, setDateCreated] = useState(new Date().toISOString().slice(0, 10));
+  // Today in the user's own (Philippine) time -- toISOString's UTC date was still yesterday before 8 am,
+  // which on the 1st put a DT's conversion into the closed month (2026-10-12).
+  const [dateCreated, setDateCreated] = useState(() => new Date().toLocaleDateString('en-CA'));
   const [dateDue, setDateDue] = useState('');
   // `term` is still what gets saved -- sales_invoices.term is the text, and the printed invoice
   // and every existing row read it. `paymentTerm` is only which master row is currently picked.
