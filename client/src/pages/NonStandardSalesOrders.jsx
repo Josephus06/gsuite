@@ -7,6 +7,8 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
+import EntityPicker from '../components/EntityPicker';
+import { downloadFile } from '../utils/downloadFile';
 
 const PAGE_SIZE = 10;
 const TYPE_LABELS = { rma: 'RMA', rma_installation: 'RMA - Installation', sample: 'Sample', internal: 'Internal' };
@@ -41,19 +43,67 @@ export default function NonStandardSalesOrders() {
   const [type, setType] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
+  // The source's other filters (2026-10-12). Location starts null and becomes Head Office once the
+  // locations are in, so the first list is already Head Office's.
+  const [locationId, setLocationId] = useState(null);
+  const [locations, setLocations] = useState([]);
+  const [dateMode, setDateMode] = useState('as_of');
+  const [asOf, setAsOf] = useState(() => new Date().toLocaleDateString('en-CA'));
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [salesRep, setSalesRep] = useState(null);
+  const [customer, setCustomer] = useState(null);
+  const [options, setOptions] = useState({ reps: [], customers: [] });
+  const [extracting, setExtracting] = useState(false);
 
-  async function load() {
-    setLoading(true);
+  useEffect(() => {
+    api.get('/lookups/locations')
+      .then(({ data }) => {
+        const locs = Array.isArray(data) ? data : (data?.rows || []);
+        setLocations(locs);
+        const ho = locs.find((l) => String(l.location_name || '').trim().toLowerCase() === 'head office');
+        setLocationId(ho ? String(ho.id) : '');
+      })
+      .catch(() => setLocationId(''));
+    api.get('/non-standard-sales-orders/filter-options').then(({ data }) => setOptions(data)).catch(() => {});
+  }, []);
+
+  function filterParams() {
     const params = {};
     if (status) params.status = status;
     if (type) params.type = type;
     if (search) params.search = search;
-    const { data } = await api.get('/non-standard-sales-orders', { params });
+    if (locationId) params.location_id = locationId;
+    if (salesRep) params.sales_rep_id = salesRep.id;
+    if (customer) params.customer_id = customer.id;
+    if (dateMode === 'range') {
+      params.date_mode = 'range';
+      if (dateFrom) params.date_from = dateFrom;
+      if (dateTo) params.date_to = dateTo;
+    } else if (asOf) params.as_of = asOf;
+    return params;
+  }
+
+  async function load() {
+    setLoading(true);
+    const { data } = await api.get('/non-standard-sales-orders', { params: filterParams() });
     setRows(data);
     setLoading(false);
   }
 
-  useEffect(() => { setPage(1); load(); }, [status, type]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Extract: every NSSO under the current filters, as an Excel workbook.
+  async function extract() {
+    setExtracting(true);
+    try {
+      await downloadFile('/non-standard-sales-orders', { ...filterParams(), format: 'xlsx' }, `non-standard-sales-orders-${new Date().toLocaleDateString('en-CA')}.xlsx`);
+    } catch {
+      alert('Extract failed. Please try again.');
+    } finally {
+      setExtracting(false);
+    }
+  }
+
+  useEffect(() => { if (locationId === null) return; setPage(1); load(); }, [status, type, locationId]); // eslint-disable-line react-hooks/exhaustive-deps
   function runSearch() { setPage(1); load(); }
   useAutoSearch(search, runSearch);
 
@@ -64,9 +114,12 @@ export default function NonStandardSalesOrders() {
     <div>
       <div className="page-header">
         <h1>Saved Non-Standard Sales Orders</h1>
-        {can('/non-standard-sales-orders', 'can_add') && (
-          <Link className="btn btn-primary" to="/non-standard-sales-orders/new">Add New</Link>
-        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" className="btn" onClick={extract} disabled={extracting}>{extracting ? 'Extracting...' : 'Extract'}</button>
+          {can('/non-standard-sales-orders', 'can_add') && (
+            <Link className="btn btn-primary" to="/non-standard-sales-orders/new">Add New</Link>
+          )}
+        </div>
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
@@ -74,6 +127,13 @@ export default function NonStandardSalesOrders() {
           <div className="field">
             <label>General Searching</label>
             <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="NSSO # or Customer..." />
+          </div>
+          <div className="field">
+            <label>Location</label>
+            <select value={locationId ?? ''} onChange={(e) => setLocationId(e.target.value)}>
+              <option value="">--ALL--</option>
+              {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
+            </select>
           </div>
           <div className="field">
             <label>Type</label>
@@ -84,6 +144,39 @@ export default function NonStandardSalesOrders() {
               <option value="sample">Sample</option>
               <option value="internal">Internal</option>
             </select>
+          </div>
+          <div className="field">
+            <label>Date</label>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <select value={dateMode} onChange={(e) => setDateMode(e.target.value)} style={{ width: 'auto' }}>
+                <option value="as_of">As of</option>
+                <option value="range">Period</option>
+              </select>
+              {dateMode === 'range' ? (
+                <>
+                  <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} title="From" />
+                  <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} title="To" />
+                </>
+              ) : (
+                <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+              )}
+            </div>
+          </div>
+          <div className="field">
+            <label>Sales Rep</label>
+            <EntityPicker
+              label="Sales Rep" items={options.reps} value={salesRep?.id ?? ''} getLabel={(r) => r.name}
+              columns={[{ key: 'name', label: 'Sales Rep' }]} searchKeys={['name']} placeholder="--ALL--"
+              onSelect={(r) => setSalesRep(r || null)} onClear={() => setSalesRep(null)}
+            />
+          </div>
+          <div className="field">
+            <label>Customer</label>
+            <EntityPicker
+              label="Customer" items={options.customers} value={customer?.id ?? ''} getLabel={(c) => c.name}
+              columns={[{ key: 'name', label: 'Customer' }]} searchKeys={['name']} placeholder="--ALL--"
+              onSelect={(c) => setCustomer(c || null)} onClear={() => setCustomer(null)}
+            />
           </div>
           <div className="field">
             <label>Status</label>

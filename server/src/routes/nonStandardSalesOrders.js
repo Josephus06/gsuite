@@ -5,6 +5,7 @@ const { releaseIfDirectToProduction } = require('../lib/directToProduction');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan, isSystemAdmin } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
+const { sendXlsx, day } = require('../lib/xlsxExport');
 const { DESIGN_QUEUE_STATUS } = require('../lib/designSupervisorVisibility');
 const { notifyDesignSupervisors } = require('../lib/designNotifications');
 
@@ -270,12 +271,25 @@ router.get('/source-job-orders/:salesOrderId', requireAuth, requirePermission(RO
   } catch (err) { next(err); }
 });
 
+// The list's filters (2026-10-12, the source's set): General Searching, Location (the page starts on
+// Head Office), Type, Date (As of, or a From-To period), Sales Rep, Customer, Status -- and
+// format=xlsx for Extract, every row under them.
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const { search, status, type } = req.query;
     const where = []; const params = [];
     if (status) { where.push('n.status = ?'); params.push(status); }
     if (type) { where.push('n.type = ?'); params.push(type); }
+    if (Number(req.query.location_id) > 0) { where.push('n.office_location_id = ?'); params.push(Number(req.query.location_id)); }
+    if (Number(req.query.sales_rep_id) > 0) { where.push('n.sales_rep_id = ?'); params.push(Number(req.query.sales_rep_id)); }
+    if (Number(req.query.customer_id) > 0) { where.push('n.customer_id = ?'); params.push(Number(req.query.customer_id)); }
+    if (req.query.date_mode === 'range') {
+      if (ISO_DAY.test(req.query.date_from || '')) { where.push('n.date_created >= ?'); params.push(req.query.date_from); }
+      if (ISO_DAY.test(req.query.date_to || '')) { where.push('n.date_created <= ?'); params.push(req.query.date_to); }
+    } else if (ISO_DAY.test(req.query.as_of || '')) {
+      where.push('n.date_created <= ?'); params.push(req.query.as_of);
+    }
     // An Account Officer sees only their own non-standard sales orders; a Supervisor sees theirs plus their
     // reports'. Same rule Estimates and Sales Orders already apply -- see lib/salesVisibility.js,
     // which returns null (and so changes nothing) for every account that is neither.
@@ -296,7 +310,51 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        ${whereSql} ORDER BY n.id DESC`,
       params
     );
+    if (req.query.format === 'xlsx') {
+      const TYPE = { rma: 'RMA', rma_installation: 'RMA - Installation', sample: 'Sample', internal: 'Internal' };
+      const STATUS = {
+        pending_approval: 'Pending / Needs Approval', pending_for_jo: 'Pending for JO', jo_in_process: 'JO In-Process',
+        pending_delivery: 'Pending Delivery', partially_delivered: 'Partially Delivered', pending_billing: 'Pending Billing',
+        pending_billing_partially_delivered: 'Pending Billing / Partially Delivered', billed: 'Billed', cancelled: 'Cancelled',
+      };
+      await sendXlsx(res, {
+        filename: 'non-standard-sales-orders.xlsx',
+        sheet: 'NSSO',
+        columns: [
+          { header: 'Sale Order No.', key: 'nsso_no', width: 18 },
+          { header: 'Date', key: 'date', width: 12 },
+          { header: 'Type', key: 'type', width: 18 },
+          { header: 'Location', key: 'office_location_name', width: 18 },
+          { header: 'Customer', key: 'customer_name', width: 40 },
+          { header: 'Sales Rep', key: 'sales_rep_name', width: 26 },
+          { header: 'Memo', key: 'memo', width: 50 },
+          { header: 'Total Amount', key: 'total', width: 16, money: true },
+          { header: 'Status', key: 'status', width: 24 },
+        ],
+        rows: rows.map((r) => ({
+          ...r, date: day(r.date_created), type: TYPE[r.type] || r.type, memo: r.memo || '',
+          total: Number(r.total_amount || 0), status: STATUS[r.status] || r.status,
+        })),
+      });
+      return;
+    }
     res.json(rows);
+  } catch (err) { next(err); }
+});
+
+// The Sales Rep and Customer filters' choices: only those that appear on an NSSO this user may see.
+router.get('/filter-options', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const salesScope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
+    const scopeSql = salesScope ? 'WHERE n.sales_rep_id IN (?)' : '';
+    const scopeParams = salesScope ? [salesScope.length ? salesScope : [0]] : [];
+    const [reps] = await pool.query(
+      `SELECT DISTINCT e.id, CONCAT(e.first_name, ' ', e.last_name) AS name
+         FROM non_standard_sales_orders n JOIN employees e ON e.id = n.sales_rep_id ${scopeSql} ORDER BY name`, scopeParams);
+    const [customers] = await pool.query(
+      `SELECT DISTINCT c.id, c.name
+         FROM non_standard_sales_orders n JOIN customers c ON c.id = n.customer_id ${scopeSql} ORDER BY c.name`, scopeParams);
+    res.json({ reps, customers });
   } catch (err) { next(err); }
 });
 
