@@ -1,50 +1,28 @@
 const express = require('express');
-const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
-const { getJobLocationScope } = require('../lib/jobLocationVisibility');
+const { listRows, filterOptions, sendExtract } = require('../lib/reworkJobOrderList');
 
 const router = express.Router();
 const ROUTE = '/rfqc-job-orders';
 
-// Lists every RFQC (rework-from-quality-check) job order -- job_orders rows with a
-// parent_job_order_id and an RFQC- number, raised during Quality Inspection for the RMA
-// (failed/damaged) qty. Read-only browse; RFQCs are approved/built/inspected from the JO view.
+// RFQC (rework-from-quality-check) job orders -- raised during Quality Inspection for the RMA (failed/damaged) qty; approved/built/inspected from the JO view.
+// Read-only browse. Filters and Extract are shared with the other rework list (lib/reworkJobOrderList.js).
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
-  try {
-    const { search, stage } = req.query;
-    const where = ['jo.parent_job_order_id IS NOT NULL', "jo.job_order_no LIKE 'RFQC-%'"];
-    const params = [];
-    // A rework job order sits in the same warehouse as the job it came from, so the department
-    // restriction applies here exactly as it does on the Production list.
-    const scopeLocationId = await getJobLocationScope(req.user.id);
-    if (scopeLocationId) { where.push('jo.job_location_id = ?'); params.push(scopeLocationId); }
-    if (search) {
-      where.push('(jo.job_order_no LIKE ? OR pjo.job_order_no LIKE ? OR c.name LIKE ? OR so.sales_order_no LIKE ?)');
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
-    }
-    if (stage === 'pending') where.push("jo.status = 'Pending RMA Approval'");
-    else if (stage === 'open') where.push("jo.status <> 'Pending RMA Approval' AND jo.status <> 'Cancelled' AND (jo.production_stage IS NULL OR jo.production_stage NOT IN ('completed','invoiced'))");
-    else if (stage === 'completed') where.push("jo.production_stage IN ('completed','invoiced')");
+  try { res.json(await listRows(req, 'RFQC')); } catch (err) { next(err); }
+});
 
-    const [rows] = await pool.query(
-      `SELECT jo.id, jo.job_order_no, jo.created_at, jo.quantity, jo.units, jo.status, jo.production_stage,
-              jo.description, jo.parent_job_order_id, pjo.job_order_no AS parent_job_order_no,
-              so.sales_order_no, c.id AS customer_id, c.name AS customer_name,
-              jt.display_name AS job_type_name, loc.location_name AS job_location_name,
-              CONCAT(rap.first_name, ' ', rap.last_name) AS rma_approved_by_name
-       FROM job_orders jo
-       LEFT JOIN job_orders pjo ON pjo.id = jo.parent_job_order_id
-       LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
-       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, (SELECT COALESCE(nx.customer_id, ex.customer_id, sx.customer_id) FROM non_standard_sales_orders nx LEFT JOIN estimates ex ON ex.id = nx.nested_estimate_id LEFT JOIN sales_orders sx ON sx.id = nx.nested_sales_order_id WHERE nx.id = jo.nsso_id))
-       LEFT JOIN job_types jt ON jt.id = jo.job_type_id
-       LEFT JOIN locations loc ON loc.id = jo.job_location_id
-       LEFT JOIN employees rap ON rap.id = jo.rma_approved_by_id
-       WHERE ${where.join(' AND ')}
-       ORDER BY jo.id DESC`,
-      params
-    );
-    res.json(rows);
-  } catch (err) { next(err); }
+router.get('/filter-options', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try { res.json(await filterOptions(req, 'RFQC')); } catch (err) { next(err); }
+});
+
+// Extract: every RFQC under the list's current filters, as a workbook.
+router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    await sendExtract(res, await listRows(req, 'RFQC'), 'RFQC');
+  } catch (err) {
+    if (res.headersSent) { res.destroy(err); return; }
+    next(err);
+  }
 });
 
 module.exports = router;
