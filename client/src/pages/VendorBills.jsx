@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import { downloadFile } from '../utils/downloadFile';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
@@ -33,19 +34,36 @@ export default function VendorBills() {
   const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
 
-  async function load() {
-    setLoading(true);
+  function filterParams() {
     const params = {};
     if (status) params.status = status;
     if (search) params.search = search;
     if (dateFrom) params.date_from = dateFrom;
     if (dateTo) params.date_to = dateTo;
-    const { data } = await api.get('/vendor-bills', { params });
+    return params;
+  }
+
+  async function load() {
+    setLoading(true);
+    const { data } = await api.get('/vendor-bills', { params: filterParams() });
     setRows(data);
     setLoading(false);
   }
 
   useEffect(() => { setPage(1); load(); }, [status, dateFrom, dateTo]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Extract: every bill under the current filters (not just this page) as an Excel workbook.
+  const [extracting, setExtracting] = useState(false);
+  async function extract() {
+    setExtracting(true);
+    try {
+      await downloadFile('/vendor-bills', { ...filterParams(), format: 'xlsx' }, `vendor-bills-${new Date().toLocaleDateString('en-CA')}.xlsx`);
+    } catch {
+      alert('Extract failed. Please try again.');
+    } finally {
+      setExtracting(false);
+    }
+  }
 
   function runSearch() {
     setPage(1);
@@ -60,9 +78,12 @@ export default function VendorBills() {
     <div>
       <div className="page-header">
         <h1>Vendor Bills</h1>
-        {can('/vendor-bills', 'can_add') && (
-          <button className="btn btn-primary" onClick={() => setShowCreate(true)}>Create New</button>
-        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" className="btn" onClick={extract} disabled={extracting}>{extracting ? 'Extracting...' : 'Extract'}</button>
+          {can('/vendor-bills', 'can_add') && (
+            <button className="btn btn-primary" onClick={() => setShowCreate(true)}>Create New</button>
+          )}
+        </div>
       </div>
 
       {showCreate && (

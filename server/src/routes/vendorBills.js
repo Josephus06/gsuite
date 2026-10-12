@@ -6,6 +6,7 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeVendorBillGl } = require('../lib/glImpact');
 const { liquidationPostError, liquidationBilling } = require('../lib/liquidationPosting');
+const { sendXlsx, day: xlsxDay } = require('../lib/xlsxExport');
 
 const router = express.Router();
 // Reached from a Received Purchase Order's "Bill" button, confirmed against the real
@@ -271,6 +272,34 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        ORDER BY vb.date_created DESC, vb.id DESC`,
       params
     );
+    // Extract (2026-10-12): the list under its current filters, every row, as a workbook.
+    if (req.query.format === 'xlsx') {
+      const STATUS = { open: 'Open', paid_in_full: 'Paid in Full', paid: 'Paid in Full', cancelled: 'Cancelled' };
+      await sendXlsx(res, {
+        filename: 'vendor-bills.xlsx',
+        sheet: 'Vendor Bills',
+        columns: [
+          { header: 'Bill #', key: 'bill_no', width: 14 },
+          { header: 'PO #', key: 'po', width: 14 },
+          { header: 'Reference #', key: 'ref', width: 18 },
+          { header: 'Date Created', key: 'date', width: 13 },
+          { header: 'Date Due', key: 'due', width: 13 },
+          { header: 'Office Location', key: 'location', width: 18 },
+          { header: 'Vendor', key: 'vendor', width: 40 },
+          { header: 'Gross Amount', key: 'gross', width: 16, money: true },
+          { header: 'Amount Due', key: 'amount_due', width: 16, money: true },
+          { header: 'Term', key: 'term', width: 12 },
+          { header: 'Memo', key: 'memo', width: 50 },
+          { header: 'Status', key: 'status', width: 14 },
+        ],
+        rows: rows.map((r) => ({
+          bill_no: r.bill_no, po: r.po_no || 'No PO', ref: r.reference_no || '', date: xlsxDay(r.date_created), due: xlsxDay(r.date_due),
+          location: r.office_location_name || '', vendor: r.supplier_name || '', gross: Number(r.gross_amount || 0),
+          amount_due: Number(r.amount_due || 0), term: r.term || '', memo: r.memo || '', status: STATUS[r.status] || r.status,
+        })),
+      });
+      return;
+    }
     res.json(rows);
   } catch (err) {
     next(err);
