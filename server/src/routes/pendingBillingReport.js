@@ -14,9 +14,9 @@ const router = express.Router();
 // invoice LINES that name the JO (not cancelled), NOT job_orders.quantity_invoiced -- that counter
 // was never filled in for migrated JOs (117k fully-billed JOs read 0 there).
 //
-// Non-standard JOs (NSJO: internal, sample, RMA work) are left out unless asked for: they are
-// mostly not billed to a customer. Price per unit is the SO line's (the NSSO line's for an NSJO),
-// so Unbilled Amount = uninvoiced qty x that line's gross per unit.
+// Non-standard JOs (NSJO: internal, sample, RMA work), rework (RWIP) and QC replacements (RFQC) are
+// left out: they are not billed to a customer (see loadRows). Price per unit is the SO line's, so
+// Unbilled Amount = uninvoiced qty x that line's gross per unit.
 const ROUTE = '/reports/pending-billing';
 
 // How much of each JO has been invoiced, worked out per SALES ORDER (2026-10-09). The migration hung
@@ -92,10 +92,14 @@ async function invoicedByJobOrder(jos) {
 // in one keyed query each (indexes added by register-pending-billing-page.js).
 // allReps: the whole company, whoever is asking -- the General Manager's dashboard card.
 async function loadRows(req, { allReps = false } = {}) {
-  const { search, sales_rep_id: rep, customer_id: customerId, from, to, delivered, include_nsjo: includeNsjo, location_id: locationId } = req.query;
+  const { search, sales_rep_id: rep, customer_id: customerId, from, to, delivered, location_id: locationId } = req.query;
   const where = ["jo.production_stage IN ('completed', 'partially_completed')", "(jo.status IS NULL OR jo.status <> 'Cancelled')"];
   const params = [];
-  if (!(includeNsjo === '1' || includeNsjo === 'true')) where.push('jo.nsso_id IS NULL');
+  // Never billed to a customer, so never listed (2026-10-12; the Include checkbox is gone):
+  //   NSJO   a Non-Standard SO's JO -- RMA, internal (INT), sample (SAM)
+  //   RWIP   rework in process     \  on an ordinary SO line, so the NSSO test alone let them
+  //   RFQC   failed-QC replacement /   through (RFQC-2 on SO-603 at the top of the list)
+  where.push('jo.nsso_id IS NULL', "jo.job_order_no NOT LIKE 'NSJO-%'", "jo.job_order_no NOT LIKE 'RWIP-%'", "jo.job_order_no NOT LIKE 'RFQC-%'");
   const scope = allReps ? null : await getSalesRepEmployeeScope(req.user.id, ROUTE);
   if (scope) { where.push('COALESCE(so.sales_rep_id, ns.sales_rep_id, jo.sales_rep_id) IN (?)'); params.push(scope.length ? scope : [0]); }
   if (rep) { where.push('COALESCE(so.sales_rep_id, ns.sales_rep_id, jo.sales_rep_id) = ?'); params.push(rep); }

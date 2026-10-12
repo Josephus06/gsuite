@@ -15,7 +15,7 @@ const qty = (v) => Number(v || 0).toLocaleString('en-US', { maximumFractionDigit
 
 export default function PendingBilling() {
   // location_id starts null: the first load waits for the locations so it is already Head Office's.
-  const [f, setF] = useState({ search: '', sales_rep_id: '', location_id: null, from: '', to: '', delivered: '', include_nsjo: false });
+  const [f, setF] = useState({ search: '', sales_rep_id: '', location_id: null, from: '', to: '', delivered: '' });
   const [locations, setLocations] = useState([]);
   const [reps, setReps] = useState([]);
   const [data, setData] = useState(null);
@@ -37,7 +37,7 @@ export default function PendingBilling() {
   const params = () => ({
     search: f.search || undefined, sales_rep_id: f.sales_rep_id || undefined, location_id: f.location_id || undefined,
     from: f.from || undefined, to: f.to || undefined,
-    delivered: f.delivered || undefined, include_nsjo: f.include_nsjo ? 1 : undefined,
+    delivered: f.delivered || undefined,
   });
 
   useEffect(() => {
@@ -95,10 +95,6 @@ export default function PendingBilling() {
               <option value="">All</option><option value="yes">Delivered</option><option value="no">Not yet delivered</option>
             </select>
           </div>
-        </div>
-        <div className="field-checkbox" style={{ marginTop: 8 }}>
-          <input type="checkbox" id="pb-nsjo" checked={f.include_nsjo} onChange={(e) => upd('include_nsjo', e.target.checked)} />
-          <label htmlFor="pb-nsjo">Include non-standard JOs (internal, sample, RMA)</label>
         </div>
       </div>
 
