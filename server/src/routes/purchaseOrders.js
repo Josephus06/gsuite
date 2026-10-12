@@ -252,6 +252,24 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
 const PARENT_PO_JOIN = `LEFT JOIN purchase_orders parent ON parent.id = po.parent_purchase_order_id
          OR (po.parent_purchase_order_id IS NULL AND po.type = 'PO2' AND parent.po_no = SUBSTRING_INDEX(po.po_no, '-', 2))`;
 
+// A PO1's Landed Cost POs (PO2) not yet received. While any is open the PO1 cannot be received
+// (asked 2026-10-12): its landed cost is received first, so the charge is in before the goods are.
+// Settled means received, or past it -- an imported PO2 the source calls Pending / Partially / Fully
+// Billed was received there (911 of them read receipt_status 'not_received' here). A cancelled one
+// does not count. Linked as the Landed Cost tab links them: parent_purchase_order_id, or the number.
+async function openLandedCosts(conn, parentId) {
+  const [rows] = await conn.query(
+    `SELECT po.po_no, po.status FROM purchase_orders po
+      WHERE po.type = 'PO2' AND po.receipt_status <> 'fully_received'
+        AND ${statusNormSql('po.status')} NOT IN ('cancelled', 'canceled', 'pending_billing', 'partially_billed', 'fully_billed', 'billed')
+        AND (po.parent_purchase_order_id = ?
+             OR (po.parent_purchase_order_id IS NULL
+                 AND po.po_no LIKE CONCAT((SELECT m.po_no FROM purchase_orders m WHERE m.id = ?), '-%')))
+      ORDER BY po.id`,
+    [parentId, parentId]);
+  return rows.map((r) => r.po_no);
+}
+
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[po]] = await pool.query(
@@ -282,7 +300,9 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
 
-    res.json({ ...po, lines });
+    // What holds up receiving this PO, shown against its Receive button.
+    const openLanded = po.type === 'PO2' ? [] : await openLandedCosts(pool, po.id);
+    res.json({ ...po, lines, open_landed_costs: openLanded });
   } catch (err) {
     next(err);
   }
@@ -1248,11 +1268,17 @@ async function requireReceiveRight(req, res, next) {
 router.post('/:id/receipts', requireAuth, requireReceiveRight, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[po]] = await conn.query('SELECT id, status, receipt_status FROM purchase_orders WHERE id = ?', [req.params.id]);
+    const [[po]] = await conn.query('SELECT id, type, status, receipt_status FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!po) return res.status(404).json({ error: 'Not found' });
     // isApproved, not a literal compare -- see lib/poStatus.js. Comparing to the code alone made
     // every imported PO unreceivable, because 'Approved by General Manager' is not 'approved'.
     if (!isApproved(po.status)) return res.status(409).json({ error: 'This Purchase Order must be Approved before it can be received.' });
+    if (po.type !== 'PO2') {
+      const open = await openLandedCosts(conn, po.id);
+      if (open.length) {
+        return res.status(409).json({ error: `Receive its Landed Cost PO${open.length > 1 ? 's' : ''} first: ${open.join(', ')}.` });
+      }
+    }
 
     const { date_created: dateCreated, ref_no: refNo, memo, is_on_hold: isOnHold, lines } = req.body;
     const submitted = (Array.isArray(lines) ? lines : []).filter((l) => l.purchase_order_line_id && Number(l.qty_received) > 0);

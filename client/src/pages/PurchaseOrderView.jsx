@@ -266,7 +266,12 @@ export default function PurchaseOrderView() {
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={'/purchase-orders'}>Back</Link>
           {showEdit && <Link className="btn btn-sm" to={`/purchase-orders/${id}/edit`}>Edit</Link>}
-          {showReceive && <Link className="btn btn-sm btn-primary" to={`/purchase-orders/${id}/receive`}>Receive</Link>}
+          {/* A PO1 waits for its Landed Cost POs to be received first (server enforces it too). */}
+          {showReceive && (po.open_landed_costs || []).length > 0 && (
+            <button className="btn btn-sm btn-primary" disabled
+              title={`Receive its Landed Cost PO${po.open_landed_costs.length > 1 ? 's' : ''} first: ${po.open_landed_costs.join(', ')}`}>Receive</button>
+          )}
+          {showReceive && !(po.open_landed_costs || []).length && <Link className="btn btn-sm btn-primary" to={`/purchase-orders/${id}/receive`}>Receive</Link>}
           {hasBillableLine && <button className="btn btn-sm btn-primary" onClick={() => setShowBillModal(true)}>Bill</button>}
           {showVendorReturn && <Link className="btn btn-sm" to={`/purchase-orders/${id}/return`}>Vendor Return</Link>}
           {showApprove && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>Approve</button>}
