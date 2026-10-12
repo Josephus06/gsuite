@@ -21,7 +21,9 @@ const FIELDS = [
 // Only the Non-Inventory form sends these (alter-non-inventory-fields.js), so they are written
 // only when present -- the Inventory form and Material Costing PUT the record without them and
 // must not blank what the Non-Inventory form saved.
-const OPTIONAL_FIELDS = ['length', 'width', 'conversion_type', 'can_be_received'];
+// unit_title_id (2026-10-12): the Unit Title picked on the Inventory form, which fills its units,
+// length, width and conversion (db/import-unit-of-measures.js adds the column).
+const OPTIONAL_FIELDS = ['length', 'width', 'conversion_type', 'can_be_received', 'unit_title_id'];
 function presentOptional(body) { return OPTIONAL_FIELDS.filter((f) => body[f] !== undefined); }
 
 async function logAudit(conn, { inventoryId, userId, eventType, fieldName = null, oldValue = null, newValue = null }) {

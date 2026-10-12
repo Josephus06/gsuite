@@ -24,6 +24,20 @@ router.get('/units', requireAuth, requirePermission(ROUTE, 'can_view'), async (r
   } catch (err) { next(err); }
 });
 
+// The Unit Title picker on the Inventory Item form (2026-10-12): anyone signed in, because whoever
+// may edit an item may pick its units without holding this master list's own page.
+router.get('/titles-lookup', requireAuth, async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, title, purchase_unit, stock_unit, sale_unit, base_unit, length, width, conversion, is_length, is_width
+         FROM unit_titles WHERE is_active = 1 ORDER BY title, id`);
+    res.json(rows);
+  } catch (err) {
+    if (err.code === 'ER_NO_SUCH_TABLE') return res.json([]); // not imported yet (db/import-unit-of-measures.js)
+    next(err);
+  }
+});
+
 router.get('/purchase-units', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const like = req.query.search ? `%${req.query.search}%` : null;

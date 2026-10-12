@@ -93,6 +93,26 @@ async function ensureTables() {
       UNIQUE KEY uq_unit_titles_live_pk (live_pk),
       KEY idx_unit_titles_title (title)
     )`);
+  // Same collation as units_of_measure, whose codes these name: tables created with the server's
+  // default (utf8mb4_0900_ai_ci) cannot be compared with the migrated ones (utf8mb4_unicode_ci) --
+  // "Illegal mix of collations" on the first join between them.
+  const [[ref]] = await pool.query(
+    "SELECT TABLE_COLLATION AS c FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'units_of_measure'");
+  for (const t of ['purchase_units', 'unit_titles']) {
+    const [[cur]] = await pool.query(
+      'SELECT TABLE_COLLATION AS c FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?', [t]);
+    if (ref?.c && cur?.c && cur.c !== ref.c) {
+      const charset = ref.c.split('_')[0];
+      await pool.query(`ALTER TABLE ${t} CONVERT TO CHARACTER SET ${charset} COLLATE ${ref.c}`);
+      console.log(`${t}: collation ${cur.c} -> ${ref.c}.`);
+    }
+  }
+  // The Unit Title an Inventory Item was set up from (its picker fills the item's units).
+  const [col] = await pool.query("SHOW COLUMNS FROM inventories LIKE 'unit_title_id'");
+  if (!col.length) {
+    await pool.query('ALTER TABLE inventories ADD COLUMN unit_title_id BIGINT NULL');
+    console.log('Added inventories.unit_title_id.');
+  }
 }
 
 async function registerPage() {

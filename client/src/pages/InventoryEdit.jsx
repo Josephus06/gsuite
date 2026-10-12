@@ -20,7 +20,7 @@ const normType = (t) => (String(t || '').toUpperCase() === 'INVENTORY' ? 'INVENT
 const EMPTY = {
   item_code: '', display_name: '', sales_description: '', purchase_description: '',
   category_id: '', base_unit_id: '', purchase_unit_id: '', stock_unit_id: '', sales_unit_id: '',
-  conversion_factor: 1, item_type: '', reorder_point: 0, is_active: true,
+  conversion_factor: 1, unit_title_id: '', length: '', width: '', item_type: '', reorder_point: 0, is_active: true,
   to_type: '', is_office_supply: false, is_to_item: true,
   is_with_jo: false, is_po: false, is_jo: false,
   is_length_based: false, is_width_based: false, last_purchase_price: '', last_purchase_date: '',
@@ -31,6 +31,7 @@ const EMPTY = {
 };
 
 function accountLabel(a) { return a ? `${a.account_code} — ${a.account_name}` : ''; }
+const fmtUnitNum = (v, d) => (v === null || v === undefined || v === '' ? '' : Number(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }));
 function unitLabel(u) { return u ? `${u.title} (${u.code})` : ''; }
 
 // Sales / Pricing follows the costing sheet (matcosting.xlsx) cell for cell:
@@ -67,6 +68,10 @@ export default function InventoryEdit() {
 
   const [categories, setCategories] = useState([]);
   const [units, setUnits] = useState([]);
+  // Unit Titles (Master Lists > Unit of Measures): picking one fills the units, length, width and
+  // conversion below, as the source's Inventory form does (2026-10-12).
+  const [unitTitles, setUnitTitles] = useState([]);
+  useEffect(() => { api.get('/unit-of-measures/titles-lookup').then(({ data }) => setUnitTitles(data || [])).catch(() => {}); }, []);
   const [accounts, setAccounts] = useState([]);
 
   useEffect(() => {
@@ -87,6 +92,7 @@ export default function InventoryEdit() {
           category_id: data.category_id || '', base_unit_id: data.base_unit_id || '',
           purchase_unit_id: data.purchase_unit_id || '', stock_unit_id: data.stock_unit_id || '', sales_unit_id: data.sales_unit_id || '',
           conversion_factor: data.conversion_factor ?? 1, item_type: normType(data.item_type),
+          unit_title_id: data.unit_title_id || '', length: data.length ?? '', width: data.width ?? '',
           reorder_point: data.reorder_point || 0, is_active: !!data.is_active,
           to_type: data.to_type || '', is_office_supply: !!data.is_office_supply, is_to_item: !!data.is_to_item,
           is_with_jo: !!data.is_with_jo, is_po: !!data.is_po, is_jo: !!data.is_jo,
@@ -105,6 +111,25 @@ export default function InventoryEdit() {
     });
   }, [id, isNew]);
 
+  // A Unit Title fills Base / Purchase / Stock / Sales Unit (matched by code), Length, Width and
+  // Conversion. A unit it names that is not in the units list leaves that field as it was.
+  function applyUnitTitle(t) {
+    if (!t) return;
+    const unitId = (code) => (code ? (units.find((u) => String(u.code).trim().toLowerCase() === String(code).trim().toLowerCase()) || {}).id : undefined);
+    const pick = (code, current) => unitId(code) || current;
+    setForm((f) => ({
+      ...f,
+      unit_title_id: t.id,
+      base_unit_id: pick(t.base_unit, f.base_unit_id),
+      purchase_unit_id: pick(t.purchase_unit, f.purchase_unit_id),
+      stock_unit_id: pick(t.stock_unit, f.stock_unit_id),
+      sales_unit_id: pick(t.sale_unit, f.sales_unit_id),
+      length: t.length ?? '',
+      width: t.width ?? '',
+      conversion_factor: t.conversion ?? 1,
+    }));
+  }
+
   const pricing = computePricing(form);
   function cellInput(key, step = '0.01') {
     return <input type="number" step={step} value={form[key]} onChange={(e) => setForm({ ...form, [key]: e.target.value })} />;
@@ -117,9 +142,9 @@ export default function InventoryEdit() {
     const payload = { ...form };
     // Selling Price is no longer typed in -- it's the sheet's Subtotal + Markup Amount.
     payload.selling_price = form.material_cost === '' ? form.selling_price : Math.round(pricing.sellingPrice * 10000) / 10000;
-    ['category_id', 'base_unit_id', 'purchase_unit_id', 'stock_unit_id', 'sales_unit_id', 'expense_account_id', 'asset_account_id', 'income_account_id', 'cogs_account_id']
+    ['category_id', 'base_unit_id', 'purchase_unit_id', 'stock_unit_id', 'sales_unit_id', 'expense_account_id', 'asset_account_id', 'income_account_id', 'cogs_account_id', 'unit_title_id']
       .forEach((k) => { payload[k] = payload[k] || null; });
-    ['last_purchase_price', 'last_purchase_date', 'average_cost', 'material_cost', 'selling_price', 'beg_selling_price']
+    ['last_purchase_price', 'last_purchase_date', 'average_cost', 'material_cost', 'selling_price', 'beg_selling_price', 'length', 'width']
       .forEach((k) => { payload[k] = payload[k] === '' ? null : payload[k]; });
     try {
       if (isNew) {
@@ -217,6 +242,23 @@ export default function InventoryEdit() {
         )}
 
         <h3 className="subsection">Units</h3>
+        <div className="field">
+          <label>Unit Title</label>
+          <EntityPicker
+            label="Unit Titles" items={unitTitles} value={form.unit_title_id} getLabel={(t) => t?.title}
+            columns={[
+              { key: 'title', label: 'Unit Title' }, { key: 'purchase_unit', label: 'Purchase Unit' },
+              { key: 'stock_unit', label: 'Stock Unit' }, { key: 'sale_unit', label: 'Sale Unit' }, { key: 'base_unit', label: 'Base Unit' },
+              { key: 'length', label: 'Length', render: (t) => fmtUnitNum(t.length, 2) },
+              { key: 'width', label: 'Width', render: (t) => fmtUnitNum(t.width, 2) },
+              { key: 'conversion', label: 'Conversion', render: (t) => fmtUnitNum(t.conversion, 2) },
+            ]}
+            searchKeys={['title', 'purchase_unit', 'stock_unit', 'sale_unit', 'base_unit']}
+            placeholder="Select Unit Title..."
+            onSelect={applyUnitTitle}
+            onClear={() => setForm({ ...form, unit_title_id: '' })}
+          />
+        </div>
         <div className="review-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
           <div className="field">
             <label>Base Unit</label>
@@ -250,6 +292,8 @@ export default function InventoryEdit() {
               onSelect={(u) => setForm({ ...form, sales_unit_id: u.id })}
             />
           </div>
+          <div className="field"><label>Length</label><input type="number" step="any" value={form.length} onChange={(e) => setForm({ ...form, length: e.target.value })} /></div>
+          <div className="field"><label>Width</label><input type="number" step="any" value={form.width} onChange={(e) => setForm({ ...form, width: e.target.value })} /></div>
           <div className="field"><label>Conversion Factor</label><input type="number" step="0.000001" value={form.conversion_factor} onChange={(e) => setForm({ ...form, conversion_factor: e.target.value })} /></div>
         </div>
 
