@@ -41,8 +41,8 @@ export default function ReceivingReportView() {
 
   if (loading || !data) return <LoadingSpinner />;
 
-  // No permission page of its own -- inherits the Purchase Order's edit right.
-  const canEdit = (can('/purchase-orders', 'can_edit') && !periodLocked);
+  // The same right that receives (server: requireReceiveRight): PO Edit, or Add on Receiving Reports.
+  const canEdit = (can('/purchase-orders', 'can_edit') || can('/receiving-reports', 'can_add')) && !periodLocked;
 
   return (
     <div>
@@ -56,7 +56,7 @@ export default function ReceivingReportView() {
           >
             Back
           </Link>
-          {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Receiving Report isn't implemented in this build">Edit</button>}
+          {canEdit && <Link className="btn btn-sm" to={`/receiving-reports/${receiptId}/edit`}>Edit</Link>}
         </div>
       </div>
 

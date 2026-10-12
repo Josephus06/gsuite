@@ -434,6 +434,7 @@ function App() {
         <Route path="/purchase-orders/receipts/:receiptId" element={<ReceivingReportView />} />
         <Route path="/receiving-reports" element={<ReceivingReports />} />
         <Route path="/receiving-reports/:receiptId" element={<ReceivingReportView />} />
+        <Route path="/receiving-reports/:receiptId/edit" element={<ReceivingReportEdit />} />
         <Route path="/purchase-orders/:id/return" element={<PurchaseReturnEdit />} />
         <Route path="/purchase-orders/returns/:returnId" element={<PurchaseReturnView />} />
         <Route path="/purchase-orders/:id" element={<PurchaseOrderView />} />

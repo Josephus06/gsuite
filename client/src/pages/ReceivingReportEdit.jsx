@@ -18,8 +18,16 @@ function qty(v) {
 // reachable once the PO is Approved. Rate/Discount %/Tax Code default from the PO line
 // but are re-editable here (invoice price can differ from what was ordered), matching
 // the real Receiving Report form.
+//
+// Also the EDIT form for a saved RR (2026-10-12; /receiving-reports/:receiptId/edit): opened on its
+// lines, saved with PUT /purchase-orders/receipts/:receiptId, which moves received qty and stock by
+// the difference. Lines are not added or removed there.
 export default function ReceivingReportEdit() {
-  const { id } = useParams();
+  const { id: poParam, receiptId } = useParams();
+  const isEdit = !!receiptId;
+  const [poId, setPoId] = useState(poParam || null);
+  const [receiptNo, setReceiptNo] = useState('');
+  const id = poId;
   const navigate = useNavigate();
   const [po, setPo] = useState(null);
   const [locations, setLocations] = useState([]);
@@ -34,14 +42,41 @@ export default function ReceivingReportEdit() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    Promise.all([
-      api.get(`/purchase-orders/${id}`),
-      api.get('/lookups/locations'),
-      api.get('/lookups/taxes'),
-    ]).then(([poRes, locRes, taxRes]) => {
+    (async () => {
+      // Editing: the receipt first -- it names its PO.
+      const rr = isEdit ? (await api.get(`/receiving-reports/${receiptId}`)).data : null;
+      const thePoId = rr ? rr.purchase_order_id : poParam;
+      const [poRes, locRes, taxRes] = await Promise.all([
+        api.get(`/purchase-orders/${thePoId}`),
+        api.get('/lookups/locations'),
+        api.get('/lookups/taxes'),
+      ]);
+      setPoId(thePoId);
       setPo(poRes.data);
       setLocations(locRes.data);
       setTaxes(taxRes.data);
+      if (rr) {
+        setReceiptNo(rr.receipt_no);
+        setDateCreated(String(rr.date_created).slice(0, 10));
+        setRefNo(rr.ref_no || '');
+        setMemo(rr.memo || '');
+        setIsOnHold(!!rr.is_on_hold);
+        const polById = new Map(poRes.data.lines.map((l) => [l.id, l]));
+        setLines(rr.lines.map((rl) => {
+          const pl = polById.get(rl.purchase_order_line_id) || {};
+          return {
+            id: rl.id, purchase_order_line_id: rl.purchase_order_line_id,
+            item_code: rl.item_code, item_name: rl.item_name, item_id: rl.item_id,
+            // "Already Received" here is what OTHER receipts took of the PO line.
+            po_qty: pl.qty, received_qty: Number(pl.received_qty || 0) - Number(rl.qty_received || 0),
+            location_id: rl.location_id || '', department_name: rl.department_name || '',
+            qty_received: Number(rl.qty_received), rate: rl.rate, disc_percent: rl.disc_percent,
+            tax_code_id: rl.tax_code_id || '',
+          };
+        }));
+        setLoading(false);
+        return;
+      }
       setLines(
         poRes.data.lines
           .filter((l) => Number(l.qty) > Number(l.received_qty))
@@ -61,8 +96,8 @@ export default function ReceivingReportEdit() {
           }))
       );
       setLoading(false);
-    });
-  }, [id]);
+    })().catch((e) => { setError(e.response?.data?.error || 'Could not load.'); setLoading(false); });
+  }, [poParam, receiptId, isEdit]);
 
   function updateLine(key, patch) {
     setLines((prev) => prev.map((l) => (l.purchase_order_line_id === key ? { ...l, ...patch } : l)));
@@ -83,11 +118,23 @@ export default function ReceivingReportEdit() {
 
   async function handleSave() {
     setError('');
+    if (isEdit && lines.some((l) => !(Number(l.qty_received) > 0))) { setError('Rec. Qty must be above 0 on every line.'); return; }
     const submitLines = lines.filter((l) => Number(l.qty_received) > 0);
     if (!submitLines.length) { setError('Enter a Qty Received greater than 0 for at least one line.'); return; }
     if (submitLines.some((l) => !l.location_id)) { setError('Select a Location for every line being received.'); return; }
     setSaving(true);
     try {
+      if (isEdit) {
+        await api.put(`/purchase-orders/receipts/${receiptId}`, {
+          date_created: dateCreated, ref_no: refNo, memo, is_on_hold: isOnHold,
+          lines: lines.map((l) => ({
+            id: l.id, location_id: l.location_id, qty_received: l.qty_received,
+            rate: l.rate, disc_percent: l.disc_percent, tax_code_id: l.tax_code_id || null,
+          })),
+        });
+        navigate(`/receiving-reports/${receiptId}`);
+        return;
+      }
       const { data } = await api.post(`/purchase-orders/${id}/receipts`, {
         date_created: dateCreated,
         ref_no: refNo,
@@ -111,13 +158,14 @@ export default function ReceivingReportEdit() {
   }
 
   if (loading) return <LoadingSpinner />;
+  if (!po) return <div className="error-banner">{error || 'Could not load.'}</div>;
 
   return (
     <div>
       <div className="page-header">
-        <h1>Receiving Report — {po.po_no}</h1>
+        <h1>{isEdit ? `Edit ${receiptNo}` : 'Receiving Report'} — {po.po_no}</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <Link className="btn" to={`/purchase-orders/${id}`}>Back to Lists</Link>
+          <Link className="btn" to={isEdit ? `/receiving-reports/${receiptId}` : `/purchase-orders/${id}`}>{isEdit ? 'Cancel' : 'Back to Lists'}</Link>
           <button className="btn btn-primary" disabled={saving} onClick={handleSave}>{saving ? <LoadingSpinner inline size="sm" label="Saving..." /> : 'Save'}</button>
         </div>
       </div>
@@ -147,7 +195,7 @@ export default function ReceivingReportEdit() {
           <table>
             <thead>
               <tr>
-                <th>Item</th><th>Location</th><th>Department</th><th>PO Qty</th><th>Already Received</th><th>Rec. Qty</th>
+                <th>Item</th><th>Location</th><th>Department</th><th>PO Qty</th><th>{isEdit ? 'Received Elsewhere' : 'Already Received'}</th><th>Rec. Qty</th>
                 <th>Rate</th><th>Discount %</th><th>Tax Code</th><th>Ext. Price</th>
               </tr>
             </thead>

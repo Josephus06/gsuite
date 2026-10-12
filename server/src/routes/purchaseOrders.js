@@ -1424,6 +1424,146 @@ router.post('/:id/receipts', requireAuth, requireReceiveRight, async (req, res, 
   }
 });
 
+// Edit a saved Receiving Report (2026-10-12): its header (date, Ref. #, memo, On Hold) and, per
+// line, Rec. Qty, Location, Rate, Discount % and Tax Code. Lines are not added or removed here.
+// Everything a receipt moved is moved again by the difference:
+//   - the PO line's received_qty, and the PO's receipt_status;
+//   - stock (inventory_locations) -- out of the old location, into the new -- for stock items only;
+//     the Bin Card reads the receipt lines themselves and follows on its own.
+// A line may not go below what has been BILLED of its PO line (received_qty may not fall under
+// billed_qty), nor above what the PO line still has open. Amounts are worked out as on Receive.
+router.put('/receipts/:receiptId', requireAuth, requireReceiveRight, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[r]] = await conn.query('SELECT * FROM purchase_order_receipts WHERE id = ?', [req.params.receiptId]);
+    if (!r) return res.status(404).json({ error: 'Not found' });
+    const day = (v) => (v instanceof Date ? v.toISOString() : String(v || '')).slice(0, 10);
+    const oldDate = day(r.date_created);
+    const newDate = day(req.body.date_created) || oldDate;
+    await assertPeriodOpen(oldDate, 'non_gl', conn);
+    if (newDate !== oldDate) await assertPeriodOpen(newDate, 'non_gl', conn);
+
+    const [oldLines] = await conn.query(
+      `SELECT rl.*, pol.qty AS po_qty, pol.received_qty AS po_received, COALESCE(pol.billed_qty, 0) AS po_billed,
+              pol.rate AS po_rate, pol.disc_percent AS po_disc, pol.tax_code_id AS po_tax, pol.disc_amount AS po_disc_amount,
+              pol.net_of_tax AS po_net, pol.ext_price AS po_ext,
+              COALESCE(i.conversion_factor, 1) AS conversion_factor, i.item_type, i.item_code
+         FROM purchase_order_receipt_lines rl
+         JOIN purchase_order_lines pol ON pol.id = rl.purchase_order_line_id
+         LEFT JOIN inventories i ON i.id = rl.item_id
+        WHERE rl.purchase_order_receipt_id = ?`, [r.id]);
+    const sent = new Map((Array.isArray(req.body.lines) ? req.body.lines : []).map((l) => [Number(l.id), l]));
+
+    const [taxRows] = await conn.query('SELECT id, rate FROM taxes');
+    const taxRate = new Map(taxRows.map((t) => [Number(t.id), Number(t.rate)]));
+    const same = (a, b) => Math.abs(Number(a || 0) - Number(b || 0)) < 1e-9;
+
+    const plans = [];
+    for (const o of oldLines) {
+      const s = sent.get(Number(o.id)) || {};
+      const qty = s.qty_received !== undefined ? Number(s.qty_received) : Number(o.qty_received);
+      const locationId = s.location_id !== undefined ? (Number(s.location_id) || null) : o.location_id;
+      const rate = s.rate !== undefined ? Number(s.rate || 0) : Number(o.rate || 0);
+      const discPercent = s.disc_percent !== undefined ? Number(s.disc_percent || 0) : Number(o.disc_percent || 0);
+      const taxCodeId = s.tax_code_id !== undefined ? (Number(s.tax_code_id) || null) : (o.tax_code_id || null);
+      const label = o.item_code || `line ${o.id}`;
+      if (!(qty > 0)) return res.status(400).json({ error: `${label}: Rec. Qty must be above 0.` });
+      if (!locationId) return res.status(400).json({ error: `${label}: select a Location.` });
+      const otherReceived = Number(o.po_received) - Number(o.qty_received);
+      if (qty > Number(o.po_qty) - otherReceived + 1e-9) {
+        return res.status(409).json({ error: `${label}: Rec. Qty can be at most ${Number(o.po_qty) - otherReceived} (the PO line's ${Number(o.po_qty)} less what other receipts took).` });
+      }
+      if (otherReceived + qty < Number(o.po_billed) - 1e-9) {
+        return res.status(409).json({ error: `${label}: ${Number(o.po_billed)} of its PO line is already billed, so this receipt cannot go below ${Number(o.po_billed) - otherReceived}.` });
+      }
+      // Amounts: at the PO line's own terms, its share of the PO line's amounts (as on Receive);
+      // otherwise worked from the rate.
+      const tr = taxCodeId ? (taxRate.get(taxCodeId) || 0) : 0;
+      let subtotal = cents(qty * rate);
+      let discAmount = cents(subtotal * (discPercent / 100));
+      let net = cents(subtotal - discAmount);
+      let ext = tr ? cents(qty * rate * (1 - discPercent / 100) * (1 + tr / 100)) : net;
+      const poQty = Number(o.po_qty);
+      if (poQty > 0 && same(rate, o.po_rate) && same(discPercent, o.po_disc) && String(taxCodeId || '') === String(o.po_tax || '')) {
+        discAmount = cents(Number(o.po_disc_amount || 0) * (qty / poQty));
+        net = cents(Number(o.po_net || 0) * (qty / poQty));
+        ext = cents(Number(o.po_ext || 0) * (qty / poQty));
+        subtotal = cents(net + discAmount);
+      }
+      plans.push({ o, qty, locationId, rate, discPercent, taxCodeId, subtotal, discAmount, net, tax: cents(ext - net), ext });
+    }
+
+    await conn.beginTransaction();
+    const changes = [];
+    for (const p of plans) {
+      const { o } = p;
+      await conn.query(
+        `UPDATE purchase_order_receipt_lines SET qty_received = ?, location_id = ?, rate = ?, disc_percent = ?, disc_amount = ?,
+                net_of_tax = ?, tax_code_id = ?, tax_amount = ?, ext_price = ? WHERE id = ?`,
+        [p.qty, p.locationId, p.rate, p.discPercent, p.discAmount, p.net, p.taxCodeId, p.tax, p.ext, o.id]);
+      const dq = p.qty - Number(o.qty_received);
+      if (Math.abs(dq) > 1e-9) {
+        await conn.query('UPDATE purchase_order_lines SET received_qty = received_qty + ? WHERE id = ?', [dq, o.purchase_order_line_id]);
+      }
+      if (!isNonStockItem(o.item_type)) {
+        const conv = Number(o.conversion_factor || 1);
+        const moved = Number(o.location_id || 0) !== Number(p.locationId || 0);
+        const upsert = (loc, by) => conn.query(
+          `INSERT INTO inventory_locations (inventory_id, location_id, qty_on_hand) VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE qty_on_hand = qty_on_hand + VALUES(qty_on_hand)`, [o.item_id, loc, by]);
+        if (moved) {
+          if (o.location_id) await upsert(o.location_id, -Number(o.qty_received) * conv);
+          await upsert(p.locationId, p.qty * conv);
+        } else if (Math.abs(dq) > 1e-9 && p.locationId) {
+          await upsert(p.locationId, dq * conv);
+        }
+      }
+      if (Math.abs(dq) > 1e-9) changes.push(`${o.item_code}: qty ${Number(o.qty_received)} -> ${p.qty}`);
+      if (Number(o.location_id || 0) !== Number(p.locationId || 0)) changes.push(`${o.item_code}: location changed`);
+      if (!same(o.rate, p.rate) || !same(o.disc_percent, p.discPercent) || String(o.tax_code_id || '') !== String(p.taxCodeId || '')) {
+        changes.push(`${o.item_code}: price terms changed`);
+      }
+    }
+
+    const sum = (k) => cents(plans.reduce((t, p) => t + p[k], 0));
+    const refNo = req.body.ref_no !== undefined ? (req.body.ref_no || null) : r.ref_no;
+    const memo = req.body.memo !== undefined ? (req.body.memo || null) : r.memo;
+    const isOnHold = req.body.is_on_hold !== undefined ? !!req.body.is_on_hold : !!r.is_on_hold;
+    await conn.query(
+      `UPDATE purchase_order_receipts SET date_created = ?, ref_no = ?, memo = ?, is_on_hold = ?, subtotal = ?, discount_amount = ?,
+              net_of_tax = ?, tax_amount = ?, total_amount = ? WHERE id = ?`,
+      [newDate, refNo, memo, isOnHold, sum('subtotal'), sum('discAmount'), sum('net'), sum('tax'), cents(sum('net') + sum('tax')), r.id]);
+    if (newDate !== oldDate) changes.push(`date ${oldDate} -> ${newDate}`);
+    if ((refNo || '') !== (r.ref_no || '')) changes.push('Ref. # changed');
+    if ((memo || '') !== (r.memo || '')) changes.push('memo changed');
+    if (isOnHold !== !!r.is_on_hold) changes.push(isOnHold ? 'put on hold' : 'taken off hold');
+
+    const [[po]] = await conn.query('SELECT receipt_status FROM purchase_orders WHERE id = ?', [r.purchase_order_id]);
+    const [allLines] = await conn.query('SELECT qty, received_qty FROM purchase_order_lines WHERE purchase_order_id = ?', [r.purchase_order_id]);
+    const allReceived = allLines.every((l) => Number(l.received_qty) >= Number(l.qty));
+    const anyReceived = allLines.some((l) => Number(l.received_qty) > 0);
+    const receiptStatus = allReceived ? 'fully_received' : anyReceived ? 'partially_received' : 'not_received';
+    await conn.query('UPDATE purchase_orders SET receipt_status = ? WHERE id = ?', [receiptStatus, r.purchase_order_id]);
+    // Logged on the PO, whose System Info is where its receipts' history is read.
+    await logAudit(conn, {
+      poId: r.purchase_order_id, userId: req.user.id, eventType: 'Updated', fieldName: r.receipt_no,
+      oldValue: null, newValue: changes.length ? changes.join('; ').slice(0, 1000) : 'saved, no changes',
+    });
+    if (po && po.receipt_status !== receiptStatus) {
+      await logAudit(conn, { poId: r.purchase_order_id, userId: req.user.id, eventType: 'Status Change', fieldName: 'receipt_status', oldValue: po.receipt_status, newValue: receiptStatus });
+    }
+    await conn.commit();
+    const [[row]] = await pool.query('SELECT * FROM purchase_order_receipts WHERE id = ?', [r.id]);
+    res.json(row);
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
 router.get('/:id/returns', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [rows] = await pool.query(
