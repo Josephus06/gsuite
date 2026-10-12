@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Avatar from '../components/Avatar';
+import { openChat } from '../components/ChatDock';
 import PostCard from '../components/feed/PostCard';
 import DashboardCarousel from '../components/feed/DashboardCarousel';
 import PostComposer from '../components/feed/PostComposer';
@@ -41,7 +42,8 @@ function PostSkeleton() {
 }
 
 export default function Feed() {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
+  const mayChat = can('/chat', 'can_view');
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -170,7 +172,7 @@ export default function Feed() {
         {/* ------------------------------------------------------------ left rail */}
         {/* Own column at the far left, outside the shortcuts rail: it is company notice
             material rather than navigation, and the space was empty anyway. */}
-        <aside className="fb-rail fb-rail-far-left">
+        <aside className="fb-rail fb-rail-far-left">
           {/* The anniversary lockup, above the Spotlight card and not inside it: it is a
               standing mark for the year rather than one of the things being spotlighted, and
               the carousel hides itself entirely for anyone with nothing to show. Served from
@@ -269,12 +271,17 @@ export default function Feed() {
           </div>
           {/* Everyone in this list is online by construction -- the server only returns users
               whose heartbeat is inside the window -- so the green dot is always accurate. */}
+          {/* Clicking someone opens a chatbox with them when you both have Chat (2026-10-12,
+              components/ChatDock.jsx); otherwise it goes to their profile as before. */}
           {contacts.map((c) => (
             <Link
               key={c.id}
               className="fb-rail-item"
-              title={c.group_name || c.account_type || ''}
+              title={mayChat && Number(c.can_chat) ? `Chat with ${c.display_name}` : (c.group_name || c.account_type || '')}
               to={`/profile/${c.id}`}
+              onClick={(e) => {
+                if (mayChat && Number(c.can_chat)) { e.preventDefault(); openChat({ ...c, online: true }); }
+              }}
             >
               <span className="fb-rail-avatar-wrap">
                 <Avatar user={c} size={36} />

@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import Avatar from './Avatar';
 import ChatWidget from './ChatWidget';
+import ChatDock from './ChatDock';
 import SelectionTranslator from './SelectionTranslator';
 import RunningJobTimer from './RunningJobTimer';
 import NotificationBell from './NotificationBell';
@@ -681,6 +682,8 @@ export default function Layout() {
       {bgNote && <div className="app-toast">{bgNote}</div>}
 
       <ChatWidget />
+      {/* Person-to-person chat (2026-10-12): boxes open here on any page. */}
+      <ChatDock />
       <SelectionTranslator />
       <RunningJobTimer />
     </div>

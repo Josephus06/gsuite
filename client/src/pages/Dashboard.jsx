@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { Sparkline, DonutChart, GaugeRing, BarList, Holo3DOrb, Holo3DBars, useCountUp } from '../components/charts';
 import Avatar from '../components/Avatar';
+import ChatContacts from '../components/ChatContacts';
 import Modal from '../components/Modal';
 import SyncFromSourceButton from '../components/SyncFromSourceButton';
 import { parseUtc } from '../utils/datetime';
@@ -183,6 +184,8 @@ function ProfileCard({ user, roleLabel, rings, activity }) {
       <Avatar user={user} size={88} editable />
       <div className="dash-profile-name">{user?.display_name}</div>
       <div className="dash-profile-role">{roleLabel}</div>
+      {/* Messenger (2026-10-12): the people you can chat with; one click pops out a chatbox. */}
+      <ChatContacts />
 
       {rings && rings.length > 0 && (
         <div className="dash-rings-row">

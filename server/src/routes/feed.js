@@ -269,7 +269,11 @@ router.get('/contacts', requireAuth, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
       `SELECT u.id, u.display_name, u.avatar_data, u.account_type, g.name AS group_name,
-              u.last_seen_at
+              u.last_seen_at,
+              -- Whether they have Chat (routes/chat.js), so clicking them opens a chatbox.
+              (u.account_type = 'System Admin' OR EXISTS (
+                 SELECT 1 FROM user_page_permissions upp JOIN pages p ON p.id = upp.page_id
+                  WHERE upp.user_id = u.id AND p.route = '/chat' AND upp.can_view = TRUE)) AS can_chat
          FROM users u
          LEFT JOIN user_groups g ON g.id = u.user_group_id
         WHERE u.is_active = 1
