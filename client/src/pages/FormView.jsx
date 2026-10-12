@@ -146,10 +146,11 @@ export default function FormView() {
   // Said plainly to the approver looking at a form they cannot yet act on, so a missing Approve
   // button reads as "waiting on the head" rather than as something broken.
   const awaitingNote = doc.can_approve && doc.status === 'submitted';
-  // An approved liquidation goes to the books through a Vendor Bill OR a Journal raised from it, once.
+  // An approved liquidation goes to the books through Vendor Bills -- one, or several split by item
+  // (2026-10-12), each item on one bill -- OR through one Journal while nothing has posted it yet.
   const unposted = doc.type === 'liquidation' && doc.status === 'approved' && !doc.gl_posts;
   const mayBill = unposted && can('/vendor-bills', 'can_add');
-  const mayJournal = unposted && can('/journals', 'can_add');
+  const mayJournal = unposted && !(doc.vendor_bills || []).length && can('/journals', 'can_add');
 
   async function discard() {
     if (!confirm(`Discard ${doc.request_no}? This cannot be undone.`)) return;
@@ -186,14 +187,16 @@ export default function FormView() {
           )}
           {mayDiscard && <button className="btn btn-sm btn-danger" disabled={busy} onClick={discard}>Discard</button>}
           {mayBill && (
-            <button className="btn btn-sm btn-primary" onClick={() => setBilling(true)}>Create Vendor Bill</button>
+            <button className="btn btn-sm btn-primary" onClick={() => setBilling(true)}>
+              {doc.partly_billed ? 'Bill Remaining Items' : 'Create Vendor Bill'}
+            </button>
           )}
           {mayJournal && (
             <Link className="btn btn-sm btn-primary" to={`/journals/new?liquidation=${doc.id}`}>Create Journal</Link>
           )}
-          {doc.vendor_bill && (
-            <Link className="btn btn-sm" to={`/vendor-bills/${doc.vendor_bill.id}`}>{doc.vendor_bill.bill_no}</Link>
-          )}
+          {(doc.vendor_bills || []).map((b) => (
+            <Link key={b.id} className="btn btn-sm" to={`/vendor-bills/${b.id}`}>{b.bill_no}</Link>
+          ))}
           {doc.journal && (
             <Link className="btn btn-sm" to={`/journals/${doc.journal.id}`}>{doc.journal.journal_no}</Link>
           )}
@@ -356,6 +359,9 @@ export default function FormView() {
                     {isFund && <td>{fmtDate(r.item_date)}</td>}
                     <td>
                       {r.particulars}
+                      {doc.billed_items?.[r.id] && (
+                        <div className="muted" style={{ fontSize: 12 }}>Billed on {doc.billed_items[r.id]}</div>
+                      )}
                       {r.rejection_remark && (
                         <div className="muted" style={{ color: 'var(--danger, #b91c1c)', fontSize: 12 }}>
                           Returned: {r.rejection_remark}
@@ -403,8 +409,10 @@ export default function FormView() {
           <h3>GL Impact</h3>
           <p className="muted" style={{ marginTop: 0 }}>
             {doc.gl_posts
-              ? <>Posted to the books through {doc.vendor_bill ? doc.vendor_bill.bill_no : doc.journal.journal_no}. The liquidation itself posts nothing.</>
-              : 'Not posted. This liquidation posts nothing on its own: once approved, Accounts Payable creates a Vendor Bill or a Journal from it, which debits each item\'s account and credits the credit account below.'}
+              ? <>Posted to the books through {doc.journal ? doc.journal.journal_no : (doc.vendor_bills || []).map((b) => b.bill_no).join(', ')}. The liquidation itself posts nothing.</>
+              : doc.partly_billed
+                ? <>Partly posted: the items marked &quot;Billed on&quot; are on {(doc.vendor_bills || []).map((b) => b.bill_no).join(', ')}. Bill the remaining items on another Vendor Bill.</>
+                : 'Not posted. This liquidation posts nothing on its own: once approved, Accounts Payable creates a Vendor Bill or a Journal from it, which debits each item\'s account and credits the credit account below. Its items can be split across several Vendor Bills -- remove the ones that belong on another bill.'}
           </p>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
             <span className="muted">Credit Account :</span>

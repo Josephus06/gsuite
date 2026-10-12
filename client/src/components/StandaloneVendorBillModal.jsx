@@ -99,8 +99,11 @@ export default function StandaloneVendorBillModal({ onClose, onSaved, replicateF
     setOfficeLocation(locs.find((l) => /head office/i.test(l.location_name || '')) || null);
     setMemo(`Liquidation ${f.request_no}${f.name ? ` -- ${f.name}` : ''}`);
     const deptOk = (metaData.departments || []).some((d) => String(d.id) === String(f.department_id));
-    const copied = (f.items || []).filter((it) => Number(it.amount)).map((it) => ({
+    // Only the items not on a bill yet: a liquidation can be split across bills by item (2026-10-12).
+    // Each line remembers its item, so removing a line leaves that item for another bill.
+    const copied = (f.items || []).filter((it) => Number(it.amount) && !f.billed_items?.[it.id]).map((it) => ({
       ...blankLine(),
+      form_request_item_id: it.id,
       account: findAcct(it.cogs_account_id)
         || (it.cogs_account_id ? { id: it.cogs_account_id, account_code: it.cogs_account_code, account_name: it.cogs_account_name } : null),
       description: it.particulars || '',
@@ -203,6 +206,7 @@ export default function StandaloneVendorBillModal({ onClose, onSaved, replicateF
         memo,
         wtax_id: wtaxId || null,
         form_request_id: fromLiquidation?.id || null,
+        ...(fromLiquidation ? { form_request_item_ids: [...new Set(payload.map((l) => l.form_request_item_id).filter(Boolean))] } : {}),
         lines: payload.map((l) => ({
           account_id: l.account.id, description: l.description, department_id: Number(l.department_id),
           qty: 1, unit_price: Number(l.amount || 0), tax_code_id: l.tax_code_id || null, is_withhold: l.is_withhold,

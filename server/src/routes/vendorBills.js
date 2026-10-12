@@ -5,7 +5,7 @@ const { insertNumbered } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeVendorBillGl } = require('../lib/glImpact');
-const { liquidationPostError } = require('../lib/liquidationPosting');
+const { liquidationPostError, liquidationBilling } = require('../lib/liquidationPosting');
 
 const router = express.Router();
 // Reached from a Received Purchase Order's "Bill" button, confirmed against the real
@@ -381,11 +381,17 @@ async function createStandaloneBill(req, res, conn) {
   if (!submitted.length) return res.status(400).json({ error: 'Add at least one line with a quantity.' });
   await assertPeriodOpen(dateCreated, 'ap', conn);
 
-  // Raised from a Liquidation (Create Vendor Bill on the form): only an approved one, and only once
-  // -- by this bill or by a Journal (lib/liquidationPosting.js), or the expenses post twice.
+  // Raised from a Liquidation (Create Vendor Bill on the form): only an approved one, and each of its
+  // items on one bill only (2026-10-12: a liquidation can be split across bills by item, receipts from
+  // different vendors) -- never once a Journal has posted it (lib/liquidationPosting.js). The items
+  // this bill posts are the ones its lines came from; an older screen that names none bills them all.
   const formRequestId = Number(req.body.form_request_id) || null;
+  let formItemIds = [];
   if (formRequestId) {
-    const why = await liquidationPostError(conn, formRequestId);
+    formItemIds = Array.isArray(req.body.form_request_item_ids)
+      ? [...new Set(req.body.form_request_item_ids.map(Number).filter(Boolean))]
+      : (await liquidationBilling(conn, formRequestId)).unbilledItemIds;
+    const why = await liquidationPostError(conn, formRequestId, { via: 'bill', itemIds: formItemIds });
     if (why) return res.status(409).json({ error: why });
   }
 
@@ -450,6 +456,10 @@ async function createStandaloneBill(req, res, conn) {
       ]
     ),
   });
+
+  for (const itemId of formItemIds) {
+    await conn.query('INSERT INTO vendor_bill_form_items (vendor_bill_id, form_request_item_id) VALUES (?, ?)', [billId, itemId]);
+  }
 
   for (const l of computedLines) {
     await conn.query(

@@ -3,7 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission, userCan, isSystemAdmin } = require('../middleware/auth');
 const { insertNumbered } = require('../lib/docNumber');
 const { computeLiquidationGl } = require('../lib/glImpact');
-const { liquidationPostedBy } = require('../lib/liquidationPosting');
+const { liquidationBilling } = require('../lib/liquidationPosting');
 const {
   DEPARTMENT_NOTED_TYPES, isDepartmentNoter, departmentsHeadedBy, notersFor,
   AP_NOTED_TYPES, isAccountsPayable, notersForDoc,
@@ -527,10 +527,14 @@ router.get('/:id', requireAuth, async (req, res, next) => {
     // Payable raises a Vendor Bill or a Journal from it, and that is what reaches the books.
     if (doc.needs_cogs) {
       doc.gl_impact = await computeLiquidationGl(doc, doc.items);
-      const { bill, journal } = await liquidationPostedBy(pool, doc.id);
-      doc.vendor_bill = bill;
-      doc.journal = journal;
-      doc.gl_posts = !!(bill || journal);
+      // Its Vendor Bills -- one or several, each item on one (2026-10-12) -- or its Journal.
+      const billing = await liquidationBilling(pool, doc.id);
+      doc.vendor_bills = billing.bills;
+      doc.vendor_bill = billing.bills[0] || null;
+      doc.journal = billing.journal;
+      doc.gl_posts = billing.fullyPosted;
+      doc.partly_billed = billing.bills.length > 0 && !billing.fullyPosted;
+      doc.billed_items = Object.fromEntries(billing.billOfItem);
       if (doc.status === 'approved' && !doc.gl_posts) {
         // Create Vendor Bill's vendor: the filer, matched by name among the suppliers (employees who
         // liquidate are set up as suppliers to be paid).
