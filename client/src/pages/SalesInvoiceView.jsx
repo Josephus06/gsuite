@@ -128,7 +128,9 @@ export default function SalesInvoiceView() {
   const isSaved = si.status === 'saved';
   // Both actions settle or reduce what's owed, so they only make sense while something is
   // still owed and the invoice hasn't been voided.
-  const isSettleable = si.status !== 'cancelled' && Number(si.amount_due) > 0;
+  // Open while anything is owed on the GROSS -- a paid invoice whose withheld EWT is not yet cleared
+  // by its EWT credit memo is still open for that memo (INV-80196).
+  const isSettleable = si.status !== 'cancelled' && Number(si.gross_due ?? si.amount_due) > 0.005;
   // Each of these belongs to the module that actually receives the record, not to Sales
   // Invoices -- the same rule SalesOrderView already applies to Item Delivery. Accepting a
   // payment POSTs to /customer-payments and a credit memo to /credit-memos, and both servers
@@ -280,13 +282,13 @@ export default function SalesInvoiceView() {
         <div><span className="muted">Net of Tax</span><div className="hi-lg">{money(si.net_of_tax)}</div></div>
         <div><span className="muted">Discount</span><div className="hi-lg">{money(si.discount_amount)}</div></div>
         {/* In the order the amounts build up: Gross = Net + Tax, Amount = Gross - EWT (as printed),
-            Amount Due = what the customer still owes on the GROSS -- the stored balance (Gross - EWT
-            less payments) with the EWT added back while the invoice is open; 0 once it is settled. */}
+            Amount Due = what is still owed on the GROSS: Gross less every payment and credit memo applied
+            to it -- the balance AR Aging carries (server lib/invoiceDue.js, 2026-10-12). */}
         <div><span className="muted">Tax</span><div className="hi-lg">{money(si.tax_amount)}</div></div>
         <div><span className="muted">Gross</span><div className="hi-lg">{money(si.gross_amount)}</div></div>
         <div><span className="muted">EWT</span><div className="hi-lg">{money(si.ewt_amount)}</div></div>
         <div><span className="muted">Amount</span><div className="hi-lg">{money(Number(si.gross_amount || 0) - Number(si.ewt_amount || 0))}</div></div>
-        <div><span className="muted">Amount Due</span><div className="hi-lg">{money(Number(si.amount_due) > 0.005 ? Number(si.amount_due) + Number(si.ewt_amount || 0) : 0)}</div></div>
+        <div><span className="muted">Amount Due</span><div className="hi-lg">{money(si.gross_due ?? si.amount_due)}</div></div>
       </div>
 
       <div className="status-tabs" style={{ marginTop: 20 }}>

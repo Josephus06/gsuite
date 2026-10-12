@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { grossDueSql, grossDue } = require('../lib/invoiceDue');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
@@ -110,25 +111,34 @@ async function assertInvoicesBelongTo(conn, applyLines, customerId) {
   }
 }
 
-// Undo one application: the money goes back on the invoice (same as Void).
+// Undo one application: the money goes back on the invoice (same as Void). Called while the
+// application row still exists. The cash balance (amount_due, net of EWT) only takes back what the
+// gross balance leaves above the EWT -- undoing the EWT credit on a paid INV-80196 leaves its cash
+// balance at 0, with the 430.62 back on its gross Amount Due.
 async function unapplyFromInvoice(conn, invoiceId, amount) {
-  const [[si]] = await conn.query('SELECT amount_due FROM sales_invoices WHERE id = ?', [invoiceId]);
+  const [[si]] = await conn.query('SELECT amount_due, ewt_amount FROM sales_invoices WHERE id = ?', [invoiceId]);
   if (!si) return;
-  const newDue = Number((Number(si.amount_due) + Number(amount)).toFixed(2));
+  const grossAfter = (await grossDue(conn, invoiceId)) + Number(amount);
+  const cap = Math.max(grossAfter - Number(si.ewt_amount || 0), 0);
+  const newDue = Number(Math.min(Number(si.amount_due) + Number(amount), cap).toFixed(2));
   await conn.query(
     "UPDATE sales_invoices SET amount_due = ?, status = IF(status = 'paid_in_full' AND ? > 0.005, 'saved', status) WHERE id = ?",
     [newDue, newDue, invoiceId]
   );
 }
 
+// Up to the invoice's GROSS Amount Due (lib/invoiceDue.js), not its cash balance: an EWT credit memo
+// clears the EWT a customer withheld after paying the rest (CM-5608 on INV-80196). Called before the
+// application row is written. The cash balance (amount_due) never goes below zero.
 async function applyToInvoice(conn, invoiceId, amount) {
   const [[si]] = await conn.query('SELECT invoice_no, amount_due, status FROM sales_invoices WHERE id = ?', [invoiceId]);
   if (!si) throw Object.assign(new Error('One of the selected invoices is no longer valid.'), { status: 400 });
   if (si.status === 'cancelled') throw Object.assign(new Error(`${si.invoice_no} is void and cannot be credited.`), { status: 409 });
-  if (amount > Number(si.amount_due) + 1e-9) {
-    throw Object.assign(new Error(`Applied Amount (${amount}) exceeds ${si.invoice_no}'s remaining Amount Due (${si.amount_due}).`), { status: 409 });
+  const due = await grossDue(conn, invoiceId);
+  if (amount > due + 1e-9) {
+    throw Object.assign(new Error(`Applied Amount (${amount}) exceeds ${si.invoice_no}'s remaining Amount Due (${due.toFixed(2)}).`), { status: 409 });
   }
-  const newDue = Number((Number(si.amount_due) - amount).toFixed(2));
+  const newDue = Math.max(Number((Number(si.amount_due) - amount).toFixed(2)), 0);
   await conn.query(
     "UPDATE sales_invoices SET amount_due = ?, status = IF(? <= 0.005, 'paid_in_full', status) WHERE id = ?",
     [newDue, newDue, invoiceId]
@@ -172,10 +182,10 @@ router.get('/for-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can
     );
 
     const [applyLines] = await pool.query(
-      `SELECT si2.id AS sales_invoice_id, si2.invoice_no, si2.date_created, si2.gross_amount, si2.amount_due
+      `SELECT si2.id AS sales_invoice_id, si2.invoice_no, si2.date_created, si2.gross_amount, ${grossDueSql('si2')} AS amount_due
        FROM sales_invoices si2
        JOIN sales_orders so2 ON so2.id = si2.sales_order_id
-       WHERE so2.customer_id = ? AND si2.status != 'cancelled' AND si2.amount_due > 0
+       WHERE so2.customer_id = ? AND si2.status != 'cancelled' AND ${grossDueSql('si2')} > 0.005
        ORDER BY si2.id DESC`,
       [si.customer_id]
     );
@@ -216,13 +226,13 @@ router.get('/for-customer/:customerId', requireAuth, async (req, res, next) => {
     if (!c) return res.status(404).json({ error: 'Customer not found.' });
     const [[arAcct]] = await pool.query("SELECT id, account_code, account_name FROM chart_of_accounts WHERE account_code = '12100'");
     const [applyLines] = await pool.query(
-      `SELECT si.id AS sales_invoice_id, si.invoice_no, si.bs_si_no, si.date_created, si.gross_amount, si.amount_due
+      `SELECT si.id AS sales_invoice_id, si.invoice_no, si.bs_si_no, si.date_created, si.gross_amount, ${grossDueSql('si')} AS amount_due
          FROM sales_invoices si
          LEFT JOIN sales_orders so ON so.id = si.sales_order_id
          LEFT JOIN estimates e ON e.id = si.estimate_id
          LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
         WHERE COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) = ?
-          AND si.status <> 'cancelled' AND (si.amount_due > 0.005 OR si.id IN (?))
+          AND si.status <> 'cancelled' AND (${grossDueSql('si')} > 0.005 OR si.id IN (?))
         ORDER BY si.date_created DESC, si.id DESC`, [c.id, mine.size ? [...mine.keys()] : [0]]);
     applyLines.forEach((l) => { l.amount_due = Number((Number(l.amount_due) + (mine.get(l.sales_invoice_id) || 0)).toFixed(2)); });
     res.json({

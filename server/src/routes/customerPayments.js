@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { grossDueSql, grossDue } = require('../lib/invoiceDue');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeCustomerPaymentGl } = require('../lib/glImpact');
@@ -47,10 +48,11 @@ async function logAudit(conn, { paymentId, userId, eventType, fieldName = null, 
   );
 }
 
-// An invoice's Amount Due as the invoice view shows it (asked 2026-10-05): gross, i.e. the stored
-// balance plus its EWT while anything is still owed. amount_due is stored net of EWT -- the cash
-// left to collect once the customer withholds -- and 0 once settled.
-const dueSql = (a) => `CASE WHEN ${a}.amount_due > 0.005 THEN ${a}.amount_due + COALESCE(${a}.ewt_amount, 0) ELSE ${a}.amount_due END`;
+// An invoice's Amount Due as the invoice view shows it: GROSS -- Gross Amount less what payments and
+// credit memos have applied to it, the balance AR Aging carries (lib/invoiceDue.js, 2026-10-12). It
+// used to be the cash balance plus EWT only while cash was still owed, so a paid invoice's withheld
+// EWT read 0 due and its EWT credit memo had nothing to apply to (INV-80196, CM-5608).
+const dueSql = grossDueSql;
 
 // Draws an invoice's Amount Due down and flips it to paid_in_full when it lands at zero.
 // Rejects rather than clamps an over-application, the same discipline used for every
@@ -66,10 +68,9 @@ async function applyToInvoice(conn, invoiceId, amount) {
   if (!si) throw Object.assign(new Error('One of the selected invoices is no longer valid.'), { status: 400 });
   if (si.status === 'cancelled') throw Object.assign(new Error(`${si.invoice_no} is void and cannot be paid.`), { status: 409 });
   const balance = Number(si.amount_due);
-  const ewt = balance > 0.005 ? Number(si.ewt_amount || 0) : 0;
-  const grossDue = Number((balance + ewt).toFixed(2));
-  if (amount > grossDue + 1e-9) {
-    throw Object.assign(new Error(`Applied Amount (${amount}) exceeds ${si.invoice_no}'s remaining Amount Due (${grossDue.toFixed(2)}).`), { status: 409 });
+  const due = await grossDue(conn, invoiceId);
+  if (amount > due + 1e-9) {
+    throw Object.assign(new Error(`Applied Amount (${amount}) exceeds ${si.invoice_no}'s remaining Amount Due (${due.toFixed(2)}).`), { status: 409 });
   }
   const pastBalance = Math.max(Number((amount - balance).toFixed(2)), 0);
   const newDue = Math.max(Number((balance - amount).toFixed(2)), 0);
@@ -219,7 +220,7 @@ router.get('/for-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can
        LEFT JOIN sales_orders so2 ON so2.id = si2.sales_order_id
        LEFT JOIN estimates e2 ON e2.id = si2.estimate_id
        LEFT JOIN customers c ON c.id = COALESCE(so2.customer_id, e2.customer_id)
-       WHERE COALESCE(so2.customer_id, e2.customer_id) = ? AND si2.status != 'cancelled' AND si2.amount_due > 0
+       WHERE COALESCE(so2.customer_id, e2.customer_id) = ? AND si2.status != 'cancelled' AND ${dueSql('si2')} > 0.005
        ORDER BY si2.id DESC`,
       [si.customer_id]
     );
@@ -306,7 +307,7 @@ router.get('/for-customer/:customerId', requireAuth, requirePermission(ROUTE, 'c
          LEFT JOIN customer_payment_lines mine
                 ON mine.sales_invoice_id = si.id AND mine.customer_payment_id = ?
         WHERE COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) = ? AND si.status != 'cancelled'
-          AND (si.amount_due > 0 OR mine.id IS NOT NULL)
+          AND (${dueSql('si')} > 0.005 OR mine.id IS NOT NULL)
         ORDER BY si.id DESC`,
       [req.query.payment_id || 0, req.params.customerId],
     );

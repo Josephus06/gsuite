@@ -1,6 +1,7 @@
 const express = require('express');
 const ExcelJS = require('exceljs');
 const pool = require('../db');
+const { grossDueSql } = require('../lib/invoiceDue');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
@@ -124,7 +125,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
               si.gross_amount,
               -- Amount Due on gross, as the invoice view shows it: the stored balance (Gross - EWT -
               -- payments) plus EWT while open, 0 once settled.
-              CASE WHEN si.amount_due > 0.005 THEN si.amount_due + COALESCE(si.ewt_amount, 0) ELSE 0 END AS amount_due,
+              ${grossDueSql('si')} AS amount_due,
               si.bs_si_no, si.term, si.status, si.memo, si.invoice_type,
               COALESCE(so.sales_order_no, ns.nsso_no) AS sales_order_no, e.estimate_no, c.name AS customer_name,
               COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) AS customer_id,
@@ -161,7 +162,7 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
               si.gross_amount,
               -- Amount Due on gross, as the invoice view shows it: the stored balance (Gross - EWT -
               -- payments) plus EWT while open, 0 once settled.
-              CASE WHEN si.amount_due > 0.005 THEN si.amount_due + COALESCE(si.ewt_amount, 0) ELSE 0 END AS amount_due,
+              ${grossDueSql('si')} AS amount_due,
               si.bs_si_no, si.term, si.status, si.memo, si.invoice_type,
               COALESCE(so.sales_order_no, ns.nsso_no) AS sales_order_no, e.estimate_no, c.name AS customer_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
@@ -706,6 +707,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // when no BILLING one is flagged default, since most customers carry only one.
     const [[si]] = await pool.query(
       `SELECT si.*, so.sales_order_no, e.estimate_no, ns.nsso_no, c.name AS customer_name, c.id AS customer_link_id, dt.dt_no,
+              ${grossDueSql('si')} AS gross_due,
               (SELECT u.display_name FROM users u WHERE u.id = si.logistics_received_by_user_id) AS logistics_received_by_name,
               c.tin AS customer_tin, c.company_name AS customer_company,
               c.bill_to_address AS customer_bill_to_address,
