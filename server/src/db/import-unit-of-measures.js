@@ -4,7 +4,7 @@
 // The source keeps all three kinds in one table (get_unit_of_measures), told apart by Module_UOM:
 //   UNIT  28  plain units -- PC, LMTR, ROLL ...          -> units_of_measure (code, title), as now
 //   PU    57  Purchase Units -- code (Name_UOM), purchase unit, base unit (Unit_UOM), length/width
-//             flags                                       -> purchase_units
+//             flags, Sales Units (Units_UOM, '|'-separated: MM|CM|MTR|IN|FT) -> purchase_units
 //   UOM  246  Unit Titles -- title (UnitTitle_UOM), purchase / stock / sale / base unit, length,
 //             width, conversion, pieces                   -> unit_titles
 //
@@ -31,6 +31,11 @@ const PAGE_NAME = 'Unit of Measures';
 
 const num = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
 const flag = (v) => (v === 1 || v === '1' || v === true ? 1 : 0);
+// The source's '|'-separated Sales Units, tidied: blanks dropped ("|CM|MTR" on SQFT), order kept.
+const salesUnits = (v) => {
+  const list = String(v || '').split('|').map((x) => x.trim()).filter(Boolean);
+  return list.length ? list.join('|').slice(0, 255) : null;
+};
 const txt = (v, n) => (v === null || v === undefined || String(v).trim() === '' ? null : String(v).trim().slice(0, n));
 
 async function fetchAll() {
@@ -63,6 +68,7 @@ async function ensureTables() {
       base_unit VARCHAR(30) NULL,
       is_length TINYINT(1) NOT NULL DEFAULT 0,
       is_width TINYINT(1) NOT NULL DEFAULT 0,
+      sales_units VARCHAR(255) NULL,
       is_active TINYINT(1) NOT NULL DEFAULT 1,
       live_pk VARCHAR(64) NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -86,6 +92,7 @@ async function ensureTables() {
       is_width TINYINT(1) NOT NULL DEFAULT 0,
       is_pieces TINYINT(1) NOT NULL DEFAULT 0,
       pieces DECIMAL(18,4) NULL,
+      sales_units VARCHAR(255) NULL,
       is_active TINYINT(1) NOT NULL DEFAULT 1,
       live_pk VARCHAR(64) NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -93,6 +100,11 @@ async function ensureTables() {
       UNIQUE KEY uq_unit_titles_live_pk (live_pk),
       KEY idx_unit_titles_title (title)
     )`);
+  // Sales Units (2026-10-12), on tables created before they were carried.
+  for (const t of ['purchase_units', 'unit_titles']) {
+    const [c] = await pool.query(`SHOW COLUMNS FROM ${t} LIKE 'sales_units'`);
+    if (!c.length) { await pool.query(`ALTER TABLE ${t} ADD COLUMN sales_units VARCHAR(255) NULL`); console.log(`Added ${t}.sales_units.`); }
+  }
   // Same collation as units_of_measure, whose codes these name: tables created with the server's
   // default (utf8mb4_0900_ai_ci) cannot be compared with the migrated ones (utf8mb4_unicode_ci) --
   // "Illegal mix of collations" on the first join between them.
@@ -168,31 +180,31 @@ async function main() {
   }
   let puNew = 0; let puUpd = 0; let utNew = 0; let utUpd = 0;
   for (const r of pus) {
-    const vals = [txt(r.Name_UOM, 60) || '', txt(r.PurchaseUnit_UOM, 30), txt(r.Unit_UOM, 30), flag(r.IsLength_UOM), flag(r.IsWidth_UOM), r.SysPK_UOM];
+    const vals = [txt(r.Name_UOM, 60) || '', txt(r.PurchaseUnit_UOM, 30), txt(r.Unit_UOM, 30), flag(r.IsLength_UOM), flag(r.IsWidth_UOM), salesUnits(r.Units_UOM), r.SysPK_UOM];
     if (existingPu.has(r.SysPK_UOM)) puUpd += 1; else puNew += 1;
     if (!APPLY) continue;
     await pool.query(
-      `INSERT INTO purchase_units (code, purchase_unit, base_unit, is_length, is_width, live_pk) VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO purchase_units (code, purchase_unit, base_unit, is_length, is_width, sales_units, live_pk) VALUES (?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE code = VALUES(code), purchase_unit = VALUES(purchase_unit), base_unit = VALUES(base_unit),
-         is_length = VALUES(is_length), is_width = VALUES(is_width), updated_at = NOW()`, vals);
+         is_length = VALUES(is_length), is_width = VALUES(is_width), sales_units = VALUES(sales_units), updated_at = NOW()`, vals);
   }
   for (const r of titles) {
     const vals = [
       txt(r.UnitTitle_UOM, 100) || txt(r.Name_UOM, 100) || '', txt(r.Name_UOM, 60),
       txt(r.PurchaseUnit_UOM, 30), txt(r.StockUnit_UOM, 30), txt(r.SaleUnit_UOM, 30), txt(r.Unit_UOM, 30),
       num(r.Length_UOM), num(r.Width_UOM), num(r.ConversionRate_UOM),
-      flag(r.IsLength_UOM), flag(r.IsWidth_UOM), flag(r.IsPieces_UOM), num(r.Pieces_UOM), r.SysPK_UOM,
+      flag(r.IsLength_UOM), flag(r.IsWidth_UOM), flag(r.IsPieces_UOM), num(r.Pieces_UOM), salesUnits(r.Units_UOM), r.SysPK_UOM,
     ];
     if (existingUt.has(r.SysPK_UOM)) utUpd += 1; else utNew += 1;
     if (!APPLY) continue;
     await pool.query(
       `INSERT INTO unit_titles (title, name, purchase_unit, stock_unit, sale_unit, base_unit, length, width, conversion,
-                                is_length, is_width, is_pieces, pieces, live_pk)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                is_length, is_width, is_pieces, pieces, sales_units, live_pk)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE title = VALUES(title), name = VALUES(name), purchase_unit = VALUES(purchase_unit),
          stock_unit = VALUES(stock_unit), sale_unit = VALUES(sale_unit), base_unit = VALUES(base_unit), length = VALUES(length),
          width = VALUES(width), conversion = VALUES(conversion), is_length = VALUES(is_length), is_width = VALUES(is_width),
-         is_pieces = VALUES(is_pieces), pieces = VALUES(pieces), updated_at = NOW()`, vals);
+         is_pieces = VALUES(is_pieces), pieces = VALUES(pieces), sales_units = VALUES(sales_units), updated_at = NOW()`, vals);
   }
   console.log(`Purchase Units: ${APPLY ? '' : 'would '}add ${puNew}, update ${puUpd}.`);
   console.log(`Unit Titles   : ${APPLY ? '' : 'would '}add ${utNew}, update ${utUpd}.\n`);
