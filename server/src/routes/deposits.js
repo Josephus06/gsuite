@@ -156,17 +156,25 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
 
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { search, status, as_of: asOf } = req.query;
+    const { search, status } = req.query;
+    // Date: As of (on or before) or a Period (From / To, inclusive) on the deposit date. Only a
+    // full yyyy-mm-dd is used, so a half-typed date does not turn into a query.
+    const day = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
+    const asOf = day(req.query.as_of);
+    const from = day(req.query.date_from);
+    const to = day(req.query.date_to);
     const where = [];
     const params = [];
     if (status) { where.push('d.status = ?'); params.push(status); }
     if (asOf) { where.push('d.date_created <= ?'); params.push(asOf); }
+    if (from) { where.push('d.date_created >= ?'); params.push(from); }
+    if (to) { where.push('d.date_created <= ?'); params.push(to); }
     if (search) { where.push('(d.bd_no LIKE ? OR d.memo LIKE ? OR coa.account_name LIKE ?)'); params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(
       `SELECT d.id, d.bd_no, d.date_created, d.total_amount, d.status, d.memo, coa.account_name
        FROM bank_deposits d LEFT JOIN chart_of_accounts coa ON coa.id = d.account_id
-       ${whereSql} ORDER BY d.id DESC`,
+       ${whereSql} ORDER BY d.date_created DESC, d.id DESC`,
       params
     );
     res.json(rows);

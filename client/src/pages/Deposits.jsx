@@ -19,6 +19,11 @@ export default function Deposits() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
+  // Date: As of (on or before) or a Period (From / To) on the deposit date. Blank = every date.
+  const [dateMode, setDateMode] = useState('as_of');
+  const [asOf, setAsOf] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
 
   async function load() {
@@ -26,6 +31,11 @@ export default function Deposits() {
     const params = {};
     if (search) params.search = search;
     if (status) params.status = status;
+    if (dateMode === 'as_of' && asOf) params.as_of = asOf;
+    if (dateMode === 'range') {
+      if (dateFrom) params.date_from = dateFrom;
+      if (dateTo) params.date_to = dateTo;
+    }
     const { data } = await api.get('/deposits', { params });
     setRows(data);
     setLoading(false);
@@ -50,6 +60,25 @@ export default function Deposits() {
           <div className="field">
             <label>General Searching</label>
             <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="BD No, Account or Memo..." />
+          </div>
+          {/* Period puts two dates beside the mode picker -- more than one grid cell holds, so the
+              field takes two cells then, and each date may shrink rather than spill over. */}
+          <div className="field" style={dateMode === 'range' ? { gridColumn: 'span 2' } : undefined}>
+            <label>Date</label>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <select value={dateMode} onChange={(e) => setDateMode(e.target.value)} style={{ width: 'auto', flex: '0 0 auto' }}>
+                <option value="as_of">As of</option>
+                <option value="range">Period</option>
+              </select>
+              {dateMode === 'range' ? (
+                <>
+                  <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} title="From" style={{ flex: 1, minWidth: 0 }} />
+                  <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} title="To" style={{ flex: 1, minWidth: 0 }} />
+                </>
+              ) : (
+                <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
+              )}
+            </div>
           </div>
           <div className="field">
             <label>Status</label>
