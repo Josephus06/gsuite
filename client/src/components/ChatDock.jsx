@@ -10,6 +10,10 @@ import Avatar from './Avatar';
 //
 // Open a box from anywhere with openChat(user) -- the Dashboard's people list does.
 const RETRY_MS = 3000; // wait after a failed poll before trying again
+const TYPING_EVERY_MS = 2000; // "I am typing" is sent at most this often while a draft is typed
+
+// The newest of my messages in this list that the other person has read (0 = none).
+const lastSeenIn = (messages, meId) => messages.reduce((n, m) => (m.sender_user_id === meId && m.read_at && m.id > n ? m.id : n), 0);
 const MAX_BOXES = 3;
 
 export function openChat(user) {
@@ -26,6 +30,18 @@ export default function ChatDock() {
   const boxesRef = useRef(boxes);
   boxesRef.current = boxes;
   const lastIdRef = useRef(null);
+  // Who is typing to me (user ids), and per conversation the newest of my messages they have seen.
+  // Mirrored in refs so the poll can tell the server what is already on screen.
+  const [typing, setTyping] = useState([]);
+  const typingRef = useRef(typing);
+  typingRef.current = typing;
+  const [seen, setSeen] = useState({});
+  const seenRef = useRef(seen);
+  seenRef.current = seen;
+  const bumpSeen = useCallback((otherId, id) => {
+    if (!id) return;
+    setSeen((m) => ((m[otherId] || 0) >= id ? m : { ...m, [otherId]: id }));
+  }, []);
 
   const markRead = useCallback((otherId) => {
     api.post(`/chat/read/${otherId}`).catch(() => {});
@@ -49,11 +65,12 @@ export default function ChatDock() {
       setBoxes((bs) => bs.map((b) => (b.user.id === u.id
         ? { ...b, user: { ...b.user, ...(data.user || {}) }, messages: data.messages, hasMore: data.has_more, loading: false }
         : b)));
+      bumpSeen(u.id, lastSeenIn(data.messages, user.id));
       if (focus) markRead(u.id);
     } catch {
       setBoxes((bs) => bs.map((b) => (b.user.id === u.id ? { ...b, loading: false } : b)));
     }
-  }, [markRead]);
+  }, [markRead, bumpSeen, user?.id]);
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -80,8 +97,20 @@ export default function ChatDock() {
           for (const p of data.pending || []) open(p, { focus: false });
           return true;
         }
-        const { data } = await api.get('/chat/poll', { params: { after: lastIdRef.current, wait: 1 }, signal: ctrl.signal, timeout: 40000 });
+        // What is on screen, so the server holds the request until any of it changes.
+        const openIds = boxesRef.current.map((b) => b.user.id);
+        const { data } = await api.get('/chat/poll', {
+          params: {
+            after: lastIdRef.current, wait: 1,
+            typing: [...typingRef.current].sort((a, b) => a - b).join(','),
+            open: openIds.join(','),
+            seen: openIds.map((id) => `${id}:${seenRef.current[id] || 0}`).join(','),
+          },
+          signal: ctrl.signal, timeout: 40000,
+        });
         if (stopped) return true;
+        setTyping(Array.isArray(data.typing) ? data.typing : []);
+        for (const [id, n] of Object.entries(data.seen || {})) bumpSeen(Number(id), Number(n));
         lastIdRef.current = data.last_id;
         let incoming = false;
         for (const m of data.messages || []) {
@@ -111,7 +140,7 @@ export default function ChatDock() {
       }
     })();
     return () => { stopped = true; ctrl.abort(); };
-  }, [enabled, user?.id, open, markRead]);
+  }, [enabled, user?.id, open, markRead, bumpSeen]);
 
   if (!enabled || !boxes.length) return null;
 
@@ -135,13 +164,15 @@ export default function ChatDock() {
       {boxes.map((b) => (
         <ChatBox key={b.user.id} box={b} meId={user.id}
           onClose={() => close(b.user.id)} onToggle={() => toggle(b.user.id)}
-          onSent={(m) => append(b.user.id, m)} onOlder={() => loadOlder(b.user.id)} />
+          onSent={(m) => append(b.user.id, m)} onOlder={() => loadOlder(b.user.id)}
+          isTyping={typing.includes(b.user.id)} seenId={seen[b.user.id] || 0} />
       ))}
     </div>
   );
 }
 
-function ChatBox({ box, meId, onClose, onToggle, onSent, onOlder }) {
+function ChatBox({ box, meId, onClose, onToggle, onSent, onOlder, isTyping, seenId }) {
+  const lastTypingSent = useRef(0);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
@@ -155,7 +186,7 @@ function ChatBox({ box, meId, onClose, onToggle, onSent, onOlder }) {
     const el = listRef.current;
     if (el && newest !== newestRef.current) el.scrollTop = el.scrollHeight;
     newestRef.current = newest;
-  }, [newest]);
+  }, [newest, isTyping]);
   useEffect(() => {
     const el = listRef.current;
     if (el && !box.minimized) el.scrollTop = el.scrollHeight;
@@ -171,12 +202,15 @@ function ChatBox({ box, meId, onClose, onToggle, onSent, onOlder }) {
       const { data } = await api.post('/chat/send', { to: box.user.id, body });
       onSent(data);
       setDraft('');
+      lastTypingSent.current = 0; // the server cleared "typing" on send; the next key may say it again
     } catch (e) { setError(e.response?.data?.error || 'Not sent.'); }
     setSending(false);
     inputRef.current?.focus();
   }
 
   let prevDay = '';
+  // "Seen" goes under the newest of my messages they have read, as Messenger shows it.
+  const seenAt = box.messages.reduce((n, m) => (m.sender_user_id === meId && m.id <= seenId && m.id > n ? m.id : n), 0);
   return (
     <div className={`chat-box ${box.minimized ? 'is-min' : ''}`}>
       <div className="chat-box-head" onClick={onToggle} title={box.minimized ? 'Open' : 'Minimize'}>
@@ -204,15 +238,29 @@ function ChatBox({ box, meId, onClose, onToggle, onSent, onOlder }) {
                   <div className={`chat-msg ${mine ? 'mine' : ''}`} title={timeOf(m.created_at)}>
                     <div className="chat-bubble">{m.body}</div>
                     <div className="chat-time">{timeOf(m.created_at)}</div>
+                    {mine && m.id === seenAt && <div className="chat-seen">Seen</div>}
                   </div>
                 </div>
               );
             })}
+            {isTyping && (
+              <div className="chat-msg">
+                <div className="chat-bubble chat-typing" title={`${box.user.display_name} is typing`}><span /><span /><span /></div>
+                <div className="chat-time">{box.user.display_name} is typing…</div>
+              </div>
+            )}
           </div>
           {error && <div className="chat-error">{error}</div>}
           <div className="chat-box-input">
             <textarea ref={inputRef} rows={1} value={draft} placeholder="Aa" maxLength={4000}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                // Tell them we are typing -- at most every TYPING_EVERY_MS, and only with text in the box.
+                if (e.target.value.trim() && Date.now() - lastTypingSent.current > TYPING_EVERY_MS) {
+                  lastTypingSent.current = Date.now();
+                  api.post('/chat/typing', { to: box.user.id }).catch(() => {});
+                }
+              }}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />
             <button type="button" className="chat-send" disabled={sending || !draft.trim()} onClick={send}>Send</button>
           </div>

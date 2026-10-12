@@ -2610,3 +2610,10 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .chat-contact-name { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-contact-name small { display: block; font-size: 11px; color: var(--chat-dim); }
 .chat-unread { background: #ef4444; color: #fff; border-radius: 10px; font-size: 11px; font-weight: 700; padding: 1px 7px; }
+/* Chat: "is typing" dots and the Seen mark (2026-10-12). */
+.chat-typing { display: inline-flex; gap: 4px; align-items: center; padding: 10px 12px; }
+.chat-typing span { width: 6px; height: 6px; border-radius: 50%; background: var(--chat-dim); animation: chat-typing-bounce 1.2s infinite ease-in-out; }
+.chat-typing span:nth-child(2) { animation-delay: 0.15s; }
+.chat-typing span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes chat-typing-bounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.5; } 30% { transform: translateY(-4px); opacity: 1; } }
+.chat-seen { font-size: 10px; color: var(--chat-dim); margin: 0 6px; font-weight: 600; }

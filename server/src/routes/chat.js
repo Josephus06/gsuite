@@ -24,6 +24,35 @@ const RECHECK_MS = 1000;
 const bus = new EventEmitter();
 bus.setMaxListeners(0); // one listener per waiting browser tab
 const wake = (userId) => bus.emit(`u${userId}`);
+
+// Typing (2026-10-12): someone counts as typing to me while their last key is under TYPING_TTL_MS
+// old -- long enough to ride over a pause, short enough that a walked-away draft clears quickly.
+const TYPING_TTL_MS = 5000;
+// Seen (2026-10-12): for each of these people, the newest message I sent them that they have read
+// (0 = none). One indexed lookup per open box -- at most a few.
+async function seenBy(me, otherIds) {
+  const out = {};
+  for (const id of otherIds) {
+    const [[r]] = await pool.query(
+      `SELECT COALESCE(MAX(id), 0) AS seen FROM chat_messages
+        WHERE sender_user_id = ? AND recipient_user_id = ? AND read_at IS NOT NULL`, [me, id]);
+    out[id] = Number(r.seen) || 0;
+  }
+  return out;
+}
+
+async function typingTo(userId) {
+  try {
+    const [rows] = await pool.query(
+      `SELECT user_id FROM chat_typing
+        WHERE to_user_id = ? AND typed_at >= NOW(3) - INTERVAL ? MICROSECOND ORDER BY user_id`,
+      [userId, TYPING_TTL_MS * 1000]);
+    return rows.map((r) => Number(r.user_id));
+  } catch (err) {
+    if (err.code === 'ER_NO_SUCH_TABLE') return []; // db/create-chat.js not re-run yet
+    throw err;
+  }
+}
 function waitForWake(userId, ms) {
   return new Promise((resolve) => {
     const ev = `u${userId}`;
@@ -103,15 +132,28 @@ router.get('/poll', requireAuth, requireChat, async (req, res, next) => {
     // through THIS server wakes it at once (bus); one sent through another server (cloud / office /
     // SM, joined by replication) is caught by re-checking the table every RECHECK_MS. Given up early
     // if the browser goes away, so a closed tab does not keep checking.
+    // Typing: the browser says who it already shows as typing (?typing=3,7); the wait also ends
+    // the moment that changes -- someone starts, or stops (no key for TYPING_TTL_MS).
+    const known = String(req.query.typing || '').split(',').map(Number).filter(Boolean).sort((a, b) => a - b).join(',');
+    // Seen: for each open box (?open=3,7) the newest of my messages that person has read; the
+    // browser sends what it shows (?seen=3:120,7:88) and the wait also ends when that moves.
+    const openIds = String(req.query.open || '').split(',').map(Number).filter(Boolean).slice(0, 10);
+    const knownSeen = String(req.query.seen || '');
+    const seenSig = (m) => openIds.map((id) => `${id}:${m[id] || 0}`).join(',');
     let messages = await fetchNew();
-    if (!messages.length && req.query.wait === '1') {
+    let typing = await typingTo(me);
+    let seen = await seenBy(me, openIds);
+    const unchanged = () => !messages.length && typing.join(',') === known && seenSig(seen) === knownSeen;
+    if (unchanged() && req.query.wait === '1') {
       let gone = false;
       res.on('close', () => { if (!res.writableEnded) gone = true; });
       const deadline = Date.now() + LONG_POLL_MS;
-      while (!messages.length && !gone && Date.now() < deadline) {
+      while (unchanged() && !gone && Date.now() < deadline) {
         await waitForWake(me, Math.min(RECHECK_MS, deadline - Date.now()));
         if (gone) return undefined;
         messages = await fetchNew();
+        typing = await typingTo(me);
+        seen = await seenBy(me, openIds);
       }
       if (gone) return undefined;
     }
@@ -119,8 +161,25 @@ router.get('/poll', requireAuth, requireChat, async (req, res, next) => {
       ? await pool.query('SELECT COUNT(*) AS unread FROM chat_messages WHERE recipient_user_id = ? AND read_at IS NULL', [me])
       : [[{ unread }]];
     const lastId = messages.length ? messages[messages.length - 1].id : after;
-    return res.json({ last_id: lastId, messages, unread: Number(unreadNow) });
+    return res.json({ last_id: lastId, messages, unread: Number(unreadNow), typing, seen });
   } catch (err) { return next(err); }
+});
+
+// "I am typing to X" -- the box sends it at most every couple of seconds while a draft is being
+// typed. Wakes X's waiting poll on this server; X on another server sees it at its next re-check.
+router.post('/typing', requireAuth, requireChat, async (req, res, next) => {
+  try {
+    const to = Number(req.body.to);
+    if (!to || to === req.user.id) return res.json({ ok: true });
+    await pool.query(
+      `INSERT INTO chat_typing (user_id, to_user_id, typed_at) VALUES (?, ?, NOW(3))
+       ON DUPLICATE KEY UPDATE typed_at = NOW(3)`, [req.user.id, to]);
+    wake(to);
+    return res.json({ ok: true });
+  } catch (err) {
+    if (err.code === 'ER_NO_SUCH_TABLE') return res.json({ ok: true }); // db/create-chat.js not re-run yet
+    return next(err);
+  }
 });
 
 // One conversation, newest 50 (or the 50 before `before`), oldest first.
@@ -154,6 +213,8 @@ router.post('/send', requireAuth, requireChat, async (req, res, next) => {
     if (!u || !u.is_active) return res.status(404).json({ error: 'That user is not available.' });
     if (!(await canChat(to))) return res.status(403).json({ error: 'That user does not have Chat.' });
     const [r] = await pool.query('INSERT INTO chat_messages (sender_user_id, recipient_user_id, body) VALUES (?, ?, ?)', [me, to, body]);
+    // Sent: no longer typing to them.
+    await pool.query('DELETE FROM chat_typing WHERE user_id = ? AND to_user_id = ?', [me, to]).catch(() => {});
     // Deliver now to anyone waiting on this server -- the recipient, and the sender's other tabs.
     wake(to); wake(me);
     const [[row]] = await pool.query(
@@ -165,9 +226,11 @@ router.post('/send', requireAuth, requireChat, async (req, res, next) => {
 // Everything this person sent me is read -- the box is open and in front of me.
 router.post('/read/:userId', requireAuth, requireChat, async (req, res, next) => {
   try {
-    await pool.query(
+    const [r] = await pool.query(
       'UPDATE chat_messages SET read_at = NOW() WHERE sender_user_id = ? AND recipient_user_id = ? AND read_at IS NULL',
       [Number(req.params.userId), req.user.id]);
+    // The sender's box shows "Seen" now (on this server; another server's catches it on re-check).
+    if (r.affectedRows) wake(Number(req.params.userId));
     res.json({ ok: true });
   } catch (err) { next(err); }
 });

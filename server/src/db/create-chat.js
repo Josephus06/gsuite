@@ -36,6 +36,18 @@ async function main() {
       KEY idx_chat_pair (sender_user_id, recipient_user_id, id)
     ) DEFAULT CHARSET=${coll.split('_')[0]} COLLATE=${coll}`);
   console.log('chat_messages ready.');
+  // "X is typing..." (2026-10-12): who is typing to whom, and when they last pressed a key. A table
+  // rather than server memory, so it reaches someone connected to another server (cloud / office /
+  // SM) through replication, as the messages do. A row older than a few seconds means "stopped".
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS chat_typing (
+      user_id BIGINT NOT NULL,
+      to_user_id BIGINT NOT NULL,
+      typed_at DATETIME(3) NOT NULL,
+      PRIMARY KEY (user_id, to_user_id),
+      KEY idx_chat_typing_to (to_user_id, typed_at)
+    ) DEFAULT CHARSET=${coll.split('_')[0]} COLLATE=${coll}`);
+  console.log('chat_typing ready.');
 
   const [[page]] = await pool.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
   let pageId = page?.id;
