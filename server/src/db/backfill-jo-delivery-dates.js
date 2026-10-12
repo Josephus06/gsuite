@@ -16,7 +16,15 @@ const L = require('./lib/liveWindow');
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const norm = (s) => (s || '').toString().trim().toUpperCase();
-const ymd = (v) => (/^\d{4}-\d{2}-\d{2}/.test(String(v || '')) ? String(v).slice(0, 10) : null);
+// A real calendar date only: the source holds some as "0000-00-00", which MySQL refuses.
+function ymd(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ''));
+  if (!m) return null;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  if (y < 1900 || mo < 1 || mo > 12 || d < 1) return null;
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d ? m[0].slice(0, 10) : null;
+}
 // "1970-01-01T11:03:00.000Z" -> "19:03:00" (UTC+8, wrapped to the day)
 function manilaTime(v) {
   const m = /T(\d{2}):(\d{2}):(\d{2})/.exec(String(v || ''));
