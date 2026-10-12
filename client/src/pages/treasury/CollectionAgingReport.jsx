@@ -16,11 +16,12 @@ function lastMonth() {
   const last = new Date(now.getFullYear(), now.getMonth(), 0);
   const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   // locationId starts null: the first load waits for the locations, so it is already Head Office's.
-  return { from: iso(first), to: iso(last), customer: null, locationId: null, bucket: '', search: '', includeGenerated: false };
+  return { from: iso(first), to: iso(last), dateBy: 'payment', customer: null, locationId: null, bucket: '', search: '', includeGenerated: false };
 }
 
 const filterParams = (r) => ({
   from: r.from, to: r.to,
+  ...(r.dateBy === 'applied' ? { date_by: 'applied' } : {}),
   ...(r.customer ? { customer_id: r.customer.id } : {}),
   ...(r.locationId ? { location_id: r.locationId } : {}),
   ...(r.bucket ? { bucket: r.bucket } : {}),
@@ -104,7 +105,15 @@ export default function CollectionAgingReport() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="filter-grid">
           <div className="field">
-            <label>Payment Date From</label>
+            <label>Date By</label>
+            <select value={range.dateBy} onChange={(e) => setRange({ ...range, dateBy: e.target.value })}
+              title="Applied date = the later of the payment date and the invoice date (an advance cannot be applied before its invoice exists)">
+              <option value="payment">Payment date</option>
+              <option value="applied">Applied date</option>
+            </select>
+          </div>
+          <div className="field">
+            <label>{range.dateBy === 'applied' ? 'Applied' : 'Payment'} Date From</label>
             <input type="date" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} />
           </div>
           <div className="field">
@@ -131,7 +140,7 @@ export default function CollectionAgingReport() {
             <label>Aging</label>
             <select value={range.bucket} onChange={(e) => setRange({ ...range, bucket: e.target.value })}>
               <option value="">All</option>
-              {(summary.length ? summary : [{ key: 'current', label: 'Current' }, { key: '1-30', label: '1-30' }, { key: '31-60', label: '31-60' }, { key: '61-90', label: '61-90' }, { key: '90+', label: 'Over 90' }])
+              {(summary.length ? summary : [{ key: 'current', label: 'Current' }, { key: '1-30', label: '1-30' }, { key: '31-60', label: '31-60' }, { key: '61-90', label: '61-90' }, { key: '90+', label: 'Over 90' }, { key: 'advance', label: 'Advance / No invoice yet' }])
                 .map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}
             </select>
           </div>
@@ -162,7 +171,7 @@ export default function CollectionAgingReport() {
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Aging</th><th style={{ textAlign: 'right' }}>Invoices</th><th style={{ textAlign: 'right' }}>Amount Collected</th><th style={{ textAlign: 'right' }}>% of Total</th></tr>
+                  <tr><th>Aging</th><th style={{ textAlign: 'right' }}>Rows</th><th style={{ textAlign: 'right' }}>Amount Collected</th><th style={{ textAlign: 'right' }}>% of Total</th></tr>
                 </thead>
                 <tbody>
                   {summary.map((b) => (
@@ -189,15 +198,17 @@ export default function CollectionAgingReport() {
 
           <div className="card">
             <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
-              {rows.length} invoice{rows.length === 1 ? '' : 's'} collected {applied.from} to {applied.to}
+              {rows.length} row{rows.length === 1 ? '' : 's'}, {data?.date_by === 'applied' ? 'applied' : 'paid'} {applied.from} to {applied.to}
               {rows.length > 0 && <> — total {money(data?.total_amount)}</>}.
               {' '}Age at Collection = payment date − invoice date; Days Past Due = payment date − invoice due date.
+              {' '}Applied Date = the later of the payment date and the invoice date.
+              {' '}&ldquo;Advance / No invoice yet&rdquo; is money a payment has not applied to any invoice (e.g. a down payment); it moves onto the invoice once applied.
             </div>
             <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>CPAY #</th><th>Payment Date</th><th>OR #</th><th>Invoice #</th>
+                    <th>CPAY #</th><th>Payment Date</th><th>OR #</th><th>Applied Date</th><th>Invoice #</th>
                     <th>Invoice Date</th><th>Invoice Due Date</th><th>Term</th><th>Customer</th>
                     <th style={{ textAlign: 'right' }}>Age at Collection</th><th style={{ textAlign: 'right' }}>Days Past Due</th>
                     <th>Aging</th><th style={{ textAlign: 'right' }}>Amount Collected</th>
@@ -205,15 +216,18 @@ export default function CollectionAgingReport() {
                 </thead>
                 <tbody>
                   {rows.length === 0 && (
-                    <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: 20 }}>No collections in this range.</td></tr>
+                    <tr><td colSpan={13} className="muted" style={{ textAlign: 'center', padding: 20 }}>No collections in this range.</td></tr>
                   )}
                   {rows.map((r, i) => (
-                    <tr key={`${r.payment_id}-${r.invoice_id}-${i}`}>
+                    <tr key={`${r.payment_id}-${r.invoice_id}-${i}`} style={r.bucket === 'advance' ? { background: 'var(--surface-2, #f3f4f6)' } : undefined}>
                       <td><Link className="link-btn" to={`/customer-payments/${r.payment_id}`}>{r.customer_payment_no}</Link></td>
                       <td>{day(r.payment_date)}</td>
                       <td>{r.or_no || '—'}</td>
-                      <td><Link className="link-btn" to={`/sales-invoices/${r.invoice_id}`}>{r.invoice_no}</Link></td>
-                      <td>{day(r.invoice_date)}</td>
+                      <td>{day(r.applied_date) || '—'}</td>
+                      <td>{r.invoice_id
+                        ? <Link className="link-btn" to={`/sales-invoices/${r.invoice_id}`}>{r.invoice_no}</Link>
+                        : <span className="muted">Not applied yet</span>}</td>
+                      <td>{day(r.invoice_date) || '—'}</td>
                       <td>{day(r.date_due) || '—'}</td>
                       <td>{r.term || '—'}</td>
                       <td>{r.customer_name || '—'}</td>
