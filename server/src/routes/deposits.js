@@ -123,8 +123,15 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
        LEFT JOIN customers c ON c.id = cp.customer_id
        LEFT JOIN locations loc ON loc.id = cp.office_location_id
        LEFT JOIN payment_methods pm ON pm.id = cp.payment_method_id
-       WHERE (cp.status = 'not_deposited' AND cp.deposit_id IS NULL) OR (? > 0 AND cp.deposit_id = ?)
-       ORDER BY cp.id DESC LIMIT 1000`,
+       -- Not the CPAY-INV-#### rows: db/generate-invoice-payments.js wrote one per already-paid
+       -- imported invoice (see routes/collectionForecast.js REAL_PAYMENT). No money arrived with
+       -- them, so there is nothing to bank, and 68,061 of them sit at not_deposited. They filled 934
+       -- of the 1,000 rows this list was capped at -- newest id first, and the generator ran after
+       -- the import -- so 147 of 2026's 213 real payments, branch ones among them, never appeared
+       -- (2026-10-12). Without them the list is a few hundred rows and needs no cap.
+       WHERE (cp.status = 'not_deposited' AND cp.deposit_id IS NULL AND cp.customer_payment_no NOT LIKE 'CPAY-INV-%')
+          OR (? > 0 AND cp.deposit_id = ?)
+       ORDER BY cp.date_created DESC, cp.id DESC`,
       // Editing a deposit (?deposit_id=): its own payments are offered too, ticked by the form.
       [Number(req.query.deposit_id) || 0, Number(req.query.deposit_id) || 0]
     );
