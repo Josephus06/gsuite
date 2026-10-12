@@ -5,9 +5,10 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import letterhead from '../assets/graphicstar-letterhead.png';
 import { displayDate } from '../utils/dates';
 
-// Printable Job Order -- the production sheet. Two pages, mirroring the live Report Viewer:
+// Printable Job Order -- the production sheet, mirroring the live Report Viewer:
 //   1. Letterhead, order header, the JOBS block, the SPECIFICATIONS table.
-//   2. FOR LOGISTICS (Ship Confirmations) -- the slip that travels with the delivery.
+//   2. FOR LOGISTICS (Ship Confirmations) -- the slip that travels with the delivery. On paper it
+//      follows on the same page when it fits, and goes whole to the next page when it does not.
 //
 // Printing is gated server-side (GET /job-orders/:id/print): System Admin prints any JO at
 // any status, everyone else needs can_print on /job-orders AND a JO with an artist assigned.
@@ -119,10 +120,14 @@ export default function JobOrderPrint() {
           html, body, #root { background: #fff !important; }
           /* No forced 297mm when printing (asked 2026-10-08): a full A4 height plus the padding and
              rounding is a hair over one page, so the first sheet spilled onto a blank page and the
-             Ship Confirmations sheet printed on a third. Each sheet now ends where its content does,
-             and the break after it is what starts the next one on a fresh page. */
-          .jo-sheet { box-shadow: none; margin: 0; min-height: 0; box-sizing: border-box; page-break-after: always; break-after: page; }
-          .jo-sheet:last-child { page-break-after: auto; break-after: auto; }
+             Ship Confirmations sheet printed on a third. Each sheet now ends where its content does. */
+          .jo-sheet { box-shadow: none; margin: 0; min-height: 0; box-sizing: border-box; }
+          /* One sheet of paper when it fits (asked 2026-10-12: JO-196731-1-1 took two sheets with the
+             second all but empty). The Ship Confirmations slip follows straight on under the "FOR
+             LOGISTICS" band; it is never split, so a job too long for one page takes the whole slip
+             onto the next page instead. */
+          .jo-sheet:not(.jo-slip) { padding-bottom: 0; }
+          .jo-slip { padding-top: 3mm; break-inside: avoid; page-break-inside: avoid; }
           /* Tighter on paper than on screen (asked 2026-10-08): JO-71588-1-2's first sheet, seven
              processes, measured ~330mm against A4's 297mm, so its last lines and the "FOR LOGISTICS"
              band spilled onto a second sheet and the Ship Confirmations sheet printed on a third.
@@ -234,8 +239,8 @@ export default function JobOrderPrint() {
         <div className="jo-band" style={{ marginTop: 26 }}>FOR LOGISTICS (Ship Confirmations)</div>
       </div>
 
-      {/* ---------------- Page 2: the logistics slip ---------------- */}
-      <div className="jo-sheet">
+      {/* ---------------- The logistics slip -- on the same page when it fits ---------------- */}
+      <div className="jo-sheet jo-slip">
         <div className="jo-row">
           <span className="jo-lbl">SO # :</span>
           <span className="jo-val">{jo.sales_order_no}&nbsp;&nbsp;&nbsp;&nbsp;JO # : {jo.job_order_no}</span>
