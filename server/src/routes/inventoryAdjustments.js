@@ -5,6 +5,7 @@ const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeInventoryAdjustmentGl } = require('../lib/glImpact');
 const { lineDepartmentError } = require('../lib/requireDepartment');
+const { deriveOnHand } = require('../lib/stockLedger');
 
 const router = express.Router();
 const ROUTE = '/inventory-adjustments';
@@ -215,6 +216,18 @@ async function recomputeTotal(conn, adjustmentId) {
   await conn.query('UPDATE inventory_adjustments SET estimated_total_value = ?, updated_at = NOW() WHERE id = ?', [total, adjustmentId]);
 }
 
+// The item's Qty on Hand at a location, in Base Unit: the Bin Card's own closing balance
+// (lib/stockLedger.js deriveOnHand -- the source's Beginning Balance plus the movements since).
+// Not inventory_locations.qty_on_hand: that counter never received the opening balances, so a
+// line read it as the movements alone -- -41 against the Bin Card's 22 for the stainless valve on
+// IA-1196 (2026-10-12), off by exactly its 63 Beginning Balance. Only APPROVED adjustments are
+// movements, so a pending line's own change is not in it.
+async function onHandAt(conn, itemId, locationId) {
+  if (!itemId || !locationId) return 0;
+  const byPair = await deriveOnHand(conn, [itemId]);
+  return Number(byPair.get(`${Number(itemId)}|${Number(locationId)}`) || 0);
+}
+
 // Adding a line snapshots the item's current Qty on Hand / Value at that location --
 // matching the real form's behavior of pulling live values in at add-time, not
 // re-querying them live forever after.
@@ -237,11 +250,7 @@ router.post('/:id/lines', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
     // per-Base-Unit price against qtyOnHand (Base Unit), so divide it down first.
     const estUnitCost = Number(item?.average_cost || 0);
     const conversionFactor = Number(item?.conversion_factor) || 1;
-    let qtyOnHand = 0;
-    if (locationId) {
-      const [[stock]] = await conn.query('SELECT qty_on_hand FROM inventory_locations WHERE inventory_id = ? AND location_id = ?', [itemId, locationId]);
-      qtyOnHand = Number(stock?.qty_on_hand || 0);
-    }
+    const qtyOnHand = await onHandAt(conn, itemId, locationId);
 
     const [[{ nextLine }]] = await conn.query(
       'SELECT COALESCE(MAX(line_no), 0) + 1 AS nextLine FROM inventory_adjustment_lines WHERE inventory_adjustment_id = ?',
@@ -296,16 +305,14 @@ router.put('/:id/lines/:lineId', requireAuth, requirePermission(ROUTE, 'can_edit
 
     let qtyOnHand = Number(line.qty_on_hand || 0);
     let estUnitCost = Number(line.est_unit_cost || 0);
-    if (locationChanged) {
-      if (locationId) {
-        const [[item]] = await conn.query('SELECT average_cost FROM inventories WHERE id = ?', [line.item_id]);
-        const [[stock]] = await conn.query('SELECT qty_on_hand FROM inventory_locations WHERE inventory_id = ? AND location_id = ?', [line.item_id, locationId]);
-        qtyOnHand = Number(stock?.qty_on_hand || 0);
-        estUnitCost = Number(item?.average_cost || 0);
-      } else {
-        qtyOnHand = 0;
-      }
+    if (locationChanged && locationId) {
+      const [[item]] = await conn.query('SELECT average_cost FROM inventories WHERE id = ?', [line.item_id]);
+      estUnitCost = Number(item?.average_cost || 0);
     }
+    // While pending, Qty on Hand is re-read on every edit, so it is the Bin Card's figure when the
+    // adjustment is approved (and lines saved with the old, wrong figure correct themselves). An
+    // approved line keeps the snapshot it posted with.
+    if (adj.status !== 'approved') qtyOnHand = await onHandAt(conn, line.item_id, locationId);
 
     // Only fields actually present in the request are changed -- everything else falls
     // back to what's already saved. The frontend fires one PUT per field edited (Unit
