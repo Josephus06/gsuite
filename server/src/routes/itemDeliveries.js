@@ -5,7 +5,7 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeSalesOrderStatus, invoicedOrTicketedSql } = require('../lib/salesOrderStatus');
 const { recomputeNssoStatus } = require('../lib/nssoStatus');
 const { computeItemDeliveryGl } = require('../lib/glImpact');
-const { assertPeriodOpen } = require('../lib/accountingPeriod');
+const { assertPeriodOpen, requireOpenPeriod } = require('../lib/accountingPeriod');
 
 const router = express.Router();
 // Its own permission scope. It used to borrow Sales Orders', which made "may I raise a
@@ -396,7 +396,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 // Every change is written to the audit log field by field, because this is the number the
 // month-end report adds up: whoever reconciles the courier bill needs to see who changed a fare
 // and when, not just its latest value.
-router.put('/:id/delivery-method', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/delivery-method', requireAuth, requireOpenPeriod('item_deliveries', 'non_gl'), requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[d]] = await conn.query(

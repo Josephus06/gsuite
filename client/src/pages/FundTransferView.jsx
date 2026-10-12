@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -33,6 +34,9 @@ export default function FundTransferView() {
     finally { setBusy(false); }
   }
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(ft?.date_created, 'other_gl');
+
   if (loading || !ft) return <LoadingSpinner />;
   const gl = ft.gl || [];
   const totalDebit = gl.reduce((s, l) => s + num(l.debit), 0);
@@ -45,12 +49,17 @@ export default function FundTransferView() {
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={'/fund-transfers'}>Back to Lists</Link>
           {can('/fund-transfers', 'can_print') && <button className="btn btn-sm" onClick={() => window.open(`/fund-transfers/${ft.id}/print`, '_blank')}>Print</button>}
-          {can('/fund-transfers', 'can_edit') && ft.status !== 'void' && <Link className="btn btn-sm" to={`/fund-transfers/${ft.id}/edit`}>Edit</Link>}
-          {can('/fund-transfers', 'can_void') && ft.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
+          {(can('/fund-transfers', 'can_edit') && !periodLocked) && ft.status !== 'void' && <Link className="btn btn-sm" to={`/fund-transfers/${ft.id}/edit`}>Edit</Link>}
+          {(can('/fund-transfers', 'can_void') && !periodLocked) && ft.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
 
       <div className="estimate-banner">
         <div className="estimate-banner-title">

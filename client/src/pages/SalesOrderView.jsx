@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import SalesInvoiceModal from '../components/SalesInvoiceModal';
 import DeliveryTicketModal from '../components/DeliveryTicketModal';
@@ -273,6 +274,9 @@ export default function SalesOrderView() {
     }
   }
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(so?.date_created, 'non_gl');
+
   if (loading || !so) return <LoadingSpinner />;
 
   const lines = so.lines || [];
@@ -291,7 +295,7 @@ export default function SalesOrderView() {
   const isClosedForBilling = so.status === 'billed' || so.status === 'cancelled';
   const hasInvoiceableLine = !isClosedForBilling
     && lines.some((l) => l.job_order_id && Number(l.quantity_delivered || 0) > Number(l.quantity_invoiced || 0));
-  const canEdit = can('/sales-orders', 'can_edit');
+  const canEdit = (can('/sales-orders', 'can_edit') && !periodLocked);
   // Raising a delivery is Item Delivery's own permission now, not Sales Orders'. Without this
   // the button would show to anyone who can read the order and only fail on save.
   const canRaiseDelivery = can('/item-deliveries', 'can_add');
@@ -342,10 +346,10 @@ export default function SalesOrderView() {
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={'/sales-orders'}>Back</Link>
           {/* System Admin only (the server enforces it too). */}
-          {user?.account_type === 'System Admin' && !String(so.status || '').toLowerCase().includes('cancel') && (
+          {user?.account_type === 'System Admin' && !periodLocked && !String(so.status || '').toLowerCase().includes('cancel') && (
             <Link className="btn btn-sm" to={`/sales-orders/${id}/edit`}>Edit</Link>
           )}
-          {user?.account_type === 'System Admin' && so.status !== 'cancelled' && (
+          {user?.account_type === 'System Admin' && !periodLocked && so.status !== 'cancelled' && (
             <button className="btn btn-sm btn-danger" onClick={openCancel}>Cancel</button>
           )}
           {hasDeliverableLine && canRaiseDelivery && <Link className="btn btn-sm btn-primary" to={`/sales-orders/${id}/item-delivery/new`}>Item Delivery</Link>}
@@ -365,6 +369,11 @@ export default function SalesOrderView() {
         </div>
       </div>
 
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
       <div className="estimate-banner">
         <div className="estimate-banner-title">
           <h1>Sales Order</h1>
@@ -407,7 +416,7 @@ export default function SalesOrderView() {
             <h4>Other Details</h4>
             <div>
               Sales Rep : <span className="hi">{so.sales_rep_name}</span>
-              {mayChangeRep && !['billed', 'cancelled'].includes(so.status) && (
+              {mayChangeRep && !periodLocked && !['billed', 'cancelled'].includes(so.status) && (
                 repOptions ? (
                   <span style={{ display: 'inline-block', minWidth: 220, marginLeft: 8, verticalAlign: 'middle' }}>
                     <EntityPicker

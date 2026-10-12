@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
@@ -21,13 +22,16 @@ export default function OsrFulfillmentView() {
 
   useEffect(() => { api.get(`/office-supply-requisitions/fulfillments/${id}`).then(({ data }) => { setF(data); setLoading(false); }); }, [id]);
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(f?.date_created, 'non_gl');
+
   if (loading || !f) return <LoadingSpinner />;
   const lines = f.lines || [];
   const gl = f.gl || [];
   const totalDebit = gl.reduce((s, l) => s + num(l.debit), 0);
   const totalCredit = gl.reduce((s, l) => s + num(l.credit), 0);
   // No permission page of its own -- inherits the OSR's edit right.
-  const canEdit = can('/office-supply-requisitions', 'can_edit');
+  const canEdit = (can('/office-supply-requisitions', 'can_edit') && !periodLocked);
 
   return (
     <div>
@@ -39,6 +43,11 @@ export default function OsrFulfillmentView() {
         </div>
       </div>
 
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
       <div className="estimate-banner">
         <div className="estimate-banner-title">
           <h1>OSR Fulfillment</h1>

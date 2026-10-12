@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -65,6 +66,11 @@ function DeliveryMethodCard({ d, onSaved }) {
     <div className="card" style={{ marginTop: 20 }}>
       <h3 className="subsection" style={{ marginTop: 0 }}>Delivery Method &amp; Cost</h3>
       {error && <div className="error-banner">{error}</div>}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
       <div className="review-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
         <div className="field">
           <label>Delivered Via</label>
@@ -141,12 +147,15 @@ export default function ItemDeliveryView() {
     }
   }
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(d?.date_created, 'non_gl');
+
   if (loading || !d) return <LoadingSpinner />;
 
   // Three separate rights now, not one: recording what a delivery cost is not the same
   // permission as cancelling it and putting the stock back on the Job Order.
-  const canEdit = can('/item-deliveries', 'can_edit');
-  const canVoid = can('/item-deliveries', 'can_void');
+  const canEdit = (can('/item-deliveries', 'can_edit') && !periodLocked);
+  const canVoid = (can('/item-deliveries', 'can_void') && !periodLocked);
   const isCancelled = d.status === 'cancelled';
   const lines = d.lines || [];
 

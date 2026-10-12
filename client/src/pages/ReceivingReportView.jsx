@@ -2,6 +2,7 @@ import { rate6 } from '../utils/rate';
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { SupplierLink } from '../components/PartyLink';
@@ -35,10 +36,13 @@ export default function ReceivingReportView() {
     api.get(`/receiving-reports/${receiptId}`).then(({ data: d }) => { setData(d); setLoading(false); });
   }, [receiptId]);
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(data?.date_created, 'non_gl');
+
   if (loading || !data) return <LoadingSpinner />;
 
   // No permission page of its own -- inherits the Purchase Order's edit right.
-  const canEdit = can('/purchase-orders', 'can_edit');
+  const canEdit = (can('/purchase-orders', 'can_edit') && !periodLocked);
 
   return (
     <div>
@@ -56,6 +60,11 @@ export default function ReceivingReportView() {
         </div>
       </div>
 
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
       <div className="estimate-banner">
         <div className="estimate-banner-title">
           <h1>Receiving Report</h1>

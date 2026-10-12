@@ -2,6 +2,7 @@ import { rate6 } from '../utils/rate';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import BillPaymentModal from '../components/BillPaymentModal';
@@ -71,10 +72,13 @@ export default function VendorBillView() {
     }
   }
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(vb?.date_created, 'ap');
+
   if (loading || !vb) return <LoadingSpinner />;
 
-  const canEdit = can('/vendor-bills', 'can_edit');
-  const canVoid = can('/vendor-bills', 'can_void');
+  const canEdit = (can('/vendor-bills', 'can_edit') && !periodLocked);
+  const canVoid = (can('/vendor-bills', 'can_void') && !periodLocked);
   const isOpen = vb.status === 'open';
   // Replicate, as the Journal screen has: start a new bill from this one's vendor, account, term
   // and lines. Only a STANDALONE bill can be: a PO-backed one's lines are quantities billed
@@ -104,6 +108,11 @@ export default function VendorBillView() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
 
       <div className="estimate-banner">
         <div className="estimate-banner-title">

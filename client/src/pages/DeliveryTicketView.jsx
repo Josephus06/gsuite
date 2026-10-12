@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import SalesInvoiceModal from '../components/SalesInvoiceModal';
@@ -75,10 +76,13 @@ export default function DeliveryTicketView() {
     }
   }
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(dt?.date_created, 'ar');
+
   if (loading || !dt) return <LoadingSpinner />;
 
-  const canEdit = can('/delivery-tickets', 'can_edit');
-  const canVoid = can('/delivery-tickets', 'can_void');
+  const canEdit = (can('/delivery-tickets', 'can_edit') && !periodLocked);
+  const canVoid = (can('/delivery-tickets', 'can_void') && !periodLocked);
   // Billing the ticket raises a Sales Invoice, so it answers to the invoice page's permission,
   // not this one -- same rule as the Sales Order's Bill menu, Head Office on can_edit and the
   // branches on can_view. Gated on both because converting the ticket needs this page too.
@@ -121,6 +125,11 @@ export default function DeliveryTicketView() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
 
       <div className="estimate-banner">
         <div className="estimate-banner-title">

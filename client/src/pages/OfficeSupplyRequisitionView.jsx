@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
@@ -31,6 +32,11 @@ function FulfillModal({ osr, onClose, onSaved }) {
   return (
     <Modal title="Fulfill Requisition" onClose={onClose} large>
       {error && <div className="error-banner">{error}</div>}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
       <div className="table-wrap">
         <table>
           <thead><tr><th>Item</th><th style={{ textAlign: 'right' }}>Requested</th><th style={{ textAlign: 'right' }}>Served</th><th style={{ textAlign: 'right' }}>Remaining</th><th style={{ textAlign: 'right' }}>On Hand</th><th style={{ textAlign: 'right' }}>Qty to Serve</th></tr></thead>
@@ -86,10 +92,13 @@ export default function OfficeSupplyRequisitionView() {
     finally { setBusy(false); }
   }
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(o?.date_created, 'non_gl');
+
   if (loading || !o) return <LoadingSpinner />;
   const lines = o.lines || [];
   const isOpen = o.status === 'open' || o.status === 'partially_served';
-  const canEdit = can('/office-supply-requisitions', 'can_edit');
+  const canEdit = (can('/office-supply-requisitions', 'can_edit') && !periodLocked);
   const canFulfill = can('/office-supply-requisitions', 'can_approve');
 
   return (

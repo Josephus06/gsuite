@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
@@ -23,6 +24,11 @@ function VoidModal({ run, onClose, onDone }) {
   return (
     <Modal title={`Void ${run.run_no}`} onClose={onClose}>
       {error && <div className="error-banner">{error}</div>}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
       <p className="muted" style={{ marginTop: 0 }}>
         Voiding removes this month&apos;s depreciation from the ledger. Nothing has to be unwound — accumulated
         depreciation is summed from posted runs, so it simply stops counting this one.
@@ -63,6 +69,9 @@ export default function AssetDepreciationView() {
     finally { setBusy(false); }
   }
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(run?.period_month, 'other_gl');
+
   if (loading || !run) return <LoadingSpinner />;
   const lines = run.lines || [];
   const isDraft = run.status === 'draft';
@@ -73,17 +82,17 @@ export default function AssetDepreciationView() {
         <div />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Link className="btn btn-sm" to={'/asset-depreciation'}>Back to Lists</Link>
-          {isDraft && can('/asset-depreciation', 'can_edit') && (
+          {isDraft && (can('/asset-depreciation', 'can_edit') && !periodLocked) && (
             <button className="btn btn-sm" disabled={busy} onClick={() => act(() => api.post(`/asset-depreciation/${id}/recalculate`))}>Recalculate</button>
           )}
           {isDraft && can('/asset-depreciation', 'can_approve') && (
             <button className="btn btn-sm btn-primary" disabled={busy}
               onClick={() => act(() => api.post(`/asset-depreciation/${id}/post`), `Post ${run.run_no} to the general ledger?`)}>Post to Ledger</button>
           )}
-          {run.status === 'posted' && can('/asset-depreciation', 'can_void') && (
+          {run.status === 'posted' && (can('/asset-depreciation', 'can_void') && !periodLocked) && (
             <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setShowVoid(true)}>Void</button>
           )}
-          {isDraft && can('/asset-depreciation', 'can_delete') && (
+          {isDraft && (can('/asset-depreciation', 'can_delete') && !periodLocked) && (
             <button className="btn btn-sm btn-warning" disabled={busy}
               onClick={() => act(async () => { await api.delete(`/asset-depreciation/${id}`); navigate('/asset-depreciation'); }, 'Delete this draft run?')}>Delete</button>
           )}

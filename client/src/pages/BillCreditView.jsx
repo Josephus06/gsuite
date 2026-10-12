@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -57,10 +58,13 @@ export default function BillCreditView() {
     }
   }
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(bc?.date_created, 'ap');
+
   if (loading || !bc) return <LoadingSpinner />;
 
-  const canEdit = can('/bill-credits', 'can_edit');
-  const canVoid = can('/bill-credits', 'can_void');
+  const canEdit = (can('/bill-credits', 'can_edit') && !periodLocked);
+  const canVoid = (can('/bill-credits', 'can_void') && !periodLocked);
   // Fully Applied can still be voided: the server reverses its bill applications, and refuses
   // with the reason if a payment or cheque has spent it.
   const isOpen = bc.status !== 'voided';
@@ -82,6 +86,11 @@ export default function BillCreditView() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
 
       <div className="estimate-banner">
         <div className="estimate-banner-title">

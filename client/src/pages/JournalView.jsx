@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -74,6 +75,9 @@ export default function JournalView() {
     finally { setBusy(false); }
   }
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(j?.date_created, 'other_gl');
+
   if (loading || !j) return <LoadingSpinner />;
   const lines = j.lines || [];
 
@@ -86,14 +90,19 @@ export default function JournalView() {
           {/* Not on a void journal, nor on a reversal a void wrote (the server refuses both too). */}
           {/* Every journal but a void one -- reversals and system-written ones too; the edit
               screen warns about those. */}
-          {can('/journals', 'can_edit') && String(j.status).toLowerCase() !== 'void'
+          {(can('/journals', 'can_edit') && !periodLocked) && String(j.status).toLowerCase() !== 'void'
             && <Link className="btn btn-sm" to={`/journals/${j.id}/edit`}>Edit</Link>}
           {can('/journals', 'can_add') && <Link className="btn btn-sm" title="Start a new journal with this one's lines" to={`/journals/new?replicate=${j.id}`}>Replicate</Link>}
-          {can('/journals', 'can_void') && j.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
+          {(can('/journals', 'can_void') && !periodLocked) && j.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
 
       <div className="estimate-banner">
         <div className="estimate-banner-title">

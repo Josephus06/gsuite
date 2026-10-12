@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -78,10 +79,13 @@ export default function AssemblyBuildView() {
     }
   }
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(ab?.date_created, 'non_gl');
+
   if (loading || !ab) return <LoadingSpinner />;
 
-  const canEdit = can('/assembly-builds', 'can_edit');
-  const canVoid = can('/assembly-builds', 'can_void');
+  const canEdit = (can('/assembly-builds', 'can_edit') && !periodLocked);
+  const canVoid = (can('/assembly-builds', 'can_void') && !periodLocked);
   const isCancelled = ab.status === 'cancelled';
   const processes = ab.processes || [];
 
@@ -103,6 +107,11 @@ export default function AssemblyBuildView() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
 
       <div className="estimate-banner">
         <div className="estimate-banner-title">

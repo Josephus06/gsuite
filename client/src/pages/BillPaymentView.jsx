@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -78,10 +79,13 @@ export default function BillPaymentView() {
     }
   }
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(bp?.date_created, 'ap');
+
   if (loading || !bp) return <LoadingSpinner />;
 
-  const canEdit = can('/bill-payments', 'can_edit');
-  const canVoid = can('/bill-payments', 'can_void');
+  const canEdit = (can('/bill-payments', 'can_edit') && !periodLocked);
+  const canVoid = (can('/bill-payments', 'can_void') && !periodLocked);
   const canPrint = can('/bill-payments', 'can_print');
   // Anything not voided: 11,432 migrated payments say 'posted', and they are as live as 'open'.
   const isOpen = bp.status !== 'voided';
@@ -102,6 +106,11 @@ export default function BillPaymentView() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
 
       <div className="estimate-banner">
         <div className="estimate-banner-title">

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import GpComputations from '../components/GpComputations';
@@ -207,6 +208,9 @@ ${estimate.estimate_no} will be CANCELLED. The new estimate will have you as its
     }
   }
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(estimate?.date_created, 'non_gl');
+
   if (loading || !estimate) return <LoadingSpinner />;
 
   const jobOrders = estimate.jobOrders || [];
@@ -256,12 +260,12 @@ ${estimate.estimate_no} will be CANCELLED. The new estimate will have you as its
   const supervisorApproved = ['pending_customer_approval', 'approved'].includes(estimate.status);
   const isSystemAdmin = user?.account_type === 'System Admin';
   // Gates the workflow buttons below. Unchanged: disapproving or cancelling is not rewriting.
-  const canEdit = can('/estimates', 'can_edit') && (!supervisorApproved || isSystemAdmin);
+  const canEdit = (can('/estimates', 'can_edit') && !periodLocked) && (!supervisorApproved || isSystemAdmin);
   // Gates the Edit button itself, which is stricter: the content is only open while the
   // estimate is Pending Supervisor Approval. Disapproved and cancelled estimates are closed
   // too, and every status but that one belongs to a System Admin. Mirrors
   // requireEditableEstimate on the server.
-  const canEditContent = can('/estimates', 'can_edit')
+  const canEditContent = (can('/estimates', 'can_edit') && !periodLocked)
     && (estimate.status === 'pending_supervisor_approval' || isSystemAdmin);
   const canAdd = can('/estimates', 'can_add');
   // Approving out of "pending supervisor approval" specifically requires the Can
@@ -333,12 +337,17 @@ ${estimate.estimate_no} will be CANCELLED. The new estimate will have you as its
           {canAdd && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleReplicate}>Replicate</button>}
           {/* Not on a cancelled estimate (nothing left to cancel), nor one already turned into a Sales
               Order -- the server refuses both. Needs Edit as well as Add: it cancels. */}
-          {canAdd && can('/estimates', 'can_edit') && estimate.status !== 'cancelled' && !estimate.sales_order_id && (
+          {canAdd && (can('/estimates', 'can_edit') && !periodLocked) && estimate.status !== 'cancelled' && !estimate.sales_order_id && (
             <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancelAndReplicate}>Cancel &amp; Replicate</button>
           )}
         </div>
       </div>
 
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
       <div className="estimate-banner">
         <div className="estimate-banner-title">
           <h1>Estimate</h1>

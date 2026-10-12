@@ -3,7 +3,7 @@ const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeCustomerPaymentGl } = require('../lib/glImpact');
-const { assertPeriodOpen } = require('../lib/accountingPeriod');
+const { assertPeriodOpen, requireOpenPeriod } = require('../lib/accountingPeriod');
 const { resolveDefaultLocation } = require('../lib/userLocation');
 const { headerDepartmentError } = require('../lib/requireDepartment');
 const ExcelJS = require('exceljs');
@@ -730,7 +730,7 @@ router.get('/meta/locations', requireAuth, requirePermission(ROUTE, 'can_view'),
   } catch (err) { next(err); }
 });
 
-router.put('/:id/office-location', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/office-location', requireAuth, requireOpenPeriod('customer_payments', 'ar'), requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const locationId = Number(req.body.office_location_id) || null;

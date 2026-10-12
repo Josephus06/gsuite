@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import ItemFulfillmentModal from '../components/ItemFulfillmentModal';
@@ -87,11 +88,14 @@ export default function TransferOrderView() {
     }
   }
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(to?.date_created, 'non_gl');
+
   if (loading || !to) return <LoadingSpinner />;
 
   // Can Edit, or the TO's own creator with Can Add (the server's requireToEdit).
-  const canEdit = can('/transfer-orders', 'can_edit')
-    || (can('/transfer-orders', 'can_add') && Number(to?.created_by_user_id) === Number(user?.id));
+  const canEdit = !periodLocked && (can('/transfer-orders', 'can_edit')
+    || (can('/transfer-orders', 'can_add') && Number(to?.created_by_user_id) === Number(user?.id)));
   // Fulfilling and receiving are separate jobs done by the two warehouses, and each now has its
   // own permission page. They both used to be can_approve on the Transfer Order, so one switch
   // let a person do both ends of the transfer.
@@ -113,12 +117,17 @@ export default function TransferOrderView() {
           {canEdit && isPending && <Link className="btn btn-sm btn-primary" to={`/transfer-orders/${id}/edit`}>Edit</Link>}
           {mayFulfill && canStillFulfill && lines.length > 0 && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfillModal(true)}>Fulfill</button>}
           {mayReceive && canReceive && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfillmentsPicker(true)}>Receive</button>}
-          {can('/transfer-orders', 'can_edit') && canCancel && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
+          {(can('/transfer-orders', 'can_edit') && !periodLocked) && canCancel && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
           <button className="btn btn-sm" onClick={() => window.open(`/transfer-orders/${id}/print`, '_blank')}>Print</button>
         </div>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
 
       <div className="estimate-banner">
         <div className="estimate-banner-title">

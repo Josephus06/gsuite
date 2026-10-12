@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import CustomerPaymentModal from '../components/CustomerPaymentModal';
@@ -97,6 +98,9 @@ export default function SalesInvoiceView() {
   const [showReversal, setShowReversal] = useState(false);
   function handleCancel() { setError(''); setShowReversal(true); }
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(si?.date_created, 'ar');
+
   if (loading) return <LoadingSpinner />;
   // A failed load leaves si null. Without this the "loading || !si" guard spun forever on
   // an error instead of saying what went wrong.
@@ -112,8 +116,8 @@ export default function SalesInvoiceView() {
     );
   }
 
-  const canEdit = can('/sales-invoices', 'can_edit');
-  const canVoid = can('/sales-invoices', 'can_void');
+  const canEdit = (can('/sales-invoices', 'can_edit') && !periodLocked);
+  const canVoid = (can('/sales-invoices', 'can_void') && !periodLocked);
   // Replicate starts a new invoice from this one's customer, terms and lines. Only an invoice billed
   // straight to a customer can be: one raised from a Sales Order, Delivery Ticket, Estimate or NSSO
   // bills quantities against that document, and a copy would bill them a second time without the
@@ -201,6 +205,11 @@ export default function SalesInvoiceView() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
 
       {logisticsDate !== null && (
         <Modal title={`Received by Logistics -- ${si.invoice_no}`} onClose={() => !busy && setLogisticsDate(null)}>

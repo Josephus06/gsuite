@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
@@ -25,6 +26,11 @@ function VoidModal({ disposal, onClose, onDone }) {
   return (
     <Modal title={`Void ${disposal.disposal_no}`} onClose={onClose}>
       {error && <div className="error-banner">{error}</div>}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
       <p className="muted" style={{ marginTop: 0 }}>
         This removes the disposal from the ledger and brings the asset back into service at the location and
         custodian it had before.
@@ -65,6 +71,9 @@ export default function AssetDisposalView() {
     finally { setBusy(false); }
   }
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(d?.disposal_date, 'other_gl');
+
   if (loading || !d) return <LoadingSpinner />;
   const isDraft = d.status === 'draft';
   const gain = Number(d.gain_loss);
@@ -84,17 +93,17 @@ export default function AssetDisposalView() {
         <div />
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Link className="btn btn-sm" to={'/asset-disposals'}>Back to Lists</Link>
-          {isDraft && can('/asset-disposals', 'can_edit') && (
+          {isDraft && (can('/asset-disposals', 'can_edit') && !periodLocked) && (
             <Link className="btn btn-sm btn-primary" to={`/asset-disposals/${id}/edit`}>Edit</Link>
           )}
           {isDraft && can('/asset-disposals', 'can_approve') && (
             <button className="btn btn-sm btn-primary" disabled={busy}
               onClick={() => act(() => api.post(`/asset-disposals/${id}/post`), 'Post this disposal? The asset leaves the balance sheet and is retired.')}>Post to Ledger</button>
           )}
-          {d.status === 'posted' && can('/asset-disposals', 'can_void') && (
+          {d.status === 'posted' && (can('/asset-disposals', 'can_void') && !periodLocked) && (
             <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setShowVoid(true)}>Void</button>
           )}
-          {isDraft && can('/asset-disposals', 'can_delete') && (
+          {isDraft && (can('/asset-disposals', 'can_delete') && !periodLocked) && (
             <button className="btn btn-sm btn-warning" disabled={busy}
               onClick={() => act(async () => { await api.delete(`/asset-disposals/${id}`); navigate('/asset-disposals'); }, 'Delete this draft?')}>Delete</button>
           )}

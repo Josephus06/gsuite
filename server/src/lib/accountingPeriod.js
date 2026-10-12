@@ -33,4 +33,17 @@ async function assertPeriodOpen(dates, category, conn = pool) {
   }
 }
 
-module.exports = { periodLock, assertPeriodOpen };
+// Route guard (2026-10-12): refuses any change to the document at req.params.id when its own date
+// falls in a month closed for `category`. For the routes that edit a saved document without
+// otherwise reaching assertPeriodOpen -- Sales Orders, NSSOs, Estimates and a few single-field edits.
+function requireOpenPeriod(table, category, dateColumn = 'date_created') {
+  return async (req, res, next) => {
+    try {
+      const [[row]] = await pool.query('SELECT ?? AS d FROM ?? WHERE id = ?', [dateColumn, table, req.params.id]);
+      if (row && row.d) await assertPeriodOpen(String(row.d instanceof Date ? row.d.toISOString() : row.d).slice(0, 10), category);
+      return next();
+    } catch (err) { return next(err); }
+  };
+}
+
+module.exports = { periodLock, assertPeriodOpen, requireOpenPeriod };

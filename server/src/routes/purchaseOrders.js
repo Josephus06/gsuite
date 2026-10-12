@@ -4,7 +4,7 @@ const { PO_TERM_SELECT, PO_TERM_JOINS, termDays } = require('../lib/poTerm');
 const mailer = require('../lib/mailer');
 const { buildPurchaseOrderPdf, purchaseOrderPdfFilename } = require('../lib/purchaseOrderPdf');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
-const { assertPeriodOpen } = require('../lib/accountingPeriod');
+const { assertPeriodOpen, requireOpenPeriod } = require('../lib/accountingPeriod');
 const { insertNumbered, insertSuffixed } = require('../lib/docNumber');
 const { isApproved, normalisePoStatus, statusNormSql } = require('../lib/poStatus');
 const { sendXlsx, day } = require('../lib/xlsxExport');
@@ -1573,7 +1573,7 @@ router.post('/:id/returns', requireAuth, requirePermission(ROUTE, 'can_edit'), a
 // A line's Purchase Description, at ANY status and on every type, PO1 to PO4 (asked 2026-10-08:
 // "purchase description must be editable"). Unlike the full edit below, which stops at approval,
 // this touches nothing that receiving, billing or the totals rest on -- it is the wording only.
-router.put('/:id/lines/:lineId/description', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/lines/:lineId/description', requireAuth, requireOpenPeriod('purchase_orders', 'non_gl'), requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
     const [[line]] = await pool.query(
       'SELECT id, purchase_description FROM purchase_order_lines WHERE id = ? AND purchase_order_id = ?',

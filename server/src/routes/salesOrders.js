@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { requireOpenPeriod } = require('../lib/accountingPeriod');
 const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { computeSalesOrderStatus, invoicedOrTicketedSql, openDtQtySql } = require('../lib/salesOrderStatus');
@@ -252,7 +253,7 @@ router.get('/:id/sales-rep-options', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.put('/:id/sales-rep', requireAuth, async (req, res, next) => {
+router.put('/:id/sales-rep', requireAuth, requireOpenPeriod('sales_orders', 'non_gl'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     if (!(await mayChangeSalesRep(req.user.id))) return res.status(403).json({ error: 'Only a sales supervisor or SBU head can change the Sales Rep.' });
@@ -300,7 +301,7 @@ router.put('/:id/sales-rep', requireAuth, async (req, res, next) => {
   }
 });
 
-router.put('/:id/cancel', requireAuth, async (req, res, next) => {
+router.put('/:id/cancel', requireAuth, requireOpenPeriod('sales_orders', 'non_gl'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     if (!(await isSystemAdmin(req.user.id))) return res.status(403).json({ error: 'Only a System Admin can cancel a Sales Order.' });
@@ -356,7 +357,7 @@ router.put('/:id/cancel', requireAuth, async (req, res, next) => {
   }
 });
 
-router.put('/:id', requireAuth, async (req, res, next) => {
+router.put('/:id', requireAuth, requireOpenPeriod('sales_orders', 'non_gl'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     if (!(await isSystemAdmin(req.user.id))) return res.status(403).json({ error: 'Only a System Admin can edit a Sales Order.' });

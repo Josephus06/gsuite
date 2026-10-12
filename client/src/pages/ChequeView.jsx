@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -64,6 +65,9 @@ export default function ChequeView() {
     setShowReversal(true);
   }
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(c?.date_created, 'other_gl');
+
   if (loading || !c) return <LoadingSpinner />;
   const lines = c.lines || [];
   const gl = c.gl || [];
@@ -82,18 +86,23 @@ export default function ChequeView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={'/cheques'}>Back to Lists</Link>
-          {can('/cheques', 'can_edit') && c.status !== 'void' && <Link className="btn btn-sm" to={`/cheques/${c.id}/edit`}>Edit</Link>}
+          {(can('/cheques', 'can_edit') && !periodLocked) && c.status !== 'void' && <Link className="btn btn-sm" to={`/cheques/${c.id}/edit`}>Edit</Link>}
           {can('/cheques', 'can_print') && <button className="btn btn-sm" onClick={() => window.open(`/cheques/${c.id}/print`, '_blank')}>Print Voucher</button>}
           {can('/cheques', 'can_print') && <button className="btn btn-sm" onClick={() => window.open(`/cheques/${c.id}/print?as=cheque`, '_blank')}>Print Cheque</button>}
           {/* As on a Vendor Bill: a new Bill Credit for this cheque's vendor, made from the cheque. */}
           {can('/bill-credits', 'can_add') && c.status !== 'void' && ['VENDOR', 'supplier'].includes(c.payee_type) && c.payee_id && (
             <button className="btn btn-sm btn-primary" onClick={() => setShowBillCredit(true)}>Bill Credit</button>
           )}
-          {can('/cheques', 'can_void') && c.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
+          {(can('/cheques', 'can_void') && !periodLocked) && c.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
 
       <div className="estimate-banner">
         <div className="estimate-banner-title">
@@ -123,7 +132,7 @@ export default function ChequeView() {
               ) : (
                 <>
                   <span className="hi">{formatDate(c.date_released) || '—'}</span>
-                  {can('/cheques', 'can_edit') && (
+                  {(can('/cheques', 'can_edit') && !periodLocked) && (
                     <button type="button" className="link-btn" style={{ marginLeft: 8, color: 'inherit', textDecoration: 'underline' }}
                       onClick={() => { setReleaseDate(c.date_released ? String(c.date_released).slice(0, 10) : ''); setEditingRelease(true); }}>
                       Edit

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -56,12 +57,15 @@ export default function QualityInspectionView() {
     }
   }
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(qi?.date_created, 'non_gl');
+
   if (loading || !qi) return <LoadingSpinner />;
 
   // Cancel reverses the inspection, so it asks for can_edit on Quality Inspection's own page --
   // the same right the server asks for. It used to read can_edit on Production, which is now a
   // different question entirely.
-  const canEdit = can('/quality-inspections', 'can_edit');
+  const canEdit = (can('/quality-inspections', 'can_edit') && !periodLocked);
   const isSaved = qi.status === 'saved';
   const totalQty = qi.lines.reduce((s, l) => s + Number(l.pass_qty || 0) + Number(l.rma_qty || 0), 0);
   const totalPassed = qi.lines.reduce((s, l) => s + Number(l.pass_qty || 0), 0);
@@ -79,6 +83,11 @@ export default function QualityInspectionView() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
 
       <div className="estimate-banner">
         <div className="estimate-banner-title">

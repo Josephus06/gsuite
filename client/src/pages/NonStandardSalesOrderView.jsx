@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -44,8 +45,11 @@ export default function NonStandardSalesOrderView() {
   const handleApprove = () => { if (confirm('Approve this Non-Standard Sales Order?')) act(() => api.put(`/non-standard-sales-orders/${id}/approve`)); };
   const handleCancel = () => { if (confirm('Cancel this Non-Standard Sales Order?')) act(() => api.put(`/non-standard-sales-orders/${id}/cancel`)); };
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(n?.date_created, 'non_gl');
+
   if (loading || !n) return <LoadingSpinner />;
-  const canEdit = can('/non-standard-sales-orders', 'can_edit');
+  const canEdit = (can('/non-standard-sales-orders', 'can_edit') && !periodLocked);
   // A Sample is approved by an SBU head (or a System Admin) only -- not on the NSSO Approve
   // permission a sales supervisor holds. The server decides the same way (mayApproveNsso).
   const canApprove = n.type === 'sample'
@@ -90,6 +94,11 @@ export default function NonStandardSalesOrderView() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
 
       <div className="estimate-banner">
         <div className="estimate-banner-title">

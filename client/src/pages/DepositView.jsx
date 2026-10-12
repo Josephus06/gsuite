@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -34,6 +35,9 @@ export default function DepositView() {
     finally { setBusy(false); }
   }
 
+  // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
+  const periodLocked = usePeriodLocked(d?.date_created, 'ar');
+
   if (loading || !d) return <LoadingSpinner />;
   const payments = d.payments || [];
   const gl = d.gl || [];
@@ -51,14 +55,19 @@ export default function DepositView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={'/deposits'}>Back to Lists</Link>
-          {can('/deposits', 'can_edit') && d.status !== 'void' && (d.reconciled
+          {(can('/deposits', 'can_edit') && !periodLocked) && d.status !== 'void' && (d.reconciled
             ? <button className="btn btn-sm" disabled title="Cleared in a Bank Reconciliation -- it can no longer be edited">Edit</button>
             : <Link className="btn btn-sm" to={`/deposits/${d.id}/edit`}>Edit</Link>)}
-          {can('/deposits', 'can_void') && d.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
+          {(can('/deposits', 'can_void') && !periodLocked) && d.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
 
       <div className="estimate-banner">
         <div className="estimate-banner-title">

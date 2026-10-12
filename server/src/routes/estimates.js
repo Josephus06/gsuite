@@ -3,6 +3,7 @@ const mailer = require('../lib/mailer');
 const { buildEstimateEmail } = require('../lib/estimateEmail');
 const { buildEstimatePdf, estimatePdfFilename } = require('../lib/estimatePdf');
 const pool = require('../db');
+const { assertPeriodOpen, requireOpenPeriod } = require('../lib/accountingPeriod');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { isHeadOfficeUser } = require('../lib/userLocation');
@@ -323,8 +324,10 @@ const EDITABLE_STATUS = 'pending_supervisor_approval';
 // customer's PO, conforme, proof of payment), which by their nature arrive at the customer stage.
 async function requireEditableEstimate(req, res, next) {
   try {
-    const [[row]] = await pool.query('SELECT status FROM estimates WHERE id = ?', [req.params.id]);
+    const [[row]] = await pool.query('SELECT status, date_created FROM estimates WHERE id = ?', [req.params.id]);
     if (!row) return res.status(404).json({ error: 'Not found' });
+    // Not in a closed accounting period (Non-GL), whoever is asking (2026-10-12).
+    await assertPeriodOpen(String(row.date_created || '').slice(0, 10), 'non_gl');
     if (row.status !== EDITABLE_STATUS && !(await isSystemAdmin(req.user.id))) {
       return res.status(403).json({
         error: 'This estimate can only be edited while it is Pending Supervisor Approval -- only a System Admin can edit it now.',
@@ -1096,7 +1099,7 @@ router.put('/:id/status', requireAuth, requireStatusChange, async (req, res, nex
   }
 });
 
-router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async (req, res, next) => {
+router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), requireOpenPeriod('estimates', 'non_gl'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();

@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { requireOpenPeriod } = require('../lib/accountingPeriod');
 const { releaseIfDirectToProduction } = require('../lib/directToProduction');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan, isSystemAdmin } = require('../middleware/auth');
@@ -218,7 +219,7 @@ router.get('/source-estimate-jobs/:estimateId', requireAuth, requirePermission(R
 // Replace the NSSO's lines from selected Estimate job orders (Sample). Copies pricing + sizes; the
 // sample amount / allowance default to the estimate line's net (a full-value sample) -- editable
 // later. Each line links back to its source estimate job order.
-router.post('/:id/lines/from-estimate', requireAuth, requireEditOrOwnDraft, async (req, res, next) => {
+router.post('/:id/lines/from-estimate', requireAuth, requireOpenPeriod('non_standard_sales_orders', 'non_gl'), requireEditOrOwnDraft, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const ids = Array.isArray(req.body?.estimate_job_order_ids) ? req.body.estimate_job_order_ids : [];
@@ -434,7 +435,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
-router.put('/:id', requireAuth, requireEditOrOwnDraft, async (req, res, next) => {
+router.put('/:id', requireAuth, requireOpenPeriod('non_standard_sales_orders', 'non_gl'), requireEditOrOwnDraft, async (req, res, next) => {
   try {
     const sets = []; const vals = [];
     for (const f of HEADER_FIELDS) {
@@ -450,7 +451,7 @@ router.put('/:id', requireAuth, requireEditOrOwnDraft, async (req, res, next) =>
 
 // Replace the NSSO's job-order lines from a set of source job orders (RMA: the Completed JOs the
 // user chose to redo). Copies job type / description / quantity / units from each JO.
-router.post('/:id/lines/from-source', requireAuth, requireEditOrOwnDraft, async (req, res, next) => {
+router.post('/:id/lines/from-source', requireAuth, requireOpenPeriod('non_standard_sales_orders', 'non_gl'), requireEditOrOwnDraft, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const ids = Array.isArray(req.body?.source_job_order_ids) ? req.body.source_job_order_ids : [];
@@ -486,7 +487,7 @@ router.post('/:id/lines/from-source', requireAuth, requireEditOrOwnDraft, async 
 // picks a Job Type per line up front; processes/items are added later, after approval, via the
 // Create-JO modal). source_job_order_id stays NULL and all pricing is 0 -- an internal work order
 // carries no revenue.
-router.put('/:id/lines', requireAuth, requireEditOrOwnDraft, async (req, res, next) => {
+router.put('/:id/lines', requireAuth, requireOpenPeriod('non_standard_sales_orders', 'non_gl'), requireEditOrOwnDraft, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const rows = Array.isArray(req.body?.lines) ? req.body.lines : [];
@@ -540,7 +541,7 @@ async function moveJobOrderQty(conn, line, qty) {
   return null;
 }
 
-router.put('/:id/lines/:lineId/details', requireAuth, requireEditOrOwnDraft, async (req, res, next) => {
+router.put('/:id/lines/:lineId/details', requireAuth, requireOpenPeriod('non_standard_sales_orders', 'non_gl'), requireEditOrOwnDraft, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[line]] = await conn.query('SELECT * FROM non_standard_sales_order_lines WHERE id = ? AND nsso_id = ?', [req.params.lineId, req.params.id]);
@@ -609,7 +610,7 @@ router.put('/:id/lines/:lineId/details', requireAuth, requireEditOrOwnDraft, asy
 // fraction of the price. Amount is the line's Net of Tax; the price per unit, tax and gross follow
 // from it (at the line's own tax rate) so the NSSO total, the Create-JO quantity and the invoice
 // all read the edited figures. Qty is locked once the line's Job Order exists -- the JO carries it.
-router.put('/:id/lines/:lineId/sample', requireAuth, requireEditOrOwnDraft, async (req, res, next) => {
+router.put('/:id/lines/:lineId/sample', requireAuth, requireOpenPeriod('non_standard_sales_orders', 'non_gl'), requireEditOrOwnDraft, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[n]] = await conn.query('SELECT type, status FROM non_standard_sales_orders WHERE id = ?', [req.params.id]);
@@ -851,7 +852,7 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
-router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id/cancel', requireAuth, requireOpenPeriod('non_standard_sales_orders', 'non_gl'), requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[n]] = await conn.query('SELECT status FROM non_standard_sales_orders WHERE id = ?', [req.params.id]);
