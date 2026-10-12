@@ -32,6 +32,10 @@ export default function DepositForm() {
   const [accountId, setAccountId] = useState('');
   const [memo, setMemo] = useState('');
   const [checked, setChecked] = useState({});
+  // Editing an imported deposit: the part of its total no linked payment or line explains -- payments
+  // the source deposited that were never linked here. Kept as it is and counted in the total; the
+  // server does the same (routes/deposits.js unlinkedPaymentsShare).
+  const [unlinked, setUnlinked] = useState(0);
   const [tab, setTab] = useState('payments');
   const [others, setOthers] = useState([{ ...EMPTY_OTHER }]);
   const [cashBacks, setCashBacks] = useState([{ ...EMPTY_CASHBACK }]);
@@ -57,6 +61,7 @@ export default function DepositForm() {
         setAccountId(d.account_id || '');
         setMemo(d.memo || '');
         setChecked(Object.fromEntries((d.payments || []).map((p) => [p.id, true])));
+        setUnlinked(Number(d.unlinked_amount) || 0);
         const str = (v) => (v == null ? '' : String(v));
         const o = (d.lines || []).filter((l) => l.line_type === 'other').map((l) => ({
           party_key: l.party_type && l.party_id ? `${l.party_type}:${l.party_id}` : '', amount: str(l.amount),
@@ -89,7 +94,7 @@ export default function DepositForm() {
     });
   }, [meta, filters]);
 
-  const paymentsTotal = useMemo(() => (meta?.payments || []).filter((p) => checked[p.id]).reduce((s, p) => s + Number(p.payment_amount || 0), 0), [meta, checked]);
+  const paymentsTotal = useMemo(() => unlinked + (meta?.payments || []).filter((p) => checked[p.id]).reduce((s, p) => s + Number(p.payment_amount || 0), 0), [meta, checked, unlinked]);
   const otherTotal = others.reduce((s, l) => s + (Number(l.amount) || 0), 0);
   const cashBackTotal = cashBacks.reduce((s, l) => s + (Number(l.amount) || 0), 0);
   const total = paymentsTotal + otherTotal - cashBackTotal;
@@ -148,7 +153,7 @@ export default function DepositForm() {
   async function save() {
     setError('');
     if (!accountId) { setError('Select a bank account to deposit into.'); return; }
-    if (!selectedIds.length && !(otherTotal > 0)) { setError('Tick at least one payment or add an Other Deposit.'); return; }
+    if (!selectedIds.length && !unlinked && !(otherTotal > 0)) { setError('Tick at least one payment or add an Other Deposit.'); return; }
     if (!(total > 0)) { setError('Cash Back cannot be as much as the payments and Other Deposits together.'); return; }
     // Department is required on every line the server keeps -- it drops rows left wholly blank.
     const used = (l) => Number(l.amount) || l.account_id || l.party_key || l.payment_method_id || l.department_id || l.location_id || String(l.memo || '').trim();
@@ -322,7 +327,14 @@ export default function DepositForm() {
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>No not-deposited payments.</td></tr>}
+              {unlinked > 0 && (
+                <tr title="Deposited in the old system; which payments were never linked here. Kept as part of this deposit.">
+                  <td><input type="checkbox" checked disabled /></td>
+                  <td colSpan={5} className="muted">Payments from the old system (not linked individually)</td>
+                  <td style={{ textAlign: 'right' }}>{money(unlinked)}</td>
+                </tr>
+              )}
+              {rows.length === 0 && !unlinked && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>No not-deposited payments.</td></tr>}
               {rows.map((p) => (
                 <tr key={p.id}>
                   <td><input type="checkbox" checked={!!checked[p.id]} onChange={(e) => setChecked((c) => ({ ...c, [p.id]: e.target.checked }))} /></td>

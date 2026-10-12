@@ -71,6 +71,21 @@ async function normaliseLines(conn, otherDeposits, cashBacks) {
   return out;
 }
 
+// The part of a deposit's total that none of its linked payments or lines explain: payments the
+// source deposited that were never linked here (deposits imported as header + total; see
+// db/import-deposit-details.js, which links them only where everything ties). lib/depositGl.js
+// already posts it as Undeposited Funds. Edit keeps it and adds the changes on top -- rebuilding the
+// total from what is linked turned every such deposit to 0 the moment it was edited (2026-10-12).
+async function unlinkedPaymentsShare(conn, d) {
+  const [[p]] = await conn.query('SELECT COALESCE(SUM(payment_amount), 0) AS s FROM customer_payments WHERE deposit_id = ?', [d.id]);
+  const [[l]] = await conn.query(
+    `SELECT COALESCE(SUM(CASE WHEN line_type = 'other' THEN amount ELSE 0 END), 0) AS other,
+            COALESCE(SUM(CASE WHEN line_type = 'cashback' THEN amount ELSE 0 END), 0) AS cashback
+       FROM bank_deposit_lines WHERE deposit_id = ?`, [d.id]);
+  const share = round2(num(d.total_amount) - num(p.s) - num(l.other) + num(l.cashback));
+  return share > 0.005 ? share : 0;
+}
+
 // Department is required on every Other Deposit and Cash Back line (2026-10-07). Each list is
 // checked on its own so the message names the line as the form numbers it.
 function depositLinesDepartmentError(lines) {
@@ -187,7 +202,8 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
     const [[uf]] = await pool.query("SELECT account_code, account_name FROM chart_of_accounts WHERE account_code = '10006'");
-    res.json({ ...d, payments, lines, gl: depositGlRows(d, lines, uf), reconciled: await isReconciled(pool, d.id) });
+    const unlinked = lineTbl.length ? await unlinkedPaymentsShare(pool, d) : 0;
+    res.json({ ...d, payments, lines, unlinked_amount: unlinked, gl: depositGlRows(d, lines, uf), reconciled: await isReconciled(pool, d.id) });
   } catch (err) { next(err); }
 });
 
@@ -296,7 +312,9 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (lines.error) return res.status(400).json({ error: lines.error });
     const deptError = depositLinesDepartmentError(lines);
     if (deptError) return res.status(400).json({ error: deptError });
-    if (!ids.length && !lines.some((l) => l.line_type === 'other')) {
+    // Read before anything below relinks or replaces lines -- it is the share as saved.
+    const unlinked = await unlinkedPaymentsShare(conn, d);
+    if (!ids.length && !unlinked && !lines.some((l) => l.line_type === 'other')) {
       return res.status(400).json({ error: 'Select at least one payment or add an Other Deposit.' });
     }
     let pays = [];
@@ -311,7 +329,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     const paymentsTotal = pays.reduce((t, p) => t + num(p.payment_amount), 0);
     const otherTotal = lines.filter((l) => l.line_type === 'other').reduce((t, l) => t + l.amount, 0);
     const cashBackTotal = lines.filter((l) => l.line_type === 'cashback').reduce((t, l) => t + l.amount, 0);
-    const total = round2(paymentsTotal + otherTotal - cashBackTotal);
+    const total = round2(unlinked + paymentsTotal + otherTotal - cashBackTotal);
     if (total <= 0) {
       return res.status(400).json({ error: 'Cash Back cannot be as much as the payments and Other Deposits together -- the deposit total must be above zero.' });
     }
