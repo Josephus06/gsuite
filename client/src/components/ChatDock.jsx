@@ -53,17 +53,24 @@ export default function ChatDock() {
     if (!u?.id) return;
     const existing = boxesRef.current.find((b) => b.user.id === u.id);
     if (existing) {
-      if (focus) setBoxes((bs) => bs.map((b) => (b.user.id === u.id ? { ...b, minimized: false } : b)));
+      if (focus) {
+        setBoxes((bs) => bs.map((b) => (b.user.id === u.id ? { ...b, minimized: false, unread: 0 } : b)));
+        if (existing.unread) markRead(u.id);
+      }
       return;
     }
     setBoxes((bs) => {
-      const next = [...bs, { user: u, messages: [], minimized: !focus, hasMore: false, loading: true }];
+      const next = [...bs, { user: u, messages: [], minimized: !focus, hasMore: false, loading: true, unread: 0 }];
       return next.length > MAX_BOXES ? next.slice(next.length - MAX_BOXES) : next;
     });
     try {
       const { data } = await api.get(`/chat/thread/${u.id}`);
       setBoxes((bs) => bs.map((b) => (b.user.id === u.id
-        ? { ...b, user: { ...b.user, ...(data.user || {}) }, messages: data.messages, hasMore: data.has_more, loading: false }
+        ? {
+          ...b, user: { ...b.user, ...(data.user || {}) }, messages: data.messages, hasMore: data.has_more, loading: false,
+          // Opened minimized (unread waiting from before the page loaded): its header counts them.
+          unread: focus ? 0 : data.messages.filter((m) => m.sender_user_id !== user.id && !m.read_at).length,
+        }
         : b)));
       bumpSeen(u.id, lastSeenIn(data.messages, user.id));
       if (focus) markRead(u.id);
@@ -118,10 +125,13 @@ export default function ChatDock() {
           const other = { id: m.other_id, display_name: m.other_name, avatar_data: m.other_avatar };
           const box = boxesRef.current.find((b) => b.user.id === other.id);
           if (box) {
+            // A minimized box stays minimized and counts the message as unread (2026-10-12), as a
+            // chat head does; it is marked read when opened. An open box reads it straight away.
+            const countIt = !mine && box.minimized;
             setBoxes((bs) => bs.map((b) => (b.user.id === other.id && !b.messages.some((x) => x.id === m.id)
-              ? { ...b, messages: [...b.messages, m], minimized: mine ? b.minimized : false }
+              ? { ...b, messages: [...b.messages, m], unread: (b.unread || 0) + (countIt ? 1 : 0) }
               : b)));
-            if (!mine) markRead(other.id);
+            if (!mine && !countIt) markRead(other.id);
           } else if (!mine) {
             open(other); // loads the thread, which already holds this message
           }
@@ -148,7 +158,7 @@ export default function ChatDock() {
   const toggle = (id) => setBoxes((bs) => bs.map((b) => {
     if (b.user.id !== id) return b;
     if (b.minimized) markRead(id);
-    return { ...b, minimized: !b.minimized };
+    return { ...b, minimized: !b.minimized, unread: b.minimized ? 0 : b.unread };
   }));
   const append = (id, m) => setBoxes((bs) => bs.map((b) => (b.user.id === id && !b.messages.some((x) => x.id === m.id)
     ? { ...b, messages: [...b.messages, m] } : b)));
@@ -219,6 +229,11 @@ function ChatBox({ box, meId, onClose, onToggle, onSent, onOlder, isTyping, seen
           {box.user.online && <span className="chat-online-dot" />}
         </span>
         <span className="chat-box-name">{box.user.display_name}</span>
+        {box.minimized && box.unread > 0 && (
+          <span className="chat-unread" title={`${box.unread} unread message${box.unread === 1 ? '' : 's'}`}>
+            {box.unread > 99 ? '99+' : box.unread}
+          </span>
+        )}
         <button type="button" className="chat-box-btn" title="Close" onClick={(e) => { e.stopPropagation(); onClose(); }}>×</button>
       </div>
       {!box.minimized && (

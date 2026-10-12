@@ -2573,6 +2573,9 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
   background: var(--chat-bg); color: var(--chat-text); border: 1px solid var(--chat-border); border-bottom: 0;
   border-radius: 10px 10px 0 0; box-shadow: var(--chat-shadow); overflow: hidden; }
 .chat-box.is-min { height: auto; }
+/* Unread count on a minimized chat box's header. */
+.chat-unread { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: #e11d48; color: #fff;
+  font-size: 11px; font-weight: 700; line-height: 20px; text-align: center; flex-shrink: 0; }
 .chat-box-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--chat-head); color: #fff; cursor: pointer; user-select: none; }
 .chat-box-name { flex: 1; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-box-btn { background: none; border: 0; color: #fff; font-size: 20px; line-height: 1; cursor: pointer; padding: 0 4px; }
