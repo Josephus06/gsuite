@@ -250,7 +250,9 @@ export default function PurchaseOrderView() {
   // hid Bill from accounting staff granted Vendor Bills but not Purchase Orders.
   const canReceive = canEdit || can('/receiving-reports', 'can_add');
   const canBill = canEdit || can('/vendor-bills', 'can_add');
-  const showReceive = canReceive && po.type !== 'PO2' && isApprovedPo(po.status)
+  // A Landed Cost PO (PO2) is received too, as in the source (922 of its receipts imported): that is
+  // what makes it billable. Its charges land no stock (server: isNonStockItem).
+  const showReceive = canReceive && isApprovedPo(po.status)
     && !isSettledPo(po.status) && po.receipt_status !== 'fully_received';
   const showVendorReturn = canEdit && po.type !== 'PO2' && po.receipt_status !== 'not_received';
   // "Bill" only makes sense once at least one line has been received but not yet

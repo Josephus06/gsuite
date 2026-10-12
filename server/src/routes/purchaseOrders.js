@@ -11,6 +11,7 @@ const { sendXlsx, day } = require('../lib/xlsxExport');
 const { parseDiscountChain } = require('../lib/discountChain');
 const { lineDepartmentError } = require('../lib/requireDepartment');
 const { notifyPoPending, notifyPoApproved } = require('../lib/approvalNotifications');
+const { isNonStockItem } = require('../lib/itemTypes');
 
 // Tells whoever acts next on a PO that has just been saved or approved (lib/approvalNotifications.js).
 function notifyPoNextStep(po, actorId) {
@@ -1265,7 +1266,7 @@ router.post('/:id/receipts', requireAuth, requireReceiveRight, async (req, res, 
     // Base Unit, so it has to be scaled by the item's own Purchase Unit -> Base Unit
     // factor (e.g. 5 ROLL x 1344.8 = 6,724 SQFT).
     const [poLines] = await conn.query(
-      `SELECT pol.id, pol.item_id, pol.qty, pol.received_qty, pol.location_id, pol.rate, pol.disc_percent, pol.tax_code_id, pol.disc_amount, pol.net_of_tax, pol.tax_amount, pol.ext_price, COALESCE(i.conversion_factor, 1) AS conversion_factor
+      `SELECT pol.id, pol.item_id, pol.qty, pol.received_qty, pol.location_id, pol.rate, pol.disc_percent, pol.tax_code_id, pol.disc_amount, pol.net_of_tax, pol.tax_amount, pol.ext_price, COALESCE(i.conversion_factor, 1) AS conversion_factor, i.item_type
        FROM purchase_order_lines pol
        LEFT JOIN inventories i ON i.id = pol.item_id
        WHERE pol.id IN (?) AND pol.purchase_order_id = ?`,
@@ -1366,7 +1367,8 @@ router.post('/:id/receipts', requireAuth, requireReceiveRight, async (req, res, 
         [receiptId, l.purchase_order_line_id, l.poLine.item_id, l.locationId || null, l.qty, l.rate, l.discPercent, l.lineDiscAmount, l.lineNetOfTax, l.tax_code_id, l.lineTaxAmount, l.extPrice]
       );
       await conn.query('UPDATE purchase_order_lines SET received_qty = received_qty + ? WHERE id = ?', [l.qty, l.purchase_order_line_id]);
-      if (l.locationId) {
+      // A charge (Landed Cost, Service, ...) is received so it can be billed, but lands no stock.
+      if (l.locationId && !isNonStockItem(l.poLine.item_type)) {
         const baseQty = l.qty * Number(l.poLine.conversion_factor || 1);
         await conn.query(
           `INSERT INTO inventory_locations (inventory_id, location_id, qty_on_hand)
