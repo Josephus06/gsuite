@@ -134,7 +134,11 @@ export default function VendorBills() {
                   <th>Date Due</th>
                   <th>Office Location</th>
                   <th>Vendor</th>
-                  <th>Gross Amount</th>
+                  <th>Net of Tax</th>
+                  <th>Tax Amount</th>
+                  <th>Total Amount</th>
+                  <th>Withholding Tax</th>
+                  <th>Net Amount</th>
                   <th>Amount Due</th>
                   <th>Term</th>
                   <th>Memo</th>
@@ -144,7 +148,7 @@ export default function VendorBills() {
               </thead>
               <tbody>
                 {rows.length === 0 && (
-                  <tr><td colSpan={13} className="muted" style={{ textAlign: 'center', padding: 20 }}>No bills found.</td></tr>
+                  <tr><td colSpan={17} className="muted" style={{ textAlign: 'center', padding: 20 }}>No bills found.</td></tr>
                 )}
                 {pageRows.map((row) => (
                   <tr key={row.id}>
@@ -155,7 +159,12 @@ export default function VendorBills() {
                     <td data-label="Date Due">{formatDate(row.date_due)}</td>
                     <td data-label="Office Location">{row.office_location_name}</td>
                     <td data-label="Vendor"><SupplierLink id={row.supplier_id} name={row.supplier_name} /></td>
-                    <td data-label="Gross Amount">{money(row.gross_amount)}</td>
+                    <td data-label="Net of Tax">{money(row.net_of_tax)}</td>
+                    <td data-label="Tax Amount">{money(row.tax_amount)}</td>
+                    <td data-label="Total Amount">{money(row.gross_amount)}</td>
+                    <td data-label="Withholding Tax">{money(row.wtax_amount)}</td>
+                    {/* Total less withholding tax -- what is owed the vendor before payments. */}
+                    <td data-label="Net Amount">{money(Number(row.gross_amount || 0) - Number(row.wtax_amount || 0))}</td>
                     <td data-label="Amount Due">{money(row.amount_due)}</td>
                     <td data-label="Term">{row.term}</td>
                     <td data-label="Memo" style={{ whiteSpace: 'normal', maxWidth: 280 }}>{row.memo || ''}</td>

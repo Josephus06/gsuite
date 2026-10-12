@@ -261,6 +261,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     const [rows] = await pool.query(
       `SELECT vb.id, vb.bill_no, vb.reference_no, vb.date_created, vb.date_due, vb.term, vb.memo, vb.gross_amount, vb.amount_due, vb.status,
+              vb.net_of_tax, vb.tax_amount, vb.wtax_amount,
               po.po_no, s.id AS supplier_id, s.name AS supplier_name, loc.location_name AS office_location_name
        FROM vendor_bills vb
        LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
@@ -286,7 +287,11 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
           { header: 'Date Due', key: 'due', width: 13 },
           { header: 'Office Location', key: 'location', width: 18 },
           { header: 'Vendor', key: 'vendor', width: 40 },
-          { header: 'Gross Amount', key: 'gross', width: 16, money: true },
+          { header: 'Net of Tax', key: 'net', width: 16, money: true },
+          { header: 'Tax Amount', key: 'tax', width: 14, money: true },
+          { header: 'Total Amount', key: 'gross', width: 16, money: true },
+          { header: 'Withholding Tax', key: 'wtax', width: 15, money: true },
+          { header: 'Net Amount', key: 'net_amount', width: 16, money: true },
           { header: 'Amount Due', key: 'amount_due', width: 16, money: true },
           { header: 'Term', key: 'term', width: 12 },
           { header: 'Memo', key: 'memo', width: 50 },
@@ -295,6 +300,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
         rows: rows.map((r) => ({
           bill_no: r.bill_no, po: r.po_no || 'No PO', ref: r.reference_no || '', date: xlsxDay(r.date_created), due: xlsxDay(r.date_due),
           location: r.office_location_name || '', vendor: r.supplier_name || '', gross: Number(r.gross_amount || 0),
+          net: Number(r.net_of_tax || 0), tax: Number(r.tax_amount || 0), wtax: Number(r.wtax_amount || 0),
+          net_amount: Number((Number(r.gross_amount || 0) - Number(r.wtax_amount || 0)).toFixed(2)),
           amount_due: Number(r.amount_due || 0), term: r.term || '', memo: r.memo || '', status: STATUS[r.status] || r.status,
         })),
       });
