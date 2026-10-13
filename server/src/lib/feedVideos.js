@@ -51,8 +51,8 @@ const isVideoMime = (m) => /^video\/[\w.+-]+$/.test(String(m || ''));
 // Room for size more bytes? -> null, or the reason it does not fit.
 async function roomFor(size) {
   const [[used]] = await pool.query(
-    "SELECT COALESCE(SUM(CASE WHEN status = 'uploading' THEN size_bytes - received_bytes ELSE 0 END), 0) AS pending, COALESCE(SUM(received_bytes), 0) AS stored FROM feed_videos");
-  const committed = Number(used.stored) + Number(used.pending);
+    "SELECT COALESCE(SUM(CASE WHEN status = 'uploading' THEN size_bytes - received_bytes ELSE 0 END), 0) AS pending, COALESCE(SUM(received_bytes), 0) AS stored_bytes FROM feed_videos");
+  const committed = Number(used.stored_bytes) + Number(used.pending);
   if (committed + size > TOTAL_CAP_BYTES) {
     return `Video storage is full (${(committed / GB).toFixed(1)} of ${TOTAL_CAP_BYTES / GB} GB used). Delete some older video posts, or ask the System Admin to raise the limit.`;
   }
