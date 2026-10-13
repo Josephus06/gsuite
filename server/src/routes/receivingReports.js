@@ -39,9 +39,45 @@ async function requireReceiptView(req, res, next) {
   }
 }
 
+// The Location / Department / Item filters' choices (2026-10-13): only what appears on receipts --
+// the location a line was received into, the department on the PO line it received, the item.
+router.get('/filter-options', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [locations] = await pool.query(
+      `SELECT l.id, l.location_name AS name FROM locations l
+        WHERE l.id IN (SELECT DISTINCT location_id FROM purchase_order_receipt_lines WHERE location_id IS NOT NULL)
+        ORDER BY l.location_name`);
+    const [departments] = await pool.query(
+      `SELECT d.id, d.name FROM departments d
+        WHERE d.id IN (SELECT DISTINCT pol.department_id FROM purchase_order_receipt_lines rl
+                         JOIN purchase_order_lines pol ON pol.id = rl.purchase_order_line_id WHERE pol.department_id IS NOT NULL)
+        ORDER BY d.name`);
+    res.json({ locations, departments });
+  } catch (err) { next(err); }
+});
+
+// Item picker search: received items whose code or name matches, at most 50.
+router.get('/items', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    const [rows] = await pool.query(
+      `SELECT i.id, i.item_code, i.display_name FROM inventories i
+        WHERE i.id IN (SELECT DISTINCT item_id FROM purchase_order_receipt_lines WHERE item_id IS NOT NULL)
+          ${q ? 'AND (i.item_code LIKE ? OR i.display_name LIKE ?)' : ''}
+        ORDER BY i.display_name LIMIT 50`, q ? [`%${q}%`, `%${q}%`] : []);
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { search, from, to, supplier_id: supplierId } = req.query;
+    const { search, supplier_id: supplierId } = req.query;
+    // Date: As of (up to that day) or a From-To period (2026-10-13). from/to alone still work.
+    const ISO = /^\d{4}-\d{2}-\d{2}$/;
+    let { from, to } = req.query;
+    if (req.query.date_mode === 'as_of') { from = null; to = req.query.as_of; }
+    if (from && !ISO.test(from)) from = null;
+    if (to && !ISO.test(to)) to = null;
     const limit = Math.min(Number(req.query.limit) || 100, 500);
     const offset = Math.max(Number(req.query.offset) || 0, 0);
 
@@ -57,6 +93,16 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     if (from) { where.push('r.date_created >= ?'); params.push(from); }
     if (to) { where.push('r.date_created <= ?'); params.push(to); }
     if (supplierId) { where.push('po.supplier_id = ?'); params.push(supplierId); }
+    // Location, Department, Item (2026-10-13): a receipt matches when any of its lines does.
+    const lineMatch = (cond, val) => {
+      where.push(`EXISTS (SELECT 1 FROM purchase_order_receipt_lines rlf
+                    LEFT JOIN purchase_order_lines polf ON polf.id = rlf.purchase_order_line_id
+                   WHERE rlf.purchase_order_receipt_id = r.id AND ${cond})`);
+      params.push(val);
+    };
+    if (Number(req.query.location_id) > 0) lineMatch('rlf.location_id = ?', Number(req.query.location_id));
+    if (Number(req.query.department_id) > 0) lineMatch('polf.department_id = ?', Number(req.query.department_id));
+    if (Number(req.query.item_id) > 0) lineMatch('rlf.item_id = ?', Number(req.query.item_id));
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const [rows] = await pool.query(

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
+import FilterPicker from '../components/FilterPicker';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { SupplierLink } from '../components/PartyLink';
@@ -41,6 +42,14 @@ export default function ReceivingReports() {
   const [supplier, setSupplier] = useState(null);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  // Location, Department, Item and an As of / Period date (asked 2026-10-13).
+  const [dateMode, setDateMode] = useState('range');
+  const [asOf, setAsOf] = useState('');
+  const [locationId, setLocationId] = useState('');
+  const [departmentId, setDepartmentId] = useState('');
+  const [item, setItem] = useState(null);
+  const [options, setOptions] = useState({ locations: [], departments: [] });
+  const [itemOptions, setItemOptions] = useState([]);
   const [page, setPage] = useState(1);
   const limit = 10;
 
@@ -52,8 +61,16 @@ export default function ReceivingReports() {
       const params = { limit, offset: (page - 1) * limit };
       if (search) params.search = search;
       if (supplier) params.supplier_id = supplier.id;
-      if (from) params.from = from;
-      if (to) params.to = to;
+      if (dateMode === 'as_of') {
+        params.date_mode = 'as_of';
+        if (asOf) params.as_of = asOf;
+      } else {
+        if (from) params.from = from;
+        if (to) params.to = to;
+      }
+      if (locationId) params.location_id = locationId;
+      if (departmentId) params.department_id = departmentId;
+      if (item) params.item_id = item.id;
       const { data } = await api.get('/receiving-reports', { params });
       setRows(data.rows);
       setTotal(data.total);
@@ -64,6 +81,16 @@ export default function ReceivingReports() {
   }
 
   useEffect(() => { api.get('/suppliers').then(({ data }) => setSuppliers(data)).catch(() => setSuppliers([])); }, []);
+  useEffect(() => {
+    api.get('/receiving-reports/filter-options').then(({ data }) => setOptions(data)).catch(() => {});
+    searchItems('');
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // The Item picker asks the server (received items only); the chosen one is kept in the list.
+  function searchItems(text) {
+    api.get('/receiving-reports/items', { params: { q: (text || '').trim() } })
+      .then(({ data }) => setItemOptions(item && !data.some((i) => i.id === item.id) ? [item, ...data] : data))
+      .catch(() => {});
+  }
   useEffect(() => { load(); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function runSearch() {
@@ -74,6 +101,7 @@ export default function ReceivingReports() {
 
   function clearFilters() {
     setSearch(''); setSupplier(null); setFrom(''); setTo('');
+    setAsOf(''); setDateMode('range'); setLocationId(''); setDepartmentId(''); setItem(null);
     if (page === 1) load(); else setPage(1);
   }
 
@@ -115,12 +143,40 @@ export default function ReceivingReports() {
               </div>
             </div>
             <div className="field">
-              <label>Date From</label>
-              <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+              <label>Location</label>
+              <FilterPicker label="Location" items={options.locations} value={locationId} onChange={setLocationId}
+                getLabel={(l) => l.name} allLabel="All" />
             </div>
             <div className="field">
-              <label>Date To</label>
-              <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+              <label>Department</label>
+              <FilterPicker label="Department" items={options.departments} value={departmentId} onChange={setDepartmentId}
+                getLabel={(d) => d.name} allLabel="All" />
+            </div>
+            <div className="field">
+              <label>Item</label>
+              <EntityPicker
+                label="Item" items={itemOptions} value={item?.id ?? ''} getLabel={(i) => `${i.item_code ? `${i.item_code} — ` : ''}${i.display_name}`}
+                columns={[{ key: 'item_code', label: 'Code' }, { key: 'display_name', label: 'Item' }]} searchKeys={['item_code', 'display_name']}
+                placeholder="All" onSearch={searchItems}
+                onSelect={(i) => setItem(i || null)} onClear={() => setItem(null)}
+              />
+            </div>
+            <div className="field">
+              <label>Date</label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <select value={dateMode} onChange={(e) => setDateMode(e.target.value)} style={{ width: 'auto' }}>
+                  <option value="as_of">As of</option>
+                  <option value="range">Period</option>
+                </select>
+                {dateMode === 'as_of' ? (
+                  <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+                ) : (
+                  <>
+                    <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} title="From" />
+                    <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} title="To" />
+                  </>
+                )}
+              </div>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
