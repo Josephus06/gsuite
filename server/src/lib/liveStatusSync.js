@@ -41,6 +41,15 @@ function joStageFromSo(localStatus) {
     pending_billing_partially_delivered: 'partially_completed', billed: 'invoiced', cancelled: null,
   }[localStatus] || 'pending_for_scheduling';
 }
+// The sync only ever moves an order or a JO FORWARD. Once T1S is where the work happens, the source
+// lags behind it: JO-72175-1-1 was built and QI'd here, the source still read SO-72175 "JO In-Process",
+// and a refresh set the order back to that and every JO on it back to In-Process (2026-10-13). A
+// source status behind the local one is the source being stale, not the order going backwards.
+const SO_RANK = ['pending_for_jo', 'jo_in_process', 'pending_delivery', 'partially_delivered',
+  'pending_billing_partially_delivered', 'pending_billing', 'partially_billed', 'billed'];
+const JO_STAGE_RANK = { pending_for_scheduling: 0, for_revision: 1, in_process_with_revision: 1, in_process: 2,
+  for_qi: 3, partially_completed: 4, completed: 5, invoiced: 6 };
+const soRegresses = (from, to) => SO_RANK.includes(from) && SO_RANK.includes(to) && SO_RANK.indexOf(to) < SO_RANK.indexOf(from);
 function invoiceStatus(live) {
   const s = (live || '').toUpperCase();
   if (s.includes('VOID') || s.includes('CANCEL')) return 'cancelled';
@@ -113,16 +122,27 @@ async function fetchLiveMap(token, ep, payload, liveKey, minDay) {
 
 // ---- module descriptors ----
 // totals: live row -> { localColumn: money }. status: live Status_TransH -> local value (or null
-// to leave status alone). after: optional hook run once per changed row (e.g. cascade JO stage).
+// to leave status alone). regresses: optional (localStatus, sourceStatus) -> true to keep the local
+// status. after: optional hook run once per changed row (e.g. cascade JO stage).
 const MODULES = {
   sales_orders: {
     label: 'Sales Orders', table: 'sales_orders', keyCol: 'sales_order_no', statusCol: 'status',
     endpoint: 'get_sales_orders', payload: { viewAll: true }, liveKey: 'so_upk',
     status: (r) => soStatus(r.Status_TransH),
+    regresses: soRegresses,
     totals: (r) => ({ subtotal: money(r.SubTotalVatEx_TransH), net_of_tax: money(r.SubTotalVatEx_TransH), tax_total: money(r.TaxAmount_TransH), total_amount: money(r.TotalAmount_TransH) }),
     after: async (conn, localId, newStatus) => {
       const stage = joStageFromSo(newStatus);
-      await conn.query('UPDATE job_orders SET production_stage = ? WHERE sales_order_id = ?', [stage, localId]);
+      if (stage == null) { // cancelled
+        await conn.query('UPDATE job_orders SET production_stage = NULL WHERE sales_order_id = ?', [localId]);
+        return;
+      }
+      // Only JOs behind the order's stage catch up to it; one already further along keeps its own.
+      const behind = Object.keys(JO_STAGE_RANK).filter((s) => JO_STAGE_RANK[s] < JO_STAGE_RANK[stage]);
+      await conn.query(
+        'UPDATE job_orders SET production_stage = ? WHERE sales_order_id = ? AND (production_stage IS NULL OR production_stage IN (?))',
+        [stage, localId, behind.length ? behind : ['']]
+      );
     },
   },
   sales_invoices: {
@@ -291,7 +311,8 @@ async function syncModule(token, key) {
       const newTotals = totals(live);
 
       const sets = []; const vals = [];
-      const statusWillChange = newStatus != null && String(newStatus) !== String(row.status);
+      const statusWillChange = newStatus != null && String(newStatus) !== String(row.status)
+        && !(cfg.regresses && cfg.regresses(row.status, newStatus));
       if (statusWillChange) { sets.push(`\`${cfg.statusCol}\` = ?`); vals.push(newStatus); }
       for (const c of totalCols) { if (money(row[c]) !== newTotals[c]) { sets.push(`\`${c}\` = ?`); vals.push(newTotals[c]); } }
       const newFields = fields(live);
