@@ -111,7 +111,9 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       commonWhere.push('i.item_type = ?');
       commonParams.push(itemType);
     } else if (includeJoServices === '1') {
-      commonWhere.push(`(${NON_STOCK_TYPES} OR (i.item_type = 'Service' AND i.is_jo = 1))`);
+      // Non-Inventory items ticked "With JO" (is_with_jo) are the same case: SCRAP MATERIALS is
+      // a Non-Inventory item meant for job lines, and could not be found on an Estimate (2026-10-13).
+      commonWhere.push(`(${NON_STOCK_TYPES} OR (i.item_type = 'Service' AND i.is_jo = 1) OR (i.item_type = 'Non-Inventory' AND i.is_with_jo = 1))`);
     } else {
       commonWhere.push(NON_STOCK_TYPES);
     }
