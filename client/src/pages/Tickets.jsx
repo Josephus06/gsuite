@@ -6,6 +6,7 @@ import DataTable from '../components/DataTable';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
+import NewTicketModal from '../components/NewTicketModal';
 import { parseUtc } from '../utils/datetime';
 
 // Doubles as the status filter tabs, so 'declined' being here is what gives the queue a way to
@@ -35,6 +36,7 @@ export default function Tickets() {
   const [sbuGroups, setSbuGroups] = useState([]);
   const [sbuTab, setSbuTab] = useState('');
   const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
   // The ticket being declined, and the reason being typed for it. Null when no modal is open.
   const [declining, setDeclining] = useState(null);
   const [declineReason, setDeclineReason] = useState('');
@@ -222,7 +224,16 @@ export default function Tickets() {
     <div>
       <div className="page-header">
         <h1>Tickets</h1>
+        {/* Besides the chatbot (2026-10-13). */}
+        <button className="btn btn-primary" onClick={() => setCreating(true)}>New Ticket</button>
       </div>
+      {creating && (
+        <NewTicketModal
+          departments={departments}
+          onClose={() => setCreating(false)}
+          onCreated={(t) => { setCreating(false); navigate(`/tickets/${t.id}`); }}
+        />
+      )}
 
       {/* Both SBUs see both groups' tickets, and Marketing's -- these tabs separate whose
           group raised the ticket, they do not grant or remove access. Labels come from the
