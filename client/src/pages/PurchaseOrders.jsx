@@ -129,7 +129,7 @@ export default function PurchaseOrders() {
                 <div style={{ flex: 1 }}>
                   <EntityPicker
                     label="Supplier" items={suppliers} value={supplier?.id || ''} getLabel={(s) => s?.name}
-                    columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']}
+                    columns={[{ key: 'name', label: 'Name' }, { key: 'address', label: 'Address', render: (s) => s.address || '—' }]} searchKeys={['name', 'address']}
                     onSelect={setSupplier}
                   />
                 </div>

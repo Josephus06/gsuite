@@ -160,7 +160,7 @@ export default function LandedCostEdit() {
             <label>Supplier</label>
             <EntityPicker
               label="Supplier" items={suppliers} value={supplierId} getLabel={(s) => s?.name}
-              columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']}
+              columns={[{ key: 'name', label: 'Name' }, { key: 'address', label: 'Address', render: (s) => s.address || '—' }]} searchKeys={['name', 'address']}
               onSelect={(s) => setSupplierId(s.id)}
             />
           </div>

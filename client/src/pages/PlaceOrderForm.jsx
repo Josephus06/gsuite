@@ -229,7 +229,7 @@ export default function PlaceOrderForm() {
                     <td>
                       <EntityPicker
                         label="Supplier" items={suppliers} value={r.supplier_id} getLabel={(s) => s.name}
-                        columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']}
+                        columns={[{ key: 'name', label: 'Name' }, { key: 'address', label: 'Address', render: (s) => s.address || '—' }]} searchKeys={['name', 'address']}
                         onSelect={(s) => updateRow(r.purchase_requisition_line_id, { supplier_id: s.id, supplier_name: s.name })}
                       />
                     </td>
