@@ -3,6 +3,7 @@ const { EventEmitter } = require('events');
 const pool = require('../db');
 const { requireAuth, userCan } = require('../middleware/auth');
 const { REACTIONS, TABLE, decorate, messageAccess, readFiles, saveFiles, noTable: mediaNoTable } = require('../lib/chatMedia');
+const { summarize, allowed: summaryAllowed } = require('../lib/chatSummary');
 
 // What changed since ?rev (reactions, unsends) in my conversations and groups -- delivered over the
 // poll so everyone sees them live (2026-10-13).
@@ -550,6 +551,35 @@ router.post('/groups/:id/read', requireAuth, requireChat, async (req, res, next)
         WHERE group_id = ? AND user_id = ?`, [g.id, g.id, req.user.id]);
     return res.json({ ok: true });
   } catch (err) { return next(err); }
+});
+
+// AI summary of the messages after ?after (the box sends where the reader had read up to when it
+// opened -- by then the box has already marked them read). lib/chatSummary.js.
+const MAX_SUMMARY_MESSAGES = 400;
+router.post('/groups/:id/summary', requireAuth, requireChat, async (req, res, next) => {
+  try {
+    const g = await memberGroup(req, res);
+    if (!g) return undefined;
+    if (!process.env.OPENAI_API_KEY) return res.status(503).json({ error: 'AI summary is not set up on this server (no OpenAI key).' });
+    const after = Math.max(0, Number(req.body.after) || 0);
+    const [rows] = await pool.query(
+      `SELECT * FROM (
+         SELECT m.id, m.sender_user_id, m.body, m.created_at, u.display_name AS sender_name,
+                (SELECT COUNT(*) FROM chat_attachments a WHERE a.kind = 'group' AND a.message_id = m.id) AS att_count
+           FROM chat_group_messages m LEFT JOIN users u ON u.id = m.sender_user_id
+          WHERE m.group_id = ? AND m.id > ? AND m.unsent_at IS NULL
+          ORDER BY m.id DESC LIMIT ?) t ORDER BY t.id`,
+      [g.id, after, MAX_SUMMARY_MESSAGES]);
+    const fromOthers = rows.filter((m) => Number(m.sender_user_id) !== Number(req.user.id));
+    if (!fromOthers.length) return res.json({ summary: '', count: 0 });
+    if (!summaryAllowed(req.user.id)) return res.status(429).json({ error: 'Too many summaries in a minute; wait a moment.' });
+    const [[me]] = await pool.query('SELECT display_name FROM users WHERE id = ?', [req.user.id]);
+    const summary = await summarize({ groupName: g.name, readerName: me?.display_name || 'the reader', rows });
+    return res.json({ summary, count: fromOthers.length });
+  } catch (err) {
+    if (err.status === 502) return res.status(502).json({ error: 'The AI could not summarize right now. Try again.' });
+    return next(err);
+  }
 });
 
 /* -------------------------------------------------------------------------- */

@@ -27,6 +27,19 @@ export function openGroupChat(group) {
   window.dispatchEvent(new CustomEvent('chatgroup:open', { detail: group }));
 }
 
+// A group box being opened (2026-10-13, AI summary): with unread waiting, it remembers where the
+// reader had read up to (readMark) -- opening marks them read -- so "Summarize" can ask for exactly
+// those. readMark then moves to the newest message, as does every message that arrives while open.
+const SUMMARY_MIN_UNREAD = 3;
+const newestId = (b) => b.messages[b.messages.length - 1]?.id || b.readMark || 0;
+const openedGroup = (b) => ({
+  ...b,
+  minimized: false,
+  unread: 0,
+  summary: b.unread >= SUMMARY_MIN_UNREAD ? { after: b.readMark || 0, count: b.unread } : b.summary,
+  readMark: newestId(b),
+});
+
 // A reaction or unsend (poll `updates`) replaces the message where it is shown; what the box
 // already knew about the sender (name, photo) is kept.
 const applyUpdates = (messages, list) => {
@@ -121,7 +134,7 @@ export default function ChatDock() {
     const existing = groupBoxesRef.current.find((b) => b.group.id === g.id);
     if (existing) {
       if (focus) {
-        setGroupBoxes((bs) => bs.map((b) => (b.group.id === g.id ? { ...b, minimized: false, unread: 0 } : b)));
+        setGroupBoxes((bs) => bs.map((b) => (b.group.id === g.id ? openedGroup(b) : b)));
         if (existing.unread) markGroupRead(g.id);
       }
       return;
@@ -132,12 +145,16 @@ export default function ChatDock() {
     });
     try {
       const { data } = await api.get(`/chat/groups/${g.id}/thread`);
-      setGroupBoxes((bs) => bs.map((b) => (b.group.id === g.id
-        ? {
+      const lastRead = data.last_read_id || 0;
+      const unread = data.messages.filter((m) => m.sender_user_id !== user.id && m.id > lastRead).length;
+      setGroupBoxes((bs) => bs.map((b) => {
+        if (b.group.id !== g.id) return b;
+        const loaded = {
           ...b, group: { ...b.group, ...(data.group || {}) }, messages: data.messages, hasMore: data.has_more, loading: false,
-          unread: focus ? 0 : data.messages.filter((m) => m.sender_user_id !== user.id && m.id > (data.last_read_id || 0)).length,
-        }
-        : b)));
+          unread, readMark: lastRead,
+        };
+        return focus ? openedGroup(loaded) : loaded;
+      }));
       if (focus) markGroupRead(g.id);
     } catch {
       setGroupBoxes((bs) => bs.map((b) => (b.group.id === g.id ? { ...b, loading: false } : b)));
@@ -229,7 +246,7 @@ export default function ChatDock() {
           if (box) {
             const countIt = !mine && box.minimized;
             setGroupBoxes((bs) => bs.map((b) => (b.group.id === m.group_id && !b.messages.some((x) => x.id === m.id)
-              ? { ...b, messages: [...b.messages, m], unread: (b.unread || 0) + (countIt ? 1 : 0) }
+              ? { ...b, messages: [...b.messages, m], unread: (b.unread || 0) + (countIt ? 1 : 0), readMark: b.minimized ? b.readMark : m.id }
               : b)));
             if (!mine && !countIt) markGroupRead(m.group_id);
           } else if (!mine) {
@@ -258,11 +275,12 @@ export default function ChatDock() {
   const closeGroup = (id) => setGroupBoxes((bs) => bs.filter((b) => b.group.id !== id));
   const toggleGroup = (id) => setGroupBoxes((bs) => bs.map((b) => {
     if (b.group.id !== id) return b;
-    if (b.minimized) markGroupRead(id);
-    return { ...b, minimized: !b.minimized, unread: b.minimized ? 0 : b.unread };
+    if (!b.minimized) return { ...b, minimized: true };
+    markGroupRead(id);
+    return openedGroup(b);
   }));
   const appendGroup = (id, m) => setGroupBoxes((bs) => bs.map((b) => (b.group.id === id && !b.messages.some((x) => x.id === m.id)
-    ? { ...b, messages: [...b.messages, m] } : b)));
+    ? { ...b, messages: [...b.messages, m], readMark: m.id } : b)));
   const loadOlderGroup = async (id) => {
     const box = groupBoxesRef.current.find((b) => b.group.id === id);
     if (!box?.messages.length) return;
@@ -306,7 +324,8 @@ export default function ChatDock() {
         <GroupChatBox key={`g${b.group.id}`} box={b} meId={user.id}
           onClose={() => closeGroup(b.group.id)} onToggle={() => toggleGroup(b.group.id)}
           onSent={(m) => appendGroup(b.group.id, m)} onOlder={() => loadOlderGroup(b.group.id)}
-          onGroupChanged={(r) => groupChanged(b.group.id, r)} />
+          onGroupChanged={(r) => groupChanged(b.group.id, r)}
+          onSummaryDone={() => setGroupBoxes((bs) => bs.map((x) => (x.group.id === b.group.id ? { ...x, summary: null } : x)))} />
       ))}
     </div>
   );

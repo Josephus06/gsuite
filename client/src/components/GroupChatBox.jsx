@@ -7,7 +7,46 @@ import ChatComposer from './chat/ChatComposer';
 // One group chat's box in the dock (2026-10-13). Like a one-to-one box, but every message from
 // someone else carries their name, the header opens the group's details (members; the creator
 // manages them there), and group messages are kept (only their sender may unsend one).
-export default function GroupChatBox({ box, meId, onClose, onToggle, onSent, onOlder, onGroupChanged }) {
+// AI summary of the unread messages a group was opened with (2026-10-13; POST /chat/groups/:id/summary).
+// Offered, not run on its own -- each summary is a paid AI call.
+function UnreadSummary({ groupId, summary, onClose }) {
+  const [state, setState] = useState({ loading: false, text: '', error: '' });
+  async function run() {
+    setState({ loading: true, text: '', error: '' });
+    try {
+      const { data } = await api.post(`/chat/groups/${groupId}/summary`, { after: summary.after }, { timeout: 60000 });
+      setState({ loading: false, text: data.summary || 'Nothing new from the others to summarize.', error: '' });
+    } catch (e) {
+      setState({ loading: false, text: '', error: e.response?.data?.error || 'Could not summarize.' });
+    }
+  }
+  return (
+    <div className="chat-summary">
+      {!state.text && (
+        <div className="chat-summary-bar">
+          <span>✨ {summary.count} unread message{summary.count === 1 ? '' : 's'}</span>
+          <button type="button" className="chat-summary-go" disabled={state.loading} onClick={run}>
+            {state.loading ? 'Summarizing…' : 'Summarize'}
+          </button>
+          <button type="button" className="chat-summary-x" title="Dismiss" onClick={onClose}>×</button>
+        </div>
+      )}
+      {state.error && <div className="chat-error">{state.error}</div>}
+      {state.text && (
+        <div className="chat-summary-body">
+          <div className="chat-summary-head">
+            <strong>✨ Summary of {summary.count} unread</strong>
+            <button type="button" className="chat-summary-x" title="Close" onClick={onClose}>×</button>
+          </div>
+          <div className="chat-summary-text">{state.text}</div>
+          <div className="chat-summary-note">AI-generated -- check the messages for details.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function GroupChatBox({ box, meId, onClose, onToggle, onSent, onOlder, onGroupChanged, onSummaryDone }) {
   const [managing, setManaging] = useState(false);
   const [replyTo, setReplyTo] = useState(null);
   const [error, setError] = useState('');
@@ -48,6 +87,7 @@ export default function GroupChatBox({ box, meId, onClose, onToggle, onSent, onO
       </div>
       {!box.minimized && (
         <>
+          {box.summary && <UnreadSummary groupId={box.group.id} summary={box.summary} onClose={onSummaryDone} />}
           <div className="chat-box-list" ref={listRef}>
             {box.hasMore && <button type="button" className="chat-older" onClick={onOlder}>Earlier messages</button>}
             {box.loading && <div className="chat-empty">Loading…</div>}

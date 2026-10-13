@@ -2654,6 +2654,18 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .chat-seen { text-align: right; margin: 0 4px 4px; }
 .chat-error { cursor: pointer; }
 
+/* AI summary of a group's unread messages (2026-10-13; GroupChatBox UnreadSummary). */
+.chat-summary { flex: none; border-bottom: 1px solid var(--chat-border); background: linear-gradient(90deg, rgba(0, 132, 255, .08), rgba(160, 51, 255, .08)); }
+.chat-summary-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 13px; }
+.chat-summary-bar > span { flex: 1; }
+.chat-summary-go { border: 0; border-radius: 14px; padding: 4px 12px; font-size: 12px; font-weight: 600; cursor: pointer; color: #fff;
+  background: linear-gradient(90deg, #0084ff, #a033ff); }
+.chat-summary-go:disabled { opacity: .7; cursor: default; }
+.chat-summary-x { border: 0; background: none; color: var(--chat-dim); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px; }
+.chat-summary-body { padding: 8px 10px; max-height: 190px; overflow-y: auto; font-size: 13px; }
+.chat-summary-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.chat-summary-text { white-space: pre-wrap; line-height: 1.4; }
+.chat-summary-note { margin-top: 6px; font-size: 11px; color: var(--chat-dim); }
 .cm-row { display: flex; align-items: flex-end; gap: 6px; margin-top: 1px; }
 .cm-row.pos-first, .cm-row.pos-single { margin-top: 6px; }
 .cm-row.mine { justify-content: flex-end; }
