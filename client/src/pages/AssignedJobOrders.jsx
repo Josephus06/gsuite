@@ -67,6 +67,7 @@ export default function AssignedJobOrders() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
 
   async function load() {
     setLoading(true);
@@ -77,12 +78,23 @@ export default function AssignedJobOrders() {
 
   useEffect(() => { load(); }, []);
 
-  // Counted from every row, not from the filtered set, so each tab keeps showing its own
-  // total while another one is selected.
-  const counts = STAGES.reduce((acc, t) => ({ ...acc, [t.key]: rows.filter((r) => stageOf(r) === t.key).length }), {});
-  const notStarted = rows.filter((r) => stageOf(r) === 'not_started');
+  // Search (2026-10-13): JO #, customer, sales rep, description, sub status, job type. It narrows
+  // every tab, so the counts show which tab the matches are in.
+  const terms = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const found = terms.length
+    ? rows.filter((r) => {
+      const text = [r.job_order_no, r.customer_name, r.sales_rep_name, r.description, r.sub_status, r.pms_job_type_code, r.pms_job_type_name]
+        .filter(Boolean).join(' ').toLowerCase();
+      return terms.every((t) => text.includes(t));
+    })
+    : rows;
+
+  // Counted from every (searched) row, not just the selected tab's, so each tab keeps showing
+  // its own total while another one is selected.
+  const counts = STAGES.reduce((acc, t) => ({ ...acc, [t.key]: found.filter((r) => stageOf(r) === t.key).length }), {});
+  const notStarted = found.filter((r) => stageOf(r) === 'not_started');
   const kindCounts = KINDS.reduce((acc, k) => ({ ...acc, [k.key]: notStarted.filter((r) => kindOf(r) === k.key).length }), {});
-  const stageRows = rows.filter((r) => stageOf(r) === stage && (stage !== 'not_started' || kindOf(r) === kind));
+  const stageRows = found.filter((r) => stageOf(r) === stage && (stage !== 'not_started' || kindOf(r) === kind));
   const totalPages = Math.max(1, Math.ceil(stageRows.length / PAGE_SIZE));
   const pageRows = stageRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -100,6 +112,9 @@ export default function AssignedJobOrders() {
     <div>
       <div className="page-header">
         <h1>Assigned JO</h1>
+        <input type="search" value={search} placeholder="Search JO #, customer, sales rep, job desc…"
+          style={{ width: 340, maxWidth: '100%' }}
+          onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
       </div>
 
       <div className="status-tabs">
@@ -152,7 +167,8 @@ export default function AssignedJobOrders() {
               <tbody>
                 {stageRows.length === 0 && (
                   <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: 20 }}>
-                    Nothing in {(STAGES.find((t) => t.key === stage) || {}).label}{stage === 'not_started' ? ` — ${kind}` : ''}.
+                    {terms.length ? `No match for "${search.trim()}" in ` : 'Nothing in '}
+                    {(STAGES.find((t) => t.key === stage) || {}).label}{stage === 'not_started' ? ` — ${kind}` : ''}.
                   </td></tr>
                 )}
                 {/* Job Orders and Non-Standard Job Orders have independent id sequences,
