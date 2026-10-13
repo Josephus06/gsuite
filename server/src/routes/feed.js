@@ -94,7 +94,14 @@ async function recipientsForPost({ audience, groupId, authorId }) {
   return rows.map((r) => r.id);
 }
 
+// A new post no longer notifies anyone (asked 2026-10-13: notify "only those who are involved").
+// It reached the whole company -- or the whole department -- on every post, ~340 notifications a
+// week for posts nobody was part of; the feed itself shows new posts. Reactions, comments and
+// replies still reach the people they concern (below).
+const NOTIFY_NEW_POSTS = false;
+
 async function notifyNewPost(post, author) {
+  if (!NOTIFY_NEW_POSTS) return;
   const recipients = await recipientsForPost({
     audience: post.audience,
     groupId: post.audience_group_id,

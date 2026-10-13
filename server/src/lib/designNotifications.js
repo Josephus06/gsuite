@@ -21,11 +21,44 @@ const NOTIFY_TYPE_ARTIST_ASSIGNED = 'design_artist_assigned';
 //
 // The forwarder is skipped -- a supervisor who forwards an order to themselves does not need
 // to be told they did it.
+//
+// ONLY THE SUPERVISORS INVOLVED (asked 2026-10-13: "only those who are involved"). Every forward used
+// to reach every design supervisor -- Ayala's and SM's included for Head Office work, 1,400 a week.
+// Now: the supervisors whose default branch is at the order's office location (the Sales Order's or
+// NSSO's; a Non-Standard JO's creator's branch). A supervisor with no branch set covers every
+// location. When the location is unknown or nobody is placed there, all of them are told, so a
+// forwarded order is never left unannounced.
+async function officeLocationOf(conn, relatedType, relatedId) {
+  if (relatedType === 'JobOrder') {
+    const [[r]] = await conn.query(
+      `SELECT COALESCE(so.office_location_id, ns.office_location_id) AS loc FROM job_orders jo
+         LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
+         LEFT JOIN non_standard_sales_orders ns ON ns.id = jo.nsso_id
+        WHERE jo.id = ?`, [relatedId]);
+    return r?.loc || null;
+  }
+  if (relatedType === 'NonStandardJobOrder') {
+    const [[r]] = await conn.query(
+      `SELECT ub.location_id AS loc FROM non_standard_job_orders n
+         JOIN user_branches ub ON ub.user_id = n.created_by_user_id AND ub.is_default = TRUE
+        WHERE n.id = ?`, [relatedId]);
+    return r?.loc || null;
+  }
+  return null;
+}
+
 async function notifyDesignSupervisors(conn, { title, message, relatedType, relatedId, excludeUserId = null }) {
   const [supervisors] = await conn.query(
-    'SELECT id FROM users WHERE is_design_supervisor = TRUE AND is_active = TRUE',
+    `SELECT u.id, ub.location_id FROM users u
+       LEFT JOIN user_branches ub ON ub.user_id = u.id AND ub.is_default = TRUE
+      WHERE u.is_design_supervisor = TRUE AND u.is_active = TRUE`,
   );
-  const recipients = supervisors.filter((u) => !excludeUserId || String(u.id) !== String(excludeUserId));
+  const others = supervisors.filter((u) => !excludeUserId || String(u.id) !== String(excludeUserId));
+  const loc = await officeLocationOf(conn, relatedType, relatedId);
+  const atLocation = loc ? others.filter((u) => !u.location_id || Number(u.location_id) === Number(loc)) : [];
+  // Someone actually placed at that location -- not only the "covers everywhere" ones.
+  const placed = atLocation.some((u) => u.location_id);
+  const recipients = [...new Map((placed ? atLocation : others).map((u) => [Number(u.id), u])).values()];
   for (const { id } of recipients) {
     await conn.query(
       `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
