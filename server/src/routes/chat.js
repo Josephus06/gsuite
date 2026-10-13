@@ -306,11 +306,13 @@ router.post('/read/:userId', requireAuth, requireChat, async (req, res, next) =>
 /* -------------------------------------------------------------------------- */
 /* Group chats (2026-10-13; db/create-chat-groups.js)                          */
 /* -------------------------------------------------------------------------- */
-// Create a group: Can Add on Chat ("Create Group Chat"). Rename it and add or remove members: its
+// Create a group: Can Add on its own page, Group Chat (/chat-groups; db/add-group-chat-permission.js
+// -- asked 2026-10-13, it used to be Can Add on Chat). Rename it and add or remove members: its
 // creator only. Read and send: its members. Group messages are kept -- the nightly purge clears only
 // one-to-one chat. Delivered through GET /poll like one-to-one messages (?gafter=).
 const MAX_GROUP_NAME = 100;
-const canCreateGroup = (userId) => userCan(userId, ROUTE, 'can_add');
+const GROUP_ROUTE = '/chat-groups';
+const canCreateGroup = (userId) => userCan(userId, GROUP_ROUTE, 'can_add');
 const noTable = (err) => err && err.code === 'ER_NO_SUCH_TABLE';
 
 async function groupPollStart(me) {
