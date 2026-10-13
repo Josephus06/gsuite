@@ -4,6 +4,7 @@ import { useAuth } from '../context/useAuth';
 import { chime } from '../utils/notificationSound';
 import Avatar from './Avatar';
 import { parseUtc } from '../utils/datetime';
+import GroupChatBox from './GroupChatBox';
 
 // Messenger-style chat (2026-10-12; routes/chat.js). Mounted once in Layout, so it lives on every
 // page: chatboxes dock at the bottom right, and a message from someone opens their box on your
@@ -20,6 +21,10 @@ const MAX_BOXES = 3;
 export function openChat(user) {
   window.dispatchEvent(new CustomEvent('chat:open', { detail: user }));
 }
+// A group chat's box (2026-10-13), from the Groups list. group: { id, name }
+export function openGroupChat(group) {
+  window.dispatchEvent(new CustomEvent('chatgroup:open', { detail: group }));
+}
 
 // chat_messages.created_at is written by the server in UTC (2026-10-12: a 3:40 PM message read
 // "7:40 AM"), so it is read as UTC and shown in Philippine time, whatever the computer's own zone.
@@ -33,6 +38,11 @@ export default function ChatDock() {
   const boxesRef = useRef(boxes);
   boxesRef.current = boxes;
   const lastIdRef = useRef(null);
+  // Group chats (2026-10-13): their own boxes, and where "now" is in group messages.
+  const [groupBoxes, setGroupBoxes] = useState([]); // { group, messages, minimized, hasMore, loading, unread }
+  const groupBoxesRef = useRef(groupBoxes);
+  groupBoxesRef.current = groupBoxes;
+  const gLastIdRef = useRef(null);
   // Who is typing to me (user ids), and per conversation the newest of my messages they have seen.
   // Mirrored in refs so the poll can tell the server what is already on screen.
   const [typing, setTyping] = useState([]);
@@ -89,6 +99,46 @@ export default function ChatDock() {
     return () => window.removeEventListener('chat:open', onOpen);
   }, [enabled, open]);
 
+  const markGroupRead = useCallback((groupId) => {
+    api.post(`/chat/groups/${groupId}/read`).then(() => window.dispatchEvent(new CustomEvent('chatgroup:changed'))).catch(() => {});
+  }, []);
+
+  // Open (or bring forward) a group's box and load its conversation.
+  const openGroup = useCallback(async (g, { focus = true } = {}) => {
+    if (!g?.id) return;
+    const existing = groupBoxesRef.current.find((b) => b.group.id === g.id);
+    if (existing) {
+      if (focus) {
+        setGroupBoxes((bs) => bs.map((b) => (b.group.id === g.id ? { ...b, minimized: false, unread: 0 } : b)));
+        if (existing.unread) markGroupRead(g.id);
+      }
+      return;
+    }
+    setGroupBoxes((bs) => {
+      const next = [...bs, { group: g, messages: [], minimized: !focus, hasMore: false, loading: true, unread: 0 }];
+      return next.length > MAX_BOXES ? next.slice(next.length - MAX_BOXES) : next;
+    });
+    try {
+      const { data } = await api.get(`/chat/groups/${g.id}/thread`);
+      setGroupBoxes((bs) => bs.map((b) => (b.group.id === g.id
+        ? {
+          ...b, group: { ...b.group, ...(data.group || {}) }, messages: data.messages, hasMore: data.has_more, loading: false,
+          unread: focus ? 0 : data.messages.filter((m) => m.sender_user_id !== user.id && m.id > (data.last_read_id || 0)).length,
+        }
+        : b)));
+      if (focus) markGroupRead(g.id);
+    } catch {
+      setGroupBoxes((bs) => bs.map((b) => (b.group.id === g.id ? { ...b, loading: false } : b)));
+    }
+  }, [markGroupRead, user?.id]);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const onOpen = (e) => openGroup(e.detail);
+    window.addEventListener('chatgroup:open', onOpen);
+    return () => window.removeEventListener('chatgroup:open', onOpen);
+  }, [enabled, openGroup]);
+
   // The poll: new messages to or from me. A message from someone opens their box.
   //
   // LONG POLL (2026-10-12): each request waits on the server until a message arrives (up to 25 s)
@@ -103,15 +153,17 @@ export default function ChatDock() {
         if (lastIdRef.current === null) {
           const { data } = await api.get('/chat/poll', { signal: ctrl.signal });
           lastIdRef.current = data.last_id;
+          gLastIdRef.current = data.g_last_id ?? 0;
           // Unread waiting from before this page loaded: open those boxes, minimized.
           for (const p of data.pending || []) open(p, { focus: false });
+          for (const g of data.pending_groups || []) openGroup(g, { focus: false });
           return true;
         }
         // What is on screen, so the server holds the request until any of it changes.
         const openIds = boxesRef.current.map((b) => b.user.id);
         const { data } = await api.get('/chat/poll', {
           params: {
-            after: lastIdRef.current, wait: 1,
+            after: lastIdRef.current, wait: 1, gafter: gLastIdRef.current ?? 0,
             typing: [...typingRef.current].sort((a, b) => a - b).join(','),
             open: openIds.join(','),
             seen: openIds.map((id) => `${id}:${seenRef.current[id] || 0}`).join(','),
@@ -140,6 +192,24 @@ export default function ChatDock() {
           }
           if (!mine) incoming = true;
         }
+        // Group messages: into the group's box (counted unread while it is minimized), or a new
+        // minimized box for a group that has none open.
+        if (data.g_last_id != null) gLastIdRef.current = data.g_last_id;
+        for (const m of data.group_messages || []) {
+          const mine = m.sender_user_id === user.id;
+          const box = groupBoxesRef.current.find((b) => b.group.id === m.group_id);
+          if (box) {
+            const countIt = !mine && box.minimized;
+            setGroupBoxes((bs) => bs.map((b) => (b.group.id === m.group_id && !b.messages.some((x) => x.id === m.id)
+              ? { ...b, messages: [...b.messages, m], unread: (b.unread || 0) + (countIt ? 1 : 0) }
+              : b)));
+            if (!mine && !countIt) markGroupRead(m.group_id);
+          } else if (!mine) {
+            openGroup({ id: m.group_id, name: m.group_name }, { focus: false });
+          }
+          if (!mine) incoming = true;
+        }
+        if ((data.group_messages || []).length) window.dispatchEvent(new CustomEvent('chatgroup:changed'));
         if (incoming) chime();
         return true;
       } catch {
@@ -153,9 +223,33 @@ export default function ChatDock() {
       }
     })();
     return () => { stopped = true; ctrl.abort(); };
-  }, [enabled, user?.id, open, markRead, bumpSeen]);
+  }, [enabled, user?.id, open, markRead, bumpSeen, openGroup, markGroupRead]);
 
-  if (!enabled || !boxes.length) return null;
+  if (!enabled || (!boxes.length && !groupBoxes.length)) return null;
+
+  const closeGroup = (id) => setGroupBoxes((bs) => bs.filter((b) => b.group.id !== id));
+  const toggleGroup = (id) => setGroupBoxes((bs) => bs.map((b) => {
+    if (b.group.id !== id) return b;
+    if (b.minimized) markGroupRead(id);
+    return { ...b, minimized: !b.minimized, unread: b.minimized ? 0 : b.unread };
+  }));
+  const appendGroup = (id, m) => setGroupBoxes((bs) => bs.map((b) => (b.group.id === id && !b.messages.some((x) => x.id === m.id)
+    ? { ...b, messages: [...b.messages, m] } : b)));
+  const loadOlderGroup = async (id) => {
+    const box = groupBoxesRef.current.find((b) => b.group.id === id);
+    if (!box?.messages.length) return;
+    const { data } = await api.get(`/chat/groups/${id}/thread`, { params: { before: box.messages[0].id } });
+    setGroupBoxes((bs) => bs.map((b) => (b.group.id === id ? { ...b, messages: [...data.messages, ...b.messages], hasMore: data.has_more } : b)));
+  };
+  // Renamed or members changed: refresh its header. Deleted or left: close it.
+  const groupChanged = async (id, r) => {
+    window.dispatchEvent(new CustomEvent('chatgroup:changed'));
+    if (r?.deleted || r?.left) { closeGroup(id); return; }
+    try {
+      const { data } = await api.get(`/chat/groups/${id}/thread`);
+      setGroupBoxes((bs) => bs.map((b) => (b.group.id === id ? { ...b, group: { ...b.group, ...(data.group || {}) } } : b)));
+    } catch { /* keep what is shown */ }
+  };
 
   const close = (id) => setBoxes((bs) => bs.filter((b) => b.user.id !== id));
   const toggle = (id) => setBoxes((bs) => bs.map((b) => {
@@ -179,6 +273,12 @@ export default function ChatDock() {
           onClose={() => close(b.user.id)} onToggle={() => toggle(b.user.id)}
           onSent={(m) => append(b.user.id, m)} onOlder={() => loadOlder(b.user.id)}
           isTyping={typing.includes(b.user.id)} seenId={seen[b.user.id] || 0} />
+      ))}
+      {groupBoxes.map((b) => (
+        <GroupChatBox key={`g${b.group.id}`} box={b} meId={user.id}
+          onClose={() => closeGroup(b.group.id)} onToggle={() => toggleGroup(b.group.id)}
+          onSent={(m) => appendGroup(b.group.id, m)} onOlder={() => loadOlderGroup(b.group.id)}
+          onGroupChanged={(r) => groupChanged(b.group.id, r)} />
       ))}
     </div>
   );

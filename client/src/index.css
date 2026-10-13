@@ -2604,6 +2604,15 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 }
 
 .chat-contacts { width: 100%; margin-top: 14px; text-align: left; }
+/* Group chats (2026-10-13) */
+.chat-groups { width: 100%; margin-top: 14px; text-align: left; }
+.chat-groups.compact { margin: 0 0 14px; }
+.chat-group-icon { width: 30px; height: 30px; border-radius: 50%; background: #6366f1; color: #fff; display: inline-flex;
+  align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex-shrink: 0; }
+.chat-sender { font-size: 11px; color: var(--chat-dim); margin: 0 6px 2px; }
+.chat-group-pick { max-height: 260px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; margin-top: 6px; }
+.chat-group-pick-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-weight: 400; cursor: pointer; }
+.chat-group-pick-row:hover { background: var(--panel-2, rgba(0,0,0,.04)); }
 .chat-contacts-head { display: flex; justify-content: space-between; align-items: baseline; font-weight: 700; font-size: 14px; margin-bottom: 6px; }
 .chat-contacts-count { font-weight: 400; font-size: 12px; color: var(--chat-dim); }
 .chat-contacts-search { width: 100%; margin-bottom: 6px; }

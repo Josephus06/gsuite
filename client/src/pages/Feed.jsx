@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Avatar from '../components/Avatar';
 import { openChat } from '../components/ChatDock';
+import ChatGroups from '../components/ChatGroups';
 import PostCard from '../components/feed/PostCard';
 import DashboardCarousel from '../components/feed/DashboardCarousel';
 import PostComposer from '../components/feed/PostComposer';
@@ -265,6 +266,8 @@ export default function Feed() {
 
         {/* ----------------------------------------------------------- right rail */}
         <aside className="fb-rail fb-rail-right">
+          {/* Group chats (2026-10-13), above the people. */}
+          <ChatGroups compact />
           <div className="fb-rail-title">
             Contacts
             {contacts.length > 0 && <span className="fb-rail-count">{contacts.length} online</span>}

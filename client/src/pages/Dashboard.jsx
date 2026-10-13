@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import { Sparkline, DonutChart, GaugeRing, BarList, Holo3DOrb, Holo3DBars, useCountUp } from '../components/charts';
 import Avatar from '../components/Avatar';
 import ChatContacts from '../components/ChatContacts';
+import ChatGroups from '../components/ChatGroups';
 import Modal from '../components/Modal';
 import SyncFromSourceButton from '../components/SyncFromSourceButton';
 import { parseUtc } from '../utils/datetime';
@@ -186,6 +187,8 @@ function ProfileCard({ user, roleLabel, rings, activity }) {
       <div className="dash-profile-role">{roleLabel}</div>
       {/* Messenger (2026-10-12): the people you can chat with; one click pops out a chatbox. */}
       <ChatContacts />
+      {/* Group chats (2026-10-13): mine, and "+ New group" for those allowed to create one. */}
+      <ChatGroups />
 
       {rings && rings.length > 0 && (
         <div className="dash-rings-row">

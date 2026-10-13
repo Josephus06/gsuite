@@ -117,8 +117,13 @@ router.get('/poll', requireAuth, requireChat, async (req, res, next) => {
         `SELECT DISTINCT m.sender_user_id AS id, u.display_name, u.avatar_data
            FROM chat_messages m JOIN users u ON u.id = m.sender_user_id
           WHERE m.recipient_user_id = ? AND m.read_at IS NULL`, [me]);
-      return res.json({ last_id: Number(last), messages: [], unread: Number(unread), pending });
+      // Group chats (2026-10-13): where "now" is in my groups, and the groups with something unread.
+      const g = await groupPollStart(me);
+      return res.json({ last_id: Number(last), messages: [], unread: Number(unread), pending, ...g });
     }
+    // Group messages since ?gafter, in groups I belong to.
+    const gAfter = Math.max(0, Number(req.query.gafter) || 0);
+    const fetchNewGroup = async () => (req.query.gafter === undefined ? [] : await newGroupMessages(me, gAfter));
     const fetchNew = async () => (await pool.query(
       `SELECT m.id, m.sender_user_id, m.recipient_user_id, m.body, m.created_at, m.read_at,
               o.id AS other_id, o.display_name AS other_name, o.avatar_data AS other_avatar
@@ -141,9 +146,10 @@ router.get('/poll', requireAuth, requireChat, async (req, res, next) => {
     const knownSeen = String(req.query.seen || '');
     const seenSig = (m) => openIds.map((id) => `${id}:${m[id] || 0}`).join(',');
     let messages = await fetchNew();
+    let groupMessages = await fetchNewGroup();
     let typing = await typingTo(me);
     let seen = await seenBy(me, openIds);
-    const unchanged = () => !messages.length && typing.join(',') === known && seenSig(seen) === knownSeen;
+    const unchanged = () => !messages.length && !groupMessages.length && typing.join(',') === known && seenSig(seen) === knownSeen;
     if (unchanged() && req.query.wait === '1') {
       let gone = false;
       res.on('close', () => { if (!res.writableEnded) gone = true; });
@@ -152,6 +158,7 @@ router.get('/poll', requireAuth, requireChat, async (req, res, next) => {
         await waitForWake(me, Math.min(RECHECK_MS, deadline - Date.now()));
         if (gone) return undefined;
         messages = await fetchNew();
+        groupMessages = await fetchNewGroup();
         typing = await typingTo(me);
         seen = await seenBy(me, openIds);
       }
@@ -161,7 +168,8 @@ router.get('/poll', requireAuth, requireChat, async (req, res, next) => {
       ? await pool.query('SELECT COUNT(*) AS unread FROM chat_messages WHERE recipient_user_id = ? AND read_at IS NULL', [me])
       : [[{ unread }]];
     const lastId = messages.length ? messages[messages.length - 1].id : after;
-    return res.json({ last_id: lastId, messages, unread: Number(unreadNow), typing, seen });
+    const gLastId = groupMessages.length ? groupMessages[groupMessages.length - 1].id : gAfter;
+    return res.json({ last_id: lastId, messages, unread: Number(unreadNow), typing, seen, group_messages: groupMessages, g_last_id: gLastId });
   } catch (err) { return next(err); }
 });
 
@@ -233,6 +241,235 @@ router.post('/read/:userId', requireAuth, requireChat, async (req, res, next) =>
     if (r.affectedRows) wake(Number(req.params.userId));
     res.json({ ok: true });
   } catch (err) { next(err); }
+});
+
+/* -------------------------------------------------------------------------- */
+/* Group chats (2026-10-13; db/create-chat-groups.js)                          */
+/* -------------------------------------------------------------------------- */
+// Create a group: Can Add on Chat ("Create Group Chat"). Rename it and add or remove members: its
+// creator only. Read and send: its members. Group messages are kept -- the nightly purge clears only
+// one-to-one chat. Delivered through GET /poll like one-to-one messages (?gafter=).
+const MAX_GROUP_NAME = 100;
+const canCreateGroup = (userId) => userCan(userId, ROUTE, 'can_add');
+const noTable = (err) => err && err.code === 'ER_NO_SUCH_TABLE';
+
+async function groupPollStart(me) {
+  try {
+    const [[{ last }]] = await pool.query(
+      `SELECT COALESCE(MAX(m.id), 0) AS last FROM chat_group_messages m
+         JOIN chat_group_members gm ON gm.group_id = m.group_id AND gm.user_id = ?`, [me]);
+    const [pending] = await pool.query(
+      `SELECT g.id, g.name FROM chat_groups g JOIN chat_group_members gm ON gm.group_id = g.id AND gm.user_id = ?
+        WHERE EXISTS (SELECT 1 FROM chat_group_messages m WHERE m.group_id = g.id AND m.id > gm.last_read_id AND m.sender_user_id <> ?)`,
+      [me, me]);
+    return { g_last_id: Number(last), pending_groups: pending };
+  } catch (err) {
+    if (noTable(err)) return { g_last_id: 0, pending_groups: [] };
+    throw err;
+  }
+}
+
+async function newGroupMessages(me, after) {
+  try {
+    const [rows] = await pool.query(
+      `SELECT m.id, m.group_id, m.sender_user_id, m.body, m.created_at, g.name AS group_name, u.display_name AS sender_name
+         FROM chat_group_messages m
+         JOIN chat_group_members gm ON gm.group_id = m.group_id AND gm.user_id = ?
+         JOIN chat_groups g ON g.id = m.group_id
+         LEFT JOIN users u ON u.id = m.sender_user_id
+        WHERE m.id > ? ORDER BY m.id LIMIT 200`, [me, after]);
+    return rows;
+  } catch (err) {
+    if (noTable(err)) return [];
+    throw err;
+  }
+}
+
+async function groupOf(groupId) {
+  const [[g]] = await pool.query('SELECT id, name, created_by_user_id FROM chat_groups WHERE id = ?', [groupId]);
+  return g || null;
+}
+async function memberIds(groupId) {
+  const [rows] = await pool.query('SELECT user_id FROM chat_group_members WHERE group_id = ?', [groupId]);
+  return rows.map((r) => Number(r.user_id));
+}
+// Only people who have Chat, are active, and exist.
+async function validMembers(ids) {
+  const clean = [...new Set((Array.isArray(ids) ? ids : []).map(Number).filter(Boolean))];
+  const ok = [];
+  for (const id of clean) {
+    const [[u]] = await pool.query('SELECT id FROM users WHERE id = ? AND is_active = 1', [id]);
+    if (u && await canChat(id)) ok.push(id);
+  }
+  return ok;
+}
+// A group the user belongs to, or a 404/403 already sent.
+async function memberGroup(req, res) {
+  const g = await groupOf(Number(req.params.id));
+  if (!g) { res.status(404).json({ error: 'Group not found.' }); return null; }
+  const [[m]] = await pool.query('SELECT 1 AS x FROM chat_group_members WHERE group_id = ? AND user_id = ?', [g.id, req.user.id]);
+  if (!m) { res.status(403).json({ error: 'You are not in this group.' }); return null; }
+  return g;
+}
+
+// My groups, with unread counts; and whether I may create one.
+router.get('/groups', requireAuth, requireChat, async (req, res, next) => {
+  try {
+    const me = req.user.id;
+    const [groups] = await pool.query(
+      `SELECT g.id, g.name, g.created_by_user_id, (g.created_by_user_id = ?) AS is_owner,
+              (SELECT COUNT(*) FROM chat_group_members x WHERE x.group_id = g.id) AS member_count,
+              (SELECT COUNT(*) FROM chat_group_messages m WHERE m.group_id = g.id AND m.id > gm.last_read_id AND m.sender_user_id <> ?) AS unread,
+              (SELECT MAX(m.id) FROM chat_group_messages m WHERE m.group_id = g.id) AS last_message_id
+         FROM chat_groups g JOIN chat_group_members gm ON gm.group_id = g.id AND gm.user_id = ?
+        ORDER BY (unread > 0) DESC, last_message_id IS NULL, last_message_id DESC, g.name`, [me, me, me]);
+    res.json({
+      can_create: await canCreateGroup(me),
+      groups: groups.map((g) => ({ ...g, is_owner: !!g.is_owner, unread: Number(g.unread) || 0, member_count: Number(g.member_count) })),
+    });
+  } catch (err) {
+    if (noTable(err)) return res.json({ can_create: false, groups: [] });
+    return next(err);
+  }
+});
+
+router.post('/groups', requireAuth, requireChat, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const me = req.user.id;
+    if (!(await canCreateGroup(me))) return res.status(403).json({ error: 'You do not have permission to create a group chat.' });
+    const name = String(req.body.name || '').trim().slice(0, MAX_GROUP_NAME);
+    if (!name) return res.status(400).json({ error: 'Give the group a name.' });
+    const members = (await validMembers(req.body.member_ids)).filter((id) => id !== me);
+    if (!members.length) return res.status(400).json({ error: 'Add at least one member.' });
+    await conn.beginTransaction();
+    const [r] = await conn.query('INSERT INTO chat_groups (name, created_by_user_id) VALUES (?, ?)', [name, me]);
+    for (const id of [me, ...members]) await conn.query('INSERT INTO chat_group_members (group_id, user_id) VALUES (?, ?)', [r.insertId, id]);
+    await conn.commit();
+    [me, ...members].forEach((id) => wake(id));
+    res.status(201).json({ id: r.insertId, name });
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
+// A group's name and members.
+router.get('/groups/:id', requireAuth, requireChat, async (req, res, next) => {
+  try {
+    const g = await memberGroup(req, res);
+    if (!g) return undefined;
+    const [members] = await pool.query(
+      `SELECT u.id, u.display_name, u.avatar_data,
+              (u.last_seen_at IS NOT NULL AND u.last_seen_at >= NOW() - INTERVAL ? MINUTE) AS online
+         FROM chat_group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.group_id = ? ORDER BY u.display_name`,
+      [ONLINE_MINUTES, g.id]);
+    return res.json({
+      id: g.id, name: g.name, created_by_user_id: g.created_by_user_id, is_owner: Number(g.created_by_user_id) === Number(req.user.id),
+      members: members.map((m) => ({ ...m, online: !!m.online })),
+    });
+  } catch (err) { return next(err); }
+});
+
+// Rename and set the members -- the creator only. The creator always stays in.
+router.put('/groups/:id', requireAuth, requireChat, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const g = await groupOf(Number(req.params.id));
+    if (!g) return res.status(404).json({ error: 'Group not found.' });
+    if (Number(g.created_by_user_id) !== Number(req.user.id)) return res.status(403).json({ error: 'Only the person who created this group can change it.' });
+    const before = await memberIds(g.id);
+    await conn.beginTransaction();
+    if (req.body.name !== undefined) {
+      const name = String(req.body.name || '').trim().slice(0, MAX_GROUP_NAME);
+      if (!name) { await conn.rollback(); return res.status(400).json({ error: 'Give the group a name.' }); }
+      await conn.query('UPDATE chat_groups SET name = ? WHERE id = ?', [name, g.id]);
+    }
+    if (req.body.member_ids !== undefined) {
+      const want = new Set([Number(g.created_by_user_id), ...(await validMembers(req.body.member_ids))]);
+      for (const id of before) if (!want.has(id)) await conn.query('DELETE FROM chat_group_members WHERE group_id = ? AND user_id = ?', [g.id, id]);
+      // A member added later reads from now on: earlier messages do not count as unread for them.
+      const [[{ last }]] = await conn.query('SELECT COALESCE(MAX(id), 0) AS last FROM chat_group_messages WHERE group_id = ?', [g.id]);
+      for (const id of want) if (!before.includes(id)) await conn.query('INSERT INTO chat_group_members (group_id, user_id, last_read_id) VALUES (?, ?, ?)', [g.id, id, last]);
+    }
+    await conn.commit();
+    [...new Set([...before, ...(await memberIds(g.id))])].forEach((id) => wake(id));
+    return res.json({ ok: true });
+  } catch (err) { await conn.rollback(); return next(err); } finally { conn.release(); }
+});
+
+// Delete a group, its members and its messages -- the creator only.
+router.delete('/groups/:id', requireAuth, requireChat, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const g = await groupOf(Number(req.params.id));
+    if (!g) return res.status(404).json({ error: 'Group not found.' });
+    if (Number(g.created_by_user_id) !== Number(req.user.id)) return res.status(403).json({ error: 'Only the person who created this group can delete it.' });
+    const members = await memberIds(g.id);
+    await conn.beginTransaction();
+    await conn.query('DELETE FROM chat_group_messages WHERE group_id = ?', [g.id]);
+    await conn.query('DELETE FROM chat_group_members WHERE group_id = ?', [g.id]);
+    await conn.query('DELETE FROM chat_groups WHERE id = ?', [g.id]);
+    await conn.commit();
+    members.forEach((id) => wake(id));
+    return res.status(204).send();
+  } catch (err) { await conn.rollback(); return next(err); } finally { conn.release(); }
+});
+
+// Leave a group (not its creator, who deletes it instead).
+router.post('/groups/:id/leave', requireAuth, requireChat, async (req, res, next) => {
+  try {
+    const g = await memberGroup(req, res);
+    if (!g) return undefined;
+    if (Number(g.created_by_user_id) === Number(req.user.id)) return res.status(409).json({ error: 'You created this group -- delete it instead of leaving.' });
+    await pool.query('DELETE FROM chat_group_members WHERE group_id = ? AND user_id = ?', [g.id, req.user.id]);
+    return res.json({ ok: true });
+  } catch (err) { return next(err); }
+});
+
+// A group's conversation, newest 50 (or the 50 before ?before), oldest first.
+router.get('/groups/:id/thread', requireAuth, requireChat, async (req, res, next) => {
+  try {
+    const g = await memberGroup(req, res);
+    if (!g) return undefined;
+    const before = Number(req.query.before) || null;
+    const [rows] = await pool.query(
+      `SELECT m.id, m.group_id, m.sender_user_id, m.body, m.created_at, u.display_name AS sender_name
+         FROM chat_group_messages m LEFT JOIN users u ON u.id = m.sender_user_id
+        WHERE m.group_id = ? ${before ? 'AND m.id < ?' : ''} ORDER BY m.id DESC LIMIT 50`,
+      before ? [g.id, before] : [g.id]);
+    const [[me]] = await pool.query('SELECT last_read_id FROM chat_group_members WHERE group_id = ? AND user_id = ?', [g.id, req.user.id]);
+    return res.json({
+      group: { id: g.id, name: g.name, is_owner: Number(g.created_by_user_id) === Number(req.user.id), member_count: (await memberIds(g.id)).length },
+      messages: rows.reverse(), has_more: rows.length === 50, last_read_id: Number(me?.last_read_id || 0),
+    });
+  } catch (err) { return next(err); }
+});
+
+router.post('/groups/:id/send', requireAuth, requireChat, async (req, res, next) => {
+  try {
+    const g = await memberGroup(req, res);
+    if (!g) return undefined;
+    const body = String(req.body.body || '').trim();
+    if (!body) return res.status(400).json({ error: 'Type a message.' });
+    if (body.length > MAX_BODY) return res.status(400).json({ error: `A message can be at most ${MAX_BODY} characters.` });
+    const [r] = await pool.query('INSERT INTO chat_group_messages (group_id, sender_user_id, body) VALUES (?, ?, ?)', [g.id, req.user.id, body]);
+    await pool.query('UPDATE chat_group_members SET last_read_id = ? WHERE group_id = ? AND user_id = ?', [r.insertId, g.id, req.user.id]);
+    (await memberIds(g.id)).forEach((id) => wake(id));
+    const [[row]] = await pool.query(
+      `SELECT m.id, m.group_id, m.sender_user_id, m.body, m.created_at, u.display_name AS sender_name
+         FROM chat_group_messages m LEFT JOIN users u ON u.id = m.sender_user_id WHERE m.id = ?`, [r.insertId]);
+    return res.status(201).json(row);
+  } catch (err) { return next(err); }
+});
+
+// Everything in this group up to now is read by me.
+router.post('/groups/:id/read', requireAuth, requireChat, async (req, res, next) => {
+  try {
+    const g = await memberGroup(req, res);
+    if (!g) return undefined;
+    await pool.query(
+      `UPDATE chat_group_members SET last_read_id = (SELECT COALESCE(MAX(id), 0) FROM chat_group_messages WHERE group_id = ?)
+        WHERE group_id = ? AND user_id = ?`, [g.id, g.id, req.user.id]);
+    return res.json({ ok: true });
+  } catch (err) { return next(err); }
 });
 
 module.exports = router;
