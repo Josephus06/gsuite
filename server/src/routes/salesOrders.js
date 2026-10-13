@@ -301,6 +301,65 @@ router.put('/:id/sales-rep', requireAuth, requireOpenPeriod('sales_orders', 'non
   }
 });
 
+// Cancel ONE Job Order of a Sales Order (asked 2026-10-13: the "×" beside a line's number) -- the same
+// rules as cancelling the whole order, for that JO alone: System Admin, a Cancellation reason, and
+// refused once the JO has been invoiced, ticketed or delivered (void those first) or is Completed.
+// The order's other JOs and the order itself are left as they are.
+router.put('/:id/job-orders/:joId/cancel', requireAuth, requireOpenPeriod('sales_orders', 'non_gl'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!(await isSystemAdmin(req.user.id))) return res.status(403).json({ error: 'Only a System Admin can cancel a Job Order.' });
+    const reasonId = Number(req.body?.reason_id) || null;
+    const remarks = String(req.body?.remarks || '').trim().slice(0, 500) || null;
+    const [[jo]] = await conn.query(
+      'SELECT id, job_order_no, status, sales_order_id FROM job_orders WHERE id = ? AND sales_order_id = ?', [req.params.joId, req.params.id]);
+    if (!jo) return res.status(404).json({ error: 'That Job Order is not on this Sales Order.' });
+    if (jo.status === 'Cancelled') return res.status(409).json({ error: `${jo.job_order_no} is already cancelled.` });
+    if (jo.status === 'Completed') return res.status(409).json({ error: `${jo.job_order_no} is Completed and cannot be cancelled.` });
+    const [[reason]] = reasonId
+      ? await conn.query("SELECT id, name FROM reasons WHERE id = ? AND reason_type = 'Cancellation'", [reasonId])
+      : [[null]];
+    if (!reason) return res.status(400).json({ error: 'Choose a cancellation reason.' });
+
+    const [invoices] = await conn.query(
+      `SELECT DISTINCT si.invoice_no FROM sales_invoice_lines l JOIN sales_invoices si ON si.id = l.sales_invoice_id
+        WHERE l.job_order_id = ? AND si.status <> 'cancelled'`, [jo.id]);
+    const [tickets] = await conn.query(
+      `SELECT DISTINCT dt.dt_no FROM delivery_ticket_lines l JOIN delivery_tickets dt ON dt.id = l.delivery_ticket_id
+        WHERE l.job_order_id = ? AND dt.status = 'open'`, [jo.id]);
+    const [[deliveries]] = await conn.query(
+      `SELECT COUNT(DISTINCT d.id) AS n FROM item_delivery_lines l JOIN item_deliveries d ON d.id = l.item_delivery_id
+        WHERE l.job_order_id = ? AND (d.status IS NULL OR d.status <> 'cancelled')`, [jo.id]);
+    const blockers = [
+      ...invoices.map((r) => r.invoice_no),
+      ...tickets.map((r) => r.dt_no),
+      ...(Number(deliveries.n) ? [`${deliveries.n} item deliver${Number(deliveries.n) === 1 ? 'y' : 'ies'}`] : []),
+    ];
+    if (blockers.length) {
+      return res.status(409).json({ error: `${jo.job_order_no} has been billed or delivered (${blockers.slice(0, 6).join(', ')}${blockers.length > 6 ? ', ...' : ''}). Void those first.` });
+    }
+
+    await conn.beginTransaction();
+    await conn.query("UPDATE job_orders SET status = 'Cancelled', updated_at = NOW() WHERE id = ?", [jo.id]);
+    const note = `cancelled -- ${reason.name}${remarks ? `: ${remarks}` : ''}`.slice(0, 2000);
+    await conn.query(
+      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+       VALUES ('JobOrder', ?, 'Cancelled', 'status', ?, ?, ?)`,
+      [jo.id, jo.status, note, req.user.id]);
+    await conn.query(
+      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+       VALUES ('SalesOrder', ?, 'Updated', ?, ?, ?, ?)`,
+      [jo.sales_order_id, `job_order ${jo.job_order_no}`, jo.status, note, req.user.id]);
+    await conn.commit();
+    res.json({ ok: true, job_order_no: jo.job_order_no });
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
 router.put('/:id/cancel', requireAuth, requireOpenPeriod('sales_orders', 'non_gl'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {

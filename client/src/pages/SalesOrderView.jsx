@@ -137,7 +137,10 @@ export default function SalesOrderView() {
   const [cancelRemarks, setCancelRemarks] = useState('');
   const [cancelError, setCancelError] = useState('');
   const [cancelling, setCancelling] = useState(false);
-  function openCancel() {
+  // The line's "×" (2026-10-13): the same modal, cancelling that one Job Order. null = the whole order.
+  const [cancelJo, setCancelJo] = useState(null);
+  function openCancel(jo = null) {
+    setCancelJo(jo);
     setCancelError(''); setCancelReasonId(''); setCancelRemarks(''); setCancelOpen(true);
     api.get('/sales-orders/cancel-reasons').then(({ data }) => setCancelReasons(data))
       .catch((e) => setCancelError(e.response?.data?.error || 'Could not load the cancellation reasons.'));
@@ -146,7 +149,8 @@ export default function SalesOrderView() {
     if (!cancelReasonId) { setCancelError('Choose a reason.'); return; }
     setCancelling(true); setCancelError('');
     try {
-      await api.put(`/sales-orders/${id}/cancel`, { reason_id: Number(cancelReasonId), remarks: cancelRemarks });
+      if (cancelJo) await api.put(`/sales-orders/${id}/job-orders/${cancelJo.id}/cancel`, { reason_id: Number(cancelReasonId), remarks: cancelRemarks });
+      else await api.put(`/sales-orders/${id}/cancel`, { reason_id: Number(cancelReasonId), remarks: cancelRemarks });
       setCancelOpen(false);
       load();
     } catch (e) {
@@ -156,6 +160,8 @@ export default function SalesOrderView() {
     }
   }
   const [showSIModal, setShowSIModal] = useState(false);
+  const mayCancelJo = (l) => user?.account_type === 'System Admin' && !periodLocked && !!l.job_order_id
+    && so?.status !== 'cancelled' && !['Cancelled', 'Completed'].includes(l.job_order_status);
   // SI or DR: both are raised through the same Create form and differ only in type.
   const [billType, setBillType] = useState('SI');
   const [showDTModal, setShowDTModal] = useState(false);
@@ -323,7 +329,7 @@ export default function SalesOrderView() {
   return (
     <div>
       {cancelOpen && (
-        <Modal title={`Cancel ${so.sales_order_no}`} onClose={() => !cancelling && setCancelOpen(false)}>
+        <Modal title={`Cancel ${cancelJo ? cancelJo.no : so.sales_order_no}`} onClose={() => !cancelling && setCancelOpen(false)}>
           {cancelError && <div className="error-banner">{cancelError}</div>}
           <div className="field">
             <label>Reason <span className="req">*</span></label>
@@ -334,10 +340,12 @@ export default function SalesOrderView() {
             <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>From Master Lists &gt; Reasons, type Cancellation.</div>
           </div>
           <div className="field"><label>Remarks</label><textarea rows={3} value={cancelRemarks} onChange={(e) => setCancelRemarks(e.target.value)} /></div>
-          <p className="muted" style={{ fontSize: 13 }}>Its job orders that are not yet Completed are cancelled too. An order already billed or delivered cannot be cancelled.</p>
+          <p className="muted" style={{ fontSize: 13 }}>{cancelJo
+            ? 'Only this Job Order is cancelled; the order and its other Job Orders stay as they are. A Job Order already billed, delivered or Completed cannot be cancelled.'
+            : 'Its job orders that are not yet Completed are cancelled too. An order already billed or delivered cannot be cancelled.'}</p>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
             <button className="btn" disabled={cancelling} onClick={() => setCancelOpen(false)}>Back</button>
-            <button className="btn btn-danger" disabled={cancelling} onClick={confirmCancel}>{cancelling ? 'Cancelling...' : 'Cancel Sales Order'}</button>
+            <button className="btn btn-danger" disabled={cancelling} onClick={confirmCancel}>{cancelling ? 'Cancelling...' : (cancelJo ? 'Cancel Job Order' : 'Cancel Sales Order')}</button>
           </div>
         </Modal>
       )}
@@ -350,7 +358,7 @@ export default function SalesOrderView() {
             <Link className="btn btn-sm" to={`/sales-orders/${id}/edit`}>Edit</Link>
           )}
           {user?.account_type === 'System Admin' && !periodLocked && so.status !== 'cancelled' && (
-            <button className="btn btn-sm btn-danger" onClick={openCancel}>Cancel</button>
+            <button className="btn btn-sm btn-danger" onClick={() => openCancel()}>Cancel</button>
           )}
           {hasDeliverableLine && canRaiseDelivery && <Link className="btn btn-sm btn-primary" to={`/sales-orders/${id}/item-delivery/new`}>Item Delivery</Link>}
           {hasInvoiceableLine && (canBillSI || canBillDT) && (
@@ -470,8 +478,16 @@ export default function SalesOrderView() {
                 )}
                 {lines.map((l, idx) => (
                   <tr key={l.id}>
-                    <td>{idx + 1}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {idx + 1}
+                      {/* Cancel this line's Job Order (System Admin; the server checks the rest). */}
+                      {mayCancelJo(l) && (
+                        <button type="button" className="so-jo-cancel" title={`Cancel ${l.job_order_no}`}
+                          onClick={() => openCancel({ id: l.job_order_id, no: l.job_order_no })}>×</button>
+                      )}
+                    </td>
                     <td>
+                      {l.job_order_status === 'Cancelled' && <span className="badge badge-danger" style={{ marginRight: 6 }}>Cancelled</span>}
                       {l.job_order_id ? (
                         <Link className="link-btn" to={`/job-orders/${l.job_order_id}`}>
                           {l.job_order_no}
