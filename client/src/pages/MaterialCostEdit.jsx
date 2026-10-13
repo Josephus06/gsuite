@@ -67,6 +67,11 @@ export default function MaterialCostEdit() {
   // Rounded UP to the peso, as computeMaterialCosting prices a material; toFixed first so a total
   // that is whole but for float noise (42.000000001) is not pushed to the next peso.
   const sellingPrice = Math.ceil(Number(c.priceUnrounded.toFixed(6)));
+  // GP Rate = (Selling Price - cost) / Selling Price. See the GP row below for which cost.
+  const gpOf = (cost) => (sellingPrice > 0 ? ((sellingPrice - cost) / sellingPrice) * 100 : null);
+  const gpCost = avgBase > 0 ? avgBase : c.costPerUnit;
+  const gpMain = gpOf(gpCost);
+  const gpSubtotal = gpOf(c.costPerUnit);
 
   const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
   function input(key) {
@@ -130,6 +135,37 @@ export default function MaterialCostEdit() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, alignItems: 'end' }}>
               <div><div className="muted">Total Price</div><strong style={{ color: 'var(--accent)', fontSize: '1.2em' }}>{fmt(c.priceUnrounded)}</strong></div>
               <div className="field"><label>Selling Price</label><input value={fmt(sellingPrice)} readOnly disabled title="Total Price rounded up to the whole peso" /></div>
+            </div>
+
+            {/* GP Rate (asked 2026-10-13), live as the figures above change. Measured against the
+                Average Cost (Base Cost) -- the cost an Estimate charges this material at (shared/costing.js
+                computeAutoPricing) -- so it is the margin the estimate will show for it. An item never
+                purchased has no average cost; then it is measured against the Subtotal instead. */}
+            <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 32, flexWrap: 'wrap', alignItems: 'baseline',
+              padding: '10px 12px', borderRadius: 8, background: 'var(--surface-2, rgba(0,0,0,.04))' }}>
+              <div>
+                <div className="muted">GP Rate</div>
+                <strong style={{ fontSize: '1.4em', color: gpMain != null && gpMain < 0 ? 'var(--danger, #dc2626)' : 'var(--accent)' }}>
+                  {gpMain == null ? '—' : `${fmt(gpMain)}%`}
+                </strong>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  {avgBase > 0
+                    ? `vs Average Cost (Base Cost) ${fmt(avgBase, 4)} — what an Estimate shows`
+                    : `vs Subtotal ${fmt(c.costPerUnit)} — no Average Cost yet (never purchased)`}
+                </div>
+              </div>
+              {avgBase > 0 && (
+                <div>
+                  <div className="muted">GP vs Subtotal</div>
+                  <strong>{gpSubtotal == null ? '—' : `${fmt(gpSubtotal)}%`}</strong>
+                  <div className="muted" style={{ fontSize: 12 }}>Material Cost + Wastage {fmt(c.costPerUnit)}</div>
+                </div>
+              )}
+              <div>
+                <div className="muted">Gross Profit</div>
+                <strong>{fmt(sellingPrice - gpCost)}</strong>
+                <div className="muted" style={{ fontSize: 12 }}>per base unit</div>
+              </div>
             </div>
 
             {DISCOUNTS.map(([key, label], i) => (
