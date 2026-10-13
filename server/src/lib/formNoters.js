@@ -36,7 +36,8 @@ const pool = require('../db');
 // Lookups > Departments like the others.
 // A business trip too (2026-10-09): noting belongs only to those ticked to note forms, never to an
 // approver by way of a page permission.
-const DEPARTMENT_NOTED_TYPES = ['payment', 'fund_transfer', 'revolving_fund', 'attendance_adjustment', 'business_trip'];
+// Overtime too (2026-10-13): the filer's head notes one filed for someone else; see routes/forms.js.
+const DEPARTMENT_NOTED_TYPES = ['payment', 'fund_transfer', 'revolving_fund', 'attendance_adjustment', 'business_trip', 'overtime'];
 const AP_NOTED_TYPES = ['liquidation'];
 
 // Is this user Accounts Payable (users.is_accounts_payable)? Read fresh, like the rest of this file.

@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../context/useAuth';
-import { ADJ_REASON_LABELS, ADJ_TIMES, FUND_TYPES, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, TYPE_LABELS, money } from '../utils/requestForms';
+import { ADJ_REASON_LABELS, ADJ_TIMES, FUND_TYPES, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, TYPE_LABELS, money, overtimeHours } from '../utils/requestForms';
 import EntityPicker from '../components/EntityPicker';
 
 // Filling out a form, and revising one. The same page does both: an edit is the same boxes with
@@ -44,8 +44,11 @@ export default function FormEdit() {
     checked_by: '', noted_by: '',
     adjustment_date: '', am_in: '', am_out: '', pm_in: '', pm_out: '', ot_in: '', ot_out: '',
     reason: '', reason_other: '',
+    // Overtime Request (2026-10-13)
+    ot_for_self: false, ot_target_user_id: '', ot_date: '', ot_time_from: '', ot_time_to: '', ot_purpose: '', ot_reference_no: '',
     remarks: '',
   });
+  const [otPeople, setOtPeople] = useState([]);
   const [items, setItems] = useState([blankItem()]);
   const [departments, setDepartments] = useState([]);
   const [bankAccounts, setBankAccounts] = useState([]);
@@ -57,7 +60,7 @@ export default function FormEdit() {
 
   useEffect(() => {
     api.get('/forms/meta/options')
-      .then(({ data }) => { setDepartments(data.departments || []); setBankAccounts(data.bank_accounts || []); })
+      .then(({ data }) => { setDepartments(data.departments || []); setBankAccounts(data.bank_accounts || []); setOtPeople(data.ot_people || []); })
       .catch(() => {});
   }, []);
 
@@ -87,6 +90,10 @@ export default function FormEdit() {
       adjustment_date: d.adjustment_date ? String(d.adjustment_date).slice(0, 10) : '',
       ...Object.fromEntries(ADJ_TIMES.map(([k]) => [k, d[k] ? String(d[k]).slice(0, 5) : ''])),
       reason: d.reason || '', reason_other: d.reason_other || '',
+      ot_for_self: !!Number(d.for_self || 0), ot_target_user_id: d.target_user_id || '',
+      ot_date: d.ot_date ? String(d.ot_date).slice(0, 10) : '',
+      ot_time_from: d.time_from ? String(d.time_from).slice(0, 5) : '', ot_time_to: d.time_to ? String(d.time_to).slice(0, 5) : '',
+      ot_purpose: data.type === 'overtime' ? (d.purpose || '') : '', ot_reference_no: d.reference_no || '',
     });
     setItems((data.items || []).length
       ? data.items.map((i) => ({
@@ -304,6 +311,64 @@ export default function FormEdit() {
           <div className="field">
             <label>Address</label>
             <input value={form.address} onChange={(e) => set('address', e.target.value)} />
+          </div>
+        </div>
+      )}
+
+      {type === 'overtime' && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3>Overtime Request</h3>
+          <div className="field">
+            <label>Overtime for *</label>
+            <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+              <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontWeight: 400 }}>
+                <input type="radio" name="ot-for" checked={form.ot_for_self} onChange={() => set('ot_for_self', true)} /> Myself
+              </label>
+              <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontWeight: 400 }}>
+                <input type="radio" name="ot-for" checked={!form.ot_for_self} onChange={() => set('ot_for_self', false)} /> Someone else
+              </label>
+            </div>
+            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+              {form.ot_for_self
+                ? 'Goes to your department head for approval.'
+                : "Noted by your department head, approved by the employee's department head, then accepted or declined by the employee."}
+            </div>
+          </div>
+          {!form.ot_for_self && (
+            <div className="field" style={{ maxWidth: 480 }}>
+              <label>Employee *</label>
+              <EntityPicker
+                label="Employee" items={otPeople} value={form.ot_target_user_id} getLabel={(p) => `${p.name}${p.department ? ` (${p.department})` : ''}`}
+                columns={[{ key: 'name', label: 'Name' }, { key: 'department', label: 'Department' }]} searchKeys={['name', 'department']}
+                onSelect={(p) => set('ot_target_user_id', p ? p.id : '')}
+              />
+            </div>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0 16px' }}>
+            <div className="field">
+              <label>Date *</label>
+              <input type="date" value={form.ot_date} onChange={(e) => set('ot_date', e.target.value)} />
+            </div>
+            <div className="field">
+              <label>From *</label>
+              <input type="time" value={form.ot_time_from} onChange={(e) => set('ot_time_from', e.target.value)} />
+            </div>
+            <div className="field">
+              <label>To *</label>
+              <input type="time" value={form.ot_time_to} onChange={(e) => set('ot_time_to', e.target.value)} />
+            </div>
+            <div className="field">
+              <label>Hours</label>
+              <input disabled value={overtimeHours(form.ot_time_from, form.ot_time_to) ?? ''} />
+            </div>
+          </div>
+          <div className="field">
+            <label>Purpose / work to be done *</label>
+            <textarea rows={3} value={form.ot_purpose} onChange={(e) => set('ot_purpose', e.target.value)} />
+          </div>
+          <div className="field" style={{ maxWidth: 320 }}>
+            <label>Reference (JO / SO #)</label>
+            <input value={form.ot_reference_no} onChange={(e) => set('ot_reference_no', e.target.value)} />
           </div>
         </div>
       )}

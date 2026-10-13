@@ -44,7 +44,7 @@ const router = express.Router();
 const ROUTE = '/forms';
 const APPROVAL_ROUTE = '/forms/approval';
 
-const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund', 'attendance_adjustment'];
+const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund', 'attendance_adjustment', 'overtime'];
 const TYPE_LABELS = {
   liquidation: 'Liquidation',
   payment: 'Request for Payment',
@@ -52,9 +52,10 @@ const TYPE_LABELS = {
   business_trip: 'Business Trip',
   revolving_fund: 'Revolving Fund',
   attendance_adjustment: 'Attendance Adjustment Form',
+  overtime: 'Overtime Request',
 };
 // Forms with no expense lines: a trip sheet, and the attendance adjustment slip.
-const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment'];
+const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime'];
 // Attendance Adjustment (asked 2026-10-08): why the biometric has no time-in / time-out. The three
 // reasons printed on the paper slip; 'others' carries the free text (e.g. "biometric error").
 const ADJ_REASONS = ['field_work', 'business_trip', 'others'];
@@ -83,7 +84,7 @@ const BANK_ACCOUNTS_SQL = `
    WHERE a.detail_type = 'Bank' AND COALESCE(a.is_summary, 0) = 0
      AND (p.account_code = '11000' OR gp.account_code = '11000')`;
 
-const WORKFLOW_STATUSES = ['submitted', 'noted', 'approved', 'rejected'];
+const WORKFLOW_STATUSES = ['submitted', 'noted', 'approved', 'rejected', 'accepted', 'declined'];
 // The owner may edit a form until somebody acts on it: a draft, a submitted one nobody has noted
 // yet, and a rejected one being revised.
 const EDITABLE_STATUSES = ['draft', 'submitted', 'rejected'];
@@ -186,8 +187,61 @@ async function loadFull(id) {
   } else if (doc.type === 'attendance_adjustment') {
     const [[d]] = await pool.query('SELECT * FROM form_attendance_adjustment_details WHERE form_request_id = ?', [id]);
     doc.detail = d || null;
+  } else if (doc.type === 'overtime') {
+    doc.detail = await overtimeDetail(id);
   }
   return doc;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Overtime Request (asked 2026-10-13)                                         */
+/* -------------------------------------------------------------------------- */
+//
+// Filed by anyone, for themself or for someone else:
+//   for someone else  submitted -> NOTED by the filer's department head -> APPROVED by the
+//                     employee's department head -> ACCEPTED / DECLINED by that employee
+//   for themself      submitted -> APPROVED by their own department head (done)
+// A department's heads are the ones ticked "Note forms" on it (lib/formNoters.js); the Forms
+// Approval page's approvers do not take part -- whose overtime it is decides who rules on it.
+async function overtimeDetail(formId, q = pool) {
+  const [[d]] = await q.query(
+    `SELECT o.*, tu.display_name AS target_name, td.name AS target_department
+       FROM form_overtime_details o
+       LEFT JOIN users tu ON tu.id = o.target_user_id
+       LEFT JOIN departments td ON td.id = o.target_department_id
+      WHERE o.form_request_id = ?`, [formId]).catch((e) => {
+    if (e.code === 'ER_NO_SUCH_TABLE') return [[null]]; // db/add-overtime-form.js not run yet
+    throw e;
+  });
+  return d || null;
+}
+
+// The employee's department, off their employee record.
+async function userDepartmentId(q, userId) {
+  const [[r]] = await q.query(
+    'SELECT e.department_id FROM users u JOIN employees e ON e.id = u.employee_id WHERE u.id = ?', [userId]);
+  return r ? r.department_id : null;
+}
+
+// Whose approval an overtime request waits on, and whether this user is one of them:
+//   for themself  -- the filer's department heads, while SUBMITTED
+//   for another   -- the employee's department heads, once NOTED
+async function overtimeApproval(userId, doc, d) {
+  if (!d) return { allowed: false, approvers: [], reason: 'This overtime request has no details.' };
+  const deptId = d.for_self ? doc.department_id : d.target_department_id;
+  const atStep = d.for_self ? doc.status === 'submitted' : doc.status === 'noted';
+  const approvers = await notersFor(deptId, pool, 'overtime');
+  const deptName = d.for_self ? (doc.department || 'the department') : (d.target_department || "the employee's department");
+  if (!deptId) {
+    return { allowed: false, approvers, reason: d.for_self ? 'This form has no department, so there is no head to approve it.' : `${d.target_name || 'The employee'} has no department on their employee record, so there is no head to approve it.` };
+  }
+  if (!approvers.length) return { allowed: false, approvers, reason: `${deptName} has no head recorded to approve this. Add one under that department's ticket approvers.` };
+  const isApprover = approvers.some((a) => Number(a.id) === Number(userId));
+  return {
+    allowed: atStep && isApprover,
+    approvers,
+    reason: isApprover ? (atStep ? null : 'Not waiting on approval.') : `Only the head of ${deptName} can approve this: ${approvers.map((a) => a.display_name).join(' or ')}.`,
+  };
 }
 
 // Who may look at one form. Its owner always; anyone holding can_view_all on /forms; the approvers,
@@ -201,6 +255,12 @@ async function maySee(userId, doc) {
   if (AP_NOTED_TYPES.includes(doc.type) && await isAccountsPayable(userId)) return true;
   if (await userCan(userId, APPROVAL_ROUTE, 'can_view')) return true;
   if (await userCan(userId, ROUTE, 'can_view_all')) return true;
+  // An overtime request: the employee it is for, and their department's heads, who approve it.
+  if (doc.type === 'overtime') {
+    const d = await overtimeDetail(doc.id);
+    if (d && Number(d.target_user_id) === Number(userId)) return true;
+    if (d && d.target_department_id && await isDepartmentNoter(userId, d.target_department_id)) return true;
+  }
   // Your own form, provided you still hold the module at all.
   return doc.user_id === userId && userCan(userId, ROUTE, 'can_view');
 }
@@ -208,6 +268,11 @@ async function maySee(userId, doc) {
 // May this user note this particular form, and if not, why not? One answer used by the button, the
 // endpoint and the explanation on screen, so the three cannot disagree.
 async function mayNote(userId, doc) {
+  // An overtime request for yourself goes straight to your head for approval -- nothing to note.
+  if (doc.type === 'overtime') {
+    const d = await overtimeDetail(doc.id);
+    if (d && d.for_self) return { allowed: false, reason: 'An overtime request for yourself goes straight to your department head for approval.' };
+  }
   // A liquidation is noted by Accounts Payable, and only once every item has its COGS account --
   // the COGS check is in the note route itself, so the screen can say what is missing.
   if (AP_NOTED_TYPES.includes(doc.type)) {
@@ -294,7 +359,10 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
     const headOf = canSeeAll ? [] : await departmentsHeadedBy(req.user.id);
     // Accounts Payable sees every liquidation, since it notes them all.
     const isAp = canSeeAll ? false : await isAccountsPayable(req.user.id);
-    if (!canSeeAll && headOf.length === 0 && !isAp) {
+    // Overtime (2026-10-13): the employee a request is for sees it, to accept or decline it.
+    const [[otMine]] = canSeeAll ? [[null]] : await pool.query(
+      'SELECT 1 AS x FROM form_overtime_details WHERE target_user_id = ? LIMIT 1', [req.user.id]).catch(() => [[null]]);
+    if (!canSeeAll && headOf.length === 0 && !isAp && !otMine) {
       return res.status(403).json({ error: 'You do not have permission to perform this action' });
     }
 
@@ -310,6 +378,18 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
         params.push(DEPARTMENT_NOTED_TYPES, req.user.id);
       }
       if (isAp) { mine.push('f.type IN (?)'); params.push(AP_NOTED_TYPES); }
+      // Overtime filed for someone in a department this user heads (they approve it), or for this user.
+      if (headOf.length) {
+        mine.push(`(f.type = 'overtime' AND EXISTS (SELECT 1 FROM form_overtime_details o
+                   JOIN department_ticket_approvers a ON a.department_id = o.target_department_id
+                  WHERE o.form_request_id = f.id AND a.user_id = ? AND a.can_note_form = 1
+                    AND (a.note_form_types IS NULL OR a.note_form_types = '' OR FIND_IN_SET('overtime', a.note_form_types) > 0)))`);
+        params.push(req.user.id);
+      }
+      if (otMine) {
+        mine.push("(f.type = 'overtime' AND EXISTS (SELECT 1 FROM form_overtime_details o WHERE o.form_request_id = f.id AND o.target_user_id = ?))");
+        params.push(req.user.id);
+      }
       where.push(`(${mine.join(' OR ')})`);
     }
     if (req.query.status && WORKFLOW_STATUSES.includes(req.query.status)) {
@@ -324,7 +404,7 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
          FROM form_requests f
          LEFT JOIN users u ON u.id = f.user_id
         WHERE ${where.join(' AND ')}
-        ORDER BY FIELD(f.status, 'submitted', 'noted', 'rejected', 'approved'), f.id DESC`,
+        ORDER BY FIELD(f.status, 'submitted', 'noted', 'rejected', 'approved', 'accepted', 'declined'), f.id DESC`,
       params,
     );
     res.json(rows);
@@ -423,6 +503,11 @@ router.get('/meta/options', requireAuth, requirePermission(ROUTE, 'can_view'), a
       purposes: PURPOSES,
       departments: departments.map((d) => d.name),
       bank_accounts: bankAccounts,
+      // Overtime Request: anyone active with a login, and the department on their employee record.
+      ot_people: (await pool.query(
+        `SELECT u.id, u.display_name AS name, d.name AS department
+           FROM users u LEFT JOIN employees e ON e.id = u.employee_id LEFT JOIN departments d ON d.id = e.department_id
+          WHERE u.is_active = 1 ORDER BY u.display_name`))[0],
       can: {
         note: await userCan(req.user.id, APPROVAL_ROUTE, 'can_edit'),
         approve: await userCan(req.user.id, APPROVAL_ROUTE, 'can_approve'),
@@ -450,7 +535,7 @@ async function logFormAudit(db, formId, userId, eventType, fieldName = null, old
       newValue === null || newValue === undefined ? null : String(newValue), userId || null]);
 }
 
-const STATUS_LABEL = { draft: 'Draft', submitted: 'Submitted', noted: 'Noted', approved: 'Approved', rejected: 'Rejected' };
+const STATUS_LABEL = { draft: 'Draft', submitted: 'Submitted', noted: 'Noted', approved: 'Approved', rejected: 'Rejected', accepted: 'Accepted', declined: 'Declined' };
 
 // Who made it and when, who last changed it, and its history. Forms filed before the history was
 // kept get theirs from the form's own dates (created, submitted, noted, approved, rejected) -- any
@@ -573,6 +658,16 @@ router.get('/:id', requireAuth, async (req, res, next) => {
 
     doc.can_approve = await userCan(req.user.id, APPROVAL_ROUTE, 'can_approve');
     doc.can_reject = await mayReject(req.user.id, doc);
+    if (doc.type === 'overtime') {
+      // Approved by department heads, not the Forms Approval page (see overtimeApproval).
+      const appr = await overtimeApproval(req.user.id, doc, doc.detail);
+      doc.can_approve = false;
+      doc.can_ot_approve = appr.allowed;
+      doc.ot_approvers = appr.approvers.map((a) => a.display_name);
+      doc.ot_approve_blocked_reason = appr.allowed ? null : appr.reason;
+      doc.can_ot_respond = !!doc.detail && !doc.detail.for_self && doc.status === 'approved'
+        && Number(doc.detail.target_user_id) === Number(req.user.id);
+    }
     return res.json(doc);
   } catch (err) { return next(err); }
 });
@@ -583,7 +678,25 @@ router.get('/:id', requireAuth, async (req, res, next) => {
 
 // Writes the side table for whichever type this is, and returns the computed totals so the caller
 // can report them. Shared by create and update so the two cannot drift apart.
-async function writeDetail(conn, docId, type, body, items) {
+async function writeDetail(conn, docId, type, body, items, ownerId = null) {
+  if (type === 'overtime') {
+    const forSelf = body.ot_for_self === true || body.ot_for_self === 'true' || body.ot_for_self === 1 || body.ot_for_self === '1';
+    const targetUserId = forSelf ? ownerId : Number(body.ot_target_user_id);
+    const from = time(body.ot_time_from);
+    const to = time(body.ot_time_to);
+    // Hours from the two times; past midnight (22:00 -> 02:00) counts on into the next day.
+    const mins = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
+    let span = mins(to) - mins(from);
+    if (span <= 0) span += 24 * 60;
+    await conn.query(
+      `INSERT INTO form_overtime_details
+         (form_request_id, for_self, target_user_id, target_department_id, ot_date, time_from, time_to, hours, purpose, reference_no)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [docId, forSelf ? 1 : 0, targetUserId, await userDepartmentId(conn, targetUserId), date(body.ot_date), from, to,
+        Number((span / 60).toFixed(2)), trunc(body.ot_purpose, 4000), trunc(body.ot_reference_no, 100)],
+    );
+    return {};
+  }
   if (type === 'liquidation' || type === 'revolving_fund') {
     const table = type === 'liquidation' ? 'form_liquidation_details' : 'form_revolving_fund_details';
     const t = totals(items, body.starting_balance);
@@ -675,6 +788,14 @@ function validate(type, body, items) {
     if (!ADJ_REASONS.includes(body.reason)) return 'Choose the reason: Field Work, Business Trip or Others.';
     if (body.reason === 'others' && !trunc(body.reason_other, 255)) return 'Say what the other reason is (e.g. biometric error).';
   }
+  if (type === 'overtime') {
+    const forSelf = body.ot_for_self === true || body.ot_for_self === 'true' || body.ot_for_self === 1 || body.ot_for_self === '1';
+    if (!forSelf && !Number(body.ot_target_user_id)) return 'Choose who the overtime is for.';
+    if (!date(body.ot_date)) return 'The overtime date is required.';
+    if (!time(body.ot_time_from) || !time(body.ot_time_to)) return 'Enter the overtime From and To times.';
+    if (time(body.ot_time_from) === time(body.ot_time_to)) return 'From and To cannot be the same time.';
+    if (!trunc(body.ot_purpose, 4000)) return 'Say what the overtime is for.';
+  }
   if (!NO_ITEM_TYPES.includes(type) && items.length === 0) return 'Add at least one line.';
   return null;
 }
@@ -717,7 +838,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       );
     }
 
-    await writeDetail(conn, id, type, req.body, items);
+    await writeDetail(conn, id, type, req.body, items, req.user.id);
     await logFormAudit(conn, id, req.user.id, 'Created');
 
     if (type === 'liquidation') {
@@ -837,9 +958,10 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       revolving_fund: 'form_revolving_fund_details',
       business_trip: 'form_business_trip_details',
       attendance_adjustment: 'form_attendance_adjustment_details',
+      overtime: 'form_overtime_details',
     }[doc.type];
     await conn.query(`DELETE FROM ${detailTable} WHERE form_request_id = ?`, [doc.id]);
-    await writeDetail(conn, doc.id, doc.type, req.body, items);
+    await writeDetail(conn, doc.id, doc.type, req.body, items, doc.user_id);
 
     if (doc.type === 'liquidation') {
       await conn.query('DELETE FROM form_liquidation_purposes WHERE form_request_id = ?', [doc.id]);
@@ -936,6 +1058,7 @@ router.post('/:id/approve', requireAuth, requirePermission(APPROVAL_ROUTE, 'can_
     const [[doc]] = await pool.query(
       'SELECT id, type, status, department, department_id FROM form_requests WHERE id = ?', [req.params.id]);
     if (!doc) return res.status(404).json({ error: 'Not found' });
+    if (doc.type === 'overtime') return res.status(409).json({ error: "An overtime request is approved by the department head, from the request itself." });
 
     // NOTING IS A GATE, not a step that can be skipped. The source allowed submitted -> approved
     // directly; here a form must be noted by its department's head first, so the head's sign-off
@@ -972,6 +1095,47 @@ router.post('/:id/approve', requireAuth, requirePermission(APPROVAL_ROUTE, 'can_
   } catch (err) { return next(err); }
 });
 
+// Overtime approval -- by the department head whose step it is (overtimeApproval). For yourself it
+// is the last step; for someone else the employee then accepts or declines.
+router.post('/:id/ot-approve', requireAuth, async (req, res, next) => {
+  try {
+    const [[doc]] = await pool.query('SELECT id, type, status, department, department_id FROM form_requests WHERE id = ?', [req.params.id]);
+    if (!doc || doc.type !== 'overtime') return res.status(404).json({ error: 'Not found' });
+    const d = await overtimeDetail(doc.id);
+    const appr = await overtimeApproval(req.user.id, doc, d);
+    if (!appr.allowed) return res.status(doc.status === (d && d.for_self ? 'submitted' : 'noted') ? 403 : 409).json({ error: appr.reason || 'Not waiting on approval.' });
+    await pool.query(
+      "UPDATE form_requests SET status = 'approved', approved_at = NOW(), approved_by = ?, updated_at = NOW() WHERE id = ?",
+      [req.user.id, doc.id]);
+    await logFormAudit(pool, doc.id, req.user.id, 'Approved', 'Status', STATUS_LABEL[doc.status], 'Approved');
+    notifyFormStatus(doc.id, req.user.id);
+    return res.json({ ok: true, status: 'approved' });
+  } catch (err) { return next(err); }
+});
+
+// The employee's answer to an approved overtime request filed for them: accept or decline.
+router.post('/:id/ot-respond', requireAuth, async (req, res, next) => {
+  try {
+    const [[doc]] = await pool.query('SELECT id, type, status FROM form_requests WHERE id = ?', [req.params.id]);
+    if (!doc || doc.type !== 'overtime') return res.status(404).json({ error: 'Not found' });
+    const d = await overtimeDetail(doc.id);
+    if (!d || d.for_self) return res.status(409).json({ error: 'An overtime request for yourself has nothing to accept.' });
+    if (Number(d.target_user_id) !== Number(req.user.id)) return res.status(403).json({ error: 'Only the employee this overtime is for can answer it.' });
+    if (doc.status !== 'approved') return res.status(409).json({ error: 'This overtime request is not waiting on your answer.' });
+    const accept = req.body?.decision === 'accept';
+    if (!accept && req.body?.decision !== 'decline') return res.status(400).json({ error: 'Accept or decline.' });
+    const remark = trunc(req.body?.remark, 1000);
+    if (!accept && !remark) return res.status(400).json({ error: 'Say why you are declining.' });
+    const status = accept ? 'accepted' : 'declined';
+    await pool.query("UPDATE form_requests SET status = ?, updated_at = NOW() WHERE id = ?", [status, doc.id]);
+    await pool.query('UPDATE form_overtime_details SET responded_at = NOW(), response_remark = ? WHERE form_request_id = ?', [remark, doc.id]);
+    await logFormAudit(pool, doc.id, req.user.id, 'Status Change', 'Status', 'Approved', STATUS_LABEL[status]);
+    if (remark) await logFormAudit(pool, doc.id, req.user.id, 'Updated', 'Response', null, remark);
+    notifyFormStatus(doc.id, req.user.id);
+    return res.json({ ok: true, status });
+  } catch (err) { return next(err); }
+});
+
 // Rejecting carries per-line remarks as well as a reason, so the owner is told WHICH expense is the
 // problem rather than only that something is.
 // Who may reject: an approver, at SUBMITTED or NOTED; and whoever may note the form (its department
@@ -979,6 +1143,13 @@ router.post('/:id/approve', requireAuth, requirePermission(APPROVAL_ROUTE, 'can_
 // -- a head who cannot accept a request has to be able to send it back, not just leave it sitting.
 async function mayReject(userId, doc) {
   if (!['submitted', 'noted'].includes(doc.status)) return false;
+  // Overtime: whoever's step it is -- the noter at SUBMITTED (for someone else), the approving head
+  // at SUBMITTED (for yourself) or NOTED (for someone else).
+  if (doc.type === 'overtime') {
+    const d = await overtimeDetail(doc.id);
+    if ((await overtimeApproval(userId, doc, d)).allowed) return true;
+    return doc.status === 'submitted' && (await mayNote(userId, doc)).allowed;
+  }
   if (await userCan(userId, APPROVAL_ROUTE, 'can_approve')) return true;
   return doc.status === 'submitted' && (await mayNote(userId, doc)).allowed;
 }

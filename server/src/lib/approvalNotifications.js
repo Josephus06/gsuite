@@ -1,5 +1,5 @@
 const pool = require('../db');
-const { notersForDoc, DEPARTMENT_NOTED_TYPES, AP_NOTED_TYPES } = require('./formNoters');
+const { notersForDoc, DEPARTMENT_NOTED_TYPES, AP_NOTED_TYPES, notersFor } = require('./formNoters');
 
 // The bell for documents waiting on somebody's decision -- Purchase Orders and the request Forms.
 // Until 2026-10-07 neither wrote a notification at all, so an approver only found a PO or a form
@@ -94,6 +94,37 @@ function notifyFormStatus(formId, actorId) {
     if (!doc) return;
     const what = `${FORM_LABEL[doc.type] || 'Form'} ${doc.request_no || ''}`.trim();
     const base = { relatedType: 'Form', relatedId: doc.id };
+
+    // Overtime Request (2026-10-13) has its own chain -- see routes/forms.js.
+    if (doc.type === 'overtime') {
+      const [[d]] = await pool.query(
+        `SELECT o.for_self, o.target_user_id, o.target_department_id, tu.display_name AS target_name, o.ot_date
+           FROM form_overtime_details o LEFT JOIN users tu ON tu.id = o.target_user_id WHERE o.form_request_id = ?`, [doc.id]);
+      if (!d) return;
+      const forWhom = d.for_self ? '' : ` for ${d.target_name}`;
+      const otWhat = `Overtime Request ${doc.request_no || ''}${forWhom}`.trim();
+      const headsOf = async (deptId) => (await notersFor(deptId, pool, 'overtime')).map((u) => u.id);
+      if (doc.status === 'submitted') {
+        if (d.for_self) {
+          await insertFor(await headsOf(doc.department_id), { ...base, type: 'form_pending_approval', title: `${otWhat} needs your approval`, message: `${otWhat} is waiting for your approval.` }, actorId);
+        } else {
+          await insertFor(await headsOf(doc.department_id), { ...base, type: 'form_pending_note', title: `${otWhat} needs your noting`, message: `${otWhat}${doc.department ? ` from ${doc.department}` : ''} is waiting to be noted.` }, actorId);
+        }
+      } else if (doc.status === 'noted') {
+        await insertFor(await headsOf(d.target_department_id), { ...base, type: 'form_pending_approval', title: `${otWhat} needs your approval`, message: `${otWhat} has been noted and is waiting for your approval.` }, actorId);
+        await insertFor([doc.user_id], { ...base, type: 'form_noted', title: `${otWhat} was noted`, message: `${otWhat} has been noted and is now waiting for approval.` }, actorId);
+      } else if (doc.status === 'approved') {
+        await insertFor([doc.user_id], { ...base, type: 'form_approved', title: `${otWhat} was approved`, message: d.for_self ? `${otWhat} is approved.` : `${otWhat} is approved and waiting for ${d.target_name} to accept.` }, actorId);
+        if (!d.for_self) {
+          await insertFor([d.target_user_id], { ...base, type: 'form_pending_approval', title: 'Overtime requested of you', message: `${otWhat}: please accept or decline.` }, actorId);
+        }
+      } else if (doc.status === 'accepted' || doc.status === 'declined') {
+        await insertFor([doc.user_id], { ...base, type: doc.status === 'accepted' ? 'form_approved' : 'form_rejected', title: `${otWhat} was ${doc.status}`, message: `${d.target_name} ${doc.status} the overtime.` }, actorId);
+      } else if (doc.status === 'rejected') {
+        await insertFor([doc.user_id], { ...base, type: 'form_rejected', title: `${otWhat} was rejected`, message: doc.rejection_reason ? `Reason: ${doc.rejection_reason}` : `${otWhat} was rejected.` }, actorId);
+      }
+      return;
+    }
 
     if (doc.status === 'submitted') {
       let to = (await notersForDoc(doc)).map((u) => u.id);

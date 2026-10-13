@@ -9,6 +9,7 @@ import EntityPicker from '../components/EntityPicker';
 import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 import { useAuth } from '../context/useAuth';
 import { ADJ_REASON_LABELS, ADJ_TIMES, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, money, pretty } from '../utils/requestForms';
+import OvertimeDecline from '../components/OvertimeDecline';
 
 // One form, and whatever the viewer is allowed to do to it.
 //
@@ -183,6 +184,19 @@ export default function FormView() {
             <button className="btn btn-sm btn-success" disabled={busy}
               onClick={() => act('approve', null, 'Approved.')}>Approve</button>
           )}
+          {/* Overtime Request: approved by the department head whose step it is; then, when filed for
+              someone else, accepted or declined by that employee (2026-10-13). */}
+          {doc.can_ot_approve && (
+            <button className="btn btn-sm btn-success" disabled={busy}
+              onClick={() => act('ot-approve', null, 'Approved.')}>Approve</button>
+          )}
+          {doc.can_ot_respond && (
+            <>
+              <button className="btn btn-sm btn-success" disabled={busy}
+                onClick={() => act('ot-respond', { decision: 'accept' }, 'Overtime accepted.')}>Accept</button>
+              <OvertimeDecline busy={busy} onDecline={(remark) => act('ot-respond', { decision: 'decline', remark }, 'Overtime declined.')} />
+            </>
+          )}
           {mayReject && (
             <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setRejecting(true)}>Reject</button>
           )}
@@ -290,6 +304,26 @@ export default function FormView() {
           <Line label="Address">{d.address}</Line>
           <Line label="Date">{fmtDate(d.doc_date)}</Line>
           <Line label="Total Amount">{d.total_amount != null ? money(d.total_amount) : null}</Line>
+        </div>
+      )}
+
+      {doc.type === 'overtime' && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3>Overtime Request</h3>
+          <Line label="Overtime For">{d.for_self ? `${d.target_name || doc.owner_name} (self)` : `${d.target_name || '—'}${d.target_department ? ` — ${d.target_department}` : ''}`}</Line>
+          <Line label="Date">{fmtDate(d.ot_date)}</Line>
+          <Line label="Time">{d.time_from ? `${clock(d.time_from)} — ${clock(d.time_to)}` : null}</Line>
+          <Line label="Hours">{d.hours != null ? Number(d.hours).toFixed(2) : null}</Line>
+          <Line label="Purpose">{d.purpose}</Line>
+          <Line label="Reference">{d.reference_no}</Line>
+          {/* Whose move it is, named, so the filer knows who to chase. */}
+          {((d.for_self && doc.status === 'submitted') || (!d.for_self && doc.status === 'noted')) && (
+            <Line label="To Be Approved By">{(doc.ot_approvers || []).length ? doc.ot_approvers.join(' or ') : (doc.ot_approve_blocked_reason || null)}</Line>
+          )}
+          {!d.for_self && doc.status === 'approved' && <Line label="Waiting On">{`${d.target_name} to accept or decline`}</Line>}
+          {['accepted', 'declined'].includes(doc.status) && (
+            <Line label={doc.status === 'accepted' ? 'Accepted' : 'Declined'}>{`${fmtDate(d.responded_at)}${d.response_remark ? ` — ${d.response_remark}` : ''}`}</Line>
+          )}
         </div>
       )}
 

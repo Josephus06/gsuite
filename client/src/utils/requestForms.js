@@ -12,10 +12,20 @@ export const TYPE_LABELS = {
   business_trip: 'Business Trip',
   revolving_fund: 'Revolving Fund',
   attendance_adjustment: 'Attendance Adjustment Form',
+  overtime: 'Overtime Request',
 };
 
 // Forms with no expense lines (and so no amount): a trip sheet, and the attendance adjustment slip.
-export const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment'];
+export const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime'];
+
+// Overtime Request (2026-10-13): hours between two "HH:MM" times; past midnight counts on.
+export function overtimeHours(from, to) {
+  if (!from || !to) return null;
+  const m = (t) => { const [h, mi] = String(t).slice(0, 5).split(':').map(Number); return h * 60 + mi; };
+  let span = m(to) - m(from);
+  if (span <= 0) span += 24 * 60;
+  return Math.round((span / 60) * 100) / 100;
+}
 
 // Attendance Adjustment Form (asked 2026-10-08): the times the biometric missed, and why.
 export const ADJ_TIMES = [
@@ -40,6 +50,8 @@ export const STATUS_BADGE = {
   noted: 'badge-info',
   approved: 'badge-success',
   rejected: 'badge-danger',
+  accepted: 'badge-success',
+  declined: 'badge-danger',
 };
 
 // The six purposes printed on the liquidation form. 'others' is the one carrying free text.
