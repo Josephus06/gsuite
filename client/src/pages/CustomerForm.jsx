@@ -50,6 +50,8 @@ export default function CustomerForm() {
   // The customer this name would duplicate, if any -- looked up when the Name field is left, and
   // again from the server's own refusal on Save. Held as a record rather than a message so the
   // form can offer to OPEN that customer, which is what the person typing actually wants.
+  // `exact` is set when name, TIN and address all match it (Save is refused); otherwise it only
+  // shares the name, which is allowed -- a TIN or address tells the two apart.
   const [duplicate, setDuplicate] = useState(null);
   const [tab, setTab] = useState('contacts');
   const canSave = isNew ? can('/customers', 'can_add') : can('/customers', 'can_edit');
@@ -119,7 +121,7 @@ export default function CustomerForm() {
       // The server refuses a duplicate name whatever the form believed. Re-asking rather than
       // building a record out of the typed name means the banner names the customer ON FILE,
       // spelled its way -- which is the one to open, and often not spelled quite as typed.
-      if (e.response?.data?.existing_customer_id) checkName(form.name);
+      if (e.response?.data?.existing_customer_id) checkName();
     } finally {
       inFlight.current = false;
       setSaving(false);
@@ -130,14 +132,15 @@ export default function CustomerForm() {
 
   const input = (k, props = {}) => <input value={form[k] ?? ''} onChange={(e) => set(k, e.target.value)} {...props} />;
 
-  // Asked on blur, not on every keystroke: the answer is only useful once a whole name is typed,
-  // and 35,000 customers is not a list to re-scan per character. A failed check never blocks the
-  // form -- the Save is checked by the server regardless, which is where the rule actually lives.
-  async function checkName(name) {
-    if (!String(name || '').trim()) { setDuplicate(null); return; }
+  // Asked on blur of Name, TIN or Address, not on every keystroke: the answer is only useful once a
+  // whole value is typed, and 35,000 customers is not a list to re-scan per character. A failed check
+  // never blocks the form -- the Save is checked by the server regardless, which is where the rule lives.
+  async function checkName(over = {}) {
+    const q = { name: form.name, tin: form.tin, address: form.address, ...over };
+    if (!String(q.name || '').trim()) { setDuplicate(null); return; }
     try {
-      const { data } = await api.get('/customers/check-name', { params: { name, exclude_id: id || undefined } });
-      setDuplicate(data.duplicate ? data.existing : null);
+      const { data } = await api.get('/customers/check-name', { params: { ...q, exclude_id: id || undefined } });
+      setDuplicate(data.existing ? { ...data.existing, exact: data.duplicate } : null);
     } catch {
       setDuplicate(null);
     }
@@ -158,18 +161,27 @@ export default function CustomerForm() {
           <div>
             <div className="field">
               <label>Name</label>
-              {input('name', { required: true, onBlur: (e) => checkName(e.target.value) })}
-              {duplicate && (
+              {input('name', { required: true, onBlur: (e) => checkName({ name: e.target.value }) })}
+              {duplicate?.exact && (
                 <div className="error-banner" style={{ marginTop: 6 }}>
                   <strong>{duplicate.name}</strong>{duplicate.customer_code ? ` (${duplicate.customer_code})` : ''} is
-                  already on file. Use that customer rather than saving another.{' '}
+                  already on file with the same TIN and address. Use that customer, or enter this one's own TIN or address.{' '}
+                  <Link className="link-btn" to={`/customers/${duplicate.id}/edit`}>
+                    Open it
+                  </Link>
+                </div>
+              )}
+              {duplicate && !duplicate.exact && (
+                <div className="muted" style={{ marginTop: 6 }}>
+                  <strong>{duplicate.name}</strong>{duplicate.customer_code ? ` (${duplicate.customer_code})` : ''} already
+                  has this name. Saving is fine if this is a different customer with its own TIN or address.{' '}
                   <Link className="link-btn" to={`/customers/${duplicate.id}/edit`}>
                     Open it
                   </Link>
                 </div>
               )}
             </div>
-            <div className="field"><label>Address</label><textarea rows={4} value={form.address ?? ''} onChange={(e) => set('address', e.target.value)} /></div>
+            <div className="field"><label>Address</label><textarea rows={4} value={form.address ?? ''} onChange={(e) => set('address', e.target.value)} onBlur={(e) => checkName({ address: e.target.value })} /></div>
             <div className="field">
               <label>Tax Code</label>
               <select value={form.tax_id ?? ''} onChange={(e) => set('tax_id', e.target.value)}>
@@ -177,7 +189,7 @@ export default function CustomerForm() {
                 {lookups.taxes.filter((t) => t.is_active !== 0).map((t) => <option key={t.id} value={t.id}>{t.code}{t.name ? ` — ${t.name}` : ''}</option>)}
               </select>
             </div>
-            <div className="field"><label>TIN</label>{input('tin')}</div>
+            <div className="field"><label>TIN</label>{input('tin', { onBlur: (e) => checkName({ tin: e.target.value }) })}</div>
             <div className="field">
               <label>Business Style</label>
               <select value={form.business_style_id ?? ''} onChange={(e) => set('business_style_id', e.target.value)}>

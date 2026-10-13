@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { findCustomerByName, duplicateMessage, nameKey } = require('../lib/customerDuplicates');
+const { findCustomerByName, findExactCustomer, exactDuplicateMessage, nameKey } = require('../lib/customerDuplicates');
 const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { mergeParty } = require('../lib/partyMerge');
 const { upperCustomerName, CUSTOMER_NAME_FIELDS } = require('../lib/customerName');
@@ -70,13 +70,16 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   }
 });
 
-// Does this name already belong to somebody? The form asks as soon as the Name field is left, so
-// the answer arrives before the rest of the form is filled in rather than on the Save that is
-// refused at the end of it. Registered ahead of GET /:id, which would otherwise swallow it.
+// Does this name already belong to somebody? The form asks as Name, TIN or Address is left, so the
+// answer arrives before the Save rather than on its refusal. `duplicate` (same name, TIN and address)
+// is what Save refuses; `existing` alone (same name only) is a heads-up -- allowed, since a TIN or
+// address can tell two same-named customers apart. Registered ahead of GET /:id.
 router.get('/check-name', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const existing = await findCustomerByName(pool, req.query.name, Number(req.query.exclude_id) || null);
-    res.json({ duplicate: !!existing, existing: existing || null, message: existing ? duplicateMessage(existing) : null });
+    const excludeId = Number(req.query.exclude_id) || null;
+    const exact = await findExactCustomer(pool, req.query, excludeId);
+    const existing = exact || await findCustomerByName(pool, req.query.name, excludeId);
+    res.json({ duplicate: !!exact, existing: existing || null, message: exact ? exactDuplicateMessage(exact) : null });
   } catch (err) {
     next(err);
   }
@@ -165,8 +168,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   const conn = await pool.getConnection();
   try {
     if (!String(req.body.name || '').trim()) return res.status(400).json({ error: 'Name is required.' });
-    const dup = await findCustomerByName(conn, req.body.name);
-    if (dup) return res.status(409).json({ error: duplicateMessage(dup), existing_customer_id: dup.id });
+    const dup = await findExactCustomer(conn, req.body);
+    if (dup) return res.status(409).json({ error: exactDuplicateMessage(dup), existing_customer_id: dup.id });
     await conn.beginTransaction();
     const [result] = await conn.query(
       `INSERT INTO customers (${FIELDS.join(', ')}) VALUES (${FIELDS.map(() => '?').join(', ')})`,
@@ -196,12 +199,13 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     // this route cannot blank the rest.
     const merged = { ...req.body };
     for (const f of FIELDS) if (merged[f] === undefined) merged[f] = current[f];
-    // Renaming onto another customer's name is a duplicate too. Only checked when the name
-    // actually changes, so a customer already sharing a name (from before this rule) can still
-    // be edited.
-    if (nameKey(merged.name) !== nameKey(current.name)) {
-      const dup = await findCustomerByName(conn, merged.name, current.id);
-      if (dup) return res.status(409).json({ error: duplicateMessage(dup), existing_customer_id: dup.id });
+    // Editing into another customer's exact name, TIN and address is a duplicate too. Only checked
+    // when one of those changes, so a customer already identical to another (from before this rule)
+    // can still be edited.
+    const keyOf = (r) => [r.name, r.tin, r.address].map(nameKey).join('|');
+    if (keyOf(merged) !== keyOf(current)) {
+      const dup = await findExactCustomer(conn, merged, current.id);
+      if (dup) return res.status(409).json({ error: exactDuplicateMessage(dup), existing_customer_id: dup.id });
     }
     await conn.beginTransaction();
     await conn.query(
