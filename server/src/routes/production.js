@@ -432,10 +432,14 @@ router.get('/:id', requireAuth, requireProductionView, async (req, res, next) =>
     // Transfer Orders raised for this JO (2026-10-13) -- on the TO itself or on its lines -- for the
     // Related Records tab.
     const [transferOrders] = await pool.query(
+      // Not `job_order_id = ? OR EXISTS (lines ...)`: that OR checks the lines once per transfer order
+      // in the table, and opening JOs held all 4 droplet cores for 20+ minutes (2026-10-13). The two
+      // lookups are taken separately (db/add-transfer-order-jo-indexes.js) and joined back.
       `SELECT t.id, t.to_no, t.date_created, t.status,
               (SELECT COALESCE(SUM(l.qty), 0) FROM transfer_order_lines l WHERE l.transfer_order_id = t.id) AS qty
-         FROM transfer_orders t
-        WHERE t.job_order_id = ? OR EXISTS (SELECT 1 FROM transfer_order_lines l WHERE l.transfer_order_id = t.id AND l.job_order_id = ?)
+         FROM (SELECT id FROM transfer_orders WHERE job_order_id = ?
+               UNION SELECT transfer_order_id FROM transfer_order_lines WHERE job_order_id = ?) m
+         JOIN transfer_orders t ON t.id = m.id
         ORDER BY t.id DESC`,
       [req.params.id, req.params.id]
     );
