@@ -673,7 +673,7 @@ export default function JobOrderView() {
                     </td>
                     <td>{Number(t.qty || 0)}</td>
                     <td></td>
-                    <td>{String(t.status || '').replace(/_/g, ' ').replace(/w/g, (c) => c.toUpperCase())}</td>
+                    <td>{String(t.status || '').replace(/_/g, ' ').toUpperCase()}</td>
                   </tr>
                 ))}
               </tbody>
