@@ -709,9 +709,10 @@ async function replicatorDefaults(conn, userId) {
 }
 
 // opts.cancelSource -- "Cancel & Replicate" (asked 2026-10-08): the source is cancelled in the SAME
-// transaction the copy is made in, so it is never one without the other, and the copy is the
-// replicator's: Sales Rep, Office Location and Sales Division are theirs (replicatorDefaults), not
-// the source's. A plain Replicate keeps the source's, as it always has.
+// transaction the copy is made in, so it is never one without the other.
+// Either way the copy is the REPLICATOR's (asked 2026-10-13 for plain Replicate too): Sales Rep,
+// Office Location and Sales Division are theirs (replicatorDefaults) and Prepared By is them. Where
+// the replicator has nothing to go on for a field, the source's value stands.
 async function replicateEstimate(userId, sourceId, opts = {}) {
   const conn = await pool.getConnection();
   try {
@@ -723,7 +724,6 @@ async function replicateEstimate(userId, sourceId, opts = {}) {
       err.status = 404;
       throw err;
     }
-    let mine = {};
     if (opts.cancelSource) {
       const refuse = (status, message) => { const err = new Error(message); err.status = status; throw err; };
       if (source.status === 'cancelled') refuse(409, `${source.estimate_no} is already cancelled -- use Replicate.`);
@@ -734,8 +734,8 @@ async function replicateEstimate(userId, sourceId, opts = {}) {
           WHERE (id = ? OR estimate_id = ?) AND (status IS NULL OR status <> 'cancelled') LIMIT 1`,
         [source.sales_order_id || 0, source.id]);
       if (liveSo) refuse(409, `${source.estimate_no} already has Sales Order ${liveSo.sales_order_no} -- cancel that first, or use Replicate.`);
-      mine = await replicatorDefaults(conn, userId);
     }
+    const mine = await replicatorDefaults(conn, userId);
     // Prepared By is whoever made THIS estimate -- the person replicating, not the source's author
     // (asked 2026-10-03). Kept from the source only when the replicating account has no employee.
     const [[replicator]] = await conn.query('SELECT employee_id FROM users WHERE id = ?', [userId]);
