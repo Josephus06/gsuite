@@ -199,6 +199,11 @@ app.use((req, res, next) => {
       || /^\/api\/archiver\/knowledge-base\/topics\/\d+\/files\/?$/.test(req.path))) {
     return carouselUploadJson(req, res, next);
   }
+  // Chat messages carry photos and files (2026-10-13): up to 25MB together (lib/chatMedia.js), ~34MB of
+  // base64 -- one-to-one and group sends.
+  if (req.method === 'POST' && (/^\/api\/chat\/send\/?$/.test(req.path) || /^\/api\/chat\/groups\/\d+\/send\/?$/.test(req.path))) {
+    return carouselUploadJson(req, res, next);
+  }
   // AI Rendering takes a site photo and a logo, up to 10MB each: ~27MB of base64 together.
   if (req.method === 'POST' && /^\/api\/ai-renderings\/?$/.test(req.path)) {
     return carouselUploadJson(req, res, next);

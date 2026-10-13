@@ -3,8 +3,9 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { chime } from '../utils/notificationSound';
 import Avatar from './Avatar';
-import { parseUtc } from '../utils/datetime';
 import GroupChatBox from './GroupChatBox';
+import ChatMessages, { replyTarget } from './chat/ChatMessages';
+import ChatComposer from './chat/ChatComposer';
 
 // Messenger-style chat (2026-10-12; routes/chat.js). Mounted once in Layout, so it lives on every
 // page: chatboxes dock at the bottom right, and a message from someone opens their box on your
@@ -26,10 +27,20 @@ export function openGroupChat(group) {
   window.dispatchEvent(new CustomEvent('chatgroup:open', { detail: group }));
 }
 
-// chat_messages.created_at is written by the server in UTC (2026-10-12: a 3:40 PM message read
-// "7:40 AM"), so it is read as UTC and shown in Philippine time, whatever the computer's own zone.
-const timeOf = (v) => (v ? parseUtc(v).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Manila' }) : '');
-const dayOf = (v) => (v ? parseUtc(v).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'Asia/Manila' }) : '');
+// A reaction or unsend (poll `updates`) replaces the message where it is shown; what the box
+// already knew about the sender (name, photo) is kept.
+const applyUpdates = (messages, list) => {
+  if (!list.length) return messages;
+  const byId = new Map(list.map((u) => [u.id, u]));
+  let changed = false;
+  const next = messages.map((m) => {
+    const u = byId.get(m.id);
+    if (!u) return m;
+    changed = true;
+    return { ...m, ...u, sender_name: u.sender_name || m.sender_name };
+  });
+  return changed ? next : messages;
+};
 
 export default function ChatDock() {
   const { user, can } = useAuth();
@@ -43,6 +54,7 @@ export default function ChatDock() {
   const groupBoxesRef = useRef(groupBoxes);
   groupBoxesRef.current = groupBoxes;
   const gLastIdRef = useRef(null);
+  const revRef = useRef(null); // where "now" is in reactions / unsends (poll rev_now)
   // Who is typing to me (user ids), and per conversation the newest of my messages they have seen.
   // Mirrored in refs so the poll can tell the server what is already on screen.
   const [typing, setTyping] = useState([]);
@@ -154,6 +166,7 @@ export default function ChatDock() {
           const { data } = await api.get('/chat/poll', { signal: ctrl.signal });
           lastIdRef.current = data.last_id;
           gLastIdRef.current = data.g_last_id ?? 0;
+          revRef.current = data.rev_now || null;
           // Unread waiting from before this page loaded: open those boxes, minimized.
           for (const p of data.pending || []) open(p, { focus: false });
           for (const g of data.pending_groups || []) openGroup(g, { focus: false });
@@ -163,7 +176,7 @@ export default function ChatDock() {
         const openIds = boxesRef.current.map((b) => b.user.id);
         const { data } = await api.get('/chat/poll', {
           params: {
-            after: lastIdRef.current, wait: 1, gafter: gLastIdRef.current ?? 0,
+            after: lastIdRef.current, wait: 1, gafter: gLastIdRef.current ?? 0, rev: revRef.current || undefined,
             typing: [...typingRef.current].sort((a, b) => a - b).join(','),
             open: openIds.join(','),
             seen: openIds.map((id) => `${id}:${seenRef.current[id] || 0}`).join(','),
@@ -174,6 +187,21 @@ export default function ChatDock() {
         setTyping(Array.isArray(data.typing) ? data.typing : []);
         for (const [id, n] of Object.entries(data.seen || {})) bumpSeen(Number(id), Number(n));
         lastIdRef.current = data.last_id;
+        if (data.rev_now) revRef.current = data.rev_now;
+        // Reactions and unsends, in the boxes that show those messages.
+        const upd = data.updates || {};
+        if ((upd.dm || []).length) {
+          setBoxes((bs) => bs.map((b) => {
+            const msgs = applyUpdates(b.messages, upd.dm.filter((u) => u.other_id === b.user.id));
+            return msgs === b.messages ? b : { ...b, messages: msgs };
+          }));
+        }
+        if ((upd.group || []).length) {
+          setGroupBoxes((bs) => bs.map((b) => {
+            const msgs = applyUpdates(b.messages, upd.group.filter((u) => u.group_id === b.group.id));
+            return msgs === b.messages ? b : { ...b, messages: msgs };
+          }));
+        }
         let incoming = false;
         for (const m of data.messages || []) {
           const mine = m.sender_user_id === user.id;
@@ -286,11 +314,9 @@ export default function ChatDock() {
 
 function ChatBox({ box, meId, onClose, onToggle, onSent, onOlder, isTyping, seenId }) {
   const lastTypingSent = useRef(0);
-  const [draft, setDraft] = useState('');
-  const [sending, setSending] = useState(false);
+  const [replyTo, setReplyTo] = useState(null);
   const [error, setError] = useState('');
   const listRef = useRef(null);
-  const inputRef = useRef(null);
   const newestRef = useRef(null);
 
   // Jump to the newest message when one arrives or the box opens -- not when older ones load above.
@@ -305,36 +331,37 @@ function ChatBox({ box, meId, onClose, onToggle, onSent, onOlder, isTyping, seen
     if (el && !box.minimized) el.scrollTop = el.scrollHeight;
   }, [box.minimized]);
 
-  useEffect(() => { if (!box.minimized) inputRef.current?.focus(); }, [box.minimized]);
-
-  async function send() {
-    const body = draft.trim();
-    if (!body || sending) return;
-    setSending(true); setError('');
-    try {
-      const { data } = await api.post('/chat/send', { to: box.user.id, body });
-      onSent(data);
-      setDraft('');
-      lastTypingSent.current = 0; // the server cleared "typing" on send; the next key may say it again
-    } catch (e) { setError(e.response?.data?.error || 'Not sent.'); }
-    setSending(false);
-    inputRef.current?.focus();
+  async function send({ body, attachments, reply_to_id }) {
+    const { data } = await api.post('/chat/send', { to: box.user.id, body, attachments, reply_to_id });
+    onSent(data);
+    setReplyTo(null);
+    lastTypingSent.current = 0; // the server cleared "typing" on send; the next key may say it again
   }
+  function typing() {
+    // Tell them we are typing -- at most every TYPING_EVERY_MS.
+    if (Date.now() - lastTypingSent.current > TYPING_EVERY_MS) {
+      lastTypingSent.current = Date.now();
+      api.post('/chat/typing', { to: box.user.id }).catch(() => {});
+    }
+  }
+  // Reactions and unsends come back to every screen over the poll (updates).
+  const act = (path, payload) => api.post(path, payload).catch((e) => setError(e.response?.data?.error || 'Could not do that.'));
 
-  let prevDay = '';
   // "Seen" goes under the newest of my messages they have read, as Messenger shows it.
   const seenAt = box.messages.reduce((n, m) => (m.sender_user_id === meId && m.id <= seenId && m.id > n ? m.id : n), 0);
   return (
     <div className={`chat-box ${box.minimized ? 'is-min' : ''}`}>
       <div className="chat-box-head" onClick={onToggle} title={box.minimized ? 'Open' : 'Minimize'}>
         <span className="chat-box-avatar">
-          <Avatar user={box.user} size={28} />
+          <Avatar user={box.user} size={32} />
           {box.user.online && <span className="chat-online-dot" />}
         </span>
         <span className="chat-box-name">
           {box.user.display_name}
           {/* Minimized, the typing bubble inside the box cannot be seen -- say it on the header. */}
-          {box.minimized && isTyping && <span className="chat-head-typing">typing…</span>}
+          {box.minimized && isTyping
+            ? <span className="chat-head-typing">typing…</span>
+            : <span className="chat-head-sub">{box.user.online ? 'Active now' : ''}</span>}
         </span>
         {box.minimized && box.unread > 0 && (
           <span className="chat-unread" title={`${box.unread} unread message${box.unread === 1 ? '' : 's'}`}>
@@ -348,44 +375,29 @@ function ChatBox({ box, meId, onClose, onToggle, onSent, onOlder, isTyping, seen
           <div className="chat-box-list" ref={listRef}>
             {box.hasMore && <button type="button" className="chat-older" onClick={onOlder}>Earlier messages</button>}
             {box.loading && <div className="chat-empty">Loading…</div>}
-            {!box.loading && !box.messages.length && <div className="chat-empty">Say hi to {box.user.display_name}.</div>}
-            {box.messages.map((m) => {
-              const d = dayOf(m.created_at);
-              const showDay = d !== prevDay;
-              prevDay = d;
-              const mine = m.sender_user_id === meId;
-              return (
-                <div key={m.id}>
-                  {showDay && <div className="chat-day">{d}</div>}
-                  <div className={`chat-msg ${mine ? 'mine' : ''}`} title={timeOf(m.created_at)}>
-                    <div className="chat-bubble">{m.body}</div>
-                    <div className="chat-time">{timeOf(m.created_at)}</div>
-                    {mine && m.id === seenAt && <div className="chat-seen">Seen</div>}
-                  </div>
-                </div>
-              );
-            })}
+            {!box.loading && !box.messages.length && (
+              <div className="chat-intro">
+                <Avatar user={box.user} size={56} />
+                <strong>{box.user.display_name}</strong>
+                <span>Say hi 👋</span>
+              </div>
+            )}
+            <ChatMessages messages={box.messages} meId={meId} otherUser={box.user} seenAt={seenAt}
+              onReply={(m) => setReplyTo(replyTarget(m, meId, box.user.display_name))}
+              onReact={(m, emoji) => act('/chat/react', { kind: 'dm', message_id: m.id, emoji })}
+              onUnsend={(m) => act('/chat/unsend', { kind: 'dm', message_id: m.id })} />
             {isTyping && (
-              <div className="chat-msg">
-                <div className="chat-bubble chat-typing" title={`${box.user.display_name} is typing`}><span /><span /><span /></div>
-                <div className="chat-time">{box.user.display_name} is typing…</div>
+              <div className="cm-row pos-single">
+                <div className="cm-avatar"><Avatar user={box.user} size={28} /></div>
+                <div className="cm-col">
+                  <div className="cm-bubble chat-typing" title={`${box.user.display_name} is typing`}><span /><span /><span /></div>
+                </div>
               </div>
             )}
           </div>
-          {error && <div className="chat-error">{error}</div>}
-          <div className="chat-box-input">
-            <textarea ref={inputRef} rows={1} value={draft} placeholder="Aa" maxLength={4000}
-              onChange={(e) => {
-                setDraft(e.target.value);
-                // Tell them we are typing -- at most every TYPING_EVERY_MS, and only with text in the box.
-                if (e.target.value.trim() && Date.now() - lastTypingSent.current > TYPING_EVERY_MS) {
-                  lastTypingSent.current = Date.now();
-                  api.post('/chat/typing', { to: box.user.id }).catch(() => {});
-                }
-              }}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />
-            <button type="button" className="chat-send" disabled={sending || !draft.trim()} onClick={send}>Send</button>
-          </div>
+          {error && <div className="chat-error" onClick={() => setError('')}>{error}</div>}
+          <ChatComposer onSend={send} onTyping={typing} focusKey={box.minimized}
+            replyTo={replyTo} onCancelReply={() => setReplyTo(null)} />
         </>
       )}
     </div>

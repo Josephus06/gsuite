@@ -19,6 +19,12 @@ function startOfTodayUtc() {
 
 async function purgeOldChat() {
   const cutoff = startOfTodayUtc();
+  // Their photos / files and reactions go with them (2026-10-13; lib/chatMedia.js). Group chats keep theirs.
+  for (const t of ['chat_attachments', 'chat_reactions']) {
+    await pool.query(
+      `DELETE x FROM ${t} x JOIN chat_messages m ON m.id = x.message_id WHERE x.kind = 'dm' AND m.created_at < ?`, [cutoff])
+      .catch((e) => { if (e.code !== 'ER_NO_SUCH_TABLE') throw e; });
+  }
   const [r] = await pool.query('DELETE FROM chat_messages WHERE created_at < ?', [cutoff]);
   return { deleted: r.affectedRows, cutoff };
 }

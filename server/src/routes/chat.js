@@ -2,6 +2,29 @@ const express = require('express');
 const { EventEmitter } = require('events');
 const pool = require('../db');
 const { requireAuth, userCan } = require('../middleware/auth');
+const { REACTIONS, TABLE, decorate, messageAccess, readFiles, saveFiles, noTable: mediaNoTable } = require('../lib/chatMedia');
+
+// What changed since ?rev (reactions, unsends) in my conversations and groups -- delivered over the
+// poll so everyone sees them live (2026-10-13).
+async function revUpdates(me, rev) {
+  if (!rev) return { dm: [], group: [] };
+  try {
+    const [dm] = await pool.query(
+      `SELECT m.id, m.sender_user_id, m.recipient_user_id, m.body, m.created_at, m.read_at, m.reply_to_id, m.unsent_at,
+              IF(m.sender_user_id = ?, m.recipient_user_id, m.sender_user_id) AS other_id
+         FROM chat_messages m WHERE m.rev_at > ? AND (m.sender_user_id = ? OR m.recipient_user_id = ?) ORDER BY m.rev_at LIMIT 200`,
+      [me, rev, me, me]);
+    const [group] = await pool.query(
+      `SELECT m.id, m.group_id, m.sender_user_id, m.body, m.created_at, m.reply_to_id, m.unsent_at, u.display_name AS sender_name
+         FROM chat_group_messages m JOIN chat_group_members gm ON gm.group_id = m.group_id AND gm.user_id = ?
+         LEFT JOIN users u ON u.id = m.sender_user_id
+        WHERE m.rev_at > ? ORDER BY m.rev_at LIMIT 200`, [me, rev]);
+    return { dm, group };
+  } catch (err) {
+    if (mediaNoTable(err) || err.code === 'ER_NO_SUCH_TABLE') return { dm: [], group: [] };
+    throw err;
+  }
+}
 
 const router = express.Router();
 
@@ -119,13 +142,18 @@ router.get('/poll', requireAuth, requireChat, async (req, res, next) => {
           WHERE m.recipient_user_id = ? AND m.read_at IS NULL`, [me]);
       // Group chats (2026-10-13): where "now" is in my groups, and the groups with something unread.
       const g = await groupPollStart(me);
-      return res.json({ last_id: Number(last), messages: [], unread: Number(unread), pending, ...g });
+      const [[{ now }]] = await pool.query('SELECT NOW(3) AS now');
+      return res.json({ last_id: Number(last), messages: [], unread: Number(unread), pending, ...g, rev_now: now });
     }
     // Group messages since ?gafter, in groups I belong to.
     const gAfter = Math.max(0, Number(req.query.gafter) || 0);
     const fetchNewGroup = async () => (req.query.gafter === undefined ? [] : await newGroupMessages(me, gAfter));
+    // Reactions / unsends since ?rev; the time this request started is where the next one picks up.
+    const [[{ now: revNow }]] = await pool.query('SELECT NOW(3) AS now');
+    const rev = req.query.rev ? String(req.query.rev) : null;
+    const fetchUpdates = () => revUpdates(me, rev);
     const fetchNew = async () => (await pool.query(
-      `SELECT m.id, m.sender_user_id, m.recipient_user_id, m.body, m.created_at, m.read_at,
+      `SELECT m.id, m.sender_user_id, m.recipient_user_id, m.body, m.created_at, m.read_at, m.reply_to_id, m.unsent_at,
               o.id AS other_id, o.display_name AS other_name, o.avatar_data AS other_avatar
          FROM chat_messages m
          JOIN users o ON o.id = IF(m.sender_user_id = ?, m.recipient_user_id, m.sender_user_id)
@@ -147,9 +175,11 @@ router.get('/poll', requireAuth, requireChat, async (req, res, next) => {
     const seenSig = (m) => openIds.map((id) => `${id}:${m[id] || 0}`).join(',');
     let messages = await fetchNew();
     let groupMessages = await fetchNewGroup();
+    let updates = await fetchUpdates();
     let typing = await typingTo(me);
     let seen = await seenBy(me, openIds);
-    const unchanged = () => !messages.length && !groupMessages.length && typing.join(',') === known && seenSig(seen) === knownSeen;
+    const unchanged = () => !messages.length && !groupMessages.length && !updates.dm.length && !updates.group.length
+      && typing.join(',') === known && seenSig(seen) === knownSeen;
     if (unchanged() && req.query.wait === '1') {
       let gone = false;
       res.on('close', () => { if (!res.writableEnded) gone = true; });
@@ -159,6 +189,7 @@ router.get('/poll', requireAuth, requireChat, async (req, res, next) => {
         if (gone) return undefined;
         messages = await fetchNew();
         groupMessages = await fetchNewGroup();
+        updates = await fetchUpdates();
         typing = await typingTo(me);
         seen = await seenBy(me, openIds);
       }
@@ -169,7 +200,14 @@ router.get('/poll', requireAuth, requireChat, async (req, res, next) => {
       : [[{ unread }]];
     const lastId = messages.length ? messages[messages.length - 1].id : after;
     const gLastId = groupMessages.length ? groupMessages[groupMessages.length - 1].id : gAfter;
-    return res.json({ last_id: lastId, messages, unread: Number(unreadNow), typing, seen, group_messages: groupMessages, g_last_id: gLastId });
+    await decorate('dm', messages, me);
+    await decorate('group', groupMessages, me);
+    await decorate('dm', updates.dm, me);
+    await decorate('group', updates.group, me);
+    return res.json({
+      last_id: lastId, messages, unread: Number(unreadNow), typing, seen, group_messages: groupMessages, g_last_id: gLastId,
+      updates, rev_now: revNow,
+    });
   } catch (err) { return next(err); }
 });
 
@@ -197,7 +235,7 @@ router.get('/thread/:userId', requireAuth, requireChat, async (req, res, next) =
     const other = Number(req.params.userId);
     const before = Number(req.query.before) || null;
     const [rows] = await pool.query(
-      `SELECT id, sender_user_id, recipient_user_id, body, created_at, read_at FROM chat_messages
+      `SELECT id, sender_user_id, recipient_user_id, body, created_at, read_at, reply_to_id, unsent_at FROM chat_messages
         WHERE ((sender_user_id = ? AND recipient_user_id = ?) OR (sender_user_id = ? AND recipient_user_id = ?))
           ${before ? 'AND id < ?' : ''}
         ORDER BY id DESC LIMIT 50`,
@@ -205,6 +243,7 @@ router.get('/thread/:userId', requireAuth, requireChat, async (req, res, next) =
     const [[u]] = await pool.query(
       `SELECT id, display_name, avatar_data, (last_seen_at IS NOT NULL AND last_seen_at >= NOW() - INTERVAL ? MINUTE) AS online
          FROM users WHERE id = ?`, [ONLINE_MINUTES, other]);
+    await decorate('dm', rows, me);
     res.json({ user: u ? { ...u, online: !!u.online } : null, messages: rows.reverse(), has_more: rows.length === 50 });
   } catch (err) { next(err); }
 });
@@ -214,19 +253,40 @@ router.post('/send', requireAuth, requireChat, async (req, res, next) => {
     const me = req.user.id;
     const to = Number(req.body.to);
     const body = String(req.body.body || '').trim();
-    if (!body) return res.status(400).json({ error: 'Type a message.' });
+    // Photos and files (2026-10-13): a message may be only those.
+    const parsed = readFiles(req.body.attachments);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    if (!body && !parsed.files.length) return res.status(400).json({ error: 'Type a message.' });
     if (body.length > MAX_BODY) return res.status(400).json({ error: `A message can be at most ${MAX_BODY} characters.` });
     if (!to || to === me) return res.status(400).json({ error: 'Choose who to message.' });
     const [[u]] = await pool.query('SELECT id, is_active FROM users WHERE id = ?', [to]);
     if (!u || !u.is_active) return res.status(404).json({ error: 'That user is not available.' });
     if (!(await canChat(to))) return res.status(403).json({ error: 'That user does not have Chat.' });
-    const [r] = await pool.query('INSERT INTO chat_messages (sender_user_id, recipient_user_id, body) VALUES (?, ?, ?)', [me, to, body]);
+    // A reply names a message of this same conversation.
+    let replyTo = Number(req.body.reply_to_id) || null;
+    if (replyTo) {
+      const [[rm]] = await pool.query(
+        `SELECT id FROM chat_messages WHERE id = ? AND ((sender_user_id = ? AND recipient_user_id = ?) OR (sender_user_id = ? AND recipient_user_id = ?))`,
+        [replyTo, me, to, to, me]);
+      if (!rm) replyTo = null;
+    }
+    const conn = await pool.getConnection();
+    let r;
+    try {
+      await conn.beginTransaction();
+      [r] = replyTo
+        ? await conn.query('INSERT INTO chat_messages (sender_user_id, recipient_user_id, body, reply_to_id) VALUES (?, ?, ?, ?)', [me, to, body, replyTo])
+        : await conn.query('INSERT INTO chat_messages (sender_user_id, recipient_user_id, body) VALUES (?, ?, ?)', [me, to, body]);
+      await saveFiles(conn, 'dm', r.insertId, parsed.files);
+      await conn.commit();
+    } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
     // Sent: no longer typing to them.
     await pool.query('DELETE FROM chat_typing WHERE user_id = ? AND to_user_id = ?', [me, to]).catch(() => {});
     // Deliver now to anyone waiting on this server -- the recipient, and the sender's other tabs.
     wake(to); wake(me);
     const [[row]] = await pool.query(
-      'SELECT id, sender_user_id, recipient_user_id, body, created_at, read_at FROM chat_messages WHERE id = ?', [r.insertId]);
+      'SELECT id, sender_user_id, recipient_user_id, body, created_at, read_at, reply_to_id, unsent_at FROM chat_messages WHERE id = ?', [r.insertId]);
+    await decorate('dm', [row], me);
     res.status(201).json(row);
   } catch (err) { next(err); }
 });
@@ -272,7 +332,7 @@ async function groupPollStart(me) {
 async function newGroupMessages(me, after) {
   try {
     const [rows] = await pool.query(
-      `SELECT m.id, m.group_id, m.sender_user_id, m.body, m.created_at, g.name AS group_name, u.display_name AS sender_name
+      `SELECT m.id, m.group_id, m.sender_user_id, m.body, m.created_at, m.reply_to_id, m.unsent_at, g.name AS group_name, u.display_name AS sender_name
          FROM chat_group_messages m
          JOIN chat_group_members gm ON gm.group_id = m.group_id AND gm.user_id = ?
          JOIN chat_groups g ON g.id = m.group_id
@@ -431,10 +491,11 @@ router.get('/groups/:id/thread', requireAuth, requireChat, async (req, res, next
     if (!g) return undefined;
     const before = Number(req.query.before) || null;
     const [rows] = await pool.query(
-      `SELECT m.id, m.group_id, m.sender_user_id, m.body, m.created_at, u.display_name AS sender_name
+      `SELECT m.id, m.group_id, m.sender_user_id, m.body, m.created_at, m.reply_to_id, m.unsent_at, u.display_name AS sender_name
          FROM chat_group_messages m LEFT JOIN users u ON u.id = m.sender_user_id
         WHERE m.group_id = ? ${before ? 'AND m.id < ?' : ''} ORDER BY m.id DESC LIMIT 50`,
       before ? [g.id, before] : [g.id]);
+    await decorate('group', rows, req.user.id);
     const [[me]] = await pool.query('SELECT last_read_id FROM chat_group_members WHERE group_id = ? AND user_id = ?', [g.id, req.user.id]);
     return res.json({
       group: { id: g.id, name: g.name, is_owner: Number(g.created_by_user_id) === Number(req.user.id), member_count: (await memberIds(g.id)).length },
@@ -448,14 +509,31 @@ router.post('/groups/:id/send', requireAuth, requireChat, async (req, res, next)
     const g = await memberGroup(req, res);
     if (!g) return undefined;
     const body = String(req.body.body || '').trim();
-    if (!body) return res.status(400).json({ error: 'Type a message.' });
+    const parsed = readFiles(req.body.attachments);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    if (!body && !parsed.files.length) return res.status(400).json({ error: 'Type a message.' });
     if (body.length > MAX_BODY) return res.status(400).json({ error: `A message can be at most ${MAX_BODY} characters.` });
-    const [r] = await pool.query('INSERT INTO chat_group_messages (group_id, sender_user_id, body) VALUES (?, ?, ?)', [g.id, req.user.id, body]);
+    let replyTo = Number(req.body.reply_to_id) || null;
+    if (replyTo) {
+      const [[rm]] = await pool.query('SELECT id FROM chat_group_messages WHERE id = ? AND group_id = ?', [replyTo, g.id]);
+      if (!rm) replyTo = null;
+    }
+    const conn = await pool.getConnection();
+    let r;
+    try {
+      await conn.beginTransaction();
+      [r] = replyTo
+        ? await conn.query('INSERT INTO chat_group_messages (group_id, sender_user_id, body, reply_to_id) VALUES (?, ?, ?, ?)', [g.id, req.user.id, body, replyTo])
+        : await conn.query('INSERT INTO chat_group_messages (group_id, sender_user_id, body) VALUES (?, ?, ?)', [g.id, req.user.id, body]);
+      await saveFiles(conn, 'group', r.insertId, parsed.files);
+      await conn.commit();
+    } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
     await pool.query('UPDATE chat_group_members SET last_read_id = ? WHERE group_id = ? AND user_id = ?', [r.insertId, g.id, req.user.id]);
     (await memberIds(g.id)).forEach((id) => wake(id));
     const [[row]] = await pool.query(
-      `SELECT m.id, m.group_id, m.sender_user_id, m.body, m.created_at, u.display_name AS sender_name
+      `SELECT m.id, m.group_id, m.sender_user_id, m.body, m.created_at, m.reply_to_id, m.unsent_at, u.display_name AS sender_name
          FROM chat_group_messages m LEFT JOIN users u ON u.id = m.sender_user_id WHERE m.id = ?`, [r.insertId]);
+    await decorate('group', [row], req.user.id);
     return res.status(201).json(row);
   } catch (err) { return next(err); }
 });
@@ -469,6 +547,67 @@ router.post('/groups/:id/read', requireAuth, requireChat, async (req, res, next)
       `UPDATE chat_group_members SET last_read_id = (SELECT COALESCE(MAX(id), 0) FROM chat_group_messages WHERE group_id = ?)
         WHERE group_id = ? AND user_id = ?`, [g.id, g.id, req.user.id]);
     return res.json({ ok: true });
+  } catch (err) { return next(err); }
+});
+
+/* -------------------------------------------------------------------------- */
+/* Reactions, unsend, files (2026-10-13; lib/chatMedia.js)                     */
+/* -------------------------------------------------------------------------- */
+const kindOf = (v) => (v === 'group' ? 'group' : v === 'dm' ? 'dm' : null);
+
+// React to a message -- one reaction per person; the same emoji again takes it off.
+router.post('/react', requireAuth, requireChat, async (req, res, next) => {
+  try {
+    const kind = kindOf(req.body.kind);
+    const id = Number(req.body.message_id);
+    const emoji = req.body.emoji == null ? null : String(req.body.emoji);
+    if (!kind || !id) return res.status(400).json({ error: 'Which message?' });
+    if (emoji && !REACTIONS.includes(emoji)) return res.status(400).json({ error: 'Not one of the reactions.' });
+    const m = await messageAccess(kind, id, req.user.id);
+    if (!m) return res.status(404).json({ error: 'Message not found.' });
+    if (m.unsent_at) return res.status(409).json({ error: 'That message was unsent.' });
+    const [[cur]] = await pool.query('SELECT emoji FROM chat_reactions WHERE kind = ? AND message_id = ? AND user_id = ?', [kind, id, req.user.id]);
+    if (!emoji || (cur && cur.emoji === emoji)) {
+      await pool.query('DELETE FROM chat_reactions WHERE kind = ? AND message_id = ? AND user_id = ?', [kind, id, req.user.id]);
+    } else {
+      await pool.query(
+        `INSERT INTO chat_reactions (kind, message_id, user_id, emoji) VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE emoji = VALUES(emoji), created_at = NOW(3)`, [kind, id, req.user.id, emoji]);
+    }
+    await pool.query(`UPDATE ${TABLE[kind]} SET rev_at = NOW(3) WHERE id = ?`, [id]);
+    m.notify.forEach((u) => wake(u));
+    return res.json({ ok: true });
+  } catch (err) { return next(err); }
+});
+
+// Unsend my own message: everyone sees "unsent"; its files are removed.
+router.post('/unsend', requireAuth, requireChat, async (req, res, next) => {
+  try {
+    const kind = kindOf(req.body.kind);
+    const id = Number(req.body.message_id);
+    if (!kind || !id) return res.status(400).json({ error: 'Which message?' });
+    const m = await messageAccess(kind, id, req.user.id);
+    if (!m) return res.status(404).json({ error: 'Message not found.' });
+    if (Number(m.sender_user_id) !== Number(req.user.id)) return res.status(403).json({ error: 'You can only unsend your own messages.' });
+    await pool.query(`UPDATE ${TABLE[kind]} SET unsent_at = NOW(), body = '', rev_at = NOW(3) WHERE id = ?`, [id]);
+    await pool.query('DELETE FROM chat_attachments WHERE kind = ? AND message_id = ?', [kind, id]);
+    await pool.query('DELETE FROM chat_reactions WHERE kind = ? AND message_id = ?', [kind, id]);
+    m.notify.forEach((u) => wake(u));
+    return res.json({ ok: true });
+  } catch (err) { return next(err); }
+});
+
+// A photo or file sent in a chat -- to the people in that conversation only.
+router.get('/attachments/:id', requireAuth, requireChat, async (req, res, next) => {
+  try {
+    const [[a]] = await pool.query('SELECT id, kind, message_id, file_name, mime_type, file_data FROM chat_attachments WHERE id = ?', [Number(req.params.id)]);
+    if (!a) return res.status(404).json({ error: 'Not found' });
+    if (!(await messageAccess(a.kind, a.message_id, req.user.id))) return res.status(404).json({ error: 'Not found' });
+    res.setHeader('Content-Type', a.mime_type || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    const inline = /^(image\/|application\/pdf)/.test(a.mime_type || '') && req.query.download !== '1';
+    res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${String(a.file_name).replace(/"/g, '')}"`);
+    return res.send(a.file_data);
   } catch (err) { return next(err); }
 });
 
