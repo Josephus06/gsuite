@@ -2765,3 +2765,16 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .so-jo-cancel { margin-left: 8px; width: 20px; height: 20px; padding: 0; border: 1px solid var(--danger, #dc2626); border-radius: 50%;
   background: transparent; color: var(--danger, #dc2626); font-size: 14px; line-height: 17px; cursor: pointer; vertical-align: middle; }
 .so-jo-cancel:hover { background: var(--danger, #dc2626); color: #fff; }
+
+/* A form's action bar (Submit / Note / Approve / Reject / Bill ...) frozen under the top menu while
+   a long form -- a liquidation's expense list -- is scrolled (asked 2026-10-13; FormView). */
+.page-header.is-sticky {
+  position: sticky;
+  top: 56px; /* the frozen .topnav's height */
+  z-index: 25;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}

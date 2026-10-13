@@ -163,8 +163,12 @@ export default function FormView() {
 
   return (
     <div>
-      <div className="page-header">
-        <div />
+      <div className="page-header is-sticky">
+        {/* Frozen while scrolling (2026-10-13), so it says which form it is acting on. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600 }}>
+          {TYPE_LABELS[doc.type] || pretty(doc.type)} {doc.request_no}
+          {doc.status && <span className={`badge ${STATUS_BADGE[doc.status] || 'badge-muted'}`}>{pretty(doc.status)}</span>}
+        </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Link className="btn btn-sm" to={'/forms'}>Back</Link>
           {printable && can('/forms', 'can_print') && (
