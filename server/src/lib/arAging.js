@@ -134,7 +134,7 @@ async function collectOpenItemsFromDocs(asOf, filters = {}) {
   const invLoc = locationClause('si', filters);
   const [invoices] = await pool.query(
     `SELECT si.id, c.id AS customer_id, c.name AS customer_name, si.date_created, si.date_due, si.gross_amount,
-            si.status, si.amount_due, si.invoice_no, si.bs_si_no, si.po_no, si.memo,
+            si.status, si.amount_due, si.invoice_no, si.bs_si_no, si.po_no, si.memo, si.term, si.sales_rep_id,
             loc.location_name, CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep
      FROM sales_invoices si
      LEFT JOIN sales_orders so ON so.id = si.sales_order_id
@@ -171,7 +171,7 @@ async function collectOpenItemsFromDocs(asOf, filters = {}) {
   const memoLoc = locationClause('cm', filters);
   const [memos] = await pool.query(
     `SELECT cm.id, cm.customer_id, c.name AS customer_name, cm.date_created, cm.gross_amount,
-            cm.credit_memo_no, cm.memo, loc.location_name
+            cm.credit_memo_no, cm.memo, cm.sales_rep_id, loc.location_name
      FROM credit_memos cm
      JOIN customers c ON c.id = cm.customer_id
      LEFT JOIN locations loc ON loc.id = cm.office_location_id
@@ -237,6 +237,7 @@ async function collectOpenItemsFromDocs(asOf, filters = {}) {
       original_amount: round2(inv.gross_amount), balance: round2(remaining),
       bs_no: inv.bs_si_no || null, po_no: inv.po_no || null, memo: inv.memo || null,
       location_name: inv.location_name || null, sales_rep: inv.sales_rep || null,
+      term: inv.term || null, sales_rep_id: inv.sales_rep_id || null,
       // The invoice header insists it is settled and nothing in the data agrees. Carried on the
       // item so the customer row can show how much of its balance rests on that disagreement.
       marked_paid_unevidenced: isMarkedPaid(inv) && settled < 0.005,
@@ -251,6 +252,7 @@ async function collectOpenItemsFromDocs(asOf, filters = {}) {
       date: cm.date_created, due_date: null, aging_date: cm.date_created,
       original_amount: round2(cm.gross_amount), balance: round2(-remaining),
       bs_no: null, po_no: null, memo: cm.memo || null, location_name: cm.location_name || null,
+      sales_rep_id: cm.sales_rep_id || null,
       marked_paid_unevidenced: false,
     });
   }
@@ -283,9 +285,31 @@ function rowKey(item) {
   return item.customer_id != null ? `id:${item.customer_id}` : `name:${String(item.customer_name || '').trim().toUpperCase()}`;
 }
 
+// Per Term and per Account Officer (asked 2026-10-13) go by each INVOICE's own term and sales rep
+// -- the customer record's are almost all blank (no customer has an Account Officer; 442 of 35,261
+// have a term), while every invoice carries both. A credit memo has a sales rep but no term; an
+// unapplied payment has neither, so it drops out while either filter is on. An opening item answers
+// for the T1S invoice it is linked to, or else by the source's sales rep name.
+const norm = (v) => String(v || '').replace(/\s+/g, ' ').trim().toUpperCase();
 async function buildArAging(asOf, filters = {}) {
-  const items = await collectOpenItems(asOf, filters);
-
+  let items = await collectOpenItems(asOf, filters);
+  const term = filters.term ? norm(filters.term) : null;
+  const officerId = filters.officerId ? Number(filters.officerId) : null;
+  if (term || officerId) {
+    let officerName = null;
+    if (officerId) {
+      const [[e]] = await pool.query("SELECT CONCAT(first_name, ' ', last_name) AS name FROM employees WHERE id = ?", [officerId]);
+      officerName = norm(e?.name);
+    }
+    items = items.filter((i) => {
+      if (term && norm(i.term) !== term) return false;
+      if (officerId) {
+        if (i.sales_rep_id) return Number(i.sales_rep_id) === officerId;
+        return !!officerName && norm(i.sales_rep) === officerName;
+      }
+      return true;
+    });
+  }
   // Accumulate every contribution into per-customer buckets.
   const byCustomer = new Map();
   function customerRow(item) {
@@ -293,7 +317,7 @@ async function buildArAging(asOf, filters = {}) {
     if (!byCustomer.has(key)) {
       byCustomer.set(key, {
         row_key: key, customer_id: item.customer_id ?? null, customer_name: item.customer_name || '',
-        ...emptyBuckets(), unevidenced_count: 0, unevidenced_amount: 0,
+        ...emptyBuckets(), unevidenced_count: 0, unevidenced_amount: 0, terms: new Set(), officers: new Set(),
       });
     }
     return byCustomer.get(key);
@@ -302,6 +326,8 @@ async function buildArAging(asOf, filters = {}) {
   for (const item of items) {
     const row = customerRow(item);
     addToBucket(row, item.balance, item.aging_date, asOf);
+    if (item.term) row.terms.add(String(item.term).trim());
+    if (item.sales_rep && String(item.sales_rep).trim()) row.officers.add(String(item.sales_rep).trim());
     if (item.marked_paid_unevidenced) {
       row.unevidenced_count += 1;
       row.unevidenced_amount += item.balance;
@@ -316,7 +342,9 @@ async function buildArAging(asOf, filters = {}) {
       };
       const total = round2(buckets.current + buckets.d1_30 + buckets.d31_60 + buckets.d61_90 + buckets.over_90);
       return {
-        row_key: r.row_key, customer_id: r.customer_id, customer_name: r.customer_name, ...buckets, total_balance: total,
+        row_key: r.row_key, customer_id: r.customer_id, customer_name: r.customer_name,
+        term_name: [...r.terms].join(', ') || null, officer_name: [...r.officers].join(', ') || null,
+        ...buckets, total_balance: total,
         unevidenced_count: r.unevidenced_count,
         unevidenced_amount: round2(r.unevidenced_amount),
       };
@@ -710,7 +738,7 @@ async function collectOpenItems(asOf, filters = {}) {
   const invById = new Map();
   if (invIds.length) {
     const [inv] = await pool.query(
-      `SELECT si.id, si.bs_si_no, si.po_no, si.memo, CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep
+      `SELECT si.id, si.bs_si_no, si.po_no, si.memo, si.term, si.sales_rep_id, CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep
          FROM sales_invoices si LEFT JOIN employees sr ON sr.id = si.sales_rep_id WHERE si.id IN (?)`, [invIds]);
     inv.forEach((r) => invById.set(r.id, r));
   }
@@ -725,6 +753,8 @@ async function collectOpenItems(asOf, filters = {}) {
       memo: o.memo || (o.type === 'Invoice' ? invById.get(o.id) : null)?.memo || (o.src_location === undefined ? 'Opening balance from the source system' : null),
       location_name: o.location_name || o.src_location || null,
       sales_rep: o.sales_rep || (o.type === 'Invoice' ? invById.get(o.id) : null)?.sales_rep || null,
+      term: (o.type === 'Invoice' ? invById.get(o.id) : null)?.term || null,
+      sales_rep_id: (o.type === 'Invoice' ? invById.get(o.id) : null)?.sales_rep_id || null,
       marked_paid_unevidenced: false, opening: true,
     })),
     ...items.filter(keepAfterStart(books, await lateEnteredKeys(books))),

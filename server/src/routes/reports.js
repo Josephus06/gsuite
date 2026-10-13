@@ -283,6 +283,10 @@ router.get('/ar-aging', requireAuth, requirePermission(AR_AGING_ROUTE, 'can_view
       locationId: req.query.locationId ? Number(req.query.locationId) : null,
       noLocation: req.query.noLocation === 'true' || req.query.noLocation === '1',
       nameStarts: req.query.nameStarts || null,
+      // Per Term, per Account Officer, per Customer (2026-10-13; lib/arAging.js).
+      term: req.query.term ? String(req.query.term) : null,
+      officerId: req.query.officerId ? Number(req.query.officerId) : null,
+      customerId: req.query.customerId ? Number(req.query.customerId) : null,
     };
     const data = await buildArAging(req.query.asOf || today(), filters);
     // ?format=xlsx -- the Extract button: the same rows and totals as a workbook.
@@ -291,6 +295,27 @@ router.get('/ar-aging', requireAuth, requirePermission(AR_AGING_ROUTE, 'can_view
   } catch (err) {
     next(err);
   }
+});
+
+// The filter lists (2026-10-13): the terms and the sales reps (Account Officers) that invoices
+// actually carry -- what the report filters on -- and a customer search. Under AR Aging's own
+// permission, not Customers' or Employees'.
+router.get('/ar-aging/filter-options', requireAuth, requirePermission(AR_AGING_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [terms] = await pool.query(
+      `SELECT term AS id, term AS term_name FROM sales_invoices
+        WHERE COALESCE(TRIM(term), '') <> '' AND status <> 'cancelled' GROUP BY term ORDER BY term`);
+    const [officers] = await pool.query(
+      `SELECT e.id, TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))) AS name
+         FROM employees e WHERE e.id IN (SELECT DISTINCT sales_rep_id FROM sales_invoices WHERE sales_rep_id IS NOT NULL)
+        ORDER BY name`);
+    res.json({ terms, officers });
+  } catch (err) { next(err); }
+});
+router.get('/ar-aging/customers', requireAuth, requirePermission(AR_AGING_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    return res.json(await searchArCustomers(req.query.q));
+  } catch (err) { return next(err); }
 });
 
 router.get('/ar-aging/customer/:customerId/details', requireAuth, requirePermission(AR_AGING_ROUTE, 'can_view'), async (req, res, next) => {

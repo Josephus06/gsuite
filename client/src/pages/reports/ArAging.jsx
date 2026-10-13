@@ -12,6 +12,7 @@ import { displayDate } from '../../utils/dates';
 function today() { return new Date().toISOString().slice(0, 10); }
 import { downloadFile } from '../../utils/downloadFile';
 import FilterPicker from '../../components/FilterPicker';
+import EntityPicker from '../../components/EntityPicker';
 function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 // Mirrors the real system's Accounting > Reports > AR Aging: a Location / Name Starts /
@@ -36,6 +37,13 @@ export default function ArAging() {
   const [noLocation, setNoLocation] = useState(false);
   const [nameStarts, setNameStarts] = useState('');
   const [locations, setLocations] = useState([]);
+  // Per Term, per Account Officer, per Customer (2026-10-13). Term and Account Officer are each invoice's own.
+  const [termId, setTermId] = useState('');
+  const [officerId, setOfficerId] = useState('');
+  const [customer, setCustomer] = useState(null);
+  const [terms, setTerms] = useState([]);
+  const [officers, setOfficers] = useState([]);
+  const [customerOptions, setCustomerOptions] = useState([]);
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -44,6 +52,7 @@ export default function ArAging() {
 
   useEffect(() => {
     api.get('/lookups/locations').then(({ data }) => setLocations(data)).catch(() => {});
+    api.get('/reports/ar-aging/filter-options').then(({ data }) => { setTerms(data.terms || []); setOfficers(data.officers || []); }).catch(() => {});
   }, []);
 
   function queryParams() {
@@ -51,7 +60,17 @@ export default function ArAging() {
     if (noLocation) params.noLocation = true;
     else if (locationId) params.locationId = locationId;
     if (nameStarts) params.nameStarts = nameStarts;
+    if (termId) params.term = termId;
+    if (officerId) params.officerId = officerId;
+    if (customer) params.customerId = customer.id;
     return params;
+  }
+
+  // The customer list is searched on the server (over 20,000 customers); the selection is kept in it.
+  function searchCustomers(text) {
+    api.get('/reports/ar-aging/customers', { params: { q: (text || '').trim() } })
+      .then(({ data }) => setCustomerOptions(customer && !data.some((c) => String(c.id) === String(customer.id)) ? [customer, ...data] : data))
+      .catch(() => {});
   }
 
   // Extract: the same report, as an Excel workbook, under the filters on screen.
@@ -115,6 +134,26 @@ export default function ArAging() {
             <input type="checkbox" checked={noLocation} onChange={(e) => setNoLocation(e.target.checked)} />
           </div>
           <div className="field">
+            <label>Term</label>
+            <FilterPicker label="Term" items={terms} value={termId} onChange={(v) => setTermId(v)}
+              getLabel={(t) => t.term_name} allLabel="--ALL--" />
+          </div>
+          <div className="field">
+            <label>Account Officer</label>
+            <FilterPicker label="Account Officer" items={officers} value={officerId} onChange={(v) => setOfficerId(v)}
+              getLabel={(o) => o.name} allLabel="--ALL--" />
+          </div>
+          <div className="field">
+            <label>Customer</label>
+            <EntityPicker
+              label="Customer" items={customerOptions} value={customer?.id ?? ''} getLabel={(c) => c.name}
+              columns={[{ key: 'name', label: 'Customer' }]} searchKeys={['name']} placeholder="--ALL--"
+              onSearch={searchCustomers}
+              onSelect={(c) => setCustomer(c || null)}
+              onClear={() => setCustomer(null)}
+            />
+          </div>
+          <div className="field">
             <label>Date as of</label>
             <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
           </div>
@@ -153,6 +192,8 @@ export default function ArAging() {
               <thead>
                 <tr>
                   <th>Customer Name</th>
+                  <th>Term</th>
+                  <th>Account Officer</th>
                   <th style={{ textAlign: 'right' }}>Current</th>
                   <th style={{ textAlign: 'right' }}>1-30 days</th>
                   <th style={{ textAlign: 'right' }}>31-60 days</th>
@@ -164,11 +205,13 @@ export default function ArAging() {
               </thead>
               <tbody>
                 {report.rows.length === 0 && (
-                  <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>No outstanding balances as of this date.</td></tr>
+                  <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>No outstanding balances as of this date.</td></tr>
                 )}
                 {report.rows.map((row) => (
                   <tr key={row.row_key || row.customer_id}>
                     <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
+                    <td data-label="Term">{row.term_name || '—'}</td>
+                    <td data-label="Account Officer">{row.officer_name || '—'}</td>
                     <td data-label="Current" style={{ textAlign: 'right' }}>{money(row.current)}</td>
                     <td data-label="1-30 days" style={{ textAlign: 'right' }}>{money(row.d1_30)}</td>
                     <td data-label="31-60 days" style={{ textAlign: 'right' }}>{money(row.d31_60)}</td>
@@ -202,7 +245,7 @@ export default function ArAging() {
               {report.rows.length > 0 && (
                 <tfoot>
                   <tr style={{ fontWeight: 700 }}>
-                    <td style={{ textAlign: 'right' }}>Total :</td>
+                    <td colSpan={3} style={{ textAlign: 'right' }}>Total :</td>
                     <td style={{ textAlign: 'right' }}>{money(report.totals.current)}</td>
                     <td style={{ textAlign: 'right' }}>{money(report.totals.d1_30)}</td>
                     <td style={{ textAlign: 'right' }}>{money(report.totals.d31_60)}</td>
