@@ -25,6 +25,7 @@ const {
   loadVisiblePost,
   fetchPostPage,
 } = require('../lib/feedData');
+const { checkAttach, setPostVideos, removeFiles, deletePostVideos } = require('../lib/feedVideos');
 
 const router = express.Router();
 
@@ -326,8 +327,11 @@ router.post('/', requireAuth, async (req, res, next) => {
     let images;
     try { images = readImages(req.body); } catch (e) { return res.status(400).json({ error: e.message }); }
     const audience = AUDIENCES.includes(req.body.audience) ? req.body.audience : 'public';
+    // An uploaded video (2026-10-13; routes/feedVideos.js), by id.
+    const vids = await checkAttach(req.user.id, req.body.video_ids);
+    if (vids.error) return res.status(400).json({ error: vids.error });
 
-    if (!body && !images.length) return res.status(400).json({ error: 'Write something or add a photo.' });
+    if (!body && !images.length && !vids.ids.length) return res.status(400).json({ error: 'Write something or add a photo or video.' });
     if (body.length > MAX_BODY) return res.status(400).json({ error: 'Post is too long.' });
 
     const { groupId, isAdmin } = await viewerContext(req.user.id);
@@ -348,6 +352,7 @@ router.post('/', requireAuth, async (req, res, next) => {
       );
       postId = result.insertId;
       await writeImages(conn, postId, images);
+      if (vids.ids.length) await setPostVideos(conn, postId, vids.ids);
       await conn.commit();
     } catch (e) {
       await conn.rollback();
@@ -395,7 +400,19 @@ router.put('/:id', requireAuth, async (req, res, next) => {
       );
       images = existingImages.map((i) => i.image_data);
     }
-    if (!body && !images.length) return res.status(400).json({ error: 'Write something or add a photo.' });
+    // Videos the same way: video_ids absent leaves them; a list (even empty) sets them.
+    const touchesVideos = Array.isArray(req.body.video_ids);
+    let videoIds = [];
+    if (touchesVideos) {
+      const vids = await checkAttach(req.user.id, req.body.video_ids, req.params.id);
+      if (vids.error) return res.status(400).json({ error: vids.error });
+      videoIds = vids.ids;
+    } else {
+      const [kept] = await pool.query('SELECT id FROM feed_videos WHERE post_id = ?', [req.params.id])
+        .catch((e) => { if (e.code === 'ER_NO_SUCH_TABLE') return [[]]; throw e; });
+      videoIds = kept.map((v) => Number(v.id));
+    }
+    if (!body && !images.length && !videoIds.length) return res.status(400).json({ error: 'Write something or add a photo or video.' });
     if (body.length > MAX_BODY) return res.status(400).json({ error: 'Post is too long.' });
 
     const audience = AUDIENCES.includes(req.body.audience) ? req.body.audience : existing.audience;
@@ -421,7 +438,10 @@ router.put('/:id', requireAuth, async (req, res, next) => {
         [body || null, audience, target.id, req.params.id]
       );
       if (touchesImages) await writeImages(conn, req.params.id, images);
+      let droppedFiles = [];
+      if (touchesVideos) droppedFiles = await setPostVideos(conn, req.params.id, videoIds);
       await conn.commit();
+      await removeFiles(droppedFiles); // only once the rows are gone for good
     } catch (e) {
       await conn.rollback();
       throw e;
@@ -453,6 +473,8 @@ router.delete('/:id', requireAuth, async (req, res, next) => {
     }
 
     await pool.query('UPDATE feed_posts SET is_deleted = 1 WHERE id = ?', [req.params.id]);
+    // The post stays (soft-deleted) but its video goes -- gigabytes nobody can see any more.
+    await deletePostVideos(req.params.id).catch((e) => console.error('feed: video delete failed', e.message));
     res.json({ ok: true });
   } catch (err) {
     next(err);

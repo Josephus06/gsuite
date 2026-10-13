@@ -6,6 +6,7 @@
 // the kind of thing that silently drifts and leaks a private post, so there is exactly one
 // copy of the rule and both routes go through it.
 const pool = require('../db');
+const { videosForPosts } = require('./feedVideos');
 
 const REACTIONS = ['like', 'love', 'care', 'haha', 'wow', 'sad', 'angry'];
 const AUDIENCES = ['public', 'department', 'private'];
@@ -80,6 +81,7 @@ function shapePost(row, viewerId) {
     // undefined -- it is not filled, because doing so is what made the feed 2.84 MB.
     images: [],
     image_ids: [],
+    videos: [], // feed videos (2026-10-13): { id, file_name, mime_type, size_bytes }
     audience: row.audience,
     // Which department a 'department' post was addressed to. Needed so the edit dialog can
     // reopen on the right one -- an admin can address any department, so it cannot be assumed
@@ -153,6 +155,11 @@ async function decoratePosts(posts, viewerId, isAdmin) {
     const post = byId.get(Number(img.post_id));
     if (!post) continue;
     post.image_ids.push(img.id);
+  }
+  // Videos (2026-10-13): ids and names; the bytes stream from /api/feed/videos/:id/stream.
+  for (const v of await videosForPosts(ids)) {
+    const post = byId.get(Number(v.post_id));
+    if (post) post.videos.push({ id: v.id, file_name: v.file_name, mime_type: v.mime_type, size_bytes: Number(v.size_bytes) });
   }
 
   const [tallies] = await pool.query(

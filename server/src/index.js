@@ -331,6 +331,8 @@ app.use('/api/manual', manualRoutes);
 app.use('/api/dashboard-carousel', dashboardCarouselRoutes);
 app.use('/api/product-flipbook', productFlipbookRoutes);
 app.use('/api/notifications', notificationRoutes);
+// Feed videos (2026-10-13): their own router, ahead of /api/feed so /videos is never read as a post id.
+app.use('/api/feed/videos', require('./routes/feedVideos'));
 app.use('/api/feed', feedRoutes);
 app.use('/api/profiles', profileRoutes);
 app.use('/api/non-standard-job-orders', nonStandardJobOrderRoutes);
@@ -458,6 +460,8 @@ if (crmAttentionJobEnabled()) {
 // business time. OFF unless CHAT_PURGE_JOB=1 -- set it on ONE box of the replicated pair.
 const { chatPurgeJobEnabled, scheduleChatPurge } = require('./lib/chatPurge');
 if (chatPurgeJobEnabled()) scheduleChatPurge();
+// Unfinished feed video uploads, cleared after a day -- only those whose file is on this server.
+require('./lib/feedVideos').scheduleFeedVideoSweep();
 
 // In production (Railway) the client is built into client/dist and this server
 // serves it directly -- single deployable service, same origin as /api so the

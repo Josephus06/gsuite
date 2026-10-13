@@ -9,6 +9,7 @@ import {
   REACTION_BY_KEY, reactionSummary, topReactionKeys, reactorTooltip, allReactorNames,
 } from './reactions';
 import useFeedImages from './useFeedImages';
+import FeedVideo from './FeedVideo';
 import { audienceMeta } from './audience';
 import { fbTime, fbTimeFull } from './time';
 
@@ -73,7 +74,7 @@ export default function PostCard({ post, user, viewer, onChanged, onDeleted, onE
 
   const long = state.body.length > FOLD_AT;
   const shownBody = long && !expanded ? `${state.body.slice(0, FOLD_AT).trimEnd()}…` : state.body;
-  const bigText = !images.length && state.body.length <= 130;
+  const bigText = !images.length && !(state.videos || []).length && state.body.length <= 130;
 
   return (
     <div className="fb-card" style={{ position: 'relative' }}>
@@ -130,6 +131,7 @@ export default function PostCard({ post, user, viewer, onChanged, onDeleted, onE
           "+N" overlay on the last one rather than shrinking every tile to a thumbnail. */}
       {/* Holds the space while the photo is still on its way, so the post does not jump as
           images land under the reader's cursor. */}
+      {(state.videos || []).map((v) => <FeedVideo key={v.id} video={v} />)}
       {imagesPending && !images.length && <div className="fb-post-image-placeholder" />}
       {images.length === 1 && (
         <img className="fb-post-image" src={images[0]} alt="" loading="lazy" onClick={() => setLightbox(0)} />

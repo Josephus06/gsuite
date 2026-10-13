@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import Avatar from '../Avatar';
 import { fileToScaledDataUrl } from '../../utils/image';
 import { AUDIENCES, audienceMeta } from './audience';
+import { MAX_VIDEO_BYTES, uploadFeedVideo } from '../../utils/videoUpload';
 
 // Kept in step with MAX_IMAGES_PER_POST on the server, which is what actually enforces it.
 // This copy is so the picker can say no before spending time scaling files it will reject.
@@ -24,6 +25,11 @@ export default function PostComposer({
   const [error, setError] = useState('');
   const textRef = useRef(null);
   const fileRef = useRef(null);
+  // One video per post (2026-10-13), up to 5 GB, uploaded while the author finishes writing.
+  // { id?, file_name, size_bytes, progress, status: 'uploading' | 'ready' | 'error', error? }
+  const [video, setVideo] = useState(null);
+  const videoRef = useRef(null);
+  const abortRef = useRef(null);
 
   // Reset to either a blank post or the one being edited each time the dialog opens.
   useEffect(() => {
@@ -33,6 +39,8 @@ export default function PostComposer({
       ? editing.images
       : (editing?.image_data ? [editing.image_data] : []));
     setAudience(editing?.audience || 'public');
+    const v = editing?.videos?.[0];
+    setVideo(v ? { ...v, progress: 1, status: 'ready' } : null);
     // Editing reopens on the department the post actually went to, which for an admin is not
     // necessarily their own.
     setTargetGroupId(editing?.audience_group_id ?? groupId ?? null);
@@ -91,19 +99,51 @@ export default function PostComposer({
     }
   }
 
+  async function pickVideo(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setError('');
+    if (file.size > MAX_VIDEO_BYTES) { setError('Videos must be 5 GB or smaller.'); return; }
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setVideo({ file_name: file.name, size_bytes: file.size, progress: 0, status: 'uploading' });
+    try {
+      const done = await uploadFeedVideo(file, {
+        signal: ctrl.signal,
+        onProgress: (p) => setVideo((cur) => (cur && cur.status === 'uploading' ? { ...cur, progress: p } : cur)),
+      });
+      if (!ctrl.signal.aborted) setVideo({ ...done, progress: 1, status: 'ready' });
+    } catch (err) {
+      if (!ctrl.signal.aborted) setVideo((cur) => ({ ...cur, status: 'error', error: err.response?.data?.error || err.message }));
+    }
+  }
+
+  function removeVideo() {
+    abortRef.current?.abort();
+    setVideo(null);
+  }
+
+  // Closing the dialog stops an upload in progress (the server clears the half-sent file).
+  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => { if (!open) abortRef.current?.abort(); }, [open]);
+
   function removeImage(index) {
     setImages((current) => current.filter((_, i) => i !== index));
   }
 
   async function submit() {
     const text = body.trim();
-    if (!text && !images.length) return;
+    if (!text && !images.length && video?.status !== 'ready') return;
+    if (video && video.status !== 'ready') return;
     setBusy(true);
     setError('');
     try {
       await onSubmit({
         body: text,
         images,
+        video_ids: video?.status === 'ready' ? [video.id] : [],
         audience,
         audience_group_id: audience === 'department' ? targetGroupId : null,
       });
@@ -120,7 +160,8 @@ export default function PostComposer({
   // own -- the label is the only thing telling them where the post is about to go.
   const chosenGroupName = groups?.find((g) => g.id === targetGroupId)?.name || groupName;
   const meta = audienceMeta(audience, chosenGroupName);
-  const canPost = Boolean(body.trim() || images.length) && !busy;
+  const videoBusy = video && video.status === 'uploading';
+  const canPost = Boolean(body.trim() || images.length || video?.status === 'ready') && !busy && !videoBusy && video?.status !== 'error';
   // FB only uses the oversized text treatment for short, image-less posts.
   const bigText = !images.length && body.length <= 130;
 
@@ -219,6 +260,27 @@ export default function PostComposer({
             </div>
           )}
 
+          {video && (
+            <div className="fb-video-upload">
+              <span className="fb-video-icon">🎬</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="fb-video-name">{video.file_name}</div>
+                <div className="fb-video-meta">
+                  {video.size_bytes >= 1024 ** 3
+                    ? `${(video.size_bytes / 1024 ** 3).toFixed(2)} GB`
+                    : `${Math.max(1, Math.round(video.size_bytes / 1024 ** 2))} MB`}
+                  {video.status === 'uploading' && ` · Uploading ${Math.floor((video.progress || 0) * 100)}%`}
+                  {video.status === 'ready' && ' · Ready'}
+                  {video.status === 'error' && <span style={{ color: 'var(--fb-red, #e41e3f)' }}> · {video.error}</span>}
+                </div>
+                {video.status === 'uploading' && (
+                  <div className="fb-video-bar"><div style={{ width: `${Math.floor((video.progress || 0) * 100)}%` }} /></div>
+                )}
+              </div>
+              <button type="button" className="fb-preview-remove" style={{ position: 'static' }} onClick={removeVideo} aria-label="Remove video">✕</button>
+            </div>
+          )}
+
           <div className="fb-attach-row">
             <span>Add to your post</span>
             <div className="fb-attach-btns">
@@ -228,6 +290,7 @@ export default function PostComposer({
                 title={images.length ? `Add photos (${images.length}/${MAX_IMAGES})` : 'Photo'}
                 onClick={() => fileRef.current?.click()}
               >🖼️</button>
+              <button type="button" className="fb-attach-btn" title="Video (up to 5 GB)" onClick={() => videoRef.current?.click()}>🎬</button>
               <button type="button" className="fb-attach-btn" title="Tag people" onClick={() => setBody((b) => `${b}@`)}>🏷️</button>
               <button type="button" className="fb-attach-btn" title="Feeling" onClick={() => setBody((b) => `${b}😊`)}>😊</button>
             </div>
@@ -239,6 +302,7 @@ export default function PostComposer({
               onChange={pickImages}
               style={{ display: 'none' }}
             />
+            <input ref={videoRef} type="file" accept="video/*" onChange={pickVideo} style={{ display: 'none' }} />
           </div>
 
           {error && <div className="fb-error" style={{ marginTop: 12, marginBottom: 0 }}>{error}</div>}
@@ -246,7 +310,7 @@ export default function PostComposer({
 
         <div className="fb-modal-foot">
           <button type="button" className="fb-post-btn" disabled={!canPost} onClick={submit}>
-            {busy ? 'Posting…' : editing ? 'Save' : 'Post'}
+            {busy ? 'Posting…' : videoBusy ? 'Uploading video…' : editing ? 'Save' : 'Post'}
           </button>
         </div>
       </div>
