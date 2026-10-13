@@ -400,7 +400,18 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
 
-    res.json({ ...jo, processes, rwips });
+    // Transfer Orders raised for this JO (2026-10-13) -- on the TO itself or on its lines -- for the
+    // Related Records tab.
+    const [transferOrders] = await pool.query(
+      `SELECT t.id, t.to_no, t.date_created, t.status,
+              (SELECT COALESCE(SUM(l.qty), 0) FROM transfer_order_lines l WHERE l.transfer_order_id = t.id) AS qty
+         FROM transfer_orders t
+        WHERE t.job_order_id = ? OR EXISTS (SELECT 1 FROM transfer_order_lines l WHERE l.transfer_order_id = t.id AND l.job_order_id = ?)
+        ORDER BY t.id DESC`,
+      [req.params.id, req.params.id]
+    );
+
+    res.json({ ...jo, processes, rwips, transfer_orders: transferOrders });
   } catch (err) {
     next(err);
   }

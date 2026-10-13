@@ -429,7 +429,18 @@ router.get('/:id', requireAuth, requireProductionView, async (req, res, next) =>
     );
     const openRwipCount = rwips.filter((r) => r.status !== 'Cancelled' && !['completed', 'invoiced'].includes(r.production_stage)).length;
 
-    res.json({ ...jo, processes, assembly_builds: assemblyBuilds, rwips, open_rwip_count: openRwipCount });
+    // Transfer Orders raised for this JO (2026-10-13) -- on the TO itself or on its lines -- for the
+    // Related Records tab.
+    const [transferOrders] = await pool.query(
+      `SELECT t.id, t.to_no, t.date_created, t.status,
+              (SELECT COALESCE(SUM(l.qty), 0) FROM transfer_order_lines l WHERE l.transfer_order_id = t.id) AS qty
+         FROM transfer_orders t
+        WHERE t.job_order_id = ? OR EXISTS (SELECT 1 FROM transfer_order_lines l WHERE l.transfer_order_id = t.id AND l.job_order_id = ?)
+        ORDER BY t.id DESC`,
+      [req.params.id, req.params.id]
+    );
+
+    res.json({ ...jo, processes, assembly_builds: assemblyBuilds, rwips, open_rwip_count: openRwipCount, transfer_orders: transferOrders });
   } catch (err) {
     next(err);
   }

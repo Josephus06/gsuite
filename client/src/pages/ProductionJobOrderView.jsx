@@ -963,6 +963,19 @@ export default function ProductionJobOrderView() {
                     <td>{ab.status === 'cancelled' ? 'Cancelled' : 'Saved'}</td>
                   </tr>
                 ))}
+                {(jo.transfer_orders || []).map((t) => (
+                  <tr key={`to-${t.id}`}>
+                    <td>{t.date_created ? String(t.date_created).slice(0, 10) : ''}</td>
+                    <td>
+                      <Link className="link-btn" to={`/transfer-orders/${t.id}`}>
+                        {t.to_no}
+                      </Link>
+                    </td>
+                    <td>{Number(t.qty || 0)}</td>
+                    <td></td>
+                    <td>{String(t.status || '').replace(/_/g, ' ').replace(/w/g, (c) => c.toUpperCase())}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
