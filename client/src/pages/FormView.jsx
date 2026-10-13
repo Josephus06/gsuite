@@ -1,4 +1,5 @@
 import FormAttachments from '../components/FormAttachments';
+import StickyActionBar from '../components/StickyActionBar';
 import FormSystemInfo from '../components/FormSystemInfo';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -163,7 +164,7 @@ export default function FormView() {
 
   return (
     <div>
-      <div className="page-header is-sticky">
+      <StickyActionBar>
         {/* Frozen while scrolling (2026-10-13), so it says which form it is acting on. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600 }}>
           {TYPE_LABELS[doc.type] || pretty(doc.type)} {doc.request_no}
@@ -220,7 +221,7 @@ export default function FormView() {
             <Link className="btn btn-sm" to={`/journals/${doc.journal.id}`}>{doc.journal.journal_no}</Link>
           )}
         </div>
-      </div>
+      </StickyActionBar>
 
       {error && <div className="error-banner">{error}</div>}
       {saved && <div className="muted" style={{ marginBottom: 8 }}>{saved}</div>}
