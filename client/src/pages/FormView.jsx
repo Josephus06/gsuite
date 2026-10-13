@@ -8,7 +8,7 @@ import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
 import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 import { useAuth } from '../context/useAuth';
-import { ADJ_REASON_LABELS, ADJ_TIMES, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, money, pretty } from '../utils/requestForms';
+import { ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, money, pretty } from '../utils/requestForms';
 import OvertimeDecline from '../components/OvertimeDecline';
 
 // One form, and whatever the viewer is allowed to do to it.
@@ -324,6 +324,19 @@ export default function FormView() {
           {['accepted', 'declined'].includes(doc.status) && (
             <Line label={doc.status === 'accepted' ? 'Accepted' : 'Declined'}>{`${fmtDate(d.responded_at)}${d.response_remark ? ` — ${d.response_remark}` : ''}`}</Line>
           )}
+        </div>
+      )}
+
+      {doc.type === 'leave' && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3>Leave Application</h3>
+          <Line label="Type of Leave">{leaveTypeLabel(d)}</Line>
+          <Line label="Dates">{d.date_from ? (String(d.date_from).slice(0, 10) === String(d.date_to).slice(0, 10)
+            ? `${fmtDate(d.date_from)}${d.day_part && d.day_part !== 'whole' ? ` — ${DAY_PART_LABELS[d.day_part]}` : ''}`
+            : `${fmtDate(d.date_from)} to ${fmtDate(d.date_to)}`) : null}</Line>
+          <Line label="No. of Days">{d.days != null ? Number(d.days) : null}</Line>
+          <Line label="Reason">{d.reason}</Line>
+          <Line label="Contact while on leave">{d.contact_while_on_leave}</Line>
         </div>
       )}
 

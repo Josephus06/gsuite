@@ -44,7 +44,7 @@ const router = express.Router();
 const ROUTE = '/forms';
 const APPROVAL_ROUTE = '/forms/approval';
 
-const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund', 'attendance_adjustment', 'overtime'];
+const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund', 'attendance_adjustment', 'overtime', 'leave'];
 const TYPE_LABELS = {
   liquidation: 'Liquidation',
   payment: 'Request for Payment',
@@ -53,9 +53,23 @@ const TYPE_LABELS = {
   revolving_fund: 'Revolving Fund',
   attendance_adjustment: 'Attendance Adjustment Form',
   overtime: 'Overtime Request',
+  leave: 'Leave Application',
 };
 // Forms with no expense lines: a trip sheet, and the attendance adjustment slip.
-const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime'];
+const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave'];
+// Leave Application (asked 2026-10-13; db/add-leave-form.js). 'others' carries free text.
+const LEAVE_TYPES = ['sick', 'vacation', 'emergency', 'maternity', 'paternity', 'bereavement', 'birthday', 'solo_parent', 'without_pay', 'others'];
+const DAY_PARTS = ['whole', 'am', 'pm'];
+// Days of leave: every day from..to except Sundays; a half day (one date only) is 0.5.
+function leaveDays(from, to, part) {
+  if (!from || !to || to < from) return 0;
+  if (from === to && part !== 'whole') return 0.5;
+  let n = 0;
+  for (let d = new Date(`${from}T00:00:00Z`); d <= new Date(`${to}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) {
+    if (d.getUTCDay() !== 0) n += 1;
+  }
+  return n;
+}
 // Attendance Adjustment (asked 2026-10-08): why the biometric has no time-in / time-out. The three
 // reasons printed on the paper slip; 'others' carries the free text (e.g. "biometric error").
 const ADJ_REASONS = ['field_work', 'business_trip', 'others'];
@@ -189,6 +203,10 @@ async function loadFull(id) {
     doc.detail = d || null;
   } else if (doc.type === 'overtime') {
     doc.detail = await overtimeDetail(id);
+  } else if (doc.type === 'leave') {
+    const [[d]] = await pool.query('SELECT * FROM form_leave_details WHERE form_request_id = ?', [id])
+      .catch((e) => { if (e.code === 'ER_NO_SUCH_TABLE') return [[null]]; throw e; });
+    doc.detail = d || null;
   }
   return doc;
 }
@@ -744,6 +762,21 @@ async function writeDetail(conn, docId, type, body, items, ownerId = null) {
     return { total_amount: total };
   }
 
+  if (type === 'leave') {
+    const leaveType = LEAVE_TYPES.includes(body.leave_type) ? body.leave_type : 'others';
+    const from = date(body.leave_date_from);
+    const to = date(body.leave_date_to) || from;
+    const part = from === to && DAY_PARTS.includes(body.leave_day_part) ? body.leave_day_part : 'whole';
+    await conn.query(
+      `INSERT INTO form_leave_details
+         (form_request_id, leave_type, leave_type_other, date_from, date_to, day_part, days, reason, contact_while_on_leave)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+      [docId, leaveType, leaveType === 'others' ? trunc(body.leave_type_other, 255) : null, from, to, part,
+        leaveDays(from, to, part), trunc(body.leave_reason, 4000), trunc(body.leave_contact, 255)],
+    );
+    return {};
+  }
+
   if (type === 'attendance_adjustment') {
     const reason = ADJ_REASONS.includes(body.reason) ? body.reason : 'others';
     await conn.query(
@@ -797,6 +830,17 @@ function validate(type, body, items) {
     if (!ADJ_TIMES.some((k) => time(body[k]))) return 'Enter at least one time to adjust (AM / PM / OT, In or Out).';
     if (!ADJ_REASONS.includes(body.reason)) return 'Choose the reason: Field Work, Business Trip or Others.';
     if (body.reason === 'others' && !trunc(body.reason_other, 255)) return 'Say what the other reason is (e.g. biometric error).';
+  }
+  if (type === 'leave') {
+    if (!LEAVE_TYPES.includes(body.leave_type)) return 'Choose the type of leave.';
+    if (body.leave_type === 'others' && !trunc(body.leave_type_other, 255)) return 'Say what kind of leave this is.';
+    const from = date(body.leave_date_from);
+    const to = date(body.leave_date_to) || from;
+    if (!from) return 'The first day of leave is required.';
+    if (to < from) return 'The last day of leave cannot be before the first.';
+    const part = from === to && DAY_PARTS.includes(body.leave_day_part) ? body.leave_day_part : 'whole';
+    if (!leaveDays(from, to, part)) return 'Those dates are only Sundays -- there is no working day to take leave on.';
+    if (!trunc(body.leave_reason, 4000)) return 'Say why you are taking leave.';
   }
   if (type === 'overtime') {
     const forSelf = body.ot_for_self === true || body.ot_for_self === 'true' || body.ot_for_self === 1 || body.ot_for_self === '1';
@@ -969,6 +1013,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       business_trip: 'form_business_trip_details',
       attendance_adjustment: 'form_attendance_adjustment_details',
       overtime: 'form_overtime_details',
+      leave: 'form_leave_details',
     }[doc.type];
     await conn.query(`DELETE FROM ${detailTable} WHERE form_request_id = ?`, [doc.id]);
     await writeDetail(conn, doc.id, doc.type, req.body, items, doc.user_id);

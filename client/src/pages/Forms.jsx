@@ -4,7 +4,7 @@ import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Pagination from '../components/Pagination';
 import { useAuth } from '../context/useAuth';
-import { STATUS_BADGE, TYPE_LABELS, fmtDate, money, pretty } from '../utils/requestForms';
+import { NO_ITEM_TYPES, STATUS_BADGE, TYPE_LABELS, fmtDate, money, pretty } from '../utils/requestForms';
 import useAutoSearch from '../utils/useAutoSearch';
 
 // Forms -- the request forms ported from the Booking system. Four company forms, one approval
@@ -122,7 +122,7 @@ export default function Forms() {
                     <td data-label="Department">{r.department || '—'}</td>
                     {/* A business trip has no lines, so it has no amount -- a 0.00 there would
                         read as "this trip cost nothing" rather than "this form is not about money". */}
-                    <td data-label="Amount">{['business_trip', 'attendance_adjustment'].includes(r.type) ? '—' : money(r.total_amount)}</td>
+                    <td data-label="Amount">{NO_ITEM_TYPES.includes(r.type) ? '—' : money(r.total_amount)}</td>
                     <td data-label="Status">
                       <span className={`badge ${STATUS_BADGE[r.status] || 'badge-muted'}`}>{pretty(r.status)}</span>
                     </td>

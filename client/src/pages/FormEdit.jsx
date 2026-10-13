@@ -3,7 +3,10 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../context/useAuth';
-import { ADJ_REASON_LABELS, ADJ_TIMES, FUND_TYPES, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, TYPE_LABELS, money, overtimeHours } from '../utils/requestForms';
+import {
+  ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, FUND_TYPES, HR_TYPES, LEAVE_TYPE_LABELS, NO_ITEM_TYPES, PAYMENT_TYPES,
+  PURPOSE_LABELS, TYPE_LABELS, leaveDays, money, overtimeHours,
+} from '../utils/requestForms';
 import EntityPicker from '../components/EntityPicker';
 
 // Filling out a form, and revising one. The same page does both: an edit is the same boxes with
@@ -46,6 +49,8 @@ export default function FormEdit() {
     reason: '', reason_other: '',
     // Overtime Request (2026-10-13)
     ot_for_self: false, ot_target_user_id: '', ot_date: '', ot_time_from: '', ot_time_to: '', ot_purpose: '', ot_reference_no: '',
+    // Leave Application (2026-10-13)
+    leave_type: '', leave_type_other: '', leave_date_from: '', leave_date_to: '', leave_day_part: 'whole', leave_reason: '', leave_contact: '',
     remarks: '',
   });
   const [otPeople, setOtPeople] = useState([]);
@@ -94,6 +99,11 @@ export default function FormEdit() {
       ot_date: d.ot_date ? String(d.ot_date).slice(0, 10) : '',
       ot_time_from: d.time_from ? String(d.time_from).slice(0, 5) : '', ot_time_to: d.time_to ? String(d.time_to).slice(0, 5) : '',
       ot_purpose: data.type === 'overtime' ? (d.purpose || '') : '', ot_reference_no: d.reference_no || '',
+      leave_type: d.leave_type || '', leave_type_other: d.leave_type_other || '',
+      leave_date_from: data.type === 'leave' && d.date_from ? String(d.date_from).slice(0, 10) : '',
+      leave_date_to: data.type === 'leave' && d.date_to ? String(d.date_to).slice(0, 10) : '',
+      leave_day_part: d.day_part || 'whole', leave_reason: data.type === 'leave' ? (d.reason || '') : '',
+      leave_contact: d.contact_while_on_leave || '',
     });
     setItems((data.items || []).length
       ? data.items.map((i) => ({
@@ -161,11 +171,18 @@ export default function FormEdit() {
         </div>
         <div className="card">
           <p className="muted">Which form is this?</p>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
-            {Object.entries(TYPE_LABELS).map(([k, label]) => (
-              <button key={k} className="btn btn-primary" onClick={() => setType(k)}>{label}</button>
-            ))}
-          </div>
+          {/* HR forms on their own row (2026-10-13), the money forms on another. */}
+          {[['HR', Object.entries(TYPE_LABELS).filter(([k]) => HR_TYPES.includes(k))],
+            ['Finance', Object.entries(TYPE_LABELS).filter(([k]) => !HR_TYPES.includes(k))]].map(([group, list]) => (
+            <div key={group} style={{ marginTop: 14 }}>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>{group}</div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                {list.map(([k, label]) => (
+                  <button key={k} className="btn btn-primary" onClick={() => setType(k)}>{label}</button>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     );
@@ -372,6 +389,67 @@ export default function FormEdit() {
           </div>
         </div>
       )}
+
+      {type === 'leave' && (() => {
+        const oneDay = form.leave_date_from && (!form.leave_date_to || form.leave_date_to === form.leave_date_from);
+        const days = leaveDays(form.leave_date_from, form.leave_date_to, oneDay ? form.leave_day_part : 'whole');
+        return (
+          <div className="card" style={{ marginTop: 16 }}>
+            <h3>Leave Application</h3>
+            <div className="field">
+              <label>Type of Leave *</label>
+              <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+                {Object.entries(LEAVE_TYPE_LABELS).map(([k, label]) => (
+                  <label key={k} style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontWeight: 400 }}>
+                    <input type="radio" name="leave-type" checked={form.leave_type === k} onChange={() => set('leave_type', k)} /> {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+            {form.leave_type === 'others' && (
+              <div className="field">
+                <label>Others, specify *</label>
+                <input value={form.leave_type_other} placeholder="e.g. Service Incentive Leave" onChange={(e) => set('leave_type_other', e.target.value)} />
+              </div>
+            )}
+            <div className="field-row">
+              <div className="field">
+                <label>From *</label>
+                <input type="date" value={form.leave_date_from} onChange={(e) => set('leave_date_from', e.target.value)} />
+              </div>
+              <div className="field">
+                <label>To</label>
+                <input type="date" value={form.leave_date_to} min={form.leave_date_from || undefined}
+                  onChange={(e) => set('leave_date_to', e.target.value)} />
+              </div>
+              {oneDay && (
+                <div className="field">
+                  <label>Whole / Half day</label>
+                  <select value={form.leave_day_part} onChange={(e) => set('leave_day_part', e.target.value)}>
+                    {Object.entries(DAY_PART_LABELS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+                  </select>
+                </div>
+              )}
+              <div className="field">
+                <label>No. of Days</label>
+                <input value={form.leave_date_from ? days : ''} readOnly />
+              </div>
+            </div>
+            <div className="muted" style={{ fontSize: 12, marginTop: -6, marginBottom: 10 }}>
+              Sundays are not counted. Leave To empty for a single day.
+              {form.leave_type === 'sick' && days > 2 ? ' For more than 2 days of sick leave, attach a medical certificate on the form after saving it.' : ''}
+            </div>
+            <div className="field">
+              <label>Reason *</label>
+              <textarea rows={3} value={form.leave_reason} onChange={(e) => set('leave_reason', e.target.value)} />
+            </div>
+            <div className="field">
+              <label>Contact number while on leave</label>
+              <input value={form.leave_contact} onChange={(e) => set('leave_contact', e.target.value)} />
+            </div>
+          </div>
+        );
+      })()}
 
       {type === 'attendance_adjustment' && (
         <div className="card" style={{ marginTop: 16 }}>

@@ -13,10 +13,42 @@ export const TYPE_LABELS = {
   revolving_fund: 'Revolving Fund',
   attendance_adjustment: 'Attendance Adjustment Form',
   overtime: 'Overtime Request',
+  leave: 'Leave Application',
 };
 
+// Which forms are HR's (2026-10-13) -- the form picker shows them as their own group.
+export const HR_TYPES = ['leave', 'overtime', 'attendance_adjustment'];
+
 // Forms with no expense lines (and so no amount): a trip sheet, and the attendance adjustment slip.
-export const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime'];
+export const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave'];
+
+// Leave Application (2026-10-13). The server counts the same days (routes/forms.js leaveDays).
+export const LEAVE_TYPE_LABELS = {
+  sick: 'Sick Leave',
+  vacation: 'Vacation Leave',
+  emergency: 'Emergency Leave',
+  maternity: 'Maternity Leave',
+  paternity: 'Paternity Leave',
+  bereavement: 'Bereavement Leave',
+  birthday: 'Birthday Leave',
+  solo_parent: 'Solo Parent Leave',
+  without_pay: 'Leave Without Pay',
+  others: 'Others',
+};
+export const DAY_PART_LABELS = { whole: 'Whole day', am: 'Half day (AM)', pm: 'Half day (PM)' };
+// Every day from..to except Sundays; a half day (one date only) is 0.5.
+export function leaveDays(from, to, part) {
+  const end = to || from;
+  if (!from || end < from) return 0;
+  if (from === end && part && part !== 'whole') return 0.5;
+  let n = 0;
+  for (let d = new Date(`${from}T00:00:00Z`); d <= new Date(`${end}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) {
+    if (d.getUTCDay() !== 0) n += 1;
+  }
+  return n;
+}
+export const leaveTypeLabel = (d) => (d?.leave_type === 'others' && d.leave_type_other
+  ? d.leave_type_other : LEAVE_TYPE_LABELS[d?.leave_type] || d?.leave_type || '');
 
 // Overtime Request (2026-10-13): hours between two "HH:MM" times; past midnight counts on.
 export function overtimeHours(from, to) {

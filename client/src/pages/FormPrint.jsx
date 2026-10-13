@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { ADJ_REASON_LABELS, PAYMENT_TYPES, PURPOSE_LABELS, bankLabel, clock } from '../utils/requestForms';
+import { ADJ_REASON_LABELS, DAY_PART_LABELS, LEAVE_TYPE_LABELS, PAYMENT_TYPES, PURPOSE_LABELS, bankLabel, clock } from '../utils/requestForms';
 import letterhead from '../assets/graphicstar-letterhead.png';
 import { displayDate } from '../utils/dates';
 
@@ -61,7 +61,7 @@ function Signatures({ doc }) {
       <Signature
         image={doc.noted_signature}
         name={doc.noted_by_name || doc.detail?.noted_by_name}
-        role={doc.type === 'attendance_adjustment' ? 'Noted By (Immediate Superior)' : 'Noted By'}
+        role={['attendance_adjustment', 'leave'].includes(doc.type) ? 'Noted By (Immediate Superior)' : 'Noted By'}
       />
       <Signature image={doc.approved_signature} name={doc.approved_by_name} role="Approved By" />
     </div>
@@ -273,6 +273,41 @@ export default function FormPrint() {
 
         {/* Attendance Adjustment Form (asked 2026-10-08), after the paper slip: who and which day,
             the IN / OUT times claimed for AM, PM and overtime, and the reason ticked. */}
+        {/* Leave Application (asked 2026-10-13): who, which leave (ticked), the dates and days, why. */}
+        {doc.type === 'leave' && (
+          <>
+            <div className="rf-row">
+              <Field label="Name" value={doc.name} />
+              <Field label="Department" value={doc.department} />
+            </div>
+            <div className="rf-box">
+              <h4>Type of Leave</h4>
+              <div className="rf-purposes" style={{ flexWrap: 'wrap', gap: '6px 18px' }}>
+                {Object.entries(LEAVE_TYPE_LABELS).map(([k, label]) => (
+                  <span className="rf-check" key={k}>
+                    <span className="rf-mark">{d.leave_type === k ? '×' : ' '}</span>
+                    {label}
+                    {k === 'others' && d.leave_type === 'others' && d.leave_type_other ? <>: <u>{d.leave_type_other}</u></> : ''}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="rf-row">
+              <Field label="From" value={fmtDate(d.date_from)} />
+              <Field label="To" value={fmtDate(d.date_to)} />
+              <Field label="No. of Days" value={d.days != null
+                ? `${Number(d.days)}${d.day_part && d.day_part !== 'whole' ? ` (${DAY_PART_LABELS[d.day_part]})` : ''}` : ''} />
+            </div>
+            <div className="rf-box">
+              <h4>Reason</h4>
+              <div style={{ whiteSpace: 'pre-wrap', minHeight: 40 }}>{d.reason}</div>
+            </div>
+            {d.contact_while_on_leave && (
+              <div className="rf-row"><Field label="Contact while on leave" value={d.contact_while_on_leave} /></div>
+            )}
+          </>
+        )}
+
         {doc.type === 'attendance_adjustment' && (
           <>
             <div className="rf-row">
