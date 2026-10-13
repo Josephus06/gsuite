@@ -253,8 +253,12 @@ async function maySee(userId, doc) {
   if (await isDepartmentNoter(userId, doc.department_id)) return true;
   // AP has to open every liquidation it notes, whoever's department it came from.
   if (AP_NOTED_TYPES.includes(doc.type) && await isAccountsPayable(userId)) return true;
-  if (await userCan(userId, APPROVAL_ROUTE, 'can_view')) return true;
+  // Only the approvers see every form (2026-10-13) -- each one reaches them. View on the approval page
+  // alone no longer opens everyone's forms: a user sees the ones they are involved in.
+  if (await userCan(userId, APPROVAL_ROUTE, 'can_approve')) return true;
   if (await userCan(userId, ROUTE, 'can_view_all')) return true;
+  // One they have already acted on -- noted, approved or rejected.
+  if ([doc.noted_by, doc.approved_by, doc.rejected_by].some((u) => u != null && Number(u) === Number(userId))) return true;
   // An overtime request: the employee it is for, and their department's heads, who approve it.
   if (doc.type === 'overtime') {
     const d = await overtimeDetail(doc.id);
@@ -355,14 +359,17 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 // also be granted sight of every other department's.
 router.get('/approval/queue', requireAuth, async (req, res, next) => {
   try {
-    const canSeeAll = await userCan(req.user.id, APPROVAL_ROUTE, 'can_view');
+    // Users see only the forms they are involved in (2026-10-13); the approvers, whom every form
+    // reaches, see them all. View on this page alone used to show everyone's forms.
+    const canSeeAll = await userCan(req.user.id, APPROVAL_ROUTE, 'can_approve');
     const headOf = canSeeAll ? [] : await departmentsHeadedBy(req.user.id);
     // Accounts Payable sees every liquidation, since it notes them all.
     const isAp = canSeeAll ? false : await isAccountsPayable(req.user.id);
     // Overtime (2026-10-13): the employee a request is for sees it, to accept or decline it.
     const [[otMine]] = canSeeAll ? [[null]] : await pool.query(
       'SELECT 1 AS x FROM form_overtime_details WHERE target_user_id = ? LIMIT 1', [req.user.id]).catch(() => [[null]]);
-    if (!canSeeAll && headOf.length === 0 && !isAp && !otMine) {
+    const pageViewer = canSeeAll ? true : await userCan(req.user.id, APPROVAL_ROUTE, 'can_view');
+    if (!canSeeAll && !pageViewer && headOf.length === 0 && !isAp && !otMine) {
       return res.status(403).json({ error: 'You do not have permission to perform this action' });
     }
 
@@ -390,6 +397,9 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
         mine.push("(f.type = 'overtime' AND EXISTS (SELECT 1 FROM form_overtime_details o WHERE o.form_request_id = f.id AND o.target_user_id = ?))");
         params.push(req.user.id);
       }
+      // Their own forms, and the ones they noted, approved or rejected.
+      mine.push('(f.user_id = ? OR f.noted_by = ? OR f.approved_by = ? OR f.rejected_by = ?)');
+      params.push(req.user.id, req.user.id, req.user.id, req.user.id);
       where.push(`(${mine.join(' OR ')})`);
     }
     if (req.query.status && WORKFLOW_STATUSES.includes(req.query.status)) {
@@ -1213,7 +1223,7 @@ router.post('/:id/reject', requireAuth, async (req, res, next) => {
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 async function formForAttachments(id) {
-  const [[doc]] = await pool.query('SELECT id, type, status, user_id, department_id FROM form_requests WHERE id = ?', [id]);
+  const [[doc]] = await pool.query('SELECT id, type, status, user_id, department_id, noted_by, approved_by, rejected_by FROM form_requests WHERE id = ?', [id]);
   return doc || null;
 }
 
