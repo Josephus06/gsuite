@@ -101,6 +101,27 @@ export default function Feed() {
     return () => { cancelled = true; clearInterval(id); };
   }, []);
 
+  // Contacts search (2026-10-13). Everyone you can chat with, online or not, fetched the first time
+  // the box is focused; without Chat the search covers only the online list.
+  const [contactSearch, setContactSearch] = useState('');
+  const [chatPeople, setChatPeople] = useState(null);
+  const loadChatPeople = useCallback(() => {
+    if (!mayChat || chatPeople) return;
+    api.get('/chat/contacts')
+      .then(({ data }) => setChatPeople((Array.isArray(data) ? data : []).map((p) => ({ ...p, can_chat: 1 }))))
+      .catch(() => setChatPeople([]));
+  }, [mayChat, chatPeople]);
+  const contactTerms = contactSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const nameMatches = (c) => contactTerms.every((t) => String(c.display_name || '').toLowerCase().includes(t));
+  const onlineContacts = contacts.map((c) => ({ ...c, online: true }));
+  const shownContacts = !contactTerms.length ? onlineContacts : (() => {
+    const online = onlineContacts.filter(nameMatches);
+    const seen = new Set(online.map((c) => c.id));
+    const others = (chatPeople || []).filter((p) => !seen.has(p.id) && nameMatches(p))
+      .sort((a, b) => Number(b.online) - Number(a.online) || String(a.display_name).localeCompare(String(b.display_name)));
+    return [...online, ...others];
+  })();
+
   // Infinite scroll.
   useEffect(() => {
     const el = sentinelRef.current;
@@ -276,27 +297,36 @@ export default function Feed() {
               whose heartbeat is inside the window -- so the green dot is always accurate. */}
           {/* Clicking someone opens a chatbox with them when you both have Chat (2026-10-12,
               components/ChatDock.jsx); otherwise it goes to their profile as before. */}
-          {contacts.map((c) => (
+          {/* Search (2026-10-13). The rail holds only who is online, so with Chat a search also
+              looks through everyone you can chat with -- offline people included. */}
+          <input
+            type="search" className="fb-rail-search" placeholder="Search contacts" value={contactSearch}
+            onFocus={loadChatPeople}
+            onChange={(e) => setContactSearch(e.target.value)}
+          />
+          {shownContacts.map((c) => (
             <Link
               key={c.id}
               className="fb-rail-item"
               title={mayChat && Number(c.can_chat) ? `Chat with ${c.display_name}` : (c.group_name || c.account_type || '')}
               to={`/profile/${c.id}`}
               onClick={(e) => {
-                if (mayChat && Number(c.can_chat)) { e.preventDefault(); openChat({ ...c, online: true }); }
+                if (mayChat && Number(c.can_chat)) { e.preventDefault(); openChat({ ...c, online: c.online }); }
               }}
             >
               <span className="fb-rail-avatar-wrap">
                 <Avatar user={c} size={36} />
-                <span className="fb-online-dot" />
+                {c.online && <span className="fb-online-dot" />}
               </span>
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {c.display_name}
               </span>
             </Link>
           ))}
-          {contacts.length === 0 && (
-            <div style={{ padding: 8, color: 'var(--fb-text-2)', fontSize: 14 }}>No one else is online right now.</div>
+          {shownContacts.length === 0 && (
+            <div style={{ padding: 8, color: 'var(--fb-text-2)', fontSize: 14 }}>
+              {contactTerms.length ? 'No one by that name.' : 'No one else is online right now.'}
+            </div>
           )}
         </aside>
       </div>
