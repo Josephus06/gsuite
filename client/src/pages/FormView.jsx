@@ -297,8 +297,9 @@ export default function FormView() {
         <div className="card" style={{ marginTop: 16 }}>
           <h3>{TYPE_LABELS[doc.type]}</h3>
           {doc.type === 'fund_transfer' && <>
-            <Line label="From">{bankLabel(d.from_account_code, d.from_account_name)}</Line>
-            <Line label="To">{bankLabel(d.to_account_code, d.to_account_name)}</Line>
+            {/* One bank for every line shows here; several are listed on the lines (2026-10-13). */}
+            <Line label="From">{bankLabel(d.from_account_code, d.from_account_name) || ((doc.items || []).some((r) => r.from_account_id) ? 'Several — see each line' : null)}</Line>
+            <Line label="To">{bankLabel(d.to_account_code, d.to_account_name) || ((doc.items || []).some((r) => r.to_account_id) ? 'Several — see each line' : null)}</Line>
           </>}
           <Line label="Payable To">{d.payable_to}</Line>
           <Line label="Address">{d.address}</Line>
@@ -393,6 +394,8 @@ export default function FormView() {
               <thead>
                 <tr>
                   {isFund && <th>Date</th>}
+                  {doc.type === 'fund_transfer' && <th>From</th>}
+                  {doc.type === 'fund_transfer' && <th>To</th>}
                   <th>Particulars</th>
                   <th style={{ textAlign: 'right' }}>Amount</th>
                   {doc.needs_cogs && <th>Account</th>}
@@ -400,11 +403,13 @@ export default function FormView() {
               </thead>
               <tbody>
                 {(doc.items || []).length === 0 && (
-                  <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 16 }}>No lines.</td></tr>
+                  <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>No lines.</td></tr>
                 )}
                 {(doc.items || []).map((r) => (
                   <tr key={r.id}>
                     {isFund && <td>{fmtDate(r.item_date)}</td>}
+                    {doc.type === 'fund_transfer' && <td>{bankLabel(r.from_account_code, r.from_account_name) || bankLabel(d.from_account_code, d.from_account_name)}</td>}
+                    {doc.type === 'fund_transfer' && <td>{bankLabel(r.to_account_code, r.to_account_name) || bankLabel(d.to_account_code, d.to_account_name)}</td>}
                     <td>
                       {r.particulars}
                       {doc.billed_items?.[r.id] && (

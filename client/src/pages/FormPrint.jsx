@@ -70,11 +70,16 @@ function Signatures({ doc }) {
 
 function ItemsTable({ doc, withDate }) {
   const total = (doc.items || []).reduce((s, r) => s + Number(r.amount || 0), 0);
+  // A Fund Transfer line's own banks (2026-10-13); a form from before then takes the form's one pair.
+  const banks = doc.type === 'fund_transfer';
+  const d = doc.detail || {};
   return (
     <table className="rf-table">
       <thead>
         <tr>
           {withDate && <th style={{ width: '18%' }}>Date</th>}
+          {banks && <th style={{ width: '22%' }}>From</th>}
+          {banks && <th style={{ width: '22%' }}>To</th>}
           <th>Particulars</th>
           <th style={{ width: '20%' }}>Amount</th>
         </tr>
@@ -83,6 +88,8 @@ function ItemsTable({ doc, withDate }) {
         {(doc.items || []).map((r) => (
           <tr key={r.id}>
             {withDate && <td>{fmtDate(r.item_date)}</td>}
+            {banks && <td>{bankLabel(r.from_account_code, r.from_account_name) || bankLabel(d.from_account_code, d.from_account_name)}</td>}
+            {banks && <td>{bankLabel(r.to_account_code, r.to_account_name) || bankLabel(d.to_account_code, d.to_account_name)}</td>}
             <td>{r.particulars}</td>
             <td className="rf-num">{money(r.amount)}</td>
           </tr>
@@ -92,6 +99,7 @@ function ItemsTable({ doc, withDate }) {
         {Array.from({ length: Math.max(0, 8 - (doc.items || []).length) }).map((_, i) => (
           <tr key={`pad-${i}`}>
             {withDate && <td>&nbsp;</td>}
+            {banks && <><td>&nbsp;</td><td>&nbsp;</td></>}
             <td>&nbsp;</td>
             <td>&nbsp;</td>
           </tr>
@@ -99,7 +107,7 @@ function ItemsTable({ doc, withDate }) {
       </tbody>
       <tfoot>
         <tr>
-          <td colSpan={withDate ? 2 : 1} className="rf-total-label">TOTAL</td>
+          <td colSpan={(withDate ? 2 : 1) + (banks ? 2 : 0)} className="rf-total-label">TOTAL</td>
           <td className="rf-num rf-total">{money(total)}</td>
         </tr>
       </tfoot>
@@ -252,8 +260,8 @@ export default function FormPrint() {
           <>
             {doc.type === 'fund_transfer' && (
               <div className="rf-row">
-                <Field label="From" value={bankLabel(d.from_account_code, d.from_account_name)} />
-                <Field label="To" value={bankLabel(d.to_account_code, d.to_account_name)} />
+                <Field label="From" value={bankLabel(d.from_account_code, d.from_account_name) || ((doc.items || []).some((r) => r.from_account_id) ? 'Several — see below' : '')} />
+                <Field label="To" value={bankLabel(d.to_account_code, d.to_account_name) || ((doc.items || []).some((r) => r.to_account_id) ? 'Several — see below' : '')} />
               </div>
             )}
             <div className="rf-row">

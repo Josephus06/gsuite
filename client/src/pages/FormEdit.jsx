@@ -111,6 +111,9 @@ export default function FormEdit() {
         particulars: i.particulars || '',
         amount: i.amount ?? '',
         rejection_remark: i.rejection_remark || '',
+        // A form from before lines had banks shows the form's one From / To on each line.
+        from_account_id: i.from_account_id || d.from_account_id || '',
+        to_account_id: i.to_account_id || d.to_account_id || '',
       }))
       : [blankItem()]);
     setLoading(false);
@@ -128,7 +131,8 @@ export default function FormEdit() {
   // wants to see the balance land where they expect before they commit to it.
   const endingBalance = (Number(form.starting_balance) || 0) - itemsTotal;
 
-  function addRow() { setItems((rows) => [...rows, blankItem()]); }
+  // A new Fund Transfer line starts from the bank the line above takes from.
+  function addRow() { setItems((rows) => [...rows, { ...blankItem(), from_account_id: rows[rows.length - 1]?.from_account_id || '' }]); }
   function removeRow(i) { setItems((rows) => (rows.length === 1 ? rows : rows.filter((_, n) => n !== i))); }
   function setRow(i, k, v) { setItems((rows) => rows.map((r, n) => (n === i ? { ...r, [k]: v } : r))); }
   function togglePurpose(k) {
@@ -143,7 +147,9 @@ export default function FormEdit() {
     const payload = {
       ...form, type,
       items: hasItems
-        ? items.filter((r) => r.particulars || r.amount).map((r) => ({ date: r.date, particulars: r.particulars, amount: r.amount }))
+        ? items.filter((r) => r.particulars || r.amount).map((r) => ({
+          date: r.date, particulars: r.particulars, amount: r.amount, from_account_id: r.from_account_id || null, to_account_id: r.to_account_id || null,
+        }))
         : [],
     };
     try {
@@ -289,30 +295,12 @@ export default function FormEdit() {
       {PAYMENT_TYPES.includes(type) && (
         <div className="card" style={{ marginTop: 16 }}>
           <h3>{TYPE_LABELS[type]}</h3>
-          {/* Fund Transfer Request Form: which bank the money leaves from and which it goes to -- the chart
-              of accounts' Bank accounts only. */}
+          {/* Fund Transfer Request Form (2026-10-13): each Particulars line has its own From and To bank,
+              so one form can move money from one bank to several, or from several into one. */}
           {type === 'fund_transfer' && (
-            <div className="field-row">
-              <div className="field">
-                <label>From *</label>
-                <EntityPicker
-                  label="From (Bank)" items={bankAccounts} value={form.from_account_id}
-                  getLabel={(a) => `${a.account_code} — ${a.account_name}`}
-                  columns={[{ key: 'bank_name', label: 'Bank' }, { key: 'account_name', label: 'Account' }, { key: 'account_code', label: 'Code' }]}
-                  searchKeys={['bank_name', 'account_name', 'account_code']}
-                  onSelect={(a) => set('from_account_id', a.id)} onClear={() => set('from_account_id', '')}
-                />
-              </div>
-              <div className="field">
-                <label>To *</label>
-                <EntityPicker
-                  label="To (Bank)" items={bankAccounts.filter((a) => String(a.id) !== String(form.from_account_id))} value={form.to_account_id}
-                  getLabel={(a) => `${a.account_code} — ${a.account_name}`}
-                  columns={[{ key: 'bank_name', label: 'Bank' }, { key: 'account_name', label: 'Account' }, { key: 'account_code', label: 'Code' }]}
-                  searchKeys={['bank_name', 'account_name', 'account_code']}
-                  onSelect={(a) => set('to_account_id', a.id)} onClear={() => set('to_account_id', '')}
-                />
-              </div>
+            <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+              Choose the From and To bank on each line below. Bank 1 to Banks 2 and 3: two lines, both From Bank 1.
+              Banks 1 and 2 to Bank 3: two lines, both To Bank 3.
             </div>
           )}
           <div className="field-row">
@@ -556,6 +544,8 @@ export default function FormEdit() {
               <thead>
                 <tr>
                   {isFund && <th style={{ width: 160 }}>Date</th>}
+                  {type === 'fund_transfer' && <th style={{ width: '24%' }}>From *</th>}
+                  {type === 'fund_transfer' && <th style={{ width: '24%' }}>To *</th>}
                   <th>Particulars</th>
                   <th style={{ width: 160 }}>Amount</th>
                   <th style={{ width: 60 }}></th>
@@ -567,6 +557,19 @@ export default function FormEdit() {
                     {isFund && (
                       <td><input type="date" value={r.date} onChange={(e) => setRow(i, 'date', e.target.value)} /></td>
                     )}
+                    {type === 'fund_transfer' && ['from_account_id', 'to_account_id'].map((k) => (
+                      <td key={k}>
+                        <EntityPicker
+                          label={k === 'from_account_id' ? 'From (Bank)' : 'To (Bank)'}
+                          items={bankAccounts.filter((a) => String(a.id) !== String(r[k === 'from_account_id' ? 'to_account_id' : 'from_account_id']))}
+                          value={r[k]}
+                          getLabel={(a) => `${a.account_code} — ${a.account_name}`}
+                          columns={[{ key: 'bank_name', label: 'Bank' }, { key: 'account_name', label: 'Account' }, { key: 'account_code', label: 'Code' }]}
+                          searchKeys={['bank_name', 'account_name', 'account_code']}
+                          onSelect={(a) => setRow(i, k, a.id)} onClear={() => setRow(i, k, '')}
+                        />
+                      </td>
+                    ))}
                     <td>
                       <input value={r.particulars} onChange={(e) => setRow(i, 'particulars', e.target.value)} />
                       {/* The approver's remark against THIS line, kept visible while it is being

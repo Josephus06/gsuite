@@ -132,6 +132,9 @@ function readItems(body, { required }) {
       item_date: date(r.date ?? r.item_date),
       particulars: trunc(r.particulars, 255),
       amount: num(r.amount),
+      // Fund Transfer only (2026-10-13): this line's banks. Ignored for every other form.
+      from_account_id: Number(r.from_account_id) || null,
+      to_account_id: Number(r.to_account_id) || null,
     }))
     .filter((r) => r.particulars || r.amount);
 
@@ -176,6 +179,21 @@ async function loadFull(id) {
       WHERE i.form_request_id = ? ORDER BY i.id`,
     [id]);
   doc.items = items;
+  // A Fund Transfer line's own From / To bank (2026-10-13; db/add-form-line-banks.js).
+  if (doc.type === 'fund_transfer' && items.length) {
+    try {
+      const [banks] = await pool.query(
+        `SELECT i.id, i.from_account_id, i.to_account_id,
+                fa.account_code AS from_account_code, fa.account_name AS from_account_name,
+                ta.account_code AS to_account_code, ta.account_name AS to_account_name
+           FROM form_request_items i
+           LEFT JOIN chart_of_accounts fa ON fa.id = i.from_account_id
+           LEFT JOIN chart_of_accounts ta ON ta.id = i.to_account_id
+          WHERE i.form_request_id = ?`, [id]);
+      const byId = new Map(banks.map((b) => [b.id, b]));
+      doc.items = items.map((it) => ({ ...it, ...(byId.get(it.id) || {}) }));
+    } catch (e) { if (e.code !== 'ER_BAD_FIELD_ERROR') throw e; }
+  }
 
   if (doc.type === 'liquidation') {
     const [[d]] = await pool.query('SELECT * FROM form_liquidation_details WHERE form_request_id = ?', [id]);
@@ -753,11 +771,16 @@ async function writeDetail(conn, docId, type, body, items, ownerId = null) {
   if (PAYMENT_TYPES.includes(type)) {
     const total = Number(items.reduce((s, r) => s + Number(r.amount || 0), 0).toFixed(2));
     const banks = type === 'fund_transfer';
+    // The form's own From / To: the one bank all its lines share, else blank -- each line says its own.
+    const shared = (k) => {
+      const ids = [...new Set(items.map((it) => it[k]).filter(Boolean))];
+      return ids.length === 1 ? ids[0] : null;
+    };
     await conn.query(
       `INSERT INTO form_payment_details (form_request_id, payable_to, address, doc_date, total_amount, from_account_id, to_account_id)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [docId, trunc(body.payable_to, 255), trunc(body.address, 255), date(body.date ?? body.doc_date), total,
-        banks ? Number(body.from_account_id) || null : null, banks ? Number(body.to_account_id) || null : null],
+        banks ? shared('from_account_id') : null, banks ? shared('to_account_id') : null],
     );
     return { total_amount: total };
   }
@@ -805,20 +828,25 @@ async function writeDetail(conn, docId, type, body, items, ownerId = null) {
 
 // From and To on a Fund Transfer Request Form must be Bank accounts in the chart of accounts -- the only
 // ones the picker offers, checked here so a hand-made request cannot name any other account.
-async function badBanks(type, body) {
+// Every line's banks, since a form may move money between several (2026-10-13).
+async function badBanks(type, body, items = []) {
   if (type !== 'fund_transfer') return null;
-  const ids = [Number(body.from_account_id), Number(body.to_account_id)];
+  const ids = [...new Set(items.flatMap((it) => [it.from_account_id, it.to_account_id]).filter(Boolean))];
+  if (!ids.length) return null; // validate() has already said what is missing
   const [rows] = await pool.query(`SELECT x.id FROM (${BANK_ACCOUNTS_SQL}) x WHERE x.id IN (?)`, [ids]);
-  return rows.length === 2 ? null : 'From and To must both be bank accounts under Cash in Bank.';
+  return rows.length === ids.length ? null : 'From and To must all be bank accounts under Cash in Bank.';
 }
 
 // Validation that differs by type. Returns an error string, or null when the body is good.
 function validate(type, body, items) {
   if (PAYMENT_TYPES.includes(type) && !trunc(body.payable_to, 255)) return 'Payable To is required.';
   if (type === 'fund_transfer') {
-    if (!Number(body.from_account_id)) return 'Choose the bank the funds come From.';
-    if (!Number(body.to_account_id)) return 'Choose the bank the funds go To.';
-    if (Number(body.from_account_id) === Number(body.to_account_id)) return 'From and To must be different banks.';
+    for (const it of items) {
+      const what = it.particulars ? `Line "${it.particulars}"` : 'Every line';
+      if (!it.from_account_id) return `${what}: choose the bank the funds come From.`;
+      if (!it.to_account_id) return `${what}: choose the bank the funds go To.`;
+      if (it.from_account_id === it.to_account_id) return `${what}: From and To must be different banks.`;
+    }
   }
   if (type === 'business_trip') {
     if (!trunc(body.driver_name, 255)) return 'Driver name is required.';
@@ -862,7 +890,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   if (parsed.error) return res.status(400).json({ error: parsed.error });
   const items = parsed.items;
 
-  const problem = validate(type, req.body, items) || await badBanks(type, req.body);
+  const problem = validate(type, req.body, items) || await badBanks(type, req.body, items);
   if (problem) return res.status(400).json({ error: problem });
 
   const conn = await pool.getConnection();
@@ -887,8 +915,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
     for (const it of items) {
       await conn.query(
-        'INSERT INTO form_request_items (form_request_id, item_date, particulars, amount) VALUES (?, ?, ?, ?)',
-        [id, it.item_date, it.particulars, it.amount],
+        'INSERT INTO form_request_items (form_request_id, item_date, particulars, amount, from_account_id, to_account_id) VALUES (?, ?, ?, ?, ?, ?)',
+        [id, it.item_date, it.particulars, it.amount, type === 'fund_transfer' ? it.from_account_id : null, type === 'fund_transfer' ? it.to_account_id : null],
       );
     }
 
@@ -961,7 +989,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (parsed.error) return res.status(400).json({ error: parsed.error });
     const items = parsed.items;
 
-    const problem = validate(doc.type, req.body, items) || await badBanks(doc.type, req.body);
+    const problem = validate(doc.type, req.body, items) || await badBanks(doc.type, req.body, items);
     if (problem) return res.status(400).json({ error: problem });
 
     await conn.beginTransaction();
@@ -1000,8 +1028,9 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       const kept = oldItems.findIndex((o) => sameLine(o, it));
       const cogs = kept >= 0 ? oldItems.splice(kept, 1)[0].cogs_account_id : null;
       await conn.query(
-        'INSERT INTO form_request_items (form_request_id, item_date, particulars, amount, cogs_account_id) VALUES (?, ?, ?, ?, ?)',
-        [doc.id, it.item_date, it.particulars, it.amount, cogs],
+        'INSERT INTO form_request_items (form_request_id, item_date, particulars, amount, cogs_account_id, from_account_id, to_account_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [doc.id, it.item_date, it.particulars, it.amount, cogs,
+          doc.type === 'fund_transfer' ? it.from_account_id : null, doc.type === 'fund_transfer' ? it.to_account_id : null],
       );
     }
 
