@@ -3,7 +3,7 @@ const ExcelJS = require('exceljs');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { buildTrialBalance, buildBalanceSheet, buildIncomeStatement, buildGeneralLedger, buildGlTransactions, buildBalanceSheetTransactions } = require('../lib/reportsEngine');
 const {
-  buildArAging, buildArAgingCustomerDetails, buildArAgingCustomerLedger,
+  buildArAging, buildArAgingCustomerInvoiceDetails, buildArAgingCustomerLedger,
   buildArAgingDetails, buildArAgingDetailsCsv, searchArCustomers,
   buildArAgingDetailsGroups,
 } = require('../lib/arAging');
@@ -320,7 +320,7 @@ router.get('/ar-aging/customers', requireAuth, requirePermission(AR_AGING_ROUTE,
 
 router.get('/ar-aging/customer/:customerId/details', requireAuth, requirePermission(AR_AGING_ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const data = await buildArAgingCustomerDetails(Number(req.params.customerId), req.query.asOf || today());
+    const data = await buildArAgingCustomerInvoiceDetails(Number(req.params.customerId), req.query.asOf || today());
     if (!data) return res.status(404).json({ error: 'Customer not found' });
     res.json(data);
   } catch (err) {

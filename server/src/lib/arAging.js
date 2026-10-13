@@ -778,7 +778,24 @@ async function buildArAgingCustomerDetails(customerId, asOf) {
   return { ...result, items, total_balance: round2(items.reduce((sum, i) => sum + i.balance, 0)) };
 }
 
+// The Details popup lists INVOICES only (asked 2026-10-13); the Ledger keeps everything. What the
+// credits come to is still returned, so the popup can say how its total meets the report's row.
+async function buildArAgingCustomerInvoiceDetails(customerId, asOf) {
+  const all = await buildArAgingCustomerDetails(customerId, asOf);
+  if (!all) return all;
+  const items = all.items.filter((i) => i.type === 'Invoice');
+  const credits = all.items.filter((i) => i.type !== 'Invoice');
+  return {
+    ...all,
+    items,
+    total_balance: round2(items.reduce((s, i) => s + i.balance, 0)),
+    credits_balance: round2(credits.reduce((s, i) => s + i.balance, 0)),
+    credits_count: credits.length,
+    customer_balance: all.total_balance,
+  };
+}
+
 module.exports = {
-  buildArAging, buildArAgingCustomerDetails, buildArAgingCustomerLedger, collectOpenItems,
+  buildArAging, buildArAgingCustomerDetails, buildArAgingCustomerInvoiceDetails, buildArAgingCustomerLedger, collectOpenItems,
   buildArAgingDetails, buildArAgingDetailsCsv, buildArAgingDetailsGroups, searchArCustomers,
 };

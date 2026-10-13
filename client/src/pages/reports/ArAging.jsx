@@ -302,13 +302,22 @@ export default function ArAging() {
                 </tbody>
                 <tfoot>
                   <tr style={{ fontWeight: 700 }}>
-                    <td colSpan={5} style={{ textAlign: 'right' }}>Total Balance :</td>
+                    <td colSpan={5} style={{ textAlign: 'right' }}>Total Open Invoices :</td>
                     <td style={{ textAlign: 'right' }}>{money(drill.data.total_balance)}</td>
                     <td></td>
                     <td></td>
                   </tr>
                 </tfoot>
               </table>
+              {/* Invoices only (asked 2026-10-13). The customer's credits still count on the report's
+                  row, so the difference is said here; the Ledger lists them. */}
+              {drill.data.credits_count > 0 && (
+                <div className="muted" style={{ marginTop: 8, fontSize: 12 }}>
+                  Not listed: {drill.data.credits_count} unapplied payment{drill.data.credits_count === 1 ? '' : 's'} / credit
+                  memo{drill.data.credits_count === 1 ? '' : 's'} totalling {money(drill.data.credits_balance)}.
+                  With them, the customer&apos;s Total Balance is {money(drill.data.customer_balance)} — see the Ledger.
+                </div>
+              )}
             </div>
           )}
           {!drillLoading && drill.data && drill.mode === 'ledger' && (
