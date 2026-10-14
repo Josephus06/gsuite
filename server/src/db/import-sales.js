@@ -543,7 +543,11 @@ async function main() {
           estimateId = estRes.insertId;
         }
 
-        const localSoStatus = soStatus(so.Status_TransH);
+        // The source cancels an order's LINES and can leave the order at "JO IN-PROCESS" with its
+        // header amount intact. Every line is skipped below, so such an order is cancelled here --
+        // otherwise it carries sales with no lines behind them (2026-10-14: SO-71811, SO-72118).
+        const allLinesCancelled = lines.length > 0 && lines.every((l) => l.IsCancelled_LdgrJob);
+        const localSoStatus = allLinesCancelled ? 'cancelled' : soStatus(so.Status_TransH);
         const stage = joStageFromSo(localSoStatus);
         const [soRes] = await conn.query(
           `INSERT INTO sales_orders (sales_order_no, estimate_id, date_created, customer_id, contract_description,
@@ -557,6 +561,16 @@ async function main() {
             num(so.TotalAmount_TransH), num(so.gpRate)]
         );
         const salesOrderId = soRes.insertId;
+        if (allLinesCancelled) {
+          // The source's line reason, matched by name to Master Lists > Reasons.
+          const why = clean(lines.find((l) => clean(l.Reason_LdgrJob))?.Reason_LdgrJob);
+          const [[reason]] = await conn.query(
+            "SELECT id FROM reasons WHERE reason_type = 'Cancellation' AND LOWER(name) IN (LOWER(?), 'customer cancels an order') ORDER BY LOWER(name) = LOWER(?) DESC LIMIT 1",
+            [why, why]);
+          await conn.query(
+            'UPDATE sales_orders SET cancel_reason_id = ?, cancel_remarks = ?, cancelled_at = NOW() WHERE id = ?',
+            [reason ? reason.id : null, 'All lines cancelled in the source -- order cancelled to match', salesOrderId]);
+        }
 
         // Lines + Job Orders. Map ledger line -> SO line -> (optional) JO.
         const lineIdByPk = new Map();   // ledger line PK -> local SO line id
