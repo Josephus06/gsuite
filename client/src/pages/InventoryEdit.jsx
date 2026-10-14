@@ -123,7 +123,9 @@ export default function InventoryEdit() {
       base_unit_id: pick(t.base_unit, f.base_unit_id),
       purchase_unit_id: pick(t.purchase_unit, f.purchase_unit_id),
       stock_unit_id: pick(t.stock_unit, f.stock_unit_id),
-      sales_unit_id: pick(t.sale_unit, f.sales_unit_id),
+      // Most source titles name no sale unit (114 of 246); the source then sells in the base unit
+      // (SHT-SQFT-30 -> SQFT), so a blank Sales Unit takes the base unit rather than staying blank.
+      sales_unit_id: unitId(t.sale_unit) || f.sales_unit_id || unitId(t.base_unit) || '',
       length: t.length ?? '',
       width: t.width ?? '',
       conversion_factor: t.conversion ?? 1,
