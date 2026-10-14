@@ -251,6 +251,15 @@ export default function AssemblyBuildView() {
                   <td>{qty(ab.quantity)}</td>
                   <td>Released</td>
                 </tr>
+                {/* Its Quality Inspections (2026-10-14): passed qty, and RMA when any. */}
+                {(ab.quality_inspections || []).map((q) => (
+                  <tr key={`qi-${q.id}`}>
+                    <td>{formatDate(q.date_created)}</td>
+                    <td><Link className="link-btn" to={`/quality-inspections/${q.id}`}>{q.qi_no}</Link></td>
+                    <td>{qty(q.pass_qty)}{Number(q.rma_qty) ? ` (RMA ${qty(q.rma_qty)})` : ''}</td>
+                    <td>{String(q.status || '').replace(/_/g, ' ').toUpperCase()}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

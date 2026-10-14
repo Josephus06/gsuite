@@ -121,7 +121,14 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     );
 
     const glImpact = await computeGlImpact(pool, ab, processes);
-    res.json({ ...ab, processes, gl_impact: glImpact });
+    // The Quality Inspections of this build (2026-10-14), for the Related Records tab
+    // (db/add-qi-line-ab-index.js indexes the lookup).
+    const [qualityInspections] = await pool.query(
+      `SELECT q.id, q.qi_no, q.date_created, q.status, SUM(l.pass_qty) AS pass_qty, SUM(l.rma_qty) AS rma_qty
+         FROM quality_inspection_lines l JOIN quality_inspections q ON q.id = l.quality_inspection_id
+        WHERE l.assembly_build_id = ?
+        GROUP BY q.id, q.qi_no, q.date_created, q.status ORDER BY q.id DESC`, [req.params.id]);
+    res.json({ ...ab, processes, gl_impact: glImpact, quality_inspections: qualityInspections });
   } catch (err) {
     next(err);
   }

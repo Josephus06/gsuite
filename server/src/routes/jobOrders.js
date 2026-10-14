@@ -415,7 +415,18 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id, req.params.id]
     );
 
-    res.json({ ...jo, processes, rwips, transfer_orders: transferOrders });
+    // Its Assembly Builds and Item Deliveries (2026-10-14), for the Related Records tab. Both lookups
+    // are on indexed job_order_id columns.
+    const [assemblyBuilds] = await pool.query(
+      `SELECT id, ab_no, date_created, quantity_built AS qty, status
+         FROM assembly_builds WHERE job_order_id = ? ORDER BY id DESC`, [req.params.id]);
+    const [itemDeliveries] = await pool.query(
+      `SELECT d.id, d.delivery_no, d.date_created, d.status, SUM(l.qty_delivered) AS qty
+         FROM item_delivery_lines l JOIN item_deliveries d ON d.id = l.item_delivery_id
+        WHERE l.job_order_id = ?
+        GROUP BY d.id, d.delivery_no, d.date_created, d.status ORDER BY d.id DESC`, [req.params.id]);
+
+    res.json({ ...jo, processes, rwips, transfer_orders: transferOrders, assembly_builds: assemblyBuilds, item_deliveries: itemDeliveries });
   } catch (err) {
     next(err);
   }

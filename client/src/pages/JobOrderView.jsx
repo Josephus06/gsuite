@@ -676,6 +676,25 @@ export default function JobOrderView() {
                     <td>{String(t.status || '').replace(/_/g, ' ').toUpperCase()}</td>
                   </tr>
                 ))}
+                {/* Its Assembly Builds and Item Deliveries (2026-10-14). */}
+                {(jo.assembly_builds || []).map((b) => (
+                  <tr key={`ab-${b.id}`}>
+                    <td>{b.date_created ? String(b.date_created).slice(0, 10) : ''}</td>
+                    <td><Link className="link-btn" to={`/assembly-builds/${b.id}`}>{b.ab_no}</Link></td>
+                    <td>{Number(b.qty || 0)}</td>
+                    <td></td>
+                    <td>{String(b.status || '').replace(/_/g, ' ').toUpperCase()}</td>
+                  </tr>
+                ))}
+                {(jo.item_deliveries || []).map((d) => (
+                  <tr key={`id-${d.id}`}>
+                    <td>{d.date_created ? String(d.date_created).slice(0, 10) : ''}</td>
+                    <td><Link className="link-btn" to={`/item-deliveries/${d.id}`}>{d.delivery_no}</Link></td>
+                    <td>{Number(d.qty || 0)}</td>
+                    <td></td>
+                    <td>{String(d.status || '').replace(/_/g, ' ').toUpperCase()}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
