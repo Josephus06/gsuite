@@ -6,6 +6,8 @@ export const AUDIENCES = [
   { key: 'public', icon: '🌐', label: 'Public', sub: 'Anyone in the company' },
   { key: 'department', icon: '👥', label: 'My department', sub: 'Only my department' },
   { key: 'private', icon: '🔒', label: 'Only me', sub: 'Visible to you alone' },
+  // Chosen people (2026-10-14): only those picked, and the author, see the post.
+  { key: 'custom', icon: '👤', label: 'Specific people', sub: 'Only the people you choose' },
 ];
 
 // Swaps the generic "My department" label for the real department name when we know it.

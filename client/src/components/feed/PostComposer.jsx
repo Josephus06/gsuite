@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import Avatar from '../Avatar';
 import { fileToScaledDataUrl } from '../../utils/image';
 import { AUDIENCES, audienceMeta } from './audience';
+import AudiencePeoplePicker from './AudiencePeoplePicker';
 import { MAX_VIDEO_BYTES, uploadFeedVideo } from '../../utils/videoUpload';
 
 // Kept in step with MAX_IMAGES_PER_POST on the server, which is what actually enforces it.
@@ -21,6 +22,8 @@ export default function PostComposer({
   const [audience, setAudience] = useState('public');
   const [targetGroupId, setTargetGroupId] = useState(null);
   const [audienceOpen, setAudienceOpen] = useState(false);
+  // 'Specific people' (2026-10-14): the user ids the post is shared with.
+  const [audienceUsers, setAudienceUsers] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const textRef = useRef(null);
@@ -39,6 +42,7 @@ export default function PostComposer({
       ? editing.images
       : (editing?.image_data ? [editing.image_data] : []));
     setAudience(editing?.audience || 'public');
+    setAudienceUsers((editing?.audience_users || []).map((u) => u.id));
     const v = editing?.videos?.[0];
     setVideo(v ? { ...v, progress: 1, status: 'ready' } : null);
     // Editing reopens on the department the post actually went to, which for an admin is not
@@ -146,6 +150,7 @@ export default function PostComposer({
         video_ids: video?.status === 'ready' ? [video.id] : [],
         audience,
         audience_group_id: audience === 'department' ? targetGroupId : null,
+        ...(audience === 'custom' ? { audience_user_ids: audienceUsers } : {}),
       });
       onClose();
     } catch (err) {
@@ -161,7 +166,8 @@ export default function PostComposer({
   const chosenGroupName = groups?.find((g) => g.id === targetGroupId)?.name || groupName;
   const meta = audienceMeta(audience, chosenGroupName);
   const videoBusy = video && video.status === 'uploading';
-  const canPost = Boolean(body.trim() || images.length || video?.status === 'ready') && !busy && !videoBusy && video?.status !== 'error';
+  const canPost = Boolean(body.trim() || images.length || video?.status === 'ready') && !busy && !videoBusy && video?.status !== 'error'
+    && (audience !== 'custom' || audienceUsers.length > 0);
   // FB only uses the oversized text treatment for short, image-less posts.
   const bigText = !images.length && body.length <= 130;
 
@@ -233,6 +239,8 @@ export default function PostComposer({
               )}
             </div>
           </div>
+
+          {audience === 'custom' && <AudiencePeoplePicker value={audienceUsers} onChange={setAudienceUsers} />}
 
           <textarea
             ref={textRef}

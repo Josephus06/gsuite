@@ -90,7 +90,10 @@ export default function PostCard({ post, user, viewer, onChanged, onDeleted, onE
             <span title={fbTimeFull(state.created_at)}>{fbTime(state.created_at)}</span>
             {state.edited_at && <><span className="dot">·</span><span>Edited</span></>}
             <span className="dot">·</span>
-            <span title={aud.sub}>{aud.icon}</span>
+            {/* A chosen-people post names who it is shared with (2026-10-14). */}
+            <span title={state.audience === 'custom' && state.audience_users?.length
+              ? `Shared with: ${state.audience_users.map((u) => u.display_name).join(', ')}`
+              : aud.sub}>{aud.icon}</span>
           </div>
         </div>
         {canManage && (

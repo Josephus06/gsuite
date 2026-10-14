@@ -9,7 +9,7 @@ const pool = require('../db');
 const { videosForPosts } = require('./feedVideos');
 
 const REACTIONS = ['like', 'love', 'care', 'haha', 'wow', 'sad', 'angry'];
-const AUDIENCES = ['public', 'department', 'private'];
+const AUDIENCES = ['public', 'department', 'private', 'custom']; // custom: chosen people (2026-10-14)
 const PAGE_SIZE = 10;
 const MAX_BODY = 20000;
 // A data-URL image lands in a MEDIUMTEXT (16 MB). The client downscales before sending;
@@ -44,13 +44,16 @@ async function viewerContext(userId) {
 // SQL fragment + params for "posts this viewer is allowed to read".
 // A System Admin sees everything except other people's 'private' posts -- those stay private
 // by design, since the audience picker promises "Only me".
+// 'custom' (2026-10-14; db/add-feed-custom-audience.js): only the people the author chose.
 function visiblePostsWhere(userId, groupId, alias = 'p') {
   const sql = `${alias}.is_deleted = 0 AND (
       ${alias}.audience = 'public'
       OR ${alias}.user_id = ?
       OR (${alias}.audience = 'department' AND ${alias}.audience_group_id IS NOT NULL AND ${alias}.audience_group_id = ?)
+      OR (${alias}.audience = 'custom' AND EXISTS (
+            SELECT 1 FROM feed_post_audience_users fa WHERE fa.post_id = ${alias}.id AND fa.user_id = ?))
     )`;
-  return { sql, params: [userId, groupId] };
+  return { sql, params: [userId, groupId, userId] };
 }
 
 // Named columns rather than p.*, so the superseded feed_posts.image_data blob is not read
@@ -155,6 +158,18 @@ async function decoratePosts(posts, viewerId, isAdmin) {
     const post = byId.get(Number(img.post_id));
     if (!post) continue;
     post.image_ids.push(img.id);
+  }
+  // Who a 'custom' post is shared with (2026-10-14), so the card can say so and the edit dialog
+  // can reopen with them chosen.
+  const customIds = posts.filter((p) => p.audience === 'custom').map((p) => p.id);
+  if (customIds.length) {
+    const [aud] = await pool.query(
+      `SELECT fa.post_id, u.id, u.display_name FROM feed_post_audience_users fa JOIN users u ON u.id = fa.user_id
+        WHERE fa.post_id IN (?) ORDER BY u.display_name`, [customIds]);
+    for (const a of aud) {
+      const post = byId.get(Number(a.post_id));
+      if (post) (post.audience_users ||= []).push({ id: a.id, display_name: a.display_name });
+    }
   }
   // Videos (2026-10-13): ids and names; the bytes stream from /api/feed/videos/:id/stream.
   for (const v of await videosForPosts(ids)) {

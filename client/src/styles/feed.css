@@ -1120,3 +1120,23 @@
 .fb-video-meta { font-size: 12px; color: var(--fb-text-2); }
 .fb-video-bar { height: 6px; margin-top: 6px; border-radius: 3px; background: var(--fb-input); overflow: hidden; }
 .fb-video-bar > div { height: 100%; background: var(--fb-blue, #1877f2); transition: width .3s; }
+
+/* ---------------------------------------- "Specific people" audience (2026-10-14; AudiencePeoplePicker) */
+
+.fb-people-picker { border: 1px solid var(--fb-divider); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; font-size: 14px; }
+.fb-people-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+.fb-people-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.fb-people-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border-radius: 14px;
+  background: var(--fb-input); font-size: 13px; }
+.fb-people-chip button { border: 0; background: none; cursor: pointer; color: var(--fb-text-2); font-size: 11px; padding: 0 4px; }
+.fb-people-clear { border: 0; background: none; color: var(--fb-blue, #1877f2); cursor: pointer; font-size: 12px; }
+.fb-people-search { width: 100%; box-sizing: border-box; padding: 7px 12px; border: 0; border-radius: 18px; background: var(--fb-input);
+  color: var(--fb-text); font-size: 14px; outline: none; }
+.fb-people-results { display: flex; flex-direction: column; margin-top: 4px; max-height: 220px; overflow-y: auto; }
+.fb-people-result { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 0; border-radius: 6px; background: none;
+  color: var(--fb-text); cursor: pointer; text-align: left; font-size: 14px; }
+.fb-people-result:hover { background: var(--fb-input); }
+.fb-people-groups { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; font-size: 13px; }
+.fb-people-group { border: 1px solid var(--fb-divider); border-radius: 14px; background: none; color: var(--fb-text); padding: 3px 10px;
+  cursor: pointer; font-size: 13px; }
+.fb-people-group:hover { background: var(--fb-input); }

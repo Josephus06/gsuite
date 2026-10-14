@@ -100,7 +100,32 @@ async function recipientsForPost({ audience, groupId, authorId }) {
 // replies still reach the people they concern (below).
 const NOTIFY_NEW_POSTS = false;
 
-async function notifyNewPost(post, author) {
+// A post for chosen people (audience 'custom', 2026-10-14). The people are the post's own audience,
+// so they ARE involved: they are told, even though a general post tells nobody.
+const MAX_AUDIENCE_USERS = 300;
+async function readAudienceUsers(raw, authorId) {
+  const ids = [...new Set((Array.isArray(raw) ? raw : []).map(Number).filter((id) => id && id !== Number(authorId)))];
+  if (!ids.length) return { error: 'Choose at least one person to share this post with.' };
+  if (ids.length > MAX_AUDIENCE_USERS) return { error: `A post can be shared with at most ${MAX_AUDIENCE_USERS} people.` };
+  const [rows] = await pool.query('SELECT id FROM users WHERE id IN (?) AND is_active = 1', [ids]);
+  return { ids: rows.map((r) => Number(r.id)) };
+}
+async function writeAudienceUsers(conn, postId, ids) {
+  await conn.query('DELETE FROM feed_post_audience_users WHERE post_id = ?', [postId]);
+  for (const id of ids) await conn.query('INSERT INTO feed_post_audience_users (post_id, user_id) VALUES (?, ?)', [postId, id]);
+}
+
+async function notifyNewPost(post, author, audienceIds = []) {
+  if (post.audience === 'custom') {
+    await insertNotifications(audienceIds.filter((id) => id !== Number(post.user_id)).map((userId) => ({
+      userId,
+      type: NOTIFY.post,
+      title: `${author.display_name} shared a post with you`,
+      message: post.body ? clip(post.body, 200) : 'Shared a photo',
+      postId: post.id,
+    })));
+    return;
+  }
   if (!NOTIFY_NEW_POSTS) return;
   const recipients = await recipientsForPost({
     audience: post.audience,
@@ -346,6 +371,11 @@ router.post('/', requireAuth, async (req, res, next) => {
       audience, requested: req.body.audience_group_id, groupId, isAdmin,
     });
     if (target.error) return res.status(target.status).json({ error: target.error });
+    let people = { ids: [] };
+    if (audience === 'custom') {
+      people = await readAudienceUsers(req.body.audience_user_ids, req.user.id);
+      if (people.error) return res.status(400).json({ error: people.error });
+    }
 
     // One transaction: a post whose photos failed to insert would show up in the feed as an
     // empty card, and the author has no way to tell it happened.
@@ -358,6 +388,7 @@ router.post('/', requireAuth, async (req, res, next) => {
         [req.user.id, body || null, audience, target.id]
       );
       postId = result.insertId;
+      if (audience === 'custom') await writeAudienceUsers(conn, postId, people.ids);
       await writeImages(conn, postId, images);
       if (vids.ids.length) await setPostVideos(conn, postId, vids.ids);
       await conn.commit();
@@ -374,7 +405,7 @@ router.post('/', requireAuth, async (req, res, next) => {
     res.status(201).json({ post });
 
     // After the response: the poster shouldn't wait on a fan-out to every colleague.
-    notifyNewPost(row, { id: req.user.id, display_name: req.user.display_name })
+    notifyNewPost(row, { id: req.user.id, display_name: req.user.display_name }, people.ids)
       .catch((e) => console.error('feed: new-post notify failed', e));
   } catch (err) {
     next(err);
@@ -434,6 +465,18 @@ router.put('/:id', requireAuth, async (req, res, next) => {
       isAdmin,
     });
     if (target.error) return res.status(target.status).json({ error: target.error });
+    // Chosen people (2026-10-14): a list sent replaces the post's; none sent keeps it -- unless the
+    // post was not 'custom' before, when there is nothing to keep.
+    let people = null;
+    let before = [];
+    if (existing.audience === 'custom') {
+      const [rows] = await pool.query('SELECT user_id FROM feed_post_audience_users WHERE post_id = ?', [req.params.id]);
+      before = rows.map((r) => Number(r.user_id));
+    }
+    if (audience === 'custom' && (Array.isArray(req.body.audience_user_ids) || existing.audience !== 'custom')) {
+      people = await readAudienceUsers(req.body.audience_user_ids, existing.user_id);
+      if (people.error) return res.status(400).json({ error: people.error });
+    }
 
     const conn = await pool.getConnection();
     try {
@@ -444,6 +487,8 @@ router.put('/:id', requireAuth, async (req, res, next) => {
           WHERE id = ?`,
         [body || null, audience, target.id, req.params.id]
       );
+      if (people) await writeAudienceUsers(conn, req.params.id, people.ids);
+      else if (audience !== 'custom' && before.length) await conn.query('DELETE FROM feed_post_audience_users WHERE post_id = ?', [req.params.id]);
       if (touchesImages) await writeImages(conn, req.params.id, images);
       let droppedFiles = [];
       if (touchesVideos) droppedFiles = await setPostVideos(conn, req.params.id, videoIds);
@@ -460,9 +505,39 @@ router.put('/:id', requireAuth, async (req, res, next) => {
     );
     const [post] = await decoratePosts([shapePost(row, req.user.id)], req.user.id, isAdmin);
     res.json({ post });
+
+    // Someone newly added to a chosen-people post is told, as on a new one; those already on it
+    // are not told again.
+    if (people) {
+      const added = people.ids.filter((id) => !before.includes(id));
+      if (added.length) {
+        notifyNewPost(row, { id: req.user.id, display_name: req.user.display_name }, added)
+          .catch((e) => console.error('feed: shared-post notify failed', e));
+      }
+    }
   } catch (err) {
     next(err);
   }
+});
+
+// The audience picker's choices for "Specific people" (2026-10-14): everyone active, and the
+// viewer's own group chats so a whole group can be added at once.
+router.get('/audience-options', requireAuth, async (req, res, next) => {
+  try {
+    const [users] = await pool.query(
+      'SELECT id, display_name, avatar_data FROM users WHERE is_active = 1 AND id <> ? ORDER BY display_name', [req.user.id]);
+    let groups = [];
+    try {
+      const [g] = await pool.query(
+        `SELECT g.id, g.name, GROUP_CONCAT(m2.user_id) AS member_ids
+           FROM chat_groups g
+           JOIN chat_group_members m ON m.group_id = g.id AND m.user_id = ?
+           JOIN chat_group_members m2 ON m2.group_id = g.id
+          GROUP BY g.id, g.name ORDER BY g.name`, [req.user.id]);
+      groups = g.map((r) => ({ id: r.id, name: r.name, member_ids: String(r.member_ids || '').split(',').map(Number).filter(Boolean) }));
+    } catch (e) { if (e.code !== 'ER_NO_SUCH_TABLE') throw e; }
+    res.json({ users, groups });
+  } catch (err) { next(err); }
 });
 
 // Soft delete so comment threads and reaction history aren't destroyed by a stray click.
