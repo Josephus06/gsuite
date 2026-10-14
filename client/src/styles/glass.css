@@ -713,3 +713,18 @@
    edge. That colour is translucent now, so the ring has to be drawn explicitly or
    the dot loses its outline against the photo underneath. */
 :root[data-theme='glass'] .fb-online-dot { border-color: rgba(11, 29, 61, 0.92); }
+
+/* Chat boxes keep their own light / dark palette in glass mode (index.css --chat-*), so the glass
+   input rule above -- light text on a frosted field -- made what you type invisible on the white
+   chat box (asked 2026-10-14). Inside a chat box, inputs take the chat's colours instead. */
+:root[data-theme='glass'] .chat-box .cc-input textarea {
+  background: transparent;
+  color: var(--chat-text);
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  min-height: 36px;
+}
+:root[data-theme='glass'] .chat-box .cc-input textarea::placeholder { color: var(--chat-dim); }
+:root[data-theme='glass'] .chat-box input,
+:root[data-theme='glass'] .chat-box textarea { color: var(--chat-text); }
