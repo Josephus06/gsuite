@@ -46,12 +46,26 @@ function UnreadSummary({ groupId, summary, onClose }) {
   );
 }
 
+const READERS_MS = 5000;
+
 export default function GroupChatBox({ box, meId, onClose, onToggle, onSent, onOlder, onGroupChanged, onSummaryDone }) {
   const [managing, setManaging] = useState(false);
   const [replyTo, setReplyTo] = useState(null);
   const [error, setError] = useState('');
   const listRef = useRef(null);
   const newestRef = useRef(null);
+  // Seen by: who has read how far, refreshed while the box is open and whenever a message lands.
+  const [readers, setReaders] = useState([]);
+  const lastMsg = box.messages[box.messages.length - 1]?.id;
+  useEffect(() => {
+    if (box.minimized) return undefined;
+    let alive = true;
+    const load = () => api.get(`/chat/groups/${box.group.id}/readers`)
+      .then(({ data }) => { if (alive && Array.isArray(data)) setReaders(data); }).catch(() => {});
+    load();
+    const t = setInterval(load, READERS_MS);
+    return () => { alive = false; clearInterval(t); };
+  }, [box.group.id, box.minimized, lastMsg]);
 
   const newest = box.messages[box.messages.length - 1]?.id;
   useEffect(() => {
@@ -98,7 +112,7 @@ export default function GroupChatBox({ box, meId, onClose, onToggle, onSent, onO
                 <span>Say hi to the group 👋</span>
               </div>
             )}
-            <ChatMessages messages={box.messages} meId={meId} showNames
+            <ChatMessages messages={box.messages} meId={meId} showNames readers={readers}
               onReply={(m) => setReplyTo(replyTarget(m, meId, m.sender_name))}
               onReact={(m, emoji) => act('/chat/react', { kind: 'group', message_id: m.id, emoji })}
               onUnsend={(m) => act('/chat/unsend', { kind: 'group', message_id: m.id })} />

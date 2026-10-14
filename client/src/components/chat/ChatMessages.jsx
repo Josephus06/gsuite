@@ -41,9 +41,25 @@ function ChatImage({ id, name, onOpen }) {
   return <img className="cm-img" src={url} alt={name} onClick={() => onOpen(url, name)} />;
 }
 
-export default function ChatMessages({ messages, meId, otherUser, showNames, seenAt, onReply, onReact, onUnsend }) {
+// Seen by (2026-10-14): each reader's profile picture sits under the newest message they have read
+// -- readers: [{ id, display_name, avatar_data, last_read_id }] for a group; for a one-to-one chat the
+// other person's picture under seenAt. Nobody is shown under their own message.
+function seenPositions(messages, readers) {
+  const at = new Map(); // message id -> readers whose newest-read message it is
+  for (const r of readers || []) {
+    let hit = null;
+    for (const m of messages) if (m.id <= r.last_read_id) hit = m; else break;
+    if (!hit || hit.sender_user_id === r.id) continue;
+    if (!at.has(hit.id)) at.set(hit.id, []);
+    at.get(hit.id).push(r);
+  }
+  return at;
+}
+
+export default function ChatMessages({ messages, meId, otherUser, showNames, seenAt, readers, onReply, onReact, onUnsend }) {
   const [menuFor, setMenuFor] = useState(null); // the message whose reaction picker is open
   const [viewer, setViewer] = useState(null); // { url, name } -- a photo opened full size
+  const seenBy = seenPositions(messages, readers);
 
   let prevDay = '';
   return (
@@ -125,7 +141,14 @@ export default function ChatMessages({ messages, meId, otherUser, showNames, see
                   </div>
                 )}
                 {(pos === 'last' || pos === 'single') && <div className="chat-time">{timeOf(m.created_at)}</div>}
-                {mine && seenAt === m.id && <div className="chat-seen">Seen</div>}
+                {mine && seenAt === m.id && otherUser && (
+                  <div className="chat-seen-by" title={`Seen by ${otherUser.display_name}`}><Avatar user={otherUser} size={14} /></div>
+                )}
+                {seenBy.has(m.id) && (
+                  <div className="chat-seen-by" title={`Seen by ${seenBy.get(m.id).map((r) => r.display_name).join(', ')}`}>
+                    {seenBy.get(m.id).map((r) => <Avatar key={r.id} user={r} size={14} />)}
+                  </div>
+                )}
               </div>
             </div>
           </div>

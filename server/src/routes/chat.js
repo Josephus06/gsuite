@@ -556,6 +556,19 @@ router.get('/groups/:id/thread', requireAuth, requireChat, async (req, res, next
   } catch (err) { return next(err); }
 });
 
+// Seen by (2026-10-14): how far each OTHER member has read this group, with their photo -- the box
+// shows each one's picture under the last message they have seen, as Messenger does.
+router.get('/groups/:id/readers', requireAuth, requireChat, async (req, res, next) => {
+  try {
+    const g = await memberGroup(req, res);
+    if (!g) return undefined;
+    const [rows] = await pool.query(
+      `SELECT u.id, u.display_name, u.avatar_data, gm.last_read_id
+         FROM chat_group_members gm JOIN users u ON u.id = gm.user_id
+        WHERE gm.group_id = ? AND gm.user_id <> ? ORDER BY u.display_name`, [g.id, req.user.id]);
+    return res.json(rows.map((r) => ({ ...r, last_read_id: Number(r.last_read_id) || 0 })));
+  } catch (err) { return next(err); }
+});
 router.post('/groups/:id/send', requireAuth, requireChat, async (req, res, next) => {
   try {
     const g = await memberGroup(req, res);
