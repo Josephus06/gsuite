@@ -11,6 +11,10 @@ import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 import { useAuth } from '../context/useAuth';
 import { ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, formBanks, money, pretty } from '../utils/requestForms';
 import OvertimeDecline from '../components/OvertimeDecline';
+import { parseUtc } from '../utils/datetime';
+
+// A guard's Time OUT / Time IN (stored UTC), read in Philippine time.
+const phTime = (v) => (v ? parseUtc(v).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Manila' }) : null);
 
 // One form, and whatever the viewer is allowed to do to it.
 //
@@ -341,6 +345,49 @@ export default function FormView() {
           {['accepted', 'declined'].includes(doc.status) && (
             <Line label={doc.status === 'accepted' ? 'Accepted' : 'Declined'}>{`${fmtDate(d.responded_at)}${d.response_remark ? ` — ${d.response_remark}` : ''}`}</Line>
           )}
+        </div>
+      )}
+
+      {doc.type === 'gate_pass' && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3>Employee Gate Pass</h3>
+          <Line label="Location">{d.location_name}</Line>
+          <Line label="Date">{d.pass_date ? `${fmtDate(d.pass_date)} (valid only on this date)` : null}</Line>
+          <Line label="Destination">{d.destination}</Line>
+          <Line label="Name of Personnel">{doc.name || doc.owner_name}</Line>
+          <Line label="Department">{doc.department}</Line>
+          <Line label="Purpose">{d.purpose}</Line>
+          <Line label="Approved by (Department Head)">{doc.noted_by_name || (doc.status === 'submitted' ? 'Waiting' : null)}</Line>
+          <Line label="Noted by (HR Department)">{doc.approved_by_name || (doc.status === 'noted' ? 'Waiting' : null)}</Line>
+          <Line label="Time OUT">{d.time_out ? `${phTime(d.time_out)}${d.time_out_by_name ? ` — released by ${d.time_out_by_name}` : ''}` : null}</Line>
+          <Line label="Time IN">{d.time_in ? `${phTime(d.time_in)}${d.time_in_by_name ? ` — by ${d.time_in_by_name}` : ''}` : null}</Line>
+          {doc.status === 'approved' && doc.can_record_gate_time && (!d.time_out || !d.time_in) && (
+            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+              {!d.time_out && (
+                <button type="button" className="btn btn-sm btn-primary" disabled={busy}
+                  onClick={() => act('gate-pass/time-out', null, 'Time OUT recorded.')}>Record Time OUT</button>
+              )}
+              {d.time_out && !d.time_in && (
+                <button type="button" className="btn btn-sm btn-primary" disabled={busy}
+                  onClick={() => act('gate-pass/time-in', null, 'Time IN recorded.')}>Record Time IN</button>
+              )}
+            </div>
+          )}
+          <div className="table-wrap" style={{ marginTop: 12 }}>
+            <table>
+              <thead><tr><th style={{ width: 40 }}>#</th><th>Items — Description</th><th>Department</th><th>Noted by</th></tr></thead>
+              <tbody>
+                {(d.items || []).length === 0 && (
+                  <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 12 }}>No items carried out.</td></tr>
+                )}
+                {(d.items || []).map((it, i) => (
+                  <tr key={it.id || i}>
+                    <td>{i + 1}</td><td>{it.description}</td><td>{it.department || '—'}</td><td>{doc.noted_by_name || ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

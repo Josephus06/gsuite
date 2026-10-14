@@ -51,8 +51,13 @@ export default function FormEdit() {
     ot_for_self: false, ot_target_user_id: '', ot_date: '', ot_time_from: '', ot_time_to: '', ot_purpose: '', ot_reference_no: '',
     // Leave Application (2026-10-13)
     leave_type: '', leave_type_other: '', leave_date_from: '', leave_date_to: '', leave_day_part: 'whole', leave_reason: '', leave_contact: '',
+    // Employee Gate Pass (2026-10-14)
+    gp_location_id: '', gp_date: '', gp_destination: '', gp_purpose: '',
     remarks: '',
   });
+  // Employee Gate Pass items: what is carried out, and the department it belongs to.
+  const [gpItems, setGpItems] = useState([{ description: '', department: '' }]);
+  const [locations, setLocations] = useState([]);
   const [otPeople, setOtPeople] = useState([]);
   const [items, setItems] = useState([blankItem()]);
   const [departments, setDepartments] = useState([]);
@@ -65,7 +70,7 @@ export default function FormEdit() {
 
   useEffect(() => {
     api.get('/forms/meta/options')
-      .then(({ data }) => { setDepartments(data.departments || []); setBankAccounts(data.bank_accounts || []); setOtPeople(data.ot_people || []); })
+      .then(({ data }) => { setDepartments(data.departments || []); setBankAccounts(data.bank_accounts || []); setOtPeople(data.ot_people || []); setLocations(data.locations || []); })
       .catch(() => {});
   }, []);
 
@@ -104,7 +109,13 @@ export default function FormEdit() {
       leave_date_to: data.type === 'leave' && d.date_to ? String(d.date_to).slice(0, 10) : '',
       leave_day_part: d.day_part || 'whole', leave_reason: data.type === 'leave' ? (d.reason || '') : '',
       leave_contact: d.contact_while_on_leave || '',
+      gp_location_id: data.type === 'gate_pass' ? (d.location_id || '') : '',
+      gp_date: data.type === 'gate_pass' && d.pass_date ? String(d.pass_date).slice(0, 10) : '',
+      gp_destination: d.destination || '', gp_purpose: data.type === 'gate_pass' ? (d.purpose || '') : '',
     });
+    if (data.type === 'gate_pass') {
+      setGpItems((d.items || []).length ? d.items.map((it) => ({ description: it.description || '', department: it.department || '' })) : [{ description: '', department: '' }]);
+    }
     setItems((data.items || []).length
       ? data.items.map((i) => ({
         date: i.item_date ? String(i.item_date).slice(0, 10) : '',
@@ -146,6 +157,7 @@ export default function FormEdit() {
     setSaving(true); setError('');
     const payload = {
       ...form, type,
+      gp_items: type === 'gate_pass' ? gpItems.filter((r) => String(r.description || '').trim()) : undefined,
       items: hasItems
         ? items.filter((r) => r.particulars || r.amount).map((r) => ({
           date: r.date, particulars: r.particulars, amount: r.amount, from_account_id: r.from_account_id || null, to_account_id: r.to_account_id || null,
@@ -375,6 +387,66 @@ export default function FormEdit() {
             <label>Reference (JO / SO #)</label>
             <input value={form.ot_reference_no} onChange={(e) => set('ot_reference_no', e.target.value)} />
           </div>
+        </div>
+      )}
+
+      {type === 'gate_pass' && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3>Employee Gate Pass</h3>
+          <div className="muted" style={{ fontSize: 12, marginTop: -6, marginBottom: 10 }}>
+            Name and Department above are the personnel going out. Approved by their Department Head, noted by HR,
+            then checked and released by the security guard on duty.
+          </div>
+          <div className="field-row">
+            <div className="field">
+              <label>Location</label>
+              <select value={form.gp_location_id} onChange={(e) => set('gp_location_id', e.target.value)}>
+                <option value="">—</option>
+                {locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
+              </select>
+            </div>
+            <div className="field">
+              <label>Date * <span className="muted" style={{ fontWeight: 400 }}>(valid only on this date)</span></label>
+              <input type="date" value={form.gp_date} onChange={(e) => set('gp_date', e.target.value)} />
+            </div>
+            <div className="field">
+              <label>Destination *</label>
+              <input value={form.gp_destination} onChange={(e) => set('gp_destination', e.target.value)} />
+            </div>
+          </div>
+          <div className="field">
+            <label>Purpose *</label>
+            <textarea rows={2} value={form.gp_purpose} onChange={(e) => set('gp_purpose', e.target.value)} />
+          </div>
+          <h4 style={{ margin: '14px 0 6px' }}>Items</h4>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>All items should be listed and noted by the department concerned.</div>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th style={{ width: 40 }}>#</th><th>Description</th><th>Department</th><th style={{ width: 40 }}></th></tr></thead>
+              <tbody>
+                {gpItems.map((r, i) => (
+                  <tr key={i}>
+                    <td>{i + 1}</td>
+                    <td><input value={r.description} placeholder="e.g. Laptop (Dell, SN 12345)"
+                      onChange={(e) => setGpItems((rs) => rs.map((x, xi) => (xi === i ? { ...x, description: e.target.value } : x)))} /></td>
+                    <td>
+                      <select value={r.department} onChange={(e) => setGpItems((rs) => rs.map((x, xi) => (xi === i ? { ...x, department: e.target.value } : x)))}>
+                        <option value="">—</option>
+                        {r.department && !departments.includes(r.department) && <option value={r.department}>{r.department}</option>}
+                        {departments.map((dp) => <option key={dp} value={dp}>{dp}</option>)}
+                      </select>
+                    </td>
+                    <td>
+                      <button type="button" className="btn btn-sm btn-danger" title="Remove"
+                        onClick={() => setGpItems((rs) => (rs.length > 1 ? rs.filter((_, xi) => xi !== i) : [{ description: '', department: '' }]))}>×</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <button type="button" className="btn btn-sm" style={{ marginTop: 8 }}
+            onClick={() => setGpItems((rs) => [...rs, { description: '', department: form.department || '' }])}>Add Item</button>
         </div>
       )}
 

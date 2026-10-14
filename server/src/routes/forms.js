@@ -45,7 +45,7 @@ const router = express.Router();
 const ROUTE = '/forms';
 const APPROVAL_ROUTE = '/forms/approval';
 
-const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund', 'attendance_adjustment', 'overtime', 'leave'];
+const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund', 'attendance_adjustment', 'overtime', 'leave', 'gate_pass'];
 const TYPE_LABELS = {
   liquidation: 'Liquidation',
   payment: 'Request for Payment',
@@ -55,9 +55,29 @@ const TYPE_LABELS = {
   attendance_adjustment: 'Attendance Adjustment Form',
   overtime: 'Overtime Request',
   leave: 'Leave Application',
+  gate_pass: 'Employee Gate Pass',
 };
 // Forms with no expense lines: a trip sheet, and the attendance adjustment slip.
-const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave'];
+const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'gate_pass'];
+// Employee Gate Pass (asked 2026-10-14; db/add-gate-pass-form.js). Its items are what is carried out
+// -- a description and the department it belongs to -- not money lines, so they have their own table.
+// The guard on duty (Edit on GUARD_ROUTE) records Time OUT / Time IN once it is approved.
+const GUARD_ROUTE = '/forms/gate-pass-guard';
+const MAX_GATE_ITEMS = 30;
+const todayPh = () => new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+async function gatePassDetail(id) {
+  try {
+    const [[d]] = await pool.query(
+      `SELECT g.*, l.location_name, uo.display_name AS time_out_by_name, ui.display_name AS time_in_by_name
+         FROM form_gate_pass_details g
+         LEFT JOIN locations l ON l.id = g.location_id
+         LEFT JOIN users uo ON uo.id = g.time_out_by_user_id
+         LEFT JOIN users ui ON ui.id = g.time_in_by_user_id
+        WHERE g.form_request_id = ?`, [id]);
+    const [items] = await pool.query('SELECT id, line_no, description, department FROM form_gate_pass_items WHERE form_request_id = ? ORDER BY line_no, id', [id]);
+    return d ? { ...d, items } : null;
+  } catch (e) { if (e.code === 'ER_NO_SUCH_TABLE') return null; throw e; }
+}
 // Leave Application (asked 2026-10-13; db/add-leave-form.js). 'others' carries free text.
 const LEAVE_TYPES = ['sick', 'vacation', 'emergency', 'maternity', 'paternity', 'bereavement', 'birthday', 'solo_parent', 'without_pay', 'others'];
 const DAY_PARTS = ['whole', 'am', 'pm'];
@@ -226,6 +246,8 @@ async function loadFull(id) {
     const [[d]] = await pool.query('SELECT * FROM form_leave_details WHERE form_request_id = ?', [id])
       .catch((e) => { if (e.code === 'ER_NO_SUCH_TABLE') return [[null]]; throw e; });
     doc.detail = d || null;
+  } else if (doc.type === 'gate_pass') {
+    doc.detail = await gatePassDetail(id);
   }
   return doc;
 }
@@ -543,12 +565,15 @@ router.get('/meta/options', requireAuth, requirePermission(ROUTE, 'can_view'), a
     // Departments come from the same list every other module uses, so a form's department is a
     // real one rather than whatever was typed that day.
     const [departments] = await pool.query('SELECT id, name FROM departments ORDER BY name');
+    // Employee Gate Pass: the Location it is issued at.
+    const [locations] = await pool.query('SELECT id, location_name FROM locations WHERE is_active = 1 ORDER BY location_name');
     // From / To on a Fund Transfer Request Form: the bank accounts under Cash in Bank (BANK_ACCOUNTS_SQL).
     const [bankAccounts] = await pool.query(`${BANK_ACCOUNTS_SQL} ORDER BY a.account_code`);
     res.json({
       types: TYPES.map((t) => ({ key: t, label: TYPE_LABELS[t] })),
       purposes: PURPOSES,
       departments: departments.map((d) => d.name),
+      locations,
       bank_accounts: bankAccounts,
       // Overtime Request: anyone active with a login, and the department on their employee record.
       ot_people: (await pool.query(
@@ -703,6 +728,10 @@ router.get('/:id', requireAuth, async (req, res, next) => {
       }
     }
 
+    // Employee Gate Pass: may this viewer record the guard's Time OUT / Time IN?
+    if (doc.type === 'gate_pass') {
+      doc.can_record_gate_time = (await userCan(req.user.id, GUARD_ROUTE, 'can_edit')) || (await isSystemAdmin(req.user.id));
+    }
     // A Fund Transfer Request is posted by a Check Voucher or a Fund Transfer Voucher raised from it
     // once approved (2026-10-14; lib/fundTransferPosting.js) -- one, or several covering its total.
     if (doc.type === 'fund_transfer') {
@@ -803,6 +832,21 @@ async function writeDetail(conn, docId, type, body, items, ownerId = null) {
     return { total_amount: total };
   }
 
+  if (type === 'gate_pass') {
+    await conn.query(
+      `INSERT INTO form_gate_pass_details (form_request_id, location_id, pass_date, destination, purpose)
+       VALUES (?, ?, ?, ?, ?)`,
+      [docId, Number(body.gp_location_id) || null, date(body.gp_date), trunc(body.gp_destination, 255), trunc(body.gp_purpose, 4000)]);
+    const lines = (Array.isArray(body.gp_items) ? body.gp_items : []).filter((it) => trunc(it && it.description, 500)).slice(0, MAX_GATE_ITEMS);
+    let n = 0;
+    for (const it of lines) {
+      n += 1;
+      await conn.query('INSERT INTO form_gate_pass_items (form_request_id, line_no, description, department) VALUES (?, ?, ?, ?)',
+        [docId, n, trunc(it.description, 500), trunc(it.department, 150)]);
+    }
+    return {};
+  }
+
   if (type === 'leave') {
     const leaveType = LEAVE_TYPES.includes(body.leave_type) ? body.leave_type : 'others';
     const from = date(body.leave_date_from);
@@ -876,6 +920,12 @@ function validate(type, body, items) {
     if (!ADJ_TIMES.some((k) => time(body[k]))) return 'Enter at least one time to adjust (AM / PM / OT, In or Out).';
     if (!ADJ_REASONS.includes(body.reason)) return 'Choose the reason: Field Work, Business Trip or Others.';
     if (body.reason === 'others' && !trunc(body.reason_other, 255)) return 'Say what the other reason is (e.g. biometric error).';
+  }
+  if (type === 'gate_pass') {
+    if (!date(body.gp_date)) return 'The date of the gate pass is required -- it is valid only on that day.';
+    if (!trunc(body.gp_destination, 255)) return 'Say where you are going (Destination).';
+    if (!trunc(body.name, 255)) return 'Name of Personnel is required.';
+    if (!trunc(body.gp_purpose, 4000)) return 'Say the purpose of going out.';
   }
   if (type === 'leave') {
     if (!LEAVE_TYPES.includes(body.leave_type)) return 'Choose the type of leave.';
@@ -1061,8 +1111,10 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       attendance_adjustment: 'form_attendance_adjustment_details',
       overtime: 'form_overtime_details',
       leave: 'form_leave_details',
+      gate_pass: 'form_gate_pass_details',
     }[doc.type];
     await conn.query(`DELETE FROM ${detailTable} WHERE form_request_id = ?`, [doc.id]);
+    if (doc.type === 'gate_pass') await conn.query('DELETE FROM form_gate_pass_items WHERE form_request_id = ?', [doc.id]);
     await writeDetail(conn, doc.id, doc.type, req.body, items, doc.user_id);
 
     if (doc.type === 'liquidation') {
@@ -1152,6 +1204,37 @@ router.post('/:id/note', requireAuth, async (req, res, next) => {
     await logFormAudit(pool, doc.id, req.user.id, 'Status Change', 'Status', 'Submitted', 'Noted');
     notifyFormStatus(doc.id, req.user.id);
     return res.json({ ok: true, status: 'noted' });
+  } catch (err) { return next(err); }
+});
+
+// Employee Gate Pass: the guard on duty checks and releases it -- Time OUT as the employee leaves,
+// Time IN on return (2026-10-14). Only an approved pass, Time OUT only on the date it is valid for,
+// OUT before IN, each once. Edit on the Gate Pass (Security Guard) page, or a System Admin.
+router.post('/:id/gate-pass/:which', requireAuth, async (req, res, next) => {
+  try {
+    if (!['time-out', 'time-in'].includes(req.params.which)) return res.status(404).json({ error: 'Not found' });
+    if (!(await userCan(req.user.id, GUARD_ROUTE, 'can_edit')) && !(await isSystemAdmin(req.user.id))) {
+      return res.status(403).json({ error: 'Only the security guard on duty records gate pass times.' });
+    }
+    const [[doc]] = await pool.query('SELECT id, type, status FROM form_requests WHERE id = ?', [req.params.id]);
+    if (!doc || doc.type !== 'gate_pass') return res.status(404).json({ error: 'Gate pass not found.' });
+    if (doc.status !== 'approved') return res.status(409).json({ error: 'This gate pass is not approved yet.' });
+    const d = await gatePassDetail(doc.id);
+    if (!d) return res.status(404).json({ error: 'Gate pass not found.' });
+    const out = req.params.which === 'time-out';
+    if (out) {
+      if (d.time_out) return res.status(409).json({ error: 'Time OUT is already recorded.' });
+      if (String(d.pass_date).slice(0, 10) !== todayPh()) {
+        return res.status(409).json({ error: `This gate pass is valid only on ${String(d.pass_date).slice(0, 10)}.` });
+      }
+      await pool.query('UPDATE form_gate_pass_details SET time_out = UTC_TIMESTAMP(), time_out_by_user_id = ? WHERE form_request_id = ?', [req.user.id, doc.id]);
+    } else {
+      if (!d.time_out) return res.status(409).json({ error: 'Record Time OUT first.' });
+      if (d.time_in) return res.status(409).json({ error: 'Time IN is already recorded.' });
+      await pool.query('UPDATE form_gate_pass_details SET time_in = UTC_TIMESTAMP(), time_in_by_user_id = ? WHERE form_request_id = ?', [req.user.id, doc.id]);
+    }
+    await logFormAudit(pool, doc.id, req.user.id, 'Updated', out ? 'Time OUT' : 'Time IN', null, 'Recorded');
+    return res.json({ ok: true });
   } catch (err) { return next(err); }
 });
 

@@ -86,7 +86,7 @@ function notifyPoApproved({ id, poNo, createdBy }, actorId) {
 const FORM_LABEL = {
   liquidation: 'Liquidation', payment: 'Request for Payment', fund_transfer: 'Fund Transfer Request',
   business_trip: 'Business Trip', revolving_fund: 'Revolving Fund', attendance_adjustment: 'Attendance Adjustment',
-  overtime: 'Overtime Request', leave: 'Leave Application',
+  overtime: 'Overtime Request', leave: 'Leave Application', gate_pass: 'Employee Gate Pass',
 };
 
 // A form has just changed status. Who acts next is routes/forms.js:

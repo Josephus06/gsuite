@@ -54,7 +54,31 @@ function Signature({ image, name, role }) {
   );
 }
 
+// The gate pass slip's own sign-offs: its Department Head approves (the note step), HR notes (the
+// approve step), and the guard on duty checks and releases it, with the Time IN / OUT.
+const phClock = (v) => (v ? new Date(`${String(v).replace(' ', 'T')}Z`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Manila' }) : '');
+function GatePassSignatures({ doc }) {
+  const d = doc.detail || {};
+  return (
+    <>
+      <div className="rf-signs">
+        <Signature image={doc.owner_signature} name={doc.name || doc.owner_name} role="Personnel" />
+        <Signature image={doc.noted_signature} name={doc.noted_by_name} role="Approved by: Department Head" />
+      </div>
+      <div className="rf-signs">
+        <Signature image={doc.approved_signature} name={doc.approved_by_name} role="Noted by: HR Department" />
+        <Signature name={d.time_out_by_name || d.time_in_by_name} role="Checked & Released by: Security Guard on Duty" />
+      </div>
+      <div className="rf-row">
+        <Field label="Time OUT" value={phClock(d.time_out)} />
+        <Field label="Time IN" value={phClock(d.time_in)} />
+      </div>
+    </>
+  );
+}
+
 function Signatures({ doc }) {
+  if (doc.type === 'gate_pass') return <GatePassSignatures doc={doc} />;
   return (
     <div className="rf-signs">
       <Signature image={doc.owner_signature} name={doc.owner_name} role="Requested By" />
@@ -282,6 +306,45 @@ export default function FormPrint() {
         {/* Attendance Adjustment Form (asked 2026-10-08), after the paper slip: who and which day,
             the IN / OUT times claimed for AM, PM and overtime, and the reason ticked. */}
         {/* Leave Application (asked 2026-10-13): who, which leave (ticked), the dates and days, why. */}
+        {/* Employee Gate Pass (asked 2026-10-14), after the paper slip: where and when, the items
+            carried out (each noted by its department), the personnel and purpose. */}
+        {doc.type === 'gate_pass' && (
+          <>
+            <div className="rf-row">
+              <Field label="Location" value={d.location_name} />
+              <Field label="Date" value={fmtDate(d.pass_date)} />
+            </div>
+            <div className="rf-row">
+              <Field label="Destination" value={d.destination} />
+              <Field label="" value="(Valid only on date indicated)" />
+            </div>
+            <div className="rf-box">
+              <h4>Items</h4>
+              <table className="rf-table">
+                <thead><tr><th>Description</th><th>Department</th><th>Noted by</th></tr></thead>
+                <tbody>
+                  {[...(d.items || []), ...Array.from({ length: Math.max(0, 6 - (d.items || []).length) }, () => null)].map((it, i) => (
+                    <tr key={i}>
+                      <td>{it ? it.description : '\u00a0'}</td>
+                      <td>{it ? it.department || '' : ''}</td>
+                      <td>{it ? doc.noted_by_name || '' : ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div style={{ fontSize: 11, fontWeight: 700, marginTop: 4 }}>ALL ITEMS SHOULD BE LISTED &amp; NOTED BY THE DEPT. CONCERNED</div>
+            </div>
+            <div className="rf-box">
+              <h4>Personnel</h4>
+              <div className="rf-row">
+                <Field label="Name of Personnel" value={doc.name || doc.owner_name} />
+                <Field label="Department" value={doc.department} />
+              </div>
+              <div className="rf-row"><Field label="Purpose" value={d.purpose} /></div>
+            </div>
+          </>
+        )}
+
         {doc.type === 'leave' && (
           <>
             <div className="rf-row">

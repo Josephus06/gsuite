@@ -38,7 +38,8 @@ const pool = require('../db');
 // approver by way of a page permission.
 // Overtime too (2026-10-13): the filer's head notes one filed for someone else; see routes/forms.js.
 // Leave Application too (2026-10-13): noted by the employee's department head, then approved.
-const DEPARTMENT_NOTED_TYPES = ['payment', 'fund_transfer', 'revolving_fund', 'attendance_adjustment', 'business_trip', 'overtime', 'leave'];
+// Employee Gate Pass too (2026-10-14): "Approved by: Department Head" on the slip is this note.
+const DEPARTMENT_NOTED_TYPES = ['payment', 'fund_transfer', 'revolving_fund', 'attendance_adjustment', 'business_trip', 'overtime', 'leave', 'gate_pass'];
 const AP_NOTED_TYPES = ['liquidation'];
 
 // Is this user Accounts Payable (users.is_accounts_payable)? Read fresh, like the rest of this file.

@@ -14,13 +14,14 @@ export const TYPE_LABELS = {
   attendance_adjustment: 'Attendance Adjustment Form',
   overtime: 'Overtime Request',
   leave: 'Leave Application',
+  gate_pass: 'Employee Gate Pass',
 };
 
 // Which forms are HR's (2026-10-13) -- the form picker shows them as their own group.
-export const HR_TYPES = ['leave', 'overtime', 'attendance_adjustment'];
+export const HR_TYPES = ['leave', 'overtime', 'attendance_adjustment', 'gate_pass'];
 
 // Forms with no expense lines (and so no amount): a trip sheet, and the attendance adjustment slip.
-export const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave'];
+export const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'gate_pass'];
 
 // Leave Application (2026-10-13). The server counts the same days (routes/forms.js leaveDays).
 export const LEAVE_TYPE_LABELS = {
