@@ -185,6 +185,7 @@ import EmployeeQuotas from './pages/EmployeeQuotas';
 import EmployeeQuotaView from './pages/EmployeeQuotaView';
 import CommissionReport from './pages/reports/CommissionReport';
 import CommissionJoDetail from './pages/reports/CommissionJoDetail';
+import CommissionSummary from './pages/reports/CommissionSummary';
 import TicketSummary from './pages/reports/TicketSummary';
 import Lookups from './pages/Lookups';
 import TransactionSettings from './pages/TransactionSettings';
@@ -474,6 +475,7 @@ function App() {
         <Route path="/employee-quotas/:id" element={<EmployeeQuotaView />} />
         <Route path="/commission-report" element={<CommissionReport />} />
         <Route path="/commission-jo-detail" element={<CommissionJoDetail />} />
+        <Route path="/commission-summary" element={<CommissionSummary />} />
         <Route path="/reports/ticket-summary" element={<TicketSummary />} />
         <Route path="/reports/delivery-summary" element={<DeliverySummary />} />
         <Route path="/reports/pending-billing" element={<PendingBilling />} />

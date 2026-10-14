@@ -16,6 +16,7 @@ const {
 } = require('../lib/agingWorkbook');
 const { parkedReport } = require('../lib/parkedBankItems');
 const { buildCommissionReport, buildCommissionJoDetail, getTeamEmployeeIds, getSbuDivisionIds } = require('../lib/commissionReport');
+const { buildCommissionSummary, commissionSummaryWorkbook } = require('../lib/commissionSummaryWorkbook');
 const {
   buildProfitabilityReport, buildProfitabilityCsv, buildProfitabilityLineDetail,
   getProfitabilityScope, searchProfitabilityCustomers,
@@ -507,6 +508,19 @@ router.get('/commission/scope', requireAuth, requirePermission(COMMISSION_ROUTE,
     const reps = await scopedReps(scope);
     const self = scope.selfId != null ? reps.find((r) => r.id === scope.selfId) || null : null;
     res.json({ self_only: scope.selfOnly, self, reps });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Commission Summary (2026-10-14; lib/commissionSummaryWorkbook.js): every rep the user may see on
+// the Commission report, for a year, grouped into the team's sheets. ?format=xlsx is the Extract.
+router.get('/commission/summary', requireAuth, requirePermission(COMMISSION_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const summary = await buildCommissionSummary(year, await getCommissionScope(req.user.id));
+    if (req.query.format === 'xlsx') return sendWorkbook(res, commissionSummaryWorkbook(summary, year), `commission-${year}.xlsx`);
+    res.json({ year, sheets: summary });
   } catch (err) {
     next(err);
   }

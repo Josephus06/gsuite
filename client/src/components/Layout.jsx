@@ -79,6 +79,8 @@ const NAV_STRUCTURE = [
       // Shares the Commission Report's permission (its backend route does too) rather than
       // having its own pages row.
       { route: '/commission-jo-detail', permRoute: '/commission-report', label: 'Commission JO Detail' },
+      // Every rep's year, grouped as the team's spreadsheet, with Extract (2026-10-14). Same permission.
+      { route: '/commission-summary', permRoute: '/commission-report', label: 'Commission Summary' },
     ],
   },
   {
