@@ -139,7 +139,7 @@ export default function CollectionAgingReport() {
             <label>Aging</label>
             <select value={range.bucket} onChange={(e) => setRange({ ...range, bucket: e.target.value })}>
               <option value="">All</option>
-              {(summary.length ? summary : [{ key: 'current', label: 'Current' }, { key: '1-30', label: '1-30' }, { key: '31-60', label: '31-60' }, { key: '61-90', label: '61-90' }, { key: '90+', label: 'Over 90' }, { key: 'advance', label: 'Advance / No invoice yet' }])
+              {(summary.length ? summary : [{ key: 'current', label: 'Current' }, { key: '1-30', label: '1-30' }, { key: '31-60', label: '31-60' }, { key: '61-90', label: '61-90' }, { key: '90+', label: 'Over 90' }, { key: 'advance', label: 'Advances from Customers' }])
                 .map((b) => <option key={b.key} value={b.key}>{b.label}</option>)}
             </select>
           </div>
@@ -201,7 +201,7 @@ export default function CollectionAgingReport() {
               {rows.length > 0 && <> — total {money(data?.total_amount)}</>}.
               {' '}Age at Collection = payment date − invoice date; Days Past Due = payment date − invoice due date.
               {' '}Applied Date = the later of the payment date and the invoice date.
-              {' '}&ldquo;Advance / No invoice yet&rdquo; is money a payment has not applied to any invoice (e.g. a down payment); it moves onto the invoice once applied.
+              {' '}&ldquo;Advances from Customers&ldquo;Advance / No invoice yet&rdquo; is moneyrdquo; is money a payment has not applied to any invoice (e.g. a down payment); it moves onto the invoice once applied.
             </div>
             <div className="table-wrap">
               <table>

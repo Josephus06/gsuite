@@ -46,7 +46,7 @@ const BUCKETS = [
   { key: '61-90', label: '61-90', min: 61, max: 90 },
   { key: '90+', label: 'Over 90', min: 91, max: Infinity },
 ];
-const ADVANCE = { key: 'advance', label: 'Advance / No invoice yet' };
+const ADVANCE = { key: 'advance', label: 'Advances from Customers' }; // renamed 2026-10-14
 const ALL_BUCKETS = [...BUCKETS, ADVANCE];
 const bucketOf = (age) => (age == null ? null : BUCKETS.find((b) => age >= b.min && age <= b.max).key);
 
