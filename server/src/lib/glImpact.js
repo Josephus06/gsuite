@@ -537,20 +537,23 @@ const cpRound = (n) => Number((Number(n) || 0).toFixed(2));
 // A Sales Manager / Marketing Director / SBU Head earns commission on the whole business, so their
 // commission expense is a cross-division cost the live system spreads EQUALLY across every sales
 // division. Everyone else (account officer / supervisor) charges their own department in one line.
+// Only a SALES MANAGER's commission is spread across the departments (asked 2026-10-14: "only for
+// Sales Managers account"). An SBU head or the Sales & Marketing Director is charged to their own
+// department like everyone else -- Arlene Arimbay (SBU, Sales - 4) is one line to Sales - 4.
 async function employeeIsSalesManager(employeeId) {
   if (!employeeId) return false;
   const [[u]] = await pool.query(
-    'SELECT is_sales_manager AS m, is_sales_marketing_director AS dir, is_sales_business_unit AS sbu FROM users WHERE employee_id = ? LIMIT 1',
-    [employeeId]
-  );
-  return !!(u && (u.m || u.dir || u.sbu));
+    'SELECT MAX(is_sales_manager) AS m FROM users WHERE employee_id = ? AND is_active = TRUE', [employeeId]);
+  return !!(u && Number(u.m));
 }
 
-// The sales divisions a manager's expense is split across (every active sales division except the
-// non-sales "Support"), each mapped to its department for the reports engine. Display name is
-// normalised to the live "Sales-N" form.
+// The departments a Sales Manager's expense is split across: Marketing and Sales-1 to Sales-5 --
+// not the branches, E-Commerce or IT Park (asked 2026-10-14), nor the non-sales "Support". Each
+// mapped to its department for the reports engine; display name normalised to "Sales-N".
+const SPLIT_DIVISION = /^(marketing|sales[1-5])$/;
 async function salesDivisionDepartments() {
-  const [divs] = await pool.query("SELECT id, name FROM sales_divisions WHERE is_active = TRUE AND name <> 'Support' ORDER BY id");
+  const [all] = await pool.query("SELECT id, name FROM sales_divisions WHERE is_active = TRUE ORDER BY id");
+  const divs = all.filter((d) => SPLIT_DIVISION.test(String(d.name).toLowerCase().replace(/[^a-z0-9]/g, '')));
   const [depts] = await pool.query('SELECT id, name FROM departments');
   const norm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const deptByNorm = new Map(depts.map((d) => [norm(d.name), d.id]));
