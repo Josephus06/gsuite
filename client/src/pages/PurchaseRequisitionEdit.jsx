@@ -112,6 +112,14 @@ export default function PurchaseRequisitionEdit() {
     }]);
   }
 
+  // JO # picker (2026-10-14): Job Orders searched on the server as the user types (lib: routes/purchaseRequisitions.js).
+  const [jobOptions, setJobOptions] = useState([]);
+  function searchJobs(text) {
+    api.get('/purchase-requisitions/job-orders', { params: { q: (text || '').trim() } })
+      .then(({ data }) => setJobOptions(Array.isArray(data) ? data : []))
+      .catch(() => {});
+  }
+
   function updateLine(key, patch) {
     setLines((prev) => prev.map((l) => (l._key === key ? { ...l, ...patch } : l)));
   }
@@ -205,7 +213,29 @@ export default function PurchaseRequisitionEdit() {
               key: 'purchase_description', label: 'Purchase Description',
               render: (l) => <input style={{ width: 180 }} defaultValue={l.purchase_description} onBlur={(e) => updateLine(l._key, { purchase_description: e.target.value })} />,
             },
-            { key: 'job_order_no', label: 'JO #' },
+            {
+              key: 'job_order_no', label: 'JO #',
+              render: (l) => (
+                <EntityPicker
+                  label="Job Order"
+                  items={l.job_order_id && !jobOptions.some((j) => j.id === l.job_order_id)
+                    ? [{ id: l.job_order_id, job_order_no: l.job_order_no }, ...jobOptions] : jobOptions}
+                  value={l.job_order_id || ''}
+                  getLabel={(j) => j.job_order_no}
+                  columns={[
+                    { key: 'job_order_no', label: 'JO #' },
+                    { key: 'customer_name', label: 'Customer' },
+                    { key: 'description', label: 'Description' },
+                    { key: 'status', label: 'Status' },
+                  ]}
+                  searchKeys={['job_order_no', 'customer_name', 'description']}
+                  placeholder="Select JO"
+                  onSearch={searchJobs}
+                  onSelect={(j) => updateLine(l._key, { job_order_id: j.id, job_order_no: j.job_order_no })}
+                  onClear={() => updateLine(l._key, { job_order_id: null, job_order_no: '' })}
+                />
+              ),
+            },
             { key: 'qty_on_hand', label: 'Qty on Hand', render: (l) => Number(l.qty_on_hand || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
             {
               key: 'qty', label: 'Qty',
