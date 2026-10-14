@@ -3,6 +3,7 @@ const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
+const { fundTransferPostError, hasLink } = require('../lib/fundTransferPosting');
 
 const router = express.Router();
 // Fund Transfer (FT-####): moves an amount from one bank account to another. GL: DR the To account
@@ -123,12 +124,21 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     if (String(fromId) === String(toId)) return res.status(400).json({ error: 'From and To accounts must be different.' });
     if (round2(amount) <= 0) return res.status(400).json({ error: 'Enter an amount greater than 0.' });
     await assertPeriodOpen(dateCreated, 'other_gl');
+    // Raised from an approved Fund Transfer Request (Create Fund Transfer Voucher on the form,
+    // 2026-10-14): it may not post more than the request has left (lib/fundTransferPosting.js).
+    const formRequestId = Number(req.body.form_request_id) || null;
+    if (formRequestId) {
+      const why = await fundTransferPostError(conn, formRequestId, amount);
+      if (why) return res.status(409).json({ error: why });
+    }
+    const linkForm = formRequestId && await hasLink(conn, 'fund_transfers');
 
     await conn.beginTransaction();
     const [r] = await conn.query(
-      `INSERT INTO fund_transfers (ft_no, date_created, from_account_id, to_account_id, amount, memo, status, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?, ?, 'open', ?)`,
-      [dateCreated || new Date().toISOString().slice(0, 10), fromId, toId, round2(amount), trunc(memo, 1000), req.user.id]
+      `INSERT INTO fund_transfers (ft_no, date_created, from_account_id, to_account_id, amount, memo, status, created_by_user_id${linkForm ? ', form_request_id' : ''})
+       VALUES ('', ?, ?, ?, ?, ?, 'open', ?${linkForm ? ', ?' : ''})`,
+      [dateCreated || new Date().toISOString().slice(0, 10), fromId, toId, round2(amount), trunc(memo, 1000), req.user.id,
+        ...(linkForm ? [formRequestId] : [])]
     );
     const ftId = r.insertId;
     const ftNo = await assignDocNo(conn, { table: 'fund_transfers', column: 'ft_no', prefix: 'FT-', id: ftId });

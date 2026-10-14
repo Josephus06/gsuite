@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -11,6 +11,11 @@ function today() { return new Date().toISOString().slice(0, 10); }
 export default function FundTransferForm() {
   const navigate = useNavigate();
   const { id } = useParams(); // set when editing (/fund-transfers/:id/edit)
+  // ?ftr=<form id>: Create Fund Transfer Voucher on an approved Fund Transfer Request (2026-10-14).
+  // Starts filled from it -- its banks and what is left to post -- and is saved against it.
+  const [searchParams] = useSearchParams();
+  const ftrId = id ? null : Number(searchParams.get('ftr')) || null;
+  const [ftrNo, setFtrNo] = useState('');
   const [meta, setMeta] = useState(null);
   const [ftNo, setFtNo] = useState('');
   const [header, setHeader] = useState({ date_created: today(), from_account_id: '', to_account_id: '', amount: '', memo: '' });
@@ -19,9 +24,24 @@ export default function FundTransferForm() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    Promise.all([api.get('/fund-transfers/meta'), id ? api.get(`/fund-transfers/${id}`) : null])
-      .then(([m, ft]) => {
+    Promise.all([api.get('/fund-transfers/meta'), id ? api.get(`/fund-transfers/${id}`) : null,
+      ftrId ? api.get(`/forms/${ftrId}`) : null])
+      .then(([m, ft, fr]) => {
         setMeta(m.data);
+        if (fr) {
+          const f = fr.data;
+          const d = f.detail || {};
+          const items = (f.items || []).filter((it) => Number(it.amount) !== 0);
+          const first = items[0] || {};
+          setFtrNo(f.request_no);
+          setHeader((h) => ({
+            ...h,
+            from_account_id: d.from_account_id || first.from_account_id || '',
+            to_account_id: d.to_account_id || first.to_account_id || '',
+            amount: Number(f.voucher_remaining) || Number(d.total_amount) || '',
+            memo: [f.request_no, ...items.map((it) => it.particulars).filter(Boolean)].join(' -- ').slice(0, 1000),
+          }));
+        }
         if (ft) {
           const d = ft.data;
           setFtNo(d.ft_no);
@@ -33,7 +53,7 @@ export default function FundTransferForm() {
         setLoading(false);
       })
       .catch((e) => { setError(e.response?.data?.error || 'Failed to load.'); setLoading(false); });
-  }, [id]);
+  }, [id, ftrId]);
 
   const setH = (patch) => setHeader((h) => ({ ...h, ...patch }));
   const acct = (id) => (meta?.accounts || []).find((a) => String(a.id) === String(id));
@@ -48,7 +68,7 @@ export default function FundTransferForm() {
     try {
       const { data } = id
         ? await api.put(`/fund-transfers/${id}`, { ...header, amount: amt })
-        : await api.post('/fund-transfers', { ...header, amount: amt });
+        : await api.post('/fund-transfers', { ...header, amount: amt, ...(ftrId ? { form_request_id: ftrId } : {}) });
       navigate(`/fund-transfers/${data.id}`);
     } catch (e) { setError(e.response?.data?.error || 'Save failed.'); setSaving(false); }
   }
@@ -61,7 +81,7 @@ export default function FundTransferForm() {
   return (
     <div>
       <div className="page-header">
-        <div style={{ fontWeight: 600 }}>Fund Transfer <span className="muted">/ {id ? `Edit ${ftNo}` : 'Create'}</span></div>
+        <div style={{ fontWeight: 600 }}>Fund Transfer <span className="muted">/ {id ? `Edit ${ftNo}` : ftrNo ? `Create from ${ftrNo}` : 'Create'}</span></div>
         <div style={{ display: 'flex', gap: 8 }}>
           {id && <Link className="btn btn-sm" to={`/fund-transfers/${id}`}>Cancel</Link>}
           <Link className="btn btn-sm" to={'/fund-transfers'}>Back to Lists</Link>

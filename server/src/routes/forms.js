@@ -4,6 +4,7 @@ const { requireAuth, requirePermission, userCan, isSystemAdmin } = require('../m
 const { insertNumbered } = require('../lib/docNumber');
 const { computeLiquidationGl } = require('../lib/glImpact');
 const { BILLABLE_FORM_TYPES, liquidationBilling } = require('../lib/liquidationPosting');
+const { fundTransferRequestPosting } = require('../lib/fundTransferPosting');
 const {
   DEPARTMENT_NOTED_TYPES, isDepartmentNoter, departmentsHeadedBy, notersFor,
   AP_NOTED_TYPES, isAccountsPayable, notersForDoc,
@@ -699,6 +700,23 @@ router.get('/:id', requireAuth, async (req, res, next) => {
             ORDER BY e.id = (SELECT employee_id FROM users WHERE id = ?) DESC LIMIT 1`,
           [doc.user_id, doc.owner_name || '', doc.name || '', doc.user_id]);
         doc.journal_employee = emp || null;
+      }
+    }
+
+    // A Fund Transfer Request is posted by a Check Voucher or a Fund Transfer Voucher raised from it
+    // once approved (2026-10-14; lib/fundTransferPosting.js) -- one, or several covering its total.
+    if (doc.type === 'fund_transfer') {
+      const p = await fundTransferRequestPosting(pool, doc.id);
+      doc.vouchers = p.vouchers;
+      doc.voucher_posted = p.posted;
+      doc.voucher_remaining = p.remaining;
+      doc.vouchers_post = p.fullyPosted;
+      doc.related_records = p.vouchers;
+      if (doc.status === 'approved' && !p.fullyPosted) {
+        // Create Check Voucher's payee: the Payable To, matched by name among the suppliers.
+        const [[sup]] = await pool.query(
+          'SELECT id, name FROM suppliers WHERE is_active = 1 AND LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [doc.detail?.payable_to || '']);
+        doc.voucher_supplier = sup || null;
       }
     }
 

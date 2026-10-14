@@ -154,6 +154,12 @@ export default function FormView() {
   const unposted = !!doc.billable && doc.status === 'approved' && !doc.gl_posts;
   const mayBill = unposted && can('/vendor-bills', 'can_add');
   const mayJournal = unposted && doc.type === 'liquidation' && !(doc.vendor_bills || []).length && can('/journals', 'can_add');
+  // An approved Fund Transfer Request is posted by a Check Voucher or a Fund Transfer Voucher raised
+  // from it (2026-10-14) -- offered until the vouchers cover its total.
+  const ftrUnposted = doc.type === 'fund_transfer' && doc.status === 'approved' && !doc.vouchers_post;
+  const mayCheckVoucher = ftrUnposted && can('/cheques', 'can_add');
+  const mayFtVoucher = ftrUnposted && can('/fund-transfers', 'can_add');
+  const hasRelated = doc.billable || doc.type === 'fund_transfer';
 
   async function discard() {
     if (!confirm(`Discard ${doc.request_no}? This cannot be undone.`)) return;
@@ -220,6 +226,15 @@ export default function FormView() {
           {doc.journal && (
             <Link className="btn btn-sm" to={`/journals/${doc.journal.id}`}>{doc.journal.journal_no}</Link>
           )}
+          {mayCheckVoucher && (
+            <Link className="btn btn-sm btn-primary" to={`/cheques/new?ftr=${doc.id}`}>Create Check Voucher</Link>
+          )}
+          {mayFtVoucher && (
+            <Link className="btn btn-sm btn-primary" to={`/fund-transfers/new?ftr=${doc.id}`}>Create Fund Transfer Voucher</Link>
+          )}
+          {(doc.vouchers || []).filter((v) => String(v.status).toLowerCase() !== 'void').map((v) => (
+            <Link key={v.path} className="btn btn-sm" to={v.path}>{v.doc_no}</Link>
+          ))}
         </div>
       </StickyActionBar>
 
@@ -521,23 +536,29 @@ export default function FormView() {
         </div>
       )}
 
-      {/* Related Records (2026-10-12): the Vendor Bills (and a liquidation's Journal) raised from it. */}
-      {doc.billable && (
+      {/* Related Records (2026-10-12): the Vendor Bills (and a liquidation's Journal) raised from it;
+          for a Fund Transfer Request, its Check / Fund Transfer Vouchers (2026-10-14). */}
+      {doc.type === 'fund_transfer' && doc.status === 'approved' && (doc.vouchers || []).length > 0 && !doc.vouchers_post && (
+        <div className="muted" style={{ marginTop: 16 }}>
+          Partly posted: {money(doc.voucher_posted)} of {money(Number(doc.voucher_posted) + Number(doc.voucher_remaining))}. {money(doc.voucher_remaining)} is still to post.
+        </div>
+      )}
+      {hasRelated && (
         <div className="card" style={{ marginTop: 16 }}>
           <h3>Related Records</h3>
           <div className="table-wrap">
             <table>
               <thead>
-                <tr><th>Type</th><th>Document #</th><th>Date</th><th>Vendor</th><th>Status</th><th style={{ textAlign: 'right' }}>Amount</th></tr>
+                <tr><th>Type</th><th>Document #</th><th>Date</th><th>{doc.type === 'fund_transfer' ? 'Payee' : 'Vendor'}</th><th>Status</th><th style={{ textAlign: 'right' }}>Amount</th></tr>
               </thead>
               <tbody>
                 {(doc.related_records || []).length === 0 && (
-                  <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>{doc.type === 'payment' ? 'No Vendor Bill yet.' : 'No Vendor Bill or Journal yet.'}</td></tr>
+                  <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>{doc.type === 'fund_transfer' ? 'No Check Voucher or Fund Transfer Voucher yet.' : doc.type === 'payment' ? 'No Vendor Bill yet.' : 'No Vendor Bill or Journal yet.'}</td></tr>
                 )}
                 {(doc.related_records || []).map((r) => (
                   <tr key={`${r.type}-${r.id}`}>
                     <td>{r.type}</td>
-                    <td><Link to={r.type === 'Journal' ? `/journals/${r.id}` : `/vendor-bills/${r.id}`}>{r.doc_no}</Link></td>
+                    <td><Link to={r.path || (r.type === 'Journal' ? `/journals/${r.id}` : `/vendor-bills/${r.id}`)}>{r.doc_no}</Link></td>
                     <td>{fmtDate(r.date_created)}</td>
                     <td>{r.party || ''}</td>
                     <td>{pretty(r.status)}</td>

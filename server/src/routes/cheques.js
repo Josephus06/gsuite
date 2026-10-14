@@ -8,6 +8,7 @@ const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeChequeGl, chequeCreditsByCheque } = require('../lib/glImpact');
 const { postReversalJournal, mirror } = require('../lib/reversalJournal');
 const { sendXlsx, day } = require('../lib/xlsxExport');
+const { fundTransferPostError, hasLink } = require('../lib/fundTransferPosting');
 
 const router = express.Router();
 // Cheque (CHK-####): pays a payee for expense lines, drawn against a bank account. GL: DR each
@@ -378,17 +379,26 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const crError = creditsError(b, credits, t);
     if (crError) return res.status(400).json({ error: crError });
     await assertPeriodOpen(b.date_created, 'other_gl');
+    // Raised from an approved Fund Transfer Request (Create Check Voucher on the form, 2026-10-14):
+    // it may not post more than the request has left (lib/fundTransferPosting.js).
+    const formRequestId = Number(b.form_request_id) || null;
+    if (formRequestId) {
+      const why = await fundTransferPostError(conn, formRequestId, t.total_amount);
+      if (why) return res.status(409).json({ error: why });
+    }
+    const linkForm = formRequestId && await hasLink(conn, 'cheques');
 
     await conn.beginTransaction();
     const [r] = await conn.query(
       `INSERT INTO cheques (cheque_no, date_created, payee_type, payee_id, payee_name, office_location_id, account_id,
          cheque_date, cheque_number, date_released, currency, conversion_rate, memo,
-         subtotal, discount_amount, net_of_tax, tax_amount, withholding_tax_amount, gross_amount, total_amount, status, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 'open', ?)`,
+         subtotal, discount_amount, net_of_tax, tax_amount, withholding_tax_amount, gross_amount, total_amount, status, created_by_user_id${linkForm ? ', form_request_id' : ''})
+       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, 'open', ?${linkForm ? ', ?' : ''})`,
       [b.date_created || new Date().toISOString().slice(0, 10), trunc(b.payee_type, 20), b.payee_id || null, trunc(b.payee_name, 255),
        b.office_location_id || null, b.account_id, b.cheque_date || null, trunc(b.cheque_number, 60), b.date_released || null,
        trunc(b.currency, 10), num(b.conversion_rate) || 1, trunc(b.memo, 1000),
-       t.subtotal, t.net_of_tax, t.tax_amount, t.withholding_tax_amount, t.gross_amount, t.total_amount, req.user.id]
+       t.subtotal, t.net_of_tax, t.tax_amount, t.withholding_tax_amount, t.gross_amount, t.total_amount, req.user.id,
+       ...(linkForm ? [formRequestId] : [])]
     );
     const chequeId = r.insertId;
     const chequeNo = await assignDocNo(conn, { table: 'cheques', column: 'cheque_no', prefix: 'CHK-', id: chequeId });

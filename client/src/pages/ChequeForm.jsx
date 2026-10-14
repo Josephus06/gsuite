@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -19,6 +19,12 @@ export default function ChequeForm() {
   const navigate = useNavigate();
   const { id } = useParams();
   const editing = !!id;
+  // ?ftr=<form id>: Create Check Voucher on an approved Fund Transfer Request (2026-10-14). The cheque
+  // starts filled from it -- drawn on the From bank, one line per request line debiting its To bank --
+  // and is saved against it, so the request shows it and stops offering the button once covered.
+  const [searchParams] = useSearchParams();
+  const ftrId = editing ? null : Number(searchParams.get('ftr')) || null;
+  const [ftr, setFtr] = useState(null);
   const [chequeNo, setChequeNo] = useState('');
   const [meta, setMeta] = useState(null);
   const [header, setHeader] = useState({
@@ -34,9 +40,33 @@ export default function ChequeForm() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    Promise.all([api.get('/cheques/meta'), editing ? api.get(`/cheques/${id}`) : Promise.resolve(null)])
-      .then(([m, ch]) => {
+    Promise.all([api.get('/cheques/meta'), editing ? api.get(`/cheques/${id}`) : Promise.resolve(null),
+      ftrId ? api.get(`/forms/${ftrId}`) : Promise.resolve(null)])
+      .then(([m, ch, fr]) => {
         setMeta(m.data);
+        if (fr) {
+          const f = fr.data;
+          const d = f.detail || {};
+          const items = (f.items || []).filter((it) => Number(it.amount) !== 0);
+          const first = items[0] || {};
+          setFtr(f);
+          setHeader((h) => ({
+            ...h,
+            payee_type: 'VENDOR', payee_id: f.voucher_supplier?.id || '', payee_name: f.voucher_supplier?.name || d.payable_to || '',
+            account_id: d.from_account_id || first.from_account_id || '',
+            memo: [f.request_no, ...items.map((it) => it.particulars).filter(Boolean)].join(' -- ').slice(0, 1000),
+          }));
+          const toLine = (it, amount) => ({
+            ...EMPTY_LINE,
+            account_id: it.to_account_id || d.to_account_id || '',
+            account_label: it.to_account_code ? `${it.to_account_code} — ${it.to_account_name}` : '',
+            department_id: f.department_id || '', description: it.particulars || f.request_no, amount,
+          });
+          // Nothing posted yet: every line as filed. Partly posted: one line for what is left.
+          setLines(Number(f.voucher_posted) > 0
+            ? [toLine(first, Number(f.voucher_remaining))]
+            : (items.length ? items.map((it) => toLine(it, Number(it.amount))) : [{ ...EMPTY_LINE }]));
+        }
         if (ch) {
           const c = ch.data;
           const day = (v) => (v ? String(v).slice(0, 10) : '');
@@ -57,7 +87,7 @@ export default function ChequeForm() {
         setLoading(false);
       })
       .catch((e) => { setError(e.response?.data?.error || 'Failed to load.'); setLoading(false); });
-  }, [id, editing]);
+  }, [id, editing, ftrId]);
 
   // Reload the vendor's credits whenever the payee changes; a non-vendor payee has none.
   const vendorId = header.payee_type === 'VENDOR' ? header.payee_id : '';
@@ -123,7 +153,7 @@ export default function ChequeForm() {
     if (creditPayload.length && totals.total <= 0) { setError('The bill credits applied must be less than the amount the cheque pays.'); setTab('credits'); return; }
     setSaving(true);
     try {
-      const body = { ...header, lines: payload, credits: creditPayload };
+      const body = { ...header, lines: payload, credits: creditPayload, ...(ftrId ? { form_request_id: ftrId } : {}) };
       const { data } = editing ? await api.put(`/cheques/${id}`, body) : await api.post('/cheques', body);
       navigate(`/cheques/${data.id}`);
     } catch (e) { setError(e.response?.data?.error || 'Save failed.'); setSaving(false); }
@@ -139,7 +169,7 @@ export default function ChequeForm() {
   return (
     <div>
       <div className="page-header">
-        <div style={{ fontWeight: 600 }}>Cheque <span className="muted">/ {editing ? `Edit ${chequeNo}` : 'Create'}</span></div>
+        <div style={{ fontWeight: 600 }}>Cheque <span className="muted">/ {editing ? `Edit ${chequeNo}` : ftr ? `Create from ${ftr.request_no}` : 'Create'}</span></div>
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={editing ? `/cheques/${id}` : '/cheques'}>{editing ? 'Cancel' : 'Back to Lists'}</Link>
           <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
