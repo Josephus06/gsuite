@@ -314,7 +314,11 @@ export default function Feed() {
                 if (mayChat && Number(c.can_chat)) { e.preventDefault(); openChat({ ...c, online: c.online }); }
               }}
             >
-              <span className="fb-rail-avatar-wrap">
+              {/* The photo opens their profile and timeline (2026-10-14); the name opens the chat. */}
+              <span
+                className="fb-rail-avatar-wrap" title={`View ${c.display_name}'s profile`}
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); navigate(`/profile/${c.id}`); }}
+              >
                 <Avatar user={c} size={36} />
                 {c.online && <span className="fb-online-dot" />}
               </span>

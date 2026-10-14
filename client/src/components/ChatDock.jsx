@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { chime } from '../utils/notificationSound';
@@ -334,6 +335,10 @@ export default function ChatDock() {
 }
 
 function ChatBox({ box, meId, onClose, onToggle, onSent, onOlder, isTyping, seenId }) {
+  // The photo opens their profile and timeline (2026-10-14); the rest of the header still opens /
+  // minimizes the box.
+  const navigate = useNavigate();
+  const viewProfile = (e) => { e.stopPropagation(); navigate(`/profile/${box.user.id}`); };
   const lastTypingSent = useRef(0);
   const [replyTo, setReplyTo] = useState(null);
   const [error, setError] = useState('');
@@ -373,7 +378,7 @@ function ChatBox({ box, meId, onClose, onToggle, onSent, onOlder, isTyping, seen
   return (
     <div className={`chat-box ${box.minimized ? 'is-min' : ''}`}>
       <div className="chat-box-head" onClick={onToggle} title={box.minimized ? 'Open' : 'Minimize'}>
-        <span className="chat-box-avatar">
+        <span className="chat-box-avatar" onClick={viewProfile} title={`View ${box.user.display_name}'s profile`} style={{ cursor: 'pointer' }}>
           <Avatar user={box.user} size={32} />
           {box.user.online && <span className="chat-online-dot" />}
         </span>
@@ -398,7 +403,9 @@ function ChatBox({ box, meId, onClose, onToggle, onSent, onOlder, isTyping, seen
             {box.loading && <div className="chat-empty">Loading…</div>}
             {!box.loading && !box.messages.length && (
               <div className="chat-intro">
-                <Avatar user={box.user} size={56} />
+                <span onClick={viewProfile} title={`View ${box.user.display_name}'s profile`} style={{ cursor: 'pointer' }}>
+                  <Avatar user={box.user} size={56} />
+                </span>
                 <strong>{box.user.display_name}</strong>
                 <span>Say hi 👋</span>
               </div>

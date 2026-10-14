@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Avatar from './Avatar';
@@ -10,6 +11,7 @@ const REFRESH_MS = 20000;
 
 export default function ChatContacts() {
   const { can } = useAuth();
+  const navigate = useNavigate();
   const enabled = can('/chat', 'can_view');
   const [contacts, setContacts] = useState([]);
   const [filter, setFilter] = useState('');
@@ -46,7 +48,9 @@ export default function ChatContacts() {
         {!contacts.length && <div className="chat-empty">No one else has Chat yet.</div>}
         {shown.map((c) => (
           <button type="button" key={c.id} className="chat-contact" onClick={() => openChat(c)} title={`Chat with ${c.display_name}`}>
-            <span className="chat-box-avatar">
+            {/* The photo opens their profile and timeline (2026-10-14); the name opens the chat. */}
+            <span className="chat-box-avatar" title={`View ${c.display_name}'s profile`}
+              onClick={(e) => { e.stopPropagation(); navigate(`/profile/${c.id}`); }}>
               <Avatar user={c} size={34} />
               {c.online && <span className="chat-online-dot" />}
             </span>

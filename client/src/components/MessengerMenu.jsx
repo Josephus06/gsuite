@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Avatar from './Avatar';
@@ -45,6 +46,7 @@ function MessengerGlyph() {
 
 export default function MessengerMenu() {
   const { can } = useAuth();
+  const navigate = useNavigate();
   const enabled = can('/chat', 'can_view');
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState([]);
@@ -164,7 +166,12 @@ export default function MessengerMenu() {
                   background: 'transparent', border: 'none', borderRadius: 8, padding: '8px', cursor: 'pointer', color: 'inherit',
                 }}
               >
-                <span style={{ position: 'relative', flexShrink: 0 }}>
+                {/* A person's photo opens their profile and timeline; the rest of the row opens the chat. */}
+                <span
+                  style={{ position: 'relative', flexShrink: 0 }}
+                  title={r.kind === 'dm' ? `View ${r.name}'s profile` : undefined}
+                  onClick={r.kind === 'dm' ? (e) => { e.stopPropagation(); setOpen(false); navigate(`/profile/${r.id}`); } : undefined}
+                >
                   {r.kind === 'group' ? <GroupBadge name={r.name} /> : <Avatar user={{ display_name: r.name, avatar_data: r.avatar_data }} size={44} />}
                   {r.online && (
                     <span style={{
