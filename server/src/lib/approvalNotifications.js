@@ -46,7 +46,11 @@ const PO_APPROVAL_THRESHOLD = 10000; // routes/purchaseOrders.js APPROVAL_THRESH
 //                        is not told about it (2026-10-14). PO3/PO4 enter this tier directly.
 function notifyPoPending({ id, poNo, status, total }, actorId) {
   return safely(`PO ${poNo} ${status}`, async () => {
-    const [sups] = await pool.query('SELECT id FROM users WHERE is_purchasing_supervisor = 1 AND is_active = 1');
+    // A General Manager is never told at the supervisor tier, even with the Purchasing Supervisor box
+    // ticked (JIMMY WU has it, and still got PO-21055 for 630.00 -- 2026-10-14): anything that needs
+    // the GM reaches them at the GM tier.
+    const [sups] = await pool.query(
+      "SELECT id FROM users WHERE is_purchasing_supervisor = 1 AND is_active = 1 AND (account_type IS NULL OR account_type <> 'General Manager')");
     let to = [];
     if (status === 'pending_approval') {
       to = sups.map((u) => u.id);
