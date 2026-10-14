@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
+import ManualStepImage from '../components/ManualStepImage';
 import api from '../api/client';
 import { NODE_W, NODE_H, DIAMOND } from '../data/processFlow';
 import { FLOWS, DEFAULT_FLOW } from '../data/flows';
@@ -104,6 +105,17 @@ export default function ProcessFlow() {
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState('');
   const wrapRef = useRef(null);
+
+  // Step pictures (2026-10-14): which steps of this workflow have one, keyed node:step.
+  const [stepImages, setStepImages] = useState({});
+  useEffect(() => {
+    let alive = true;
+    api.get('/manual/images', { params: { flow: flowKey } })
+      .then(({ data }) => { if (alive) setStepImages(Object.fromEntries(data.map((r) => [`${r.node_id}:${r.step_index}`, r]))); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [flowKey]);
+  const canEditManual = can('/process-flow', 'can_edit');
 
   const flow = FLOWS.find((f) => f.key === flowKey) || FLOWS[0];
   const { CANVAS_W, CANVAS_H, NODES, EDGES, GUIDES, LEGEND } = flow.data;
@@ -302,7 +314,18 @@ export default function ProcessFlow() {
 
             <h3>Steps</h3>
             <ol className="pf-steps">
-              {guide.steps.map((s, i) => <li key={i}>{s}</li>)}
+              {guide.steps.map((s, i) => (
+                <li key={i}>
+                  {s}
+                  <ManualStepImage flowKey={flowKey} nodeId={openId} stepIndex={i} image={stepImages[`${openId}:${i}`]}
+                    canEdit={canEditManual}
+                    onChanged={(row) => setStepImages((m) => {
+                      const next = { ...m };
+                      if (row) next[`${openId}:${i}`] = row; else delete next[`${openId}:${i}`];
+                      return next;
+                    })} />
+                </li>
+              ))}
             </ol>
 
             {guide.notes?.length > 0 && (

@@ -1,6 +1,7 @@
 const express = require('express');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { buildManualPdf } = require('../lib/manualPdf');
+const pool = require('../db');
 
 const router = express.Router();
 const ROUTE = '/process-flow';
@@ -22,6 +23,74 @@ const ROUTE = '/process-flow';
 // here is stored or echoed back to anybody else.
 const MAX_NODES = 400;
 const MAX_EDGES = 800;
+
+/* -------------------------------------------------------------------------- */
+/* Step pictures (2026-10-14; db/add-manual-step-images.js)                    */
+/* -------------------------------------------------------------------------- */
+// Everyone who can read the Manual sees them; Edit on the Manual adds, replaces and removes them.
+const MAX_IMAGE_BYTES = 1.4 * 1024 * 1024; // inside the 2 MB request limit once base64; the browser shrinks screenshots well below it
+const KEY_RE = /^[\w.-]{1,60}$/;
+const noTable = (e) => e && e.code === 'ER_NO_SUCH_TABLE';
+
+// Which steps of a workflow have a picture: [{ id, node_id, step_index, updated_at }]
+router.get('/images', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const flow = String(req.query.flow || '');
+    if (!KEY_RE.test(flow)) return res.json([]);
+    const [rows] = await pool.query(
+      'SELECT id, node_id, step_index, updated_at FROM manual_step_images WHERE flow_key = ?', [flow]);
+    res.json(rows);
+  } catch (err) {
+    if (noTable(err)) return res.json([]);
+    next(err);
+  }
+});
+
+router.get('/images/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [[row]] = await pool.query('SELECT mime_type, image_data, updated_at FROM manual_step_images WHERE id = ?', [req.params.id]);
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    res.setHeader('Content-Type', row.mime_type);
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.send(row.image_data);
+  } catch (err) { next(err); }
+});
+
+// { flow, node, step, data: data URL } -- adds the step's picture, or replaces it.
+router.put('/images', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const { flow, node } = req.body || {};
+    const step = Number(req.body?.step);
+    if (!KEY_RE.test(String(flow || '')) || !KEY_RE.test(String(node || '')) || !Number.isInteger(step) || step < 0 || step > 200) {
+      return res.status(400).json({ error: 'Which step is this picture for?' });
+    }
+    const m = /^data:(image\/(?:png|jpeg|webp|gif));base64,(.+)$/s.exec(String(req.body?.data || ''));
+    if (!m) return res.status(400).json({ error: 'That is not a picture.' });
+    const buf = Buffer.from(m[2], 'base64');
+    if (!buf.length) return res.status(400).json({ error: 'That picture is empty.' });
+    if (buf.length > MAX_IMAGE_BYTES) return res.status(413).json({ error: 'That picture is too large.' });
+    await pool.query(
+      `INSERT INTO manual_step_images (flow_key, node_id, step_index, mime_type, image_data, uploaded_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE mime_type = VALUES(mime_type), image_data = VALUES(image_data),
+                               uploaded_by_user_id = VALUES(uploaded_by_user_id)`,
+      [flow, node, step, m[1], buf, req.user.id]);
+    const [[row]] = await pool.query(
+      'SELECT id, node_id, step_index, updated_at FROM manual_step_images WHERE flow_key = ? AND node_id = ? AND step_index = ?',
+      [flow, node, step]);
+    res.json(row);
+  } catch (err) {
+    if (noTable(err)) return res.status(503).json({ error: 'Step pictures are not set up yet (db/add-manual-step-images.js).' });
+    next(err);
+  }
+});
+
+router.delete('/images/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    await pool.query('DELETE FROM manual_step_images WHERE id = ?', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
 
 router.post('/pdf', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {

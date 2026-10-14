@@ -2776,3 +2776,12 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
   box-sizing: border-box;
 }
 .sticky-action-bar.is-pinned { z-index: 25; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12); }
+
+/* Manual: a picture under a step (2026-10-14; components/ManualStepImage.jsx). */
+.pf-step-image { margin: 8px 0 14px; }
+.pf-step-image img { display: block; max-width: 100%; max-height: 360px; border: 1px solid var(--border); border-radius: 6px; cursor: zoom-in; }
+.pf-step-image-loading { height: 160px; border-radius: 6px; background: var(--surface-2, rgba(0, 0, 0, .05)); }
+.pf-step-image-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+.pf-step-image-paste { width: 200px; font-size: 12px; padding: 4px 8px; border: 1px dashed var(--border); border-radius: 6px; background: transparent; cursor: text; }
+.pf-step-image-zoom { position: fixed; inset: 0; z-index: 3000; background: rgba(0, 0, 0, .85); display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
+.pf-step-image-zoom img { max-width: 94vw; max-height: 92vh; border-radius: 4px; }
