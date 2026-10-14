@@ -1,5 +1,6 @@
 const pool = require('../db');
 const { agingAnchor, openingItems } = require('./openingBalances');
+const { getSbuGroups } = require('./sbuGroups');
 
 // AR Aging (Accounting > Reports > AR Aging). Every customer's outstanding receivable as
 // of a date, split into age buckets. Reconstructed point-in-time -- like the four GL
@@ -135,7 +136,7 @@ async function collectOpenItemsFromDocs(asOf, filters = {}) {
   const [invoices] = await pool.query(
     `SELECT si.id, c.id AS customer_id, c.name AS customer_name, si.date_created, si.date_due, si.gross_amount,
             si.status, si.amount_due, si.invoice_no, si.bs_si_no, si.po_no, si.memo, si.term, si.sales_rep_id,
-            loc.location_name, CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep
+            si.department_id, loc.location_name, CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep
      FROM sales_invoices si
      LEFT JOIN sales_orders so ON so.id = si.sales_order_id
      LEFT JOIN estimates e ON e.id = si.estimate_id
@@ -171,7 +172,9 @@ async function collectOpenItemsFromDocs(asOf, filters = {}) {
   const memoLoc = locationClause('cm', filters);
   const [memos] = await pool.query(
     `SELECT cm.id, cm.customer_id, c.name AS customer_name, cm.date_created, cm.gross_amount,
-            cm.credit_memo_no, cm.memo, cm.sales_rep_id, loc.location_name
+            cm.credit_memo_no, cm.memo, cm.sales_rep_id, loc.location_name,
+            -- A memo keeps its sales group on its lines, not its header.
+            (SELECT MIN(cml.department_id) FROM credit_memo_lines cml WHERE cml.credit_memo_id = cm.id) AS department_id
      FROM credit_memos cm
      JOIN customers c ON c.id = cm.customer_id
      LEFT JOIN locations loc ON loc.id = cm.office_location_id
@@ -237,7 +240,7 @@ async function collectOpenItemsFromDocs(asOf, filters = {}) {
       original_amount: round2(inv.gross_amount), balance: round2(remaining),
       bs_no: inv.bs_si_no || null, po_no: inv.po_no || null, memo: inv.memo || null,
       location_name: inv.location_name || null, sales_rep: inv.sales_rep || null,
-      term: inv.term || null, sales_rep_id: inv.sales_rep_id || null,
+      term: inv.term || null, sales_rep_id: inv.sales_rep_id || null, department_id: inv.department_id || null,
       // The invoice header insists it is settled and nothing in the data agrees. Carried on the
       // item so the customer row can show how much of its balance rests on that disagreement.
       marked_paid_unevidenced: isMarkedPaid(inv) && settled < 0.005,
@@ -252,7 +255,7 @@ async function collectOpenItemsFromDocs(asOf, filters = {}) {
       date: cm.date_created, due_date: null, aging_date: cm.date_created,
       original_amount: round2(cm.gross_amount), balance: round2(-remaining),
       bs_no: null, po_no: null, memo: cm.memo || null, location_name: cm.location_name || null,
-      sales_rep_id: cm.sales_rep_id || null,
+      sales_rep_id: cm.sales_rep_id || null, department_id: cm.department_id || null,
       marked_paid_unevidenced: false,
     });
   }
@@ -293,16 +296,29 @@ function rowKey(item) {
 const norm = (v) => String(v || '').replace(/\s+/g, ' ').trim().toUpperCase();
 // The open items narrowed by Term / Account Officer (Sales Rep). Shared by AR Aging and AR Aging
 // Details (2026-10-14: "add filter per sales rep") so both answer the same way.
+//
+// Per Sales Group / SBU (2026-10-14) goes by each document's sales group: an invoice's department
+// (e.g. "Sales - 3"), a credit memo's from its lines. An SBU is its groups (lib/sbuGroups.js -- SBU 1
+// is Sales 1 + 3, SBU 2 is Sales 2 + 4). A document with no group, an unapplied payment, or an
+// opening balance not linked to a T1S invoice drops out while either is on.
+async function salesGroupIds(filters) {
+  if (filters.salesGroupId) return new Set([Number(filters.salesGroupId)]);
+  if (!filters.sbu) return null;
+  const sbu = (await getSbuGroups()).find((g) => String(g.index) === String(filters.sbu));
+  return new Set(sbu ? sbu.departmentIds.map(Number) : []);
+}
 async function narrowItems(items, filters = {}) {
   const term = filters.term ? norm(filters.term) : null;
   const officerId = filters.officerId ? Number(filters.officerId) : null;
-  if (!term && !officerId) return items;
+  const groups = await salesGroupIds(filters);
+  if (!term && !officerId && !groups) return items;
   let officerName = null;
   if (officerId) {
     const [[e]] = await pool.query("SELECT CONCAT(first_name, ' ', last_name) AS name FROM employees WHERE id = ?", [officerId]);
     officerName = norm(e?.name);
   }
   return items.filter((i) => {
+    if (groups && !groups.has(Number(i.department_id))) return false;
     if (term && norm(i.term) !== term) return false;
     if (officerId) {
       if (i.sales_rep_id) return Number(i.sales_rep_id) === officerId;
@@ -742,7 +758,7 @@ async function collectOpenItems(asOf, filters = {}) {
   const invById = new Map();
   if (invIds.length) {
     const [inv] = await pool.query(
-      `SELECT si.id, si.bs_si_no, si.po_no, si.memo, si.term, si.sales_rep_id, CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep
+      `SELECT si.id, si.bs_si_no, si.po_no, si.memo, si.term, si.sales_rep_id, si.department_id, CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep
          FROM sales_invoices si LEFT JOIN employees sr ON sr.id = si.sales_rep_id WHERE si.id IN (?)`, [invIds]);
     inv.forEach((r) => invById.set(r.id, r));
   }
@@ -759,6 +775,7 @@ async function collectOpenItems(asOf, filters = {}) {
       sales_rep: o.sales_rep || (o.type === 'Invoice' ? invById.get(o.id) : null)?.sales_rep || null,
       term: (o.type === 'Invoice' ? invById.get(o.id) : null)?.term || null,
       sales_rep_id: (o.type === 'Invoice' ? invById.get(o.id) : null)?.sales_rep_id || null,
+      department_id: (o.type === 'Invoice' ? invById.get(o.id) : null)?.department_id || null,
       marked_paid_unevidenced: false, opening: true,
     })),
     ...items.filter(keepAfterStart(books, await lateEnteredKeys(books))),

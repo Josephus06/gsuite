@@ -23,6 +23,7 @@ const {
 } = require('../lib/profitabilityReport');
 const { resolveDefaultLocation } = require('../lib/userLocation');
 const pool = require('../db');
+const { getSbuGroups } = require('../lib/sbuGroups');
 
 const router = express.Router();
 
@@ -288,6 +289,9 @@ router.get('/ar-aging', requireAuth, requirePermission(AR_AGING_ROUTE, 'can_view
       term: req.query.term ? String(req.query.term) : null,
       officerId: req.query.officerId ? Number(req.query.officerId) : null,
       customerId: req.query.customerId ? Number(req.query.customerId) : null,
+      // Per Sales Group / SBU (2026-10-14; lib/arAging.js). A group wins over an SBU if both come.
+      salesGroupId: Number(req.query.salesGroupId) > 0 ? Number(req.query.salesGroupId) : null,
+      sbu: req.query.sbu ? String(req.query.sbu) : null,
     };
     const data = await buildArAging(req.query.asOf || today(), filters);
     // ?format=xlsx -- the Extract button: the same rows and totals as a workbook.
@@ -310,7 +314,15 @@ router.get('/ar-aging/filter-options', requireAuth, requirePermission(AR_AGING_R
       `SELECT e.id, TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))) AS name
          FROM employees e WHERE e.id IN (SELECT DISTINCT sales_rep_id FROM sales_invoices WHERE sales_rep_id IS NOT NULL)
         ORDER BY name`);
-    res.json({ terms, officers });
+    // The sales groups invoices carry, and the SBUs that own them (lib/sbuGroups.js).
+    const [salesGroups] = await pool.query(
+      `SELECT d.id, d.name FROM departments d
+        WHERE d.id IN (SELECT DISTINCT department_id FROM sales_invoices WHERE department_id IS NOT NULL)
+        ORDER BY d.name`);
+    const sbus = (await getSbuGroups()).map((g) => ({
+      id: String(g.index), name: `${g.label} -- ${g.displayName} (${g.departmentNames.join(', ')})`, departmentIds: g.departmentIds,
+    }));
+    res.json({ terms, officers, salesGroups, sbus });
   } catch (err) { next(err); }
 });
 router.get('/ar-aging/customers', requireAuth, requirePermission(AR_AGING_ROUTE, 'can_view'), async (req, res, next) => {
@@ -415,6 +427,8 @@ function arAgingDetailsFilters(query) {
     nameStarts: query.nameStarts ? String(query.nameStarts).slice(0, 100) : null,
     // Per Sales Rep (2026-10-14): each invoice's / credit memo's own rep, as AR Aging's Account Officer.
     officerId: query.salesRepId && Number(query.salesRepId) > 0 ? Number(query.salesRepId) : null,
+    salesGroupId: Number(query.salesGroupId) > 0 ? Number(query.salesGroupId) : null,
+    sbu: query.sbu ? String(query.sbu) : null,
     page: query.page,
     limit: query.limit,
   };

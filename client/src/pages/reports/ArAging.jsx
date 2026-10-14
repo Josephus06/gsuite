@@ -44,6 +44,11 @@ export default function ArAging() {
   const [customer, setCustomer] = useState(null);
   const [terms, setTerms] = useState([]);
   const [officers, setOfficers] = useState([]);
+  // Per SBU / Sales Group (2026-10-14): each invoice's own sales group; an SBU is its groups.
+  const [sbu, setSbu] = useState('');
+  const [salesGroupId, setSalesGroupId] = useState('');
+  const [sbus, setSbus] = useState([]);
+  const [salesGroups, setSalesGroups] = useState([]);
   const [customerOptions, setCustomerOptions] = useState([]);
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -53,7 +58,7 @@ export default function ArAging() {
 
   useEffect(() => {
     api.get('/lookups/locations').then(({ data }) => setLocations(data)).catch(() => {});
-    api.get('/reports/ar-aging/filter-options').then(({ data }) => { setTerms(data.terms || []); setOfficers(data.officers || []); }).catch(() => {});
+    api.get('/reports/ar-aging/filter-options').then(({ data }) => { setTerms(data.terms || []); setOfficers(data.officers || []); setSbus(data.sbus || []); setSalesGroups(data.salesGroups || []); }).catch(() => {});
   }, []);
 
   // Location starts on Head Office (2026-10-14; utils/useHeadOffice), unless one is already chosen.
@@ -68,6 +73,8 @@ export default function ArAging() {
     if (nameStarts) params.nameStarts = nameStarts;
     if (termId) params.term = termId;
     if (officerId) params.officerId = officerId;
+    if (salesGroupId) params.salesGroupId = salesGroupId;
+    else if (sbu) params.sbu = sbu;
     if (customer) params.customerId = customer.id;
     return params;
   }
@@ -148,6 +155,22 @@ export default function ArAging() {
             <label>Account Officer</label>
             <FilterPicker label="Account Officer" items={officers} value={officerId} onChange={(v) => setOfficerId(v)}
               getLabel={(o) => o.name} allLabel="--ALL--" />
+          </div>
+          <div className="field">
+            <label>SBU</label>
+            <FilterPicker label="SBU" items={sbus} value={sbu} getLabel={(g) => g.name} allLabel="--ALL--"
+              onChange={(v) => {
+                setSbu(v);
+                // A group outside the newly chosen SBU would quietly override it.
+                const g = sbus.find((x) => String(x.id) === String(v));
+                if (g && salesGroupId && !g.departmentIds.map(String).includes(String(salesGroupId))) setSalesGroupId('');
+              }} />
+          </div>
+          <div className="field">
+            <label>Sales Group</label>
+            <FilterPicker label="Sales Group" value={salesGroupId} onChange={(v) => setSalesGroupId(v)}
+              items={(() => { const g = sbus.find((x) => String(x.id) === String(sbu)); return g ? salesGroups.filter((d) => g.departmentIds.map(String).includes(String(d.id))) : salesGroups; })()}
+              getLabel={(d) => d.name} allLabel="--ALL--" />
           </div>
           <div className="field">
             <label>Customer</label>
