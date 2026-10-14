@@ -328,7 +328,8 @@ export default function NonStandardJobOrderView() {
           )}
           {/* Only once the SBU gate is cleared -- neither while awaiting an approver nor
               while parked with Sales for changes. The server refuses both regardless. */}
-          {canEdit && !isCancelled && sbuCleared && !order.forwarded_at && (
+          {/* Can Edit or Can Update (2026-10-14), as the server's forward route allows. */}
+          {(canEdit || can(ROUTE, 'can_update')) && !isCancelled && sbuCleared && !order.forwarded_at && (
             <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => act('forward')}>Forward to Design Supervisor</button>
           )}
           {canComplete && (

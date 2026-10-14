@@ -517,7 +517,15 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
 // "Forward To Design Supervisor" on the live site -- a second submit action beside Save
 // that hands the saved order to Design. Recorded via forwarded_at so it only happens once.
-router.post('/:id/forward', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+// Can Edit OR Can Update on the page (asked 2026-10-14: Michelle Riveral holds Can Update, not
+// Can Edit, and could not forward her own NSTDJO-11291).
+async function requireEditOrUpdate(req, res, next) {
+  try {
+    if (await userCan(req.user.id, ROUTE, 'can_edit') || await userCan(req.user.id, ROUTE, 'can_update')) return next();
+    return res.status(403).json({ error: 'You need Can Edit or Can Update on Non-Standard Job Orders to forward to Design.' });
+  } catch (err) { return next(err); }
+}
+router.post('/:id/forward', requireAuth, requireEditOrUpdate, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[row]] = await conn.query(
