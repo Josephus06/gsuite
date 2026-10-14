@@ -9,6 +9,7 @@ import BillPaymentModal from '../components/BillPaymentModal';
 import BillCreditModal from '../components/BillCreditModal';
 import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import ReversalJournalModal from '../components/ReversalJournalModal';
 import { SupplierLink } from '../components/PartyLink';
 import { displayDate, displayAuditTime } from '../utils/dates';
 
@@ -58,18 +59,12 @@ export default function VendorBillView() {
     }
   }, [tab, id]);
 
-  async function handleCancel() {
-    if (!confirm('Cancel this Vendor Bill? Its billed qty will be reversed.')) return;
-    setBusy(true);
+  // Cancel opens the Reversal Journal popup (2026-10-14): the bill's entry reversed, on the date,
+  // location and memo chosen there -- as voiding a Sales Invoice or a Cheque does.
+  const [showReversal, setShowReversal] = useState(false);
+  function handleCancel() {
     setError('');
-    try {
-      await api.put(`/vendor-bills/${id}/cancel`);
-      await load();
-    } catch (err) {
-      setError(err.response?.data?.error || 'Cancel failed');
-    } finally {
-      setBusy(false);
-    }
+    setShowReversal(true);
   }
 
   // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
@@ -268,7 +263,17 @@ export default function VendorBillView() {
                     <td>{bc.status === 'voided' ? 'Voided' : 'Open'}</td>
                   </tr>
                 ))}
-                {related.bill_payments.length === 0 && related.bill_credits.length === 0 && (
+                {/* The reversal journal a cancel posted (2026-10-14). */}
+                {(related.reversal_journals || []).map((j) => (
+                  <tr key={`rj-${j.id}`}>
+                    <td>Reversal Journal</td>
+                    <td><Link className="link-btn" to={`/journals/${j.id}`}>{j.journal_no}</Link></td>
+                    <td>{formatDate(j.date_created)}</td>
+                    <td>{money(j.total_debit)}</td>
+                    <td>{j.status === 'void' ? 'Voided' : 'Posted'}</td>
+                  </tr>
+                ))}
+                {related.bill_payments.length === 0 && related.bill_credits.length === 0 && !(related.reversal_journals || []).length && (
                   <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>No related records yet.</td></tr>
                 )}
               </tbody>
@@ -313,6 +318,15 @@ export default function VendorBillView() {
           replicateFrom={id}
           onClose={() => setShowReplicate(false)}
           onSaved={(nb) => { setShowReplicate(false); navigate(`/vendor-bills/${nb.id}`); }}
+        />
+      )}
+      {showReversal && (
+        <ReversalJournalModal
+          previewPath={`/vendor-bills/${id}/reversal-preview`}
+          voidPath={`/vendor-bills/${id}/cancel`}
+          docLabel="bill"
+          onClose={() => setShowReversal(false)}
+          onSaved={async () => { setShowReversal(false); await load(); }}
         />
       )}
     </div>

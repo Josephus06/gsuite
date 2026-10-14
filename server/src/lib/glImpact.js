@@ -1553,7 +1553,12 @@ async function computePostedGlLines({ toDate, fromDate }) {
       `SELECT vb.*, coa.account_code, coa.account_name
        FROM vendor_bills vb
        LEFT JOIN chart_of_accounts coa ON coa.id = vb.account_id
-       WHERE vb.status != 'cancelled' AND ${sql}`, params
+       WHERE (vb.status != 'cancelled'
+              -- A bill cancelled since 2026-10-14 keeps its entry in its own period: its reversal
+              -- journal (routes/vendorBills.js cancel) takes it out in the period of the void. One
+              -- cancelled before that has no reversal and stays out, as it always has.
+              OR EXISTS (SELECT 1 FROM journals rj WHERE rj.source_type = 'vendor_bill' AND rj.source_id = vb.id AND rj.status <> 'void'))
+         AND ${sql}`, params
     );
     // A standalone (no-PO) bill debits its lines' own accounts, so its lines have to come along;
     // a PO bill's entry is its header alone, as before.

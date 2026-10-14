@@ -5,6 +5,8 @@ const { insertNumbered } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeVendorBillGl } = require('../lib/glImpact');
+const { postReversalJournal, mirror, listReversalJournals } = require('../lib/reversalJournal');
+const { booksStart } = require('../lib/openingBalances');
 const { liquidationPostError, liquidationBilling } = require('../lib/liquidationPosting');
 const { sendXlsx, day: xlsxDay } = require('../lib/xlsxExport');
 
@@ -370,7 +372,9 @@ router.get('/:id/related', requireAuth, requirePermission(ROUTE, 'can_view'), as
       'SELECT id, bill_credit_no, date_created, total_amount, applied_amount, status FROM bill_credits WHERE vendor_bill_id = ? ORDER BY id DESC',
       [req.params.id]
     );
-    res.json({ bill_payments: billPayments, bill_credits: billCredits });
+    // The reversal journal a cancel posted (2026-10-14).
+    const reversalJournals = await listReversalJournals(pool, 'vendor_bill', Number(req.params.id));
+    res.json({ bill_payments: billPayments, bill_credits: billCredits, reversal_journals: reversalJournals });
   } catch (err) {
     next(err);
   }
@@ -911,6 +915,65 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
   }
 });
 
+// The entry a bill posts, exactly as the GL has it (lib/glImpact.js getPostedGlLines): the old
+// system's own imported entries where there are any, else the computed one -- a PO bill's from its
+// header, a standalone bill's from its lines. The reversal journal mirrors these (2026-10-14).
+async function postedBillGlRows(db, billId) {
+  const [[vb]] = await db.query(
+    `SELECT vb.*, coa.account_code, coa.account_name, loc.location_name AS office_location_name
+       FROM vendor_bills vb
+       LEFT JOIN chart_of_accounts coa ON coa.id = vb.account_id
+       LEFT JOIN locations loc ON loc.id = vb.office_location_id
+      WHERE vb.id = ?`, [billId]);
+  if (!vb) return null;
+  const [imported] = await db.query(
+    `SELECT g.account_code, g.account_name, g.debit, g.credit
+       FROM live_gl_entries g WHERE g.source_type = 'vendor_bill' AND g.source_id = ?`, [billId])
+    .catch((e) => { if (e.code === 'ER_NO_SUCH_TABLE') return [[]]; throw e; });
+  let glRows;
+  if (imported.length) {
+    glRows = imported.map((r) => ({ account_code: r.account_code, account_name: r.account_name, debit: Number(r.debit) || 0, credit: Number(r.credit) || 0 }));
+  } else {
+    const [lines] = vb.purchase_order_id ? [[]] : await db.query('SELECT * FROM vendor_bill_lines WHERE vendor_bill_id = ?', [billId]);
+    glRows = await computeVendorBillGl(vb, lines);
+  }
+  return { vb, glRows: glRows.filter((r) => Number(r.debit) || Number(r.credit)) };
+}
+
+// Is this bill in the ledger at all? Up to the books start the GL is the old system's own figures
+// (lib/openingBalances.js), so a bill dated before it is there only if the old system had it when
+// those figures were loaded. One keyed in T1S after that, dated earlier, posted nowhere -- reversing
+// it would take out what was never put in. From the books start, every bill posts.
+async function billInLedger(db, vb) {
+  const books = await booksStart();
+  const dated = String(vb.date_created instanceof Date ? vb.date_created.toISOString() : vb.date_created).slice(0, 10);
+  if (!books || dated >= books.start) return true;
+  const [[snap]] = await db.query('SELECT MIN(created_at) AS loaded FROM opening_gl_balances WHERE as_of = ?', [books.asOf]);
+  if (!snap?.loaded) return true;
+  return !vb.created_at || new Date(vb.created_at) <= new Date(snap.loaded);
+}
+
+// The Reversal Journal popup's table (components/ReversalJournalModal.jsx): the bill's posted entry,
+// debits and credits swapped -- the same rows the cancel will post.
+router.get('/:id/reversal-preview', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const gl = await postedBillGlRows(pool, req.params.id);
+    if (!gl) return res.status(404).json({ error: 'Not found' });
+    const { vb } = gl;
+    // Never in the ledger (billInLedger): nothing to reverse, so the popup shows no lines.
+    const inLedger = await billInLedger(pool, vb);
+    res.json({
+      doc_no: vb.bill_no,
+      doc_date: vb.date_created,
+      location: vb.office_location_id ? { id: vb.office_location_id, location_name: vb.office_location_name } : null,
+      rows: inLedger ? mirror(gl.glRows) : [],
+    });
+  } catch (err) { next(err); }
+});
+
+// Cancel (void) a bill. Since 2026-10-14 it posts a REVERSAL journal dated the day chosen in the
+// popup, and the bill keeps posting its original entry in its own period (lib/glImpact.js), so the
+// month it was billed in is not rewritten -- as Sales Invoices, Delivery Tickets and Cheques do.
 router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
@@ -918,6 +981,15 @@ router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_void'), asy
     if (vb) await assertPeriodOpen(vb.date_created, 'ap', conn);
     if (!vb) return res.status(404).json({ error: 'Not found' });
     if (vb.status === 'cancelled') return res.status(409).json({ error: 'This Vendor Bill is already cancelled.' });
+    // The reversal's own date: never before the bill's, and in an open A/P period.
+    const body = req.body || {};
+    const reversalDateIn = /^\d{4}-\d{2}-\d{2}$/.test(String(body.reversal_date || '')) ? String(body.reversal_date) : null;
+    if (reversalDateIn) {
+      if (reversalDateIn < String(vb.date_created instanceof Date ? vb.date_created.toISOString() : vb.date_created).slice(0, 10)) {
+        return res.status(400).json({ error: 'The reversal date cannot be before the bill date.' });
+      }
+      await assertPeriodOpen(reversalDateIn, 'ap', conn);
+    }
     // Not while anything has paid or credited it (asked 2026-10-06): voiding left those Bill Payments
     // and Bill Credits applied to a void bill -- the cash and AP no longer agreeing, with nothing to
     // say so. What is applied is gross less withholding less what is still due, as Edit reads it.
@@ -949,6 +1021,18 @@ router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_void'), asy
     );
     if (vb.purchase_order_id) await recomputePoBillStatus(conn, vb.purchase_order_id);
     await logAudit(conn, { billId: req.params.id, userId: req.user.id, eventType: 'Cancelled', fieldName: 'status', oldValue: 'open', newValue: 'cancelled' });
+    // The reversal journal (2026-10-14), in the same transaction: a bill is never cancelled without it.
+    const gl = await postedBillGlRows(conn, req.params.id);
+    const reversal = gl && await billInLedger(conn, gl.vb) ? await postReversalJournal(conn, {
+      sourceType: 'vendor_bill', sourceId: Number(req.params.id), sourceNo: gl.vb.bill_no,
+      glRows: gl.glRows, documentDate: gl.vb.date_created, voidedAt: new Date(),
+      reason: String(body.memo || body.reason || '').trim() || null, userId: req.user.id,
+      locationId: body.location_id ? Number(body.location_id) : (gl.vb.office_location_id || null),
+      date: reversalDateIn,
+    }) : null;
+    if (reversal) {
+      await logAudit(conn, { billId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'reversal_journal', oldValue: null, newValue: reversal.journalNo });
+    }
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM vendor_bills WHERE id = ?', [req.params.id]);
