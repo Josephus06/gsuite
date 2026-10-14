@@ -6,7 +6,7 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeVendorBillGl } = require('../lib/glImpact');
 const { postReversalJournal, mirror, listReversalJournals } = require('../lib/reversalJournal');
-const { booksStart } = require('../lib/openingBalances');
+const { postedBillGlRows, billInLedger } = require('../lib/vendorBillReversal');
 const { liquidationPostError, liquidationBilling } = require('../lib/liquidationPosting');
 const { sendXlsx, day: xlsxDay } = require('../lib/xlsxExport');
 
@@ -914,44 +914,6 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     conn.release();
   }
 });
-
-// The entry a bill posts, exactly as the GL has it (lib/glImpact.js getPostedGlLines): the old
-// system's own imported entries where there are any, else the computed one -- a PO bill's from its
-// header, a standalone bill's from its lines. The reversal journal mirrors these (2026-10-14).
-async function postedBillGlRows(db, billId) {
-  const [[vb]] = await db.query(
-    `SELECT vb.*, coa.account_code, coa.account_name, loc.location_name AS office_location_name
-       FROM vendor_bills vb
-       LEFT JOIN chart_of_accounts coa ON coa.id = vb.account_id
-       LEFT JOIN locations loc ON loc.id = vb.office_location_id
-      WHERE vb.id = ?`, [billId]);
-  if (!vb) return null;
-  const [imported] = await db.query(
-    `SELECT g.account_code, g.account_name, g.debit, g.credit
-       FROM live_gl_entries g WHERE g.source_type = 'vendor_bill' AND g.source_id = ?`, [billId])
-    .catch((e) => { if (e.code === 'ER_NO_SUCH_TABLE') return [[]]; throw e; });
-  let glRows;
-  if (imported.length) {
-    glRows = imported.map((r) => ({ account_code: r.account_code, account_name: r.account_name, debit: Number(r.debit) || 0, credit: Number(r.credit) || 0 }));
-  } else {
-    const [lines] = vb.purchase_order_id ? [[]] : await db.query('SELECT * FROM vendor_bill_lines WHERE vendor_bill_id = ?', [billId]);
-    glRows = await computeVendorBillGl(vb, lines);
-  }
-  return { vb, glRows: glRows.filter((r) => Number(r.debit) || Number(r.credit)) };
-}
-
-// Is this bill in the ledger at all? Up to the books start the GL is the old system's own figures
-// (lib/openingBalances.js), so a bill dated before it is there only if the old system had it when
-// those figures were loaded. One keyed in T1S after that, dated earlier, posted nowhere -- reversing
-// it would take out what was never put in. From the books start, every bill posts.
-async function billInLedger(db, vb) {
-  const books = await booksStart();
-  const dated = String(vb.date_created instanceof Date ? vb.date_created.toISOString() : vb.date_created).slice(0, 10);
-  if (!books || dated >= books.start) return true;
-  const [[snap]] = await db.query('SELECT MIN(created_at) AS loaded FROM opening_gl_balances WHERE as_of = ?', [books.asOf]);
-  if (!snap?.loaded) return true;
-  return !vb.created_at || new Date(vb.created_at) <= new Date(snap.loaded);
-}
 
 // The Reversal Journal popup's table (components/ReversalJournalModal.jsx): the bill's posted entry,
 // debits and credits swapped -- the same rows the cancel will post.
