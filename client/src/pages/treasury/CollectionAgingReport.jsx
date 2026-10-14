@@ -201,7 +201,7 @@ export default function CollectionAgingReport() {
               {rows.length > 0 && <> — total {money(data?.total_amount)}</>}.
               {' '}Age at Collection = payment date − invoice date; Days Past Due = payment date − invoice due date.
               {' '}Applied Date = the later of the payment date and the invoice date.
-              {' '}&ldquo;Advances from Customers&ldquo;Advance / No invoice yet&rdquo; is moneyrdquo; is money a payment has not applied to any invoice (e.g. a down payment); it moves onto the invoice once applied.
+              {' '}&ldquo;Advances from Customers&rdquo; is money a payment has not applied to any invoice (e.g. a down payment); it moves onto the invoice once applied.
             </div>
             <div className="table-wrap">
               <table>
