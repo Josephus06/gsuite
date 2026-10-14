@@ -5,6 +5,7 @@ const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { computeSalesOrderStatus, invoicedOrTicketedSql, openDtQtySql } = require('../lib/salesOrderStatus');
 const { releaseIfDirectToProduction } = require('../lib/directToProduction');
+const { sendXlsx } = require('../lib/xlsxExport');
 
 const router = express.Router();
 const ROUTE = '/sales-orders';
@@ -61,6 +62,42 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     //
     // The same reasoning is already applied to the Production list counts, for the same reason.
     const countFrom = search ? baseFrom : `FROM sales_orders so`;
+
+    // Extract (?format=xlsx, 2026-10-14): every order under the filters and status on screen --
+    // no page limit -- with the list's columns.
+    if (req.query.format === 'xlsx') {
+      const [all] = await pool.query(
+        `SELECT so.sales_order_no, e.estimate_no, so.date_created, so.status, loc.location_name, c.name AS customer_name,
+                so.contract_description, CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
+                CONCAT(pb.first_name, ' ', pb.last_name) AS prepared_by_name, so.net_of_tax, so.total_amount
+         ${baseFrom} ${whereSql}
+         ORDER BY so.id DESC`, params);
+      const label = (s) => String(s || '').replace(/_/g, ' ').replace(/\b\w/g, (ch) => ch.toUpperCase());
+      return sendXlsx(res, {
+        filename: `sales-orders${status && STATUS_VALUES.includes(status) ? `-${status}` : ''}.xlsx`,
+        sheet: 'Sales Orders',
+        columns: [
+          { header: 'Sale Order No.', key: 'sales_order_no', width: 14 },
+          { header: 'Est No.', key: 'estimate_no', width: 13 },
+          { header: 'Date', key: 'date_created', width: 11 },
+          { header: 'Status', key: 'status', width: 22 },
+          { header: 'Location', key: 'location_name', width: 15 },
+          { header: 'Customer', key: 'customer_name', width: 36 },
+          { header: 'Contract Description', key: 'contract_description', width: 48 },
+          { header: 'Sales Rep.', key: 'sales_rep_name', width: 24 },
+          { header: 'Prepared By', key: 'prepared_by_name', width: 24 },
+          { header: 'Net of Tax', key: 'net_of_tax', width: 14, money: true },
+          { header: 'Total Amount', key: 'total_amount', width: 14, money: true },
+        ],
+        rows: all.map((r) => ({
+          ...r,
+          date_created: r.date_created ? String(r.date_created).slice(0, 10) : '',
+          status: label(r.status),
+          net_of_tax: r.net_of_tax == null ? null : Number(r.net_of_tax),
+          total_amount: r.total_amount == null ? null : Number(r.total_amount),
+        })),
+      });
+    }
 
     const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${countFrom} ${whereSql}`, params);
 

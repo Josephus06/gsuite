@@ -8,6 +8,7 @@ import SyncFromSourceButton from '../components/SyncFromSourceButton';
 import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
 import FilterPicker from '../components/FilterPicker';
+import { downloadFile } from '../utils/downloadFile';
 
 // Mirrors Estimates.jsx / the real system's "Saved Sales Orders" list -- Sales Orders
 // are only ever generated automatically (when an estimate reaches Approved), so there
@@ -48,13 +49,32 @@ export default function SalesOrders() {
   const [employees, setEmployees] = useState([]);
   const [locations, setLocations] = useState([]);
 
-  async function load() {
-    setLoading(true);
-    const params = { status, page, limit };
+  // The filters on screen. status '' = every status (the All tab / Status filter, 2026-10-14).
+  function filterParams() {
+    const params = {};
+    if (status) params.status = status;
     if (search) params.search = search;
     if (salesRepId) params.sales_rep_id = salesRepId;
     if (officeLocationId) params.office_location_id = officeLocationId;
     if (asOf) params.as_of = asOf;
+    return params;
+  }
+
+  // Extract: every order under the filters and status on screen, as Excel (2026-10-14).
+  const [extracting, setExtracting] = useState(false);
+  async function extract() {
+    setExtracting(true);
+    try {
+      await downloadFile('/sales-orders', { ...filterParams(), format: 'xlsx' }, `sales-orders${status ? `-${status}` : ''}.xlsx`);
+    } catch {
+      window.alert('Could not extract the sales orders.');
+    }
+    setExtracting(false);
+  }
+
+  async function load() {
+    setLoading(true);
+    const params = { ...filterParams(), page, limit };
     const { data } = await api.get('/sales-orders', { params });
     setRows(data.rows);
     setTotal(data.total);
@@ -83,6 +103,7 @@ export default function SalesOrders() {
         <h1>Saved Sales Orders</h1>
         <div style={{ display: 'flex', gap: 8 }}>
           <SyncFromSourceButton module="sales_orders" onDone={load} />
+          <button className="btn btn-sm" onClick={extract} disabled={extracting}>{extracting ? 'Extracting...' : 'Extract'}</button>
           <button className="btn btn-sm" onClick={() => setShowFilters((s) => !s)}>Toggle Filter</button>
         </div>
       </div>
@@ -105,6 +126,13 @@ export default function SalesOrders() {
               getLabel={(l) => l.location_name} allLabel="All" />
             </div>
             <div className="field">
+              <label>Status</label>
+              <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
+                <option value="">All</option>
+                {STATUS_TABS.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+              </select>
+            </div>
+            <div className="field">
               <label>Date Created (As of)</label>
               <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
             </div>
@@ -114,6 +142,9 @@ export default function SalesOrders() {
       )}
 
       <div className="status-tabs">
+        <button className={`status-tab ${status === '' ? 'active' : ''}`} onClick={() => { setStatus(''); setPage(1); }}>
+          All <span className="badge badge-muted">{Object.values(counts).reduce((s, n) => s + Number(n || 0), 0)}</span>
+        </button>
         {STATUS_TABS.map((t) => (
           <button
             key={t.key}
@@ -135,6 +166,7 @@ export default function SalesOrders() {
                     <th>Sale Order No.</th>
                     <th>Est No.</th>
                     <th>Date</th>
+                    {status === '' && <th>Status</th>}
                     <th>Location</th>
                     <th>Customer</th>
                     <th>Contract Description</th>
@@ -147,13 +179,14 @@ export default function SalesOrders() {
                 </thead>
                 <tbody>
                   {rows.length === 0 && (
-                    <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: 20 }}>No sales orders found.</td></tr>
+                    <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: 20 }}>No sales orders found.</td></tr>
                   )}
                   {rows.map((row) => (
                     <tr key={row.id}>
                       <td data-label="Sale Order No.">{row.sales_order_no}</td>
                       <td data-label="Est No.">{row.estimate_no}</td>
                       <td data-label="Date">{row.date_created ? String(row.date_created).slice(0, 10) : ''}</td>
+                      {status === '' && <td data-label="Status">{STATUS_TABS.find((t) => t.key === row.status)?.label || row.status}</td>}
                       <td data-label="Location">{row.location_name}</td>
                       <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                       <td data-label="Contract Description">{row.contract_description}</td>
