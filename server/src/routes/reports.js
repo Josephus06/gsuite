@@ -413,6 +413,8 @@ function arAgingDetailsFilters(query) {
     locationId: query.locationId && Number(query.locationId) > 0 ? Number(query.locationId) : null,
     noLocation: query.noLocation === 'true' || query.noLocation === '1',
     nameStarts: query.nameStarts ? String(query.nameStarts).slice(0, 100) : null,
+    // Per Sales Rep (2026-10-14): each invoice's / credit memo's own rep, as AR Aging's Account Officer.
+    officerId: query.salesRepId && Number(query.salesRepId) > 0 ? Number(query.salesRepId) : null,
     page: query.page,
     limit: query.limit,
   };
@@ -435,6 +437,17 @@ router.get('/ar-aging-details', requireAuth, requirePermission(AR_AGING_DETAILS_
   } catch (err) {
     return next(err);
   }
+});
+
+// The Sales Rep filter's list: the reps invoices actually carry (2026-10-14), under this report's permission.
+router.get('/ar-aging-details/sales-reps', requireAuth, requirePermission(AR_AGING_DETAILS_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT e.id, TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))) AS name
+         FROM employees e WHERE e.id IN (SELECT DISTINCT sales_rep_id FROM sales_invoices WHERE sales_rep_id IS NOT NULL)
+        ORDER BY name`);
+    return res.json(rows);
+  } catch (err) { return next(err); }
 });
 
 router.get('/ar-aging-details/customers', requireAuth, requirePermission(AR_AGING_DETAILS_ROUTE, 'can_view'), async (req, res, next) => {

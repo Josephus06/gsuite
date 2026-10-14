@@ -291,25 +291,29 @@ function rowKey(item) {
 // unapplied payment has neither, so it drops out while either filter is on. An opening item answers
 // for the T1S invoice it is linked to, or else by the source's sales rep name.
 const norm = (v) => String(v || '').replace(/\s+/g, ' ').trim().toUpperCase();
-async function buildArAging(asOf, filters = {}) {
-  let items = await collectOpenItems(asOf, filters);
+// The open items narrowed by Term / Account Officer (Sales Rep). Shared by AR Aging and AR Aging
+// Details (2026-10-14: "add filter per sales rep") so both answer the same way.
+async function narrowItems(items, filters = {}) {
   const term = filters.term ? norm(filters.term) : null;
   const officerId = filters.officerId ? Number(filters.officerId) : null;
-  if (term || officerId) {
-    let officerName = null;
-    if (officerId) {
-      const [[e]] = await pool.query("SELECT CONCAT(first_name, ' ', last_name) AS name FROM employees WHERE id = ?", [officerId]);
-      officerName = norm(e?.name);
-    }
-    items = items.filter((i) => {
-      if (term && norm(i.term) !== term) return false;
-      if (officerId) {
-        if (i.sales_rep_id) return Number(i.sales_rep_id) === officerId;
-        return !!officerName && norm(i.sales_rep) === officerName;
-      }
-      return true;
-    });
+  if (!term && !officerId) return items;
+  let officerName = null;
+  if (officerId) {
+    const [[e]] = await pool.query("SELECT CONCAT(first_name, ' ', last_name) AS name FROM employees WHERE id = ?", [officerId]);
+    officerName = norm(e?.name);
   }
+  return items.filter((i) => {
+    if (term && norm(i.term) !== term) return false;
+    if (officerId) {
+      if (i.sales_rep_id) return Number(i.sales_rep_id) === officerId;
+      return !!officerName && norm(i.sales_rep) === officerName;
+    }
+    return true;
+  });
+}
+
+async function buildArAging(asOf, filters = {}) {
+  const items = await narrowItems(await collectOpenItems(asOf, filters), filters);
   // Accumulate every contribution into per-customer buckets.
   const byCustomer = new Map();
   function customerRow(item) {
@@ -424,7 +428,7 @@ function groupItemsByCustomer(items, asOf) {
 }
 
 async function buildArAgingDetails(asOf, filters = {}) {
-  const items = await collectOpenItems(asOf, filters);
+  const items = await narrowItems(await collectOpenItems(asOf, filters), filters);
   const groups = groupItemsByCustomer(items, asOf);
 
   const limit = Math.min(DETAILS_MAX_PAGE_SIZE, Math.max(1, Number(filters.limit) || DETAILS_DEFAULT_PAGE_SIZE));
@@ -463,7 +467,7 @@ async function buildArAgingDetails(asOf, filters = {}) {
 // spreadsheet can sort and pivot. No page limit: this report's cost is the scan that already
 // happened, so paging the export would only make someone run it five times.
 async function buildArAgingDetailsCsv(asOf, filters = {}) {
-  const items = await collectOpenItems(asOf, filters);
+  const items = await narrowItems(await collectOpenItems(asOf, filters), filters);
   const groups = groupItemsByCustomer(items, asOf);
 
   // The source's own extract layout (asked 2026-10-02), as the Excel one (lib/agingWorkbook.js): the
@@ -500,7 +504,7 @@ async function buildArAgingDetailsCsv(asOf, filters = {}) {
 
 // The Details report's customer groups, whole (no paging) -- for its Excel extract.
 async function buildArAgingDetailsGroups(asOf, filters = {}) {
-  return groupItemsByCustomer(await collectOpenItems(asOf, filters), asOf);
+  return groupItemsByCustomer(await narrowItems(await collectOpenItems(asOf, filters), filters), asOf);
 }
 
 // Typeahead for the Details report's Customer filter. Capped, and limited to customers that

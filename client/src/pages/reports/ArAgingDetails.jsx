@@ -55,12 +55,13 @@ const PAGE_SIZES = [25, 50, 100, 200];
 
 export default function ArAgingDetails() {
   const [filters, setFilters] = useState({
-    customer: null, locationId: '', noLocation: false, nameStarts: '', asOf: today(),
+    customer: null, locationId: '', noLocation: false, nameStarts: '', asOf: today(), salesRepId: '',
   });
   const [applied, setApplied] = useState(null);
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(25);
   const [locations, setLocations] = useState([]);
+  const [salesReps, setSalesReps] = useState([]); // Sales Rep filter (2026-10-14)
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -68,6 +69,7 @@ export default function ArAgingDetails() {
 
   useEffect(() => {
     api.get('/lookups/locations').then(({ data }) => setLocations(data)).catch(() => {});
+    api.get('/reports/ar-aging-details/sales-reps').then(({ data }) => setSalesReps(data)).catch(() => {});
   }, []);
 
   // Location starts on Head Office (2026-10-14; utils/useHeadOffice), unless one is already chosen.
@@ -78,6 +80,7 @@ export default function ArAgingDetails() {
   const paramsOf = useCallback((f, extra = {}) => {
     const p = { asOf: f.asOf, ...extra };
     if (f.customer) p.customerId = f.customer.id;
+    if (f.salesRepId) p.salesRepId = f.salesRepId;
     if (f.noLocation) p.noLocation = 'true';
     else if (f.locationId) p.locationId = f.locationId;
     if (f.nameStarts) p.nameStarts = f.nameStarts;
@@ -179,6 +182,11 @@ export default function ArAgingDetails() {
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="filter-grid">
+          <div className="field">
+            <label>Sales Rep</label>
+            <FilterPicker label="Sales Rep" items={salesReps} value={filters.salesRepId}
+              onChange={(v) => setFilters((f) => ({ ...f, salesRepId: v }))} getLabel={(r) => r.name} allLabel="--ALL--" />
+          </div>
           <div className="field">
             <label>Customer</label>
             {/* A picker, not a type-ahead. The datalist that stood here only filtered once a name
