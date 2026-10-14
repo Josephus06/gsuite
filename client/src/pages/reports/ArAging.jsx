@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
+import { headOfficeLocationId } from '../../utils/useHeadOffice';
 import { CustomerLink } from '../../components/PartyLink';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import { REPORT_TIMING } from '../../utils/reportTiming';
@@ -53,6 +54,11 @@ export default function ArAging() {
   useEffect(() => {
     api.get('/lookups/locations').then(({ data }) => setLocations(data)).catch(() => {});
     api.get('/reports/ar-aging/filter-options').then(({ data }) => { setTerms(data.terms || []); setOfficers(data.officers || []); }).catch(() => {});
+  }, []);
+
+  // Location starts on Head Office (2026-10-14; utils/useHeadOffice), unless one is already chosen.
+  useEffect(() => {
+    headOfficeLocationId().then((id) => { if (id) setLocationId((v) => (v === '' ? id : v)); });
   }, []);
 
   function queryParams() {

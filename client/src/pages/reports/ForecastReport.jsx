@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../../api/client';
+import { headOfficeLocationId } from '../../utils/useHeadOffice';
 import { CustomerLink } from '../../components/PartyLink';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Pagination from '../../components/Pagination';
@@ -37,13 +38,23 @@ export default function ForecastReport() {
 
   const params = useCallback((f) => Object.fromEntries(Object.entries(f).filter(([, v]) => v !== '' && v != null)), []);
 
+  // Office Location starts on Head Office (2026-10-14; utils/useHeadOffice); the report waits for it.
+  const [hoReady, setHoReady] = useState(false);
   useEffect(() => {
+    headOfficeLocationId().then((id) => {
+      if (id) { setFilters((f) => ({ ...f, office_location_id: id })); setApplied((a) => ({ ...a, office_location_id: id })); }
+      setHoReady(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!hoReady) return;
     setLoading(true); setError('');
     api.get('/reports/forecast', { params: { ...params(applied), page, limit: PAGE_SIZE } })
       .then(({ data: r }) => setData(r))
       .catch((err) => setError(err.response?.data?.error || 'Could not load the report.'))
       .finally(() => setLoading(false));
-  }, [applied, page, params]);
+  }, [applied, page, params, hoReady]);
 
   const set = (k) => (e) => setFilters((f) => ({ ...f, [k]: e.target.value }));
   function search() { setPage(1); setApplied(filters); }

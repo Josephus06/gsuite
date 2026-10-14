@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import { useHeadOfficeFilter } from '../utils/useHeadOffice';
 import EntityPicker from '../components/EntityPicker';
 import FilterPicker from '../components/FilterPicker';
 import Pagination from '../components/Pagination';
@@ -45,7 +46,7 @@ export default function ReceivingReports() {
   // Location, Department, Item and an As of / Period date (asked 2026-10-13).
   const [dateMode, setDateMode] = useState('range');
   const [asOf, setAsOf] = useState('');
-  const [locationId, setLocationId] = useState('');
+  const [locationId, setLocationId] = useHeadOfficeFilter(); // Head Office by default (2026-10-14); null until known
   const [departmentId, setDepartmentId] = useState('');
   const [item, setItem] = useState(null);
   const [options, setOptions] = useState({ locations: [], departments: [] });
@@ -91,7 +92,7 @@ export default function ReceivingReports() {
       .then(({ data }) => setItemOptions(item && !data.some((i) => i.id === item.id) ? [item, ...data] : data))
       .catch(() => {});
   }
-  useEffect(() => { load(); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (locationId === null) return; load(); }, [page, locationId === null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function runSearch() {
     // Reset to page 1 and load once: setPage(1) alone would not re-fire when already on 1.
@@ -144,7 +145,7 @@ export default function ReceivingReports() {
             </div>
             <div className="field">
               <label>Location</label>
-              <FilterPicker label="Location" items={options.locations} value={locationId} onChange={setLocationId}
+              <FilterPicker label="Location" items={options.locations} value={locationId ?? ''} onChange={setLocationId}
                 getLabel={(l) => l.name} allLabel="All" />
             </div>
             <div className="field">

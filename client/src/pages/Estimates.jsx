@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import { useHeadOfficeFilter } from '../utils/useHeadOffice';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -42,7 +43,8 @@ export default function Estimates() {
   const [status, setStatus] = useState('pending_supervisor_approval');
   const [search, setSearch] = useState('');
   const [salesRepId, setSalesRepId] = useState('');
-  const [officeLocationId, setOfficeLocationId] = useState('');
+  // Head Office by default (2026-10-14; utils/useHeadOffice); null until known, and the list waits for it.
+  const [officeLocationId, setOfficeLocationId] = useHeadOfficeFilter();
   const [asOf, setAsOf] = useState('');
   const [page, setPage] = useState(1);
   const limit = 10;
@@ -76,7 +78,7 @@ export default function Estimates() {
     api.get('/lookups/locations').then(({ data }) => setLocations(data));
   }, []);
 
-  useEffect(() => { load(); }, [status, page]);
+  useEffect(() => { if (officeLocationId === null) return; load(); }, [status, page, officeLocationId === null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function runSearch() {
     setPage(1);
@@ -158,7 +160,7 @@ export default function Estimates() {
             </div>
             <div className="field">
               <label>Location</label>
-              <FilterPicker label="Location" items={locations} value={officeLocationId} onChange={(v) => setOfficeLocationId(v)}
+              <FilterPicker label="Location" items={locations} value={officeLocationId ?? ''} onChange={(v) => setOfficeLocationId(v)}
               getLabel={(l) => l.location_name} allLabel="All" />
             </div>
             <div className="field">

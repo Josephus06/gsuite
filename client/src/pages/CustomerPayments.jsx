@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
+import { headOfficeLocationId } from '../utils/useHeadOffice';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EntityPicker from '../components/EntityPicker';
@@ -61,7 +62,17 @@ export default function CustomerPayments() {
   // One effect is the only thing that fetches, keyed on the page and the applied filters. Every
   // control changes one of those two and nothing else, so there is no path that sets state and
   // forgets to reload, and none that reloads twice for one click.
+  // Location starts on Head Office (2026-10-14; utils/useHeadOffice); the list waits for it.
+  const [hoReady, setHoReady] = useState(false);
   useEffect(() => {
+    headOfficeLocationId().then((id) => {
+      if (id) { setForm((f) => ({ ...f, locationId: id })); setApplied((a) => ({ ...a, locationId: id })); }
+      setHoReady(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!hoReady) return undefined;
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -85,7 +96,7 @@ export default function CustomerPayments() {
       }
     })();
     return () => { cancelled = true; };
-  }, [page, applied, refreshKey]);
+  }, [page, applied, refreshKey, hoReady]);
 
   // The two dropdowns' options. Lookups, not the admin lists -- a handful of rows each, needing
   // no permission beyond seeing this page. Failures are swallowed: a filter that cannot offer its

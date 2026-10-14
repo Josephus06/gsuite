@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
+import { headOfficeLocationId } from '../../utils/useHeadOffice';
 import { SupplierLink } from '../../components/PartyLink';
 import EntityPicker from '../../components/EntityPicker';
 import LoadingSpinner from '../../components/LoadingSpinner';
@@ -56,6 +57,11 @@ export default function ApAgingDetails() {
 
   useEffect(() => {
     api.get('/lookups/locations').then(({ data }) => setLocations(data)).catch(() => {});
+  }, []);
+
+  // Location starts on Head Office (2026-10-14; utils/useHeadOffice), unless one is already chosen.
+  useEffect(() => {
+    headOfficeLocationId().then((id) => { if (id) setFilters((f) => (f.locationId === '' ? { ...f, locationId: id } : f)); });
   }, []);
 
   const paramsOf = useCallback((f, extra = {}) => {

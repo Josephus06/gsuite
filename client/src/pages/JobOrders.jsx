@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import { useHeadOfficeFilter } from '../utils/useHeadOffice';
 import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import Modal from '../components/Modal';
@@ -58,7 +59,8 @@ export default function JobOrders() {
   const [search, setSearch] = useState('');
   const [salesRepId, setSalesRepId] = useState('');
   const [jobLocationId, setJobLocationId] = useState('');
-  const [officeLocationId, setOfficeLocationId] = useState('');
+  // Head Office by default (2026-10-14; utils/useHeadOffice); null until known, and the list waits for it.
+  const [officeLocationId, setOfficeLocationId] = useHeadOfficeFilter();
   const [customerId, setCustomerId] = useState('');
   // Period From / Date Created (As of): inclusive bounds on Date Created, applied on Search.
   const [dateFrom, setDateFrom] = useState('');
@@ -139,7 +141,7 @@ export default function JobOrders() {
     // -- otherwise a permitted viewer's very first render would wrongly skip these.
   }, [permissions]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { load(); }, [page, tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (officeLocationId === null) return; load(); }, [page, tab, officeLocationId === null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function selectTab(t) {
     setSelectedIds(new Set());
@@ -261,7 +263,7 @@ export default function JobOrders() {
             </div>
             <div className="field">
               <label>Office Location</label>
-              <FilterPicker label="Office Location" items={locations} value={officeLocationId} onChange={(v) => setOfficeLocationId(v)}
+              <FilterPicker label="Office Location" items={locations} value={officeLocationId ?? ''} onChange={(v) => setOfficeLocationId(v)}
               getLabel={(l) => l.location_name} allLabel="All" />
             </div>
             <div className="field">

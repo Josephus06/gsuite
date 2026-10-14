@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import { useHeadOfficeFilter } from '../utils/useHeadOffice';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import SyncFromSourceButton from '../components/SyncFromSourceButton';
@@ -48,7 +49,8 @@ export default function SalesInvoices() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [departmentId, setDepartmentId] = useState('');
-  const [locationId, setLocationId] = useState('');
+  // Head Office by default (2026-10-14; utils/useHeadOffice); null until known, and the list waits for it.
+  const [locationId, setLocationId] = useHeadOfficeFilter();
   const [locations, setLocations] = useState([]);
   const [invoiceType, setInvoiceType] = useState(''); // '' = all, 'SI' or 'DR'
   const [departments, setDepartments] = useState([]);
@@ -90,8 +92,8 @@ export default function SalesInvoices() {
   // The two dropdowns apply themselves; the dates and the search box wait for Search. A <select>
   // is one deliberate act, but a date input fires onChange on the way to a complete date, so
   // refetching on it would run a query per keystroke against half-typed years.
-  useEffect(() => { setPage(1); load(1); }, [status, departmentId, locationId, invoiceType]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { load(page); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (locationId === null) return; setPage(1); load(1); }, [status, departmentId, locationId, invoiceType]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (locationId === null) return; load(page); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function runSearch() {
     setPage(1);
@@ -194,7 +196,7 @@ export default function SalesInvoices() {
           </div>
           <div className="field">
             <label>Location</label>
-            <FilterPicker label="Location" items={locations} value={locationId} onChange={(v) => setLocationId(v)}
+            <FilterPicker label="Location" items={locations} value={locationId ?? ''} onChange={(v) => setLocationId(v)}
               getLabel={(l) => l.name} allLabel="--ALL--" />
           </div>
           <div className="field">

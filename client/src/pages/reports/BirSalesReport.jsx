@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/client';
+import { headOfficeLocationId } from '../../utils/useHeadOffice';
 import { CustomerLink } from '../../components/PartyLink';
 import Pagination from '../../components/Pagination';
 import LoadingSpinner from '../../components/LoadingSpinner';
@@ -61,7 +62,17 @@ export default function BirSalesReport() {
     };
   }
 
+  // Location starts on Head Office (2026-10-14; utils/useHeadOffice); the report waits for it.
+  const [hoReady, setHoReady] = useState(false);
   useEffect(() => {
+    headOfficeLocationId().then((id) => {
+      if (id) { setForm((f) => ({ ...f, locationId: id })); setApplied((a) => ({ ...a, locationId: id })); }
+      setHoReady(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!hoReady) return undefined;
     let cancelled = false;
     (async () => {
       setLoading(true); setError('');
@@ -78,7 +89,7 @@ export default function BirSalesReport() {
       if (!cancelled) setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [applied, page]);
+  }, [applied, page, hoReady]);
 
   // Applying a filter always returns to page 1 -- page 40 of "all" is not page 40 of "VOID".
   function search() {
