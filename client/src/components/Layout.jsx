@@ -7,6 +7,7 @@ import ChatDock from './ChatDock';
 import SelectionTranslator from './SelectionTranslator';
 import RunningJobTimer from './RunningJobTimer';
 import NotificationBell from './NotificationBell';
+import MessengerMenu from './MessengerMenu';
 import NavIcon from './NavIcon';
 import ButtonMenu from './ButtonMenu';
 import t1sLogo from '../assets/t1s-logo.png';
@@ -610,6 +611,7 @@ export default function Layout() {
             onChange={pickBackground}
             style={{ display: 'none' }}
           />
+          <MessengerMenu />
           <NotificationBell />
           <Avatar user={user} size={28} />
           <span className="muted topnav-user-name">{user?.display_name}</span>

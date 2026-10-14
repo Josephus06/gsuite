@@ -255,6 +255,8 @@ export default function ChatDock() {
           if (!mine) incoming = true;
         }
         if ((data.group_messages || []).length) window.dispatchEvent(new CustomEvent('chatgroup:changed'));
+        // The top bar's Messenger list (MessengerMenu) refreshes on any direct message, sent or received.
+        if ((data.messages || []).length) window.dispatchEvent(new CustomEvent('chat:activity'));
         if (incoming) chime();
         return true;
       } catch {

@@ -2785,3 +2785,6 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .pf-step-image-paste { width: 200px; font-size: 12px; padding: 4px 8px; border: 1px dashed var(--border); border-radius: 6px; background: transparent; cursor: text; }
 .pf-step-image-zoom { position: fixed; inset: 0; z-index: 3000; background: rgba(0, 0, 0, .85); display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
 .pf-step-image-zoom img { max-width: 94vw; max-height: 92vh; border-radius: 4px; }
+
+/* Top bar Messenger list (components/MessengerMenu.jsx). */
+.messenger-row:hover { background: color-mix(in srgb, var(--primary, #4f46e5) 8%, transparent) !important; }

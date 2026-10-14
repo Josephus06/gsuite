@@ -121,6 +121,55 @@ router.get('/contacts', requireAuth, requireChat, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Recent chats for the Messenger icon in the top bar (2026-10-14): every conversation and group
+// I am in, newest first, each with its last message, who sent it, when, and how many are unread --
+// the list Facebook's Messenger dropdown shows. One row per conversation, at most RECENT_LIMIT.
+const RECENT_LIMIT = 60;
+const preview = (r) => (r.unsent_at ? 'Message unsent' : (String(r.body || '').trim() || 'Sent an attachment'));
+router.get('/recent', requireAuth, requireChat, async (req, res, next) => {
+  try {
+    const me = req.user.id;
+    const [dms] = await pool.query(
+      `SELECT x.other_id, m.id AS message_id, m.body, m.unsent_at, m.sender_user_id, m.created_at,
+              u.display_name, u.avatar_data,
+              (u.last_seen_at IS NOT NULL AND u.last_seen_at >= NOW() - INTERVAL ? MINUTE) AS online,
+              (SELECT COUNT(*) FROM chat_messages q WHERE q.sender_user_id = x.other_id AND q.recipient_user_id = ? AND q.read_at IS NULL) AS unread
+         FROM (SELECT IF(sender_user_id = ?, recipient_user_id, sender_user_id) AS other_id, MAX(id) AS last_id
+                 FROM chat_messages WHERE sender_user_id = ? OR recipient_user_id = ? GROUP BY other_id) x
+         JOIN chat_messages m ON m.id = x.last_id
+         JOIN users u ON u.id = x.other_id AND u.is_active = 1
+        ORDER BY m.id DESC LIMIT ?`, [ONLINE_MINUTES, me, me, me, me, RECENT_LIMIT]);
+    let groups = [];
+    try {
+      [groups] = await pool.query(
+        `SELECT g.id AS group_id, g.name, m.id AS message_id, m.body, m.unsent_at, m.sender_user_id, m.created_at,
+                su.display_name AS sender_name,
+                (SELECT COUNT(*) FROM chat_group_messages q WHERE q.group_id = g.id AND q.id > gm.last_read_id AND q.sender_user_id <> ?) AS unread
+           FROM chat_groups g
+           JOIN chat_group_members gm ON gm.group_id = g.id AND gm.user_id = ?
+           LEFT JOIN chat_group_messages m ON m.id = (SELECT MAX(id) FROM chat_group_messages WHERE group_id = g.id)
+           LEFT JOIN users su ON su.id = m.sender_user_id
+          ORDER BY m.id IS NULL, m.created_at DESC LIMIT ?`, [me, me, RECENT_LIMIT]);
+    } catch (err) { if (!noTable(err)) throw err; }
+    const firstName = (n) => String(n || '').trim().split(/s+/)[0] || '';
+    const rows = [
+      ...dms.map((r) => ({
+        kind: 'dm', id: Number(r.other_id), name: r.display_name, avatar_data: r.avatar_data, online: !!r.online,
+        last_at: r.created_at, unread: Number(r.unread) || 0,
+        preview: `${Number(r.sender_user_id) === me ? 'You: ' : ''}${preview(r)}`,
+      })),
+      ...groups.map((g) => ({
+        kind: 'group', id: Number(g.group_id), name: g.name, online: false,
+        last_at: g.created_at || null, unread: Number(g.unread) || 0,
+        preview: g.message_id
+          ? `${Number(g.sender_user_id) === me ? 'You' : firstName(g.sender_name)}: ${preview(g)}`
+          : 'No messages yet',
+      })),
+    ].sort((a, b) => (b.last_at ? new Date(b.last_at) : 0) - (a.last_at ? new Date(a.last_at) : 0)).slice(0, RECENT_LIMIT);
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
 // New messages to or from me since `after` (a message id). Called with no `after` it only says
 // where "now" is, so a page load does not replay history as if it had just arrived. Each message
 // carries the other person's name and photo, so a box can open for someone not yet on screen.
