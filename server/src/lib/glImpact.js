@@ -1706,6 +1706,40 @@ async function preStartT1sJournalLines(books, to, from) {
   });
 }
 
+// Commission Payables raised in T1S (from COMMISSION_DATE_POSTING_FROM) whose commission month falls
+// BEFORE the books start -- CP-112, raised 14 Oct for Sept, posts 30 Sep while September is still the
+// source's figures. Like a journal keyed late (above), it is added to those figures; otherwise it
+// would be in no month at all. Payables raised before the cutoff post on their own dates, as before.
+async function preStartCommissionLines(books, to, from) {
+  const upTo = to < books.start ? to : (() => { const d = new Date(`${books.start}T00:00:00Z`); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); })();
+  const posting = 'LAST_DAY(COALESCE(cp.period_to, cp.date_created))';
+  const params = [COMMISSION_DATE_POSTING_FROM, upTo, books.first];
+  let fromSql = '';
+  if (from) { fromSql = ` AND ${posting} >= ?`; params.push(from); }
+  let headers;
+  try {
+    [headers] = await pool.query(
+      `SELECT cp.* FROM commission_payables cp
+        WHERE cp.status != 'void' AND cp.date_created >= ? AND ${posting} <= ? AND ${posting} > ?${fromSql}`, params);
+  } catch (e) {
+    if (e.code === 'ER_NO_SUCH_TABLE') return [];
+    throw e;
+  }
+  const out = [];
+  for (const cp of headers) {
+    const rows = await computeCommissionPayableGl(cp);
+    for (const r of rows) {
+      if (!r.debit && !r.credit) continue;
+      out.push({
+        account_code: r.account_code, account_name: r.account_name, debit: r.debit || 0, credit: r.credit || 0,
+        department_id: r.department_id || null, entry_date: commissionPostingDate(cp), source_type: 'commission_payable',
+        source_no: cp.commission_payable_no, source_id: cp.id, memo: cp.memo || null, location_id: cp.office_location_id || null,
+      });
+    }
+  }
+  return out;
+}
+
 async function getPostedGlLines({ toDate, fromDate }) {
   const books = await booksStart();
   const to = String(toDate).slice(0, 10);
@@ -1716,7 +1750,9 @@ async function getPostedGlLines({ toDate, fromDate }) {
   // the window. A report ending before the books start reads ONLY these (plus any journal keyed
   // in T1S for that period, above): up to the cut-over the source is the book of record.
   const source = await openingGlLines(to, from);
-  const late = (!from || from < books.start) ? await preStartT1sJournalLines(books, to, from) : [];
+  const late = (!from || from < books.start)
+    ? [...await preStartT1sJournalLines(books, to, from), ...await preStartCommissionLines(books, to, from)]
+    : [];
   if (to < books.start) return [...source, ...late];
   // After the last source date, T1S's own ledger from its documents.
   const computed = await computePostedGlLines({ toDate, fromDate: from && from > books.start ? from : books.start });
