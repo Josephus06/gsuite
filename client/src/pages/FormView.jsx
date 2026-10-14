@@ -154,11 +154,10 @@ export default function FormView() {
   const unposted = !!doc.billable && doc.status === 'approved' && !doc.gl_posts;
   const mayBill = unposted && can('/vendor-bills', 'can_add');
   const mayJournal = unposted && doc.type === 'liquidation' && !(doc.vendor_bills || []).length && can('/journals', 'can_add');
-  // An approved Fund Transfer Request is posted by a Check Voucher or a Fund Transfer Voucher raised
-  // from it (2026-10-14) -- offered until the vouchers cover its total.
+  // An approved Fund Transfer Request is posted by a Check Voucher raised from it (2026-10-14) --
+  // offered until its vouchers cover its total. Check Voucher only (asked 2026-10-14).
   const ftrUnposted = doc.type === 'fund_transfer' && doc.status === 'approved' && !doc.vouchers_post;
   const mayCheckVoucher = ftrUnposted && can('/cheques', 'can_add');
-  const mayFtVoucher = ftrUnposted && can('/fund-transfers', 'can_add');
   const hasRelated = doc.billable || doc.type === 'fund_transfer';
 
   async function discard() {
@@ -228,9 +227,6 @@ export default function FormView() {
           )}
           {mayCheckVoucher && (
             <Link className="btn btn-sm btn-primary" to={`/cheques/new?ftr=${doc.id}`}>Create Check Voucher</Link>
-          )}
-          {mayFtVoucher && (
-            <Link className="btn btn-sm btn-primary" to={`/fund-transfers/new?ftr=${doc.id}`}>Create Fund Transfer Voucher</Link>
           )}
           {(doc.vouchers || []).filter((v) => String(v.status).toLowerCase() !== 'void').map((v) => (
             <Link key={v.path} className="btn btn-sm" to={v.path}>{v.doc_no}</Link>
@@ -553,7 +549,7 @@ export default function FormView() {
               </thead>
               <tbody>
                 {(doc.related_records || []).length === 0 && (
-                  <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>{doc.type === 'fund_transfer' ? 'No Check Voucher or Fund Transfer Voucher yet.' : doc.type === 'payment' ? 'No Vendor Bill yet.' : 'No Vendor Bill or Journal yet.'}</td></tr>
+                  <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>{doc.type === 'fund_transfer' ? 'No Check Voucher yet.' : doc.type === 'payment' ? 'No Vendor Bill yet.' : 'No Vendor Bill or Journal yet.'}</td></tr>
                 )}
                 {(doc.related_records || []).map((r) => (
                   <tr key={`${r.type}-${r.id}`}>
