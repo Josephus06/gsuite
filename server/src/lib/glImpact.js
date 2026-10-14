@@ -560,6 +560,22 @@ async function salesDivisionDepartments() {
   return divs.map((dv) => ({ name: String(dv.name).replace(/\s*-\s*/g, '-'), department_id: deptByNorm.get(norm(dv.name)) || null }));
 }
 
+// A Commission Payable's GL date: the last day of its commission period (period_to holds the 1st of
+// the month), or its own date when it has none. YYYY-MM-DD.
+// Only payables raised from COMMISSION_DATE_POSTING_FROM post on the commission month. The ones before
+// it stay on their own date: January-August 2026 were closed when this changed, and five older
+// payables (CP-62, 83, 84, 85, 98) would otherwise have moved between closed months.
+const COMMISSION_DATE_POSTING_FROM = '2026-10-01';
+function commissionPostingDate(cp) {
+  const created = cp.date_created ? String(cp.date_created).slice(0, 10) : null;
+  if (created && created < COMMISSION_DATE_POSTING_FROM) return created;
+  const base = String(cp.period_to || cp.date_created || '').slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(base)) return cp.date_created;
+  const [y, m] = base.split('-').map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return `${base}-${String(last).padStart(2, '0')}`;
+}
+
 async function computeCommissionPayableGl(cp) {
   if (!cp.expense_account_id || !cp.payable_account_id) return [];
   const exp = await coaById(cp.expense_account_id);
@@ -1456,14 +1472,17 @@ async function computePostedGlLines({ toDate, fromDate }) {
   {
     const [tbl] = await pool.query("SHOW TABLES LIKE 'commission_payables'");
     if (tbl.length) {
-      const { sql, params } = dateFilter('cp.date_created');
+      // Posted on the COMMISSION month, not the day it was raised (asked 2026-10-14): CP-112, raised
+      // 14 Oct for Sept 2026, is September's expense -- the last day of its period.
+      const { sql, params } = dateFilter(
+        `(CASE WHEN cp.date_created >= '${COMMISSION_DATE_POSTING_FROM}' THEN LAST_DAY(COALESCE(cp.period_to, cp.date_created)) ELSE cp.date_created END)`);
       const [headers] = await pool.query(`SELECT cp.* FROM commission_payables cp WHERE cp.status != 'void' AND ${sql}`, params);
       for (const cp of headers) {
         const rows = await computeCommissionPayableGl(cp);
         // No department_id in meta: each GL row carries its own (a manager's expense is split across
         // sales divisions), and push() keeps row fields when meta omits them.
         push(rows, {
-          entry_date: cp.date_created, source_type: 'commission_payable', source_no: cp.commission_payable_no,
+          entry_date: commissionPostingDate(cp), source_type: 'commission_payable', source_no: cp.commission_payable_no,
           source_id: cp.id, memo: cp.memo || null, location_id: cp.office_location_id || null,
         });
       }
@@ -1705,6 +1724,7 @@ async function getPostedGlLines({ toDate, fromDate }) {
 }
 
 module.exports = {
+  commissionPostingDate,
   computeSalesInvoiceGl,
   computeAssemblyBuildGl,
   computeItemDeliveryGl,

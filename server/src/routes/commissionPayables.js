@@ -3,7 +3,9 @@ const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
-const { computeCommissionPayableGl } = require('../lib/glImpact');
+const { computeCommissionPayableGl, commissionPostingDate } = require('../lib/glImpact');
+// The GL posts on the commission month (2026-10-14), so that month has to be open too.
+const postingDateOfMonth = (month) => (/^\d{4}-\d{2}$/.test(String(month || '')) ? commissionPostingDate({ period_to: `${month}-01` }) : null);
 const { buildCommissionReport } = require('../lib/commissionReport');
 const { releaseForPayable } = require('../lib/commissionRelease');
 const { headerDepartmentError } = require('../lib/requireDepartment');
@@ -290,7 +292,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     // The department is the employee's own (employees.department_id), so that is where to fix it.
     const deptError = headerDepartmentError(computed.department_id, "Department on the employee's record");
     if (deptError) return res.status(400).json({ error: deptError });
-    await assertPeriodOpen(dateCreated, 'other_gl', conn);
+    await assertPeriodOpen([dateCreated, postingDateOfMonth(month)], 'other_gl', conn);
 
     const [[exp]] = await conn.query('SELECT id FROM chart_of_accounts WHERE account_code = ?', [EXPENSE_CODE]);
     const [[pay]] = await conn.query('SELECT id FROM chart_of_accounts WHERE account_code = ?', [PAYABLE_CODE]);
@@ -379,8 +381,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (deptError) return res.status(400).json({ error: deptError });
 
     // Both the period it currently sits in and the one it is moving to must be open.
-    await assertPeriodOpen(existing.date_created, 'other_gl', conn);
-    await assertPeriodOpen(dateCreated || existing.date_created, 'other_gl', conn);
+    await assertPeriodOpen([existing.date_created, commissionPostingDate(existing)], 'other_gl', conn);
+    await assertPeriodOpen([dateCreated || existing.date_created, postingDateOfMonth(month)], 'other_gl', conn);
 
     const ctx = await resolveEmployeeContext(existing.employee_id);
     const t = computed.totals;
@@ -469,8 +471,8 @@ router.put('/:id/pay', requireAuth, requirePermission(ROUTE, 'can_edit'), async 
 router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[cp]] = await conn.query('SELECT status, date_created FROM commission_payables WHERE id = ?', [req.params.id]);
-    if (cp) await assertPeriodOpen(cp.date_created, 'other_gl', conn);
+    const [[cp]] = await conn.query('SELECT status, date_created, period_to FROM commission_payables WHERE id = ?', [req.params.id]);
+    if (cp) await assertPeriodOpen([cp.date_created, commissionPostingDate(cp)], 'other_gl', conn);
     if (!cp) return res.status(404).json({ error: 'Not found' });
     if (cp.status === 'void') return res.status(409).json({ error: 'This Commission Payable is already void.' });
     await conn.beginTransaction();

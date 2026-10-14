@@ -55,7 +55,20 @@ export default function CommissionPayableView() {
   }
 
   // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
-  const periodLocked = usePeriodLocked(cp?.date_created, 'other_gl');
+  // The GL posts on the commission month (server lib/glImpact.js commissionPostingDate) -- a payable
+  // raised from 1 Oct 2026 for Sept posts on 30 Sep -- so that month being closed locks it too.
+  const postingDate = (() => {
+    if (!cp) return null;
+    const created = cp.date_created ? String(cp.date_created).slice(0, 10) : null;
+    if (created && created < '2026-10-01') return created;
+    const base = String(cp.period_to || cp.date_created || '').slice(0, 7);
+    if (!/^\d{4}-\d{2}$/.test(base)) return created;
+    const [y, m] = base.split('-').map(Number);
+    return `${base}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`;
+  })();
+  const createdLocked = usePeriodLocked(cp?.date_created, 'other_gl');
+  const postingLocked = usePeriodLocked(postingDate, 'other_gl');
+  const periodLocked = createdLocked || postingLocked;
 
   if (loading || !cp) return <LoadingSpinner />;
 
@@ -145,6 +158,7 @@ export default function CommissionPayableView() {
           <div>
             <div>Date : <span className="hi">{formatDate(cp.date_created)}</span></div>
             <div>Commission Date : <span className="hi">{formatMonth(cp.period_from)} to {formatMonth(cp.period_to)}</span></div>
+            {postingDate && <div>GL Posting Date : <span className="hi">{postingDate}</span></div>}
             <div>Memo : <span className="hi">{cp.memo || ''}</span></div>
           </div>
           <div className="commission-summary-box">
