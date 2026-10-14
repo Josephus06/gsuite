@@ -52,7 +52,43 @@ function summaryWorkbook({ title, partyHeader, partyKey, data }) {
 }
 
 function arAgingWorkbook(data) {
+  if (data.sbu_layout) return arAgingSbuWorkbook(data);
   return summaryWorkbook({ title: 'AR Aging', partyHeader: 'Customer Name', partyKey: 'customer_name', data });
+}
+
+// AR Aging filtered by SBU (asked 2026-10-14), laid out as the SBU heads' own sheet: each
+// supervisor / account officer / SBU head on a heading row -- role and name shaded orange -- with
+// their customers under it, a gap after each, and one "Total:" at the end. Every cell boxed.
+const SBU_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8CBAD' } };
+const THIN = { style: 'thin' };
+function arAgingSbuWorkbook(data) {
+  const wb = new ExcelJS.Workbook();
+  const ws = sheet(wb, 'AR Aging', [
+    { header: 'Customer Name', key: 'customer', width: 34 },
+    { header: 'Term', key: 'term', width: 20 },
+    { header: '', key: 'role', width: 20 },
+    { header: 'Account Officer', key: 'officer', width: 26 },
+    ...BUCKETS.map((b) => ({ ...b, width: 14 })),
+  ]);
+  const money = (r) => Object.fromEntries(BUCKETS.map((b) => [b.key, num(r[b.key]) || null]));
+  for (const sec of data.sbu_layout.sections) {
+    const head = ws.addRow({ role: sec.label, officer: sec.name });
+    head.font = { bold: true };
+    ['role', 'officer'].forEach((k) => { head.getCell(k).fill = SBU_FILL; });
+    ws.addRow({});
+    for (const r of sec.rows) {
+      ws.addRow({ customer: r.customer_name, term: r.term_name || '', officer: r.officer_name || sec.name, ...money(r) });
+    }
+  }
+  const t = data.totals || {};
+  const total = ws.addRow({ officer: 'Total:', ...money(t) });
+  total.font = { bold: true };
+  total.getCell('officer').alignment = { horizontal: 'right' };
+  ws.eachRow((row) => {
+    for (let col = 1; col <= 10; col += 1) row.getCell(col).border = { top: THIN, left: THIN, bottom: THIN, right: THIN };
+  });
+  BUCKETS.forEach((b) => { ws.getColumn(b.key).numFmt = MONEY; });
+  return wb;
 }
 
 function apAgingWorkbook(data) {

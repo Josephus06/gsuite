@@ -330,6 +330,13 @@ async function narrowItems(items, filters = {}) {
 
 async function buildArAging(asOf, filters = {}) {
   const items = await narrowItems(await collectOpenItems(asOf, filters), filters);
+  const result = { as_of: asOf, ...summarizeItems(items, asOf) };
+  if (filters.sbu && !filters.salesGroupId) result.sbu_layout = await buildSbuLayout(items, asOf, filters.sbu);
+  return result;
+}
+
+// One row per customer, and the totals, for a set of open items.
+function summarizeItems(items, asOf) {
   // Accumulate every contribution into per-customer buckets.
   const byCustomer = new Map();
   function customerRow(item) {
@@ -383,7 +390,83 @@ async function buildArAging(asOf, filters = {}) {
   }), { ...emptyBuckets(), total_balance: 0, unevidenced_count: 0, unevidenced_amount: 0 });
   Object.keys(totals).forEach((k) => { totals[k] = round2(totals[k]); });
 
-  return { as_of: asOf, rows, totals };
+  return { rows, totals };
+}
+
+// AR Aging filtered by SBU, laid out the way the SBU heads read it (asked 2026-10-14):
+//
+//   Sales-1 supervisor | Arjie Bayagna        <- the supervisor's own customers
+//   AC-1               | Catherine            <- each account officer under them
+//   AC-1               | Jocel
+//   Sales-3 supervisor | Nicole Joji Ann Fuentes
+//   AC-3               | ...
+//   SBU 1              | Michelle Riveral     <- the SBU head's own customers
+//
+// Groups are the SBU's sales groups by name; who supervises whom is user_supervisors, the same as
+// the dashboard's sales breakdown (lib/salesBreakdown.js). A document belongs to its own sales rep
+// (by id, or by name for an opening balance), so a customer appears under each officer it owes on.
+// Every item lands in exactly one section, so the sections add up to the report total.
+async function buildSbuLayout(items, asOf, sbuIndex) {
+  const sbu = (await getSbuGroups()).find((g) => String(g.index) === String(sbuIndex));
+  if (!sbu) return null;
+  const [users] = await pool.query(
+    `SELECT u.id, u.employee_id, u.is_supervisor, u.is_sales_business_unit,
+            COALESCE(CONCAT(e.first_name, ' ', e.last_name), u.display_name) AS name
+       FROM users u LEFT JOIN employees e ON e.id = u.employee_id WHERE u.is_active = TRUE`);
+  const [links] = await pool.query('SELECT user_id, supervisor_id FROM user_supervisors');
+  const userById = new Map(users.map((u) => [u.id, u]));
+  const userByEmp = new Map(users.filter((u) => u.employee_id).map((u) => [Number(u.employee_id), u]));
+  const empByName = new Map(users.filter((u) => u.employee_id).map((u) => [norm(u.name), Number(u.employee_id)]));
+  const supsOf = new Map();
+  for (const l of links) {
+    if (l.supervisor_id === l.user_id || !userById.get(l.supervisor_id)?.is_supervisor) continue;
+    if (!supsOf.has(l.user_id)) supsOf.set(l.user_id, []);
+    supsOf.get(l.user_id).push(l.supervisor_id);
+  }
+  const empOf = (i) => (i.sales_rep_id ? Number(i.sales_rep_id) : empByName.get(norm(i.sales_rep)) || null);
+  const nameOf = (empId, i) => userByEmp.get(empId)?.name || i?.sales_rep || '(no account officer)';
+  const section = (kind, label, name, list) => ({ kind, label, name, ...summarizeItems(list, asOf) });
+
+  const headUser = userById.get(sbu.userId);
+  const isHead = (empId) => empId != null && headUser && Number(headUser.employee_id) === empId;
+  const groups = sbu.departmentIds.map((id, k) => ({ id: Number(id), name: sbu.departmentNames[k] }))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+  const sections = [];
+  for (const g of groups) {
+    const short = g.name.replace(/s*-s*/g, '-');
+    const num = (g.name.match(/d+/) || [''])[0];
+    const mine = items.filter((i) => Number(i.department_id) === g.id && !isHead(empOf(i)));
+    // supervisor user id -> { own: [], members: Map(empId -> items) }; reps nobody supervises apart.
+    const bySup = new Map();
+    const loose = new Map();
+    const supEntry = (id) => { if (!bySup.has(id)) bySup.set(id, { own: [], members: new Map() }); return bySup.get(id); };
+    for (const i of mine) {
+      const emp = empOf(i);
+      const u = emp != null ? userByEmp.get(emp) : null;
+      const key = emp ?? `name:${norm(i.sales_rep)}`;
+      if (u && u.is_supervisor) { supEntry(u.id).own.push(i); continue; }
+      const sup = u ? (supsOf.get(u.id) || []).find((sid) => !userById.get(sid)?.is_sales_business_unit) : null;
+      const bucket = sup ? supEntry(sup).members : loose;
+      if (!bucket.has(key)) bucket.set(key, { emp, items: [] });
+      bucket.get(key).items.push(i);
+    }
+    const byName = (a, b) => String(a.name).localeCompare(String(b.name));
+    for (const [supId, e] of [...bySup.entries()].sort((a, b) => String(userById.get(a[0])?.name).localeCompare(String(userById.get(b[0])?.name)))) {
+      sections.push(section('supervisor', `${short} supervisor`, userById.get(supId)?.name || 'Supervisor', e.own));
+      [...e.members.values()].map((m) => ({ name: nameOf(m.emp, m.items[0]), items: m.items })).sort(byName)
+        .forEach((m) => sections.push(section('officer', `AC-${num}`, m.name, m.items)));
+    }
+    [...loose.values()].map((m) => ({ name: nameOf(m.emp, m.items[0]), items: m.items })).sort(byName)
+      .forEach((m) => sections.push(section('officer', `AC-${num}`, m.name, m.items)));
+  }
+  const headItems = items.filter((i) => isHead(empOf(i)));
+  sections.push(section('sbu', sbu.label, headUser?.name || sbu.displayName, headItems));
+  // Anything outside the SBU's groups (should be none -- the filter keeps only those) is not lost.
+  const inGroups = new Set(groups.map((g) => g.id));
+  const rest = items.filter((i) => !isHead(empOf(i)) && !inGroups.has(Number(i.department_id)));
+  if (rest.length) sections.push(section('officer', 'Other', '', rest));
+  return { label: sbu.label, owner: headUser?.name || sbu.displayName, sections };
 }
 
 // AR Aging Details (Accounting > Reports > AR Aging Details). The same open items AR Aging

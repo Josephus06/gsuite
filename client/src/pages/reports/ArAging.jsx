@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Fragment } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import { headOfficeLocationId } from '../../utils/useHeadOffice';
@@ -31,6 +31,9 @@ const PATH_BY_TYPE = {
 function DocLink({ type, id, children }) {
   return PATH_BY_TYPE[type] && id != null ? <Link to={`/${PATH_BY_TYPE[type]}/${id}`}>{children}</Link> : children;
 }
+
+// The heading shade on the SBU layout, as on the SBU heads' own sheet.
+const SBU_FILL = '#F8CBAD';
 
 export default function ArAging() {
   const [asOf, setAsOf] = useState(today());
@@ -123,6 +126,48 @@ export default function ArAging() {
     } finally {
       setDrillLoading(false);
     }
+  }
+
+  // Filtered by SBU, the report comes back in sections (lib/arAging.js buildSbuLayout).
+  const sbuLayout = report?.sbu_layout || null;
+
+  // One customer row. In the SBU layout the role column is blank and the officer is the section's.
+  function renderRow(row, key, sectionName) {
+    return (
+                  <tr key={key}>
+                    <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
+                    <td data-label="Term">{row.term_name || '—'}</td>
+                    {sbuLayout && <td></td>}
+                    <td data-label="Account Officer">{row.officer_name || sectionName || '—'}</td>
+                    <td data-label="Current" style={{ textAlign: 'right' }}>{money(row.current)}</td>
+                    <td data-label="1-30 days" style={{ textAlign: 'right' }}>{money(row.d1_30)}</td>
+                    <td data-label="31-60 days" style={{ textAlign: 'right' }}>{money(row.d31_60)}</td>
+                    <td data-label="61-90 days" style={{ textAlign: 'right' }}>{money(row.d61_90)}</td>
+                    <td data-label="Over 90 days" style={{ textAlign: 'right' }}>{money(row.over_90)}</td>
+                    <td data-label="Total Balance" style={{ textAlign: 'right', fontWeight: 600 }}>
+                      {money(row.total_balance)}
+                      {row.unevidenced_count > 0 && (
+                        <div
+                          className="muted"
+                          style={{ fontSize: 11, fontWeight: 400 }}
+                          title={`${row.unevidenced_count} invoice(s) marked Paid In Full with no payment recorded`}
+                        >
+                          {money(row.unevidenced_amount)} unevidenced
+                        </div>
+                      )}
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {/* An opening balance whose source customer matched none in T1S has no customer to
+                          open; its documents are listed in AR Aging Details. */}
+                      {row.customer_id ? (
+                        <>
+                          <button className="btn btn-sm btn-primary" style={{ marginRight: 4 }} onClick={() => openDrill('details', row)}>Details</button>
+                          <button className="btn btn-sm btn-primary" onClick={() => openDrill('ledger', row)}>Ledger</button>
+                        </>
+                      ) : <span className="muted" style={{ fontSize: 11 }}>Not a T1S customer</span>}
+                    </td>
+                  </tr>
+    );
   }
 
   return (
@@ -222,6 +267,7 @@ export default function ArAging() {
                 <tr>
                   <th>Customer Name</th>
                   <th>Term</th>
+                  {sbuLayout && <th></th>}
                   <th>Account Officer</th>
                   <th style={{ textAlign: 'right' }}>Current</th>
                   <th style={{ textAlign: 'right' }}>1-30 days</th>
@@ -234,47 +280,25 @@ export default function ArAging() {
               </thead>
               <tbody>
                 {report.rows.length === 0 && (
-                  <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>No outstanding balances as of this date.</td></tr>
+                  <tr><td colSpan={sbuLayout ? 11 : 10} className="muted" style={{ textAlign: 'center', padding: 20 }}>No outstanding balances as of this date.</td></tr>
                 )}
-                {report.rows.map((row) => (
-                  <tr key={row.row_key || row.customer_id}>
-                    <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
-                    <td data-label="Term">{row.term_name || '—'}</td>
-                    <td data-label="Account Officer">{row.officer_name || '—'}</td>
-                    <td data-label="Current" style={{ textAlign: 'right' }}>{money(row.current)}</td>
-                    <td data-label="1-30 days" style={{ textAlign: 'right' }}>{money(row.d1_30)}</td>
-                    <td data-label="31-60 days" style={{ textAlign: 'right' }}>{money(row.d31_60)}</td>
-                    <td data-label="61-90 days" style={{ textAlign: 'right' }}>{money(row.d61_90)}</td>
-                    <td data-label="Over 90 days" style={{ textAlign: 'right' }}>{money(row.over_90)}</td>
-                    <td data-label="Total Balance" style={{ textAlign: 'right', fontWeight: 600 }}>
-                      {money(row.total_balance)}
-                      {row.unevidenced_count > 0 && (
-                        <div
-                          className="muted"
-                          style={{ fontSize: 11, fontWeight: 400 }}
-                          title={`${row.unevidenced_count} invoice(s) marked Paid In Full with no payment recorded`}
-                        >
-                          {money(row.unevidenced_amount)} unevidenced
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      {/* An opening balance whose source customer matched none in T1S has no customer to
-                          open; its documents are listed in AR Aging Details. */}
-                      {row.customer_id ? (
-                        <>
-                          <button className="btn btn-sm btn-primary" style={{ marginRight: 4 }} onClick={() => openDrill('details', row)}>Details</button>
-                          <button className="btn btn-sm btn-primary" onClick={() => openDrill('ledger', row)}>Ledger</button>
-                        </>
-                      ) : <span className="muted" style={{ fontSize: 11 }}>Not a T1S customer</span>}
-                    </td>
-                  </tr>
+                {!sbuLayout && report.rows.map((row) => renderRow(row, row.row_key || row.customer_id))}
+                {sbuLayout && sbuLayout.sections.map((sec, k) => (
+                  <Fragment key={`sec-${k}`}>
+                    <tr style={{ fontWeight: 700 }}>
+                      <td></td><td></td>
+                      <td style={{ background: SBU_FILL, color: '#1f2937' }}>{sec.label}</td>
+                      <td style={{ background: SBU_FILL, color: '#1f2937' }}>{sec.name}</td>
+                      <td colSpan={7}></td>
+                    </tr>
+                    {sec.rows.map((row) => renderRow(row, `${k}-${row.row_key || row.customer_id}`, sec.name))}
+                  </Fragment>
                 ))}
               </tbody>
               {report.rows.length > 0 && (
                 <tfoot>
                   <tr style={{ fontWeight: 700 }}>
-                    <td colSpan={3} style={{ textAlign: 'right' }}>Total :</td>
+                    <td colSpan={sbuLayout ? 4 : 3} style={{ textAlign: 'right' }}>Total :</td>
                     <td style={{ textAlign: 'right' }}>{money(report.totals.current)}</td>
                     <td style={{ textAlign: 'right' }}>{money(report.totals.d1_30)}</td>
                     <td style={{ textAlign: 'right' }}>{money(report.totals.d31_60)}</td>
