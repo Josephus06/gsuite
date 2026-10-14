@@ -273,6 +273,14 @@ router.put('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_void'), asy
     const [[ab]] = await conn.query('SELECT status, job_order_id, quantity_built, date_created FROM assembly_builds WHERE id = ?', [req.params.id]);
     if (!ab) { return res.status(404).json({ error: 'Not found' }); }
     if (ab.status === 'cancelled') { return res.status(409).json({ error: 'This Assembly Build is already cancelled.' }); }
+    // A build still inspected cannot go first (2026-10-14): it would leave the JO's Qty Inspected
+    // above its Qty Built. Cancel the Quality Inspection, then the build.
+    const [liveQi] = await conn.query(
+      `SELECT DISTINCT q.qi_no FROM quality_inspection_lines l JOIN quality_inspections q ON q.id = l.quality_inspection_id
+        WHERE l.assembly_build_id = ? AND q.status <> 'cancelled'`, [req.params.id]);
+    if (liveQi.length) {
+      return res.status(409).json({ error: `This build has been inspected (${liveQi.map((q) => q.qi_no).join(', ')}). Cancel the Quality Inspection first, then this build.` });
+    }
     // Cancelling puts the consumed material back and unwinds the built qty -- a stock
     // movement dated in the original build's period, so the same lock applies.
     await assertPeriodOpen(ab.date_created, 'non_gl', conn);

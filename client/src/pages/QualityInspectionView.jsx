@@ -66,7 +66,9 @@ export default function QualityInspectionView() {
   // the same right the server asks for. It used to read can_edit on Production, which is now a
   // different question entirely.
   const canEdit = (can('/quality-inspections', 'can_edit') && !periodLocked);
-  const isSaved = qi.status === 'saved';
+  // Any inspection not already cancelled can be cancelled (2026-10-14) -- the imported ones are
+  // 'completed', not 'saved', and the server accepts them; only the button refused.
+  const isSaved = qi.status !== 'cancelled';
   const totalQty = qi.lines.reduce((s, l) => s + Number(l.pass_qty || 0) + Number(l.rma_qty || 0), 0);
   const totalPassed = qi.lines.reduce((s, l) => s + Number(l.pass_qty || 0), 0);
 
