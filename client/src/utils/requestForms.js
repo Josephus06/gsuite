@@ -113,3 +113,16 @@ export function money(v) {
 export function fmtDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 export const pretty = (s) => (s ? String(s).replace(/_/g, ' ') : '');
+
+// Fund Transfer (2026-10-14): every bank a form's lines move money From (side 'from') or To ('to'),
+// each once, in line order -- printed in place of "Several". Falls back to the form's own pair.
+export function formBanks(doc, side) {
+  const d = doc?.detail || {};
+  const seen = new Set();
+  const labels = [];
+  for (const r of doc?.items || []) {
+    const label = bankLabel(r[`${side}_account_code`], r[`${side}_account_name`]);
+    if (label && !seen.has(label)) { seen.add(label); labels.push(label); }
+  }
+  return labels.length ? labels.join(' / ') : bankLabel(d[`${side}_account_code`], d[`${side}_account_name`]);
+}

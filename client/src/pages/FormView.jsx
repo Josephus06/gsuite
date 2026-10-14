@@ -9,7 +9,7 @@ import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
 import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 import { useAuth } from '../context/useAuth';
-import { ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, money, pretty } from '../utils/requestForms';
+import { ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, formBanks, money, pretty } from '../utils/requestForms';
 import OvertimeDecline from '../components/OvertimeDecline';
 
 // One form, and whatever the viewer is allowed to do to it.
@@ -303,8 +303,8 @@ export default function FormView() {
           <h3>{TYPE_LABELS[doc.type]}</h3>
           {doc.type === 'fund_transfer' && <>
             {/* One bank for every line shows here; several are listed on the lines (2026-10-13). */}
-            <Line label="From">{bankLabel(d.from_account_code, d.from_account_name) || ((doc.items || []).some((r) => r.from_account_id) ? 'Several — see each line' : null)}</Line>
-            <Line label="To">{bankLabel(d.to_account_code, d.to_account_name) || ((doc.items || []).some((r) => r.to_account_id) ? 'Several — see each line' : null)}</Line>
+            <Line label="From">{formBanks(doc, 'from') || null}</Line>
+            <Line label="To">{formBanks(doc, 'to') || null}</Line>
           </>}
           <Line label="Payable To">{d.payable_to}</Line>
           <Line label="Address">{d.address}</Line>

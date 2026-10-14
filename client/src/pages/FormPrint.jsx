@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { ADJ_REASON_LABELS, DAY_PART_LABELS, LEAVE_TYPE_LABELS, PAYMENT_TYPES, PURPOSE_LABELS, bankLabel, clock } from '../utils/requestForms';
+import { ADJ_REASON_LABELS, DAY_PART_LABELS, LEAVE_TYPE_LABELS, PAYMENT_TYPES, PURPOSE_LABELS, bankLabel, clock, formBanks } from '../utils/requestForms';
 import letterhead from '../assets/graphicstar-letterhead.png';
 import { displayDate } from '../utils/dates';
 
@@ -260,8 +260,8 @@ export default function FormPrint() {
           <>
             {doc.type === 'fund_transfer' && (
               <div className="rf-row">
-                <Field label="From" value={bankLabel(d.from_account_code, d.from_account_name) || ((doc.items || []).some((r) => r.from_account_id) ? 'Several — see below' : '')} />
-                <Field label="To" value={bankLabel(d.to_account_code, d.to_account_name) || ((doc.items || []).some((r) => r.to_account_id) ? 'Several — see below' : '')} />
+                <Field label="From" value={formBanks(doc, 'from')} />
+                <Field label="To" value={formBanks(doc, 'to')} />
               </div>
             )}
             <div className="rf-row">
