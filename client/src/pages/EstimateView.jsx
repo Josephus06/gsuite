@@ -179,11 +179,21 @@ export default function EstimateView() {
     }
   }
 
+  // A source line with no processes is copied empty -- said plainly, so the copy is not sent on
+  // with 0.00 cost and 100% GP (EST-210521, 2026-10-14).
+  function warnNoProcesses(data) {
+    const lines = data?.lines_without_processes || [];
+    if (lines.length) {
+      alert(`${estimate.estimate_no} has no processes on line ${lines.join(', ')}, so ${data.estimate_no || 'the copy'} has none there either. Add them before sending it for approval.`);
+    }
+  }
+
   async function handleReplicate() {
     if (!confirm('Replicate this estimate into a new draft?')) return;
     setBusy(true);
     try {
       const { data } = await api.post(`/estimates/${id}/replicate`);
+      warnNoProcesses(data);
       navigate(`/estimates/${data.id}`);
     } finally {
       setBusy(false);
@@ -200,6 +210,7 @@ ${estimate.estimate_no} will be CANCELLED. The new estimate will have you as its
     setBusy(true);
     try {
       const { data } = await api.post(`/estimates/${id}/cancel-and-replicate`);
+      warnNoProcesses(data);
       navigate(`/estimates/${data.id}`);
     } catch (err) {
       alert(err.response?.data?.error || 'Could not cancel and replicate this estimate.');

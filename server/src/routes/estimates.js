@@ -760,6 +760,10 @@ async function replicateEstimate(userId, sourceId, opts = {}) {
     await conn.query('UPDATE estimates SET estimate_no = ? WHERE id = ?', [`EST-${100000 + newEstimateId}`, newEstimateId]);
 
     const [jobOrders] = await conn.query('SELECT * FROM estimate_job_orders WHERE estimate_id = ? ORDER BY line_no', [sourceId]);
+    // Source lines with no processes come across empty. Said back to the person replicating, since
+    // an estimate imported from the source can lack them until back-filled (EST-104541 -> EST-210521,
+    // 2026-10-14: copied a minute before its processes were filled in, so the copy had none).
+    const linesWithoutProcesses = [];
     for (const jo of jobOrders) {
       const joValues = JOB_ORDER_FIELDS.map((f) => jo[f]);
       const [joResult] = await conn.query(
@@ -768,6 +772,7 @@ async function replicateEstimate(userId, sourceId, opts = {}) {
         [newEstimateId, jo.line_no, ...joValues]
       );
       const [processes] = await conn.query('SELECT * FROM estimate_job_order_processes WHERE estimate_job_order_id = ? ORDER BY line_no', [jo.id]);
+      if (!processes.length) linesWithoutProcesses.push(jo.line_no);
       for (const proc of processes) {
         const procValues = PROCESS_FIELDS.map((f) => proc[f]);
         await conn.query(
@@ -800,7 +805,7 @@ async function replicateEstimate(userId, sourceId, opts = {}) {
     const [[row]] = await pool.query('SELECT * FROM estimates WHERE id = ?', [newEstimateId]);
     // replicated_from and the line count ride along for the chatbot, which has to describe
     // what it just did in a sentence. The button ignores them.
-    return { ...row, replicated_from: source.estimate_no, job_orders: jobOrders.length };
+    return { ...row, replicated_from: source.estimate_no, job_orders: jobOrders.length, lines_without_processes: linesWithoutProcesses };
   } catch (err) {
     await conn.rollback();
     throw err;
@@ -1827,3 +1832,4 @@ router.refreshEstimateTotals = refreshEstimateTotals;
 module.exports = router;
 // Exported so the chatbot raises a copy through exactly this code path.
 module.exports.replicateEstimate = replicateEstimate;
+module.exports.refreshEstimateTotals = refreshEstimateTotals;
