@@ -17,12 +17,12 @@ function lastMonth() {
   const last = new Date(now.getFullYear(), now.getMonth(), 0);
   const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   // locationId starts null: the first load waits for the locations, so it is already Head Office's.
-  return { from: iso(first), to: iso(last), dateBy: 'payment', customer: null, locationId: null, bucket: '', search: '', includeGenerated: false };
+  return { from: iso(first), to: iso(last), dateBy: 'applied', customer: null, locationId: null, bucket: '', search: '', includeGenerated: false };
 }
 
 const filterParams = (r) => ({
   from: r.from, to: r.to,
-  ...(r.dateBy === 'applied' ? { date_by: 'applied' } : {}),
+  date_by: r.dateBy === 'payment' ? 'payment' : 'applied',
   ...(r.customer ? { customer_id: r.customer.id } : {}),
   ...(r.locationId ? { location_id: r.locationId } : {}),
   ...(r.bucket ? { bucket: r.bucket } : {}),
@@ -109,8 +109,8 @@ export default function CollectionAgingReport() {
             <label>Date By</label>
             <select value={range.dateBy} onChange={(e) => setRange({ ...range, dateBy: e.target.value })}
               title="Applied date = the later of the payment date and the invoice date (an advance cannot be applied before its invoice exists)">
-              <option value="payment">Payment date</option>
               <option value="applied">Applied date</option>
+              <option value="payment">Payment date</option>
             </select>
           </div>
           <div className="field">

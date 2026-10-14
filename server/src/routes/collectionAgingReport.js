@@ -9,8 +9,9 @@ const router = express.Router();
 // range, one row per invoice each payment settled, with how old the invoice was when the money
 // came in -- so Treasury can see what was collected inside 30 days and what was chased for months.
 //
-//   Age at Collection   payment date - invoice date.
-//   Days Past Due       payment date - invoice due date; 0 or less means collected on time.
+//   Age at Collection   application date - invoice date.
+//   Days Past Due       application date - invoice due date; 0 or less means collected on time.
+//   (Application date since 2026-10-14 -- the later of the payment date and the invoice date, below.)
 //
 // Aging is on DAYS PAST DUE (2026-10-09): Current (paid by the due date), 1-30, 31-60, 61-90 and Over 90
 // days late. An invoice with no due date ages from its own date instead.
@@ -63,7 +64,8 @@ function range(query) {
 
 async function fetchRows(query) {
   const { from, to } = range(query);
-  const byApplied = query.date_by === 'applied';
+  // Applied date is the default since 2026-10-14; ?date_by=payment dates the range by payment instead.
+  const byApplied = query.date_by !== 'payment';
   // What both queries share: the payment's own filters.
   const where = ["cp.status <> 'voided'"];
   const params = [];
@@ -92,8 +94,10 @@ async function fetchRows(query) {
             c.name AS customer_name, si.id AS invoice_id, si.invoice_no, si.date_created AS invoice_date,
             si.date_due, si.term, cpl.applied_amount,
             GREATEST(cp.date_created, si.date_created) AS applied_date,
-            DATEDIFF(cp.date_created, si.date_created) AS age_days,
-            DATEDIFF(cp.date_created, si.date_due) AS days_past_due
+            -- Aged on the APPLICATION date (asked 2026-10-14): when the money met the invoice, not when
+            -- it came in -- an advance taken before its invoice is not "collected early" by weeks.
+            DATEDIFF(GREATEST(cp.date_created, si.date_created), si.date_created) AS age_days,
+            DATEDIFF(GREATEST(cp.date_created, si.date_created), si.date_due) AS days_past_due
        FROM customer_payment_lines cpl
        JOIN customer_payments cp ON cp.id = cpl.customer_payment_id
        JOIN sales_invoices si ON si.id = cpl.sales_invoice_id
