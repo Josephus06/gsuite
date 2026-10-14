@@ -26,11 +26,6 @@ function VoidModal({ disposal, onClose, onDone }) {
   return (
     <Modal title={`Void ${disposal.disposal_no}`} onClose={onClose}>
       {error && <div className="error-banner">{error}</div>}
-      {periodLocked && (
-        <div className="warning-banner" style={{ marginBottom: 12 }}>
-          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
-        </div>
-      )}
       <p className="muted" style={{ marginTop: 0 }}>
         This removes the disposal from the ledger and brings the asset back into service at the location and
         custodian it had before.
@@ -111,6 +106,12 @@ export default function AssetDisposalView() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {/* Closed accounting period (shown on the page itself, 2026-10-14). */}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
       {isDraft && <div className="error-banner">This disposal is a draft — the asset is still on the balance sheet and still depreciating.</div>}
 
       <div className="estimate-banner">

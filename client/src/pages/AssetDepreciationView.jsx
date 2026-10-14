@@ -24,11 +24,6 @@ function VoidModal({ run, onClose, onDone }) {
   return (
     <Modal title={`Void ${run.run_no}`} onClose={onClose}>
       {error && <div className="error-banner">{error}</div>}
-      {periodLocked && (
-        <div className="warning-banner" style={{ marginBottom: 12 }}>
-          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
-        </div>
-      )}
       <p className="muted" style={{ marginTop: 0 }}>
         Voiding removes this month&apos;s depreciation from the ledger. Nothing has to be unwound — accumulated
         depreciation is summed from posted runs, so it simply stops counting this one.
@@ -100,6 +95,12 @@ export default function AssetDepreciationView() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {/* Closed accounting period (shown on the page itself, 2026-10-14). */}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
       {isDraft && (
         <div className="error-banner">
           This run is a draft — nothing has reached the ledger yet. Recalculate to pick up assets capitalised since it

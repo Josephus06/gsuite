@@ -66,11 +66,6 @@ function DeliveryMethodCard({ d, onSaved }) {
     <div className="card" style={{ marginTop: 20 }}>
       <h3 className="subsection" style={{ marginTop: 0 }}>Delivery Method &amp; Cost</h3>
       {error && <div className="error-banner">{error}</div>}
-      {periodLocked && (
-        <div className="warning-banner" style={{ marginBottom: 12 }}>
-          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
-        </div>
-      )}
       <div className="review-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
         <div className="field">
           <label>Delivered Via</label>
@@ -172,6 +167,12 @@ export default function ItemDeliveryView() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {/* Closed accounting period (shown on the page itself, 2026-10-14). */}
+      {periodLocked && (
+        <div className="warning-banner" style={{ marginBottom: 12 }}>
+          The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+        </div>
+      )}
 
       <div className="estimate-banner">
         <div className="estimate-banner-title">
