@@ -41,8 +41,9 @@ const PO_APPROVAL_THRESHOLD = 10000; // routes/purchaseOrders.js APPROVAL_THRESH
 // A PO has just entered a pending status. Who clears each tier is routes/purchaseOrders.js
 // PUT /:id/approve:
 //   pending_approval     a Purchasing Supervisor
-//   pending_approval_gm  the General Manager; a Purchasing Supervisor too when it is within the
-//                        threshold (PO3/PO4 enter this tier directly, whatever the amount)
+//   pending_approval_gm  above the threshold, the General Manager; within it, the Purchasing
+//                        Supervisors only -- a PO of 10,000 or less no longer goes to the GM, so the GM
+//                        is not told about it (2026-10-14). PO3/PO4 enter this tier directly.
 function notifyPoPending({ id, poNo, status, total }, actorId) {
   return safely(`PO ${poNo} ${status}`, async () => {
     const [sups] = await pool.query('SELECT id FROM users WHERE is_purchasing_supervisor = 1 AND is_active = 1');
@@ -50,14 +51,18 @@ function notifyPoPending({ id, poNo, status, total }, actorId) {
     if (status === 'pending_approval') {
       to = sups.map((u) => u.id);
     } else if (status === 'pending_approval_gm') {
-      const [gms] = await pool.query("SELECT id FROM users WHERE account_type = 'General Manager' AND is_active = 1");
-      to = gms.map((u) => u.id);
-      if (Number(total) <= PO_APPROVAL_THRESHOLD) to.push(...sups.map((u) => u.id));
+      if (Number(total) <= PO_APPROVAL_THRESHOLD) {
+        to = sups.map((u) => u.id);
+      } else {
+        const [gms] = await pool.query("SELECT id FROM users WHERE account_type = 'General Manager' AND is_active = 1");
+        to = gms.map((u) => u.id);
+      }
     }
+    const forGm = status === 'pending_approval_gm' && Number(total) > PO_APPROVAL_THRESHOLD;
     await insertFor(to, {
       type: 'po_pending_approval',
       title: `${poNo} needs your approval`,
-      message: `Purchase Order ${poNo} (${Number(total || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}) is ${status === 'pending_approval_gm' ? 'pending GM approval' : 'pending approval'}.`,
+      message: `Purchase Order ${poNo} (${Number(total || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}) is ${forGm ? 'pending GM approval' : 'pending approval'}.`,
       relatedType: 'PurchaseOrder',
       relatedId: id,
     }, actorId);
