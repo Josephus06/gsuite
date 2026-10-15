@@ -1140,3 +1140,35 @@
 .fb-people-group { border: 1px solid var(--fb-divider); border-radius: 14px; background: none; color: var(--fb-text); padding: 3px 10px;
   cursor: pointer; font-size: 13px; }
 .fb-people-group:hover { background: var(--fb-input); }
+
+/* ---------------------------------------------------- Get the T1S app (GetTheApp.jsx) */
+.get-app-card p { margin: 0 8px 8px; font-size: 13px; line-height: 1.4; color: var(--fb-text-2); }
+.get-app-card-title {
+  color: var(--fb-text-2); font-size: 17px; font-weight: 600; padding: 4px 8px 6px;
+}
+.get-app-row {
+  display: flex; align-items: center; gap: 12px; padding: 8px;
+  border-radius: var(--fb-radius); color: var(--fb-text); text-decoration: none;
+}
+.get-app-row:hover { background: var(--fb-hover); }
+.get-app-row-text { display: flex; flex-direction: column; flex: 1; min-width: 0; font-size: 15px; font-weight: 500; }
+.get-app-row-text small { font-size: 12px; font-weight: 400; color: var(--fb-text-2); }
+.get-app-row-arrow { color: var(--fb-blue); font-size: 16px; }
+
+/* The banner stands in for the rail card where the rail is hidden (below 1080px). */
+.get-app-banner { display: none; }
+@media (max-width: 1080px) {
+  .get-app-banner { display: flex; align-items: center; gap: 12px; padding: 12px 14px; margin-bottom: 12px; }
+}
+.get-app-banner-icon { font-size: 24px; flex: none; }
+.get-app-banner-text { flex: 1; min-width: 0; display: flex; flex-direction: column; font-size: 13px; color: var(--fb-text-2); line-height: 1.35; }
+.get-app-banner-text strong { font-size: 15px; color: var(--fb-text); }
+.get-app-btn {
+  flex: none; background: var(--fb-blue); color: #fff; text-decoration: none; font-weight: 600;
+  font-size: 14px; padding: 8px 14px; border-radius: 8px;
+}
+.get-app-close {
+  flex: none; background: none; border: 0; color: var(--fb-text-2); font-size: 16px;
+  width: 32px; height: 32px; border-radius: 50%; cursor: pointer;
+}
+.get-app-close:hover { background: var(--fb-hover); }

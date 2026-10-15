@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Avatar from '../components/Avatar';
+import { GetTheAppCard } from '../components/GetTheApp';
 import { openChat } from '../components/ChatDock';
 import ChatGroups from '../components/ChatGroups';
 import PostCard from '../components/feed/PostCard';
@@ -220,12 +221,15 @@ export default function Feed() {
               <span>{s.label}</span>
             </Link>
           ))}
+          <GetTheAppCard variant="rail" />
         </aside>
 
         {/* ---------------------------------------------------------- center feed */}
         <main className="fb-center">
           {error && <div className="fb-error">{error}</div>}
           {toast && <div className="fb-error" style={{ background: 'var(--fb-blue)' }}>{toast}</div>}
+
+          <GetTheAppCard variant="banner" />
 
           <div className="fb-card fb-composer">
             <div className="fb-composer-top">

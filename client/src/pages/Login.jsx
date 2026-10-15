@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
+import { GetTheAppLink } from '../components/GetTheApp';
 
 // GraphicStar's own product-showcase graphics (Room Nameplates, Yearbooks, Booth
 // Fabrication, Acrylic Medals) -- faded into a 2x2 collage behind the sign-in card
@@ -82,6 +83,7 @@ export default function Login() {
           <button className="login-submit-v2" disabled={loading}>
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
+          <GetTheAppLink />
         </div>
       </form>
 

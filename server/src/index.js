@@ -248,6 +248,35 @@ app.use(express.json({ limit: '2mb' })); // room for the base64 profile-picture 
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
+// The T1S apps (Android APK, Windows installer), offered from the Feed and the login page.
+// They live OUTSIDE the git checkout -- the installer is over GitHub's 100 MB file limit, and the
+// deploy's `git reset --hard` must not wipe them -- in /opt/gsuite-downloads beside /opt/gsuite.
+// Drop a new build in under the same name to publish it; the site only offers what is there.
+const DOWNLOADS_DIR = process.env.DOWNLOADS_DIR || path.join(__dirname, '../../../gsuite-downloads');
+const APP_DOWNLOADS = { android: 'T1S.apk', windows: 'T1S-Setup.exe' };
+app.get('/api/app-downloads', (req, res) => {
+  const out = {};
+  for (const [platform, file] of Object.entries(APP_DOWNLOADS)) {
+    try {
+      const st = fs.statSync(path.join(DOWNLOADS_DIR, file));
+      if (st.isFile()) out[platform] = { url: `/downloads/${file}`, size: st.size, updated_at: st.mtime };
+    } catch { /* not published on this server */ }
+  }
+  res.setHeader('Cache-Control', 'no-cache');
+  res.json(out);
+});
+app.use('/downloads', express.static(DOWNLOADS_DIR, {
+  index: false,
+  dotfiles: 'deny',
+  setHeaders: (res, filePath) => {
+    res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
+    res.setHeader('Cache-Control', 'no-cache'); // same name for every release
+    if (filePath.endsWith('.apk')) res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+  },
+}));
+// A file that is not there is a 404, not the app's index.html saved under the download's name.
+app.use('/downloads', (req, res) => res.status(404).type('text').send('Not found'));
+
 app.use('/api/auth', authRoutes);
 app.use('/api/lookups', lookupRoutes);
 // Unauthenticated: the customer-facing quote site is the only caller. See routes/publicQuotes.js.

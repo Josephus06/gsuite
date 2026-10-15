@@ -2805,3 +2805,9 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 /* Seen by: readers' profile pictures under the last message they have read (chat/ChatMessages.jsx). */
 .chat-seen-by { display: flex; justify-content: flex-end; gap: 2px; margin-top: 2px; }
 .chat-seen-by > * { flex-shrink: 0; }
+
+/* "Get the T1S app" line under the login button (GetTheApp.jsx). */
+.get-app-login { margin-top: 18px; text-align: center; font-size: 13px; color: #64748b; }
+.get-app-login-links { white-space: nowrap; }
+.get-app-login a { color: #3aa89d; font-weight: 600; text-decoration: none; }
+.get-app-login a:hover { text-decoration: underline; }
