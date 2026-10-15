@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/useAuth';
 import Avatar from './Avatar';
@@ -502,10 +502,41 @@ export default function Layout() {
       return can(item.route, 'can_view');
     });
 
+  // The module strip collapses behind the hamburger whenever it does not fit, measured rather
+  // than guessed: a fixed breakpoint went stale every time a module was added (at 1920 the bell
+  // and Log out were pushed off the screen), and how many modules show depends on the user's
+  // permissions anyway. While collapsed the strip cannot be measured, so the width it needed is
+  // remembered and the strip comes back once the bar is that wide again.
+  const navKey = visibleStructure.map((i) => i.label).join('|');
+  const headerRef = useRef(null);
+  const neededWidthRef = useRef(0);
+  const [navCompact, setNavCompact] = useState(false);
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    if (!header) return undefined;
+    let compact = false;
+    setNavCompact(false); // a different set of modules is re-measured from the full strip
+    const check = () => {
+      if (!compact && header.scrollWidth > header.clientWidth + 1) {
+        neededWidthRef.current = header.scrollWidth;
+        compact = true;
+        setNavCompact(true);
+      } else if (compact && header.clientWidth >= neededWidthRef.current) {
+        compact = false;
+        setNavCompact(false);
+      }
+    };
+    const ro = new ResizeObserver(check);
+    ro.observe(header);
+    check();
+    document.fonts?.ready.then(check);
+    return () => ro.disconnect();
+  }, [navKey]);
+
   return (
     <div className="app-shell">
       <ImpersonationBanner />
-      <header className="topnav">
+      <header ref={headerRef} className={`topnav${navCompact ? ' topnav-compact' : ''}`}>
         <button
           type="button"
           className="topnav-hamburger"

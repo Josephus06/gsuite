@@ -619,6 +619,13 @@ a.btn, a.link-btn { text-decoration: none; }
   .topnav-user-name { display: none; }
   .topnav { padding: 0 10px; gap: 4px; }
 }
+/* The same collapse at any width, set by Layout when it measures that the strip does not fit --
+   more modules, or a user who can see more of them, than the breakpoint above was sized for. */
+.topnav.topnav-compact { padding-left: 10px; padding-right: 10px; gap: 4px; }
+.topnav-compact .topnav-hamburger { display: flex; }
+.topnav-compact .topnav-menu { display: none; }
+.topnav-compact .topnav-logo { height: 24px; }
+.topnav-compact .topnav-brand { padding-right: 8px; margin-right: 4px; }
 
 /* ---- Avatar: circular profile photo, used in the topnav and dashboard profile cards ---- */
 .avatar-wrap { position: relative; flex-shrink: 0; display: inline-block; }
