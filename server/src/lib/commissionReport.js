@@ -40,18 +40,21 @@ const ROLE_TO_SCHEME = [
 
 function round2(n) { return Math.round((Number(n) + Number.EPSILON) * 100) / 100; }
 
-// A scheme is a ladder of Total-Weighted-Sales brackets -> a fixed commission amount. Find
-// the bracket the amount falls in. Below the first bracket pays nothing; above the last
-// bracket earns the top bracket's amount (the ladder doesn't cap what it recognises).
+// A scheme is a ladder of Total-Weighted-Sales brackets -> a fixed commission amount. Below the
+// first bracket pays nothing; above the last earns the top bracket's amount (the ladder doesn't cap
+// what it recognises).
+//
+// The ladders have GAPS -- Sales Manager runs ...-10,500,000.00 then 10,600,000.01-..., so
+// 10,500,000.01 to 10,600,000.00 is in no bracket. An amount in a gap takes the NEXT bracket up, as
+// the source does (asked 2026-10-15): JICA EMMANUEL C. WU's January passing total 10,506,802.95 reads
+// 31,800 there, and his August 12,508,863.56 reads 37,800. This used to pay 0 in a gap.
 function lookupCommission(brackets, amount) {
   const amt = Number(amount) || 0;
   if (amt <= 0 || !brackets.length) return 0;
-  for (const b of brackets) {
-    if (amt >= Number(b.min_weighted_sales) && amt <= Number(b.max_weighted_sales)) return Number(b.commission_amount) || 0;
-  }
-  const top = brackets.reduce((a, b) => (Number(b.max_weighted_sales) > Number(a.max_weighted_sales) ? b : a));
-  if (amt > Number(top.max_weighted_sales)) return Number(top.commission_amount) || 0;
-  return 0;
+  const ladder = [...brackets].sort((x, y) => Number(x.max_weighted_sales) - Number(y.max_weighted_sales));
+  if (amt < Number(ladder[0].min_weighted_sales)) return 0;
+  const hit = ladder.find((b) => amt <= Number(b.max_weighted_sales));
+  return Number((hit || ladder[ladder.length - 1]).commission_amount) || 0;
 }
 
 // The rep plus everyone reporting up to them, as a set of employee ids -- what their team
@@ -100,6 +103,32 @@ async function getSbuDivisionIds(userId) {
   return rows.map((r) => r.sales_division_id);
 }
 
+// Whose sales a rep is read at -- the WHERE both the monthly report and its JO detail use.
+//
+//   Sales Manager   every sales order in every division except the branches (asked 2026-10-15:
+//                   JICA EMMANUEL C. WU's January read 9,833,453.53 here, his own reporting tree,
+//                   against the source's 12,954,199.85 -- which is the whole company's 13,645,932.27
+//                   less Branch - Ayala and Branch-SM_Cebu, to the centavo). Marketing, Support and
+//                   E-Commerce count; a division whose name starts "Branch" does not.
+//   SBU Head        their reporting team's orders plus every order in the divisions they own
+//   anyone else     their reporting team's orders (sales_rep_id in the team)
+const BRANCH_DIVISIONS_SQL = "SELECT id FROM sales_divisions WHERE name LIKE 'Branch%'";
+async function salesScope(employeeId, user) {
+  const teamEmployeeIds = await getTeamEmployeeIds(employeeId, user ? user.id : null);
+  const isManager = !!(user && user.is_sales_manager && !user.is_sales_business_unit);
+  if (isManager) {
+    return {
+      sql: `(so.sales_division_id IS NULL OR so.sales_division_id NOT IN (${BRANCH_DIVISIONS_SQL}))`,
+      params: [], teamEmployeeIds, sbuDivisionIds: [], companyWide: true,
+    };
+  }
+  const sbuDivisionIds = user && user.is_sales_business_unit ? await getSbuDivisionIds(user.id) : [];
+  if (sbuDivisionIds.length) {
+    return { sql: '(so.sales_rep_id IN (?) OR so.sales_division_id IN (?))', params: [teamEmployeeIds, sbuDivisionIds], teamEmployeeIds, sbuDivisionIds };
+  }
+  return { sql: 'so.sales_rep_id IN (?)', params: [teamEmployeeIds], teamEmployeeIds, sbuDivisionIds };
+}
+
 function resolveScheme(user, brackets) {
   if (!user) return { schemeName: null, brackets: [] };
   const match = ROLE_TO_SCHEME.find((r) => user[r.flag]);
@@ -134,24 +163,12 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
   );
   const { schemeName } = resolveScheme(user, []);
   const brackets = await loadSchemeBrackets(schemeName);
-  const teamEmployeeIds = await getTeamEmployeeIds(employeeId, user ? user.id : null);
-  const sbuDivisionIds = user && user.is_sales_business_unit ? await getSbuDivisionIds(user.id) : [];
-
-  // A rep's sales are their reporting team's (sales_rep_id in the team). An SBU owns whole
-  // divisions on top of that, so its sales also include everything in the divisions it
-  // owns, whoever the rep was. The two are unioned.
-  const whereParts = [];
-  const params = [];
-  // Attribute by the SALES ORDER's rep (matches the live report's "Sales Rep" column), so an
-  // order still pending its job order -- and any order whose job's rep differs from its sales
-  // rep -- is credited to the sales order's owning rep exactly as live does.
-  if (sbuDivisionIds.length) {
-    whereParts.push('(so.sales_rep_id IN (?) OR so.sales_division_id IN (?))');
-    params.push(teamEmployeeIds, sbuDivisionIds);
-  } else {
-    whereParts.push('so.sales_rep_id IN (?)');
-    params.push(teamEmployeeIds);
-  }
+  // Whose orders count (salesScope): the reporting team; an SBU's divisions too; a Sales Manager the
+  // whole company less the branches. Attributed by the SALES ORDER's rep, as the source does.
+  const scope = await salesScope(employeeId, user);
+  const { teamEmployeeIds, sbuDivisionIds } = scope;
+  const whereParts = [scope.sql];
+  const params = [...scope.params];
   whereParts.push('YEAR(so.date_created) = ?');
   params.push(year);
   // Cancelled sales orders never count toward weighted sales (or anything downstream).
@@ -213,7 +230,7 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
     const row = months[l.month - 1];
     if (!row) continue;
     row.weighted_sales += Number(l.net_of_tax);
-    if (!row.division_name && l.division_name) row.division_name = l.division_name;
+    if (!row.division_name && l.division_name) row.division_name = scope.companyWide ? 'All (excl. branches)' : l.division_name;
     if (l.passing) {
       row.passing_total += Number(l.net_of_tax);
       row.paid_passing += paidByJo.get(l.jo_id) || 0;
@@ -260,7 +277,7 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
 
   return {
     employee_id: employee.id, employee_name: employee.name, year: Number(year),
-    scheme_name: schemeName, team_size: teamEmployeeIds.length,
+    scheme_name: schemeName, team_size: teamEmployeeIds.length, company_wide: !!scope.companyWide,
     sbu_division_count: sbuDivisionIds.length, rows,
   };
 }
@@ -319,21 +336,13 @@ async function buildCommissionJoDetail(employeeId, year, month, filters = {}) {
   if (!employee) return null;
 
   const [[user]] = await pool.query(
-    `SELECT id, is_sales_business_unit FROM users WHERE employee_id = ? AND is_active = TRUE ORDER BY id LIMIT 1`,
+    `SELECT id, is_sales_manager, is_sales_business_unit FROM users WHERE employee_id = ? AND is_active = TRUE ORDER BY id LIMIT 1`,
     [employeeId]
   );
-  const teamEmployeeIds = await getTeamEmployeeIds(employeeId, user ? user.id : null);
-  const sbuDivisionIds = user && user.is_sales_business_unit ? await getSbuDivisionIds(user.id) : [];
-
-  const whereParts = [];
-  const params = [];
-  if (sbuDivisionIds.length) {
-    whereParts.push('(so.sales_rep_id IN (?) OR so.sales_division_id IN (?))');
-    params.push(teamEmployeeIds, sbuDivisionIds);
-  } else {
-    whereParts.push('so.sales_rep_id IN (?)');
-    params.push(teamEmployeeIds);
-  }
+  // The same scope as the monthly report (salesScope), so the detail adds up to its row.
+  const scope = await salesScope(employeeId, user);
+  const whereParts = [scope.sql];
+  const params = [...scope.params];
   whereParts.push('YEAR(so.date_created) = ?'); params.push(Number(year));
   whereParts.push('MONTH(so.date_created) = ?'); params.push(Number(month));
   // Cancelled sales orders are excluded here too, so the detail matches the monthly totals.
@@ -413,7 +422,7 @@ async function buildCommissionJoDetail(employeeId, year, month, filters = {}) {
 
   return {
     employee_id: employee.id, employee_name: employee.name, year: Number(year), month: Number(month),
-    team_size: teamEmployeeIds.length, sbu_division_count: sbuDivisionIds.length, rows, totals,
+    team_size: scope.teamEmployeeIds.length, sbu_division_count: scope.sbuDivisionIds.length, rows, totals,
   };
 }
 
