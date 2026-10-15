@@ -485,7 +485,17 @@ export default function EstimateWizard() {
     });
   }
 
+  // A refused line or process save used to fail silently: the screen kept the typed figures and
+  // the refresh put the old ones back (EST-210951, 2026-10-15). Say so instead.
   async function commitJobOrderRow(idx, overrides = {}) {
+    try {
+      await commitJobOrderRowUnsafe(idx, overrides);
+    } catch (err) {
+      setError(`Line ${idx + 1} was NOT saved: ${err.response?.data?.error || err.message || 'save failed'}`);
+    }
+  }
+
+  async function commitJobOrderRowUnsafe(idx, overrides = {}) {
     if (Object.keys(overrides).length) {
       setJobOrders((prev) => {
         const next = [...prev];
@@ -639,7 +649,12 @@ export default function EstimateWizard() {
     const row = { ...jo?.processes?.[procIdx], ...overrides };
     if (!jo?.id || !row) return;
     if (row.id) {
-      await api.put(`/estimates/${estimateId}/job-orders/${jo.id}/processes/${row.id}`, toPayload(row, PROCESS_FIELDS));
+      try {
+        await api.put(`/estimates/${estimateId}/job-orders/${jo.id}/processes/${row.id}`, toPayload(row, PROCESS_FIELDS));
+      } catch (err) {
+        setError(`Line ${joIdx + 1}, process ${procIdx + 1} was NOT saved: ${err.response?.data?.error || err.message || 'save failed'}`);
+        return;
+      }
       const updatedProcs = (jo.processes || []).map((p, pi) => (pi === procIdx ? row : p));
       await recalcJobOrderSubtotal(joIdx, updatedProcs);
     } else {
