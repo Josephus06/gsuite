@@ -72,27 +72,29 @@ function bucketTotals(rows) {
 function compute(totals, months, s) {
   const total = BUCKETS.reduce((sum, b) => sum + totals[b.key], 0);
   const base = (total / months) * s.incentive_rate;
+  const avgMonthly = total / months;
+  const qualifyAt = s.monthly_target * s.qualifier_pct;
+  const qualified = avgMonthly >= qualifyAt;
+  // Not qualified: every multiplier, and so every incentive, is zero (Treasury, 2026-10-15).
   const lines = BUCKETS.map((b) => {
     const targetPct = s[b.col];
     const actualPct = total ? totals[b.key] / total : 0;
     const expected = base * actualPct;
-    const multiplier = actualPct < targetPct ? (targetPct ? actualPct / targetPct : 0) : 1;
+    const multiplier = !qualified ? 0 : actualPct < targetPct ? (targetPct ? actualPct / targetPct : 0) : 1;
     return {
       key: b.key, label: b.label, target_pct: targetPct, target_amount: targetPct * base,
       collected: totals[b.key], actual_pct: actualPct, expected, multiplier, incentive: expected * multiplier,
     };
   });
-  const avgMonthly = total / months;
-  const qualifyAt = s.monthly_target * s.qualifier_pct;
   const incentive = lines.reduce((sum, l) => sum + l.incentive, 0);
   return {
     lines, total_collected: total, months, avg_monthly_collection: avgMonthly, base_incentive: base,
     target_total: lines.reduce((sum, l) => sum + l.target_amount, 0),
     expected_total: lines.reduce((sum, l) => sum + l.expected, 0),
     incentive_total: incentive,
-    qualify_at: qualifyAt, qualified: avgMonthly >= qualifyAt,
+    qualify_at: qualifyAt, qualified,
     pct_of_target: s.monthly_target ? avgMonthly / s.monthly_target : 0,
-    incentive_payable: avgMonthly >= qualifyAt ? incentive : 0,
+    incentive_payable: incentive,
   };
 }
 
@@ -207,13 +209,13 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
     kv('Incentive payable', r.incentive_payable, money).font = { bold: true };
     if (rep.mode === 'annual') {
       ws.addRow([]);
-      ws.addRow(['Month', 'Collected', '% of Target', 'Qualified', 'Incentive', 'Payable']).font = { bold: true };
+      ws.addRow(['Month', 'Collected', '% of Target', 'Qualified', 'Incentive']).font = { bold: true };
       for (const m of rep.months) {
-        const row = ws.addRow([m.label, m.collected, m.pct_of_target, m.qualified ? 'YES' : 'NO', m.incentive, m.payable]);
-        row.getCell(2).numFmt = money; row.getCell(3).numFmt = pct; row.getCell(5).numFmt = money; row.getCell(6).numFmt = money;
+        const row = ws.addRow([m.label, m.collected, m.pct_of_target, m.qualified ? 'YES' : 'NO', m.payable]);
+        row.getCell(2).numFmt = money; row.getCell(3).numFmt = pct; row.getCell(5).numFmt = money;
       }
-      const e = ws.addRow(['Earned (qualified months)', null, null, `${rep.qualified_months} of ${rep.months.length}`, null, rep.earned_total]);
-      e.font = { bold: true }; e.getCell(6).numFmt = money;
+      const e = ws.addRow(['Earned (qualified months)', null, null, `${rep.qualified_months} of ${rep.months.length}`, rep.earned_total]);
+      e.font = { bold: true }; e.getCell(5).numFmt = money;
     }
     const name = rep.mode === 'annual' ? `${rep.year}-thru-${pad(rep.through)}` : rep.month;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

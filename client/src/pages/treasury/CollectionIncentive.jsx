@@ -311,7 +311,7 @@ export default function CollectionIncentive() {
             </div>
             {!r.qualified && (
               <div className="warning-banner" style={{ marginTop: 8 }}>
-                Not qualified: {data.mode === 'annual' ? 'the average month' : 'the month'} collected {money(r.avg_monthly_collection)}, below {pct(s.qualifier_pct, 0)} of the {money(s.monthly_target)} monthly target ({money(r.qualify_at)}). The incentive above is what it would have been.
+                Not qualified: {data.mode === 'annual' ? 'the average month' : 'the month'} collected {money(r.avg_monthly_collection)}, below {pct(s.qualifier_pct, 0)} of the {money(s.monthly_target)} monthly target ({money(r.qualify_at)}). No incentive is due.
               </div>
             )}
           </div>
@@ -325,7 +325,7 @@ export default function CollectionIncentive() {
               <div className="table-wrap">
                 <table className="responsive-cards">
                   <thead>
-                    <tr><th>Month</th><th style={R}>Collected</th><th style={R}>% of Target</th><th>Qualified</th><th style={R}>Incentive</th><th style={R}>Earned</th></tr>
+                    <tr><th>Month</th><th style={R}>Collected</th><th style={R}>% of Target</th><th>Qualified</th><th style={R}>Incentive</th></tr>
                   </thead>
                   <tbody>
                     {data.months.map((m) => (
@@ -336,15 +336,14 @@ export default function CollectionIncentive() {
                         <td data-label="Qualified">
                           <span className={`badge ${m.qualified ? 'badge-success' : 'badge-muted'}`}>{m.qualified ? 'Yes' : 'No'}</span>
                         </td>
-                        <td data-label="Incentive" style={R}>{money(m.incentive)}</td>
-                        <td data-label="Earned" style={{ ...R, fontWeight: 600 }}>{money(m.payable)}</td>
+                        <td data-label="Incentive" style={{ ...R, fontWeight: 600 }}>{money(m.payable)}</td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr style={{ fontWeight: 700 }}>
                       <td>Earned ({data.qualified_months} of {data.months.length} months qualified)</td>
-                      <td style={R}>{money(r.total_collected)}</td><td /><td /><td />
+                      <td style={R}>{money(r.total_collected)}</td><td /><td />
                       <td style={R}>{money(data.earned_total)}</td>
                     </tr>
                   </tfoot>
