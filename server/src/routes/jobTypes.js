@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { releaseWaitingForJobType } = require('../lib/directToProduction');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 
 const router = express.Router();
@@ -104,7 +105,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
-    const [[before]] = await pool.query('SELECT id FROM job_types WHERE id = ?', [req.params.id]);
+    const [[before]] = await pool.query('SELECT id, is_direct_to_prod FROM job_types WHERE id = ?', [req.params.id]);
     if (!before) return res.status(404).json({ error: 'Not found' });
 
     const body = { ...req.body };
@@ -114,8 +115,19 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       [...values, req.params.id]
     );
 
+    // Just ticked Direct to Production: its job orders still waiting in Design go to Production now,
+    // as new ones of this type do (lib/directToProduction.js releaseWaitingForJobType).
+    let released = [];
     const [[row]] = await pool.query('SELECT * FROM job_types WHERE id = ?', [req.params.id]);
-    res.json(row);
+    if (!Number(before.is_direct_to_prod) && Number(row.is_direct_to_prod)) {
+      const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+        released = await releaseWaitingForJobType(conn, row.id, req.user.id);
+        await conn.commit();
+      } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
+    }
+    res.json({ ...row, released_job_orders: released });
   } catch (err) {
     next(err);
   }

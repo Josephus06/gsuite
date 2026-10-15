@@ -37,4 +37,25 @@ async function releaseIfDirectToProduction(conn, { jobOrderId, jobTypeId, userId
   return true;
 }
 
-module.exports = { isDirectToProduction, releaseIfDirectToProduction, RELEASED };
+// Job orders of this type made BEFORE it was marked Direct to Production, still waiting in Design:
+// no production stage yet, no artist, not released, not cancelled, not on hold. Ticking the box used
+// to leave them there -- CNC-ACCESSORIES was ticked on 2026-10-15 and NSSO-INT-1951 / NSSO-INT-1963's
+// nine NSJOs stayed "For Design Supervisor". Releases each as a new one would be; returns their numbers.
+// dryRun lists them without changing anything.
+async function releaseWaitingForJobType(conn, jobTypeId, userId, { dryRun = false } = {}) {
+  if (!(await isDirectToProduction(conn, jobTypeId))) return [];
+  const [jos] = await conn.query(
+    `SELECT id, job_order_no, status, sub_status FROM job_orders
+      WHERE job_type_id = ? AND production_stage IS NULL AND artist_id IS NULL
+        AND (status IS NULL OR status NOT IN ('Cancelled', 'Released'))
+        AND COALESCE(is_on_hold, 0) = 0
+      ORDER BY id`, [jobTypeId]);
+  if (!dryRun) {
+    for (const jo of jos) {
+      await releaseIfDirectToProduction(conn, { jobOrderId: jo.id, jobTypeId, userId, fromStatus: jo.status, fromSubStatus: jo.sub_status });
+    }
+  }
+  return jos.map((j) => j.job_order_no);
+}
+
+module.exports = { isDirectToProduction, releaseIfDirectToProduction, releaseWaitingForJobType, RELEASED };
