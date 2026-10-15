@@ -14,6 +14,42 @@ function money(v) {
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 }
 
+// A line's Supplier picker (2026-10-15): it opens on the suppliers this ITEM has been bought from
+// (or quoted by, on the Inventory's price list), newest first with their last price; "Show all
+// suppliers" widens it to every supplier. An item never bought before has no list of its own, so it
+// opens on all of them.
+function SupplierCell({ row, suppliers, itemSuppliers, onSelect }) {
+  const [showAll, setShowAll] = useState(false);
+  const known = itemSuppliers || [];
+  const byId = new Map(suppliers.map((s) => [s.id, s]));
+  const own = known.map((k) => ({ ...(byId.get(k.supplier_id) || { name: k.supplier_name }), ...k, id: k.supplier_id }));
+  const all = showAll || !own.length;
+  // A supplier picked from the full list stays named after the box is unticked again.
+  if (row.supplier_id && !own.some((s) => s.id === row.supplier_id) && byId.has(row.supplier_id)) own.push(byId.get(row.supplier_id));
+  return (
+    <EntityPicker
+      label={all ? 'Supplier' : `Suppliers of ${row.item_code || 'this item'}`}
+      items={all ? suppliers : own} value={row.supplier_id} getLabel={(s) => s.name || s.supplier_name}
+      columns={[
+        { key: 'name', label: 'Name', render: (s) => s.name || s.supplier_name },
+        { key: 'address', label: 'Address', render: (s) => s.address || '—' },
+        ...(all ? [] : [
+          { key: 'rate', label: 'Last Price', render: (s) => money(s.rate) },
+          { key: 'last_purchase_date', label: 'Last Bought', render: (s) => (s.last_purchase_date ? String(s.last_purchase_date).slice(0, 10) : '—') },
+        ]),
+      ]}
+      searchKeys={['name', 'supplier_name', 'address']}
+      headerExtra={(
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 400 }}>
+          <input type="checkbox" checked={all} disabled={!own.length} onChange={(e) => setShowAll(e.target.checked)} />
+          Show all suppliers{!own.length && itemSuppliers ? ' (none on record for this item)' : ''}
+        </label>
+      )}
+      onSelect={(s) => onSelect(s, known.find((k) => k.supplier_id === s.id))}
+    />
+  );
+}
+
 // Mirrors the real "Placing Order Form" -- reached from Purchasing > Place Order Form.
 // Simplified version of the real Canvass step: no Supplier Price history comparison or
 // "not the lowest price, pick a reason" justification yet (see schema.sql note on
@@ -30,6 +66,8 @@ export default function PlaceOrderForm() {
   const [selectedPrIds, setSelectedPrIds] = useState(new Set());
   const [rows, setRows] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
+  // item_id -> the suppliers it has been bought from (see SupplierCell); loaded as lines arrive.
+  const [itemSuppliers, setItemSuppliers] = useState({});
   const [taxes, setTaxes] = useState([]);
   const [locations, setLocations] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -93,6 +131,17 @@ export default function PlaceOrderForm() {
         })),
     ]);
   }
+
+  useEffect(() => {
+    const missing = [...new Set(rows.map((r) => r.item_id).filter((id) => id && !(id in itemSuppliers)))];
+    if (!missing.length) return;
+    setItemSuppliers((prev) => ({ ...prev, ...Object.fromEntries(missing.map((id) => [id, null])) }));
+    for (const id of missing) {
+      api.get(`/purchase-orders/item-price-history/${id}`)
+        .then(({ data }) => setItemSuppliers((prev) => ({ ...prev, [id]: data.suppliers || [] })))
+        .catch(() => setItemSuppliers((prev) => ({ ...prev, [id]: [] })));
+    }
+  }, [rows, itemSuppliers]);
 
   function updateRow(key, patch) {
     setRows((prev) => prev.map((r) => (r.purchase_requisition_line_id === key ? { ...r, ...patch } : r)));
@@ -227,10 +276,14 @@ export default function PlaceOrderForm() {
                     </td>
                     <td>{r.purchase_unit}</td>
                     <td>
-                      <EntityPicker
-                        label="Supplier" items={suppliers} value={r.supplier_id} getLabel={(s) => s.name}
-                        columns={[{ key: 'name', label: 'Name' }, { key: 'address', label: 'Address', render: (s) => s.address || '—' }]} searchKeys={['name', 'address']}
-                        onSelect={(s) => updateRow(r.purchase_requisition_line_id, { supplier_id: s.id, supplier_name: s.name })}
+                      <SupplierCell
+                        row={r} suppliers={suppliers} itemSuppliers={itemSuppliers[r.item_id]}
+                        // Picking one of the item's own suppliers brings its last price in, when no rate is typed yet.
+                        onSelect={(s, last) => updateRow(r.purchase_requisition_line_id, {
+                          supplier_id: s.id, supplier_name: s.name || s.supplier_name,
+                          // Only in the same unit: a price per box is not a price per piece.
+                          ...(last && !Number(r.rate) && (!last.unit || last.unit === r.purchase_unit) ? { rate: Number(last.rate) || 0 } : {}),
+                        })}
                       />
                     </td>
                     <td>
