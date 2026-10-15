@@ -227,9 +227,14 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
 
   const rows = months.map((r) => {
     const weighted = round2(r.weighted_sales);
-    const passingTotal = round2(r.passing_total);
-    const paid = round2(r.paid_passing);
-    const estimated = round2(lookupCommission(brackets, weighted));
+    const pct = r.quota > 0 ? round2((weighted / r.quota) * 100) : 0;
+    // A month under 100% of its quota earns nothing (asked 2026-10-15): Estimated through Unpaid
+    // read 0, and so does everything built on Confirmed (Commission Payable, vouchers). A month
+    // with no quota set has no % to judge it by and is computed as before.
+    const belowQuota = r.quota > 0 && pct < 100;
+    const passingTotal = belowQuota ? 0 : round2(r.passing_total);
+    const paid = belowQuota ? 0 : round2(r.paid_passing);
+    const estimated = belowQuota ? 0 : round2(lookupCommission(brackets, weighted));
     const expected = round2(lookupCommission(brackets, passingTotal));
     const confirmed = passingTotal > 0 ? round2((paid / passingTotal) * expected) : 0;
     // Released and Unpaid as the source system reads them (asked 2026-10-03, "released commission
@@ -241,7 +246,6 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
     const deducted = round2(deductedByMonth[r.month]);
     const refunded = round2(refundedByMonth[r.month]);
     const unpaid = round2(confirmed - released);
-    const pct = r.quota > 0 ? round2((weighted / r.quota) * 100) : 0;
     return {
       month: r.month, month_name: r.month_name, quota: round2(r.quota),
       division_name: r.division_name, weighted_sales: weighted, performance_pct: pct,
