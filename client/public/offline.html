@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>T1S — Offline</title>
+  <!-- Shown by the Android app (capacitor.config.json errorPath) when it cannot reach the T1S
+       server -- no signal, or the server is down -- instead of the WebView's raw error page. -->
+  <style>
+    :root { --navy: #002248; --orange: #fa6000; --bg: #ffffff; --text: #334155; }
+    @media (prefers-color-scheme: dark) { :root { --navy: #ffffff; --bg: #0b1220; --text: #cbd5e1; } }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: system-ui, Arial, sans-serif; }
+    main { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; text-align: center; }
+    .mark { font: 900 64px 'Arial Black', Arial, sans-serif; font-style: italic; letter-spacing: -2px; color: var(--navy); line-height: 1; }
+    .mark span { color: var(--orange); }
+    h1 { font-size: 18px; color: var(--navy); margin: 28px 0 8px; }
+    p { font-size: 14px; line-height: 1.5; max-width: 300px; margin: 0 0 24px; }
+    button { font: 600 15px system-ui, Arial, sans-serif; color: #fff; background: var(--orange); border: 0; border-radius: 10px; padding: 12px 32px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark">T<span>1</span>S</div>
+    <h1>Can't reach T1S</h1>
+    <p>Check your internet connection, then try again.</p>
+    <button type="button" onclick="location.href = 'https://gsuite.graphicstar.ph/'">Retry</button>
+  </main>
+</body>
+</html>

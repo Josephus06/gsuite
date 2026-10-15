@@ -1,5 +1,18 @@
 {
   "appId": "com.graphicstar.gsuite",
-  "appName": "GSuite ERP",
-  "webDir": "dist"
+  "appName": "T1S",
+  "webDir": "dist",
+  "server": {
+    "url": "https://gsuite.graphicstar.ph",
+    "androidScheme": "https",
+    "errorPath": "offline.html"
+  },
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "css"
+    }
+  }
 }
