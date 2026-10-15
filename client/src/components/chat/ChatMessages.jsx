@@ -58,6 +58,14 @@ function seenPositions(messages, readers) {
 
 export default function ChatMessages({ messages, meId, otherUser, showNames, seenAt, readers, onReply, onReact, onUnsend }) {
   const [menuFor, setMenuFor] = useState(null); // the message whose reaction picker is open
+  const [menuBelow, setMenuBelow] = useState(false); // open the picker under the message (near the top)
+  function toggleMenu(m, e) {
+    if (menuFor === m.id) { setMenuFor(null); return; }
+    const line = e.currentTarget.closest('.cm-line');
+    const list = e.currentTarget.closest('.chat-box-list');
+    setMenuBelow(!!(line && list && line.getBoundingClientRect().top - list.getBoundingClientRect().top < 56));
+    setMenuFor(m.id);
+  }
   const [viewer, setViewer] = useState(null); // { url, name } -- a photo opened full size
   const seenBy = seenPositions(messages, readers);
 
@@ -99,7 +107,9 @@ export default function ChatMessages({ messages, meId, otherUser, showNames, see
                   {m.unsent ? (
                     <div className="cm-bubble cm-unsent">{mine ? 'You unsent a message' : 'Message unsent'}</div>
                   ) : (
-                    <div className="cm-content" title={timeOf(m.created_at)}>
+                    // Double-click a message to 👍 it (again to take it back) -- one gesture, no menu.
+                    <div className="cm-content" title={`${timeOf(m.created_at)} · double-click to 👍`}
+                      onDoubleClick={() => { window.getSelection()?.removeAllRanges(); onReact(m, '👍'); }}>
                       {images.length > 0 && (
                         <div className={`cm-images n${Math.min(images.length, 3)}`}>
                           {images.map((a) => <ChatImage key={a.id} id={a.id} name={a.file_name} onOpen={(url, name) => setViewer({ url, name, id: a.id })} />)}
@@ -116,14 +126,14 @@ export default function ChatMessages({ messages, meId, otherUser, showNames, see
                     </div>
                   )}
                   {!m.unsent && (
-                    <div className="cm-actions">
-                      <button type="button" title="React" onClick={() => setMenuFor(menuFor === m.id ? null : m.id)}>😊</button>
+                    <div className={`cm-actions ${menuFor === m.id ? 'open' : ''}`}>
+                      <button type="button" title="React" onClick={(e) => toggleMenu(m, e)}>😊</button>
                       <button type="button" title="Reply" onClick={() => onReply(m)}>↩</button>
                       {mine && <button type="button" title="Unsend" onClick={() => { if (window.confirm('Unsend this message for everyone?')) onUnsend(m); }}>🗑</button>}
                     </div>
                   )}
                   {menuFor === m.id && (
-                    <div className="cm-react-menu">
+                    <div className={`cm-react-menu ${menuBelow ? 'below' : ''}`}>
                       {REACTIONS.map((e) => (
                         <button type="button" key={e} className={(m.reactions || []).some((r) => r.emoji === e && r.mine) ? 'on' : ''}
                           onClick={() => { onReact(m, e); setMenuFor(null); }}>{e}</button>

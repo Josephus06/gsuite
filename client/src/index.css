@@ -2670,7 +2670,7 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .cm-row.pos-first, .cm-row.pos-single { margin-top: 6px; }
 .cm-row.mine { justify-content: flex-end; }
 .cm-avatar { width: 28px; flex: none; display: flex; align-items: flex-end; }
-.cm-col { display: flex; flex-direction: column; align-items: flex-start; max-width: 75%; min-width: 0; }
+.cm-col { display: flex; flex-direction: column; align-items: flex-start; max-width: 70%; min-width: 0; }
 .cm-row.mine .cm-col { align-items: flex-end; }
 .cm-line { position: relative; display: flex; align-items: center; gap: 4px; max-width: 100%; }
 .cm-row.mine .cm-line { flex-direction: row-reverse; }
@@ -2705,12 +2705,18 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .cm-file-name { min-width: 0; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cm-file-name small { display: block; font-weight: 400; opacity: .8; }
 
-.cm-actions { display: none; flex: none; gap: 0; }
-.cm-row:hover .cm-actions { display: flex; }
+/* The hover buttons float beside the bubble instead of taking room inside the line: shown and hidden
+   in place, so the bubble no longer re-wraps and jumps out from under the mouse (2026-10-15). */
+.cm-actions { position: absolute; top: 50%; left: 100%; transform: translateY(-50%); margin-left: 2px; z-index: 4;
+  display: flex; gap: 0; visibility: hidden; }
+.cm-row.mine .cm-actions { left: auto; right: 100%; margin-left: 0; margin-right: 2px; }
+.cm-row:hover .cm-actions, .cm-actions.open { visibility: visible; }
 .cm-actions button { width: 26px; height: 26px; border: 0; border-radius: 50%; background: none; color: var(--chat-dim); cursor: pointer; font-size: 14px; }
 .cm-actions button:hover { background: var(--chat-hover); }
-.cm-react-menu { position: absolute; bottom: calc(100% + 4px); left: 0; z-index: 5; display: flex; gap: 2px; padding: 4px 6px;
+.cm-react-menu { position: absolute; bottom: calc(100% + 4px); left: 0; z-index: 6; display: flex; gap: 2px; padding: 4px 6px;
   background: var(--chat-bg); border-radius: 22px; box-shadow: 0 2px 12px rgba(0, 0, 0, .25); }
+/* Near the top of the box the bar opens under the message, not behind the header. */
+.cm-react-menu.below { bottom: auto; top: calc(100% + 4px); }
 .cm-row.mine .cm-react-menu { left: auto; right: 0; }
 .cm-react-menu button { border: 0; background: none; font-size: 22px; width: 34px; height: 34px; border-radius: 50%; cursor: pointer; transition: transform .1s; }
 .cm-react-menu button:hover { transform: scale(1.25); }
