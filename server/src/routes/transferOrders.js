@@ -141,8 +141,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const params = [];
     if (status) { where.push('t.status = ?'); params.push(status); }
     if (search) {
-      where.push('(t.to_no LIKE ? OR jo.job_order_no LIKE ?)');
-      params.push(`%${search}%`, `%${search}%`);
+      where.push('(t.to_no LIKE ? OR jo.job_order_no LIKE ? OR t.memo LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
     if (req.query.withdraw_from) { where.push('t.withdraw_from_location_id = ?'); params.push(req.query.withdraw_from); }
     if (req.query.transfer_to) { where.push('t.transfer_to_location_id = ?'); params.push(req.query.transfer_to); }

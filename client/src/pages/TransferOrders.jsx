@@ -130,7 +130,7 @@ export default function TransferOrders() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="TO No. or Job Order No..." />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="TO No., Job Order No. or Memo..." />
           </div>
           <DateRangeField label="Date Created" value={created} onChange={setCreated} />
           <LocationField label="Withdraw From" value={withdrawFrom} onChange={setWithdrawFrom} locations={locations} />
@@ -161,13 +161,14 @@ export default function TransferOrders() {
                   <th>Transfer To</th>
                   <th>Job Order</th>
                   <th>Requestor</th>
+                  <th>Memo</th>
                   <th>Status</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && (
-                  <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 20 }}>No transfer orders found.</td></tr>
+                  <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>No transfer orders found.</td></tr>
                 )}
                 {pageRows.map((row) => (
                   <tr key={row.id}>
@@ -178,6 +179,7 @@ export default function TransferOrders() {
                     <td data-label="Transfer To">{row.transfer_to_name}</td>
                     <td data-label="Job Order">{row.job_order_no || '—'}</td>
                     <td data-label="Requestor">{row.requestor_name || '—'}</td>
+                    <td data-label="Memo" style={{ whiteSpace: 'pre-wrap', maxWidth: 280 }}>{row.memo || '—'}</td>
                     <td data-label="Status">{STATUS_LABELS[row.status] || row.status}</td>
                     <td><Link className="btn btn-sm btn-primary" to={`/transfer-orders/${row.id}`}>View</Link></td>
                   </tr>
