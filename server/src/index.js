@@ -132,6 +132,22 @@ const app = express();
 // already compressed formats and are skipped by compression's own type filter.
 app.use(compression());
 
+// Slow-request log: any /api call slower than SLOW_REQUEST_MS (default 1500) is written to the
+// service log with its duration, so "this module takes too long to load" can be traced to the
+// endpoint behind it -- `journalctl -u gsuite | grep '\[slow\]'`.
+const SLOW_REQUEST_MS = Number(process.env.SLOW_REQUEST_MS) || 1500;
+app.use('/api', (req, res, next) => {
+  const started = process.hrtime.bigint();
+  res.on('finish', () => {
+    const ms = Number(process.hrtime.bigint() - started) / 1e6;
+    if (ms >= SLOW_REQUEST_MS) {
+      const user = req.user?.username ? ` user=${req.user.username}` : '';
+      console.warn(`[slow] ${Math.round(ms)}ms ${req.method} ${req.originalUrl.slice(0, 300)} -> ${res.statusCode}${user}`);
+    }
+  });
+  next();
+});
+
 // CORS was wide open, which was defensible while every route demanded a bearer token -- a
 // cross-origin request without one got nothing. /api/public changed that: it is unauthenticated
 // by design, so an open policy let any site on the internet read the catalogue and post quotes
