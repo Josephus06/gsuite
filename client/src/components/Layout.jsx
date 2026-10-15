@@ -303,6 +303,7 @@ const NAV_STRUCTURE = [
     children: [
       { route: '/treasury/collection-forecast', label: 'Collection Forecast' },
       { route: '/treasury/collection-aging', label: 'Collection Report with Aging' },
+      { route: '/treasury/collection-incentive', label: 'Collection Incentive' },
     ],
   },
 ];

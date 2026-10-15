@@ -205,3 +205,6 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
 });
 
 module.exports = router;
+// Treasury > Collection Incentive counts collections exactly as this report does.
+module.exports.fetchCollections = fetchRows;
+module.exports.COLLECTION_BUCKETS = ALL_BUCKETS;
