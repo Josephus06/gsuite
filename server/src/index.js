@@ -88,6 +88,7 @@ const pendingBillingReportRoutes = require('./routes/pendingBillingReport');
 const disbursementReportRoutes = require('./routes/disbursementReport');
 const forecastReportRoutes = require('./routes/forecastReport');
 const weightedSalesReportRoutes = require('./routes/weightedSalesReport');
+const topCustomersReportRoutes = require('./routes/topCustomersReport');
 const budgetRoutes = require('./routes/budgets');
 const birReportRoutes = require('./routes/birReports');
 const collectionForecastRoutes = require('./routes/collectionForecast');
@@ -310,6 +311,7 @@ app.use('/api/reports/pending-billing', pendingBillingReportRoutes);
 app.use('/api/reports/disbursement', disbursementReportRoutes);
 app.use('/api/reports/forecast', forecastReportRoutes);
 app.use('/api/reports/weighted-sales', weightedSalesReportRoutes);
+app.use('/api/reports/top-customers', topCustomersReportRoutes);
 app.use('/api/budgets', budgetRoutes);
 // BIR Reports > Sales Report / Purchase Report -- mounted under its own prefix so each page
 // keeps its own permission row rather than borrowing the Accounting reports'.

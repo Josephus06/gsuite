@@ -63,7 +63,7 @@ export default function WeightedSalesReport() {
       const url = URL.createObjectURL(res.data);
       const a = document.createElement('a');
       const group = (meta?.divisions || []).find((d) => String(d.id) === String(applied.sales_division_id));
-      a.href = url; a.download = `weighted-sales-${applied.month}${group ? `-${group.name.replace(/[^w-]+/g, '')}` : ''}.xlsx`;
+      a.href = url; a.download = `weighted-sales-${applied.month}${group ? `-${group.name.replace(/[^\w-]+/g, '')}` : ''}.xlsx`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch { setError('Extract failed.'); } finally { setDownloading(false); }

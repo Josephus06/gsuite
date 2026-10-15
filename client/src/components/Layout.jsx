@@ -163,6 +163,7 @@ const NAV_STRUCTURE = [
       { route: '/job-orders', label: 'Job Orders' },
       { route: '/reports/pending-billing', label: 'Pending Billing' },
       { route: '/reports/weighted-sales', label: 'Weighted Sales per Month' },
+      { route: '/reports/top-customers', label: 'Top Customers per Year' },
     ],
   },
   {
