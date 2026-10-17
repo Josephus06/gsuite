@@ -121,7 +121,11 @@ async function resolveEmployeeContext(employeeId) {
 
 async function getUserMeta(userId) {
   const [[u]] = await pool.query('SELECT account_type, employee_id FROM users WHERE id = ?', [userId]);
-  return { isAdmin: u?.account_type === 'System Admin', employeeId: u?.employee_id || null };
+  const isAdmin = u?.account_type === 'System Admin';
+  // View All on this page (2026-10-17): sees every employee's commission payables, not only their
+  // own. Seeing only -- editing someone else's still takes a System Admin.
+  const viewAll = isAdmin || await userCan(userId, ROUTE, 'can_view_all');
+  return { isAdmin, viewAll, employeeId: u?.employee_id || null };
 }
 
 // The employee a compute/save applies to: an admin may target any employee via employee_id;
@@ -184,9 +188,9 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   try {
     const { search, status } = req.query;
     const where = []; const params = [];
-    // Non-admins see only their own commission payables; admins see everyone's.
+    // Their own commission payables, or everyone's with View All (System Admins have it).
     const meta = await getUserMeta(req.user.id);
-    if (!meta.isAdmin) { where.push('cp.employee_id = ?'); params.push(meta.employeeId || -1); }
+    if (!meta.viewAll) { where.push('cp.employee_id = ?'); params.push(meta.employeeId || -1); }
     if (status) { where.push('cp.status = ?'); params.push(status); }
     if (search) { where.push('(cp.commission_payable_no LIKE ? OR CONCAT(e.first_name, " ", e.last_name) LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -224,7 +228,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     );
     if (!cp) return res.status(404).json({ error: 'Not found' });
     const meta = await getUserMeta(req.user.id);
-    if (!meta.isAdmin && Number(cp.employee_id) !== Number(meta.employeeId)) {
+    if (!meta.viewAll && Number(cp.employee_id) !== Number(meta.employeeId)) {
       return res.status(403).json({ error: 'You can only view your own commission payables.' });
     }
     const [lines] = await pool.query('SELECT * FROM commission_payable_lines WHERE commission_payable_id = ? ORDER BY line_month', [req.params.id]);
@@ -260,6 +264,8 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     res.json({
       ...cp, lines, gl_impact: glImpact, vouchers,
       can_override_edit_lock: mayOverride, fully_released: fullyReleased,
+      // Edit (PUT /:id) is the owner's or a System Admin's; View All only lets others see it.
+      can_edit_record: meta.isAdmin || Number(cp.employee_id) === Number(meta.employeeId),
     });
   } catch (err) { next(err); }
 });

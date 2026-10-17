@@ -72,7 +72,7 @@ export default function CommissionPayableView() {
 
   if (loading || !cp) return <LoadingSpinner />;
 
-  const canEdit = (can('/commission-payables', 'can_edit') && !periodLocked);
+  const canEdit = (can('/commission-payables', 'can_edit') && !periodLocked && cp?.can_edit_record !== false);
   const canVoid = (can('/commission-payables', 'can_void') && !periodLocked);
   const isOpen = cp.status !== 'void';
 
