@@ -1,5 +1,5 @@
 // Undo fix-double-counted-generated-settlements.js on the invoices that also carry a credit memo dated
-// ON the cut-over day (2026-10-19). The fix counted only credits dated AFTER the cut-over, so for these
+// ON the cut-over day (the opening AR as-of date, 2026-09-30). The fix counted only credits dated AFTER the cut-over, so for these
 // it could not tell whether the cut-over credit memo or the generated settlement was the real one
 // (INV-11981 / CM-5519: the generated 18.78 was the real earlier payment). Restored exactly as they
 // were -- the generated settlement's amount and status, the invoice's amount_due and status -- from the
