@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
+import { useAuth } from '../context/useAuth';
 
 // Office Location filters start on the SIGNED-IN USER'S Default Login Location (Users > User
 // Branches, the row ticked "Default Login Location") -- asked 2026-10-19: a Head Office user's
@@ -43,12 +44,25 @@ export const headOfficeLocationId = defaultOfficeLocationId;
 // A location filter's state, starting at null (= not decided yet) and set to the user's default
 // office once known. A screen waits for it to stop being null before its first load, so the first
 // list it shows is already that office's. Choosing "All" afterwards sets '' and stays.
+//
+// Follows the signed-in account: when it changes on an open screen (an admin's "Log in as", or
+// "Return to my account"), the filter moves to the new account's default -- it used to keep the
+// first account's, so a screen opened as an admin stayed on Head Office after logging in as a
+// branch user (2026-10-19, ROSELYN P. TUNDAG / Branch - Ayala).
 export function useHeadOfficeFilter() {
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
   const [value, setValue] = useState(null);
+  const shownFor = useRef(undefined);
   useEffect(() => {
     let alive = true;
-    defaultOfficeLocationId().then((id) => { if (alive) setValue((v) => (v === null ? id : v)); });
+    defaultOfficeLocationId().then((id) => {
+      if (!alive) return;
+      const switched = shownFor.current !== undefined && shownFor.current !== userId;
+      shownFor.current = userId;
+      setValue((v) => (v === null || switched ? id : v));
+    });
     return () => { alive = false; };
-  }, []);
+  }, [userId]);
   return [value, setValue];
 }
