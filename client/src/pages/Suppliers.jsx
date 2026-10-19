@@ -99,7 +99,10 @@ export default function Suppliers() {
         await api.post('/suppliers', payload);
         setEditing(null);
       } else {
-        await api.put(`/suppliers/${editing.id}`, payload);
+        // The values as this form loaded them: the server writes only what was changed here, and
+        // refuses a change to a field someone else has changed since (a stale tab).
+        const original = Object.fromEntries(Object.keys(EMPTY).map((k) => [k, editing[k] ?? null]));
+        await api.put(`/suppliers/${editing.id}`, { ...payload, _original: original });
         await openEdit(editing);
       }
       load();

@@ -27,6 +27,34 @@ const FIELDS = ['supplier_code', 'name', 'company_name', 'tin', 'payment_term_id
 // Applying it to the text columns too keeps a cleared field matching what the importer stores.
 const blankToNull = (value) => (value === '' || value === undefined ? null : value);
 
+// Change history (2026-10-19): suppliers had none, so when SUP-249's TIN went back nobody could
+// say who did it. Each field a save changes is one audit_logs row, read on the System Information tab.
+const FIELD_LABEL = {
+  supplier_code: 'Supplier Code', name: 'Name', company_name: 'Company Name', tin: 'TIN', payment_term_id: 'Payment Term',
+  is_active: 'Active', address: 'Address', contact_no: 'Contact No', mobile_no: 'Mobile No', office_no: 'Office No',
+  fax_no: 'Fax No', email: 'Email', credit_term: 'Credit Term', term_days: 'Term Days', payee_name: 'Payee Name',
+  bank_name: 'Bank Name', bank_account_name: 'Bank Account Name', bank_account_no: 'Bank Account No', credit_limit: 'Credit Limit',
+};
+const NUMERIC = new Set(['payment_term_id', 'term_days', 'credit_limit', 'is_active']);
+// Equal as stored? '' and null are both "not filled in"; numbers compare as numbers (0.00 = 0,
+// true = 1) -- but a TIN or account number is text, where a leading zero matters.
+function same(field, a, b) {
+  const norm = (v) => {
+    if (v === null || v === undefined || v === '') return '';
+    if (typeof v === 'boolean') return v ? '1' : '0';
+    const s = String(v).trim();
+    return NUMERIC.has(field) && s !== '' && Number.isFinite(Number(s)) ? String(Number(s)) : s;
+  };
+  return norm(a) === norm(b);
+}
+async function logSupplierAudit(q, supplierId, userId, eventType, field, oldValue, newValue) {
+  const text = (v) => (v === null || v === undefined ? null : String(v));
+  await q.query(
+    `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+     VALUES ('Supplier', ?, ?, ?, ?, ?, ?)`,
+    [supplierId, eventType, field, text(oldValue), text(newValue), userId]);
+}
+
 // The list's filters, shared with its Excel extract so the file holds exactly what the list shows.
 // All optional: with none given the list is every supplier, which is the shape the supplier
 // dropdowns on seven other pages rely on. The Suppliers page itself filters in the browser on the
@@ -245,6 +273,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       values
     );
     const supplierId = result.insertId;
+    await logSupplierAudit(conn, supplierId, req.user.id, 'Created', null, null, req.body.name || null);
 
     for (const c of req.body.contacts || []) {
       await conn.query(
@@ -272,6 +301,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 });
 
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
   try {
     // Only the fields actually SENT are written. This matters now that a supplier carries the
     // twelve imported columns: the old version wrote every field in FIELDS, using null for any the
@@ -280,16 +310,62 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     // Clearing a field on purpose still works -- that sends the field, as an empty string.
     const present = FIELDS.filter((f) => req.body[f] !== undefined);
     if (present.length === 0) return res.status(400).json({ error: 'Nothing to update' });
-    await pool.query(
-      `UPDATE suppliers SET ${present.map((f) => `${f} = ?`).join(', ')}, updated_at = NOW() WHERE id = ?`,
-      [...present.map((f) => blankToNull(req.body[f])), req.params.id]
-    );
+
+    await conn.beginTransaction();
+    const [[cur]] = await conn.query('SELECT * FROM suppliers WHERE id = ? FOR UPDATE', [req.params.id]);
+    if (!cur) { await conn.rollback(); return res.status(404).json({ error: 'Not found' }); }
+
+    // A STALE TAB (2026-10-19). SUP-249's TIN was put back on 16 Oct by a save of the whole form
+    // from a page opened before the TIN was corrected. The edit screen now sends `_original`, the
+    // values as it loaded them: a field the user did not touch is not written at all, and a field
+    // they did change that someone else has changed in the meantime is refused, not overwritten.
+    const original = req.body._original && typeof req.body._original === 'object' ? req.body._original : null;
+    const toWrite = original
+      ? present.filter((f) => !(f in original) || same(f, req.body[f], original[f]) === false)
+      : present;
+    if (original) {
+      const clashes = toWrite.filter((f) => f in original && !same(f, cur[f], original[f]) && !same(f, cur[f], req.body[f]));
+      if (clashes.length) {
+        await conn.rollback();
+        const what = clashes.map((f) => `${FIELD_LABEL[f] || f} (now "${cur[f] ?? ''}")`).join(', ');
+        return res.status(409).json({
+          error: `Someone else changed ${what} on this supplier after you opened it. Close and reopen it to see the latest, then make your change again.`,
+          conflict_fields: clashes,
+        });
+      }
+    }
+
+    // What actually changes, written and recorded field by field in the supplier's history.
+    const changed = toWrite.filter((f) => !same(f, cur[f], req.body[f]));
+    if (changed.length) {
+      await conn.query(
+        `UPDATE suppliers SET ${changed.map((f) => `${f} = ?`).join(', ')}, updated_at = NOW() WHERE id = ?`,
+        [...changed.map((f) => blankToNull(req.body[f])), req.params.id]
+      );
+      for (const f of changed) {
+        await logSupplierAudit(conn, cur.id, req.user.id, 'Updated', f, cur[f], blankToNull(req.body[f]));
+      }
+    }
+    await conn.commit();
     const [[row]] = await pool.query('SELECT * FROM suppliers WHERE id = ?', [req.params.id]);
-    if (!row) return res.status(404).json({ error: 'Not found' });
     res.json(row);
   } catch (err) {
+    await conn.rollback();
     next(err);
+  } finally {
+    conn.release();
   }
+});
+
+// The supplier's change history (System Information tab): who changed which field, from what to what.
+router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT a.*, u.display_name AS set_by_name FROM audit_logs a LEFT JOIN users u ON u.id = a.set_by_user_id
+        WHERE a.auditable_type = 'Supplier' AND a.auditable_id = ? ORDER BY a.set_at DESC, a.id DESC`,
+      [req.params.id]);
+    res.json(rows.map((r) => ({ ...r, field_name: FIELD_LABEL[r.field_name] || r.field_name })));
+  } catch (err) { next(err); }
 });
 
 router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async (req, res, next) => {

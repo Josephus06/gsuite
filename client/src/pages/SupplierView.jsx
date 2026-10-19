@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
+import DataTable from '../components/DataTable';
 
-import { displayDate } from '../utils/dates';
+import { displayDate, displayAuditTime } from '../utils/dates';
 
 function money(v) {
   const n = Number(v);
@@ -48,6 +49,11 @@ export default function SupplierView() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [tab, setTab] = useState('transactions');
+  // Who changed what on this supplier (2026-10-19), loaded when System Information is opened.
+  const [auditLogs, setAuditLogs] = useState([]);
+  useEffect(() => {
+    if (tab === 'system') api.get(`/suppliers/${id}/audit-logs`).then(({ data }) => setAuditLogs(data || [])).catch(() => setAuditLogs([]));
+  }, [tab, id]);
 
   const [ledger, setLedger] = useState({ rows: [], total: 0 });
   const [ledgerLoading, setLedgerLoading] = useState(false);
@@ -305,6 +311,16 @@ export default function SupplierView() {
                 this is -- and it is set by the importer alone, never typed. */}
             <div className="field"><label>Live Record</label><div>{supplier.live_id || supplier.live_pk || '—'}</div></div>
           </div>
+          <h4 style={{ margin: '16px 0 8px' }}>Change History</h4>
+          <DataTable
+            columns={[
+              { key: 'set_at', label: 'When', render: (r) => displayAuditTime(r.set_at) },
+              { key: 'set_by_name', label: 'Changed By' }, { key: 'event_type', label: 'Type' },
+              { key: 'field_name', label: 'Field' }, { key: 'old_value', label: 'Old Value' }, { key: 'new_value', label: 'New Value' },
+            ]}
+            rows={auditLogs}
+            emptyLabel="No changes recorded yet. Changes are recorded from 19 Oct 2026."
+          />
         </div>
       )}
     </div>

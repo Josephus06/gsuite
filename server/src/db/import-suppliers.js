@@ -138,6 +138,16 @@ async function main() {
 
   const conn = await pool.getConnection();
   let updated = 0; let inserted = 0; let unchanged = 0;
+  let keptEdits = 0;
+  // Fields corrected by hand in T1S, per supplier -- never overwritten from live (see below).
+  const editedHere = new Map();
+  const [edits] = await pool.query(
+    "SELECT DISTINCT auditable_id, field_name FROM audit_logs WHERE auditable_type = 'Supplier' AND event_type = 'Updated' AND field_name IS NOT NULL");
+  for (const e of edits) {
+    const id = Number(e.auditable_id);
+    if (!editedHere.has(id)) editedHere.set(id, new Set());
+    editedHere.get(id).add(e.field_name);
+  }
   let nextCode = DRY ? 0 : await nextSupplierCode(conn);
   const fields = ['live_pk', 'live_id', 'name', 'company_name', 'address', 'contact_no', 'mobile_no',
     'office_no', 'fax_no', 'email', 'tin', 'credit_term', 'term_days', 'payee_name', 'bank_name',
@@ -153,12 +163,16 @@ async function main() {
         // COALESCE keeps whatever is already local when live has nothing -- enrichment, not
         // replacement. The name is left alone entirely: it is what the match was made on, and
         // rewriting it would make a re-run unable to find the row it just changed.
-        const sets = fields.filter((f) => f !== 'name')
-          .map((f) => `${f} = COALESCE(?, ${f})`).join(', ');
+        // A field somebody has corrected in T1S (its change history, routes/suppliers.js) is left
+        // alone too (2026-10-19): a re-run had put live's values back over hand edits.
+        const mine = editedHere.get(Number(existing.id)) || new Set();
+        const cols = fields.filter((f) => f !== 'name' && !mine.has(f));
+        if (mine.size) keptEdits += 1;
+        const sets = cols.map((f) => `${f} = COALESCE(?, ${f})`).join(', ');
         if (!DRY) {
           await conn.query(
             `UPDATE suppliers SET ${sets}, updated_at = NOW() WHERE id = ?`,
-            [...fields.filter((f) => f !== 'name').map((f) => s[f]), existing.id],
+            [...cols.map((f) => s[f]), existing.id],
           );
         }
         if (existing.live_pk === s.live_pk) unchanged += 1; else updated += 1;
@@ -188,6 +202,7 @@ async function main() {
   console.log(`Enriched and linked : ${updated}`);
   console.log(`Already linked      : ${unchanged}`);
   console.log(`Newly created       : ${inserted}`);
+  console.log(`Hand edits kept     : ${keptEdits} supplier(s) -- fields corrected in T1S left as they are`);
 
   // Local rows live knows nothing about. Reported, never deleted -- purchase history points at
   // these, and a supplier dropped from live is not a supplier that never existed.
