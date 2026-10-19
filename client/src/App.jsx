@@ -14,6 +14,8 @@ import AssetItems from './pages/AssetItems';
 import Assets from './pages/Assets';
 import AssetForm from './pages/AssetForm';
 import AssetView from './pages/AssetView';
+import Fleet from './pages/Fleet';
+import FleetVehicle from './pages/FleetVehicle';
 import AssetTransfers from './pages/AssetTransfers';
 import AssetTransferForm from './pages/AssetTransferForm';
 import AssetTransferView from './pages/AssetTransferView';
@@ -493,6 +495,9 @@ function App() {
         {/* Assets Monitoring. /new is declared before /:id so "new" is not read as a record id. */}
         <Route path="/asset-items" element={<AssetItems />} />
         <Route path="/assets" element={<Assets />} />
+        {/* Fleet before /assets/:id, which would otherwise read "fleet" as an asset id. */}
+        <Route path="/assets/fleet" element={<Fleet />} />
+        <Route path="/assets/fleet/:assetId" element={<FleetVehicle />} />
         <Route path="/assets/new" element={<AssetForm />} />
         <Route path="/assets/:id/edit" element={<AssetForm />} />
         <Route path="/assets/:id" element={<AssetView />} />

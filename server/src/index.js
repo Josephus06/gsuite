@@ -109,6 +109,7 @@ const rfqcJobOrderRoutes = require('./routes/rfqcJobOrders');
 const rmaJobOrderRoutes = require('./routes/rmaJobOrders');
 const assetItemRoutes = require('./routes/assetItems');
 const assetRoutes = require('./routes/assets');
+const fleetRoutes = require('./routes/fleet');
 const assetTransferRoutes = require('./routes/assetTransfers');
 const assetAuditRoutes = require('./routes/assetAudits');
 const assetClassRoutes = require('./routes/assetClasses');
@@ -403,6 +404,8 @@ app.use('/api/asset-disposals', assetDisposalRoutes);
 // BEFORE the general reports router so its two paths are matched here first.
 app.use('/api/reports', assetReportRoutes);
 app.use('/api/assets', assetRoutes);
+// Assets > Fleet (Vehicles) -- its own prefix so the assets router's /:id never meets it.
+app.use('/api/fleet', fleetRoutes);
 // The Archiver, three modules under one section. Credentials keeps secrets encrypted at rest and
 // only ever releases one through /credentials/:id/reveal, which costs a fresh emailed code.
 app.use('/api/archiver/credentials', archiverRoutes);
@@ -509,6 +512,24 @@ if (crmAttentionJobEnabled()) {
 // business time. OFF unless CHAT_PURGE_JOB=1 -- set it on ONE box of the replicated pair.
 const { chatPurgeJobEnabled, scheduleChatPurge } = require('./lib/chatPurge');
 if (chatPurgeJobEnabled()) scheduleChatPurge();
+
+// Fleet reminders (lib/fleet.js runFleetReminders): registration / insurance / emission expiring
+// and PMS due, to the General Managers, custodian and in-charge, once a day at 7:00 business time.
+// OFF unless FLEET_REMINDER_JOB=1 -- set it on ONE box of the replicated set: each reminder is
+// recorded in vehicle_reminders_sent, and two boxes writing the same row would collide.
+if (process.env.FLEET_REMINDER_JOB === '1') {
+  const { runFleetReminders } = require('./lib/fleet');
+  const hour = Number(process.env.FLEET_REMINDER_HOUR || 7);
+  const scheduleNextFleetRun = () => {
+    const delayMs = msUntilBusinessTime(hour, 0);
+    console.log(`Fleet reminders scheduled for ${new Date(Date.now() + delayMs).toISOString()}`);
+    setTimeout(async () => {
+      try { console.log('Fleet reminders:', await runFleetReminders()); } catch (err) { console.error('Fleet reminders failed:', err); }
+      scheduleNextFleetRun();
+    }, delayMs);
+  };
+  scheduleNextFleetRun();
+}
 // Unfinished feed video uploads, cleared after a day -- only those whose file is on this server.
 require('./lib/feedVideos').scheduleFeedVideoSweep();
 

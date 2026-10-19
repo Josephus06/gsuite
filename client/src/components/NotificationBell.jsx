@@ -18,6 +18,8 @@ function formatTime(v) {
 function notificationTypeLabel(type) {
   switch (type) {
     case 'ticket_pending_approval': return 'Pending Approval';
+    case 'vehicle_registration_due': case 'vehicle_insurance_due': case 'vehicle_emission_due': case 'vehicle_pms_due': return 'Vehicle Due';
+    case 'vehicle_registration_overdue': case 'vehicle_insurance_overdue': case 'vehicle_emission_overdue': case 'vehicle_pms_overdue': return 'Vehicle Overdue';
     case 'ticket_received': return 'New Ticket';
     case 'ticket_ready': return 'Ticket Ready';
     case 'ticket_assigned': return 'Assigned';
@@ -127,6 +129,8 @@ export default function NotificationBell() {
     // carry -- it opens the report that lists what is still parked.
     if (n.related_type === 'ParkedBankItems') return '/reports/parked-bank-items';
     if (n.related_type === 'PurchaseOrder' && n.related_id) return `/purchase-orders/${n.related_id}`;
+    // Fleet reminders (lib/fleet.js): registration / insurance / emission / PMS due on a vehicle.
+    if (n.related_type === 'Vehicle' && n.related_id) return `/assets/fleet/${n.related_id}`;
     if (n.related_type === 'Form' && n.related_id) return `/forms/${n.related_id}`;
     // Design hand-off notifications. An artist told the work is theirs goes straight to the
     // run screen where they start the timer; everyone else goes to the order itself.

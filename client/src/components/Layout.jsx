@@ -143,6 +143,7 @@ const NAV_STRUCTURE = [
     label: 'Assets',
     children: [
       { route: '/assets', label: 'Assets' },
+      { route: '/assets/fleet', label: 'Fleet (Vehicles)' },
       { route: '/asset-transfers', label: 'Asset Transfers' },
       { route: '/asset-audits', label: 'Asset Audits' },
       { route: '/asset-items', label: 'Asset Types' },

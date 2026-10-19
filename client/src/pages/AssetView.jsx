@@ -138,6 +138,8 @@ export default function AssetView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={'/assets'}>Back to Lists</Link>
+          {/* A vehicle's plate, registration, PMS and fuel (Assets > Fleet). */}
+          {can('/assets/fleet', 'can_view') && <Link className="btn btn-sm" to={`/assets/fleet/${a.id}`}>Vehicle / Fleet</Link>}
           {canAct && can('/assets', 'can_edit') && <Link className="btn btn-sm btn-primary" to={`/assets/${id}/edit`}>Edit</Link>}
           {canAct && can('/assets', 'can_edit') && <button className="btn btn-sm" onClick={() => setShowStatus(true)}>Change Status</button>}
           {canAct && can('/assets', 'can_approve') && !a.parent_asset_id && <button className="btn btn-sm" onClick={() => setShowRelocate(true)}>Correct Location</button>}

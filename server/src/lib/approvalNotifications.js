@@ -179,4 +179,4 @@ function notifyFormStatus(formId, actorId) {
   });
 }
 
-module.exports = { notifyPoPending, notifyPoApproved, notifyFormStatus };
+module.exports = { notifyPoPending, notifyPoApproved, notifyFormStatus, insertFor, usersWithPermission };
