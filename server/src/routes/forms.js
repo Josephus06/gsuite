@@ -7,8 +7,9 @@ const { BILLABLE_FORM_TYPES, liquidationBilling } = require('../lib/liquidationP
 const { fundTransferRequestPosting } = require('../lib/fundTransferPosting');
 const {
   DEPARTMENT_NOTED_TYPES, isDepartmentNoter, departmentsHeadedBy, notersFor,
-  AP_NOTED_TYPES, isAccountsPayable, notersForDoc, leaveApproversFor, approvesLeaveAnywhere,
+  AP_NOTED_TYPES, isAccountsPayable, notersForDoc,
 } = require('../lib/formNoters');
+const { leaveRoute } = require('../lib/leaveRoute');
 const { notifyFormStatus } = require('../lib/approvalNotifications');
 
 const router = express.Router();
@@ -304,30 +305,34 @@ async function overtimeApproval(userId, doc, d) {
 }
 
 // Who gives the final approval (NOTED -> APPROVED), for every type but overtime (overtimeApproval).
-// A Leave Application is not noted (2026-10-19): it waits on approval from the moment it is
-// submitted (one noted before that change can still be approved).
 //
-// A Leave Application (asked 2026-10-19) is approved by the people its department has ticked
-// "Approve leave" in Lookups > Departments -- only them, once any are ticked: naming who approves a
-// department's leave is the point of the tick. A department with nobody ticked keeps the Forms
-// Approval page's approvers (can_approve), as every other form does.
-//   { allowed: may approve it now, eligible: is one of its approvers, approvers: the ticked names }
-const awaitsApproval = (doc) => doc.status === 'noted' || (doc.type === 'leave' && doc.status === 'submitted');
+// A Leave Application follows the filer's reporting line (lib/leaveRoute.js, 2026-10-19): noted by
+// their direct supervisor when there is one below the approver, approved by the first SBU / General
+// Manager / department leave approver up the line (an SBU's own leave: whoever they report to).
+// With nobody to note it waits on approval from the moment it is submitted. approvers: [] there
+// means the Forms Approval page's approvers.
+//   { allowed: may approve it now, eligible: is one of its approvers, approvers, noters }
+const isMember = (list, userId) => list.some((a) => Number(a.id) === Number(userId));
 async function mayApprove(userId, doc) {
   if (doc.type === 'leave') {
-    const approvers = await leaveApproversFor(doc.department_id);
-    if (approvers.length) {
-      const eligible = approvers.some((a) => Number(a.id) === Number(userId));
-      return {
-        allowed: eligible && awaitsApproval(doc),
-        eligible,
-        approvers,
-        reason: eligible ? null : `Only ${approvers.map((a) => a.display_name).join(' or ')} can approve leave for ${doc.department || 'this department'}.`,
-      };
+    const route = await leaveRoute(doc);
+    const atStep = route.noters.length ? doc.status === 'noted' : ['submitted', 'noted'].includes(doc.status);
+    const eligible = route.approvers.length ? isMember(route.approvers, userId) : await userCan(userId, APPROVAL_ROUTE, 'can_approve');
+    const waitingNote = route.noters.length > 0 && doc.status === 'submitted';
+    let reason = null;
+    if (!eligible) {
+      reason = route.approvers.length
+        ? `Only ${route.approvers.map((a) => a.display_name).join(' or ')} can approve this leave.`
+        : 'You do not have permission to perform this action';
+    } else if (waitingNote) {
+      reason = `This has to be noted first, by ${route.noters.map((a) => a.display_name).join(' or ')}.`;
+    } else if (!atStep) {
+      reason = 'Not waiting on approval.';
     }
+    return { allowed: eligible && atStep, eligible, approvers: route.approvers, noters: route.noters, reason };
   }
   const eligible = await userCan(userId, APPROVAL_ROUTE, 'can_approve');
-  return { allowed: eligible && awaitsApproval(doc), eligible, approvers: [], reason: eligible ? null : 'You do not have permission to perform this action' };
+  return { allowed: eligible && doc.status === 'noted', eligible, approvers: [], noters: [], reason: eligible ? null : 'You do not have permission to perform this action' };
 }
 
 // Who may look at one form. Its owner always; anyone holding can_view_all on /forms; the approvers,
@@ -345,8 +350,11 @@ async function maySee(userId, doc) {
   if (await userCan(userId, ROUTE, 'can_view_all')) return true;
   // One they have already acted on -- noted, approved or rejected.
   if ([doc.noted_by, doc.approved_by, doc.rejected_by].some((u) => u != null && Number(u) === Number(userId))) return true;
-  // A Leave Application: whoever its department has ticked to approve leave.
-  if (doc.type === 'leave' && (await leaveApproversFor(doc.department_id)).some((a) => Number(a.id) === Number(userId))) return true;
+  // A Leave Application: the supervisor who notes it and whoever approves it (lib/leaveRoute.js).
+  if (doc.type === 'leave') {
+    const route = await leaveRoute(doc);
+    if (isMember(route.noters, userId) || isMember(route.approvers, userId)) return true;
+  }
   // An overtime request: the employee it is for, and their department's heads, who approve it.
   if (doc.type === 'overtime') {
     const d = await overtimeDetail(doc.id);
@@ -360,8 +368,14 @@ async function maySee(userId, doc) {
 // May this user note this particular form, and if not, why not? One answer used by the button, the
 // endpoint and the explanation on screen, so the three cannot disagree.
 async function mayNote(userId, doc) {
-  // A Leave Application goes straight to its approver once submitted (2026-10-19).
-  if (doc.type === 'leave') return { allowed: false, reason: 'A Leave Application goes straight to approval -- there is nothing to note.' };
+  // A Leave Application is noted by the filer's direct supervisor, when the line has one below the
+  // approver (lib/leaveRoute.js); otherwise it goes straight to approval.
+  if (doc.type === 'leave') {
+    const route = await leaveRoute(doc);
+    if (!route.noters.length) return { allowed: false, reason: 'This leave goes straight to approval -- there is nothing to note.' };
+    if (isMember(route.noters, userId)) return { allowed: true };
+    return { allowed: false, reason: `Only ${route.noters.map((a) => a.display_name).join(' or ')} can note this leave.` };
+  }
   // An overtime request for yourself goes straight to your head for approval -- nothing to note.
   if (doc.type === 'overtime') {
     const d = await overtimeDetail(doc.id);
@@ -447,6 +461,19 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 // page, which shows everything, or heading a department, which shows that department's forms. A
 // head who had to be granted the whole approval page to find their own team's expense claims would
 // also be granted sight of every other department's.
+// The open leave forms this user notes or approves by the filer's reporting line. Computed per
+// form -- the line is a walk up user_supervisors, not something one SQL join expresses.
+async function leaveWaitingOn(userId) {
+  const [open] = await pool.query(
+    "SELECT id, type, status, user_id, department_id FROM form_requests WHERE type = 'leave' AND status IN ('submitted', 'noted')");
+  const ids = [];
+  for (const doc of open) {
+    const route = await leaveRoute(doc);
+    if (isMember(route.noters, userId) || isMember(route.approvers, userId)) ids.push(doc.id);
+  }
+  return ids;
+}
+
 router.get('/approval/queue', requireAuth, async (req, res, next) => {
   try {
     // Users see only the forms they are involved in (2026-10-13); the approvers, whom every form
@@ -459,9 +486,9 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
     const [[otMine]] = canSeeAll ? [[null]] : await pool.query(
       'SELECT 1 AS x FROM form_overtime_details WHERE target_user_id = ? LIMIT 1', [req.user.id]).catch(() => [[null]]);
     const pageViewer = canSeeAll ? true : await userCan(req.user.id, APPROVAL_ROUTE, 'can_view');
-    // Ticked to approve some department's leave (2026-10-19): sees that department's leave forms.
-    const leaveApprover = canSeeAll ? false : await approvesLeaveAnywhere(req.user.id);
-    if (!canSeeAll && !pageViewer && headOf.length === 0 && !isAp && !otMine && !leaveApprover) {
+    // Leave waiting on this user by the filer's reporting line (lib/leaveRoute.js, 2026-10-19).
+    const leaveIds = canSeeAll ? [] : await leaveWaitingOn(req.user.id);
+    if (!canSeeAll && !pageViewer && headOf.length === 0 && !isAp && !otMine && !leaveIds.length) {
       return res.status(403).json({ error: 'You do not have permission to perform this action' });
     }
 
@@ -489,11 +516,7 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
         mine.push("(f.type = 'overtime' AND EXISTS (SELECT 1 FROM form_overtime_details o WHERE o.form_request_id = f.id AND o.target_user_id = ?))");
         params.push(req.user.id);
       }
-      if (leaveApprover) {
-        mine.push(`(f.type = 'leave' AND EXISTS (SELECT 1 FROM department_ticket_approvers a
-                   WHERE a.department_id = f.department_id AND a.user_id = ? AND a.can_approve_leave = 1))`);
-        params.push(req.user.id);
-      }
+      if (leaveIds.length) { mine.push('f.id IN (?)'); params.push(leaveIds); }
       // Their own forms, and the ones they noted, approved or rejected.
       mine.push('(f.user_id = ? OR f.noted_by = ? OR f.approved_by = ? OR f.rejected_by = ?)');
       params.push(req.user.id, req.user.id, req.user.id, req.user.id);
@@ -789,8 +812,12 @@ router.get('/:id', requireAuth, async (req, res, next) => {
 
     const appr = await mayApprove(req.user.id, doc);
     doc.can_approve = appr.eligible;
-    // A leave whose department names its approvers says who they are (Lookups > Departments).
-    if (doc.type === 'leave') doc.leave_approvers = appr.approvers.map((a) => a.display_name);
+    // A leave says who notes and who approves it, by the filer's reporting line.
+    if (doc.type === 'leave') {
+      doc.leave_approvers = appr.approvers.map((a) => a.display_name);
+      doc.leave_needs_note = appr.noters.length > 0;
+      doc.noters = appr.noters.map((a) => a.display_name);
+    }
     doc.can_reject = await mayReject(req.user.id, doc);
     if (doc.type === 'overtime') {
       // Approved by department heads, not the Forms Approval page (see overtimeApproval).
@@ -1224,7 +1251,7 @@ router.post('/:id/submit', requireAuth, requirePermission(ROUTE, 'can_add'), asy
 router.post('/:id/note', requireAuth, async (req, res, next) => {
   try {
     const [[doc]] = await pool.query(
-      'SELECT id, type, status, department_id, department FROM form_requests WHERE id = ?', [req.params.id]);
+      'SELECT id, type, status, user_id, department_id, department FROM form_requests WHERE id = ?', [req.params.id]);
     if (!doc) return res.status(404).json({ error: 'Not found' });
 
     const { allowed, reason } = await mayNote(req.user.id, doc);
@@ -1284,11 +1311,12 @@ router.post('/:id/gate-pass/:which', requireAuth, async (req, res, next) => {
 router.post('/:id/approve', requireAuth, async (req, res, next) => {
   try {
     const [[doc]] = await pool.query(
-      'SELECT id, type, status, department, department_id FROM form_requests WHERE id = ?', [req.params.id]);
+      'SELECT id, type, status, user_id, department, department_id FROM form_requests WHERE id = ?', [req.params.id]);
     if (!doc) return res.status(404).json({ error: 'Not found' });
     if (doc.type === 'overtime') return res.status(409).json({ error: "An overtime request is approved by the department head, from the request itself." });
     const appr = await mayApprove(req.user.id, doc);
     if (!appr.eligible) return res.status(403).json({ error: appr.reason });
+    if (doc.type === 'leave' && !appr.allowed) return res.status(409).json({ error: appr.reason || 'Not waiting on approval.' });
 
     // NOTING IS A GATE, not a step that can be skipped. The source allowed submitted -> approved
     // directly; here a form must be noted by its department's head first, so the head's sign-off
@@ -1312,8 +1340,8 @@ router.post('/:id/approve', requireAuth, async (req, res, next) => {
           : 'This has to be noted before it can be approved.',
       });
     }
-    if (!awaitsApproval(doc)) {
-      return res.status(409).json({ error: doc.type === 'leave' ? 'Only a submitted leave can be approved.' : 'Only a noted form can be approved.' });
+    if (doc.type !== 'leave' && doc.status !== 'noted') {
+      return res.status(409).json({ error: 'Only a noted form can be approved.' });
     }
 
     await pool.query(
@@ -1380,7 +1408,7 @@ async function mayReject(userId, doc) {
     if ((await overtimeApproval(userId, doc, d)).allowed) return true;
     return doc.status === 'submitted' && (await mayNote(userId, doc)).allowed;
   }
-  // The approver (for leave, the department's ticked leave approvers when it has any).
+  // The approver (for leave, by the filer's reporting line -- lib/leaveRoute.js).
   if ((await mayApprove(userId, doc)).eligible) return true;
   return doc.status === 'submitted' && (await mayNote(userId, doc)).allowed;
 }
@@ -1388,7 +1416,7 @@ async function mayReject(userId, doc) {
 router.post('/:id/reject', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[doc]] = await conn.query('SELECT id, type, status, department_id, department FROM form_requests WHERE id = ?', [req.params.id]);
+    const [[doc]] = await conn.query('SELECT id, type, status, user_id, department_id, department FROM form_requests WHERE id = ?', [req.params.id]);
     if (!doc) return res.status(404).json({ error: 'Not found' });
     if (!['submitted', 'noted'].includes(doc.status)) {
       return res.status(409).json({ error: 'Only a submitted or noted form can be rejected.' });

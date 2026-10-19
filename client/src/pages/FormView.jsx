@@ -142,18 +142,20 @@ export default function FormView() {
   const mayNote = doc.can_note && doc.status === 'submitted';
   // A liquidation is noted by Accounts Payable only once every item has a COGS account.
   const cogsBlocksNote = mayNote && doc.needs_cogs && doc.cogs_missing > 0;
-  // A Leave Application is not noted (2026-10-19): submitted, it waits on its approver.
+  // A Leave Application follows the filer's reporting line (2026-10-19): noted by their supervisor
+  // when there is one below the approver (leave_needs_note), otherwise straight to approval.
   const isLeave = doc.type === 'leave';
-  const noteBlocked = !isLeave && doc.status === 'submitted' && !doc.can_note && doc.note_blocked_reason;
+  const leaveDirect = isLeave && !doc.leave_needs_note;
+  const noteBlocked = !leaveDirect && doc.status === 'submitted' && !doc.can_note && doc.note_blocked_reason;
   // Approving reads only from NOTED -- the head's sign-off is a gate, not a step to skip. Rejecting
   // still works from SUBMITTED: sending something back does not need the head to have seen it first.
-  const mayApprove = doc.can_approve && (doc.status === 'noted' || (isLeave && doc.status === 'submitted'));
+  const mayApprove = doc.can_approve && (doc.status === 'noted' || (leaveDirect && doc.status === 'submitted'));
   // Decided by the server: an approver at submitted or noted, and the noter (department head, or
   // Accounts Payable for a liquidation) while the form is waiting on them.
   const mayReject = !!doc.can_reject;
   // Said plainly to the approver looking at a form they cannot yet act on, so a missing Approve
   // button reads as "waiting on the head" rather than as something broken.
-  const awaitingNote = !isLeave && doc.can_approve && doc.status === 'submitted';
+  const awaitingNote = !leaveDirect && doc.can_approve && doc.status === 'submitted';
   // An approved liquidation goes to the books through Vendor Bills -- one, or several split by item
   // (2026-10-12), each item on one bill -- OR through one Journal while nothing has posted it yet.
   // A Request for Payment is billed the same way, by Vendor Bill only -- no Journal (2026-10-12).
@@ -265,7 +267,7 @@ export default function FormView() {
         </div>
       )}
       {/* A leave whose department names its approvers (Lookups > Departments > Approve leave). */}
-      {isLeave && ['submitted', 'noted'].includes(doc.status) && !doc.can_approve && (doc.leave_approvers || []).length > 0 && (
+      {isLeave && (doc.status === 'noted' || (leaveDirect && doc.status === 'submitted')) && !doc.can_approve && (doc.leave_approvers || []).length > 0 && (
         <div className="muted" style={{ marginBottom: 8 }}>
           Waiting on approval by {doc.leave_approvers.join(' or ')}.
         </div>

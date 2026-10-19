@@ -457,8 +457,9 @@ export default function Lookups() {
                   Tickets: any ticket created by someone in this department needs sign-off from one of these people
                   before the receiving department can assign it. Forms: a Request for Payment, Fund Transfer, Revolving Fund or
                   Attendance Adjustment filed from this department is noted by one of them -- tick which forms each one notes.
-                  Leave: a Leave Application from this department goes straight to whoever is ticked Approve leave once
-                  submitted -- no noting (nobody ticked: the Forms Approval approvers).
+                  Leave follows each person's Supervisors (Users &amp; Permissions): their supervisor notes, and the first SBU,
+                  General Manager or person ticked Approve leave up the line approves; an SBU's leave is approved by whoever
+                  they report to. Someone with no supervisors set: approved by this department's Approve leave person.
                   Leave empty for no approval gate.
                 </div>
                 <div className="dept-heads">

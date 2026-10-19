@@ -1,5 +1,6 @@
 const pool = require('../db');
-const { notersForDoc, DEPARTMENT_NOTED_TYPES, AP_NOTED_TYPES, notersFor, leaveApproversFor } = require('./formNoters');
+const { notersForDoc, DEPARTMENT_NOTED_TYPES, AP_NOTED_TYPES, notersFor } = require('./formNoters');
+const { leaveRoute } = require('./leaveRoute');
 
 // The bell for documents waiting on somebody's decision -- Purchase Orders and the request Forms.
 // Until 2026-10-07 neither wrote a notification at all, so an approver only found a PO or a form
@@ -136,14 +137,22 @@ function notifyFormStatus(formId, actorId) {
       return;
     }
 
-    // Leave Application (2026-10-19): no noting -- submitted goes straight to its approvers, the
-    // department's ticked leave approvers or, with none ticked, the Forms Approval approvers.
-    if (doc.type === 'leave' && doc.status === 'submitted') {
-      const ticked = (await leaveApproversFor(doc.department_id)).map((u) => u.id);
-      await insertFor(ticked.length ? ticked : await usersWithPermission('/forms/approval', 'can_approve'), {
-        ...base, type: 'form_pending_approval', title: `${what} needs your approval`,
-        message: `${what}${doc.department ? ` from ${doc.department}` : ''} is waiting for your approval.`,
-      }, actorId);
+    // Leave Application (2026-10-19): by the filer's reporting line (lib/leaveRoute.js) -- submitted
+    // goes to the supervisor who notes it, or straight to its approver when there is nobody to note;
+    // noted goes to the approver. approvers: [] there means the Forms Approval approvers.
+    if (doc.type === 'leave' && (doc.status === 'submitted' || doc.status === 'noted')) {
+      const route = await leaveRoute(doc);
+      const approverIds = async () => (route.approvers.length
+        ? route.approvers.map((u) => u.id) : usersWithPermission('/forms/approval', 'can_approve'));
+      const from = doc.department ? ` from ${doc.department}` : '';
+      if (doc.status === 'submitted' && route.noters.length) {
+        await insertFor(route.noters.map((u) => u.id), { ...base, type: 'form_pending_note', title: `${what} needs your noting`, message: `${what}${from} is waiting to be noted.` }, actorId);
+      } else if (doc.status === 'submitted') {
+        await insertFor(await approverIds(), { ...base, type: 'form_pending_approval', title: `${what} needs your approval`, message: `${what}${from} is waiting for your approval.` }, actorId);
+      } else {
+        await insertFor(await approverIds(), { ...base, type: 'form_pending_approval', title: `${what} needs your approval`, message: `${what} has been noted and is waiting for your approval.` }, actorId);
+        await insertFor([doc.user_id], { ...base, type: 'form_noted', title: `${what} was noted`, message: `${what} has been noted and is now waiting for approval.` }, actorId);
+      }
       return;
     }
 
