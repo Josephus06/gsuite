@@ -141,6 +141,8 @@ export default function TransferOrderEdit() {
         }
         const bad = draftLines.find((l) => !(Number(l.qty) > 0));
         if (bad) { setError(`Enter a Qty above zero for ${bad.item_name}.`); return; }
+        // Only a System Admin edits a saved TO (2026-10-19), so anyone else adds its items now.
+        if (!draftLines.length && user?.account_type !== 'System Admin') { setError('Add at least one item before saving.'); return; }
         const { data } = await api.post('/transfer-orders', {
           ...form,
           lines: draftLines.map((l) => ({ item_id: l.item_id, qty: Number(l.qty), uom: l.uom, unit_used: l.unit_used, memo: l.memo || null })),
@@ -182,13 +184,11 @@ export default function TransferOrderEdit() {
   if (loading) return <LoadingSpinner />;
 
   const isPending = !to || to.status === 'pending_fulfillment';
-  // Past Pending Fulfillment a System Admin may still edit (asked 2026-10-12), never once Cancelled --
-  // except Withdraw From / Transfer To, which stay as they are once stock has moved (toEditBlocked).
-  const adminPastPending = !isPending && user?.account_type === 'System Admin' && to?.status !== 'cancelled';
-  // Can Edit on Transfer Orders; or, with Can Add, a NEW TO or one you created yourself (the server
-  // allows the same -- requireToEdit in routes/transferOrders.js).
-  const canEdit = (isPending || adminPastPending) && (can('/transfer-orders', 'can_edit')
-    || (can('/transfer-orders', 'can_add') && (isNew || Number(to?.created_by_user_id) === Number(user?.id))));
+  const isAdmin = user?.account_type === 'System Admin';
+  // A saved TO is edited by a System Admin only, at any status (2026-10-19) -- except Withdraw From /
+  // Transfer To, which stay as they are once stock has moved. A NEW one, by anyone with Can Add.
+  const adminPastPending = !isPending && isAdmin;
+  const canEdit = isNew ? can('/transfer-orders', 'can_add') : isAdmin;
 
   return (
     <div>

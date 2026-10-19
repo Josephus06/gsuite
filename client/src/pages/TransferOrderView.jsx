@@ -93,9 +93,10 @@ export default function TransferOrderView() {
 
   if (loading || !to) return <LoadingSpinner />;
 
-  // Can Edit, or the TO's own creator with Can Add (the server's requireToEdit).
-  const canEdit = !periodLocked && (can('/transfer-orders', 'can_edit')
-    || (can('/transfer-orders', 'can_add') && Number(to?.created_by_user_id) === Number(user?.id)));
+  // Editing a TO -- header and lines -- is a System Admin's alone, at any status (2026-10-19; the
+  // server's requireToEdit).
+  const isAdmin = user?.account_type === 'System Admin';
+  const canEdit = !periodLocked && isAdmin;
   // Fulfilling and receiving are separate jobs done by the two warehouses, and each now has its
   // own permission page. They both used to be can_approve on the Transfer Order, so one switch
   // let a person do both ends of the transfer.
@@ -103,19 +104,13 @@ export default function TransferOrderView() {
   // about the transfer's STATUS rather than the user's rights. Both have to hold.
   const mayFulfill = can('/item-fulfillments', 'can_add');
   const mayReceive = can('/item-receipts', 'can_add');
-  const isPending = to.status === 'pending_fulfillment';
-  // Editable while Pending Fulfillment; past that by a System Admin only, never once Cancelled
-  // (asked 2026-10-12 -- the server's toEditBlocked).
-  const isAdmin = user?.account_type === 'System Admin';
-  const editableStatus = isPending || (isAdmin && to.status !== 'cancelled');
   const canStillFulfill = CAN_STILL_FULFILL.includes(to.status);
   const canReceive = CAN_RECEIVE.includes(to.status);
-  const canCancel = to.status !== 'received' && to.status !== 'cancelled';
-  // Who may cancel (asked 2026-10-12; the server's PUT /:id/cancel): while Pending Fulfillment, the
-  // person who raised it or anyone with Can Edit; once fulfilled, a System Admin only.
+  // Cancellable while not fulfilled or partially fulfilled (2026-10-19; the server's PUT /:id/cancel),
+  // by the person who raised it, anyone with Can Edit, or a System Admin.
+  const canCancel = CAN_STILL_FULFILL.includes(to.status);
   const ownTo = Number(to?.created_by_user_id) === Number(user?.id);
-  const mayCancel = !periodLocked && canCancel
-    && (isPending ? (ownTo || can('/transfer-orders', 'can_edit')) : isAdmin);
+  const mayCancel = !periodLocked && canCancel && (ownTo || can('/transfer-orders', 'can_edit') || isAdmin);
 
   return (
     <div>
@@ -123,7 +118,7 @@ export default function TransferOrderView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={'/transfer-orders'}>Back</Link>
-          {canEdit && editableStatus && <Link className="btn btn-sm btn-primary" to={`/transfer-orders/${id}/edit`}>Edit</Link>}
+          {canEdit && <Link className="btn btn-sm btn-primary" to={`/transfer-orders/${id}/edit`}>Edit</Link>}
           {mayFulfill && canStillFulfill && lines.length > 0 && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfillModal(true)}>Fulfill</button>}
           {mayReceive && canReceive && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => setShowFulfillmentsPicker(true)}>Receive</button>}
           {mayCancel && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}

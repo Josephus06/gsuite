@@ -104,6 +104,8 @@ async function logAudit(conn, { toId, userId, eventType, fieldName = null, oldVa
 // Status is derived from the lines' running totals -- see lib/transferTotals.js.
 
 const OPEN_TO_STATUSES = ['pending_fulfillment', 'partially_fulfilled', 'pending_receipt_partially_fulfilled'];
+// Not fulfilled, or partially fulfilled -- what can still be cancelled (2026-10-19).
+const CANCELLABLE_TO_STATUSES = ['pending_fulfillment', 'partially_fulfilled', 'pending_receipt_partially_fulfilled'];
 
 // GL Impact for Item Fulfillment / Item Receipt -- the real system's sandbox (GL Impact
 // tab, `transaction_transactionledgerentries`) posts these as a two-step stock move
@@ -907,33 +909,19 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 // (with can_add) while nothing is fulfilled yet. Raising a TO includes filling in its materials --
 // without this, someone who may create TOs but not edit others' (Joel Taboada, 2026-10-01) could
 // save the header but never add a single material to it.
+// Editing a Transfer Order -- its header and its lines -- is a System Admin's alone, at any status
+// (asked 2026-10-19; until then Can Edit, or its creator, edited one still Pending Fulfillment).
 async function requireToEdit(req, res, next) {
   try {
-    if (await userCan(req.user.id, ROUTE, 'can_edit')) return next();
-    if (await userCan(req.user.id, ROUTE, 'can_add')) {
-      const [[t]] = await pool.query('SELECT created_by_user_id, status FROM transfer_orders WHERE id = ?', [req.params.id]);
-      if (t && Number(t.created_by_user_id) === Number(req.user.id) && t.status === 'pending_fulfillment') return next();
-    }
-    return res.status(403).json({ error: 'You do not have permission to perform this action' });
+    if (await isSystemAdmin(req.user.id)) return next();
+    return res.status(403).json({ error: 'Only a System Admin can edit a transfer order.' });
   } catch (err) { return next(err); }
-}
-
-// Editable while Pending Fulfillment; past that, by a System Admin only (asked 2026-10-12) -- and
-// never once Cancelled. Returns the refusal, or null.
-async function toEditBlocked(req, t) {
-  if (t.status === 'pending_fulfillment') return null;
-  if (t.status !== 'cancelled' && await isSystemAdmin(req.user.id)) return null;
-  return t.status === 'cancelled'
-    ? 'A cancelled transfer order cannot be edited.'
-    : 'Only a transfer order with nothing fulfilled yet can be edited -- past that, only a System Admin can edit it.';
 }
 
 router.put('/:id', requireAuth, requireToEdit, async (req, res, next) => {
   try {
     const [[t]] = await pool.query('SELECT status, date_created, withdraw_from_location_id, transfer_to_location_id FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
-    const blocked = await toEditBlocked(req, t);
-    if (blocked) return res.status(409).json({ error: blocked });
 
     const {
       date_created: dateCreated, date_needed: dateNeeded,
@@ -965,8 +953,6 @@ router.post('/:id/lines', requireAuth, requireToEdit, async (req, res, next) => 
   try {
     const [[t]] = await conn.query('SELECT status, date_created, withdraw_from_location_id, job_order_id FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
-    const blocked = await toEditBlocked(req, t);
-    if (blocked) return res.status(409).json({ error: blocked });
     await assertPeriodOpen(t.date_created, 'non_gl', conn);
 
     const { item_id: itemId, qty, uom, unit, unit_used: unitUsedIn, memo } = req.body;
@@ -1006,8 +992,6 @@ router.put('/:id/lines/:lineId', requireAuth, requireToEdit, async (req, res, ne
   try {
     const [[t]] = await pool.query('SELECT status, date_created FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
-    const blocked = await toEditBlocked(req, t);
-    if (blocked) return res.status(409).json({ error: blocked });
     await assertPeriodOpen(t.date_created, 'non_gl');
 
     const [[line]] = await pool.query(
@@ -1059,8 +1043,6 @@ router.delete('/:id/lines/:lineId', requireAuth, requireToEdit, async (req, res,
   try {
     const [[t]] = await pool.query('SELECT status, date_created FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
-    const blocked = await toEditBlocked(req, t);
-    if (blocked) return res.status(409).json({ error: blocked });
     await assertPeriodOpen(t.date_created, 'non_gl');
 
     const [[dl]] = await pool.query('SELECT fulfilled FROM transfer_order_lines WHERE id = ? AND transfer_order_id = ?', [req.params.lineId, req.params.id]);
@@ -1223,24 +1205,24 @@ router.post('/:id/item-fulfillments', requireAuth, requirePermission(FULFILLMENT
   }
 });
 
-// Cancelling (asked 2026-10-12): while Pending Fulfillment, by whoever raised the TO -- everyone may
-// cancel their own -- or by anyone with Can Edit on Transfer Orders. Once anything is fulfilled, by a
-// System Admin only, as with editing (toEditBlocked). Never a Received or Cancelled one.
+// Cancelling (2026-10-19): a TO not yet fulfilled or only partially fulfilled (CANCELLABLE_TO_STATUSES),
+// by whoever raised it -- everyone may cancel their own -- anyone with Can Edit on Transfer Orders, or
+// a System Admin. Fully fulfilled, received or cancelled: no.
 router.put('/:id/cancel', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[t]] = await conn.query('SELECT status, date_created, created_by_user_id FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
-    if (t.status === 'received' || t.status === 'cancelled') {
-      return res.status(409).json({ error: `A transfer order that's already ${t.status === 'received' ? 'Received' : 'Cancelled'} can't be cancelled.` });
+    // Cancellable while nothing, or only part, has been fulfilled (asked 2026-10-19) -- by the person
+    // who raised it, anyone with Can Edit, or a System Admin. Fully fulfilled, received or already
+    // cancelled: no.
+    if (!CANCELLABLE_TO_STATUSES.includes(t.status)) {
+      const why = { pending_receipt: 'fully fulfilled', received: 'received', cancelled: 'cancelled' }[t.status] || t.status;
+      return res.status(409).json({ error: `This transfer order is already ${why} -- only one not yet fulfilled, or partially fulfilled, can be cancelled.` });
     }
-    if (t.status === 'pending_fulfillment') {
-      const own = Number(t.created_by_user_id) === Number(req.user.id);
-      if (!own && !(await userCan(req.user.id, ROUTE, 'can_edit'))) {
-        return res.status(403).json({ error: 'Only the person who raised this transfer order can cancel it.' });
-      }
-    } else if (!(await isSystemAdmin(req.user.id))) {
-      return res.status(409).json({ error: 'This transfer order has been fulfilled already -- only a System Admin can cancel it now.' });
+    const own = Number(t.created_by_user_id) === Number(req.user.id);
+    if (!own && !(await userCan(req.user.id, ROUTE, 'can_edit')) && !(await isSystemAdmin(req.user.id))) {
+      return res.status(403).json({ error: 'Only the person who raised this transfer order, or someone with Can Edit, can cancel it.' });
     }
     await assertPeriodOpen(t.date_created, 'non_gl', conn);
 
