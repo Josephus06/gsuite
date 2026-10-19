@@ -497,7 +497,8 @@ export default function FormView() {
                     <td style={{ textAlign: 'right' }}>{money(r.amount)}</td>
                     {doc.needs_cogs && (
                       <td>
-                        {canSetCogs ? (
+                        {/* A line already on a Vendor Bill keeps its account (it is fixed on the bill). */}
+                        {canSetCogs && !doc.billed_items?.[r.id] ? (
                           <div style={{ minWidth: 260, ...(!r.cogs_account_id ? { outline: '1px solid var(--danger, #b91c1c)', borderRadius: 6 } : {}) }}>
                             <EntityPicker
                               label="Select Account" items={cogsAccounts} value={r.cogs_account_id || ''}

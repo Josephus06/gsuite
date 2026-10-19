@@ -596,15 +596,27 @@ router.get('/meta/cogs-accounts', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Assign one liquidation item's COGS account (asked 2026-10-06). Accounts Payable, while the
-// liquidation is waiting to be noted -- every item needs one before AP can note it.
+// Assign one liquidation item's COGS account (asked 2026-10-06). Accounts Payable (or a System Admin)
+// while it waits to be noted -- every item needs one before AP can note it -- and, since 2026-10-19,
+// after it is noted or approved too, so a wrong account can be corrected (REQ-89). Never once the item
+// is posted: a line on a live Vendor Bill, or a liquidation posted by Journal, keeps the account the
+// books already carry -- change it there (cancel the bill / void the journal) instead.
+async function cogsEditBlock(doc, itemId) {
+  if (!['submitted', 'noted', 'approved'].includes(doc.status)) return 'The accounts can only be changed while the liquidation is submitted, noted or approved.';
+  if (doc.status === 'submitted') return null;
+  const billing = await liquidationBilling(pool, doc.id);
+  if (billing.journal) return `This liquidation is posted by ${billing.journal.journal_no}; its accounts are fixed there.`;
+  if (itemId && billing.billOfItem.has(Number(itemId))) return `This line is on ${billing.billOfItem.get(Number(itemId))}; its account is fixed there.`;
+  return null;
+}
 router.put('/:id/items/:itemId/cogs', requireAuth, async (req, res, next) => {
   try {
     const [[doc]] = await pool.query('SELECT id, type, status FROM form_requests WHERE id = ?', [req.params.id]);
     if (!doc) return res.status(404).json({ error: 'Not found' });
     if (!AP_NOTED_TYPES.includes(doc.type)) return res.status(409).json({ error: 'Only a liquidation\'s items take a COGS account.' });
-    if (!(await isAccountsPayable(req.user.id))) return res.status(403).json({ error: 'Only Accounts Payable assigns COGS.' });
-    if (doc.status !== 'submitted') return res.status(409).json({ error: 'COGS can only be assigned while the liquidation is waiting to be noted.' });
+    if (!(await isAccountsPayable(req.user.id)) && !(await isSystemAdmin(req.user.id))) return res.status(403).json({ error: 'Only Accounts Payable assigns COGS.' });
+    const blocked = await cogsEditBlock(doc, req.params.itemId);
+    if (blocked) return res.status(409).json({ error: blocked });
     const accountId = req.body?.cogs_account_id ? Number(req.body.cogs_account_id) : null;
     if (accountId) {
       const [[acct]] = await pool.query(
@@ -741,7 +753,12 @@ router.get('/:id', requireAuth, async (req, res, next) => {
     // A liquidation's items each need a COGS account before it can be noted; AP assigns them.
     doc.needs_cogs = AP_NOTED_TYPES.includes(doc.type);
     doc.cogs_missing = doc.needs_cogs ? doc.items.filter((i) => !i.cogs_account_id).length : 0;
-    doc.can_set_cogs = doc.needs_cogs && note.allowed && doc.status === 'submitted';
+    // While it waits to be noted, whoever notes it (AP); once noted or approved, AP or a System Admin,
+    // until it is posted (cogsEditBlock -- a line already on a Vendor Bill stays as it is).
+    doc.can_set_cogs = doc.needs_cogs && (doc.status === 'submitted'
+      ? note.allowed
+      : (['noted', 'approved'].includes(doc.status) && !(await cogsEditBlock(doc, null))
+        && ((await isAccountsPayable(req.user.id)) || (await isSystemAdmin(req.user.id)))));
     // The entry its Vendor Bill or Journal will post (lib/glImpact.js computeLiquidationGl), shown as
     // it stands now. The liquidation itself posts nothing (2026-10-09): once approved, Accounts
     // Payable raises a Vendor Bill or a Journal from it, and that is what reaches the books.
