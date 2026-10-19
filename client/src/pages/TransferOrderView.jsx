@@ -96,7 +96,10 @@ export default function TransferOrderView() {
   // Editing a TO -- header and lines -- is a System Admin's alone, at any status (2026-10-19; the
   // server's requireToEdit).
   const isAdmin = user?.account_type === 'System Admin';
-  const canEdit = !periodLocked && isAdmin;
+  // ...or its requestor -- who raised it, or the employee named Requestor -- while Pending Fulfillment.
+  const ownPending = to?.status === 'pending_fulfillment' && (Number(to?.created_by_user_id) === Number(user?.id)
+    || (!!user?.employee_id && Number(to?.requestor_id) === Number(user?.employee_id)));
+  const canEdit = !periodLocked && (isAdmin || ownPending);
   // Unit Used and Adjusted Qty are the warehouse's, part of fulfilling (server: requireToLineEdit) --
   // Can Edit on Transfer Orders or Can Add on Item Fulfillments, while it can still be fulfilled.
   const canAdjust = !periodLocked && (isAdmin || can('/transfer-orders', 'can_edit') || can('/item-fulfillments', 'can_add'));

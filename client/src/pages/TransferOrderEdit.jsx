@@ -188,7 +188,10 @@ export default function TransferOrderEdit() {
   // A saved TO is edited by a System Admin only, at any status (2026-10-19) -- except Withdraw From /
   // Transfer To, which stay as they are once stock has moved. A NEW one, by anyone with Can Add.
   const adminPastPending = !isPending && isAdmin;
-  const canEdit = isNew ? can('/transfer-orders', 'can_add') : isAdmin;
+  // ...and its requestor (who raised it, or the employee named Requestor) while Pending Fulfillment.
+  const ownPending = isPending && (Number(to?.created_by_user_id) === Number(user?.id)
+    || (!!user?.employee_id && Number(to?.requestor_id) === Number(user?.employee_id)));
+  const canEdit = isNew ? can('/transfer-orders', 'can_add') : (isAdmin || ownPending);
 
   return (
     <div>

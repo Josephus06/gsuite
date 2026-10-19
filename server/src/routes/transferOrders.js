@@ -911,10 +911,21 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 // save the header but never add a single material to it.
 // Editing a Transfer Order -- its header and its lines -- is a System Admin's alone, at any status
 // (asked 2026-10-19; until then Can Edit, or its creator, edited one still Pending Fulfillment).
+// ...except its own requestor (2026-10-19): the person who raised it, or the employee named as its
+// Requestor, may edit it while it is still Pending Fulfillment -- nothing has moved yet.
+async function isOwnPendingTo(userId, toId) {
+  const [[t]] = await pool.query('SELECT created_by_user_id, requestor_id, status FROM transfer_orders WHERE id = ?', [toId]);
+  if (!t || t.status !== 'pending_fulfillment') return false;
+  if (Number(t.created_by_user_id) === Number(userId)) return true;
+  if (!t.requestor_id) return false;
+  const [[u]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [userId]);
+  return !!u?.employee_id && Number(u.employee_id) === Number(t.requestor_id);
+}
 async function requireToEdit(req, res, next) {
   try {
     if (await isSystemAdmin(req.user.id)) return next();
-    return res.status(403).json({ error: 'Only a System Admin can edit a transfer order.' });
+    if (await userCan(req.user.id, ROUTE, 'can_view') && await isOwnPendingTo(req.user.id, req.params.id)) return next();
+    return res.status(403).json({ error: 'Only a System Admin can edit a transfer order -- or its requestor, while it is still Pending Fulfillment.' });
   } catch (err) { return next(err); }
 }
 
@@ -926,6 +937,8 @@ const WAREHOUSE_LINE_FIELDS = ['unit_used', 'adjusted_qty'];
 async function requireToLineEdit(req, res, next) {
   try {
     if (await isSystemAdmin(req.user.id)) return next();
+    // Its requestor, while Pending Fulfillment, edits any field of its lines (requireToEdit).
+    if (await userCan(req.user.id, ROUTE, 'can_view') && await isOwnPendingTo(req.user.id, req.params.id)) return next();
     const keys = Object.keys(req.body || {}).filter((k) => req.body[k] !== undefined);
     const warehouseOnly = keys.length > 0 && keys.every((k) => WAREHOUSE_LINE_FIELDS.includes(k));
     if (warehouseOnly && (await userCan(req.user.id, ROUTE, 'can_edit') || await userCan(req.user.id, FULFILLMENT_ROUTE, 'can_add'))) {
