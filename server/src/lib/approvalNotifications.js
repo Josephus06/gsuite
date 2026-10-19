@@ -91,6 +91,7 @@ const FORM_LABEL = {
   liquidation: 'Liquidation', payment: 'Request for Payment', fund_transfer: 'Fund Transfer Request',
   business_trip: 'Business Trip', revolving_fund: 'Revolving Fund', attendance_adjustment: 'Attendance Adjustment',
   overtime: 'Overtime Request', leave: 'Leave Application', gate_pass: 'Employee Gate Pass',
+  hmo_enrollment: 'Life & Health - Enrollment', hmo_deletion: 'Life & Health - Deletion', bpi_deletion: 'BPI Deletion',
 };
 
 // A form has just changed status. Who acts next is routes/forms.js:

@@ -9,7 +9,7 @@ import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
 import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 import { useAuth } from '../context/useAuth';
-import { ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, formBanks, money, pretty } from '../utils/requestForms';
+import { MEMBER_FORMS, ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, formBanks, money, pretty } from '../utils/requestForms';
 import OvertimeDecline from '../components/OvertimeDecline';
 import { parseUtc } from '../utils/datetime';
 
@@ -355,6 +355,30 @@ export default function FormView() {
           {['accepted', 'declined'].includes(doc.status) && (
             <Line label={doc.status === 'accepted' ? 'Accepted' : 'Declined'}>{`${fmtDate(d.responded_at)}${d.response_remark ? ` — ${d.response_remark}` : ''}`}</Line>
           )}
+        </div>
+      )}
+
+      {MEMBER_FORMS[doc.type] && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3>{MEMBER_FORMS[doc.type].title}</h3>
+          {doc.type === 'hmo_enrollment' && <Line label="Enrollment For">{d.enrollment_for}</Line>}
+          {doc.type === 'bpi_deletion' && <Line label="Date">{d.letter_date ? fmtDate(d.letter_date) : null}</Line>}
+          <div className="table-wrap" style={{ marginTop: 10 }}>
+            <table>
+              <thead><tr><th style={{ width: 36 }}>#</th>{MEMBER_FORMS[doc.type].columns.map((c) => <th key={c.key}>{c.label}</th>)}</tr></thead>
+              <tbody>
+                {(d.lines || []).length === 0 && (
+                  <tr><td colSpan={MEMBER_FORMS[doc.type].columns.length + 1} className="muted" style={{ textAlign: 'center', padding: 12 }}>No members.</td></tr>
+                )}
+                {(d.lines || []).map((l, i) => (
+                  <tr key={l.id || i}>
+                    <td>{i + 1}</td>
+                    {MEMBER_FORMS[doc.type].columns.map((c) => <td key={c.key}>{c.type === 'date' ? fmtDate(l[c.key]) : (l[c.key] || '')}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

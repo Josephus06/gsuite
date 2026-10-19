@@ -46,7 +46,8 @@ const router = express.Router();
 const ROUTE = '/forms';
 const APPROVAL_ROUTE = '/forms/approval';
 
-const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund', 'attendance_adjustment', 'overtime', 'leave', 'gate_pass'];
+const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund', 'attendance_adjustment', 'overtime', 'leave', 'gate_pass',
+  'hmo_enrollment', 'hmo_deletion', 'bpi_deletion'];
 const TYPE_LABELS = {
   liquidation: 'Liquidation',
   payment: 'Request for Payment',
@@ -57,9 +58,48 @@ const TYPE_LABELS = {
   overtime: 'Overtime Request',
   leave: 'Leave Application',
   gate_pass: 'Employee Gate Pass',
+  hmo_enrollment: 'Life & Health - Enrollment',
+  hmo_deletion: 'Life & Health - Deletion',
+  bpi_deletion: 'BPI Deletion',
 };
 // Forms with no expense lines: a trip sheet, and the attendance adjustment slip.
-const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'gate_pass'];
+const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion'];
+// HR's member lists (asked 2026-10-19; db/add-hr-member-forms.js): Life & Health HMO enrollment and
+// deletion, and the BPI payroll-account deletion letter. One lines table; each form its own columns
+// (kept in step with client/src/utils/requestForms.js MEMBER_FORMS). required = a line needs these.
+const MEMBER_FORMS = {
+  hmo_enrollment: {
+    fields: ['member_type', 'family_name', 'first_name', 'middle_initial', 'birthday', 'gender', 'civil_status', 'relationship', 'position', 'plan', 'remarks'],
+    required: ['member_type', 'family_name', 'first_name'],
+  },
+  hmo_deletion: { fields: ['member_type', 'full_name', 'company', 'reason'], required: ['member_type', 'full_name', 'reason'] },
+  bpi_deletion: { fields: ['full_name', 'bank_account_no', 'remarks'], required: ['full_name', 'bank_account_no'] },
+};
+const MEMBER_LIMITS = {
+  member_type: 1, family_name: 120, first_name: 120, middle_initial: 10, full_name: 255, gender: 1, civil_status: 20,
+  relationship: 60, position: 120, plan: 120, company: 255, reason: 500, bank_account_no: 60, remarks: 500,
+};
+const MAX_MEMBER_LINES = 200;
+function memberLines(type, body) {
+  const cfg = MEMBER_FORMS[type];
+  return (Array.isArray(body.member_lines) ? body.member_lines : []).slice(0, MAX_MEMBER_LINES).map((l) => {
+    const row = {};
+    for (const f of cfg.fields) {
+      if (f === 'birthday') row[f] = l?.[f] ? String(l[f]).slice(0, 10) : null;
+      else row[f] = l?.[f] == null || String(l[f]).trim() === '' ? null : String(l[f]).trim().slice(0, MEMBER_LIMITS[f]);
+    }
+    if (row.member_type) row.member_type = row.member_type.toUpperCase();
+    if (row.gender) row.gender = row.gender.toUpperCase();
+    return row;
+  }).filter((r) => cfg.fields.some((f) => r[f]));
+}
+async function memberDetail(id) {
+  try {
+    const [[d]] = await pool.query('SELECT * FROM form_member_details WHERE form_request_id = ?', [id]);
+    const [lines] = await pool.query('SELECT * FROM form_member_lines WHERE form_request_id = ? ORDER BY line_no, id', [id]);
+    return { ...(d || {}), lines };
+  } catch (e) { if (e.code === 'ER_NO_SUCH_TABLE') return null; throw e; }
+}
 // Employee Gate Pass (asked 2026-10-14; db/add-gate-pass-form.js). Its items are what is carried out
 // -- a description and the department it belongs to -- not money lines, so they have their own table.
 // The guard on duty (Edit on GUARD_ROUTE) records Time OUT / Time IN once it is approved.
@@ -249,6 +289,8 @@ async function loadFull(id) {
     doc.detail = d || null;
   } else if (doc.type === 'gate_pass') {
     doc.detail = await gatePassDetail(id);
+  } else if (MEMBER_FORMS[doc.type]) {
+    doc.detail = await memberDetail(id);
   }
   return doc;
 }
@@ -942,6 +984,20 @@ async function writeDetail(conn, docId, type, body, items, ownerId = null) {
     return { total_amount: total };
   }
 
+  if (MEMBER_FORMS[type]) {
+    await conn.query('INSERT INTO form_member_details (form_request_id, enrollment_for, letter_date) VALUES (?, ?, ?)',
+      [docId, type === 'hmo_enrollment' ? (trunc(body.enrollment_for, 120) || 'HEALTH INSURANCE') : null, type === 'bpi_deletion' ? date(body.letter_date) : null]);
+    const fields = MEMBER_FORMS[type].fields;
+    let n = 0;
+    for (const l of memberLines(type, body)) {
+      n += 1;
+      await conn.query(
+        `INSERT INTO form_member_lines (form_request_id, line_no, ${fields.join(', ')}) VALUES (?, ?, ${fields.map(() => '?').join(', ')})`,
+        [docId, n, ...fields.map((f) => l[f])]);
+    }
+    return {};
+  }
+
   if (type === 'gate_pass') {
     await conn.query(
       `INSERT INTO form_gate_pass_details (form_request_id, location_id, pass_date, destination, purpose)
@@ -1030,6 +1086,16 @@ function validate(type, body, items) {
     if (!ADJ_TIMES.some((k) => time(body[k]))) return 'Enter at least one time to adjust (AM / PM / OT, In or Out).';
     if (!ADJ_REASONS.includes(body.reason)) return 'Choose the reason: Field Work, Business Trip or Others.';
     if (body.reason === 'others' && !trunc(body.reason_other, 255)) return 'Say what the other reason is (e.g. biometric error).';
+  }
+  if (MEMBER_FORMS[type]) {
+    const lines = memberLines(type, body);
+    if (!lines.length) return 'Add at least one member.';
+    const LABEL = { member_type: 'P / D', family_name: 'Family Name', first_name: 'First Name', full_name: 'Name', reason: 'Reason for the Removal', bank_account_no: 'BPI Account Number' };
+    for (let i = 0; i < lines.length; i += 1) {
+      const miss = MEMBER_FORMS[type].required.filter((f) => !lines[i][f]);
+      if (miss.length) return `Line ${i + 1}: ${miss.map((f) => LABEL[f] || f).join(', ')} required.`;
+      if (lines[i].member_type && !['P', 'D'].includes(lines[i].member_type)) return `Line ${i + 1}: P / D must be P (principal) or D (dependent).`;
+    }
   }
   if (type === 'gate_pass') {
     if (!date(body.gp_date)) return 'The date of the gate pass is required -- it is valid only on that day.';
@@ -1222,9 +1288,13 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       overtime: 'form_overtime_details',
       leave: 'form_leave_details',
       gate_pass: 'form_gate_pass_details',
+      hmo_enrollment: 'form_member_details',
+      hmo_deletion: 'form_member_details',
+      bpi_deletion: 'form_member_details',
     }[doc.type];
     await conn.query(`DELETE FROM ${detailTable} WHERE form_request_id = ?`, [doc.id]);
     if (doc.type === 'gate_pass') await conn.query('DELETE FROM form_gate_pass_items WHERE form_request_id = ?', [doc.id]);
+    if (MEMBER_FORMS[doc.type]) await conn.query('DELETE FROM form_member_lines WHERE form_request_id = ?', [doc.id]);
     await writeDetail(conn, doc.id, doc.type, req.body, items, doc.user_id);
 
     if (doc.type === 'liquidation') {

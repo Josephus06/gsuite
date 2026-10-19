@@ -4,7 +4,7 @@ import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../context/useAuth';
 import {
-  ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, FUND_TYPES, HR_TYPES, LEAVE_TYPE_LABELS, NO_ITEM_TYPES, PAYMENT_TYPES,
+  ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, MEMBER_FORMS, blankMemberLine, FUND_TYPES, HR_TYPES, LEAVE_TYPE_LABELS, NO_ITEM_TYPES, PAYMENT_TYPES,
   PURPOSE_LABELS, TYPE_LABELS, leaveDays, money, overtimeHours,
 } from '../utils/requestForms';
 import EntityPicker from '../components/EntityPicker';
@@ -53,8 +53,11 @@ export default function FormEdit() {
     leave_type: '', leave_type_other: '', leave_date_from: '', leave_date_to: '', leave_day_part: 'whole', leave_reason: '', leave_contact: '',
     // Employee Gate Pass (2026-10-14)
     gp_location_id: '', gp_date: '', gp_destination: '', gp_purpose: '',
+    // HR member lists (2026-10-19)
+    enrollment_for: 'HEALTH INSURANCE', letter_date: '',
     remarks: '',
   });
+  const [memberLines, setMemberLines] = useState([]);
   // Employee Gate Pass items: what is carried out, and the department it belongs to.
   const [gpItems, setGpItems] = useState([{ description: '', department: '' }]);
   const [locations, setLocations] = useState([]);
@@ -113,6 +116,12 @@ export default function FormEdit() {
       gp_date: data.type === 'gate_pass' && d.pass_date ? String(d.pass_date).slice(0, 10) : '',
       gp_destination: d.destination || '', gp_purpose: data.type === 'gate_pass' ? (d.purpose || '') : '',
     });
+    if (MEMBER_FORMS[data.type]) {
+      setForm((f) => ({ ...f, enrollment_for: d.enrollment_for || 'HEALTH INSURANCE', letter_date: d.letter_date ? String(d.letter_date).slice(0, 10) : '' }));
+      setMemberLines((d.lines || []).length
+        ? d.lines.map((l) => Object.fromEntries(MEMBER_FORMS[data.type].columns.map((c) => [c.key, c.type === 'date' && l[c.key] ? String(l[c.key]).slice(0, 10) : (l[c.key] ?? '')])))
+        : [blankMemberLine(data.type)]);
+    }
     if (data.type === 'gate_pass') {
       setGpItems((d.items || []).length ? d.items.map((it) => ({ description: it.description || '', department: it.department || '' })) : [{ description: '', department: '' }]);
     }
@@ -158,6 +167,7 @@ export default function FormEdit() {
     const payload = {
       ...form, type,
       gp_items: type === 'gate_pass' ? gpItems.filter((r) => String(r.description || '').trim()) : undefined,
+      member_lines: MEMBER_FORMS[type] ? memberLines : undefined,
       items: hasItems
         ? items.filter((r) => r.particulars || r.amount).map((r) => ({
           date: r.date, particulars: r.particulars, amount: r.amount, from_account_id: r.from_account_id || null, to_account_id: r.to_account_id || null,
@@ -389,6 +399,67 @@ export default function FormEdit() {
           </div>
         </div>
       )}
+
+      {MEMBER_FORMS[type] && (() => {
+        const cfg = MEMBER_FORMS[type];
+        const lines = memberLines.length ? memberLines : [blankMemberLine(type)];
+        const setLine = (i, k, v) => setMemberLines(() => lines.map((r, ri) => (ri === i ? { ...r, [k]: v } : r)));
+        return (
+          <div className="card" style={{ marginTop: 16 }}>
+            <h3>{cfg.title}</h3>
+            {type === 'hmo_enrollment' && (
+              <div className="field" style={{ maxWidth: 360 }}>
+                <label>Enrollment For</label>
+                <input value={form.enrollment_for} onChange={(e) => set('enrollment_for', e.target.value)} />
+              </div>
+            )}
+            {type === 'bpi_deletion' && (
+              <>
+                <div className="field" style={{ maxWidth: 220 }}>
+                  <label>Date</label>
+                  <input type="date" value={form.letter_date} onChange={(e) => set('letter_date', e.target.value)} />
+                </div>
+                <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+                  To BPI GF Insular Mall, Basak, Mandaue City: please delete from the payroll list under Cebu Graphicstar Imaging Corp. the following separated employees.
+                </div>
+              </>
+            )}
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr><th style={{ width: 36 }}>#</th>{cfg.columns.map((c) => <th key={c.key} style={c.width ? { width: c.width } : undefined}>{c.label}</th>)}<th style={{ width: 40 }} /></tr>
+                </thead>
+                <tbody>
+                  {lines.map((r, i) => (
+                    <tr key={i}>
+                      <td>{i + 1}</td>
+                      {cfg.columns.map((c) => (
+                        <td key={c.key}>
+                          {c.type === 'select' ? (
+                            <select value={r[c.key] || ''} onChange={(e) => setLine(i, c.key, e.target.value)}>
+                              <option value="">—</option>
+                              {c.options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                            </select>
+                          ) : (
+                            <input type={c.type === 'date' ? 'date' : 'text'} value={r[c.key] || ''} placeholder={c.placeholder || ''}
+                              onChange={(e) => setLine(i, c.key, e.target.value)} />
+                          )}
+                        </td>
+                      ))}
+                      <td>
+                        <button type="button" className="btn btn-sm btn-danger" title="Remove"
+                          onClick={() => setMemberLines(lines.length > 1 ? lines.filter((_, ri) => ri !== i) : [blankMemberLine(type)])}>×</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <button type="button" className="btn btn-sm" style={{ marginTop: 8 }}
+              onClick={() => setMemberLines([...lines, blankMemberLine(type)])}>{cfg.addLabel}</button>
+          </div>
+        );
+      })()}
 
       {type === 'gate_pass' && (
         <div className="card" style={{ marginTop: 16 }}>

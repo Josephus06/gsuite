@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { ADJ_REASON_LABELS, DAY_PART_LABELS, LEAVE_TYPE_LABELS, PAYMENT_TYPES, PURPOSE_LABELS, bankLabel, clock } from '../utils/requestForms';
+import { MEMBER_FORMS, ADJ_REASON_LABELS, DAY_PART_LABELS, LEAVE_TYPE_LABELS, PAYMENT_TYPES, PURPOSE_LABELS, bankLabel, clock } from '../utils/requestForms';
 import letterhead from '../assets/graphicstar-letterhead.png';
 import { displayDate } from '../utils/dates';
 
@@ -77,8 +77,20 @@ function GatePassSignatures({ doc }) {
   );
 }
 
+// HR's member lists: prepared / requested by HR, approved by the General Manager, as on the sheets.
+function MemberSignatures({ doc }) {
+  return (
+    <div className="rf-signs">
+      <Signature image={doc.owner_signature} name={doc.owner_name} role={doc.type === 'hmo_enrollment' ? 'Requested by' : 'Prepared by'} />
+      <Signature image={doc.noted_signature} name={doc.noted_by_name} role="Noted by" />
+      <Signature image={doc.approved_signature} name={doc.approved_by_name} role="Approved by" />
+    </div>
+  );
+}
+
 function Signatures({ doc }) {
   if (doc.type === 'gate_pass') return <GatePassSignatures doc={doc} />;
+  if (MEMBER_FORMS[doc.type]) return <MemberSignatures doc={doc} />;
   // A Leave Application is not noted (2026-10-19) -- no Noted By line, unless it was noted before then.
   const noted = doc.type !== 'leave' || !!doc.noted_by_name;
   return (
@@ -317,6 +329,44 @@ export default function FormPrint() {
         {/* Leave Application (asked 2026-10-13): who, which leave (ticked), the dates and days, why. */}
         {/* Employee Gate Pass (asked 2026-10-14), after the paper slip: where and when, the items
             carried out (each noted by its department), the personnel and purpose. */}
+        {/* HR's member lists (asked 2026-10-19), after the sheets: the company block for the HMO forms,
+            the letter to BPI for the BPI deletion, then the members. */}
+        {MEMBER_FORMS[doc.type] && (
+          <>
+            {doc.type !== 'bpi_deletion' && (
+              <div className="rf-box">
+                <div className="rf-row"><Field label="Name of Company" value="CEBU GRAPHICSTAR IMAGING CORPORATION" /></div>
+                <div className="rf-row"><Field label="Address" value="JS ALINSUG ST., BASAK MANDAUE CITY CEBU 6014" /></div>
+                <div className="rf-row">
+                  <Field label="Contact Person" value={doc.owner_name} />
+                  {doc.type === 'hmo_enrollment' && <Field label="Enrollment For" value={d.enrollment_for} />}
+                  {doc.type === 'hmo_deletion' && <Field label="" value="FOR DELETION" />}
+                </div>
+              </div>
+            )}
+            {doc.type === 'bpi_deletion' && (
+              <div style={{ fontSize: 12, lineHeight: 1.6, margin: '8px 0 12px' }}>
+                <div>Date: <u>{fmtDate(d.letter_date)}</u></div>
+                <div style={{ marginTop: 10 }}>The Manager<br />Bank of the Philippine Islands (BPI)<br />GF Insular Mall<br />Basak, Mandaue City<br />6014 Cebu</div>
+                <div style={{ marginTop: 10 }}>Dear Sir/Madam:</div>
+                <div style={{ marginTop: 6 }}>Please delete from the payroll list under Cebu Graphicstar Imaging Corp. the following separated employees:</div>
+              </div>
+            )}
+            <table className="rf-table">
+              <thead><tr><th>#</th>{MEMBER_FORMS[doc.type].columns.map((c) => <th key={c.key}>{c.label}</th>)}</tr></thead>
+              <tbody>
+                {(d.lines || []).map((l, i) => (
+                  <tr key={l.id || i}>
+                    <td>{i + 1}</td>
+                    {MEMBER_FORMS[doc.type].columns.map((c) => <td key={c.key}>{c.type === 'date' ? fmtDate(l[c.key]) : (l[c.key] || '')}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {doc.type === 'bpi_deletion' && <div style={{ fontSize: 12, marginTop: 12 }}>Thank you.<br /><br />Sincerely yours,</div>}
+          </>
+        )}
+
         {doc.type === 'gate_pass' && (
           <>
             <div className="rf-row">

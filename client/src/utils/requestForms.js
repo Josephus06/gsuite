@@ -15,13 +15,57 @@ export const TYPE_LABELS = {
   overtime: 'Overtime Request',
   leave: 'Leave Application',
   gate_pass: 'Employee Gate Pass',
+  hmo_enrollment: 'Life & Health - Enrollment',
+  hmo_deletion: 'Life & Health - Deletion',
+  bpi_deletion: 'BPI Deletion',
 };
 
 // Which forms are HR's (2026-10-13) -- the form picker shows them as their own group.
-export const HR_TYPES = ['leave', 'overtime', 'attendance_adjustment', 'gate_pass'];
+export const HR_TYPES = ['leave', 'overtime', 'attendance_adjustment', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion'];
 
 // Forms with no expense lines (and so no amount): a trip sheet, and the attendance adjustment slip.
-export const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'gate_pass'];
+export const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion'];
+
+// HR's member lists (2026-10-19), after HR's own sheets -- kept in step with server/src/routes/forms.js
+// MEMBER_FORMS. Each column: key, the sheet's heading, and how it is entered.
+const PD = { type: 'select', options: [['P', 'P - Principal'], ['D', 'D - Dependent']] };
+export const MEMBER_FORMS = {
+  hmo_enrollment: {
+    title: 'Life & Health - Enrollment', addLabel: 'Add Member',
+    columns: [
+      { key: 'member_type', label: 'P / D', ...PD, width: 120 },
+      { key: 'family_name', label: 'Family Name' },
+      { key: 'first_name', label: 'First Name' },
+      { key: 'middle_initial', label: 'M.I.', width: 60 },
+      { key: 'birthday', label: 'Birthday', type: 'date', width: 140 },
+      { key: 'gender', label: 'Gender (M/F)', type: 'select', options: [['M', 'M'], ['F', 'F']], width: 80 },
+      { key: 'civil_status', label: 'Single / Married', type: 'select', options: [['S', 'S'], ['M', 'M'], ['W', 'Widow']], width: 90 },
+      { key: 'relationship', label: 'Relationship' },
+      { key: 'position', label: 'Position' },
+      { key: 'plan', label: 'Plan', placeholder: 'e.g. PAYWARD-30K MBL' },
+      { key: 'remarks', label: 'Remarks', placeholder: 'e.g. WITH DENTAL' },
+    ],
+  },
+  hmo_deletion: {
+    title: 'Life & Health - Deletion', addLabel: 'Add Member',
+    columns: [
+      { key: 'member_type', label: 'Principal / Dependent', ...PD, width: 140 },
+      { key: 'full_name', label: 'Name' },
+      { key: 'company', label: 'Company', placeholder: 'Cebu Graphic Star Imaging Corp.' },
+      { key: 'reason', label: 'Reason for the Removal', placeholder: 'e.g. Voluntary Resignation of member' },
+    ],
+  },
+  bpi_deletion: {
+    title: 'BPI Deletion', addLabel: 'Add Employee',
+    columns: [
+      { key: 'full_name', label: 'Name of Employee' },
+      { key: 'bank_account_no', label: 'BPI Account Number' },
+      { key: 'remarks', label: 'Remarks' },
+    ],
+  },
+};
+export const blankMemberLine = (type) => Object.fromEntries((MEMBER_FORMS[type]?.columns || []).map((c) => [c.key,
+  c.key === 'company' && type === 'hmo_deletion' ? 'Cebu Graphic Star Imaging Corp.' : '']));
 
 // Leave Application (2026-10-13). The server counts the same days (routes/forms.js leaveDays).
 export const LEAVE_TYPE_LABELS = {
