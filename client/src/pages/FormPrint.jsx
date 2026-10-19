@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { ADJ_REASON_LABELS, DAY_PART_LABELS, LEAVE_TYPE_LABELS, PAYMENT_TYPES, PURPOSE_LABELS, bankLabel, clock, formBanks } from '../utils/requestForms';
+import { ADJ_REASON_LABELS, DAY_PART_LABELS, LEAVE_TYPE_LABELS, PAYMENT_TYPES, PURPOSE_LABELS, bankLabel, clock } from '../utils/requestForms';
 import letterhead from '../assets/graphicstar-letterhead.png';
 import { displayDate } from '../utils/dates';
 
@@ -282,23 +282,28 @@ export default function FormPrint() {
 
         {PAYMENT_TYPES.includes(doc.type) && (
           <>
-            {doc.type === 'fund_transfer' && (
-              <div className="rf-row">
-                <Field label="From" value={formBanks(doc, 'from')} />
-                <Field label="To" value={formBanks(doc, 'to')} />
-              </div>
-            )}
             <div className="rf-row">
               <Field label="Payable To" value={d.payable_to} />
               <Field label="Date" value={fmtDate(d.doc_date)} />
             </div>
-            <div className="rf-row">
-              <Field label="Address" value={d.address} />
-            </div>
-            <div className="rf-row">
-              <Field label="Department" value={doc.department} />
-              <Field label="Name" value={doc.name} />
-            </div>
+            {doc.type === 'fund_transfer' ? (
+              // Fund Transfer (2026-10-19): no From / To / Name in the header -- each line's From and
+              // To are in the table -- and Department beside Address rather than on a row of its own.
+              <div className="rf-row">
+                <Field label="Address" value={d.address} />
+                <Field label="Department" value={doc.department} />
+              </div>
+            ) : (
+              <>
+                <div className="rf-row">
+                  <Field label="Address" value={d.address} />
+                </div>
+                <div className="rf-row">
+                  <Field label="Department" value={doc.department} />
+                  <Field label="Name" value={doc.name} />
+                </div>
+              </>
+            )}
             <ItemsTable doc={doc} />
           </>
         )}
