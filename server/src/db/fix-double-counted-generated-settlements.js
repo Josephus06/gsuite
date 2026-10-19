@@ -22,6 +22,15 @@ require('dotenv').config();
 const pool = require('../db');
 const { grossDueSql } = require('../lib/invoiceDue');
 
+// An invoice's balance before it is floored at zero: gross less every payment and credit applied. An
+// invoice overpaid by the double count reads 0 on grossDueSql however much the generated settlement
+// is cut, so the gap is measured from this (2026-10-19: 45 were still short after the first pass).
+const rawDueSql = (a) => `ROUND(${a}.gross_amount
+  - COALESCE((SELECT SUM(cpl.applied_amount) FROM customer_payment_lines cpl JOIN customer_payments cp ON cp.id = cpl.customer_payment_id
+               WHERE cpl.sales_invoice_id = ${a}.id AND cp.status <> 'voided'), 0)
+  - COALESCE((SELECT SUM(cma.applied_amount) FROM credit_memo_applications cma JOIN credit_memos cmx ON cmx.id = cma.credit_memo_id
+               WHERE cma.sales_invoice_id = ${a}.id AND cmx.status <> 'voided'), 0), 2)`;
+
 const DRY = process.argv.includes('--dry-run');
 const xlsxArg = process.argv.find((a) => a.startsWith('--xlsx='));
 const byArg = process.argv.find((a) => a.startsWith('--by='));
@@ -35,7 +44,7 @@ async function findRows() {
   const asOf = day(asof);
   const [rows] = await pool.query(`
     SELECT si.id AS invoice_id, si.invoice_no, si.status AS invoice_status, si.amount_due, c.name AS customer, si.gross_amount,
-           oi.balance AS snap_balance, ${grossDueSql('si')} AS t1s_due,
+           oi.balance AS snap_balance, ${grossDueSql('si')} AS t1s_due, ${rawDueSql('si')} AS raw_due,
            syn.id AS line_id, syn.applied_amount AS synthetic, cp.id AS payment_id, cp.customer_payment_no AS synthetic_no,
            cp.date_created AS synthetic_date, cp.payment_amount AS synthetic_payment,
       (SELECT COALESCE(SUM(cpl.applied_amount), 0) FROM customer_payment_lines cpl JOIN customer_payments p ON p.id = cpl.customer_payment_id
@@ -53,12 +62,12 @@ async function findRows() {
   const fixes = [];
   for (const r of rows) {
     const agingOpen = Math.max(0, r2(Number(r.snap_balance) - Number(r.paid_after) - Number(r.credited_after)));
-    const gap = r2(agingOpen - Number(r.t1s_due));
-    if (gap <= 0.005) continue;
+    if (r2(agingOpen - Number(r.t1s_due)) <= 0.005) continue;
+    const gap = r2(agingOpen - Number(r.raw_due));
     const cut = r2(Math.min(gap, Number(r.synthetic)));
     fixes.push({
       ...r, agingOpen, cut, newSynthetic: r2(Number(r.synthetic) - cut),
-      newDue: r2(Number(r.t1s_due) + cut), fully: r2(Number(r.synthetic) - cut) <= 0.005,
+      newDue: Math.max(0, r2(Number(r.raw_due) + cut)), fully: r2(Number(r.synthetic) - cut) <= 0.005,
       afterCutover: day(r.synthetic_date) > asOf,
     });
   }
@@ -99,6 +108,17 @@ async function audit(conn, type, id, field, oldV, newV) {
      VALUES (?, ?, 'Updated', ?, ?, ?, ?)`, [type, id, field, oldV == null ? null : String(oldV), newV == null ? null : String(newV), BY]);
 }
 
+// The invoice's stored cash balance from its true balance: amount_due + EWT = gross due (the payments
+// module keeps it so), so amount_due = gross due - EWT, never below zero; open again if anything is due.
+async function settleAmountDue(conn, invoiceId) {
+  const [[r]] = await conn.query(`SELECT ${grossDueSql('si')} AS gdue, COALESCE(si.ewt_amount, 0) AS ewt FROM sales_invoices si WHERE si.id = ?`, [invoiceId]);
+  const amountDue = Math.max(0, r2(Number(r.gdue) - Number(r.ewt)));
+  await conn.query(
+    "UPDATE sales_invoices SET amount_due = ?, status = IF(status = 'paid_in_full' AND ? > 0.005, 'saved', status) WHERE id = ?",
+    [amountDue, Number(r.gdue), invoiceId]);
+  return amountDue;
+}
+
 async function apply(f) {
   const conn = await pool.getConnection();
   try {
@@ -114,11 +134,7 @@ async function apply(f) {
         [f.cut, f.cut, f.payment_id]);
       await audit(conn, 'CustomerPayment', f.payment_id, 'applied_amount', f.synthetic, `${f.newSynthetic} -- ${note}`);
     }
-    // The invoice's stored cash balance and status follow (amount_due is net of EWT; never above gross).
-    const newAmountDue = r2(Math.min(Number(f.amount_due || 0) + f.cut, Number(f.gross_amount)));
-    await conn.query(
-      "UPDATE sales_invoices SET amount_due = ?, status = IF(status = 'paid_in_full' AND ? > 0.005, 'saved', status) WHERE id = ?",
-      [newAmountDue, newAmountDue, f.invoice_id]);
+    const newAmountDue = await settleAmountDue(conn, f.invoice_id);
     await audit(conn, 'SalesInvoice', f.invoice_id, 'amount_due', f.amount_due, `${newAmountDue} -- ${f.synthetic_no} ${note}`);
     await conn.commit();
   } catch (e) {
@@ -131,6 +147,28 @@ async function apply(f) {
 
 async function main() {
   console.log(`Database: ${process.env.DB_NAME} on ${process.env.DB_HOST}${DRY ? ' -- DRY RUN' : ''}\n`);
+  if (process.argv.includes('--resettle')) {
+    // The first run (2026-10-19) added its cut to amount_due instead of recomputing it -- doubling it
+    // where amount_due already read right (INV-79225: 13,075 -> 26,150). Recompute those.
+    const [touched] = await pool.query(
+      `SELECT DISTINCT a.auditable_id AS id, si.amount_due FROM audit_logs a JOIN sales_invoices si ON si.id = a.auditable_id
+        WHERE a.auditable_type = 'SalesInvoice' AND a.new_value LIKE '%fix-double-counted-generated-settlements%'`);
+    let changed = 0;
+    for (const t of touched) {
+      if (DRY) continue;
+      const conn = await pool.getConnection();
+      try {
+        const v = await settleAmountDue(conn, t.id);
+        if (Math.abs(v - Number(t.amount_due)) > 0.005) {
+          changed += 1;
+          await audit(conn, 'SalesInvoice', t.id, 'amount_due', t.amount_due, `${v} -- recomputed from the invoice's balance (fix-double-counted-generated-settlements.js --resettle)`);
+        }
+      } finally { conn.release(); }
+    }
+    console.log(`${DRY ? 'Would recompute' : 'Recomputed'} amount_due on ${touched.length} invoice(s); ${changed} changed.`);
+    await pool.end();
+    return;
+  }
   const { asOf, fixes } = await findRows();
   const voids = fixes.filter((f) => f.fully).length;
   const total = fixes.reduce((s, f) => s + f.cut, 0);
