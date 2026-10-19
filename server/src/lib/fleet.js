@@ -39,11 +39,13 @@ function dateStatus(due, today) {
 // Transportation Equipment class, and any other asset given vehicle details. `assetId` narrows it to one.
 async function loadVehicles(q = pool, assetId = null) {
   const [rows] = await q.query(
-    `SELECT a.id AS asset_id, a.reference_no, a.tag_no, a.brand, a.model AS asset_model, a.serial_no, a.status AS asset_status,
+    // v.* FIRST: a vehicle with no details row yet has v.asset_id NULL, and a column named later wins
+    // -- listed after it, a.id AS asset_id is always the asset's own id.
+    `SELECT v.*,
+            a.id AS asset_id, a.reference_no, a.tag_no, a.brand, a.model AS asset_model, a.serial_no, a.status AS asset_status,
             a.custodian_employee_id, ac.name AS asset_class,
             CONCAT_WS(' ', ce.first_name, ce.last_name) AS custodian_name,
             ai.display_name AS asset_name,
-            v.*,
             CONCAT_WS(' ', de.first_name, de.last_name) AS driver_name,
             CONCAT_WS(' ', ie.first_name, ie.last_name) AS incharge_name
        FROM assets a

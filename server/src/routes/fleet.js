@@ -6,6 +6,9 @@ const { sendXlsx } = require('../lib/xlsxExport');
 
 const router = express.Router();
 
+// A bad link (/assets/fleet/null) is a 404, not a database error.
+router.param('assetId', (req, res, next, id) => (/^\d+$/.test(String(id)) ? next() : res.status(404).json({ error: 'Vehicle not found.' })));
+
 // Assets > Fleet (Vehicles) (asked 2026-10-19). A vehicle is an asset (Transportation Equipment);
 // this is what is tracked on top of it -- registration / insurance / emission, PMS interval and
 // odometer, the PMS / maintenance log and the fuel log. Due dates are lib/fleet.js; the daily
