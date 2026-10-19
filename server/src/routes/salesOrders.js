@@ -8,6 +8,29 @@ const { releaseIfDirectToProduction } = require('../lib/directToProduction');
 const { sendXlsx } = require('../lib/xlsxExport');
 
 const router = express.Router();
+
+// A line whose Job Order is Cancelled is not part of the order's total (asked 2026-10-19, SO-70642):
+// it stays on the order, marked Cancelled, but its amount comes off Net of Tax / Tax / Total.
+const LIVE_LINE = "(jo.id IS NULL OR jo.status <> 'Cancelled')";
+async function recomputeSoTotals(conn, soId, userId) {
+  const [[so]] = await conn.query('SELECT total_amount, status FROM sales_orders WHERE id = ?', [soId]);
+  if (!so || so.status === 'cancelled') return; // a cancelled order keeps the amount it was cancelled at
+  const [[t]] = await conn.query(
+    `SELECT COALESCE(SUM(sol.subtotal),0) sub, COALESCE(SUM(sol.disc_amount),0) disc, COALESCE(SUM(sol.net_of_tax),0) net,
+            COALESCE(SUM(sol.tax_amount),0) tax, COALESCE(SUM(sol.gross_amount),0) gross, COALESCE(SUM(sol.gp_amount),0) gp
+       FROM sales_order_lines sol LEFT JOIN job_orders jo ON jo.id = sol.job_order_id
+      WHERE sol.sales_order_id = ? AND ${LIVE_LINE}`, [soId]);
+  const r = (v) => Math.round(Number(v) * 100) / 100;
+  await conn.query(
+    `UPDATE sales_orders SET subtotal = ?, discount_total = ?, net_of_tax = ?, tax_total = ?, total_amount = ?,
+            est_gp_amount = ?, est_gp_rate = ? WHERE id = ?`,
+    [r(t.sub), r(t.disc), r(t.net), r(t.tax), r(t.gross), r(t.gp), Number(t.net) ? r(t.gp / t.net * 100) : null, soId]);
+  if (userId && Math.abs(Number(so.total_amount || 0) - r(t.gross)) > 0.005) {
+    await conn.query(
+      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+       VALUES ('SalesOrder', ?, 'Updated', 'total_amount', ?, ?, ?)`, [soId, String(so.total_amount), String(r(t.gross)), userId]);
+  }
+}
 const ROUTE = '/sales-orders';
 
 const STATUS_VALUES = [
@@ -378,6 +401,8 @@ router.put('/:id/job-orders/:joId/cancel', requireAuth, requireOpenPeriod('sales
 
     await conn.beginTransaction();
     await conn.query("UPDATE job_orders SET status = 'Cancelled', updated_at = NOW() WHERE id = ?", [jo.id]);
+    // The order's totals drop the cancelled line (2026-10-19) -- lists and reports read them.
+    await recomputeSoTotals(conn, jo.sales_order_id, req.user.id);
     const note = `cancelled -- ${reason.name}${remarks ? `: ${remarks}` : ''}`.slice(0, 2000);
     await conn.query(
       `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
@@ -568,9 +593,10 @@ router.put('/:id', requireAuth, requireOpenPeriod('sales_orders', 'non_gl'), asy
     // header totals from the lines as they now stand -- only when some line's pricing changed
     if (pricingChanged) {
     const [[t]] = await conn.query(
-      `SELECT COALESCE(SUM(subtotal),0) sub, COALESCE(SUM(disc_amount),0) disc, COALESCE(SUM(net_of_tax),0) net,
-              COALESCE(SUM(tax_amount),0) tax, COALESCE(SUM(gross_amount),0) gross, COALESCE(SUM(gp_amount),0) gp
-         FROM sales_order_lines WHERE sales_order_id = ?`, [req.params.id]);
+      `SELECT COALESCE(SUM(sol.subtotal),0) sub, COALESCE(SUM(sol.disc_amount),0) disc, COALESCE(SUM(sol.net_of_tax),0) net,
+              COALESCE(SUM(sol.tax_amount),0) tax, COALESCE(SUM(sol.gross_amount),0) gross, COALESCE(SUM(sol.gp_amount),0) gp
+         FROM sales_order_lines sol LEFT JOIN job_orders jo ON jo.id = sol.job_order_id
+        WHERE sol.sales_order_id = ? AND ${LIVE_LINE}`, [req.params.id]);
     await conn.query(
       `UPDATE sales_orders SET subtotal = ?, discount_total = ?, net_of_tax = ?, tax_total = ?, total_amount = ?,
               est_gp_amount = ?, est_gp_rate = ? WHERE id = ?`,
@@ -872,3 +898,4 @@ router.get('/:id/attachments/:attachmentId/file', requireAuth, requirePermission
 });
 
 module.exports = router;
+module.exports.recomputeSoTotals = recomputeSoTotals;

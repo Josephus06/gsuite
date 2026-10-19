@@ -320,10 +320,13 @@ export default function SalesOrderView() {
   const lineTax = (l) => (l.tax_amount != null && l.tax_amount !== ''
     ? num(l.tax_amount)
     : r2((num(l.subtotal) - num(l.disc_amount)) * (num(l.tax_rate) / 100)));
-  const subtotal = r2(lines.reduce((s, l) => s + num(l.subtotal), 0));
-  const discountTotal = r2(lines.reduce((s, l) => s + num(l.disc_amount), 0));
+  // A line whose Job Order is Cancelled is not in the totals (2026-10-19, SO-70642) -- unless the whole
+  // order is cancelled, which keeps showing the amount it was cancelled at.
+  const totalLines = so?.status === 'cancelled' ? lines : lines.filter((l) => l.job_order_status !== 'Cancelled');
+  const subtotal = r2(totalLines.reduce((s, l) => s + num(l.subtotal), 0));
+  const discountTotal = r2(totalLines.reduce((s, l) => s + num(l.disc_amount), 0));
   const netOfTax = r2(subtotal - discountTotal);
-  const taxTotal = r2(lines.reduce((s, l) => s + lineTax(l), 0));
+  const taxTotal = r2(totalLines.reduce((s, l) => s + lineTax(l), 0));
   const totalAmount = r2(netOfTax + taxTotal);
 
   return (
