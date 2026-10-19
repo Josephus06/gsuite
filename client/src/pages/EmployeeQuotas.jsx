@@ -4,6 +4,7 @@ import api from '../api/client';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 const PAGE_SIZE = 10;
 
@@ -41,7 +42,7 @@ export default function EmployeeQuotas() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Employee name or code..." />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Employee name or code..." />
           </div>
         </div>
         <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>

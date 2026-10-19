@@ -8,6 +8,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { AUDIT_STATUS_LABELS } from '../utils/assetLabels';
 import { displayMonth } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 const PAGE_SIZE = 15;
 
@@ -133,7 +134,7 @@ export default function AssetAudits() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={filters.search} onChange={(e) => setF({ search: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Audit no or memo..." />
+            <SearchInput value={filters.search} onChange={(e) => setF({ search: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Audit no or memo..." />
           </div>
           <div className="field">
             <label>Status</label>

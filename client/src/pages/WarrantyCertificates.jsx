@@ -7,6 +7,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
+import SearchInput from '../components/SearchInput';
 
 const PAGE_SIZE = 15;
 const STATUS_LABELS = { pending_approval: 'Pending Approval', approved: 'Approved', voided: 'Voided' };
@@ -48,7 +49,7 @@ export default function WarrantyCertificates() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Warranty #, SO #, Customer or Project..." />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Warranty #, SO #, Customer or Project..." />
           </div>
           <div className="field">
             <label>Status</label>

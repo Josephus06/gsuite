@@ -10,6 +10,7 @@ import { CustomerLink } from '../components/PartyLink';
 import EntityPicker from '../components/EntityPicker';
 import { downloadFile } from '../utils/downloadFile';
 import FilterPicker from '../components/FilterPicker';
+import SearchInput from '../components/SearchInput';
 
 const PAGE_SIZE = 10;
 const TYPE_LABELS = { rma: 'RMA', rma_installation: 'RMA - Installation', sample: 'Sample', internal: 'Internal' };
@@ -127,7 +128,7 @@ export default function NonStandardSalesOrders() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="NSSO # or Customer..." />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="NSSO # or Customer..." />
           </div>
           <div className="field">
             <label>Location</label>

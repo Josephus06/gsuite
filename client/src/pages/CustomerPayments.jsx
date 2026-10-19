@@ -12,6 +12,7 @@ import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
 import FilterPicker from '../components/FilterPicker';
+import SearchInput from '../components/SearchInput';
 
 const PAGE_SIZE = 10;
 const NO_FILTERS = { search: '', status: '', departmentId: '', locationId: '', dateFrom: '', dateTo: '' };
@@ -172,7 +173,7 @@ export default function CustomerPayments() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input
+            <SearchInput
               value={form.search} onChange={(e) => setField('search', e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && apply(form)}
               placeholder="CPAY #, OR #, SI#/BS# or Customer..."

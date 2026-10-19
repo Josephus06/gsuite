@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 const PAGE_SIZE = 15;
 function formatDate(v) { return v ? displayDate(v) : ''; }
@@ -48,7 +49,7 @@ export default function Journals() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Journal No or Memo..." />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Journal No or Memo..." />
           </div>
           <div className="field">
             <label>Date Created (as of)</label>

@@ -9,6 +9,7 @@ import useAutoSearch from '../utils/useAutoSearch';
 import { useAuth } from '../context/useAuth';
 import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 import { SupplierLink } from '../components/PartyLink';
+import SearchInput from '../components/SearchInput';
 
 const PAGE_SIZE = 10;
 const STATUS_LABELS = { open: 'Open', paid_in_full: 'Paid in Full', paid: 'Paid in Full', cancelled: 'Cancelled' };
@@ -97,7 +98,7 @@ export default function VendorBills() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Bill #, PO No, Reference # or Vendor..." />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Bill #, PO No, Reference # or Vendor..." />
           </div>
           <div className="field">
             <label>Status</label>

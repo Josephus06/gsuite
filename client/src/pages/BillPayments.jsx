@@ -7,6 +7,7 @@ import EntityPicker from '../components/EntityPicker';
 import { SupplierLink } from '../components/PartyLink';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 const PAGE_SIZE = 15;
 const STATUS_LABELS = { open: 'Open', voided: 'Voided' };
@@ -97,7 +98,7 @@ export default function BillPayments() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Payment #, Vendor, Payee, Check #, Reference or Memo..." />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Payment #, Vendor, Payee, Check #, Reference or Memo..." />
           </div>
           <div className="field">
             <label>Vendor</label>

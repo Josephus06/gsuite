@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 // Mirrors the real system's "Accounting > Chart of Accounts" screen -- fully migrated
 // from the live site (276 accounts, real parent/child hierarchy). The real screen also
@@ -53,7 +54,7 @@ export default function ChartOfAccounts() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Account code or title..." />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Account code or title..." />
           </div>
         </div>
         <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>

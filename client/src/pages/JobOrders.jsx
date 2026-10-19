@@ -9,6 +9,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
 import FilterPicker from '../components/FilterPicker';
+import SearchInput from '../components/SearchInput';
 
 // Mirrors server/src/lib/designSupervisorVisibility.js's own DESIGN_QUEUE_STATUS/
 // DESIGN_QUEUE_SUB_STATUSES -- a JO is eligible for (re)assignment here only while
@@ -249,7 +250,7 @@ export default function JobOrders() {
           <div className="filter-grid">
             <div className="field">
               <label>General Searching</label>
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." />
+              <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." />
             </div>
             <div className="field">
               <label>Sales Rep</label>

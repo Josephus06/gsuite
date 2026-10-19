@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 const PAGE_SIZE = 15;
 const STATUS_LABELS = { open: 'Open', partially_served: 'Partially Served', served: 'Served', cancelled: 'Cancelled' };
@@ -48,7 +49,7 @@ export default function OfficeSupplyRequisitions() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="OSR No, Withdraw From, Transfer To or Memo..." />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="OSR No, Withdraw From, Transfer To or Memo..." />
           </div>
           <div className="field">
             <label>Status</label>

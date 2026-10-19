@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 const PAGE_SIZE = 10;
 function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
@@ -88,7 +89,7 @@ export default function CommissionSchemes() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Scheme name..." />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Scheme name..." />
           </div>
         </div>
         <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>

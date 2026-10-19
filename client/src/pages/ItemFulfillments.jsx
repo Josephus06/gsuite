@@ -7,6 +7,7 @@ import Pagination from '../components/Pagination';
 import { displayDate } from '../utils/dates';
 import { downloadFile } from '../utils/downloadFile';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 function locationLabel(l) { return l ? l.location_name : ''; }
@@ -105,7 +106,7 @@ export default function ItemFulfillments() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="IF No. or TO No..." />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="IF No. or TO No..." />
           </div>
           <div className="field">
             <label>Withdraw From</label>

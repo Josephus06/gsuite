@@ -2811,3 +2811,15 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .get-app-login-links { white-space: nowrap; }
 .get-app-login a { color: #3aa89d; font-weight: 600; text-decoration: none; }
 .get-app-login a:hover { text-decoration: underline; }
+
+/* General Searching box with its clear (×) button (components/SearchInput.jsx). */
+.search-input { position: relative; width: 100%; }
+.search-input > input { padding-right: 34px; }
+.search-input-clear {
+  position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+  width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%;
+  background: transparent; color: var(--color-text-secondary, #6b7280);
+  font-size: 18px; line-height: 24px; text-align: center; cursor: pointer;
+}
+.search-input-clear:hover { background: var(--accent-bg, rgba(0, 0, 0, 0.06)); color: var(--color-text-primary, #111827); }
+@media (pointer: coarse) { .search-input-clear { width: 32px; height: 32px; line-height: 32px; right: 2px; } }

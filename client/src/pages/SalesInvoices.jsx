@@ -12,6 +12,7 @@ import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
 import FilterPicker from '../components/FilterPicker';
+import SearchInput from '../components/SearchInput';
 
 const PAGE_SIZE = 10;
 const STATUS_LABELS = { saved: 'Open', cancelled: 'Void' };
@@ -171,7 +172,7 @@ export default function SalesInvoices() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Invoice #, BS/SI #, PO #, SO # or Customer..." />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Invoice #, BS/SI #, PO #, SO # or Customer..." />
           </div>
           <div className="field">
             <label>Type</label>

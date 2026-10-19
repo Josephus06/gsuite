@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayMonth, displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 const PAGE_SIZE = 10;
 const STATUS_LABELS = { unpaid: 'Unpaid', partial: 'Partially Paid', paid: 'Paid', void: 'Void' };
@@ -55,7 +56,7 @@ export default function CommissionPayables() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="CP # or Employee..." />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="CP # or Employee..." />
           </div>
           <div className="field">
             <label>Status</label>

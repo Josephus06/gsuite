@@ -9,6 +9,7 @@ import SyncFromSourceButton from '../components/SyncFromSourceButton';
 import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
 import FilterPicker from '../components/FilterPicker';
+import SearchInput from '../components/SearchInput';
 
 // Mirrors the real system's Estimates list: status tabs with counts (instead of a
 // plain flat table), a collapsible filter panel, and a "View" action per row that
@@ -151,7 +152,7 @@ export default function Estimates() {
           <div className="filter-grid">
             <div className="field">
               <label>General Searching</label>
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." />
+              <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." />
             </div>
             <div className="field">
               <label>Sales Rep</label>

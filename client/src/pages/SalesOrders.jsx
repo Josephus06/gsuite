@@ -10,6 +10,7 @@ import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
 import FilterPicker from '../components/FilterPicker';
 import { downloadFile } from '../utils/downloadFile';
+import SearchInput from '../components/SearchInput';
 
 // Mirrors Estimates.jsx / the real system's "Saved Sales Orders" list -- Sales Orders
 // are only ever generated automatically (when an estimate reaches Approved), so there
@@ -115,7 +116,7 @@ export default function SalesOrders() {
           <div className="filter-grid">
             <div className="field">
               <label>General Searching</label>
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." />
+              <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." />
             </div>
             <div className="field">
               <label>Sales Rep</label>

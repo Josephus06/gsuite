@@ -8,6 +8,7 @@ import EntityPicker from '../components/EntityPicker';
 import { CustomerLink, SupplierLink } from '../components/PartyLink';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 // The Payee opens its Master List record when it is a supplier or a customer; an employee (or a
 // cheque with no linked payee) stays plain text.
@@ -107,7 +108,7 @@ export default function Cheques() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Cheque No, Payee, Cheque # or Memo..." />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Cheque No, Payee, Cheque # or Memo..." />
           </div>
           <div className="field">
             <label>Payee Type</label>

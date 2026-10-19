@@ -9,6 +9,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { SupplierLink } from '../components/PartyLink';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 // Purchasing > Receiving Report -- every RR raised against every Purchase Order.
 //
@@ -123,7 +124,7 @@ export default function ReceivingReports() {
           <div className="filter-grid">
             <div className="field">
               <label>General Searching</label>
-              <input
+              <SearchInput
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && runSearch()}

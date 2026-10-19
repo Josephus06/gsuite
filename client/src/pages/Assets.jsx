@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { STATUS_LABELS } from '../utils/assetLabels';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 const TYPES_PER_PAGE = 10;
 const ROWS_PER_PAGE = 15;
@@ -100,7 +101,7 @@ export default function Assets() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={filters.search} onChange={(e) => setF({ search: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Reference no, serial, type..." />
+            <SearchInput value={filters.search} onChange={(e) => setF({ search: e.target.value })} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Reference no, serial, type..." />
           </div>
           <div className="field">
             <label>Location</label>

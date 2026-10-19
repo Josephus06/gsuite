@@ -6,6 +6,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
 import FilterPicker from '../components/FilterPicker';
+import SearchInput from '../components/SearchInput';
 
 // Mirrors the real system's "Production > Item Delivery" ("Saved Item Delivery") list --
 // a flat filterable table (no status tabs), same pattern as Assembly Build's list.
@@ -62,7 +63,7 @@ export default function ItemDeliveries() {
           <div className="filter-grid">
             <div className="field">
               <label>General Searching</label>
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." />
+              <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." />
             </div>
             <div className="field">
               <label>Customer</label>

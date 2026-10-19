@@ -5,6 +5,7 @@ import { CustomerLink } from '../../components/PartyLink';
 import Pagination from '../../components/Pagination';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import EntityPicker from '../../components/EntityPicker';
+import SearchInput from '../../components/SearchInput';
 
 const PAGE_SIZE = 25;
 const NO_FILTERS = {
@@ -133,7 +134,7 @@ export default function BirSalesReport() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input
+            <SearchInput
               placeholder="Search" value={form.search}
               onChange={(e) => setField('search', e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') search(); }}

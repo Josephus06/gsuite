@@ -7,6 +7,7 @@ import Modal from '../components/Modal';
 import NonStandardJobOrderFormModal from '../components/NonStandardJobOrderFormModal';
 import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
+import SearchInput from '../components/SearchInput';
 
 const ROUTE = '/non-standard-job-orders';
 const SUB_SBU_APPROVAL = 'SBU Approval';
@@ -138,7 +139,7 @@ export default function NonStandardJobOrders() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="field">
           <label>General Searching</label>
-          <input
+          <SearchInput
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); runSearch(); } }}

@@ -5,6 +5,7 @@ import { CustomerLink } from '../../components/PartyLink';
 import EntityPicker from '../../components/EntityPicker';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Modal from '../../components/Modal';
+import SearchInput from '../../components/SearchInput';
 
 // Accounting > Reports > Profitability Report -- the real system's report, column for column: one group per
 // Sales Order with its lines underneath, estimated against actual on both sides of the margin.
@@ -246,7 +247,7 @@ export default function Profitability() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input
+            <SearchInput
               value={filters.search}
               placeholder="SO #, Est #, JO #, customer, contract"
               onChange={(e) => setFilters({ ...filters, search: e.target.value })}

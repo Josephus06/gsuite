@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 // Purchasing > Inventory Replenishment: the INVENTORY-type items (the ones kept on the shelf --
 // JIT items are bought per job and never stocked) whose stock will not cover the job orders in
@@ -59,7 +60,7 @@ export default function InventoryReplenishment() {
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div className="field" style={{ flex: '1 1 360px' }}>
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setApplied(search)} placeholder="Item code, name or category..." />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setApplied(search)} placeholder="Item code, name or category..." />
           </div>
           <div className="field" style={{ width: 230 }}>
             <label>Job Orders counted</label>

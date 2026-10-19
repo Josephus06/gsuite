@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import MergePartyModal from '../components/MergePartyModal';
+import SearchInput from '../components/SearchInput';
 
 // Adding and editing a customer happen on their own page (CustomerForm.jsx), laid out as the old
 // system's "Setup Your Customer" screen.
@@ -74,7 +75,7 @@ export default function Customers() {
           <div className="filter-grid">
             <div className="field">
               <label>General Searching</label>
-              <input
+              <SearchInput
                 value={search} onChange={(e) => setSearch(e.target.value)}
                 placeholder="Code, Name, Company, TIN or Address..."
               />

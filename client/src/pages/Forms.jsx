@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import { useAuth } from '../context/useAuth';
 import { NO_ITEM_TYPES, STATUS_BADGE, TYPE_LABELS, fmtDate, money, pretty } from '../utils/requestForms';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 // Forms -- the request forms ported from the Booking system. Four company forms, one approval
 // chain. This is the filer's own list: your forms, or everyone's if you hold Can View All.
@@ -63,7 +64,7 @@ export default function Forms() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input
+            <SearchInput
               value={search} onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && load()}
               placeholder="REQ #, name or department..."

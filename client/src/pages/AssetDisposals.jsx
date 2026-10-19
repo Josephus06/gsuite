@@ -7,6 +7,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { DISPOSAL_STATUS_LABELS, DISPOSAL_TYPE_LABELS, formatMoney } from '../utils/assetLabels';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 const PAGE_SIZE = 15;
 function formatDate(v) { return v ? displayDate(v) : '—'; }
@@ -49,7 +50,7 @@ export default function AssetDisposals() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={filters.search} onChange={(e) => setF({ search: e.target.value })}
+            <SearchInput value={filters.search} onChange={(e) => setF({ search: e.target.value })}
               onKeyDown={(e) => e.key === 'Enter' && (setPage(1), setApplied(filters))} placeholder="Disposal no, reference no, buyer..." />
           </div>
           <div className="field">

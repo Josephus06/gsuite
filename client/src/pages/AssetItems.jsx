@@ -5,6 +5,7 @@ import Modal from '../components/Modal';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 const PAGE_SIZE = 15;
 const EMPTY = { item_code: '', display_name: '', category: '', owning_department_id: '', brand: '', model: '', specification: '', description: '', is_active: true };
@@ -143,7 +144,7 @@ export default function AssetItems() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Name, code, brand or model..." />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Name, code, brand or model..." />
           </div>
           <div className="field">
             <label>Category</label>

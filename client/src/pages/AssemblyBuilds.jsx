@@ -6,6 +6,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
 import FilterPicker from '../components/FilterPicker';
+import SearchInput from '../components/SearchInput';
 
 // Mirrors the real system's "Production > Assembly Build" ("Saved Assembly Build")
 // list -- a flat filterable table (no status tabs), same pattern as Saved Job Orders.
@@ -70,7 +71,7 @@ export default function AssemblyBuilds() {
           <div className="filter-grid">
             <div className="field">
               <label>General Searching</label>
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." />
+              <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." />
             </div>
             <div className="field">
               <label>Sales Rep</label>

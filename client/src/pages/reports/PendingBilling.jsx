@@ -5,6 +5,7 @@ import { CustomerLink } from '../../components/PartyLink';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import { displayDate } from '../../utils/dates';
 import FilterPicker from '../../components/FilterPicker';
+import SearchInput from '../../components/SearchInput';
 
 // Sales > Pending Billing: Job Orders production has completed but that are not yet (fully)
 // invoiced -- the work that is done and waiting for its bill. Oldest first, because the longer a
@@ -76,7 +77,7 @@ export default function PendingBilling() {
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="filter-grid">
-          <div className="field"><label>General Searching</label><input value={f.search} placeholder="JO, SO, customer or description..." onChange={(e) => upd('search', e.target.value)} /></div>
+          <div className="field"><label>General Searching</label><SearchInput value={f.search} placeholder="JO, SO, customer or description..." onChange={(e) => upd('search', e.target.value)} /></div>
           <div className="field">
             <label>Sales Rep</label>
             <FilterPicker label="Sales Rep" items={reps} value={f.sales_rep_id} onChange={(v) => upd('sales_rep_id', v)}

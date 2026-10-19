@@ -8,6 +8,7 @@ import SyncFromSourceButton from '../components/SyncFromSourceButton';
 import { SupplierLink } from '../components/PartyLink';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 // Mirrors the real "Saved Purchase Orders" list -- status tabs are a read-only bucket
 // derived from status + receipt_status + bill_status together (see purchaseOrders.js's
@@ -121,7 +122,7 @@ export default function PurchaseOrders() {
           <div className="filter-grid">
             <div className="field">
               <label>General Searching</label>
-              <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Search..." />
+              <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="Search..." />
             </div>
             <div className="field">
               <label>Supplier</label>

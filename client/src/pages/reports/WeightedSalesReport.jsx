@@ -5,6 +5,7 @@ import { CustomerLink } from '../../components/PartyLink';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Pagination from '../../components/Pagination';
 import { displayDate } from '../../utils/dates';
+import SearchInput from '../../components/SearchInput';
 
 function money(v) {
   const n = Number(v);
@@ -97,7 +98,7 @@ export default function WeightedSalesReport() {
               {(meta?.reps || []).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select></div>
           <div className="field"><label>General Searching</label>
-            <input value={filters.search} onChange={set('search')} onKeyDown={(e) => e.key === 'Enter' && search()} placeholder="SO #, JO #, customer, description…" /></div>
+            <SearchInput value={filters.search} onChange={set('search')} onKeyDown={(e) => e.key === 'Enter' && search()} placeholder="SO #, JO #, customer, description…" /></div>
         </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
           <button className="btn btn-primary" onClick={search}>Search</button>

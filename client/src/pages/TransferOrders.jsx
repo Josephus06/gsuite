@@ -7,6 +7,7 @@ import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 const PAGE_SIZE = 10;
 
@@ -130,7 +131,7 @@ export default function TransferOrders() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="TO No., Job Order No. or Memo..." />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="TO No., Job Order No. or Memo..." />
           </div>
           <DateRangeField label="Date Created" value={created} onChange={setCreated} />
           <LocationField label="Withdraw From" value={withdrawFrom} onChange={setWithdrawFrom} locations={locations} />

@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
+import SearchInput from '../components/SearchInput';
 
 const PAGE_SIZE = 15;
 const STATUS_LABELS = { open: 'Open', void: 'Void' };
@@ -59,7 +60,7 @@ export default function Deposits() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="BD No, Account or Memo..." />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="BD No, Account or Memo..." />
           </div>
           {/* Period puts two dates beside the mode picker -- more than one grid cell holds, so the
               field takes two cells then, and each date may shrink rather than spill over. */}

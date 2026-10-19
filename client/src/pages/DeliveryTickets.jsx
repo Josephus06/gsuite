@@ -8,6 +8,7 @@ import SyncFromSourceButton from '../components/SyncFromSourceButton';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
+import SearchInput from '../components/SearchInput';
 
 const PAGE_SIZE = 10;
 const STATUS_LABELS = { open: 'Open', converted: 'Converted', void: 'Void' };
@@ -102,7 +103,7 @@ export default function DeliveryTickets() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input
+            <SearchInput
               value={search} onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && runSearch()}
               placeholder="DT #, SO #, Customer or PO #..."

@@ -9,6 +9,7 @@ import useAutoSearch from '../utils/useAutoSearch';
 import { downloadFile } from '../utils/downloadFile';
 import { CustomerLink } from './PartyLink';
 import FilterPicker from './FilterPicker';
+import SearchInput from './SearchInput';
 
 const PAGE_SIZE = 10;
 const STAGE_LABELS = {
@@ -113,7 +114,7 @@ export default function ReworkJobOrderList({ prefix }) {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()}
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()}
               placeholder={`${prefix} #, Mother JO #, SO # or Customer...`} />
           </div>
           <div className="field">

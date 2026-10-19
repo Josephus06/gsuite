@@ -6,6 +6,7 @@ import { CustomerLink } from '../../components/PartyLink';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Pagination from '../../components/Pagination';
 import { displayDate } from '../../utils/dates';
+import SearchInput from '../../components/SearchInput';
 
 function money(v) {
   const n = Number(v);
@@ -91,7 +92,7 @@ export default function ForecastReport() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="filter-grid">
           <div className="field"><label>General Searching</label>
-            <input value={filters.search} onChange={set('search')} onKeyDown={(e) => e.key === 'Enter' && search()} placeholder="JO #, SO #, customer, description…" /></div>
+            <SearchInput value={filters.search} onChange={set('search')} onKeyDown={(e) => e.key === 'Enter' && search()} placeholder="JO #, SO #, customer, description…" /></div>
           <div className="field"><label>Office Location</label>{select('office_location_id', meta?.locations, 'Office Location', (l) => l.location_name)}</div>
           <div className="field"><label>Job Location</label>{select('job_location_id', meta?.locations, 'Job Location', (l) => l.location_name)}</div>
           <div className="field"><label>Department</label>{select('department_id', meta?.departments, 'Department', (x) => x.name)}</div>
