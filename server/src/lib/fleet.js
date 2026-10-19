@@ -57,7 +57,7 @@ async function loadVehicles(q = pool, assetId = null) {
              OR ai.category LIKE '%Transport%' OR ai.display_name REGEXP '(^|[^a-z])(vehicles?|motorcycles?|motorbikes?|trucks?|vans?|cars?)([^a-z]|$)'
              OR v.asset_id IS NOT NULL)
         ${assetId ? 'AND a.id = ?' : ''}
-      ORDER BY COALESCE(v.plate_no, a.serial_no) IS NULL, COALESCE(v.plate_no, a.serial_no), a.id`,
+      ORDER BY COALESCE(TRIM(v.plate_no), TRIM(a.serial_no)) IS NULL, COALESCE(TRIM(v.plate_no), TRIM(a.serial_no)), a.id`,
     assetId ? [assetId] : []).catch((e) => {
     if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') return [[]]; // create-fleet-module.js not run yet
     throw e;
@@ -103,8 +103,8 @@ function computeDue(v, pms, logOdo, today) {
     ...v,
     // The asset's Serial No is its plate number (asked 2026-10-19 -- the 28 vehicles were entered with
     // the plate there); a plate typed on the vehicle itself wins.
-    plate_no: v.plate_no || v.serial_no || null,
-    plate_from_serial: !v.plate_no && !!v.serial_no,
+    plate_no: String(v.plate_no || v.serial_no || '').trim() || null,
+    plate_from_serial: !String(v.plate_no || '').trim() && !!String(v.serial_no || '').trim(),
     registration_expiry: day(v.registration_expiry), insurance_expiry: day(v.insurance_expiry),
     emission_expiry: day(v.emission_expiry), registration_date: day(v.registration_date), odometer_at: day(v.odometer_at),
     current_odometer_km: odometer,
