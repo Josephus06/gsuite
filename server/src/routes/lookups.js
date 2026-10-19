@@ -83,14 +83,16 @@ router.get('/landed-cost-items', requireAuth, requirePermission('/lookups', 'can
 
 router.get('/departments/:id/ticket-approvers', requireAuth, requirePermission('/lookups', 'can_view'), async (req, res, next) => {
   try {
-    const [rows] = await pool.query(
-      `SELECT u.id, u.display_name, u.username,
-              dta.can_approve_ticket, dta.can_note_form, dta.note_form_types
+    const sql = (leaveCol) => `SELECT u.id, u.display_name, u.username,
+              dta.can_approve_ticket, dta.can_note_form, dta.note_form_types${leaveCol ? ', dta.can_approve_leave' : ''}
        FROM department_ticket_approvers dta
        JOIN users u ON u.id = dta.user_id
-       WHERE dta.department_id = ? ORDER BY u.display_name`,
-      [req.params.id]
-    );
+       WHERE dta.department_id = ? ORDER BY u.display_name`;
+    // can_approve_leave arrives with db/add-department-leave-approvers.js; until then, without it.
+    const [rows] = await pool.query(sql(true), [req.params.id]).catch((e) => {
+      if (e.code === 'ER_BAD_FIELD_ERROR') return pool.query(sql(false), [req.params.id]);
+      throw e;
+    });
     res.json(rows);
   } catch (err) {
     next(err);
@@ -127,6 +129,10 @@ router.put('/departments/:id/ticket-approvers/:userId', requireAuth, requirePerm
     }
     if (req.body.can_note_form !== undefined) {
       fields.push('can_note_form = ?'); params.push(req.body.can_note_form ? 1 : 0);
+    }
+    // Approves the Leave Applications filed from this department (2026-10-19; see routes/forms.js).
+    if (req.body.can_approve_leave !== undefined) {
+      fields.push('can_approve_leave = ?'); params.push(req.body.can_approve_leave ? 1 : 0);
     }
     // Which forms they note (2026-10-08): a list of department-noted form types; empty or every one
     // of them is stored as NULL, meaning all -- so a form type added later is included by default.

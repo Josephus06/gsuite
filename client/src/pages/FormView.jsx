@@ -262,6 +262,12 @@ export default function FormView() {
             : 'This has to be noted before it can be approved.'}
         </div>
       )}
+      {/* A leave whose department names its approvers (Lookups > Departments > Approve leave). */}
+      {doc.type === 'leave' && doc.status === 'noted' && !doc.can_approve && (doc.leave_approvers || []).length > 0 && (
+        <div className="muted" style={{ marginBottom: 8 }}>
+          Waiting on approval by {doc.leave_approvers.join(' or ')}.
+        </div>
+      )}
 
       {doc.status === 'rejected' && (
         <div className="error-banner">

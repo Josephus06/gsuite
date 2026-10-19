@@ -456,6 +456,8 @@ export default function Lookups() {
                   Tickets: any ticket created by someone in this department needs sign-off from one of these people
                   before the receiving department can assign it. Forms: a Request for Payment, Fund Transfer, Revolving Fund or
                   Attendance Adjustment filed from this department is noted by one of them -- tick which forms each one notes.
+                  Leave: once noted, a Leave Application from this department is approved by whoever is ticked Approve leave
+                  (nobody ticked: the Forms Approval approvers, as before).
                   Leave empty for no approval gate.
                 </div>
                 <div className="dept-heads">
@@ -477,6 +479,14 @@ export default function Lookups() {
                             onChange={(e) => setApproverRole(a, { can_note_form: e.target.checked })}
                           />
                           Note form
+                        </label>
+                        {/* Approves this department's Leave Applications (2026-10-19); see routes/forms.js mayApprove. */}
+                        <label className="check">
+                          <input
+                            type="checkbox" checked={!!a.can_approve_leave}
+                            onChange={(e) => setApproverRole(a, { can_approve_leave: e.target.checked })}
+                          />
+                          Approve leave
                         </label>
                         <button type="button" className="btn btn-sm btn-danger" onClick={() => removeApprover(a)}>Remove</button>
                       </div>

@@ -103,7 +103,38 @@ async function notersForDoc(doc, q = pool) {
   return [];
 }
 
+// Who APPROVES a department's Leave Applications (asked 2026-10-19): the people on its list ticked
+// "Approve leave" (can_approve_leave, db/add-department-leave-approvers.js). A department with
+// nobody ticked keeps the old rule -- the Forms Approval page's approvers. Before the column exists
+// nobody is ticked anywhere, which is that same old rule.
+async function leaveApproversFor(departmentId, q = pool) {
+  if (!departmentId) return [];
+  try {
+    const [rows] = await q.query(
+      `SELECT u.id, u.display_name FROM department_ticket_approvers a
+         JOIN users u ON u.id = a.user_id
+        WHERE a.department_id = ? AND a.can_approve_leave = 1 AND u.is_active = 1 ORDER BY u.display_name`,
+      [departmentId]);
+    return rows;
+  } catch (e) {
+    if (e.code === 'ER_BAD_FIELD_ERROR') return [];
+    throw e;
+  }
+}
+
+// Does this user approve leave for any department? Widens the approval queue to those forms.
+async function approvesLeaveAnywhere(userId, q = pool) {
+  try {
+    const [[row]] = await q.query(
+      'SELECT 1 AS ok FROM department_ticket_approvers WHERE user_id = ? AND can_approve_leave = 1 LIMIT 1', [userId]);
+    return !!row;
+  } catch (e) {
+    if (e.code === 'ER_BAD_FIELD_ERROR') return false;
+    throw e;
+  }
+}
+
 module.exports = {
   TYPE_OK, DEPARTMENT_NOTED_TYPES, AP_NOTED_TYPES, isDepartmentNoter, departmentsHeadedBy, notersFor,
-  isAccountsPayable, accountsPayableUsers, notersForDoc,
+  isAccountsPayable, accountsPayableUsers, notersForDoc, leaveApproversFor, approvesLeaveAnywhere,
 };
