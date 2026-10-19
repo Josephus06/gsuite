@@ -230,11 +230,11 @@ export default function PurchaseOrderView() {
       alert(e.response?.data?.error || 'Could not save the description.');
     }
   }
-  // A Purchasing Supervisor signs any type of PO up to this, including the PO3/PO4 that are raised
-  // straight into the GM tier; above it the General Manager alone. Kept in step with
-  // APPROVAL_THRESHOLD in routes/purchaseOrders.js, which is what actually enforces it.
+  // A Purchasing Supervisor signs a PO up to this; above it the General Manager alone. PO3/PO4 are
+  // the General Manager's whatever the amount (2026-10-19). Kept in step with APPROVAL_THRESHOLD /
+  // GM_ONLY_TYPES in routes/purchaseOrders.js, which is what actually enforces it.
   const SUPERVISOR_APPROVAL_LIMIT = 10000;
-  const withinSupervisorLimit = Number(po.total_amount || 0) <= SUPERVISOR_APPROVAL_LIMIT;
+  const withinSupervisorLimit = Number(po.total_amount || 0) <= SUPERVISOR_APPROVAL_LIMIT && !['PO3', 'PO4'].includes(po.type);
   const showApprove = canApprovePO && (
     // A GM may also approve at the first stage -- it approves outright (server: PUT /approve).
     (st === 'pending_approval' && (!!user?.is_purchasing_supervisor || user?.account_type === 'System Admin' || user?.account_type === 'General Manager'))

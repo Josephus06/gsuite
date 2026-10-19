@@ -13,11 +13,15 @@ const { lineDepartmentError } = require('../lib/requireDepartment');
 const { notifyPoPending, notifyPoApproved } = require('../lib/approvalNotifications');
 const { isNonStockItem } = require('../lib/itemTypes');
 
+// Purchase Order types the General Manager approves whatever the amount (2026-10-19): PO3 (Services
+// with JO) and PO4 (Services / Non-Inventory without JO). Kept in step with lib/approvalNotifications.js.
+const GM_ONLY_TYPES = ['PO3', 'PO4'];
+
 // Tells whoever acts next on a PO that has just been saved or approved (lib/approvalNotifications.js).
 function notifyPoNextStep(po, actorId) {
   const st = normalisePoStatus(po.status);
   if (st === 'pending_approval' || st === 'pending_approval_gm') {
-    return notifyPoPending({ id: po.id, poNo: po.po_no, status: st, total: po.total_amount }, actorId);
+    return notifyPoPending({ id: po.id, poNo: po.po_no, status: st, total: po.total_amount, type: po.type }, actorId);
   }
   if (isApproved(po.status)) return notifyPoApproved({ id: po.id, poNo: po.po_no, createdBy: po.created_by_user_id }, actorId);
   return null;
@@ -895,9 +899,9 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 //   PO1/PO2, total > APPROVAL_THRESHOLD: Purchasing Supervisor approves -> pending_approval_gm
 //     -> General Manager approves -> 'approved'.
 //   PO1/PO2, total <= APPROVAL_THRESHOLD: Purchasing Supervisor approves -> 'approved' directly.
-//   PO3/PO4: created straight into pending_approval_gm. A General Manager approves any amount; a
-//     Purchasing Supervisor may approve one up to APPROVAL_THRESHOLD, so the same ceiling applies
-//     to a supervisor whatever the type -- it is the amount the threshold exists to judge.
+//   PO3/PO4: created straight into pending_approval_gm, and approved by the General Manager alone,
+//     whatever the amount (2026-10-19) -- the GM is notified of every one. (Until then a Purchasing
+//     Supervisor could approve one up to APPROVAL_THRESHOLD, and the GM was not told about those.)
 // A General Manager (or System Admin) may also approve at the FIRST stage: that approves the PO
 // outright, skipping the supervisor tier.
 // A System Admin can also perform the GM-tier approval (matches the "GM" ~ admin-level
@@ -906,7 +910,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 router.put('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[po]] = await conn.query('SELECT status, total_amount FROM purchase_orders WHERE id = ?', [req.params.id]);
+    const [[po]] = await conn.query('SELECT status, total_amount, type FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!po) return res.status(404).json({ error: 'Not found' });
     const [[actingUser]] = await conn.query('SELECT is_purchasing_supervisor, account_type FROM users WHERE id = ?', [req.user.id]);
 
@@ -940,12 +944,16 @@ router.put('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve'),
       // created straight into pending_approval_gm, so without this a 500-peso service PO waited on
       // the General Manager while a 9,000-peso PO1 did not -- the amount, not the type, is what
       // the threshold is there to judge. Above it, still the GM alone.
-      const isSupervisorUnderThreshold = !!actingUser.is_purchasing_supervisor
+      // EXCEPT PO3/PO4 (2026-10-19): the General Manager approves those whatever the amount.
+      const gmOnly = GM_ONLY_TYPES.includes(po.type);
+      const isSupervisorUnderThreshold = !gmOnly && !!actingUser.is_purchasing_supervisor
         && Number(po.total_amount) <= APPROVAL_THRESHOLD;
       if (!isGm && !isSupervisorUnderThreshold) {
         await conn.rollback();
         return res.status(403).json({
-          error: actingUser.is_purchasing_supervisor
+          error: gmOnly
+            ? `A ${po.type} Purchase Order is approved by the General Manager, whatever the amount.`
+            : actingUser.is_purchasing_supervisor
             ? `A Purchasing Supervisor can approve up to ${APPROVAL_THRESHOLD.toLocaleString('en-US')}. This one is for ${Number(po.total_amount).toLocaleString('en-US', { minimumFractionDigits: 2 })} and needs a General Manager.`
             : 'Only a General Manager / System Admin can approve this Purchase Order.',
         });

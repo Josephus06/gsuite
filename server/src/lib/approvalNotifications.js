@@ -45,7 +45,10 @@ const PO_APPROVAL_THRESHOLD = 10000; // routes/purchaseOrders.js APPROVAL_THRESH
 //   pending_approval_gm  above the threshold, the General Manager; within it, the Purchasing
 //                        Supervisors only -- a PO of 10,000 or less no longer goes to the GM, so the GM
 //                        is not told about it (2026-10-14). PO3/PO4 enter this tier directly.
-function notifyPoPending({ id, poNo, status, total }, actorId) {
+// PO3/PO4 (2026-10-19): the General Manager approves those whatever the amount, so the GM is told
+// about every one -- routes/purchaseOrders.js GM_ONLY_TYPES.
+const PO_GM_ONLY_TYPES = ['PO3', 'PO4'];
+function notifyPoPending({ id, poNo, status, total, type }, actorId) {
   return safely(`PO ${poNo} ${status}`, async () => {
     // A General Manager is never told at the supervisor tier, even with the Purchasing Supervisor box
     // ticked (JIMMY WU has it, and still got PO-21055 for 630.00 -- 2026-10-14): anything that needs
@@ -56,14 +59,14 @@ function notifyPoPending({ id, poNo, status, total }, actorId) {
     if (status === 'pending_approval') {
       to = sups.map((u) => u.id);
     } else if (status === 'pending_approval_gm') {
-      if (Number(total) <= PO_APPROVAL_THRESHOLD) {
+      if (Number(total) <= PO_APPROVAL_THRESHOLD && !PO_GM_ONLY_TYPES.includes(type)) {
         to = sups.map((u) => u.id);
       } else {
         const [gms] = await pool.query("SELECT id FROM users WHERE account_type = 'General Manager' AND is_active = 1");
         to = gms.map((u) => u.id);
       }
     }
-    const forGm = status === 'pending_approval_gm' && Number(total) > PO_APPROVAL_THRESHOLD;
+    const forGm = status === 'pending_approval_gm' && (Number(total) > PO_APPROVAL_THRESHOLD || PO_GM_ONLY_TYPES.includes(type));
     await insertFor(to, {
       type: 'po_pending_approval',
       title: `${poNo} needs your approval`,
