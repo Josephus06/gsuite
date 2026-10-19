@@ -224,6 +224,10 @@ const LIST_FROM = `FROM job_orders jo
        LEFT JOIN employees pb ON pb.id = so.prepared_by_id
        LEFT JOIN employees ar ON ar.id = jo.artist_id`;
 
+const EXTRACT_STAGE_LABELS = {
+  pending_for_scheduling: 'Pending for Sched.', for_revision: 'For Revision', in_process_with_revision: 'In-Process w/ Rev.',
+  in_process: 'In-Process', for_qi: 'For QI', partially_completed: 'Part. Completed', completed: 'Completed', invoiced: 'Invoiced',
+};
 const LIST_SELECT = `SELECT jo.*, so.sales_order_no, c.name AS customer_name, c.id AS customer_id, cc.contact_name,
               jt.display_name AS job_type_name, jloc.location_name AS job_location_name,
               oloc.location_name AS office_location_name, sd.name AS sales_division_name,
@@ -298,7 +302,8 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
         department: r.sales_division_name || '', job_type: r.job_type_name || '', description: r.description || '',
         qty: r.quantity == null ? '' : Number(r.quantity), customer: r.customer_name || '', contact: r.contact_name || '',
         prepared_by: r.prepared_by_name || '', sales_rep: r.sales_rep_name || '', artist: r.artist_name || '',
-        status: r.status || '', sub_status: r.sub_status || '',
+        // A released JO's Sub Status is its production stage, as on screen (pages/JobOrders.jsx).
+        status: r.status || '', sub_status: Number(r.is_on_hold) ? 'On Hold' : (EXTRACT_STAGE_LABELS[r.production_stage] || r.sub_status || ''),
       })),
     });
   } catch (err) {

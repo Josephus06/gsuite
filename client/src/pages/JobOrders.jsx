@@ -11,6 +11,15 @@ import { CustomerLink } from '../components/PartyLink';
 import FilterPicker from '../components/FilterPicker';
 import SearchInput from '../components/SearchInput';
 
+// Sub Status of a released JO is where it is in Production (asked 2026-10-19: the Completed tab's JOs
+// read "Released / Approved"), as the JO's own page shows it; on hold says so. Before release, the
+// design / approval sub status as stored.
+const STAGE_LABELS = {
+  pending_for_scheduling: 'Pending for Sched.', for_revision: 'For Revision', in_process_with_revision: 'In-Process w/ Rev.',
+  in_process: 'In-Process', for_qi: 'For QI', partially_completed: 'Part. Completed', completed: 'Completed', invoiced: 'Invoiced',
+};
+const subStatusOf = (row) => (Number(row.is_on_hold) ? 'On Hold' : STAGE_LABELS[row.production_stage] || row.sub_status);
+
 // Mirrors server/src/lib/designSupervisorVisibility.js's own DESIGN_QUEUE_STATUS/
 // DESIGN_QUEUE_SUB_STATUSES -- a JO is eligible for (re)assignment here only while
 // still unassigned and sitting in a Design Supervisor's queue. Keep in sync with that
@@ -358,7 +367,7 @@ export default function JobOrders() {
                       <td data-label="Sales Rep">{row.sales_rep_name}</td>
                       <td data-label="Artist">{row.artist_name}</td>
                       <td data-label="Status">{row.status}</td>
-                      <td data-label="Sub Status">{row.sub_status}</td>
+                      <td data-label="Sub Status">{subStatusOf(row)}</td>
                       <td><Link className="btn btn-sm btn-primary" to={`/job-orders/${row.id}`}>View</Link></td>
                     </tr>
                   ))}
