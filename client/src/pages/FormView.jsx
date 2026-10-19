@@ -144,7 +144,8 @@ export default function FormView() {
   const cogsBlocksNote = mayNote && doc.needs_cogs && doc.cogs_missing > 0;
   // A Leave Application follows the filer's reporting line (2026-10-19): noted by their supervisor
   // when there is one below the approver (leave_needs_note), otherwise straight to approval.
-  const isLeave = doc.type === 'leave';
+  // A Fuel Request behaves as a leave with nobody to note it: straight to its tagged approvers.
+  const isLeave = doc.type === 'leave' || doc.type === 'fuel';
   const leaveDirect = isLeave && !doc.leave_needs_note;
   const noteBlocked = !leaveDirect && doc.status === 'submitted' && !doc.can_note && doc.note_blocked_reason;
   // Approving reads only from NOTED -- the head's sign-off is a gate, not a step to skip. Rejecting

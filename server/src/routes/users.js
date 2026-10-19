@@ -43,6 +43,8 @@ const ACCOUNT_TYPE_FIELDS = [
   'is_accounts_payable',
   // Monthly fuel limit (2026-10-19; db/add-fuel-form.js): a Fuel Request past it is refused at submit.
   'has_fuel_limit', 'fuel_limit_liters',
+  // Fuel Approver: approves every Fuel Request (they are not noted).
+  'is_fuel_approver',
 ];
 
 // Supervisors are NOT in the list above on purpose. Every field there that a PUT carries is

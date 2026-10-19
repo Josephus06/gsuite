@@ -571,7 +571,7 @@ export default function FormEdit() {
               <div className="field"><label>Station</label><input value={form.fuel_station} onChange={set('fuel_station')} /></div>
             </div>
             <div className="field"><label>Purpose *</label><textarea rows={2} value={form.fuel_purpose} onChange={set('fuel_purpose')} placeholder="What the fuel is for (delivery, installation, site visit ...)" /></div>
-            <div className="muted" style={{ fontSize: 12 }}>Once approved, a request for a listed vehicle is added to that vehicle's fuel log (Assets &gt; Fleet).</div>
+            <div className="muted" style={{ fontSize: 12 }}>Goes straight to the Fuel Approver once submitted. Once approved, a request for a listed vehicle is added to that vehicle's fuel log (Assets &gt; Fleet).</div>
           </div>
         );
       })()}

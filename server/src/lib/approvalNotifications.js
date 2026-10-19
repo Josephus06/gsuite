@@ -141,6 +141,16 @@ function notifyFormStatus(formId, actorId) {
       return;
     }
 
+    // Fuel Request (2026-10-19): no noting -- submitted goes straight to the tagged Fuel Approvers.
+    if (doc.type === 'fuel' && doc.status === 'submitted') {
+      const [rows] = await pool.query('SELECT id FROM users WHERE is_fuel_approver = 1 AND is_active = 1').catch(() => [[]]);
+      await insertFor(rows.map((r) => r.id).filter((id) => Number(id) !== Number(doc.user_id)), {
+        ...base, type: 'form_pending_approval', title: `${what} needs your approval`,
+        message: `${what}${doc.department ? ` from ${doc.department}` : ''} is waiting for your approval.`,
+      }, actorId);
+      return;
+    }
+
     // Leave Application (2026-10-19): by the filer's reporting line (lib/leaveRoute.js) -- submitted
     // goes to the supervisor who notes it, or straight to its approver when there is nobody to note;
     // noted goes to the approver. approvers: [] there means the Forms Approval approvers.

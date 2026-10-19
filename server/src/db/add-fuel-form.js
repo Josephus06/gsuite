@@ -6,6 +6,7 @@
 //   users.has_fuel_limit  ticked in Users & Permissions: the user has a monthly limit
 //   users.fuel_limit_liters  how many litres a month; a request that would take the month past it is
 //                         refused at submit (routes/forms.js)
+//   users.is_fuel_approver   tagged: approves Fuel Requests, which are not noted
 //
 // form_requests.type is a VARCHAR -- the new type needs no change there. Idempotent.
 // Droplet, office and SM replicate: run on ONE box (the droplet).
@@ -51,6 +52,7 @@ async function main() {
   for (const [col, ddl] of [
     ['has_fuel_limit', 'ADD COLUMN has_fuel_limit TINYINT(1) NOT NULL DEFAULT 0'],
     ['fuel_limit_liters', 'ADD COLUMN fuel_limit_liters DECIMAL(10,2) NULL'],
+    ['is_fuel_approver', 'ADD COLUMN is_fuel_approver TINYINT(1) NOT NULL DEFAULT 0'],
   ]) {
     if (await columnExists('users', col)) { console.log(`= users.${col} already exists`); continue; }
     if (DRY) { console.log(`~ would add users.${col}`); continue; }

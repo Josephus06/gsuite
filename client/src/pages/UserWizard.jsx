@@ -49,7 +49,7 @@ const EMPTY_ACCOUNT_TYPE = {
   is_production_supervisor: false, approval_code: '', supervisor_ids: [],
   sales_division_ids: [],
   // Monthly fuel limit (2026-10-19): a Fuel Request past it is refused at submit.
-  has_fuel_limit: false, fuel_limit_liters: '',
+  has_fuel_limit: false, fuel_limit_liters: '', is_fuel_approver: false,
 };
 
 const EMPTY_BRANCH = { location_id: '', department_id: '', can_override_date: false, remarks: '', is_default: false };
@@ -156,7 +156,7 @@ export default function UserWizard() {
         is_production_supervisor: !!data.is_production_supervisor,
         approval_code: data.approval_code || '', supervisor_ids: data.supervisor_ids || [],
         sales_division_ids: data.sales_division_ids || [],
-        has_fuel_limit: !!data.has_fuel_limit, fuel_limit_liters: data.fuel_limit_liters ?? '',
+        has_fuel_limit: !!data.has_fuel_limit, fuel_limit_liters: data.fuel_limit_liters ?? '', is_fuel_approver: !!data.is_fuel_approver,
       });
       setBranches((data.branches || []).map((b) => ({
         location_id: b.location_id, department_id: b.department_id || '',
@@ -559,6 +559,11 @@ export default function UserWizard() {
                 <input type="checkbox" checked={!!accountType.has_fuel_limit}
                   onChange={(e) => setAccountType({ ...accountType, has_fuel_limit: e.target.checked })} />
                 Has monthly fuel limit
+              </label>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
+                <input type="checkbox" checked={!!accountType.is_fuel_approver}
+                  onChange={(e) => setAccountType({ ...accountType, is_fuel_approver: e.target.checked })} />
+                Fuel Approver (approves Fuel Requests)
               </label>
               {accountType.has_fuel_limit && (
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>

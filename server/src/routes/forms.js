@@ -324,6 +324,13 @@ async function loadFull(id) {
 // requests count; drafts, rejected and cancelled ones do not. Approved for a Fleet vehicle, it
 // becomes that vehicle's fuel log entry (Assets > Fleet).
 const FUEL_COUNTED = ['submitted', 'noted', 'approved'];
+// Who approves a Fuel Request (2026-10-19): the users tagged Fuel Approver in Users & Permissions
+// (users.is_fuel_approver) -- nobody notes it; it waits on them from the moment it is submitted.
+async function fuelApprovers(q = pool) {
+  const [rows] = await q.query('SELECT id, display_name FROM users WHERE is_fuel_approver = 1 AND is_active = 1 ORDER BY display_name')
+    .catch((e) => { if (e.code === 'ER_BAD_FIELD_ERROR') return [[]]; throw e; });
+  return rows;
+}
 async function fuelUsage(userId, onDate, excludeFormId = null, q = pool) {
   const [[u]] = await q.query('SELECT has_fuel_limit, fuel_limit_liters FROM users WHERE id = ?', [userId])
     .catch((e) => { if (e.code === 'ER_BAD_FIELD_ERROR') return [[null]]; throw e; });
@@ -399,6 +406,16 @@ async function overtimeApproval(userId, doc, d) {
 //   { allowed: may approve it now, eligible: is one of its approvers, approvers, noters }
 const isMember = (list, userId) => list.some((a) => Number(a.id) === Number(userId));
 async function mayApprove(userId, doc) {
+  if (doc.type === 'fuel') {
+    const approvers = await fuelApprovers();
+    const atStep = ['submitted', 'noted'].includes(doc.status);
+    const eligible = Number(userId) !== Number(doc.user_id) && isMember(approvers, userId);
+    let reason = null;
+    if (!approvers.length) reason = 'Nobody is tagged Fuel Approver -- tick it on the approver in Users & Permissions.';
+    else if (!eligible) reason = Number(userId) === Number(doc.user_id) ? 'You cannot approve your own fuel request.' : `Only ${approvers.map((a) => a.display_name).join(' or ')} can approve fuel requests.`;
+    else if (!atStep) reason = 'Not waiting on approval.';
+    return { allowed: eligible && atStep, eligible, approvers, noters: [], reason };
+  }
   if (doc.type === 'leave') {
     const route = await leaveRoute(doc);
     const atStep = route.noters.length ? doc.status === 'noted' : ['submitted', 'noted'].includes(doc.status);
@@ -438,6 +455,8 @@ async function maySee(userId, doc) {
   if (await userCan(userId, APPROVAL_ROUTE, 'can_view_all')) return true;
   // One they have already acted on -- noted, approved or rejected.
   if ([doc.noted_by, doc.approved_by, doc.rejected_by].some((u) => u != null && Number(u) === Number(userId))) return true;
+  // A Fuel Request: its tagged approvers.
+  if (doc.type === 'fuel' && isMember(await fuelApprovers(), userId)) return true;
   // A Leave Application: the supervisor who notes it and whoever approves it (lib/leaveRoute.js).
   if (doc.type === 'leave') {
     const route = await leaveRoute(doc);
@@ -456,6 +475,8 @@ async function maySee(userId, doc) {
 // May this user note this particular form, and if not, why not? One answer used by the button, the
 // endpoint and the explanation on screen, so the three cannot disagree.
 async function mayNote(userId, doc) {
+  // A Fuel Request is not noted -- it goes straight to its tagged approvers (2026-10-19).
+  if (doc.type === 'fuel') return { allowed: false, reason: 'A fuel request goes straight to its approver -- there is nothing to note.' };
   // A Leave Application is noted by the filer's direct supervisor, when the line has one below the
   // approver (lib/leaveRoute.js); otherwise it goes straight to approval.
   if (doc.type === 'leave') {
@@ -579,7 +600,9 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
     const pageViewer = canSeeAll ? true : await userCan(req.user.id, APPROVAL_ROUTE, 'can_view');
     // Leave waiting on this user by the filer's reporting line (lib/leaveRoute.js, 2026-10-19).
     const leaveIds = canSeeAll ? [] : await leaveWaitingOn(req.user.id);
-    if (!canSeeAll && !pageViewer && headOf.length === 0 && !isAp && !otMine && !leaveIds.length) {
+    // Tagged Fuel Approver: every fuel request (2026-10-19).
+    const fuelApprover = canSeeAll ? false : isMember(await fuelApprovers(), req.user.id);
+    if (!canSeeAll && !pageViewer && headOf.length === 0 && !isAp && !otMine && !leaveIds.length && !fuelApprover) {
       return res.status(403).json({ error: 'You do not have permission to perform this action' });
     }
 
@@ -608,6 +631,7 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
         params.push(req.user.id);
       }
       if (leaveIds.length) { mine.push('f.id IN (?)'); params.push(leaveIds); }
+      if (fuelApprover) mine.push("f.type = 'fuel'");
       // Their own forms, and the ones they noted, approved or rejected.
       mine.push('(f.user_id = ? OR f.noted_by = ? OR f.approved_by = ? OR f.rejected_by = ?)');
       params.push(req.user.id, req.user.id, req.user.id, req.user.id);
@@ -953,6 +977,12 @@ router.get('/:id', requireAuth, async (req, res, next) => {
 
     const appr = await mayApprove(req.user.id, doc);
     doc.can_approve = appr.eligible;
+    // A fuel request names its tagged approvers, and is never waiting on a note (as a leave with none).
+    if (doc.type === 'fuel') {
+      doc.leave_approvers = appr.approvers.map((a) => a.display_name);
+      doc.leave_needs_note = false;
+      doc.noters = [];
+    }
     // A leave says who notes and who approves it, by the filer's reporting line.
     if (doc.type === 'leave') {
       doc.leave_approvers = appr.approvers.map((a) => a.display_name);
@@ -1518,7 +1548,7 @@ router.post('/:id/approve', requireAuth, async (req, res, next) => {
     if (doc.type === 'overtime') return res.status(409).json({ error: "An overtime request is approved by the department head, from the request itself." });
     const appr = await mayApprove(req.user.id, doc);
     if (!appr.eligible) return res.status(403).json({ error: appr.reason });
-    if (doc.type === 'leave' && !appr.allowed) return res.status(409).json({ error: appr.reason || 'Not waiting on approval.' });
+    if ((doc.type === 'leave' || doc.type === 'fuel') && !appr.allowed) return res.status(409).json({ error: appr.reason || 'Not waiting on approval.' });
 
     // NOTING IS A GATE, not a step that can be skipped. The source allowed submitted -> approved
     // directly; here a form must be noted by its department's head first, so the head's sign-off
@@ -1526,7 +1556,7 @@ router.post('/:id/approve', requireAuth, async (req, res, next) => {
     //
     // The cost of that is real and deliberate: a form from a department with no head recorded has
     // nowhere to go, so the refusal names who is missing rather than just saying no.
-    if (doc.status === 'submitted' && doc.type !== 'leave') {
+    if (doc.status === 'submitted' && doc.type !== 'leave' && doc.type !== 'fuel') {
       const heads = await notersForDoc(doc);
       if (AP_NOTED_TYPES.includes(doc.type) && heads.length === 0) {
         return res.status(409).json({ error: 'This liquidation has to be noted by Accounts Payable first, and nobody is marked Accounts Payable.' });
@@ -1542,7 +1572,7 @@ router.post('/:id/approve', requireAuth, async (req, res, next) => {
           : 'This has to be noted before it can be approved.',
       });
     }
-    if (doc.type !== 'leave' && doc.status !== 'noted') {
+    if (doc.type !== 'leave' && doc.type !== 'fuel' && doc.status !== 'noted') {
       return res.status(409).json({ error: 'Only a noted form can be approved.' });
     }
 
