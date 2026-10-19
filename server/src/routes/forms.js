@@ -350,6 +350,7 @@ async function maySee(userId, doc) {
   // alone no longer opens everyone's forms: a user sees the ones they are involved in.
   if (await userCan(userId, APPROVAL_ROUTE, 'can_approve')) return true;
   if (await userCan(userId, ROUTE, 'can_view_all')) return true;
+  if (await userCan(userId, APPROVAL_ROUTE, 'can_view_all')) return true;
   // One they have already acted on -- noted, approved or rejected.
   if ([doc.noted_by, doc.approved_by, doc.rejected_by].some((u) => u != null && Number(u) === Number(userId))) return true;
   // A Leave Application: the supervisor who notes it and whoever approves it (lib/leaveRoute.js).
@@ -480,7 +481,10 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
   try {
     // Users see only the forms they are involved in (2026-10-13); the approvers, whom every form
     // reaches, see them all. View on this page alone used to show everyone's forms.
-    const canSeeAll = await userCan(req.user.id, APPROVAL_ROUTE, 'can_approve');
+    // ...and anyone given View All on this page (2026-10-19) -- seeing every form, not ruling on it:
+    // approving still takes can_approve.
+    const canSeeAll = await userCan(req.user.id, APPROVAL_ROUTE, 'can_approve')
+      || await userCan(req.user.id, APPROVAL_ROUTE, 'can_view_all');
     const headOf = canSeeAll ? [] : await departmentsHeadedBy(req.user.id);
     // Accounts Payable sees every liquidation, since it notes them all.
     const isAp = canSeeAll ? false : await isAccountsPayable(req.user.id);
