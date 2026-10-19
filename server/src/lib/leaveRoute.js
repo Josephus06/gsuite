@@ -55,8 +55,10 @@ async function leaveRoute(doc, q = pool) {
   const filerId = Number(doc.user_id);
   const direct = (await supervisorsOf(q, [filerId])).filter((u) => Number(u.id) !== filerId);
   if (!direct.length) {
-    // No reporting line recorded: the department rule, straight to approval.
-    return { noters: [], approvers: (await leaveApproversFor(doc.department_id, q)).map(strip), via: 'department' };
+    // No reporting line recorded: the department rule, straight to approval. Never the filer --
+    // a department's own leave approver filing leave goes to the Forms Approval approvers.
+    const approvers = (await leaveApproversFor(doc.department_id, q)).map(strip).filter((u) => u.id !== filerId);
+    return { noters: [], approvers, via: 'department' };
   }
 
   const gms = await generalManagers(q);

@@ -317,7 +317,9 @@ async function mayApprove(userId, doc) {
   if (doc.type === 'leave') {
     const route = await leaveRoute(doc);
     const atStep = route.noters.length ? doc.status === 'noted' : ['submitted', 'noted'].includes(doc.status);
-    const eligible = route.approvers.length ? isMember(route.approvers, userId) : await userCan(userId, APPROVAL_ROUTE, 'can_approve');
+    // Never your own leave, even holding Approve on the Forms Approval page.
+    const eligible = Number(userId) !== Number(doc.user_id)
+      && (route.approvers.length ? isMember(route.approvers, userId) : await userCan(userId, APPROVAL_ROUTE, 'can_approve'));
     const waitingNote = route.noters.length > 0 && doc.status === 'submitted';
     let reason = null;
     if (!eligible) {
