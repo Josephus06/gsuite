@@ -5,6 +5,12 @@
 //     space-insensitive -- how import-sales.js resolved them) only have EMPTY fields filled in:
 //     anything already set in T1S, or edited by staff, is left alone.
 //   - UNMATCHED source customers are inserted (names upper-cased, lib/customerName.js).
+//   - A NAME THE SOURCE HAS MORE THAN ONCE is not one customer (2026-10-19: ROBINSONS LAND
+//     CORPORATION is three in the source -- Dusit Thani Mactan, Ortigas, NUSTAR -- and one in T1S,
+//     because this matched on the name alone). Each such row matches by code, else by name + TIN +
+//     address (lib/customerDuplicates.js's rule), else a same-name T1S customer not yet claimed whose
+//     TIN / address do not contradict it; whatever is left is inserted. A name the source has once is
+//     matched by name as before, so a T1S customer whose address staff corrected is not duplicated.
 // Source fields: Name_Cust, Company_Cust, UserPK_Cust, Address_Cust, ContactNo_Cust,
 // Birthdate_Cust (1970-01-01 is the source's "none"), Gender_Cust, Type_Cust, TIN_Cust,
 // BusinessStyle_Cust (text -> business_styles by name), CreditLimit_Cust, CreditTerm_Cust
@@ -24,6 +30,8 @@ const APPLY = process.argv.includes('--apply');
 const arg = (n) => (process.argv.find((a) => a.startsWith(`--${n}=`)) || '').split('=').slice(1).join('=') || null;
 const clean = (v) => { const s = v == null ? '' : String(v).replace(/\s+/g, ' ').trim(); return s || null; };
 const key = (v) => (clean(v) || '').toUpperCase();
+// Compared the way lib/customerDuplicates.js compares: case, spaces and punctuation dropped.
+const nk = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 async function pullSource() {
   const login = await fetch(`${SITE}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -58,8 +66,27 @@ async function main() {
   const [cust] = await pool.query(`SELECT id, customer_code, name, company_name, address, contact_no, birthdate, gender, customer_type, tin,
       business_style_id, credit_limit, payment_term_id, is_charge_to_location, is_charge_to, include_90_commission,
       bill_to_name, bill_to_address, bill_to_contact_no FROM customers`);
-  const byCode = new Map(); const byName = new Map();
-  for (const c of cust) { if (clean(c.customer_code)) byCode.set(key(c.customer_code), c); if (!byName.has(key(c.name))) byName.set(key(c.name), c); }
+  const byCode = new Map(); const byName = new Map(); const allByName = new Map();
+  for (const c of cust) {
+    if (clean(c.customer_code)) byCode.set(key(c.customer_code), c);
+    if (!byName.has(key(c.name))) byName.set(key(c.name), c);
+    if (!allByName.has(nk(c.name))) allByName.set(nk(c.name), []);
+    allByName.get(nk(c.name)).push(c);
+  }
+  // How many times the source has each name: only a repeated one is split up.
+  const srcNameCount = new Map();
+  for (const r of rows) srcNameCount.set(nk(r.Name_Cust), (srcNameCount.get(nk(r.Name_Cust)) || 0) + 1);
+  const claimed = new Set(); // T1S customer ids a repeated-name source row has already taken
+  const identity = (name, tin, address) => [nk(name), nk(tin), nk(address)].join('|');
+  const contradicts = (a, b) => nk(a) && nk(b) && nk(a) !== nk(b);
+  function matchRepeated(s, code) {
+    const byC = code && byCode.get(key(code));
+    if (byC && !claimed.has(byC.id)) return byC;
+    const same = (allByName.get(nk(s.Name_Cust)) || []).filter((c) => c.id && !claimed.has(c.id));
+    const exact = same.find((c) => identity(c.name, c.tin, c.address) === identity(s.Name_Cust, s.TIN_Cust, s.Address_Cust));
+    if (exact) return exact;
+    return same.find((c) => !contradicts(c.tin, s.TIN_Cust) && !contradicts(c.address, s.Address_Cust)) || null;
+  }
   const [styles] = await pool.query('SELECT id, name FROM business_styles');
   const styleId = new Map(styles.map((s) => [key(s.name), s.id]));
   const [terms] = await pool.query('SELECT id, term_name FROM payment_terms');
@@ -91,9 +118,13 @@ async function main() {
 
   const updates = []; const inserts = []; const fieldCounts = {};
   const seenNew = new Set();
-  for (const s of rows) {
+  // Repeated names first, exact matches before loose ones, so each claims its own T1S customer.
+  const ordered = [...rows].sort((a, b) => (srcNameCount.get(nk(b.Name_Cust)) > 1) - (srcNameCount.get(nk(a.Name_Cust)) > 1));
+  for (const s of ordered) {
     const code = clean(s.UserPK_Cust);
-    const match = (code && byCode.get(key(code))) || byName.get(key(s.Name_Cust));
+    const repeated = srcNameCount.get(nk(s.Name_Cust)) > 1;
+    const match = repeated ? matchRepeated(s, code) : ((code && byCode.get(key(code))) || byName.get(key(s.Name_Cust)));
+    if (match && repeated) claimed.add(match.id);
     const f = toFields(s);
     if (match) {
       const set = {};
@@ -104,8 +135,9 @@ async function main() {
       if (code && !clean(match.customer_code) && !byCode.has(key(code))) { set.customer_code = code.slice(0, 30); match.customer_code = code; byCode.set(key(code), match); fieldCounts.customer_code = (fieldCounts.customer_code || 0) + 1; }
       if (Object.keys(set).length) updates.push([match.id, set]);
     } else {
-      const k = key(s.Name_Cust);
-      if (seenNew.has(k)) continue; // same name twice in the source: one customer
+      // Same name twice in the source is one customer only when TIN and address agree too.
+      const k = repeated ? identity(s.Name_Cust, s.TIN_Cust, s.Address_Cust) : key(s.Name_Cust);
+      if (seenNew.has(k)) continue;
       seenNew.add(k);
       const c = { name: cut(upperCustomerName(clean(s.Name_Cust)), 200),customer_code: code && !byCode.has(key(code)) ? code.slice(0, 30) : null, ...f, is_active: 1 };
       if (c.customer_code) byCode.set(key(c.customer_code), c);
@@ -115,6 +147,9 @@ async function main() {
   console.log(`Matched customers getting empty fields filled: ${updates.length}`);
   console.log('  fields filled:', Object.entries(fieldCounts).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(', '));
   console.log(`New customers to add: ${inserts.length}${inserts.length ? ` (e.g. ${inserts.slice(0, 5).map((c) => c.name).join('; ')})` : ''}`);
+  const splitNew = inserts.filter((c) => (srcNameCount.get(nk(c.name)) || 0) > 1);
+  console.log(`  of which same-name customers with their own TIN / address: ${splitNew.length}`);
+  if (arg('show')) inserts.filter((c) => nk(c.name).includes(nk(arg('show')))).forEach((c) => console.log(`    + ${c.name} | ${c.tin || ''} | ${(c.address || '').slice(0, 90)}`));
 
   if (!APPLY) { console.log('\nPreview only. Re-run with --apply to write.'); await pool.end(); return; }
   const conn = await pool.getConnection();
