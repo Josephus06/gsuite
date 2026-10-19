@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { costMissingLines } = require('../lib/joProcessCosting');
 const { assignDocNo, nextDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { motherUomOf } = require('../lib/reworkUom');
@@ -1179,6 +1180,7 @@ router.post('/:id/rwip', requireAuth, async (req, res, next) => {
         );
       }
     }
+    await costMissingLines(conn, rwipId); // lib/joProcessCosting.js -- saved with no cost before
     await rwipAudit(conn, rwipId, req.user.id, 'Created', 'status', null, 'Pending RMA Approval');
     await rwipAudit(conn, jo.id, req.user.id, 'Updated', 'rwip', null, jobOrderNo);
     await conn.commit();

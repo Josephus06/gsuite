@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { costMissingLines } = require('../lib/joProcessCosting');
 const { requireOpenPeriod } = require('../lib/accountingPeriod');
 const { releaseIfDirectToProduction } = require('../lib/directToProduction');
 const { assignDocNo } = require('../lib/docNumber');
@@ -889,6 +890,9 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
       );
     }
 
+    // Cost each line the way an estimate would (lib/joProcessCosting.js) -- it used to be saved with
+    // none, so every NSJO made here showed no Total Cost. A line copied with its cost keeps it.
+    await costMissingLines(conn, joId);
     await conn.query('UPDATE non_standard_sales_order_lines SET created_job_order_id = ? WHERE id = ?', [joId, line.id]);
     if (nsso.status === 'pending_for_jo') await conn.query("UPDATE non_standard_sales_orders SET status = 'jo_in_process' WHERE id = ?", [nsso.id]);
     await logAudit(conn, { id: nsso.id, userId: req.user.id, eventType: 'Updated', fieldName: 'created_job_order', newValue: jobOrderNo });
