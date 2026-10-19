@@ -4,6 +4,7 @@ import api from '../api/client';
 import Modal from './Modal';
 import { useCalendarRange } from '../utils/calendarRange';
 import FilterPicker from './FilterPicker';
+import SearchInput from './SearchInput';
 
 // The General Manager dashboard's Weighted Sales and Invoice calendars: one month of sales orders
 // or invoices by the day they were created, as customer chips with the day's total -- laid out
@@ -33,12 +34,35 @@ function money(v) {
 const plural = (n, noun) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 const EMPTY = { calendar: [], count: 0, total: 0 };
 
+// The calendar's Search (asked 2026-10-19): keeps the customers whose name matches, or -- for a
+// document number -- just the matching documents of a customer, and works each day's count and
+// total out again from what is left, so the tallies speak for what is on screen.
+function searchCalendar(calendar, term) {
+  const q = term.trim().toLowerCase();
+  if (!q) return calendar;
+  const has = (v) => String(v || '').toLowerCase().includes(q);
+  return calendar.map((day) => {
+    const customers = (day.customers || []).map((c) => {
+      if (has(c.customerName)) return c;
+      const docs = (c.docs || []).filter((d) => has(d.docNo));
+      return docs.length ? { ...c, docs, count: docs.length, total: docs.reduce((t, d) => t + Number(d.amount || 0), 0) } : null;
+    }).filter(Boolean);
+    const dts = (day.dts || []).filter((t) => has(t.docNo) || has(t.customerName));
+    return {
+      ...day, customers, dts,
+      count: customers.reduce((t, c) => t + Number(c.count || 0), 0),
+      total: customers.reduce((t, c) => t + Number(c.total || 0), 0),
+    };
+  }).filter((day) => day.customers.length || day.dts.length);
+}
+
 export default function GmDocumentCalendar({ type, range = 'month' }) {
   const cfg = TYPES[type];
   const { cells, days, months, title, shift, todayKey } = useCalendarRange(range);
   const [data, setData] = useState(EMPTY);
   const [loading, setLoading] = useState(true);
   const [openDay, setOpenDay] = useState(null);
+  const [search, setSearch] = useState('');
   const monthsKey = months.join(',');
 
   // Weighted Sales only: Location and Department filters (asked 2026-10-09). Location starts on Head
@@ -75,7 +99,7 @@ export default function GmDocumentCalendar({ type, range = 'month' }) {
     return () => { cancelled = true; };
   }, [type, monthsKey, withFilters, locationId, divisionId]);
 
-  const byDay = new Map((data.calendar || []).map((d) => [d.day, d]));
+  const byDay = new Map(searchCalendar(data.calendar || [], search).map((d) => [d.day, d]));
   // The header speaks for the days on screen -- a week's or a day's, not the whole month's.
   const visible = days.map((k) => byDay.get(k)).filter(Boolean);
   const shownCount = visible.reduce((t, e) => t + Number(e.count || 0), 0);
@@ -101,8 +125,11 @@ export default function GmDocumentCalendar({ type, range = 'month' }) {
             </div>
           </>
         )}
+        <div style={{ minWidth: 220 }}>
+          <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search customer or ${cfg.docLabel}...`} />
+        </div>
         <span className="muted artist-calendar-count">
-          {loading ? 'Loading...' : `${plural(shownCount, cfg.noun)} · ${money(shownTotal)}`}
+          {loading ? 'Loading...' : `${plural(shownCount, cfg.noun)} · ${money(shownTotal)}${search.trim() ? ' (matching)' : ''}`}
         </span>
       </div>
 
