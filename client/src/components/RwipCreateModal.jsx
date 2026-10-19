@@ -3,6 +3,7 @@ import api from '../api/client';
 import Modal from './Modal';
 import EntityPicker from './EntityPicker';
 import LoadingSpinner from './LoadingSpinner';
+import ItemUomSelect, { defaultItemUom } from './ItemUomSelect';
 
 // "Create RWIP" modal on a Production job order's RWIP JO tab. Mirrors the NSSO Create-JO modal --
 // the mother JO's header, Reason Code / Reason / Action, editable process rows -- plus a Delivery
@@ -130,13 +131,13 @@ export default function RwipCreateModal({ jobOrderId, onClose, onSaved }) {
                     <td style={{ minWidth: 200 }}>
                       <EntityPicker label="Item" items={meta?.items || []} value={r.item_id || ''} getLabel={(x) => x.display_name}
                         columns={[{ key: 'item_code', label: 'Code' }, { key: 'display_name', label: 'Name' }]} searchKeys={['item_code', 'display_name']}
-                        placeholder={r.item_name || '--Select--'} onSelect={(x) => setRow(i, { item_id: x?.id || null, item_name: x?.display_name || '', ...(motherUoms.has(x?.id) ? { uom: motherUoms.get(x.id) } : {}) })} />
+                        placeholder={r.item_name || '--Select--'} onSelect={async (x) => setRow(i, { item_id: x?.id || null, item_name: x?.display_name || '', uom: motherUoms.has(x?.id) ? motherUoms.get(x.id) : (x ? await defaultItemUom(x.id, x.base_unit_code) : '') })} />
                     </td>
                     <td><input type="number" value={r.length ?? ''} onChange={(e) => setRow(i, { length: e.target.value })} style={{ width: 60 }} /></td>
                     <td><input type="number" value={r.width ?? ''} onChange={(e) => setRow(i, { width: e.target.value })} style={{ width: 60 }} /></td>
                     <td>{motherUoms.has(r.item_id)
                       ? <input value={motherUoms.get(r.item_id)} readOnly tabIndex={-1} title="The mother JO's UOM" style={{ width: 60 }} />
-                      : <input value={r.uom || ''} onChange={(e) => setRow(i, { uom: e.target.value })} style={{ width: 60 }} />}</td>
+                      : <ItemUomSelect itemId={r.item_id} value={r.uom || ''} onChange={(uom) => setRow(i, { uom })} style={{ width: 80 }} />}</td>
                     <td><input type="number" value={r.qty ?? 0} onChange={(e) => setRow(i, { qty: e.target.value })} style={{ width: 60 }} /></td>
                     <td><input value={r.unit || ''} onChange={(e) => setRow(i, { unit: e.target.value })} style={{ width: 60 }} /></td>
                     <td><input value={r.remarks || ''} onChange={(e) => setRow(i, { remarks: e.target.value })} style={{ width: 120 }} /></td>

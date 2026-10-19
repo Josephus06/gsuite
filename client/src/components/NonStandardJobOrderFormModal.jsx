@@ -3,6 +3,7 @@ import api from '../api/client';
 import EntityPicker from './EntityPicker';
 import Modal from './Modal';
 import { computeProcessCosting, selectBracket } from '../utils/costing';
+import ItemUomSelect from './ItemUomSelect';
 
 // The one Non-Standard Job Order form, shared by "Add New" on the list and the rework a
 // Sales user does before the order clears the SBU gate -- either while it is still queued
@@ -333,7 +334,7 @@ export default function NonStandardJobOrderFormModal({ mode = 'create', order, r
                   <td><input type="number" step="0.01" value={material.length} onChange={(event) => setMaterial(index, 'length', event.target.value)} /></td>
                   <td><input type="number" step="0.01" value={material.width} onChange={(event) => setMaterial(index, 'width', event.target.value)} /></td>
                   <td><input type="number" step="0.0001" value={material.qty} onChange={(event) => setMaterial(index, 'qty', event.target.value)} /></td>
-                  <td><select value={material.uom} onChange={(event) => setMaterial(index, 'uom', event.target.value)}><option value="">--</option>{(meta?.uoms || []).map((uom) => <option key={uom.id} value={uom.code}>{uom.code}</option>)}</select></td>
+                  <td><ItemUomSelect itemId={material.item_id} value={material.uom} onChange={(uom) => setMaterial(index, 'uom', uom)} /></td>
                   <td><input type="number" step="0.0001" value={material.total} onChange={(event) => setMaterial(index, 'total', event.target.value)} /></td>
                   <td><input value={material.unit} onChange={(event) => setMaterial(index, 'unit', event.target.value)} /></td>
                   <td><input readOnly value={material.process_price} title="Auto-calculated: Process Costing rate for this quantity bracket x Qty" placeholder="—" /></td>

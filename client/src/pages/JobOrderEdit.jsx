@@ -9,6 +9,7 @@ import { useAuth } from '../context/useAuth';
 
 import { displayAuditTime } from '../utils/dates';
 import { convertAreaToBaseUnit, convertLengthToBaseUnit } from '../utils/costing';
+import ItemUomSelect, { defaultItemUom } from '../components/ItemUomSelect';
 
 // Mirrors the real system's full-page Job Order Edit form (not a modal): a 3-column
 // header form + a Materials tab with an inline-editable process/material table + a
@@ -235,7 +236,12 @@ export default function JobOrderEdit() {
           columns={[{ key: 'item_code', label: 'Code' }, { key: 'display_name', label: 'Name' }, { key: 'category_name', label: 'Category' }]}
           searchKeys={['item_code', 'display_name']}
           // UOM starts at the item's base unit CODE, as on the Estimate, and is then changeable.
-          onSelect={(i) => { ensureUomsLoaded(i.id); recalcAndCommitMaterial(row.id, { item_id: i.id, uom: motherUoms.get(i.id) || i.base_unit_code || '', unit: unitLabel(i.base_unit_id) }); }}
+          onSelect={async (i) => {
+            ensureUomsLoaded(i.id);
+            // The item's base unit only if it is one of its assigned units (else the first) -- ItemUomSelect.
+            const uom = motherUoms.get(i.id) || await defaultItemUom(i.id, i.base_unit_code);
+            recalcAndCommitMaterial(row.id, { item_id: i.id, uom, unit: unitLabel(i.base_unit_id) });
+          }}
         />
       );
     }
@@ -262,14 +268,11 @@ export default function JobOrderEdit() {
       if (motherUoms.has(row.item_id)) {
         return <input value={motherUoms.get(row.item_id)} readOnly tabIndex={-1} title="A rework job order uses the mother JO's UOM" />;
       }
-      const options = row.item_id ? (uomsByItem[row.item_id] || []) : [];
       return (
-        <select value={val} disabled={!row.item_id}
-          onChange={(e) => { updateMaterial(row.id, 'uom', e.target.value); recalcAndCommitMaterial(row.id, { uom: e.target.value }); }}>
-          {val && !options.some((u) => u.code === val) && <option value={val}>{val}</option>}
-          <option value="">—</option>
-          {options.map((u) => <option key={u.id} value={u.code}>{u.code}</option>)}
-        </select>
+        <ItemUomSelect
+          itemId={row.item_id} value={val} options={row.item_id ? uomsByItem[row.item_id] : undefined}
+          onChange={(uom) => { updateMaterial(row.id, 'uom', uom); recalcAndCommitMaterial(row.id, { uom }); }}
+        />
       );
     }
     if (col.readOnly) {

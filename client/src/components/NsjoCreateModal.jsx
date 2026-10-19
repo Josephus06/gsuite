@@ -4,6 +4,7 @@ import Modal from './Modal';
 import EntityPicker from './EntityPicker';
 import LoadingSpinner from './LoadingSpinner';
 import { displayDate } from '../utils/dates';
+import ItemUomSelect, { defaultItemUom } from './ItemUomSelect';
 
 function fmtDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
@@ -122,11 +123,11 @@ export default function NsjoCreateModal({ nssoId, lineId, nssoType, onClose, onS
                     <td style={{ minWidth: 200 }}>
                       <EntityPicker label="Item" items={meta?.items || []} value={r.item_id || ''} getLabel={(x) => x.display_name}
                         columns={[{ key: 'item_code', label: 'Code' }, { key: 'display_name', label: 'Name' }]} searchKeys={['item_code', 'display_name']}
-                        placeholder={r.item_name || '--Select--'} onSelect={(x) => setRow(i, { item_id: x?.id || null, item_name: x?.display_name || '' })} />
+                        placeholder={r.item_name || '--Select--'} onSelect={async (x) => setRow(i, { item_id: x?.id || null, item_name: x?.display_name || '', uom: x ? await defaultItemUom(x.id, x.base_unit_code) : '' })} />
                     </td>
                     <td><input type="number" value={r.length ?? ''} onChange={(e) => setRow(i, { length: e.target.value })} style={{ width: 60 }} /></td>
                     <td><input type="number" value={r.width ?? ''} onChange={(e) => setRow(i, { width: e.target.value })} style={{ width: 60 }} /></td>
-                    <td><input value={r.uom || ''} onChange={(e) => setRow(i, { uom: e.target.value })} style={{ width: 60 }} /></td>
+                    <td><ItemUomSelect itemId={r.item_id} value={r.uom || ''} onChange={(uom) => setRow(i, { uom })} style={{ width: 80 }} /></td>
                     <td><input type="number" value={r.qty ?? 0} onChange={(e) => setRow(i, { qty: e.target.value })} style={{ width: 60 }} /></td>
                     <td><input value={r.unit || ''} onChange={(e) => setRow(i, { unit: e.target.value })} style={{ width: 60 }} /></td>
                     <td><input value={r.remarks || ''} onChange={(e) => setRow(i, { remarks: e.target.value })} style={{ width: 120 }} /></td>

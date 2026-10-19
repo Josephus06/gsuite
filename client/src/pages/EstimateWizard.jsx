@@ -12,6 +12,7 @@ import Modal from '../components/Modal';
 
 import { displayAuditTime } from '../utils/dates';
 import { headerDepartmentError } from '../utils/requireDepartment';
+import ItemUomSelect from '../components/ItemUomSelect';
 
 const STEPS = ['Customer and Estimate', 'Job Orders', 'Billing', 'Completed'];
 
@@ -1205,9 +1206,12 @@ export default function EstimateWizard() {
           ]}
           searchKeys={['item_code', 'display_name']}
           onSelect={async (i) => {
-            await ensureUomsLoaded(i.id);
+            const itemUoms = await ensureUomsLoaded(i.id);
+            // Starts on the item's base unit only if that is one of its assigned units (else the first).
+            const base = String(i.base_unit_code || '').toUpperCase();
+            const uom = (itemUoms.find((u) => String(u.code).toUpperCase() === base) || itemUoms[0] || {}).code || '';
             recalcAndCommitProcess(joIdx, procIdx, {
-              item_id: i.id, unit: unitLabel(i.base_unit_id), uom: i.base_unit_code || '',
+              item_id: i.id, unit: unitLabel(i.base_unit_id), uom,
             });
             // Chosen from outside the defined list -- remember it for next time.
             if (!allowedIds || !allowedIds.has(i.id)) learnMaterial(jobTypeId, row.process_id, i);
@@ -1224,17 +1228,12 @@ export default function EstimateWizard() {
       );
     }
     if (col.type === 'select-uom') {
-      const uomOptions = row.item_id ? (uomsByItem[row.item_id] || []) : [];
+      // Only the item's own units (components/ItemUomSelect.jsx) -- a unit outside them is not offered.
       return (
-        <select
-          value={val}
-          disabled={!row.item_id}
-          onChange={(e) => recalcAndCommitProcess(joIdx, procIdx, { uom: e.target.value })}
-        >
-          {val && !uomOptions.some((u) => u.code === val) && <option value={val}>{val}</option>}
-          <option value="">—</option>
-          {uomOptions.map((u) => <option key={u.id} value={u.code}>{u.code}</option>)}
-        </select>
+        <ItemUomSelect
+          itemId={row.item_id} value={val} options={row.item_id ? uomsByItem[row.item_id] : undefined}
+          onChange={(uom) => recalcAndCommitProcess(joIdx, procIdx, { uom })}
+        />
       );
     }
     if (col.readOnly) {

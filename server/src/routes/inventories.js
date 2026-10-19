@@ -640,7 +640,16 @@ router.delete('/:id/sub-items/:subItemId', requireAuth, requirePermission(ROUTE,
 router.get('/:id/unit-of-measures', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [rows] = await pool.query('SELECT * FROM inventory_unit_of_measures WHERE inventory_id = ? ORDER BY id', [req.params.id]);
-    res.json(rows);
+    if (rows.length) return res.json(rows);
+    // No units assigned -- every Service item, and some Inventory ones: the item's own base / purchase /
+    // stock / sales units stand in, so a process line's UOM (components/ItemUomSelect.jsx, limited to
+    // the item's units since 2026-10-19) can still be LOT for SERVICE LABOR rather than nothing. Marked
+    // `derived` so the Unit of Measures tab can tell them from assigned rows.
+    const [own] = await pool.query(
+      `SELECT DISTINCT u.code FROM inventories i
+         JOIN units_of_measure u ON u.id IN (i.base_unit_id, i.purchase_unit_id, i.stock_unit_id, i.sales_unit_id)
+        WHERE i.id = ? AND COALESCE(u.code, '') <> ''`, [req.params.id]);
+    return res.json(own.map((u) => ({ id: `own-${u.code}`, inventory_id: Number(req.params.id), code: u.code, derived: true })));
   } catch (err) {
     next(err);
   }
