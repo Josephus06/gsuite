@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
+import EntityPicker from '../components/EntityPicker';
 import { displayDate } from '../utils/dates';
 
 // "Setup Your Customer" -- the add/edit customer form, laid out as the old system's customer
@@ -18,7 +19,9 @@ const EMPTY = {
 };
 const EMPTY_CONTACT = { contact_name: '', address: '', email: '', title: '', phone: '', is_primary: false, is_default_bill_to: false, is_approver: false, is_certifier: false };
 const EMPTY_ADDRESS = { address_type: 'Shipping', address_line: '', is_default: false };
-const EMPTY_RELATIONSHIP = { name: '', address: '', contact_no: '' };
+// A relationship is another customer from the list (2026-10-19): a payment from this customer may
+// then be applied to that customer's invoices (server: lib/customerRelations.js).
+const EMPTY_RELATIONSHIP = { related_customer_id: '', name: '', address: '', contact_no: '' };
 const FLAGS = [
   ['is_charge_to_location', 'Is Charge To Location'],
   ['is_ewt', 'Expanded Withholding Tax'],
@@ -79,6 +82,18 @@ export default function CustomerForm() {
   }, [id, isNew]);
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  // The customer list for the Relationships picker, loaded the first time that tab opens.
+  const [allCustomers, setAllCustomers] = useState(null);
+  useEffect(() => {
+    if (tab === 'relationships' && allCustomers === null) {
+      api.get('/customers').then((r) => setAllCustomers(Array.isArray(r.data) ? r.data : (r.data?.rows || []))).catch(() => setAllCustomers([]));
+    }
+  }, [tab, allCustomers]);
+  const pickRelated = (idx, c) => setForm((f) => ({
+    ...f,
+    relationships: f.relationships.map((r, i) => (i === idx
+      ? { ...r, related_customer_id: c.id, name: c.name, address: c.address || '', contact_no: c.contact_no || '' } : r)),
+  }));
   const setRow = (list, idx, k, v) => setForm((f) => ({ ...f, [list]: f[list].map((r, i) => (i === idx ? { ...r, [k]: v } : r)) }));
   const addRow = (list, empty) => setForm((f) => ({ ...f, [list]: [...f[list], { ...empty }] }));
   const removeRow = (list, idx) => setForm((f) => ({ ...f, [list]: f[list].filter((_, i) => i !== idx) }));
@@ -297,13 +312,26 @@ export default function CustomerForm() {
             <>
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Name</th><th>Address</th><th>Contact No.</th><th /></tr></thead>
+                  <thead><tr><th>Customer</th><th>Address</th><th>Contact No.</th><th /></tr></thead>
                   <tbody>
                     {form.relationships.map((r, i) => (
                       <tr key={r.id || `n${i}`}>
-                        <td><input value={r.name ?? ''} onChange={(e) => setRow('relationships', i, 'name', e.target.value)} /></td>
-                        <td><input value={r.address ?? ''} onChange={(e) => setRow('relationships', i, 'address', e.target.value)} /></td>
-                        <td><input value={r.contact_no ?? ''} onChange={(e) => setRow('relationships', i, 'contact_no', e.target.value)} /></td>
+                        <td style={{ minWidth: 260 }}>
+                          <EntityPicker
+                            label="Customer"
+                            items={(allCustomers || []).filter((c) => String(c.id) !== String(id)
+                              && !form.relationships.some((o, j) => j !== i && String(o.related_customer_id) === String(c.id)))
+                              .concat(r.related_customer_id && !(allCustomers || []).some((c) => String(c.id) === String(r.related_customer_id))
+                                ? [{ id: r.related_customer_id, name: r.name }] : [])}
+                            value={r.related_customer_id || ''} getLabel={(c) => c?.name}
+                            columns={[{ key: 'name', label: 'Name' }, { key: 'customer_code', label: 'Code' }]} searchKeys={['name', 'customer_code']}
+                            placeholder={r.related_customer_id ? r.name : (allCustomers === null ? 'Loading customers…' : '--Select customer--')}
+                            onSelect={(c) => pickRelated(i, c)}
+                          />
+                          {!r.related_customer_id && r.name && <div className="muted" style={{ fontSize: 11 }}>Was typed as "{r.name}" -- pick the customer.</div>}
+                        </td>
+                        <td>{r.address || <span className="muted">—</span>}</td>
+                        <td>{r.contact_no || <span className="muted">—</span>}</td>
                         <td><button type="button" className="btn btn-sm btn-danger" onClick={() => removeRow('relationships', i)}>✕</button></td>
                       </tr>
                     ))}
@@ -311,6 +339,9 @@ export default function CustomerForm() {
                 </table>
               </div>
               <button type="button" className="btn btn-primary" style={{ marginTop: 8 }} onClick={() => addRow('relationships', EMPTY_RELATIONSHIP)}>Add Relationship</button>
+              <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+                A Customer Payment from this customer can also be applied to the invoices of the customers listed here.
+              </div>
             </>
           )}
 

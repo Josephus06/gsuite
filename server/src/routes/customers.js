@@ -151,14 +151,23 @@ async function syncChildren(conn, customerId, body) {
       else await conn.query('INSERT INTO customer_addresses (customer_id, address_type, address_line, is_default) VALUES (?, ?, ?, ?)', [customerId, ...v]);
     }
   }
+  // A relationship is another customer from the list (2026-10-19; lib/customerRelations.js): a
+  // payment from this customer may then settle that one's invoices. Name, Address and Contact No.
+  // are copied from the customer picked, so the row reads right even if it is renamed later.
   if (Array.isArray(body.relationships)) {
-    const rows = body.relationships.filter((r) => String(r.name || '').trim());
+    const rows = body.relationships.filter((r) => Number(r.related_customer_id) > 0 && Number(r.related_customer_id) !== Number(customerId));
     const ids = rows.map((r) => Number(r.id)).filter(Boolean);
     await conn.query('DELETE FROM customer_relationships WHERE customer_id = ? AND id NOT IN (?)', [customerId, ids.length ? ids : [0]]);
+    const seen = new Set();
     for (const r of rows) {
-      const v = [r.name, blank(r.address) ?? null, blank(r.contact_no) ?? null];
-      if (r.id) await conn.query('UPDATE customer_relationships SET name = ?, address = ?, contact_no = ?, updated_at = NOW() WHERE id = ? AND customer_id = ?', [...v, r.id, customerId]);
-      else await conn.query('INSERT INTO customer_relationships (customer_id, name, address, contact_no) VALUES (?, ?, ?, ?)', [customerId, ...v]);
+      const relId = Number(r.related_customer_id);
+      if (seen.has(relId)) continue;
+      seen.add(relId);
+      const [[rel]] = await conn.query('SELECT name, address, contact_no FROM customers WHERE id = ?', [relId]);
+      if (!rel) continue;
+      const v = [relId, rel.name, blank(rel.address) ?? null, blank(rel.contact_no) ?? null];
+      if (r.id) await conn.query('UPDATE customer_relationships SET related_customer_id = ?, name = ?, address = ?, contact_no = ?, updated_at = NOW() WHERE id = ? AND customer_id = ?', [...v, r.id, customerId]);
+      else await conn.query('INSERT INTO customer_relationships (customer_id, related_customer_id, name, address, contact_no) VALUES (?, ?, ?, ?, ?)', [customerId, ...v]);
     }
   }
   return kept;

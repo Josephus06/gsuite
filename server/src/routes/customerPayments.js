@@ -1,5 +1,6 @@
 const express = require('express');
 const pool = require('../db');
+const { payableCustomerIds } = require('../lib/customerRelations');
 const { grossDueSql, grossDue } = require('../lib/invoiceDue');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
@@ -219,10 +220,12 @@ router.get('/for-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can
        FROM sales_invoices si2
        LEFT JOIN sales_orders so2 ON so2.id = si2.sales_order_id
        LEFT JOIN estimates e2 ON e2.id = si2.estimate_id
-       LEFT JOIN customers c ON c.id = COALESCE(so2.customer_id, e2.customer_id)
-       WHERE COALESCE(so2.customer_id, e2.customer_id) = ? AND si2.status != 'cancelled' AND ${dueSql('si2')} > 0.005
-       ORDER BY si2.id DESC`,
-      [si.customer_id]
+       LEFT JOIN non_standard_sales_orders ns2 ON ns2.id = si2.nsso_id
+       LEFT JOIN customers c ON c.id = COALESCE(so2.customer_id, e2.customer_id, ns2.customer_id, si2.customer_id)
+       WHERE COALESCE(so2.customer_id, e2.customer_id, ns2.customer_id, si2.customer_id) IN (?) AND si2.status != 'cancelled' AND ${dueSql('si2')} > 0.005
+       ORDER BY (COALESCE(so2.customer_id, e2.customer_id, ns2.customer_id, si2.customer_id) = ?) DESC, si2.id DESC`,
+      // This customer's open invoices, and its related customers' (lib/customerRelations.js).
+      [await payableCustomerIds(si.customer_id), si.customer_id]
     );
 
     const [creditLines] = await pool.query(
@@ -306,10 +309,12 @@ router.get('/for-customer/:customerId', requireAuth, requirePermission(ROUTE, 'c
          LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
          LEFT JOIN customer_payment_lines mine
                 ON mine.sales_invoice_id = si.id AND mine.customer_payment_id = ?
-        WHERE COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) = ? AND si.status != 'cancelled'
+        WHERE COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) IN (?) AND si.status != 'cancelled'
           AND (${dueSql('si')} > 0.005 OR mine.id IS NOT NULL)
-        ORDER BY si.id DESC`,
-      [req.query.payment_id || 0, req.params.customerId],
+        ORDER BY (COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) = ?) DESC, si.id DESC`,
+      // Its own invoices first, then those of the customers on its Relationships tab
+      // (lib/customerRelations.js) -- a payment from this customer may settle theirs too.
+      [req.query.payment_id || 0, await payableCustomerIds(req.params.customerId), Number(req.params.customerId)],
     );
 
     const [creditLines] = await pool.query(
@@ -823,16 +828,17 @@ router.put('/:id/apply', requireAuth, requirePermission(ROUTE, 'can_edit'), asyn
     }
     if (cp.created_by_user_id || cp.deposit_account_id) await assertPeriodOpen(cp.date_created, 'ar', conn);
 
-    // Only this customer's invoices.
+    // Only this customer's invoices -- or those of a customer on its Relationships tab
+    // (lib/customerRelations.js).
     const [owned] = await conn.query(
       `SELECT si.id FROM sales_invoices si
          LEFT JOIN sales_orders so ON so.id = si.sales_order_id
          LEFT JOIN estimates e ON e.id = si.estimate_id
          LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-        WHERE si.id IN (?) AND COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) = ?`,
-      [lines.map((l) => l.sales_invoice_id), cp.customer_id]);
+        WHERE si.id IN (?) AND COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) IN (?)`,
+      [lines.map((l) => l.sales_invoice_id), await payableCustomerIds(cp.customer_id, conn)]);
     if (owned.length !== new Set(lines.map((l) => l.sales_invoice_id)).size) {
-      return res.status(400).json({ error: 'Every invoice must belong to this payment’s customer.' });
+      return res.status(400).json({ error: 'Every invoice must belong to this payment’s customer, or a customer on its Relationships.' });
     }
 
     await conn.beginTransaction();
