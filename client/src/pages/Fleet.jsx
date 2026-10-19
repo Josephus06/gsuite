@@ -68,7 +68,7 @@ export default function Fleet() {
           </div>
         </div>
         <div className="muted" style={{ marginTop: 4 }}>
-          A vehicle is an asset in the Transportation Equipment class -- add it under Assets, then open it here to fill in its plate,
+          A vehicle is an asset whose Asset Type has the Category "Vehicle" -- add it under Assets, then open it here to fill in its plate,
           registration, insurance and PMS interval. {attention > 0 && <strong>{attention} vehicle{attention === 1 ? '' : 's'} need attention.</strong>}
         </div>
       </div>
@@ -86,7 +86,7 @@ export default function Fleet() {
               <tbody>
                 {shown.length === 0 && (
                   <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>
-                    No vehicles{q || status ? ' match' : ' yet -- add one under Assets in the Transportation Equipment class'}.
+                    No vehicles{q || status ? ' match' : ' yet -- add one under Assets with an Asset Type whose Category is Vehicle'}.
                   </td></tr>
                 )}
                 {shown.map((v) => (

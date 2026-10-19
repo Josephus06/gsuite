@@ -33,8 +33,9 @@ function dateStatus(due, today) {
   return { status: left < 0 ? 'overdue' : left <= DUE_SOON_DAYS ? 'due_soon' : 'ok', due, days_left: left };
 }
 
-// The vehicles: every asset in a Transportation Equipment class, and any other asset given vehicle
-// details. `assetId` narrows it to one.
+// The vehicles: every asset whose Asset Type's Category reads Vehicle / Transportation (what the New
+// Asset form sets -- its class is only given when Accounting capitalises it), every asset in a
+// Transportation Equipment class, and any other asset given vehicle details. `assetId` narrows it to one.
 async function loadVehicles(q = pool, assetId = null) {
   const [rows] = await q.query(
     `SELECT a.id AS asset_id, a.reference_no, a.tag_no, a.brand, a.model AS asset_model, a.serial_no, a.status AS asset_status,
@@ -51,7 +52,8 @@ async function loadVehicles(q = pool, assetId = null) {
        LEFT JOIN employees ce ON ce.id = a.custodian_employee_id
        LEFT JOIN employees de ON de.id = v.driver_employee_id
        LEFT JOIN employees ie ON ie.id = v.incharge_employee_id
-      WHERE (ac.name LIKE '%Transport%' OR ac.name LIKE '%Vehicle%' OR v.asset_id IS NOT NULL)
+      WHERE (ac.name LIKE '%Transport%' OR ac.name LIKE '%Vehicle%' OR ai.category LIKE '%Vehicle%'
+             OR ai.category LIKE '%Transport%' OR v.asset_id IS NOT NULL)
         ${assetId ? 'AND a.id = ?' : ''}
       ORDER BY v.plate_no IS NULL, v.plate_no, a.id`,
     assetId ? [assetId] : []).catch((e) => {
