@@ -100,9 +100,10 @@ export default function TransferOrderView() {
   const ownPending = to?.status === 'pending_fulfillment' && (Number(to?.created_by_user_id) === Number(user?.id)
     || (!!user?.employee_id && Number(to?.requestor_id) === Number(user?.employee_id)));
   const canEdit = !periodLocked && (isAdmin || ownPending);
-  // Unit Used and Adjusted Qty are the warehouse's, part of fulfilling (server: requireToLineEdit) --
-  // Can Edit on Transfer Orders or Can Add on Item Fulfillments, while it can still be fulfilled.
-  const canAdjust = !periodLocked && (isAdmin || can('/transfer-orders', 'can_edit') || can('/item-fulfillments', 'can_add'));
+  // Unit Used and Adjusted Qty are the warehouse's (server: requireToLineEdit) -- Can Edit on Transfer
+  // Orders or Can Add on Item Fulfillments, while Pending Fulfillment; once fulfilled, admin only.
+  const canAdjust = !periodLocked && (isAdmin || ownPending
+    || (to?.status === 'pending_fulfillment' && (can('/transfer-orders', 'can_edit') || can('/item-fulfillments', 'can_add'))));
   // Fulfilling and receiving are separate jobs done by the two warehouses, and each now has its
   // own permission page. They both used to be can_approve on the Transfer Order, so one switch
   // let a person do both ends of the transfer.
