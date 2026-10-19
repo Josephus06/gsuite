@@ -73,9 +73,14 @@ export default function JobOrderPrint() {
 
   // A JO with no dimensions (a per-piece job) has 0 length and width -- show the unit alone
   // rather than "0.00 x 0.00 x PC/S".
+  // The size is in the order line's UOM -- 5.50 x 4.25 INCHES -- not Units, which is what the
+  // Quantity counts (PC/S) (2026-10-19). A job with no UOM on its line keeps showing Units.
   const hasSize = (Number(jo.length) || 0) || (Number(jo.width) || 0);
+  const UOM_WORD = { INCH: 'INCHES', IN: 'INCHES', FT: 'FEET', M: 'METERS', MTR: 'METERS' };
+  const lineUom = String(jo.line_uom || '').trim();
+  const sizeUnit = lineUom ? (UOM_WORD[lineUom.toUpperCase()] || lineUom) : '';
   const sizeLine = hasSize
-    ? `${num(jo.length)} x ${num(jo.width)}${jo.units ? ` x ${jo.units}` : ''}`
+    ? `${num(jo.length)} x ${num(jo.width)}${Number(jo.height) ? ` x ${num(jo.height)}` : ''}${sizeUnit ? ` ${sizeUnit}` : (jo.units ? ` x ${jo.units}` : '')}`
     : (jo.units || '');
   const shipTo = jo.shipping_address || jo.so_shipping_address || '';
 

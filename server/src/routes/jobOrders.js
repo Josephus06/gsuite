@@ -1424,13 +1424,17 @@ router.get('/:id/print', requireAuth, async (req, res, next) => {
               sd.name AS sales_division_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name,
-              cc.contact_name
+              cc.contact_name,
+              -- The order line's UOM (INCH, FT ...) for the sheet's Size; Units (PC/S) is the count's unit.
+              COALESCE(nsl.uom, sol.uom) AS line_uom
          FROM job_orders jo
          -- A rework order (RWIP / RFQC) has no artist of its own; its sheet names the original's, and
          -- takes the original's order where it carries none (an RWIP of an NSJO).
          LEFT JOIN job_orders parent ON parent.id = jo.parent_job_order_id
          LEFT JOIN sales_orders so ON so.id = COALESCE(jo.sales_order_id, parent.sales_order_id)
          LEFT JOIN non_standard_sales_orders ns ON ns.id = COALESCE(jo.nsso_id, parent.nsso_id)
+         LEFT JOIN sales_order_lines sol ON sol.id = COALESCE(jo.sales_order_line_id, parent.sales_order_line_id)
+         LEFT JOIN non_standard_sales_order_lines nsl ON nsl.id = COALESCE(jo.nsso_line_id, parent.nsso_line_id)
          LEFT JOIN estimates nsest ON nsest.id = ns.nested_estimate_id
          LEFT JOIN sales_orders nsso_so ON nsso_so.id = ns.nested_sales_order_id
          LEFT JOIN customers c ON c.id = COALESCE(ns.customer_id, so.customer_id, nsest.customer_id, nsso_so.customer_id)
