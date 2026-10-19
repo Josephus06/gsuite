@@ -198,13 +198,13 @@ router.get('/for-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can
       // whichever source it has. An INNER JOIN here made the payment form fail to load at all
       // for those invoices -- they could be raised but never collected.
       `SELECT si.id AS sales_invoice_id, si.invoice_no, si.office_location_id, si.department_id, si.memo,
-              ${dueSql('si')} AS amount_due, COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) AS customer_id, c.name AS customer_name,
+              ${dueSql('si')} AS amount_due, COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id) AS customer_id, c.name AS customer_name,
               loc.location_name AS office_location_name, d.name AS department_name
        FROM sales_invoices si
        LEFT JOIN sales_orders so ON so.id = si.sales_order_id
        LEFT JOIN estimates e ON e.id = si.estimate_id
        LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
+       LEFT JOIN customers c ON c.id = COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id)
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        LEFT JOIN departments d ON d.id = si.department_id
        WHERE si.id = ?`,
@@ -299,6 +299,9 @@ router.get('/for-customer/:customerId', requireAuth, requirePermission(ROUTE, 'c
       // invoices this payment settled are therefore included regardless of their balance, and
       // each row carries what this payment already draws from it, so the form can work out how
       // much is really available: amount_due plus its own existing application.
+      // An invoice belongs to the customer it is BILLED to (si.customer_id) before its order's -- the
+      // source bills some orders to another company (INV-81555..81558: ordered by MACTAN SEASCAPES,
+      // billed to and paid by FILINVEST HOSPITALITY, CPAY-998), and those were missing here (2026-10-19).
       `SELECT si.id AS sales_invoice_id, si.invoice_no, si.bs_si_no, si.date_created, si.gross_amount, ${dueSql('si')} AS amount_due,
               c.name AS customer_name,
               COALESCE(mine.applied_amount, 0) AS applied_by_this_payment
@@ -306,12 +309,12 @@ router.get('/for-customer/:customerId', requireAuth, requirePermission(ROUTE, 'c
          LEFT JOIN sales_orders so ON so.id = si.sales_order_id
          LEFT JOIN estimates e ON e.id = si.estimate_id
          LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-         LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
+         LEFT JOIN customers c ON c.id = COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id)
          LEFT JOIN customer_payment_lines mine
                 ON mine.sales_invoice_id = si.id AND mine.customer_payment_id = ?
-        WHERE COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) IN (?) AND si.status != 'cancelled'
+        WHERE COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id) IN (?) AND si.status != 'cancelled'
           AND (${dueSql('si')} > 0.005 OR mine.id IS NOT NULL)
-        ORDER BY (COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) = ?) DESC, si.id DESC`,
+        ORDER BY (COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id) = ?) DESC, si.id DESC`,
       // Its own invoices first, then those of the customers on its Relationships tab
       // (lib/customerRelations.js) -- a payment from this customer may settle theirs too.
       [req.query.payment_id || 0, await payableCustomerIds(req.params.customerId), Number(req.params.customerId)],
@@ -835,7 +838,7 @@ router.put('/:id/apply', requireAuth, requirePermission(ROUTE, 'can_edit'), asyn
          LEFT JOIN sales_orders so ON so.id = si.sales_order_id
          LEFT JOIN estimates e ON e.id = si.estimate_id
          LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-        WHERE si.id IN (?) AND COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) IN (?)`,
+        WHERE si.id IN (?) AND COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id) IN (?)`,
       [lines.map((l) => l.sales_invoice_id), await payableCustomerIds(cp.customer_id, conn)]);
     if (owned.length !== new Set(lines.map((l) => l.sales_invoice_id)).size) {
       return res.status(400).json({ error: 'Every invoice must belong to this payment’s customer, or a customer on its Relationships.' });

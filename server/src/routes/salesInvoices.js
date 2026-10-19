@@ -56,7 +56,7 @@ async function listFilter(query, userId) {
   // An invoice has exactly one source -- a Sales Order, an Estimate or a Non-Standard Sales Order --
   // so the customer is whichever of the three it actually has. Same COALESCE everywhere the
   // customer is read below.
-  if (customerId) { where.push('COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) = ?'); params.push(customerId); }
+  if (customerId) { where.push('COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id) = ?'); params.push(customerId); }
   if (salesRepId) { where.push('si.sales_rep_id = ?'); params.push(salesRepId); }
   // Date Created, inclusive at both ends, and either end usable on its own -- "everything since
   // March" is as ordinary a question as a closed month. Compared as plain dates because the
@@ -115,7 +115,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN sales_orders so ON so.id = si.sales_order_id
        LEFT JOIN estimates e ON e.id = si.estimate_id
        LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-       ${needsSource ? 'LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)' : ''}`;
+       ${needsSource ? 'LEFT JOIN customers c ON c.id = COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id)' : ''}`;
     const [[{ total }]] = await pool.query(
       `SELECT COUNT(*) AS total ${countFrom} ${whereSql}`, params
     );
@@ -128,14 +128,14 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
               ${grossDueSql('si')} AS amount_due,
               si.bs_si_no, si.term, si.status, si.memo, si.invoice_type,
               COALESCE(so.sales_order_no, ns.nsso_no) AS sales_order_no, e.estimate_no, c.name AS customer_name,
-              COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) AS customer_id,
+              COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id) AS customer_id,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               loc.location_name AS office_location_name, d.name AS department_name
        FROM sales_invoices si
        LEFT JOIN sales_orders so ON so.id = si.sales_order_id
        LEFT JOIN estimates e ON e.id = si.estimate_id
        LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
+       LEFT JOIN customers c ON c.id = COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id)
        LEFT JOIN employees sr ON sr.id = si.sales_rep_id
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        LEFT JOIN departments d ON d.id = si.department_id
@@ -171,7 +171,7 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
        LEFT JOIN sales_orders so ON so.id = si.sales_order_id
        LEFT JOIN estimates e ON e.id = si.estimate_id
        LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
+       LEFT JOIN customers c ON c.id = COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id)
        LEFT JOIN employees sr ON sr.id = si.sales_rep_id
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        LEFT JOIN departments d ON d.id = si.department_id
@@ -729,7 +729,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
        LEFT JOIN sales_orders eso ON eso.id = e.sales_order_id
        LEFT JOIN delivery_tickets dt ON dt.id = si.delivery_ticket_id
        LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
+       LEFT JOIN customers c ON c.id = COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id)
        LEFT JOIN employees sr ON sr.id = si.sales_rep_id
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        LEFT JOIN departments d ON d.id = si.department_id

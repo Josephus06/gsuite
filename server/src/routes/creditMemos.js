@@ -153,14 +153,14 @@ router.get('/for-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can
   try {
     const [[si]] = await pool.query(
       `SELECT si.id AS sales_invoice_id, si.invoice_no, si.office_location_id, si.memo, si.amount_due,
-              si.gross_amount, si.status, COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) AS customer_id,
+              si.gross_amount, si.status, COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id) AS customer_id,
               c.name AS customer_name,
               loc.location_name AS office_location_name
        FROM sales_invoices si
        LEFT JOIN sales_orders so ON so.id = si.sales_order_id
        LEFT JOIN estimates e ON e.id = si.estimate_id
        LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
+       LEFT JOIN customers c ON c.id = COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id)
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        WHERE si.id = ?`,
       [req.params.invoiceId]
@@ -231,7 +231,7 @@ router.get('/for-customer/:customerId', requireAuth, async (req, res, next) => {
          LEFT JOIN sales_orders so ON so.id = si.sales_order_id
          LEFT JOIN estimates e ON e.id = si.estimate_id
          LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-        WHERE COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) = ?
+        WHERE COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id) = ?
           AND si.status <> 'cancelled' AND (${grossDueSql('si')} > 0.005 OR si.id IN (?))
         ORDER BY si.date_created DESC, si.id DESC`, [c.id, mine.size ? [...mine.keys()] : [0]]);
     applyLines.forEach((l) => { l.amount_due = Number((Number(l.amount_due) + (mine.get(l.sales_invoice_id) || 0)).toFixed(2)); });
@@ -450,7 +450,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     let si;
     if (salesInvoiceId) {
       [[si]] = await conn.query(
-        `SELECT si.id, si.status, si.sales_rep_id, COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id) AS customer_id
+        `SELECT si.id, si.status, si.sales_rep_id, COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id) AS customer_id
            FROM sales_invoices si
            LEFT JOIN sales_orders so ON so.id = si.sales_order_id
            LEFT JOIN estimates e ON e.id = si.estimate_id

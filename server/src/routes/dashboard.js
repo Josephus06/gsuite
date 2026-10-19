@@ -963,7 +963,7 @@ const GM_CALENDARS = {
                LEFT JOIN sales_orders so ON so.id = si.sales_order_id
                LEFT JOIN estimates e ON e.id = si.estimate_id
                LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-               LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, e.customer_id, ns.customer_id, si.customer_id)
+               LEFT JOIN customers c ON c.id = COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id)
                LEFT JOIN delivery_tickets dt ON dt.id = si.delivery_ticket_id
               WHERE si.date_created >= ? AND si.date_created < ? AND si.cancelled_at IS NULL
                 -- An invoice converted from a Delivery Ticket is never counted: the ticket itself is,
