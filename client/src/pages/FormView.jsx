@@ -543,7 +543,8 @@ export default function FormView() {
           </p>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
             <span className="muted">Credit Account :</span>
-            {canSetCogs ? (
+            {/* Every bill / journal made from it credits this account, so it is fixed once one exists. */}
+            {canSetCogs && !(doc.vendor_bills || []).length && !doc.journal ? (
               <div style={{ minWidth: 320 }}>
                 <EntityPicker
                   label="Credit Account" items={creditAccounts} value={doc.credit_account_id || ''}

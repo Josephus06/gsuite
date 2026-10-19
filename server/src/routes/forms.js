@@ -571,14 +571,24 @@ router.get('/meta/credit-accounts', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// The liquidation's credit account, while it waits to be noted. Empty = the default (13305).
+// The liquidation's credit account. Empty = the default (13305). Who and when: see below.
 router.put('/:id/credit-account', requireAuth, async (req, res, next) => {
   try {
     const [[doc]] = await pool.query('SELECT id, type, status FROM form_requests WHERE id = ?', [req.params.id]);
     if (!doc) return res.status(404).json({ error: 'Not found' });
     if (!AP_NOTED_TYPES.includes(doc.type)) return res.status(409).json({ error: 'Only a liquidation has a credit account.' });
-    if (!(await isAccountsPayable(req.user.id))) return res.status(403).json({ error: 'Only Accounts Payable sets this.' });
-    if (doc.status !== 'submitted') return res.status(409).json({ error: 'The credit account can only be set while the liquidation is waiting to be noted.' });
+    // The same rule as the items' accounts (2026-10-19): Accounts Payable up to noted, a System Admin
+    // only once approved -- and never once anything is posted, since every Vendor Bill or Journal made
+    // from the liquidation credits this account.
+    const admin = await isSystemAdmin(req.user.id);
+    if (doc.status === 'approved' && !admin) return res.status(403).json({ error: 'This liquidation is approved -- only a System Admin can change its credit account.' });
+    if (!admin && !(await isAccountsPayable(req.user.id))) return res.status(403).json({ error: 'Only Accounts Payable sets this.' });
+    if (!['submitted', 'noted', 'approved'].includes(doc.status)) return res.status(409).json({ error: 'The credit account can only be changed while the liquidation is submitted, noted or approved.' });
+    if (doc.status !== 'submitted') {
+      const billing = await liquidationBilling(pool, doc.id);
+      if (billing.journal) return res.status(409).json({ error: `This liquidation is posted by ${billing.journal.journal_no}; its credit account is fixed there.` });
+      if (billing.bills.length) return res.status(409).json({ error: `This liquidation is already on ${billing.bills.map((b) => b.bill_no).join(', ')}; its credit account is fixed there.` });
+    }
     const accountId = req.body?.credit_account_id ? Number(req.body.credit_account_id) : null;
     if (accountId) {
       const [[acct]] = await pool.query(
