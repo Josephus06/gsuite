@@ -76,7 +76,7 @@ async function main() {
     where.push('NOT EXISTS (SELECT 1 FROM customer_payment_lines l WHERE l.sales_invoice_id = si.id)');
   }
   const [invoices] = await pool.query(
-    `SELECT si.id, si.invoice_no, si.date_created, si.gross_amount, si.amount_due,
+    `SELECT si.id, si.invoice_no, si.date_created, si.gross_amount, si.amount_due, COALESCE(si.ewt_amount, 0) AS ewt_amount,
             COALESCE(so.customer_id, ns.customer_id, si.customer_id) AS customer_id, si.office_location_id,
             COALESCE((SELECT SUM(ca.applied_amount) FROM credit_memo_applications ca
                        WHERE ca.sales_invoice_id = si.id), 0) AS credited
@@ -114,8 +114,14 @@ async function main() {
 
   // What was settled in CASH: the amount drawn off the invoice, less whatever a credit memo
   // already covered. A credit is not a receipt -- see the note at the top of this file.
+  //
+  // Nor is withheld EWT (2026-10-19): the source counts it as paid, but on GROSS it stays due until
+  // the EWT credit memo (BIR 2307) clears it (lib/invoiceDue.js). Settling it here hid it -- CPAY-INV-
+  // 81555 for exactly INV-81555's 34.36 EWT, so CM-5695 had nothing to apply to (fixed for the existing
+  // ones by reopen-ewt-settled-by-migration.js). So the larger of the EWT and the credit already
+  // applied comes off: a credit memo applied is taken to be clearing that EWT first.
   const cashOf = (inv) => Number((
-    Number(inv.gross_amount) - Number(inv.amount_due) - Number(inv.credited || 0)
+    Number(inv.gross_amount) - Number(inv.amount_due) - Math.max(Number(inv.ewt_amount || 0), Number(inv.credited || 0))
   ).toFixed(2));
 
   const fullyCredited = invoices.filter((i) => cashOf(i) <= 0.005);
