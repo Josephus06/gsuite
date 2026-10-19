@@ -191,7 +191,7 @@ export default function CreditMemoForm() {
             <div className="field">
               <label>Customer :</label>
               <EntityPicker label="Customer" items={lookups.customers} value={customer?.id || ''} getLabel={(c) => c?.name}
-                columns={[{ key: 'name', label: 'Name' }, { key: 'customer_code', label: 'Code' }]} searchKeys={['name', 'customer_code']}
+                columns={[{ key: 'name', label: 'Name' }, { key: 'customer_code', label: 'Code' }, { key: 'list_address', label: 'Address', render: (c) => c.list_address || c.address || '' }]} searchKeys={['name', 'customer_code', 'list_address']}
                 placeholder="--Select--" onSelect={setCustomer} disabled={isEdit} />
             </div>
             <div className="field">

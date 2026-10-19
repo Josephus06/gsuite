@@ -117,7 +117,7 @@ export default function SalesOrderEdit() {
                 : (
                   <EntityPicker label="Customer" items={customers.length ? customers : [{ id: so.customer_id, name: so.customer_name }]}
                     value={head.customer_id || ''} getLabel={(c) => c?.name}
-                    columns={[{ key: 'name', label: 'Name' }, { key: 'customer_code', label: 'Code' }]} searchKeys={['name', 'customer_code']}
+                    columns={[{ key: 'name', label: 'Name' }, { key: 'customer_code', label: 'Code' }, { key: 'list_address', label: 'Address', render: (c) => c.list_address || c.address || '' }]} searchKeys={['name', 'customer_code', 'list_address']}
                     placeholder="--Select--" onSelect={pickCustomer} />
                 )}
               {String(head.customer_id) !== String(so.customer_id) && <div className="muted" style={{ fontSize: 12 }}>Changed from {so.customer_name}. Blanket PO will be cleared.</div>}

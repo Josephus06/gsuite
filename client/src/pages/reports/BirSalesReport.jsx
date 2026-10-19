@@ -144,8 +144,8 @@ export default function BirSalesReport() {
             <EntityPicker
               label="Customer" items={customers} value={form.customerId}
               getLabel={(c) => c.name}
-              columns={[{ key: 'customer_code', label: 'Code' }, { key: 'name', label: 'Name' }]}
-              searchKeys={['name', 'customer_code']}
+              columns={[{ key: 'customer_code', label: 'Code' }, { key: 'name', label: 'Name' }, { key: 'list_address', label: 'Address', render: (c) => c.list_address || c.address || '' }]}
+              searchKeys={['name', 'customer_code', 'list_address']}
               placeholder="Customer"
               onSelect={(c) => setField('customerId', c ? c.id : '')}
               onClear={() => setField('customerId', '')}

@@ -160,8 +160,8 @@ export default function CustomerPayments() {
         {can('/customer-payments', 'can_add') && (
           <EntityPicker
             label="Customer" items={customers} value="" getLabel={(c) => c?.name}
-            columns={[{ key: 'customer_code', label: 'Code' }, { key: 'name', label: 'Name' }]}
-            searchKeys={['customer_code', 'name']}
+            columns={[{ key: 'customer_code', label: 'Code' }, { key: 'name', label: 'Name' }, { key: 'list_address', label: 'Address', render: (c) => c.list_address || c.address || '' }]}
+            searchKeys={['customer_code', 'name', 'list_address']}
             onSelect={(c) => setNewFor(c)}
             triggerLabel="Add Customer Payment"
             triggerClassName="btn btn-primary"

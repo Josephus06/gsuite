@@ -1322,8 +1322,8 @@ export default function EstimateWizard() {
                   <label>Customer</label>
                   <EntityPicker
                     required label="Customer" items={customers} value={header.customer_id} getLabel={(c) => c.name}
-                    columns={[{ key: 'name', label: 'Name' }, { key: 'company_name', label: 'Company' }]}
-                    searchKeys={['name', 'company_name', 'customer_code']}
+                    columns={[{ key: 'name', label: 'Name' }, { key: 'company_name', label: 'Company' }, { key: 'list_address', label: 'Address', render: (c) => c.list_address || c.address || '' }]}
+                    searchKeys={['name', 'company_name', 'customer_code', 'list_address']}
                     onSelect={handleCustomerSelect}
                   />
                 </div>

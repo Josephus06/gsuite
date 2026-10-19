@@ -257,7 +257,7 @@ export default function AiRenderings() {
               <div className="field">
                 <label>Customer *</label>
                 <EntityPicker label="Customer" items={customerItems} value={customer?.id || ''} getLabel={(c) => c?.name}
-                  columns={[{ key: 'name', label: 'Name' }, { key: 'customer_code', label: 'Code' }]} searchKeys={['name', 'customer_code']}
+                  columns={[{ key: 'name', label: 'Name' }, { key: 'customer_code', label: 'Code' }, { key: 'list_address', label: 'Address', render: (c) => c.list_address || c.address || '' }]} searchKeys={['name', 'customer_code', 'list_address']}
                   placeholder="--Select--" onSelect={setCustomer} onSearch={searchCustomers} />
               </div>
               <div className="field">
