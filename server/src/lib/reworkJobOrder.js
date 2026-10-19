@@ -4,7 +4,6 @@
 // copying the mother's header + processes. They then go through the same approve -> build -> QI
 // lifecycle as any production JO.
 const { nextDocNo } = require('./docNumber');
-const { costMissingLines } = require('./joProcessCosting');
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const trunc = (s, n) => (s == null ? null : String(s).slice(0, n));
 
@@ -49,7 +48,6 @@ async function createReworkJobOrder(conn, { mother, prefix, quantity, reason = n
       [id, mother.id]
     );
   }
-  await costMissingLines(conn, id); // lib/joProcessCosting.js -- explicit rows came with no cost
 
   await conn.query(
     `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)

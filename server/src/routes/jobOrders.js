@@ -1,6 +1,5 @@
 const express = require('express');
 const pool = require('../db');
-const { costMissingLines, costProcessLine, costInputsChanged } = require('../lib/joProcessCosting');
 const { completeDesignProcesses } = require('../lib/designAutoComplete');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { motherUom } = require('../lib/reworkUom');
@@ -1120,7 +1119,6 @@ router.post('/:id/processes', requireAuth, requireJobOrderEdit, async (req, res,
       [req.params.id, nextLine, ...values]
     );
     await saveProductionRemarks(conn, result.insertId, req.body);
-    await costMissingLines(conn, req.params.id); // lib/joProcessCosting.js -- an added line had no cost
     await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Created', fieldName: `material[${nextLine}]` });
     await conn.commit();
     const [[row]] = await pool.query('SELECT * FROM job_order_processes WHERE id = ?', [result.insertId]);
@@ -1156,14 +1154,6 @@ router.put('/:id/processes/:procId', requireAuth, requireJobOrderEdit, async (re
       `UPDATE job_order_processes SET ${PROCESS_FIELDS.map((f) => `${f} = ?`).join(', ')} WHERE id = ?`,
       [...values, req.params.procId]
     );
-    // Re-costed only when what the cost depends on changed (or it never had one): a line from an
-    // estimate keeps the cost it was quoted at through a memo or remarks edit.
-    const after = Object.fromEntries(PROCESS_FIELDS.map((f, i) => [f, values[i]]));
-    if (oldRow.total_cost == null || costInputsChanged(oldRow, after)) {
-      const c = await costProcessLine(conn, after);
-      await conn.query('UPDATE job_order_processes SET process_cost = ?, material_cost = ?, total_cost = ? WHERE id = ?',
-        [c.process_cost, c.material_cost, c.total_cost, req.params.procId]);
-    }
     await saveProductionRemarks(conn, req.params.procId, req.body);
     await conn.commit();
     const [[row]] = await pool.query('SELECT * FROM job_order_processes WHERE id = ?', [req.params.procId]);
