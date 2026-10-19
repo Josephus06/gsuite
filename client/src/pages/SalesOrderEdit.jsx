@@ -28,11 +28,12 @@ export default function SalesOrderEdit() {
     (async () => {
       try {
         const { data } = await api.get(`/sales-orders/${id}`);
-        const [cust, reps, locs, taxes] = await Promise.all([
+        const [cust, reps, locs, taxes, terms] = await Promise.all([
           data.customer_id ? api.get(`/customers/${data.customer_id}`).catch(() => ({ data: {} })) : Promise.resolve({ data: {} }),
           api.get('/employees').catch(() => ({ data: [] })), api.get('/lookups/locations'), api.get('/lookups/taxes'),
+          api.get('/lookups/payment-terms').catch(() => ({ data: [] })),
         ]);
-        setLk({ contacts: cust.data.contacts || [], reps: reps.data, locations: locs.data, taxes: taxes.data });
+        setLk({ contacts: cust.data.contacts || [], reps: reps.data, locations: locs.data, taxes: taxes.data, terms: terms.data || [] });
         if (!data.customer_locked) api.get('/customers').then((r) => setCustomers(r.data)).catch(() => {});
         setSo(data);
         setHead({ ...data, date_created: day(data.date_created) });
@@ -166,7 +167,18 @@ export default function SalesOrderEdit() {
             <div className="field"><label>Order Confirmation</label>
               <div style={{ display: 'flex', gap: 6 }}><input placeholder="Type" {...h('order_confirmation_type')} /><input placeholder="Ref" {...h('order_confirmation_ref')} /></div>
             </div>
-            <div className="field"><label>Credit Term</label><input {...h('credit_term')} /></div>
+            {/* Picked from Master Lists > Payment Terms (2026-10-19), stored as the term's name as before.
+                A value typed before then that is not on the list stays selectable, so saving does not drop it. */}
+            <div className="field"><label>Credit Term</label>
+              <select {...h('credit_term')}>
+                <option value="">—</option>
+                {head.credit_term && !(lk.terms || []).some((t) => t.term_name === head.credit_term) && (
+                  <option value={head.credit_term}>{head.credit_term} (not on the Payment Terms list)</option>
+                )}
+                {(lk.terms || []).filter((t) => (t.is_active !== 0 && t.is_active !== false) || t.term_name === head.credit_term)
+                  .map((t) => <option key={t.id} value={t.term_name}>{t.term_name}</option>)}
+              </select>
+            </div>
             <div className="field"><label>Bill to Contact No.</label><input {...h('bill_to_contact_number')} /></div>
           </div>
           <div>
