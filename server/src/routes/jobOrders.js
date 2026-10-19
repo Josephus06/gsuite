@@ -194,10 +194,11 @@ async function listFilter(req) {
   } else {
     // An Artist sees only the Job Orders assigned to them. Without this they match no
     // filter at all (they are neither an Account Officer nor a Supervisor) and see the
-    // entire list.
+    // entire list. Every NSJO too (2026-10-19): an NSJO is never assigned an artist, so the
+    // rule alone kept all of them off an artist's Saved Job Orders.
     const artistEmployeeId = await getArtistEmployeeScope(req.user.id);
     if (artistEmployeeId) {
-      where.push('jo.artist_id = ?');
+      where.push('(jo.artist_id = ? OR jo.nsso_id IS NOT NULL)');
       params.push(artistEmployeeId);
     }
   }
@@ -384,7 +385,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       }
     } else {
       const artistEmployeeId = await getArtistEmployeeScope(req.user.id);
-      if (artistEmployeeId && String(jo.artist_id) !== String(artistEmployeeId)) {
+      if (artistEmployeeId && String(jo.artist_id) !== String(artistEmployeeId) && !jo.nsso_id) {
         return res.status(404).json({ error: 'Not found' });
       }
     }
