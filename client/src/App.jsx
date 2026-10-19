@@ -47,6 +47,7 @@ import InventoryEdit from './pages/InventoryEdit';
 import ServiceItems from './pages/ServiceItems';
 import NonInventories from './pages/NonInventories';
 import NonInventoryEdit from './pages/NonInventoryEdit';
+import ServiceItemEdit from './pages/ServiceItemEdit';
 import WebProducts from './pages/WebProducts';
 import SystemHealth from './pages/SystemHealth';
 import Estimates from './pages/Estimates';
@@ -290,6 +291,8 @@ function App() {
         <Route path="/inventory/:id/edit" element={<InventoryEdit />} />
         <Route path="/inventory/:id" element={<InventoryView />} />
         <Route path="/service-items" element={<ServiceItems />} />
+        <Route path="/service-items/new" element={<ServiceItemEdit />} />
+        <Route path="/service-items/:id/edit" element={<ServiceItemEdit />} />
         <Route path="/non-inventories" element={<NonInventories />} />
         <Route path="/non-inventories/new" element={<NonInventoryEdit />} />
         <Route path="/non-inventories/:id/edit" element={<NonInventoryEdit />} />

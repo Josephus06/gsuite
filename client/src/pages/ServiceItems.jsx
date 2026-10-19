@@ -47,7 +47,7 @@ export default function ServiceItems() {
     <div>
       <div className="page-header">
         <h1>Service Items</h1>
-        {can('/service-items', 'can_add') && <Link className="btn btn-primary" to={'/inventory/new?type=Service'}>Add New</Link>}
+        {can('/service-items', 'can_add') && <Link className="btn btn-primary" to={'/service-items/new'}>Add New</Link>}
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
@@ -99,7 +99,7 @@ export default function ServiceItems() {
                     <td data-label="COGS">{row.cogs_account_name}</td>
                     <td style={{ display: 'flex', gap: 6 }}>
                       <Link className="btn btn-sm btn-primary" to={`/inventory/${row.id}`}>View</Link>
-                      {can('/service-items', 'can_edit') && <Link className="btn btn-sm" to={`/inventory/${row.id}/edit`}>Update</Link>}
+                      {can('/service-items', 'can_edit') && <Link className="btn btn-sm" to={`/service-items/${row.id}/edit`}>Update</Link>}
                     </td>
                   </tr>
                 ))}

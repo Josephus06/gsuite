@@ -151,7 +151,7 @@ export default function InventoryView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={isNonInventory ? '/non-inventories' : '/inventory'}>Back to Lists</Link>
-          {canEdit && <Link className="btn btn-sm btn-primary" to={isNonInventory ? `/non-inventories/${id}/edit` : `/inventory/${id}/edit`}>Edit</Link>}
+          {canEdit && <Link className="btn btn-sm btn-primary" to={isNonInventory ? `/non-inventories/${id}/edit` : String(item.item_type || '').toLowerCase() === 'service' ? `/service-items/${id}/edit` : `/inventory/${id}/edit`}>Edit</Link>}
           {canAdd && <Link className="btn btn-sm" to={isNonInventory ? '/non-inventories/new' : '/inventory/new'}>Add New</Link>}
           {showApproveCosting && <button className="btn btn-sm btn-primary" disabled={approving} onClick={handleApproveCosting}>Approve Costing</button>}
           {showApproveAccounting && <button className="btn btn-sm btn-primary" disabled={approving} onClick={handleApproveAccounting}>Approve Accounting</button>}
