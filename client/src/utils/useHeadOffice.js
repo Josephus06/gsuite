@@ -30,7 +30,9 @@ export function defaultOfficeLocationId() {
     pendingToken = token;
     pending = api.get('/auth/me')
       .then(({ data }) => {
-        const id = data?.default_branch?.location_id;
+        // /auth/me answers { user, permissions } -- the branch is on the user. Reading it off the
+        // top level found nothing, so every account fell back to Head Office (2026-10-19).
+        const id = (data?.user || data)?.default_branch?.location_id;
         return id ? String(id) : headOffice();
       })
       .catch(() => headOffice())
