@@ -1,5 +1,5 @@
 const pool = require('../db');
-const { notersForDoc, DEPARTMENT_NOTED_TYPES, AP_NOTED_TYPES, notersFor } = require('./formNoters');
+const { notersForDoc, DEPARTMENT_NOTED_TYPES, AP_NOTED_TYPES, notersFor, leaveApproversFor } = require('./formNoters');
 
 // The bell for documents waiting on somebody's decision -- Purchase Orders and the request Forms.
 // Until 2026-10-07 neither wrote a notification at all, so an approver only found a PO or a form
@@ -133,6 +133,17 @@ function notifyFormStatus(formId, actorId) {
       } else if (doc.status === 'rejected') {
         await insertFor([doc.user_id], { ...base, type: 'form_rejected', title: `${otWhat} was rejected`, message: doc.rejection_reason ? `Reason: ${doc.rejection_reason}` : `${otWhat} was rejected.` }, actorId);
       }
+      return;
+    }
+
+    // Leave Application (2026-10-19): no noting -- submitted goes straight to its approvers, the
+    // department's ticked leave approvers or, with none ticked, the Forms Approval approvers.
+    if (doc.type === 'leave' && doc.status === 'submitted') {
+      const ticked = (await leaveApproversFor(doc.department_id)).map((u) => u.id);
+      await insertFor(ticked.length ? ticked : await usersWithPermission('/forms/approval', 'can_approve'), {
+        ...base, type: 'form_pending_approval', title: `${what} needs your approval`,
+        message: `${what}${doc.department ? ` from ${doc.department}` : ''} is waiting for your approval.`,
+      }, actorId);
       return;
     }
 

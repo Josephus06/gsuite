@@ -304,19 +304,22 @@ async function overtimeApproval(userId, doc, d) {
 }
 
 // Who gives the final approval (NOTED -> APPROVED), for every type but overtime (overtimeApproval).
+// A Leave Application is not noted (2026-10-19): it waits on approval from the moment it is
+// submitted (one noted before that change can still be approved).
 //
 // A Leave Application (asked 2026-10-19) is approved by the people its department has ticked
 // "Approve leave" in Lookups > Departments -- only them, once any are ticked: naming who approves a
 // department's leave is the point of the tick. A department with nobody ticked keeps the Forms
 // Approval page's approvers (can_approve), as every other form does.
 //   { allowed: may approve it now, eligible: is one of its approvers, approvers: the ticked names }
+const awaitsApproval = (doc) => doc.status === 'noted' || (doc.type === 'leave' && doc.status === 'submitted');
 async function mayApprove(userId, doc) {
   if (doc.type === 'leave') {
     const approvers = await leaveApproversFor(doc.department_id);
     if (approvers.length) {
       const eligible = approvers.some((a) => Number(a.id) === Number(userId));
       return {
-        allowed: eligible && doc.status === 'noted',
+        allowed: eligible && awaitsApproval(doc),
         eligible,
         approvers,
         reason: eligible ? null : `Only ${approvers.map((a) => a.display_name).join(' or ')} can approve leave for ${doc.department || 'this department'}.`,
@@ -324,7 +327,7 @@ async function mayApprove(userId, doc) {
     }
   }
   const eligible = await userCan(userId, APPROVAL_ROUTE, 'can_approve');
-  return { allowed: eligible && doc.status === 'noted', eligible, approvers: [], reason: eligible ? null : 'You do not have permission to perform this action' };
+  return { allowed: eligible && awaitsApproval(doc), eligible, approvers: [], reason: eligible ? null : 'You do not have permission to perform this action' };
 }
 
 // Who may look at one form. Its owner always; anyone holding can_view_all on /forms; the approvers,
@@ -357,6 +360,8 @@ async function maySee(userId, doc) {
 // May this user note this particular form, and if not, why not? One answer used by the button, the
 // endpoint and the explanation on screen, so the three cannot disagree.
 async function mayNote(userId, doc) {
+  // A Leave Application goes straight to its approver once submitted (2026-10-19).
+  if (doc.type === 'leave') return { allowed: false, reason: 'A Leave Application goes straight to approval -- there is nothing to note.' };
   // An overtime request for yourself goes straight to your head for approval -- nothing to note.
   if (doc.type === 'overtime') {
     const d = await overtimeDetail(doc.id);
@@ -1291,7 +1296,7 @@ router.post('/:id/approve', requireAuth, async (req, res, next) => {
     //
     // The cost of that is real and deliberate: a form from a department with no head recorded has
     // nowhere to go, so the refusal names who is missing rather than just saying no.
-    if (doc.status === 'submitted') {
+    if (doc.status === 'submitted' && doc.type !== 'leave') {
       const heads = await notersForDoc(doc);
       if (AP_NOTED_TYPES.includes(doc.type) && heads.length === 0) {
         return res.status(409).json({ error: 'This liquidation has to be noted by Accounts Payable first, and nobody is marked Accounts Payable.' });
@@ -1307,14 +1312,14 @@ router.post('/:id/approve', requireAuth, async (req, res, next) => {
           : 'This has to be noted before it can be approved.',
       });
     }
-    if (doc.status !== 'noted') {
-      return res.status(409).json({ error: 'Only a noted form can be approved.' });
+    if (!awaitsApproval(doc)) {
+      return res.status(409).json({ error: doc.type === 'leave' ? 'Only a submitted leave can be approved.' : 'Only a noted form can be approved.' });
     }
 
     await pool.query(
       "UPDATE form_requests SET status = 'approved', approved_at = NOW(), approved_by = ?, updated_at = NOW() WHERE id = ?",
       [req.user.id, doc.id]);
-    await logFormAudit(pool, doc.id, req.user.id, 'Approved', 'Status', 'Noted', 'Approved');
+    await logFormAudit(pool, doc.id, req.user.id, 'Approved', 'Status', STATUS_LABEL[doc.status], 'Approved');
     notifyFormStatus(doc.id, req.user.id);
     return res.json({ ok: true, status: 'approved' });
   } catch (err) { return next(err); }

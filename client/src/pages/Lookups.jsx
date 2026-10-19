@@ -152,7 +152,8 @@ function emptyForm(fields) {
 
 
 // The forms a department head notes, and how a head's note_form_types reads: empty means all of them.
-const NOTED_FORM_TYPES = [['payment', 'Request for Payment'], ['fund_transfer', 'Fund Transfer'], ['revolving_fund', 'Revolving Fund'], ['attendance_adjustment', 'Attendance Adjustment'], ['business_trip', 'Business Trip'], ['overtime', 'Overtime'], ['leave', 'Leave'], ['gate_pass', 'Gate Pass']];
+const NOTED_FORM_TYPES = [['payment', 'Request for Payment'], ['fund_transfer', 'Fund Transfer'], ['revolving_fund', 'Revolving Fund'], ['attendance_adjustment', 'Attendance Adjustment'], ['business_trip', 'Business Trip'], ['overtime', 'Overtime'], ['gate_pass', 'Gate Pass']];
+// No 'leave': a Leave Application is not noted, it goes straight to approval (2026-10-19).
 const noteTypesOf = (a) => (a.note_form_types ? String(a.note_form_types).split(',') : NOTED_FORM_TYPES.map(([t]) => t));
 
 export default function Lookups() {
@@ -456,8 +457,8 @@ export default function Lookups() {
                   Tickets: any ticket created by someone in this department needs sign-off from one of these people
                   before the receiving department can assign it. Forms: a Request for Payment, Fund Transfer, Revolving Fund or
                   Attendance Adjustment filed from this department is noted by one of them -- tick which forms each one notes.
-                  Leave: once noted, a Leave Application from this department is approved by whoever is ticked Approve leave
-                  (nobody ticked: the Forms Approval approvers, as before).
+                  Leave: a Leave Application from this department goes straight to whoever is ticked Approve leave once
+                  submitted -- no noting (nobody ticked: the Forms Approval approvers).
                   Leave empty for no approval gate.
                 </div>
                 <div className="dept-heads">

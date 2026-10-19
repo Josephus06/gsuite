@@ -79,14 +79,18 @@ function GatePassSignatures({ doc }) {
 
 function Signatures({ doc }) {
   if (doc.type === 'gate_pass') return <GatePassSignatures doc={doc} />;
+  // A Leave Application is not noted (2026-10-19) -- no Noted By line, unless it was noted before then.
+  const noted = doc.type !== 'leave' || !!doc.noted_by_name;
   return (
     <div className="rf-signs">
       <Signature image={doc.owner_signature} name={doc.owner_name} role="Requested By" />
-      <Signature
-        image={doc.noted_signature}
-        name={doc.noted_by_name || doc.detail?.noted_by_name}
-        role={['attendance_adjustment', 'leave'].includes(doc.type) ? 'Noted By (Immediate Superior)' : 'Noted By'}
-      />
+      {noted && (
+        <Signature
+          image={doc.noted_signature}
+          name={doc.noted_by_name || doc.detail?.noted_by_name}
+          role={['attendance_adjustment', 'leave'].includes(doc.type) ? 'Noted By (Immediate Superior)' : 'Noted By'}
+        />
+      )}
       <Signature image={doc.approved_signature} name={doc.approved_by_name} role="Approved By" />
     </div>
   );
