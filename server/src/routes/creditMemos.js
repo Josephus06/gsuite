@@ -97,11 +97,12 @@ async function insertLines(conn, memoId, prepared) {
   }
 }
 
-// Every invoice a memo is applied to must be that customer's.
+// Every invoice a memo is applied to must be that customer's -- the customer it is BILLED to first (2026-10-19:
+// CM-5695 for FILINVEST could not apply to INV-81555..81558, ordered under MACTAN SEASCAPES).
 async function assertInvoicesBelongTo(conn, applyLines, customerId) {
   for (const l of applyLines) {
     const [[a]] = await conn.query(
-      `SELECT COALESCE(so.customer_id, e.customer_id, ns.customer_id, s2.customer_id) AS customer_id
+      `SELECT COALESCE(s2.customer_id, so.customer_id, e.customer_id, ns.customer_id) AS customer_id
          FROM sales_invoices s2 LEFT JOIN sales_orders so ON so.id = s2.sales_order_id
          LEFT JOIN estimates e ON e.id = s2.estimate_id LEFT JOIN non_standard_sales_orders ns ON ns.id = s2.nsso_id
         WHERE s2.id = ?`, [l.sales_invoice_id]);

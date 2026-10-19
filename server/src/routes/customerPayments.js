@@ -221,9 +221,9 @@ router.get('/for-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can
        LEFT JOIN sales_orders so2 ON so2.id = si2.sales_order_id
        LEFT JOIN estimates e2 ON e2.id = si2.estimate_id
        LEFT JOIN non_standard_sales_orders ns2 ON ns2.id = si2.nsso_id
-       LEFT JOIN customers c ON c.id = COALESCE(so2.customer_id, e2.customer_id, ns2.customer_id, si2.customer_id)
-       WHERE COALESCE(so2.customer_id, e2.customer_id, ns2.customer_id, si2.customer_id) IN (?) AND si2.status != 'cancelled' AND ${dueSql('si2')} > 0.005
-       ORDER BY (COALESCE(so2.customer_id, e2.customer_id, ns2.customer_id, si2.customer_id) = ?) DESC, si2.id DESC`,
+       LEFT JOIN customers c ON c.id = COALESCE(si2.customer_id, so2.customer_id, e2.customer_id, ns2.customer_id)
+       WHERE COALESCE(si2.customer_id, so2.customer_id, e2.customer_id, ns2.customer_id) IN (?) AND si2.status != 'cancelled' AND ${dueSql('si2')} > 0.005
+       ORDER BY (COALESCE(si2.customer_id, so2.customer_id, e2.customer_id, ns2.customer_id) = ?) DESC, si2.id DESC`,
       // This customer's open invoices, and its related customers' (lib/customerRelations.js).
       [await payableCustomerIds(si.customer_id), si.customer_id]
     );

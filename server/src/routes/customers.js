@@ -273,7 +273,7 @@ const LEDGER_SQL = `
   UNION ALL
   SELECT 'Invoice', si.id, si.invoice_no, si.date_created, si.status, si.sales_rep_id, si.gross_amount
     FROM sales_invoices si LEFT JOIN sales_orders s ON s.id = si.sales_order_id LEFT JOIN estimates e ON e.id = si.estimate_id
-   WHERE COALESCE(s.customer_id, e.customer_id) = ?
+   WHERE COALESCE(si.customer_id, s.customer_id, e.customer_id) = ?
   UNION ALL
   SELECT 'Customer Payment', p.id, p.customer_payment_no, p.date_created, p.status, NULL, p.payment_amount
     FROM customer_payments p WHERE p.customer_id = ?
@@ -312,7 +312,7 @@ const OPEN_INVOICES_SQL = `
   SELECT si.id, si.invoice_no, si.bs_si_no, si.date_created, si.date_due, si.gross_amount, si.amount_due, si.status,
          si.collection_forecast_date, DATEDIFF(CURDATE(), si.date_due) AS days_overdue
     FROM sales_invoices si LEFT JOIN sales_orders s ON s.id = si.sales_order_id LEFT JOIN estimates e ON e.id = si.estimate_id
-   WHERE COALESCE(s.customer_id, e.customer_id) = ? AND si.status NOT IN ('cancelled', 'void') AND si.amount_due > 0.005`;
+   WHERE COALESCE(si.customer_id, s.customer_id, e.customer_id) = ? AND si.status NOT IN ('cancelled', 'void') AND si.amount_due > 0.005`;
 
 router.get('/:id/financial', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
@@ -328,7 +328,7 @@ router.get('/:id/financial', requireAuth, requirePermission(ROUTE, 'can_view'), 
         WHERE customer_id = ? AND status NOT IN ('void', 'cancelled') ORDER BY date_created DESC, id DESC LIMIT 1`, [id]);
     const [[ytd]] = await pool.query(`SELECT COALESCE(SUM(si.gross_amount), 0) sales FROM sales_invoices si
         LEFT JOIN sales_orders s ON s.id = si.sales_order_id LEFT JOIN estimates e ON e.id = si.estimate_id
-        WHERE COALESCE(s.customer_id, e.customer_id) = ? AND si.status NOT IN ('cancelled', 'void') AND YEAR(si.date_created) = YEAR(CURDATE())`, [id]);
+        WHERE COALESCE(si.customer_id, s.customer_id, e.customer_id) = ? AND si.status NOT IN ('cancelled', 'void') AND YEAR(si.date_created) = YEAR(CURDATE())`, [id]);
     const limit = Number(c.credit_limit || 0);
     res.json({
       credit_limit: limit, credit_term: c.term_name, open_invoices: ar.n, balance: Number(ar.due), overdue: Number(ar.overdue),
