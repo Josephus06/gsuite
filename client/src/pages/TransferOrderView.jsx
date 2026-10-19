@@ -97,6 +97,9 @@ export default function TransferOrderView() {
   // server's requireToEdit).
   const isAdmin = user?.account_type === 'System Admin';
   const canEdit = !periodLocked && isAdmin;
+  // Unit Used and Adjusted Qty are the warehouse's, part of fulfilling (server: requireToLineEdit) --
+  // Can Edit on Transfer Orders or Can Add on Item Fulfillments, while it can still be fulfilled.
+  const canAdjust = !periodLocked && (isAdmin || can('/transfer-orders', 'can_edit') || can('/item-fulfillments', 'can_add'));
   // Fulfilling and receiving are separate jobs done by the two warehouses, and each now has its
   // own permission page. They both used to be can_approve on the Transfer Order, so one switch
   // let a person do both ends of the transfer.
@@ -202,7 +205,7 @@ export default function TransferOrderView() {
                         asking in rolls is the point of the switch, and 24 SQFT becomes "1", typed
                         by the person who knows one roll covers it. */}
                     <td>
-                      {canStillFulfill && canEdit ? (
+                      {canStillFulfill && canAdjust ? (
                         <select
                           value={l.unit_used_resolved || 'stock'}
                           onChange={(e) => commitLine(l.id, { unit_used: e.target.value })}
@@ -214,7 +217,7 @@ export default function TransferOrderView() {
                     </td>
                     <td>{l.unit}</td>
                     <td>
-                      {canStillFulfill && canEdit ? (
+                      {canStillFulfill && canAdjust ? (
                         <input
                           type="number" step="0.0001" style={{ width: 110 }} className="highlight-input"
                           defaultValue={l.adjusted_qty ?? ''}

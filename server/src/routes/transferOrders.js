@@ -918,6 +918,25 @@ async function requireToEdit(req, res, next) {
   } catch (err) { return next(err); }
 }
 
+// The warehouse's two fields on a line -- Unit Used and Adjusted Qty -- are part of fulfilling, not
+// editing the order (2026-10-19: Jumar Gidacan lost them when editing went System Admin only). Anyone
+// with Can Edit on Transfer Orders or Can Add on Item Fulfillments may change those two, and only
+// those, while the TO can still be fulfilled; anything else in the request still needs an admin.
+const WAREHOUSE_LINE_FIELDS = ['unit_used', 'adjusted_qty'];
+async function requireToLineEdit(req, res, next) {
+  try {
+    if (await isSystemAdmin(req.user.id)) return next();
+    const keys = Object.keys(req.body || {}).filter((k) => req.body[k] !== undefined);
+    const warehouseOnly = keys.length > 0 && keys.every((k) => WAREHOUSE_LINE_FIELDS.includes(k));
+    if (warehouseOnly && (await userCan(req.user.id, ROUTE, 'can_edit') || await userCan(req.user.id, FULFILLMENT_ROUTE, 'can_add'))) {
+      const [[t]] = await pool.query('SELECT status FROM transfer_orders WHERE id = ?', [req.params.id]);
+      if (t && OPEN_TO_STATUSES.includes(t.status)) return next();
+      return res.status(409).json({ error: 'This transfer order can no longer be fulfilled, so its lines cannot be adjusted.' });
+    }
+    return res.status(403).json({ error: 'Only a System Admin can edit a transfer order -- Unit Used and Adjusted Qty excepted.' });
+  } catch (err) { return next(err); }
+}
+
 router.put('/:id', requireAuth, requireToEdit, async (req, res, next) => {
   try {
     const [[t]] = await pool.query('SELECT status, date_created, withdraw_from_location_id, transfer_to_location_id FROM transfer_orders WHERE id = ?', [req.params.id]);
@@ -988,7 +1007,7 @@ router.post('/:id/lines', requireAuth, requireToEdit, async (req, res, next) => 
   }
 });
 
-router.put('/:id/lines/:lineId', requireAuth, requireToEdit, async (req, res, next) => {
+router.put('/:id/lines/:lineId', requireAuth, requireToLineEdit, async (req, res, next) => {
   try {
     const [[t]] = await pool.query('SELECT status, date_created FROM transfer_orders WHERE id = ?', [req.params.id]);
     if (!t) return res.status(404).json({ error: 'Not found' });
