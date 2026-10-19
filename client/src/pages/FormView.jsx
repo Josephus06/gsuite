@@ -432,8 +432,6 @@ export default function FormView() {
           <Line label="Date">{fmtDate(d.fuel_date)}</Line>
           <Line label="Vehicle">{d.vehicle_name}</Line>
           <Line label="Litres">{d.liters != null ? `${Number(d.liters).toLocaleString('en-US', { maximumFractionDigits: 3 })} L` : null}</Line>
-          <Line label="Price / litre">{d.price_per_liter != null ? money(d.price_per_liter) : null}</Line>
-          <Line label="Amount">{d.amount != null ? money(d.amount) : null}</Line>
           <Line label="Odometer">{d.odometer_km != null ? `${Number(d.odometer_km).toLocaleString('en-US')} km` : null}</Line>
           <Line label="Station">{d.station}</Line>
           <Line label="Purpose">{d.purpose}</Line>

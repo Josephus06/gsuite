@@ -417,8 +417,6 @@ export default function FormPrint() {
             </div>
             <div className="rf-row">
               <Field label="Litres" value={d.liters != null ? `${Number(d.liters)} L` : ''} />
-              <Field label="Price / Litre" value={d.price_per_liter != null ? Number(d.price_per_liter).toLocaleString('en-US', { minimumFractionDigits: 2 }) : ''} />
-              <Field label="Amount" value={d.amount != null ? Number(d.amount).toLocaleString('en-US', { minimumFractionDigits: 2 }) : ''} />
             </div>
             <div className="rf-row">
               <Field label="Odometer (km)" value={d.odometer_km != null ? Number(d.odometer_km).toLocaleString('en-US') : ''} />

@@ -562,11 +562,6 @@ export default function FormEdit() {
                 <div className="field"><label>Vehicle (if not listed)</label><input value={form.fuel_vehicle_label} onChange={set('fuel_vehicle_label')} placeholder="Plate no. / description" /></div>
               )}
               <div className="field"><label>Litres *</label><input type="number" step="0.001" min="0" value={form.fuel_liters} onChange={set('fuel_liters')} /></div>
-              <div className="field"><label>Price / litre</label><input type="number" step="0.01" min="0" value={form.fuel_price_per_liter} onChange={set('fuel_price_per_liter')} /></div>
-              <div className="field"><label>Amount</label>
-                <input type="number" step="0.01" min="0" value={form.fuel_amount} onChange={set('fuel_amount')}
-                  placeholder={liters && Number(form.fuel_price_per_liter) ? (liters * Number(form.fuel_price_per_liter)).toFixed(2) : ''} />
-              </div>
               <div className="field"><label>Odometer (km)</label><input type="number" step="any" min="0" value={form.fuel_odometer_km} onChange={set('fuel_odometer_km')} /></div>
               <div className="field"><label>Station</label><input value={form.fuel_station} onChange={set('fuel_station')} /></div>
             </div>
