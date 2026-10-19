@@ -164,16 +164,16 @@ async function listFilter(req) {
   // than replacing them, and it goes into `where` so the status tab counts inherit it too.
   const scopeLocationId = await getJobLocationScope(req.user.id, ROUTE);
   if (scopeLocationId) { where.push('jo.job_location_id = ?'); params.push(scopeLocationId); }
-  if (salesRepId) { where.push('so.sales_rep_id = ?'); params.push(salesRepId); }
+  if (salesRepId) { where.push('COALESCE(so.sales_rep_id, ns.sales_rep_id) = ?'); params.push(salesRepId); }
   // Scoped on the job order's OWN rep, not the sales order's. The two agree on every one of
   // the 124,300 rows, but a job order can exist without a sales order at all (NSJO, RWIP), and
   // scoping through the join would make those invisible to everyone rather than to nobody.
   const salesScope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
   if (salesScope) { where.push('jo.sales_rep_id IN (?)'); params.push(salesScope); }
   if (jobLocationId) { where.push('jo.job_location_id = ?'); params.push(jobLocationId); }
-  if (officeLocationId) { where.push('so.office_location_id = ?'); params.push(officeLocationId); }
-  if (departmentId) { where.push('so.sales_division_id = ?'); params.push(departmentId); }
-  if (customerId) { where.push('so.customer_id = ?'); params.push(customerId); }
+  if (officeLocationId) { where.push('COALESCE(so.office_location_id, ns.office_location_id) = ?'); params.push(officeLocationId); }
+  if (departmentId) { where.push('COALESCE(so.sales_division_id, ns.sales_division_id) = ?'); params.push(departmentId); }
+  if (customerId) { where.push('c.id = ?'); params.push(customerId); }
   // Job orders proper, without the RWIP-### rework orders -- the PO-3 Job Order picker (asked
   // 2026-10-05), where the RWIPs, being the newest rows, had crowded every real JO off the list.
   if (excludeRwip === '1') where.push("jo.job_order_no NOT LIKE 'RWIP-%'");
@@ -182,8 +182,8 @@ async function listFilter(req) {
   // created_at is a DATETIME: "<= day" stopped at that day's midnight and left the day itself out.
   if (asOf) { where.push('jo.created_at < DATE_ADD(?, INTERVAL 1 DAY)'); params.push(String(asOf).slice(0, 10)); }
   if (search) {
-    where.push('(jo.job_order_no LIKE ? OR so.sales_order_no LIKE ? OR c.name LIKE ? OR jo.description LIKE ?)');
-    params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    where.push('(jo.job_order_no LIKE ? OR so.sales_order_no LIKE ? OR ns.nsso_no LIKE ? OR c.name LIKE ? OR jo.description LIKE ?)');
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
   }
   // A Design Supervisor only ever sees their own design queue -- JOs still in "For
   // Design Supervisor" (awaiting an artist assignment from them) or "For Artist"
@@ -213,16 +213,20 @@ async function listFilter(req) {
   return { whereSql, params, listWhereSql, listParams };
 }
 
+// An NSJO has no Sales Order: its office location, department, sales rep, contact and preparer come
+// from its Non-Standard Sales Order (ns) -- for the columns and for the filters (2026-10-19:
+// NSJO-SAM-2491-1-1 vanished as soon as Office Location was Head Office).
 const LIST_FROM = `FROM job_orders jo
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
+       LEFT JOIN non_standard_sales_orders ns ON ns.id = jo.nsso_id
        LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, (SELECT COALESCE(nx.customer_id, ex.customer_id, sx.customer_id) FROM non_standard_sales_orders nx LEFT JOIN estimates ex ON ex.id = nx.nested_estimate_id LEFT JOIN sales_orders sx ON sx.id = nx.nested_sales_order_id WHERE nx.id = jo.nsso_id))
-       LEFT JOIN customer_contacts cc ON cc.id = so.contact_person_id
+       LEFT JOIN customer_contacts cc ON cc.id = COALESCE(so.contact_person_id, ns.contact_person_id)
        LEFT JOIN job_types jt ON jt.id = jo.job_type_id
        LEFT JOIN locations jloc ON jloc.id = jo.job_location_id
-       LEFT JOIN locations oloc ON oloc.id = so.office_location_id
-       LEFT JOIN sales_divisions sd ON sd.id = so.sales_division_id
-       LEFT JOIN employees sr ON sr.id = so.sales_rep_id
-       LEFT JOIN employees pb ON pb.id = so.prepared_by_id
+       LEFT JOIN locations oloc ON oloc.id = COALESCE(so.office_location_id, ns.office_location_id)
+       LEFT JOIN sales_divisions sd ON sd.id = COALESCE(so.sales_division_id, ns.sales_division_id)
+       LEFT JOIN employees sr ON sr.id = COALESCE(so.sales_rep_id, ns.sales_rep_id)
+       LEFT JOIN employees pb ON pb.id = COALESCE(so.prepared_by_id, ns.prepared_by_id)
        LEFT JOIN employees ar ON ar.id = jo.artist_id`;
 
 const EXTRACT_STAGE_LABELS = {
