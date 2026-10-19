@@ -556,9 +556,13 @@ async function activeAccounts() {
     'SELECT id, account_code, account_name, account_type FROM chart_of_accounts WHERE COALESCE(is_summary, 0) = 0 ORDER BY account_code');
   return rows;
 }
+// The account lists behind the liquidation's pickers. A System Admin too (2026-10-19): an approved
+// liquidation's accounts are theirs to change, and refusing them the list left every picker blank
+// under an "Only Accounts Payable sets this." banner (REQ-89).
+const mayPickLiquidationAccounts = async (userId) => (await isAccountsPayable(userId)) || (await isSystemAdmin(userId));
 router.get('/meta/credit-accounts', requireAuth, async (req, res, next) => {
   try {
-    if (!(await isAccountsPayable(req.user.id))) return res.status(403).json({ error: 'Only Accounts Payable sets this.' });
+    if (!(await mayPickLiquidationAccounts(req.user.id))) return res.status(403).json({ error: 'Only Accounts Payable sets this.' });
     res.json(await activeAccounts());
   } catch (err) { next(err); }
 });
@@ -591,7 +595,7 @@ router.put('/:id/credit-account', requireAuth, async (req, res, next) => {
 
 router.get('/meta/cogs-accounts', requireAuth, async (req, res, next) => {
   try {
-    if (!(await isAccountsPayable(req.user.id))) return res.status(403).json({ error: 'Only Accounts Payable assigns COGS.' });
+    if (!(await mayPickLiquidationAccounts(req.user.id))) return res.status(403).json({ error: 'Only Accounts Payable assigns COGS.' });
     res.json(await activeAccounts());
   } catch (err) { next(err); }
 });
