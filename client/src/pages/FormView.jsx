@@ -425,6 +425,24 @@ export default function FormView() {
         </div>
       )}
 
+      {doc.type === 'fuel' && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3>Fuel Request</h3>
+          <Line label="Date">{fmtDate(d.fuel_date)}</Line>
+          <Line label="Vehicle">{d.vehicle_name}</Line>
+          <Line label="Litres">{d.liters != null ? `${Number(d.liters).toLocaleString('en-US', { maximumFractionDigits: 3 })} L` : null}</Line>
+          <Line label="Price / litre">{d.price_per_liter != null ? money(d.price_per_liter) : null}</Line>
+          <Line label="Amount">{d.amount != null ? money(d.amount) : null}</Line>
+          <Line label="Odometer">{d.odometer_km != null ? `${Number(d.odometer_km).toLocaleString('en-US')} km` : null}</Line>
+          <Line label="Station">{d.station}</Line>
+          <Line label="Purpose">{d.purpose}</Line>
+          {doc.fuel_usage?.has_limit && (
+            <Line label="Monthly fuel limit">{`${doc.fuel_usage.limit} L for ${doc.fuel_usage.month} -- ${doc.fuel_usage.used} L in other requests, ${doc.fuel_usage.remaining} L left before this one`}</Line>
+          )}
+          {d.fuel_log_id && <div className="muted" style={{ marginTop: 6 }}>Added to the vehicle&apos;s fuel log (Assets &gt; Fleet).</div>}
+        </div>
+      )}
+
       {doc.type === 'leave' && (
         <div className="card" style={{ marginTop: 16 }}>
           <h3>Leave Application</h3>

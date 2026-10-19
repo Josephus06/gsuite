@@ -47,7 +47,7 @@ const ROUTE = '/forms';
 const APPROVAL_ROUTE = '/forms/approval';
 
 const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund', 'attendance_adjustment', 'overtime', 'leave', 'gate_pass',
-  'hmo_enrollment', 'hmo_deletion', 'bpi_deletion'];
+  'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel'];
 const TYPE_LABELS = {
   liquidation: 'Liquidation',
   payment: 'Request for Payment',
@@ -61,9 +61,10 @@ const TYPE_LABELS = {
   hmo_enrollment: 'Life & Health - Enrollment',
   hmo_deletion: 'Life & Health - Deletion',
   bpi_deletion: 'BPI Deletion',
+  fuel: 'Fuel Request',
 };
 // Forms with no expense lines: a trip sheet, and the attendance adjustment slip.
-const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion'];
+const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel'];
 // HR's member lists (asked 2026-10-19; db/add-hr-member-forms.js): Life & Health HMO enrollment and
 // deletion, and the BPI payroll-account deletion letter. One lines table; each form its own columns
 // (kept in step with client/src/utils/requestForms.js MEMBER_FORMS). required = a line needs these.
@@ -287,12 +288,54 @@ async function loadFull(id) {
     const [[d]] = await pool.query('SELECT * FROM form_leave_details WHERE form_request_id = ?', [id])
       .catch((e) => { if (e.code === 'ER_NO_SUCH_TABLE') return [[null]]; throw e; });
     doc.detail = d || null;
+  } else if (doc.type === 'fuel') {
+    const [[d]] = await pool.query(
+      `SELECT d.*, vd.plate_no, a.serial_no, a.reference_no AS vehicle_reference, a.brand, a.model
+         FROM form_fuel_details d LEFT JOIN assets a ON a.id = d.vehicle_asset_id
+         LEFT JOIN vehicle_details vd ON vd.asset_id = d.vehicle_asset_id
+        WHERE d.form_request_id = ?`, [id])
+      .catch(async (e) => {
+        if (e.code === 'ER_NO_SUCH_TABLE') return pool.query('SELECT * FROM form_fuel_details WHERE form_request_id = ?', [id]).catch(() => [[null]]);
+        throw e;
+      });
+    if (d) {
+      const plate = String(d.plate_no || d.serial_no || '').trim();
+      d.vehicle_name = d.vehicle_asset_id ? [plate, [d.brand, d.model].filter(Boolean).join(' ')].filter(Boolean).join(' · ') || d.vehicle_reference : d.vehicle_label;
+      d.fuel_date = date(d.fuel_date instanceof Date ? d.fuel_date.toISOString() : d.fuel_date);
+    }
+    doc.detail = d || null;
+    doc.fuel_usage = await fuelUsage(doc.user_id, d?.fuel_date, doc.id);
   } else if (doc.type === 'gate_pass') {
     doc.detail = await gatePassDetail(id);
   } else if (MEMBER_FORMS[doc.type]) {
     doc.detail = await memberDetail(id);
   }
   return doc;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Fuel Request (asked 2026-10-19; db/add-fuel-form.js)                        */
+/* -------------------------------------------------------------------------- */
+//
+// A request for fuel: date, vehicle (a Fleet vehicle, or typed), litres, price / amount, odometer,
+// station, purpose. Noted by the department head, approved like the other forms. A user ticked
+// "Has monthly fuel limit" in Users & Permissions (users.has_fuel_limit / fuel_limit_liters) cannot
+// SUBMIT a request that takes that calendar month past the limit -- submitted, noted and approved
+// requests count; drafts, rejected and cancelled ones do not. Approved for a Fleet vehicle, it
+// becomes that vehicle's fuel log entry (Assets > Fleet).
+const FUEL_COUNTED = ['submitted', 'noted', 'approved'];
+async function fuelUsage(userId, onDate, excludeFormId = null, q = pool) {
+  const [[u]] = await q.query('SELECT has_fuel_limit, fuel_limit_liters FROM users WHERE id = ?', [userId])
+    .catch((e) => { if (e.code === 'ER_BAD_FIELD_ERROR') return [[null]]; throw e; });
+  const month = String(onDate || new Date(Date.now() + 8 * 3600 * 1000).toISOString()).slice(0, 7);
+  const [[used]] = await q.query(
+    `SELECT COALESCE(SUM(d.liters), 0) AS l FROM form_fuel_details d JOIN form_requests f ON f.id = d.form_request_id
+      WHERE f.user_id = ? AND f.type = 'fuel' AND f.status IN (?) AND DATE_FORMAT(d.fuel_date, '%Y-%m') = ? AND f.id <> ?`,
+    [userId, FUEL_COUNTED, month, excludeFormId || 0]).catch((e) => { if (e.code === 'ER_NO_SUCH_TABLE') return [[{ l: 0 }]]; throw e; });
+  const hasLimit = !!(u && u.has_fuel_limit && Number(u.fuel_limit_liters) > 0);
+  const limit = hasLimit ? Number(u.fuel_limit_liters) : null;
+  const usedL = Number(used.l) || 0;
+  return { month, has_limit: hasLimit, limit, used: usedL, remaining: hasLimit ? Math.max(0, Number((limit - usedL).toFixed(3))) : null };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -699,6 +742,20 @@ router.put('/:id/items/:itemId/cogs', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Fuel Request's pickers: the Fleet vehicles, and this user's limit and what is left this month.
+router.get('/meta/fuel', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [vehicles] = await pool.query(
+      `SELECT a.id AS asset_id, TRIM(COALESCE(vd.plate_no, a.serial_no)) AS plate_no, a.brand, a.model, a.reference_no
+         FROM assets a LEFT JOIN asset_items ai ON ai.id = a.asset_item_id LEFT JOIN asset_classes ac ON ac.id = a.asset_class_id
+         LEFT JOIN vehicle_details vd ON vd.asset_id = a.id
+        WHERE ac.name LIKE '%Transport%' OR ac.name LIKE '%Vehicle%' OR ai.category LIKE '%Vehicle%' OR ai.category LIKE '%Transport%'
+           OR ai.display_name REGEXP '(^|[^a-z])(vehicles?|motorcycles?|motorbikes?|trucks?|vans?|cars?)([^a-z]|$)' OR vd.asset_id IS NOT NULL
+        ORDER BY plate_no`).catch((e) => { if (e.code === 'ER_NO_SUCH_TABLE') return [[]]; throw e; });
+    res.json({ vehicles, usage: await fuelUsage(req.user.id, date(req.query.date), Number(req.query.exclude) || null) });
+  } catch (err) { next(err); }
+});
+
 router.get('/meta/options', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     // Departments come from the same list every other module uses, so a form's department is a
@@ -1013,6 +1070,21 @@ async function writeDetail(conn, docId, type, body, items, ownerId = null) {
     return {};
   }
 
+  if (type === 'fuel') {
+    const liters = num(body.fuel_liters);
+    const price = num(body.fuel_price_per_liter);
+    const amount = num(body.fuel_amount) ?? (price != null && liters != null ? Number((price * liters).toFixed(2)) : null);
+    await conn.query(
+      `INSERT INTO form_fuel_details
+         (form_request_id, fuel_date, vehicle_asset_id, vehicle_label, liters, price_per_liter, amount, odometer_km, station, purpose)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [docId, date(body.fuel_date), Number(body.fuel_vehicle_asset_id) || null,
+        Number(body.fuel_vehicle_asset_id) ? null : trunc(body.fuel_vehicle_label, 120),
+        liters, price, amount, num(body.fuel_odometer_km), trunc(body.fuel_station, 120), trunc(body.fuel_purpose, 4000)],
+    );
+    return {};
+  }
+
   if (type === 'leave') {
     const leaveType = LEAVE_TYPES.includes(body.leave_type) ? body.leave_type : 'others';
     const from = date(body.leave_date_from);
@@ -1102,6 +1174,12 @@ function validate(type, body, items) {
     if (!trunc(body.gp_destination, 255)) return 'Say where you are going (Destination).';
     if (!trunc(body.name, 255)) return 'Name of Personnel is required.';
     if (!trunc(body.gp_purpose, 4000)) return 'Say the purpose of going out.';
+  }
+  if (type === 'fuel') {
+    if (!date(body.fuel_date)) return 'The date is required.';
+    if (!(Number(body.fuel_liters) > 0)) return 'Enter how many litres.';
+    if (!Number(body.fuel_vehicle_asset_id) && !trunc(body.fuel_vehicle_label, 120)) return 'Choose the vehicle (or type it).';
+    if (!trunc(body.fuel_purpose, 4000)) return 'Say what the fuel is for.';
   }
   if (type === 'leave') {
     if (!LEAVE_TYPES.includes(body.leave_type)) return 'Choose the type of leave.';
@@ -1287,6 +1365,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       attendance_adjustment: 'form_attendance_adjustment_details',
       overtime: 'form_overtime_details',
       leave: 'form_leave_details',
+      fuel: 'form_fuel_details',
       gate_pass: 'form_gate_pass_details',
       hmo_enrollment: 'form_member_details',
       hmo_deletion: 'form_member_details',
@@ -1345,10 +1424,21 @@ router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async
 // approval page: filing a form and sending it are the same job.
 router.post('/:id/submit', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
   try {
-    const [[doc]] = await pool.query('SELECT id, user_id, status FROM form_requests WHERE id = ?', [req.params.id]);
+    const [[doc]] = await pool.query('SELECT id, user_id, status, type FROM form_requests WHERE id = ?', [req.params.id]);
     if (!doc) return res.status(404).json({ error: 'Not found' });
     if (doc.user_id !== req.user.id) return res.status(403).json({ error: 'Only the person who filed this form can submit it.' });
     if (doc.status !== 'draft') return res.status(409).json({ error: 'Only a draft can be submitted.' });
+    // Fuel Request: not past the filer's monthly limit (see fuelUsage).
+    if (doc.type === 'fuel') {
+      const [[d]] = await pool.query('SELECT fuel_date, liters FROM form_fuel_details WHERE form_request_id = ?', [doc.id]);
+      const fd = d && date(d.fuel_date instanceof Date ? d.fuel_date.toISOString() : d.fuel_date);
+      const u = await fuelUsage(doc.user_id, fd, doc.id);
+      if (u.has_limit && d && u.used + Number(d.liters) > u.limit + 0.0005) {
+        return res.status(409).json({
+          error: `This takes you past your fuel limit of ${u.limit} L for ${u.month}: ${u.used} L already requested, ${u.remaining} L left, and this asks for ${Number(d.liters)} L.`,
+        });
+      }
+    }
 
     await pool.query(
       "UPDATE form_requests SET status = 'submitted', submitted_at = NOW(), updated_at = NOW() WHERE id = ?", [doc.id]);
@@ -1459,6 +1549,19 @@ router.post('/:id/approve', requireAuth, async (req, res, next) => {
     await pool.query(
       "UPDATE form_requests SET status = 'approved', approved_at = NOW(), approved_by = ?, updated_at = NOW() WHERE id = ?",
       [req.user.id, doc.id]);
+    // An approved Fuel Request for a Fleet vehicle is that vehicle's fuel log entry (Assets > Fleet).
+    if (doc.type === 'fuel') {
+      const [[d]] = await pool.query('SELECT * FROM form_fuel_details WHERE form_request_id = ?', [doc.id]);
+      if (d && d.vehicle_asset_id && !d.fuel_log_id) {
+        const [[emp]] = await pool.query('SELECT employee_id FROM users WHERE id = ?', [doc.user_id]);
+        const [ins] = await pool.query(
+          `INSERT INTO vehicle_fuel_logs (asset_id, fuel_date, odometer_km, liters, price_per_liter, amount, is_full_tank, station,
+             driver_employee_id, receipt_no, created_by_user_id) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+          [d.vehicle_asset_id, d.fuel_date, d.odometer_km, d.liters, d.price_per_liter, d.amount, d.station,
+            emp?.employee_id || null, null, req.user.id]).catch((e) => { if (e.code === 'ER_NO_SUCH_TABLE') return [{}]; throw e; });
+        if (ins.insertId) await pool.query('UPDATE form_fuel_details SET fuel_log_id = ? WHERE form_request_id = ?', [ins.insertId, doc.id]);
+      }
+    }
     await logFormAudit(pool, doc.id, req.user.id, 'Approved', 'Status', STATUS_LABEL[doc.status], 'Approved');
     notifyFormStatus(doc.id, req.user.id);
     return res.json({ ok: true, status: 'approved' });

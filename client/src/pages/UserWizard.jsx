@@ -48,6 +48,8 @@ const EMPTY_ACCOUNT_TYPE = {
   ...Object.fromEntries(PLANNER_FLAGS.map((flag) => [flag, false])),
   is_production_supervisor: false, approval_code: '', supervisor_ids: [],
   sales_division_ids: [],
+  // Monthly fuel limit (2026-10-19): a Fuel Request past it is refused at submit.
+  has_fuel_limit: false, fuel_limit_liters: '',
 };
 
 const EMPTY_BRANCH = { location_id: '', department_id: '', can_override_date: false, remarks: '', is_default: false };
@@ -154,6 +156,7 @@ export default function UserWizard() {
         is_production_supervisor: !!data.is_production_supervisor,
         approval_code: data.approval_code || '', supervisor_ids: data.supervisor_ids || [],
         sales_division_ids: data.sales_division_ids || [],
+        has_fuel_limit: !!data.has_fuel_limit, fuel_limit_liters: data.fuel_limit_liters ?? '',
       });
       setBranches((data.branches || []).map((b) => ({
         location_id: b.location_id, department_id: b.department_id || '',
@@ -548,6 +551,22 @@ export default function UserWizard() {
             <div className="field">
               <label>Approval Code</label>
               <input value={accountType.approval_code} onChange={(e) => setAccountType({ ...accountType, approval_code: e.target.value })} />
+            </div>
+            {/* Fuel limit (2026-10-19): ticked, the user's Fuel Requests may not take a month past
+                this many litres -- submitted, noted and approved requests count. */}
+            <div className="field">
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input type="checkbox" checked={!!accountType.has_fuel_limit}
+                  onChange={(e) => setAccountType({ ...accountType, has_fuel_limit: e.target.checked })} />
+                Has monthly fuel limit
+              </label>
+              {accountType.has_fuel_limit && (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6 }}>
+                  <input type="number" step="0.01" min="0" style={{ maxWidth: 160 }} value={accountType.fuel_limit_liters}
+                    onChange={(e) => setAccountType({ ...accountType, fuel_limit_liters: e.target.value })} placeholder="e.g. 60" />
+                  <span className="muted">litres per month</span>
+                </div>
+              )}
             </div>
             {/* A user can report to several supervisors -- the picker adds one at a time and
                 each stays listed until removed. Their data rolls up to every supervisor here,

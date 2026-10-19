@@ -55,9 +55,19 @@ export default function FormEdit() {
     gp_location_id: '', gp_date: '', gp_destination: '', gp_purpose: '',
     // HR member lists (2026-10-19)
     enrollment_for: 'HEALTH INSURANCE', letter_date: '',
+    // Fuel Request (2026-10-19)
+    fuel_date: isNew ? new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10) : '', fuel_vehicle_asset_id: '', fuel_vehicle_label: '',
+    fuel_liters: '', fuel_price_per_liter: '', fuel_amount: '', fuel_odometer_km: '', fuel_station: '', fuel_purpose: '',
     remarks: '',
   });
   const [memberLines, setMemberLines] = useState([]);
+  // Fuel Request: the Fleet vehicles, and this user's monthly limit and what is left (GET /forms/meta/fuel).
+  const [fuelMeta, setFuelMeta] = useState({ vehicles: [], usage: null });
+  useEffect(() => {
+    if (type !== 'fuel') return;
+    api.get('/forms/meta/fuel', { params: { date: form.fuel_date || undefined, exclude: id || undefined } })
+      .then(({ data }) => setFuelMeta(data)).catch(() => {});
+  }, [type, form.fuel_date, id]);
   // Employee Gate Pass items: what is carried out, and the department it belongs to.
   const [gpItems, setGpItems] = useState([{ description: '', department: '' }]);
   const [locations, setLocations] = useState([]);
@@ -115,6 +125,11 @@ export default function FormEdit() {
       gp_location_id: data.type === 'gate_pass' ? (d.location_id || '') : '',
       gp_date: data.type === 'gate_pass' && d.pass_date ? String(d.pass_date).slice(0, 10) : '',
       gp_destination: d.destination || '', gp_purpose: data.type === 'gate_pass' ? (d.purpose || '') : '',
+      ...(data.type === 'fuel' ? {
+        fuel_date: d.fuel_date ? String(d.fuel_date).slice(0, 10) : '', fuel_vehicle_asset_id: d.vehicle_asset_id || '',
+        fuel_vehicle_label: d.vehicle_label || '', fuel_liters: d.liters ?? '', fuel_price_per_liter: d.price_per_liter ?? '',
+        fuel_amount: d.amount ?? '', fuel_odometer_km: d.odometer_km ?? '', fuel_station: d.station || '', fuel_purpose: d.purpose || '',
+      } : {}),
     });
     if (MEMBER_FORMS[data.type]) {
       setForm((f) => ({ ...f, enrollment_for: d.enrollment_for || 'HEALTH INSURANCE', letter_date: d.letter_date ? String(d.letter_date).slice(0, 10) : '' }));
@@ -520,6 +535,46 @@ export default function FormEdit() {
             onClick={() => setGpItems((rs) => [...rs, { description: '', department: form.department || '' }])}>Add Item</button>
         </div>
       )}
+
+      {type === 'fuel' && (() => {
+        const u = fuelMeta.usage;
+        const liters = Number(form.fuel_liters) || 0;
+        const over = u?.has_limit && liters > (u.remaining ?? 0) + 0.0005;
+        const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+        return (
+          <div className="card" style={{ marginBottom: 16 }}>
+            <h3 style={{ marginTop: 0 }}>Fuel</h3>
+            {u?.has_limit && (
+              <div className={over ? 'error-banner' : 'muted'} style={{ marginBottom: 10 }}>
+                Your fuel limit: <strong>{u.limit} L</strong> a month · {u.month}: {u.used} L requested, <strong>{u.remaining} L left</strong>.
+                {over && ' This request is more than what is left -- it cannot be submitted.'}
+              </div>
+            )}
+            <div className="filter-grid">
+              <div className="field"><label>Date *</label><input type="date" value={form.fuel_date} onChange={set('fuel_date')} /></div>
+              <div className="field"><label>Vehicle *</label>
+                <select value={form.fuel_vehicle_asset_id} onChange={(e) => setForm({ ...form, fuel_vehicle_asset_id: e.target.value })}>
+                  <option value="">-- Other (type it below) --</option>
+                  {fuelMeta.vehicles.map((v) => <option key={v.asset_id} value={v.asset_id}>{[v.plate_no, [v.brand, v.model].filter(Boolean).join(' ')].filter(Boolean).join(' · ') || v.reference_no}</option>)}
+                </select>
+              </div>
+              {!form.fuel_vehicle_asset_id && (
+                <div className="field"><label>Vehicle (if not listed)</label><input value={form.fuel_vehicle_label} onChange={set('fuel_vehicle_label')} placeholder="Plate no. / description" /></div>
+              )}
+              <div className="field"><label>Litres *</label><input type="number" step="0.001" min="0" value={form.fuel_liters} onChange={set('fuel_liters')} /></div>
+              <div className="field"><label>Price / litre</label><input type="number" step="0.01" min="0" value={form.fuel_price_per_liter} onChange={set('fuel_price_per_liter')} /></div>
+              <div className="field"><label>Amount</label>
+                <input type="number" step="0.01" min="0" value={form.fuel_amount} onChange={set('fuel_amount')}
+                  placeholder={liters && Number(form.fuel_price_per_liter) ? (liters * Number(form.fuel_price_per_liter)).toFixed(2) : ''} />
+              </div>
+              <div className="field"><label>Odometer (km)</label><input type="number" step="any" min="0" value={form.fuel_odometer_km} onChange={set('fuel_odometer_km')} /></div>
+              <div className="field"><label>Station</label><input value={form.fuel_station} onChange={set('fuel_station')} /></div>
+            </div>
+            <div className="field"><label>Purpose *</label><textarea rows={2} value={form.fuel_purpose} onChange={set('fuel_purpose')} placeholder="What the fuel is for (delivery, installation, site visit ...)" /></div>
+            <div className="muted" style={{ fontSize: 12 }}>Once approved, a request for a listed vehicle is added to that vehicle's fuel log (Assets &gt; Fleet).</div>
+          </div>
+        );
+      })()}
 
       {type === 'leave' && (() => {
         const oneDay = form.leave_date_from && (!form.leave_date_to || form.leave_date_to === form.leave_date_from);

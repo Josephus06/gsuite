@@ -404,6 +404,32 @@ export default function FormPrint() {
           </>
         )}
 
+        {/* Fuel Request (2026-10-19). */}
+        {doc.type === 'fuel' && (
+          <>
+            <div className="rf-row">
+              <Field label="Name" value={doc.name} />
+              <Field label="Department" value={doc.department} />
+            </div>
+            <div className="rf-row">
+              <Field label="Date" value={fmtDate(d.fuel_date)} />
+              <Field label="Vehicle" value={d.vehicle_name} />
+            </div>
+            <div className="rf-row">
+              <Field label="Litres" value={d.liters != null ? `${Number(d.liters)} L` : ''} />
+              <Field label="Price / Litre" value={d.price_per_liter != null ? Number(d.price_per_liter).toLocaleString('en-US', { minimumFractionDigits: 2 }) : ''} />
+              <Field label="Amount" value={d.amount != null ? Number(d.amount).toLocaleString('en-US', { minimumFractionDigits: 2 }) : ''} />
+            </div>
+            <div className="rf-row">
+              <Field label="Odometer (km)" value={d.odometer_km != null ? Number(d.odometer_km).toLocaleString('en-US') : ''} />
+              <Field label="Station" value={d.station} />
+            </div>
+            <div className="rf-row">
+              <Field label="Purpose" value={d.purpose} />
+            </div>
+          </>
+        )}
+
         {doc.type === 'leave' && (
           <>
             <div className="rf-row">

@@ -40,7 +40,8 @@ const pool = require('../db');
 // Leave Application too (2026-10-13): noted by the employee's department head, then approved.
 // Employee Gate Pass too (2026-10-14): "Approved by: Department Head" on the slip is this note.
 // HR's member lists too (2026-10-19): Life & Health enrollment / deletion, BPI deletion.
-const DEPARTMENT_NOTED_TYPES = ['payment', 'fund_transfer', 'revolving_fund', 'attendance_adjustment', 'business_trip', 'overtime', 'leave', 'gate_pass',
+// Fuel Request too (2026-10-19): noted by the department head, then approved.
+const DEPARTMENT_NOTED_TYPES = ['payment', 'fund_transfer', 'revolving_fund', 'attendance_adjustment', 'business_trip', 'overtime', 'leave', 'gate_pass', 'fuel',
   'hmo_enrollment', 'hmo_deletion', 'bpi_deletion'];
 const AP_NOTED_TYPES = ['liquidation'];
 
