@@ -45,6 +45,10 @@ const router = express.Router();
 // can_edit there does NOT let somebody note a liquidation from a department they do not head.
 const ROUTE = '/forms';
 const APPROVAL_ROUTE = '/forms/approval';
+// Forms with approvers of their own (2026-10-19): Leave (the filer's reporting line), Overtime (the
+// department heads), Fuel (tagged Fuel Approvers). The Forms Approval page's approvers rule on the
+// others -- and see only those, plus any of these three actually routed to them.
+const OWN_APPROVER_TYPES = ['leave', 'overtime', 'fuel'];
 
 const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund', 'attendance_adjustment', 'overtime', 'leave', 'gate_pass',
   'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel'];
@@ -450,7 +454,10 @@ async function maySee(userId, doc) {
   if (AP_NOTED_TYPES.includes(doc.type) && await isAccountsPayable(userId)) return true;
   // Only the approvers see every form (2026-10-13) -- each one reaches them. View on the approval page
   // alone no longer opens everyone's forms: a user sees the ones they are involved in.
-  if (await userCan(userId, APPROVAL_ROUTE, 'can_approve')) return true;
+  // The Forms Approval page's approvers: the types they rule on (Leave / Overtime / Fuel by their own
+  // routes, below).
+  const pageApprover = await userCan(userId, APPROVAL_ROUTE, 'can_approve');
+  if (pageApprover && !OWN_APPROVER_TYPES.includes(doc.type)) return true;
   if (await userCan(userId, ROUTE, 'can_view_all')) return true;
   if (await userCan(userId, APPROVAL_ROUTE, 'can_view_all')) return true;
   // One they have already acted on -- noted, approved or rejected.
@@ -461,6 +468,7 @@ async function maySee(userId, doc) {
   if (doc.type === 'leave') {
     const route = await leaveRoute(doc);
     if (isMember(route.noters, userId) || isMember(route.approvers, userId)) return true;
+    if (pageApprover && !route.approvers.length) return true; // falls to the page's approvers
   }
   // An overtime request: the employee it is for, and their department's heads, who approve it.
   if (doc.type === 'overtime') {
@@ -572,25 +580,27 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 // also be granted sight of every other department's.
 // The open leave forms this user notes or approves by the filer's reporting line. Computed per
 // form -- the line is a walk up user_supervisors, not something one SQL join expresses.
-async function leaveWaitingOn(userId) {
+async function leaveWaitingOn(userId, isPageApprover = false) {
   const [open] = await pool.query(
     "SELECT id, type, status, user_id, department_id FROM form_requests WHERE type = 'leave' AND status IN ('submitted', 'noted')");
   const ids = [];
   for (const doc of open) {
     const route = await leaveRoute(doc);
-    if (isMember(route.noters, userId) || isMember(route.approvers, userId)) ids.push(doc.id);
+    // A leave with no named approver falls to the Forms Approval page's approvers.
+    const pageFallback = isPageApprover && !route.approvers.length && Number(doc.user_id) !== Number(userId);
+    if (isMember(route.noters, userId) || isMember(route.approvers, userId) || pageFallback) ids.push(doc.id);
   }
   return ids;
 }
 
 router.get('/approval/queue', requireAuth, async (req, res, next) => {
   try {
-    // Users see only the forms they are involved in (2026-10-13); the approvers, whom every form
-    // reaches, see them all. View on this page alone used to show everyone's forms.
-    // ...and anyone given View All on this page (2026-10-19) -- seeing every form, not ruling on it:
-    // approving still takes can_approve.
-    const canSeeAll = await userCan(req.user.id, APPROVAL_ROUTE, 'can_approve')
-      || await userCan(req.user.id, APPROVAL_ROUTE, 'can_view_all');
+    // Users see only the forms they are involved in (2026-10-13). View All on this page shows every
+    // form (2026-10-19). An approver (can_approve) sees the types the page's approvers rule on, and a
+    // Leave / Overtime / Fuel only when it is routed to them (asked 2026-10-19: an overtime request
+    // that never goes to the General Manager is not on the General Manager's list).
+    const canSeeAll = await userCan(req.user.id, APPROVAL_ROUTE, 'can_view_all');
+    const pageApprover = !canSeeAll && await userCan(req.user.id, APPROVAL_ROUTE, 'can_approve');
     const headOf = canSeeAll ? [] : await departmentsHeadedBy(req.user.id);
     // Accounts Payable sees every liquidation, since it notes them all.
     const isAp = canSeeAll ? false : await isAccountsPayable(req.user.id);
@@ -599,10 +609,10 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
       'SELECT 1 AS x FROM form_overtime_details WHERE target_user_id = ? LIMIT 1', [req.user.id]).catch(() => [[null]]);
     const pageViewer = canSeeAll ? true : await userCan(req.user.id, APPROVAL_ROUTE, 'can_view');
     // Leave waiting on this user by the filer's reporting line (lib/leaveRoute.js, 2026-10-19).
-    const leaveIds = canSeeAll ? [] : await leaveWaitingOn(req.user.id);
+    const leaveIds = canSeeAll ? [] : await leaveWaitingOn(req.user.id, pageApprover);
     // Tagged Fuel Approver: every fuel request (2026-10-19).
     const fuelApprover = canSeeAll ? false : isMember(await fuelApprovers(), req.user.id);
-    if (!canSeeAll && !pageViewer && headOf.length === 0 && !isAp && !otMine && !leaveIds.length && !fuelApprover) {
+    if (!canSeeAll && !pageApprover && !pageViewer && headOf.length === 0 && !isAp && !otMine && !leaveIds.length && !fuelApprover) {
       return res.status(403).json({ error: 'You do not have permission to perform this action' });
     }
 
@@ -632,6 +642,7 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
       }
       if (leaveIds.length) { mine.push('f.id IN (?)'); params.push(leaveIds); }
       if (fuelApprover) mine.push("f.type = 'fuel'");
+      if (pageApprover) { mine.push('f.type NOT IN (?)'); params.push(OWN_APPROVER_TYPES); }
       // Their own forms, and the ones they noted, approved or rejected.
       mine.push('(f.user_id = ? OR f.noted_by = ? OR f.approved_by = ? OR f.rejected_by = ?)');
       params.push(req.user.id, req.user.id, req.user.id, req.user.id);
