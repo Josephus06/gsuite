@@ -3,6 +3,9 @@
 //
 //   form_business_trip_details.obt_confirmed_at         (new)  when HR confirmed it, else NULL
 //   form_business_trip_details.obt_confirmed_by_user_id (new)  who confirmed it
+//   form_business_trip_details.obt_returned_at          (new)  when "Back in Office" was clicked -- it
+//                                                              also fills the trip's Time In (2026-10-20)
+//   form_business_trip_details.obt_returned_by_user_id  (new)  who clicked it
 //   pages /hrd/obt  "OBT"   View lists them; Update confirms. System Admins get every right.
 //
 // Idempotent. Droplet, office and SM replicate: run on ONE box (the droplet).
@@ -12,7 +15,8 @@ const pool = require('../db');
 
 (async () => {
   console.log(`DB ${process.env.DB_NAME} on ${process.env.DB_HOST}`);
-  for (const [col, def] of [['obt_confirmed_at', 'DATETIME NULL'], ['obt_confirmed_by_user_id', 'BIGINT NULL']]) {
+  for (const [col, def] of [['obt_confirmed_at', 'DATETIME NULL'], ['obt_confirmed_by_user_id', 'BIGINT NULL'],
+    ['obt_returned_at', 'DATETIME NULL'], ['obt_returned_by_user_id', 'BIGINT NULL']]) {
     const [c] = await pool.query('SHOW COLUMNS FROM form_business_trip_details LIKE ?', [col]);
     if (c.length) console.log(`  form_business_trip_details.${col} already there -- skipped`);
     else { await pool.query(`ALTER TABLE form_business_trip_details ADD COLUMN ${col} ${def}`); console.log(`  added form_business_trip_details.${col}`); }
