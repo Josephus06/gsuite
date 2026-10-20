@@ -468,6 +468,8 @@ async function maySee(userId, doc) {
   if (await isDepartmentNoter(userId, doc.department_id)) return true;
   // AP has to open every liquidation it notes, whoever's department it came from.
   if (AP_NOTED_TYPES.includes(doc.type) && await isAccountsPayable(userId)) return true;
+  // HRD > OBT (2026-10-20, routes/obt.js): HR opens each approved Official Business Trip it confirms.
+  if (doc.type === 'business_trip' && doc.status === 'approved' && await userCan(userId, '/hrd/obt', 'can_view')) return true;
   // Only the approvers see every form (2026-10-13) -- each one reaches them. View on the approval page
   // alone no longer opens everyone's forms: a user sees the ones they are involved in.
   // The Forms Approval page's approvers: the types they rule on (Leave / Overtime / Fuel by their own

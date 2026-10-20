@@ -38,6 +38,8 @@ const NAV_STRUCTURE = [
       { route: '/hrd', label: 'Files' },
       { route: '/hrd/violations', label: 'Violation' },
       { route: '/hrd/incident-reports', label: 'Incident Report' },
+      // Approved Official Business Trips, for HR to confirm (2026-10-20).
+      { route: '/hrd/obt', label: 'OBT' },
     ],
   },
   // Forms. The four company request forms -- liquidation, payment, business trip, revolving fund --

@@ -212,6 +212,7 @@ import Hrd from './pages/Hrd';
 import Product from './pages/Product';
 import HrdRoom from './pages/HrdRoom';
 import HrViolations from './pages/HrViolations';
+import Obt from './pages/Obt';
 import HrIncidentReports from './pages/HrIncidentReports';
 import HrIncidentReportView from './pages/HrIncidentReportView';
 import NonStandardJobOrders from './pages/NonStandardJobOrders';
@@ -311,6 +312,7 @@ function App() {
         <Route path="/hrd" element={<Hrd />} />
         <Route path="/product" element={<Product />} />
         <Route path="/hrd/violations" element={<HrViolations />} />
+        <Route path="/hrd/obt" element={<Obt />} />
         <Route path="/hrd/incident-reports" element={<HrIncidentReports />} />
         <Route path="/hrd/incident-reports/:id" element={<HrIncidentReportView />} />
         {/* Forms. /new and /approval are literal segments, so they must precede /:id -- the
