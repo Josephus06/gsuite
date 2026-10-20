@@ -285,13 +285,39 @@ async function openingItems(side, asOf, books, { partyId, nameStarts, locationId
         openingPaymentUsed.set(a.pay_no, (openingPaymentUsed.get(a.pay_no) || 0) + amt);
       }
     }
+    // OPENING CREDIT MEMOS, the same way (2026-10-20): a memo the snapshot lists as still open was
+    // unapplied when it was taken, so its application came afterwards, whatever the memo's own date.
+    // INV-83461 (17,920.00) kept 320.00 open beside CM-5467 (-320.00), dated 2026-09-29 and applied to
+    // it after the 2026-09-30 snapshot, though PAY-60689 and CM-5467 had settled it in full.
+    const memoNos = rows.filter((r) => r.doc_type === 'Credit Memo' && r.doc_no).map((r) => r.doc_no);
+    if (memoNos.length) {
+      try {
+        const [apps] = await pool.query(
+          `SELECT cm.credit_memo_no AS memo_no, cma.sales_invoice_id AS invoice_id, SUM(cma.applied_amount) AS amt,
+                  MAX(oi.id IS NOT NULL) AS opening_invoice
+             FROM credit_memo_applications cma
+             JOIN credit_memos cm ON cm.id = cma.credit_memo_id
+             JOIN sales_invoices si ON si.id = cma.sales_invoice_id
+             LEFT JOIN opening_ar_items oi ON oi.as_of = ? AND oi.sales_invoice_id = cma.sales_invoice_id
+            WHERE cm.credit_memo_no IN (?) AND cm.status != 'voided' AND si.status != 'cancelled'
+              AND (oi.id IS NOT NULL OR si.date_created >= ?)
+            GROUP BY cm.credit_memo_no, cma.sales_invoice_id`,
+          [books.asOf, memoNos, books.start],
+        );
+        for (const a of apps) {
+          const amt = Number(a.amt) || 0;
+          if (Number(a.opening_invoice)) fromOpeningPayment.set(a.invoice_id, (fromOpeningPayment.get(a.invoice_id) || 0) + amt);
+          openingPaymentUsed.set(a.memo_no, (openingPaymentUsed.get(a.memo_no) || 0) + amt);
+        }
+      } catch (e) { if (e.code !== 'ER_NO_SUCH_TABLE') throw e; }
+    }
   }
 
   const out = [];
   for (const r of rows) {
     let settled = r[s.link] ? (settledBy.get(r[s.link]) || 0) + (fromOpeningPayment.get(r[s.link]) || 0) : 0;
     // A payment's credit is negative; what it has since applied brings it back toward zero, never past.
-    if (r.doc_type === 'Unapplied Payment' && openingPaymentUsed.has(r.doc_no)) {
+    if (['Unapplied Payment', 'Credit Memo'].includes(r.doc_type) && openingPaymentUsed.has(r.doc_no)) {
       settled = -Math.min(openingPaymentUsed.get(r.doc_no), Math.abs(Number(r.balance)));
     }
     const balance = round2(Number(r.balance) - settled);
