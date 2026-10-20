@@ -173,6 +173,14 @@ export default function Profile() {
   const [editingPost, setEditingPost] = useState(null);
   const [toast, setToast] = useState('');
   const coverRef = useRef(null);
+  // The profile picture / cover photo opened full screen (asked 2026-10-20), as Facebook does.
+  const [viewer, setViewer] = useState(null); // { src, alt }
+  useEffect(() => {
+    if (!viewer) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') setViewer(null); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [viewer]);
   const busyRef = useRef(false);
   const sentinelRef = useRef(null);
 
@@ -283,7 +291,10 @@ export default function Profile() {
       <div className="fb-profile-head">
         <div className="fb-profile-inner">
           <div className="fb-cover">
-            {profile.cover_data && <img src={profile.cover_data} alt="" />}
+            {profile.cover_data && (
+              <img src={profile.cover_data} alt="" style={{ cursor: 'zoom-in' }} title="View cover photo"
+                onClick={() => setViewer({ src: profile.cover_data, alt: `${profile.display_name}'s cover photo` })} />
+            )}
             {profile.is_self && (
               <>
                 <button type="button" className="fb-cover-btn" onClick={() => coverRef.current?.click()}>
@@ -301,7 +312,13 @@ export default function Profile() {
           </div>
 
           <div className="fb-profile-id">
-            <div className="fb-profile-avatar" style={{ width: 168, height: 168 }}>
+            {/* A click on the picture opens it full screen; the ✎ button (own profile) still changes it. */}
+            <div className="fb-profile-avatar" style={{ width: 168, height: 168, cursor: profile.avatar_data ? 'zoom-in' : undefined }}
+              title={profile.avatar_data ? 'View profile picture' : undefined}
+              onClick={(e) => {
+                if (!profile.avatar_data || e.target.closest('.avatar-edit-btn, input')) return;
+                setViewer({ src: profile.avatar_data, alt: `${profile.display_name}'s profile picture` });
+              }}>
               {/* Only your own avatar is editable, matching the topbar/dashboard behaviour. */}
               <Avatar user={profile} size={160} editable={profile.is_self} />
               {profile.is_online && <span className="fb-profile-online" title="Online now" />}
@@ -434,6 +451,15 @@ export default function Profile() {
         onClose={() => { setComposerOpen(false); setEditingPost(null); }}
         onSubmit={submitPost}
       />
+      {viewer && (
+        <div className="cm-viewer" onClick={() => setViewer(null)} role="dialog" aria-label={viewer.alt}>
+          <img src={viewer.src} alt={viewer.alt} onClick={(e) => e.stopPropagation()} />
+          <div className="cm-viewer-bar" onClick={(e) => e.stopPropagation()}>
+            <span>{viewer.alt}</span>
+            <button type="button" onClick={() => setViewer(null)}>Close</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
