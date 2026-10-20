@@ -4,7 +4,7 @@ import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Pagination from '../components/Pagination';
 import { useAuth } from '../context/useAuth';
-import { NO_ITEM_TYPES, STATUS_BADGE, TYPE_LABELS, fmtDate, money, pretty } from '../utils/requestForms';
+import { NO_ITEM_TYPES, STATUS_BADGE, TYPE_LABELS, clock, fmtDate, money, pretty } from '../utils/requestForms';
 import useAutoSearch from '../utils/useAutoSearch';
 import SearchInput from '../components/SearchInput';
 
@@ -14,6 +14,53 @@ import SearchInput from '../components/SearchInput';
 // The approval queue is a separate page (/forms/approval) because it answers a different
 // question -- "what is waiting on me" rather than "what did I file".
 const PAGE_SIZE = 10;
+
+// Overtime waiting on its ACTUAL time (2026-10-20; GET /forms/meta/ot-to-confirm): the filer confirms it
+// from the form; the employee it is for -- an artist whose supervisor filed it -- sees it here too, to
+// monitor. Shown only when there is something waiting.
+function OvertimeToConfirm() {
+  const [rows, setRows] = useState([]);
+  useEffect(() => {
+    api.get('/forms/meta/ot-to-confirm').then(({ data }) => setRows(Array.isArray(data) ? data : [])).catch(() => setRows([]));
+  }, []);
+  if (!rows.length) return null;
+  const mine = rows.filter((r) => r.mine_to_confirm).length;
+  return (
+    <div className="card" style={{ marginBottom: 16, borderLeft: '4px solid var(--warning, #d97706)' }}>
+      <h3 style={{ marginTop: 0 }}>
+        Overtime to Confirm <span className="badge badge-warning" style={{ marginLeft: 6 }}>{rows.length}</span>
+      </h3>
+      <div className="muted" style={{ fontSize: 12, marginTop: -6, marginBottom: 8 }}>
+        Approved overtime still waiting on its actual time.{mine ? ` ${mine} ${mine === 1 ? 'is' : 'are'} yours to confirm.` : ''} The person who filed it confirms.
+      </div>
+      <div className="table-wrap">
+        <table className="responsive-cards">
+          <thead>
+            <tr><th>REQ #</th><th>Overtime For</th><th>Date</th><th>Filed Time</th><th>Hours</th><th>Purpose</th><th>Filed By</th><th /></tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id}>
+                <td data-label="REQ #">{r.request_no}</td>
+                <td data-label="Overtime For">{r.for_self ? r.filed_by : r.target_name}</td>
+                <td data-label="Date">{fmtDate(r.ot_date)}</td>
+                <td data-label="Filed Time">{r.time_from ? `${clock(r.time_from)} — ${clock(r.time_to)}` : '—'}</td>
+                <td data-label="Hours">{r.hours != null ? Number(r.hours).toFixed(2) : '—'}</td>
+                <td data-label="Purpose" style={{ maxWidth: 260, whiteSpace: 'normal' }}>{r.purpose}</td>
+                <td data-label="Filed By">{r.filed_by}</td>
+                <td>
+                  {r.mine_to_confirm
+                    ? <Link className="btn btn-sm btn-primary" to={`/forms/${r.id}`}>Confirm</Link>
+                    : <><Link className="btn btn-sm" to={`/forms/${r.id}`}>View</Link> <span className="muted" style={{ fontSize: 11 }}>waiting on {r.filed_by}</span></>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 export default function Forms() {
   const navigate = useNavigate();
@@ -59,6 +106,8 @@ export default function Forms() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+
+      <OvertimeToConfirm />
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="filter-grid">

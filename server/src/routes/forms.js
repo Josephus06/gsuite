@@ -809,6 +809,32 @@ router.get('/meta/fuel', requireAuth, requirePermission(ROUTE, 'can_view'), asyn
   } catch (err) { next(err); }
 });
 
+// Overtime waiting on its ACTUAL time (2026-10-20, see /:id/ot-confirm): final -- approved for
+// yourself, accepted for someone else -- and not yet confirmed. Each row says whose move it is: the
+// FILER confirms; the employee it is for (an artist whose supervisor filed it) sees it to monitor.
+router.get('/meta/ot-to-confirm', requireAuth, async (req, res, next) => {
+  try {
+    const me = req.user.id;
+    const [rows] = await pool.query(
+      `SELECT f.id, f.request_no, f.status, f.user_id, fu.display_name AS filed_by,
+              o.for_self, o.target_user_id, tu.display_name AS target_name,
+              o.ot_date, o.time_from, o.time_to, o.hours, o.purpose
+         FROM form_requests f
+         JOIN form_overtime_details o ON o.form_request_id = f.id
+         LEFT JOIN users fu ON fu.id = f.user_id
+         LEFT JOIN users tu ON tu.id = o.target_user_id
+        WHERE f.type = 'overtime' AND o.ot_confirmed_at IS NULL
+          AND ((o.for_self = 1 AND f.status = 'approved') OR (o.for_self = 0 AND f.status = 'accepted'))
+          AND (f.user_id = ? OR o.target_user_id = ?)
+        ORDER BY o.ot_date DESC, f.id DESC
+        LIMIT 200`, [me, me]);
+    res.json(rows.map((r) => ({ ...r, for_self: !!Number(r.for_self), mine_to_confirm: Number(r.user_id) === Number(me) })));
+  } catch (err) {
+    if (err.code === 'ER_BAD_FIELD_ERROR' || err.code === 'ER_NO_SUCH_TABLE') return res.json([]); // add-ot-confirmation.js not run
+    next(err);
+  }
+});
+
 router.get('/meta/options', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     // Departments come from the same list every other module uses, so a form's department is a
