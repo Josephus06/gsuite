@@ -1688,6 +1688,13 @@ export default function EstimateWizard() {
                     setError(`Delivery Date and Delivery Time are required on every job line: ${detail}${missing.length > 5 ? `, and ${missing.length - 5} more` : ''}.`);
                     return;
                   }
+                  // Tax Code is required on every job line too (asked 2026-10-20) -- the server
+                  // refuses to approve without it.
+                  const noTax = jobOrders.map((jo, i) => (jo.tax_code_id ? null : i + 1)).filter(Boolean);
+                  if (noTax.length) {
+                    setError(`Tax Code is required on every job line: line ${noTax.slice(0, 8).join(', ')}${noTax.length > 8 ? ` and ${noTax.length - 8} more` : ''}.`);
+                    return;
+                  }
                   saveHeaderAndGoTo(3);
                 }}
               >

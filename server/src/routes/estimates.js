@@ -1031,6 +1031,18 @@ router.put('/:id/status', requireAuth, requireStatusChange, async (req, res, nex
           error: `Delivery Date and Delivery Time are required on every job line before this estimate can be approved. ${detail}${incomplete.length > 5 ? `; and ${incomplete.length - 5} more` : ''}.`,
         });
       }
+      // Tax Code on every job line (asked 2026-10-20): the Sales Order and the invoice take their
+      // tax from it, and a line without one bills as untaxed.
+      const [noTax] = await conn.query(
+        'SELECT line_no, description FROM estimate_job_orders WHERE estimate_id = ? AND tax_code_id IS NULL ORDER BY line_no',
+        [req.params.id]);
+      if (noTax.length) {
+        await conn.rollback();
+        const detail = noTax.slice(0, 5).map((l) => `line ${l.line_no}${l.description ? ` (${String(l.description).slice(0, 40)})` : ''}`).join('; ');
+        return res.status(400).json({
+          error: `Tax Code is required on every job line before this estimate can be approved: ${detail}${noTax.length > 5 ? `; and ${noTax.length - 5} more` : ''}.`,
+        });
+      }
     }
     // Approving out of the initial "pending supervisor approval" stage requires the
     // Can Approve Sales Estimate flag from the user's Account Type settings -- checked

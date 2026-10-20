@@ -495,6 +495,13 @@ router.put('/:id', requireAuth, requireOpenPeriod('sales_orders', 'non_gl'), asy
     const byId = new Map(oldLines.map((l) => [Number(l.id), l]));
     const sent = Array.isArray(b.lines) ? b.lines : [];
     for (const l of sent) if (!byId.has(Number(l.id))) return res.status(400).json({ error: 'A line does not belong to this Sales Order.' });
+    // Tax Code is required on every line (asked 2026-10-20). A line the form did not send keeps its own.
+    const sentById = new Map(sent.map((l) => [Number(l.id), l]));
+    const noTaxLines = oldLines.filter((ol) => {
+      const s = sentById.get(Number(ol.id));
+      return !Number(s && s.tax_code_id !== undefined ? s.tax_code_id : ol.tax_code_id);
+    }).map((ol) => ol.line_no);
+    if (noTaxLines.length) return res.status(400).json({ error: `Tax Code is required on every line: line ${noTaxLines.join(', ')}.` });
     const taxIds = [...new Set(sent.map((l) => Number(l.tax_code_id)).filter(Boolean))];
     const [taxRows] = taxIds.length ? await conn.query('SELECT id, rate FROM taxes WHERE id IN (?)', [taxIds]) : [[]];
     const rate = new Map(taxRows.map((t) => [Number(t.id), Number(t.rate)]));

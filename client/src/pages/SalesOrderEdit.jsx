@@ -81,6 +81,9 @@ export default function SalesOrderEdit() {
 
   async function save() {
     setSaving(true); setError('');
+    // Tax Code is required on every line (asked 2026-10-20); the server refuses the save too.
+    const noTax = lines.map((l, i) => (l.tax_code_id ? null : i + 1)).filter(Boolean);
+    if (noTax.length) { setError(`Tax Code is required on every line: line ${noTax.join(', ')}.`); setSaving(false); return; }
     try {
       const body = { customer_id: head.customer_id, ...Object.fromEntries(['ref_no', 'date_created', 'contact_person_id', 'contact_email', 'contact_title', 'contact_phone',
         'blanket_po_memo', 'sales_rep_id', 'office_location_id', 'contract_description', 'memo', 'shipping_address',
