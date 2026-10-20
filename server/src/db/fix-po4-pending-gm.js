@@ -24,7 +24,7 @@ const THRESHOLD = 10000; // routes/purchaseOrders.js APPROVAL_THRESHOLD
   for (const r of rows) {
     console.log(`  ${r.po_no}  ${String(r.date_created).slice(0, 10)}  ${Number(r.total_amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}  ${r.status} -> pending_approval`);
     if (!APPLY) continue;
-    await pool.query("UPDATE purchase_orders SET status = 'pending_approval', updated_at = NOW() WHERE id = ?", [r.id]);
+    await pool.query("UPDATE purchase_orders SET status = 'pending_approval' WHERE id = ?", [r.id]);
     await pool.query(
       `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
        VALUES ('PurchaseOrder', ?, 'Updated', 'status', ?, 'pending_approval', NULL)`, [r.id, r.status]);
