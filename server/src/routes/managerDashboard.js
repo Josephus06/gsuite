@@ -3,9 +3,15 @@ const mysql = require('mysql2/promise');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { buildArAging } = require('../lib/arAging');
+const { grossDueSql } = require('../lib/invoiceDue');
 
 // Managers Dashboard (asked 2026-10-20): the read-only figures behind the "Managers Dashboard"
 // Android app -- AR aging, sales orders, invoices and collections. GET only; nothing here writes.
+// Each metric counts what its ERP page shows (asked 2026-10-20), and says which page that is:
+//   AR Aging     Reports > AR Aging     /reports/ar-aging   (its own report code)
+//   Invoices     Saved Invoices         /sales-invoices     (Status, Amount Due on gross)
+//   Collection   Customer Payments      /customer-payments  (every payment but a voided one)
+//   Sales        Sales Orders           /sales-orders       (Total Amount, by status tab)
 // Only users given View on the "Managers Dashboard" page (/manager-dashboard) may call it; they sign
 // in through the ERP's own POST /api/auth/login and send its token.
 //
@@ -125,6 +131,7 @@ router.get('/ar-aging', handle(async (req) => {
     : rows.sort(oldestFirst);
   return {
     as_of: today,
+    source_page: '/reports/ar-aging',
     total_outstanding: round2(aging.totals.total_balance),
     buckets: agingBuckets(aging.totals),
     customer_count: rows.length,
@@ -140,14 +147,15 @@ router.get('/ar-aging', handle(async (req) => {
 
 // "Weighted Sales" on the app is every Sales Order created in the period (asked 2026-10-20: "all
 // SALES order created this month not estimate"), by where it has got to. Cancelled ones are left out.
+// The Sales Orders page's own status tabs, in its order (client/src/pages/SalesOrders.jsx).
 const SO_STAGES = [
-  ['pending_for_jo', 'For JO'],
-  ['jo_in_process', 'JO in process'],
-  ['pending_delivery', 'For delivery'],
-  ['partially_delivered', 'Partially delivered'],
-  ['pending_billing', 'For billing'],
-  ['pending_billing_partially_delivered', 'For billing (partially delivered)'],
-  ['partially_billed', 'Partially billed'],
+  ['pending_for_jo', 'Pending for JO'],
+  ['jo_in_process', 'JO In-Process'],
+  ['pending_delivery', 'Pending Delivery'],
+  ['partially_delivered', 'Partially Delivered'],
+  ['pending_billing', 'Pending Billing'],
+  ['pending_billing_partially_delivered', 'Pending Billing / Partially Delivered'],
+  ['partially_billed', 'Partially Billed'],
   ['billed', 'Billed'],
 ];
 
@@ -155,15 +163,16 @@ async function salesOrders(from, to) {
   const [rows] = await ro.query(
     `SELECT status, COUNT(*) AS n, COALESCE(SUM(total_amount), 0) AS amount, COALESCE(SUM(net_of_tax), 0) AS net
        FROM sales_orders
-      WHERE date_created >= ? AND date_created < ? AND status <> 'cancelled'
-      GROUP BY status`, [from, addDays(to, 1)]);
-  const by = new Map(rows.map((r) => [r.status, r]));
+      WHERE date_created >= ? AND date_created <= ?
+      GROUP BY status`, [from, to]);
+  const cancelled = rows.find((r) => r.status === 'cancelled');
+  const by = new Map(rows.filter((r) => r.status !== 'cancelled').map((r) => [r.status, r]));
   const stages = SO_STAGES.map(([key, label]) => ({
     key, label, count: Number(by.get(key)?.n || 0), amount: round2(by.get(key)?.amount), net_of_tax: round2(by.get(key)?.net),
   }));
   // Any status not listed above still counts, under its own name.
   for (const r of rows) {
-    if (!SO_STAGES.some(([k]) => k === r.status)) {
+    if (r.status !== 'cancelled' && !SO_STAGES.some(([k]) => k === r.status)) {
       stages.push({ key: r.status, label: String(r.status || 'Unknown'), count: Number(r.n), amount: round2(r.amount), net_of_tax: round2(r.net) });
     }
   }
@@ -172,37 +181,42 @@ async function salesOrders(from, to) {
     total_net_of_tax: round2(stages.reduce((s, x) => s + x.net_of_tax, 0)),
     count: stages.reduce((s, x) => s + x.count, 0),
     stages: stages.filter((s) => s.count > 0),
+    cancelled: { count: Number(cancelled?.n || 0), amount: round2(cancelled?.amount) },
   };
 }
 
 router.get('/weighted-sales', handle(async (req) => {
   const { from, to } = period(req);
-  return { from, to, basis: 'sales_orders_created', ...(await salesOrders(from, to)) };
+  return { from, to, basis: 'sales_orders_created', source_page: '/sales-orders', ...(await salesOrders(from, to)) };
 }));
 
 /* ------------------------------------------------------------------ Invoices ---------------- */
 
-// The ERP stores an invoice as open (saved), paid in full or cancelled; the app's four come from it:
-//   Paid            paid in full, or nothing left to collect
-//   Overdue         still open and past its due date (wins over the two below, so each counts once)
-//   Partially paid  open, not yet due, and something already received (amount_due + EWT = what is
-//                   still owed gross; below the gross, money came in)
-//   Unpaid          open, not yet due, nothing received
+// As the Saved Invoices page (/sales-invoices) shows them: its Status (Open / Paid In Full / Void)
+// and its Amount Due (on gross -- lib/invoiceDue.js). The app's four, from those:
+//   Paid            Status Paid In Full
+//   Overdue         Open and past its Date Due (wins over the two below, so each counts once)
+//   Partially paid  Open, not yet due, Amount Due below the Gross Amount
+//   Unpaid          Open, not yet due, Amount Due = Gross Amount
+// Void invoices are reported apart and left out of the totals.
 const INVOICE_STATUSES = [['paid', 'Paid'], ['partial', 'Partially paid'], ['unpaid', 'Unpaid'], ['overdue', 'Overdue']];
 
 async function invoices(from, to, today) {
   const [rows] = await ro.query(
-    `SELECT CASE
-              WHEN si.status = 'paid_in_full' OR si.amount_due <= 0.005 THEN 'paid'
-              WHEN COALESCE(si.date_due, si.date_created) < ? THEN 'overdue'
-              WHEN si.amount_due + COALESCE(si.ewt_amount, 0) < si.gross_amount - 0.005 THEN 'partial'
-              ELSE 'unpaid'
-            END AS bucket,
-            COUNT(*) AS n, COALESCE(SUM(si.gross_amount), 0) AS gross, COALESCE(SUM(si.amount_due), 0) AS due
-       FROM sales_invoices si
-      WHERE si.date_created >= ? AND si.date_created < ? AND si.status NOT IN ('cancelled', 'void')
-      GROUP BY bucket`, [today, from, addDays(to, 1)]);
+    `SELECT bucket, COUNT(*) AS n, COALESCE(SUM(gross), 0) AS gross, COALESCE(SUM(due), 0) AS due
+       FROM (SELECT si.gross_amount AS gross, ${grossDueSql('si')} AS due,
+                    CASE
+                      WHEN si.status = 'cancelled' THEN 'void'
+                      WHEN si.status = 'paid_in_full' THEN 'paid'
+                      WHEN COALESCE(si.date_due, si.date_created) < ? THEN 'overdue'
+                      WHEN ${grossDueSql('si')} < si.gross_amount - 0.005 THEN 'partial'
+                      ELSE 'unpaid'
+                    END AS bucket
+               FROM sales_invoices si
+              WHERE si.date_created >= ? AND si.date_created <= ?) x
+      GROUP BY bucket`, [today, from, to]);
   const by = new Map(rows.map((r) => [r.bucket, r]));
+  const voided = by.get('void');
   const statuses = INVOICE_STATUSES.map(([key, label]) => ({
     key, label, count: Number(by.get(key)?.n || 0), amount: round2(by.get(key)?.gross), outstanding: round2(by.get(key)?.due),
   }));
@@ -211,21 +225,23 @@ async function invoices(from, to, today) {
     total_amount: round2(statuses.reduce((s, x) => s + x.amount, 0)),
     total_outstanding: round2(statuses.reduce((s, x) => s + x.outstanding, 0)),
     statuses,
+    void: { count: Number(voided?.n || 0), amount: round2(voided?.gross) },
   };
 }
 
 router.get('/invoices-summary', handle(async (req) => {
   const { from, to, today } = period(req);
-  return { from, to, ...(await invoices(from, to, today)) };
+  return { from, to, source_page: '/sales-invoices', ...(await invoices(from, to, today)) };
 }));
 
 /* ------------------------------------------------------------------ Collections ------------- */
 
-// Real, non-voided Customer Payments, by their date -- the CPAY-INV-#### payments the migration
-// generated to close invoices are not money received (routes/collectionAgingReport.js leaves them
-// out the same way). The target is Treasury's monthly target (Treasury > Collection Incentive set-up,
-// collection_incentive_settings), times the months the period touches.
-const REAL_PAYMENT = "cp.customer_payment_no NOT LIKE 'CPAY-INV-%' AND cp.status NOT IN ('voided', 'void')";
+// Every Customer Payment the Customer Payments page (/customer-payments) lists for the dates, except a
+// voided one -- Payment Amount, by Date. That page lists the CPAY-INV-#### payments generated to close
+// imported invoices as well, so they count here too; how much of the total they are is returned
+// (generated) so the app can say so. The target is Treasury's monthly target (Treasury > Collection
+// Incentive set-up, collection_incentive_settings), times the months the period touches.
+const REAL_PAYMENT = "cp.status <> 'voided'";
 const MODES = [['check', 'Check'], ['bank_transfer', 'Bank transfer'], ['cash', 'Cash'], ['gcash', 'GCash'], ['other', 'Other']];
 function modeOf(name) {
   const n = String(name || '').toUpperCase();
@@ -245,7 +261,12 @@ async function monthlyTarget(year) {
 
 async function collections(from, to) {
   const [[tot]] = await ro.query(
-    `SELECT COUNT(*) AS n, COALESCE(SUM(cp.payment_amount), 0) AS amount FROM customer_payments cp
+    `SELECT COUNT(*) AS n, COALESCE(SUM(cp.payment_amount), 0) AS amount,
+            COALESCE(SUM(cp.status = 'deposited'), 0) AS dep_n,
+            COALESCE(SUM(IF(cp.status = 'deposited', cp.payment_amount, 0)), 0) AS dep_amount,
+            COALESCE(SUM(cp.customer_payment_no LIKE 'CPAY-INV-%'), 0) AS gen_n,
+            COALESCE(SUM(IF(cp.customer_payment_no LIKE 'CPAY-INV-%', cp.payment_amount, 0)), 0) AS gen_amount
+       FROM customer_payments cp
       WHERE ${REAL_PAYMENT} AND cp.date_created >= ? AND cp.date_created < ?`, [from, addDays(to, 1)]);
   const [methods] = await ro.query(
     `SELECT pm.name, COUNT(*) AS n, COALESCE(SUM(cp.payment_amount), 0) AS amount
@@ -277,6 +298,9 @@ async function collections(from, to) {
   return {
     total_collected: total,
     payment_count: Number(tot.n),
+    deposited: { count: Number(tot.dep_n), amount: round2(tot.dep_amount) },
+    not_deposited: { count: Number(tot.n) - Number(tot.dep_n), amount: round2(total - Number(tot.dep_amount)) },
+    generated: { count: Number(tot.gen_n), amount: round2(tot.gen_amount) },
     target: targetKnown ? round2(target) : null,
     pct_achieved: targetKnown && target ? round2((total / target) * 100) : null,
     last_7_days: Array.from({ length: 7 }, (_, i) => { const d = addDays(sevenFrom, i); return { date: d, amount: dayMap.get(d) || 0 }; }),
@@ -289,7 +313,7 @@ async function collections(from, to) {
 
 router.get('/collections', handle(async (req) => {
   const { from, to } = period(req);
-  return { from, to, ...(await collections(from, to)) };
+  return { from, to, source_page: '/customer-payments', ...(await collections(from, to)) };
 }));
 
 /* ------------------------------------------------------------------ Overview ---------------- */
