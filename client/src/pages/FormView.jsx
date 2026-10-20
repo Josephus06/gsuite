@@ -9,7 +9,7 @@ import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
 import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 import { useAuth } from '../context/useAuth';
-import { hoursMinutes, MEMBER_FORMS, ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, formBanks, money, pretty } from '../utils/requestForms';
+import { hoursMinutes, overtimeHours, MEMBER_FORMS, ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, formBanks, money, pretty } from '../utils/requestForms';
 import OvertimeDecline from '../components/OvertimeDecline';
 import { parseUtc } from '../utils/datetime';
 
@@ -43,6 +43,8 @@ export default function FormView() {
   const [error, setError] = useState('');
   const [saved, setSaved] = useState('');
   const [rejecting, setRejecting] = useState(false);
+  // Overtime: the actual time, confirmed by the filer once it is final (2026-10-20).
+  const [otActual, setOtActual] = useState({ from: '', to: '' });
   const [reason, setReason] = useState('');
   const [lineRemarks, setLineRemarks] = useState({});
   // Accounts Payable assigns each liquidation item its COGS account before noting it.
@@ -357,6 +359,42 @@ export default function FormView() {
           {['accepted', 'declined'].includes(doc.status) && (
             <Line label={doc.status === 'accepted' ? 'Accepted' : 'Declined'}>{`${fmtDate(d.responded_at)}${d.response_remark ? ` — ${d.response_remark}` : ''}`}</Line>
           )}
+          {/* The ACTUAL time, confirmed by the filer once it is final (asked 2026-10-20). */}
+          {d.ot_confirmed_at && (
+            <>
+              <Line label="Actual Time">{`${clock(d.actual_time_from)} — ${clock(d.actual_time_to)}`}</Line>
+              <Line label="Actual Hours">
+                {d.actual_hours != null ? Number(d.actual_hours).toFixed(2) : null}
+                {d.hours != null && d.actual_hours != null && Number(d.actual_hours) !== Number(d.hours)
+                  ? <span className="muted"> (filed {Number(d.hours).toFixed(2)})</span> : null}
+              </Line>
+              <Line label="Confirmed">{fmtDate(d.ot_confirmed_at)}</Line>
+            </>
+          )}
+          {doc.can_ot_confirm && (() => {
+            const from = otActual.from || (d.time_from ? String(d.time_from).slice(0, 5) : '');
+            const to = otActual.to || (d.time_to ? String(d.time_to).slice(0, 5) : '');
+            const hrs = from && to ? overtimeHours(from, to) : 0;
+            return (
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+                <strong>Confirm the actual time</strong>
+                <div className="muted" style={{ fontSize: 12, margin: '2px 0 8px' }}>Enter the time the overtime actually started and ended.</div>
+                <div className="field-row" style={{ alignItems: 'flex-end' }}>
+                  <div className="field"><label>Actual Time From</label>
+                    <input type="time" value={from} onChange={(e) => setOtActual((v) => ({ ...v, from: e.target.value, to: v.to || to }))} /></div>
+                  <div className="field"><label>Actual Time To</label>
+                    <input type="time" value={to} onChange={(e) => setOtActual((v) => ({ ...v, to: e.target.value, from: v.from || from }))} /></div>
+                  <div className="field"><label>Actual Hours</label><input value={hrs ? hrs.toFixed(2) : ''} readOnly /></div>
+                  <div className="field">
+                    <button type="button" className="btn btn-primary" disabled={busy || !hrs}
+                      onClick={() => act('ot-confirm', { actual_time_from: from, actual_time_to: to }, 'Actual time confirmed.')}>
+                      Confirm Actual Time
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 

@@ -1028,6 +1028,10 @@ router.get('/:id', requireAuth, async (req, res, next) => {
       doc.ot_approve_blocked_reason = appr.allowed ? null : appr.reason;
       doc.can_ot_respond = !!doc.detail && !doc.detail.for_self && doc.status === 'approved'
         && Number(doc.detail.target_user_id) === Number(req.user.id);
+      // Confirm the ACTUAL time (2026-10-20): the filer, once it is final -- approved (for themself) or
+      // accepted (for someone else) -- and not yet confirmed.
+      doc.can_ot_confirm = !!doc.detail && doc.is_owner && !doc.detail.ot_confirmed_at
+        && doc.status === (doc.detail.for_self ? 'approved' : 'accepted') && ('actual_hours' in doc.detail);
     }
     return res.json(doc);
   } catch (err) { return next(err); }
@@ -1684,6 +1688,43 @@ router.post('/:id/ot-respond', requireAuth, async (req, res, next) => {
     if (remark) await logFormAudit(pool, doc.id, req.user.id, 'Updated', 'Response', null, remark);
     notifyFormStatus(doc.id, req.user.id);
     return res.json({ ok: true, status });
+  } catch (err) { return next(err); }
+});
+
+// Overtime: the ACTUAL time worked, confirmed by the person who filed it (asked 2026-10-20: requested for
+// 4 hours, worked 3). Once final -- approved for yourself, accepted by the employee for someone else --
+// and once only. db/add-ot-confirmation.js adds the columns.
+const otHours = (from, to) => {
+  const m = (t) => { const [h, mi] = String(t).split(':').map(Number); return h * 60 + (mi || 0); };
+  if (!from || !to) return 0;
+  let d = m(to) - m(from);
+  if (d <= 0) d += 24 * 60; // past midnight counts on
+  return Math.round((d / 60) * 100) / 100;
+};
+router.post('/:id/ot-confirm', requireAuth, async (req, res, next) => {
+  try {
+    const [[doc]] = await pool.query('SELECT id, type, status, user_id FROM form_requests WHERE id = ?', [req.params.id]);
+    if (!doc || doc.type !== 'overtime') return res.status(404).json({ error: 'Not found' });
+    if (Number(doc.user_id) !== Number(req.user.id)) return res.status(403).json({ error: 'Only the person who filed this overtime request confirms it.' });
+    const d = await overtimeDetail(doc.id);
+    if (!d || !('actual_hours' in d)) return res.status(409).json({ error: 'Overtime confirmation is not set up yet (run db/add-ot-confirmation.js).' });
+    const finalStatus = d.for_self ? 'approved' : 'accepted';
+    if (doc.status !== finalStatus) {
+      return res.status(409).json({ error: d.for_self ? 'Only an approved overtime request can be confirmed.' : 'The employee has to accept this overtime request before it can be confirmed.' });
+    }
+    if (d.ot_confirmed_at) return res.status(409).json({ error: 'This overtime request is already confirmed.' });
+    const t = (v) => (/^\d{1,2}:\d{2}/.test(String(v || '')) ? String(v).slice(0, 5) : null);
+    const from = t(req.body?.actual_time_from);
+    const to = t(req.body?.actual_time_to);
+    if (!from || !to) return res.status(400).json({ error: 'Enter the actual time from and to.' });
+    const hours = otHours(from, to);
+    if (!(hours > 0)) return res.status(400).json({ error: 'The actual time from and to cannot be the same.' });
+    await pool.query(
+      `UPDATE form_overtime_details SET actual_time_from = ?, actual_time_to = ?, actual_hours = ?, ot_confirmed_at = NOW(), ot_confirmed_by_user_id = ?
+        WHERE form_request_id = ?`, [from, to, hours, req.user.id, doc.id]);
+    await logFormAudit(pool, doc.id, req.user.id, 'Updated', 'Actual Overtime',
+      d.hours != null ? `${Number(d.hours).toFixed(2)} h filed` : null, `${from}-${to} (${hours.toFixed(2)} h actual)`);
+    return res.json({ ok: true, actual_hours: hours });
   } catch (err) { return next(err); }
 });
 
