@@ -21,13 +21,21 @@ const THRESHOLD = 10000; // routes/purchaseOrders.js APPROVAL_THRESHOLD
       WHERE type = 'PO4' AND total_amount <= ?
         AND LOWER(REPLACE(status, ' ', '_')) IN ('pending_approval_gm', 'pending_approval_for_gm')
       ORDER BY id`, [THRESHOLD]);
+  // audit_logs needs a user: recorded as the first active System Admin, since a script has none.
+  const [[admin]] = await pool.query("SELECT id FROM users WHERE account_type = 'System Admin' AND is_active = 1 ORDER BY id LIMIT 1");
+  if (APPLY && !admin) throw new Error('No active System Admin to record the change under.');
   for (const r of rows) {
     console.log(`  ${r.po_no}  ${String(r.date_created).slice(0, 10)}  ${Number(r.total_amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}  ${r.status} -> pending_approval`);
     if (!APPLY) continue;
-    await pool.query("UPDATE purchase_orders SET status = 'pending_approval' WHERE id = ?", [r.id]);
-    await pool.query(
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.query("UPDATE purchase_orders SET status = 'pending_approval' WHERE id = ?", [r.id]);
+      await conn.query(
       `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
-       VALUES ('PurchaseOrder', ?, 'Updated', 'status', ?, 'pending_approval', NULL)`, [r.id, r.status]);
+       VALUES ('PurchaseOrder', ?, 'Updated', 'status', ?, 'pending_approval', ?)`, [r.id, r.status, admin.id]);
+      await conn.commit();
+    } catch (e) { await conn.rollback(); throw e; } finally { conn.release(); }
   }
   console.log(`\n${rows.length} PO4(s) of ${THRESHOLD.toLocaleString('en-US')} or less ${APPLY ? 'moved back to' : 'would move back to'} Pending Approval.`);
   await pool.end();
