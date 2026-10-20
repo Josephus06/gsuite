@@ -44,6 +44,15 @@ export default function Obt() {
     finally { setBusy(null); }
   }
 
+  // Back in Office (2026-10-20): after confirmation, the click fills the trip's Time In with now.
+  async function returned(r) {
+    if (!window.confirm(`${r.name || r.filed_by} is back in the office? This fills ${r.request_no}'s Time In with the time now.`)) return;
+    setBusy(r.id); setError('');
+    try { await api.post(`/obt/${r.id}/returned`); load(); }
+    catch (e) { setError(e.response?.data?.error || 'Could not record the return.'); }
+    finally { setBusy(null); }
+  }
+
   return (
     <div>
       <div className="page-header"><h1>OBT <span className="muted" style={{ fontSize: '0.55em', fontWeight: 400 }}>Official Business Trips</span></h1></div>
@@ -84,7 +93,10 @@ export default function Obt() {
                     <td data-label="Department">{r.department || '—'}</td>
                     <td data-label="Trip Date">{fmtDate(r.trip_date)}</td>
                     <td data-label="Time Out">{clock(r.time_out)}</td>
-                    <td data-label="Time In">{clock(r.time_in)}</td>
+                    <td data-label="Time In">
+                      {clock(r.time_in)}
+                      {r.obt_returned_at && <div className="muted" style={{ fontSize: 11 }} title={`Back in office ${phDateTime(r.obt_returned_at)}`}>back · {r.returned_by_name}</div>}
+                    </td>
                     <td data-label="Driver">{r.driver_name || '—'}</td>
                     <td data-label="Vehicle">{r.vehicle_plate_no || '—'}</td>
                     <td data-label="Purpose" style={{ maxWidth: 280, whiteSpace: 'normal' }}>{r.purpose}</td>
@@ -97,6 +109,12 @@ export default function Obt() {
                     </td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       <Link className="btn btn-sm" to={`/forms/${r.id}`}>View</Link>{' '}
+                      {mayConfirm && r.obt_confirmed_at && !r.obt_returned_at && (
+                        <button type="button" className="btn btn-sm btn-primary" disabled={busy === r.id} onClick={() => returned(r)}
+                          title="Fills Time In with the time now">
+                          {busy === r.id ? 'Saving…' : 'Back in Office'}
+                        </button>
+                      )}
                       {mayConfirm && !r.obt_confirmed_at && (
                         <button type="button" className="btn btn-sm btn-success" disabled={busy === r.id} onClick={() => confirm(r)}>
                           {busy === r.id ? 'Confirming…' : 'Confirm'}
