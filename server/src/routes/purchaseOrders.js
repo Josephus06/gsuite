@@ -13,9 +13,11 @@ const { lineDepartmentError } = require('../lib/requireDepartment');
 const { notifyPoPending, notifyPoApproved } = require('../lib/approvalNotifications');
 const { isNonStockItem } = require('../lib/itemTypes');
 
-// Purchase Order types the General Manager approves whatever the amount (2026-10-19): PO3 (Services
-// with JO) and PO4 (Services / Non-Inventory without JO). Kept in step with lib/approvalNotifications.js.
-const GM_ONLY_TYPES = ['PO3', 'PO4'];
+// Purchase Order types the General Manager alone approves whatever the amount: PO3 (Services with
+// JO). PO4 (Services / Non-Inventory without JO) follows PO1/PO2 from 2026-10-20 -- a Purchasing
+// Supervisor approves it up to APPROVAL_THRESHOLD, above that the GM after them. Kept in step with
+// lib/approvalNotifications.js and client PurchaseOrderView.jsx.
+const GM_ONLY_TYPES = ['PO3'];
 
 // Tells whoever acts next on a PO that has just been saved or approved (lib/approvalNotifications.js).
 function notifyPoNextStep(po, actorId) {
@@ -896,12 +898,13 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
 // Approval path depends on PO type and amount (see the /direct route's status pick for
 // PO3/PO4, which skip straight to the GM tier below):
-//   PO1/PO2, total > APPROVAL_THRESHOLD: Purchasing Supervisor approves -> pending_approval_gm
+//   PO1/PO2/PO4, total > APPROVAL_THRESHOLD: Purchasing Supervisor approves -> pending_approval_gm
 //     -> General Manager approves -> 'approved'.
-//   PO1/PO2, total <= APPROVAL_THRESHOLD: Purchasing Supervisor approves -> 'approved' directly.
-//   PO3/PO4: created straight into pending_approval_gm, and approved by the General Manager alone,
-//     whatever the amount (2026-10-19) -- the GM is notified of every one. (Until then a Purchasing
-//     Supervisor could approve one up to APPROVAL_THRESHOLD, and the GM was not told about those.)
+//   PO1/PO2/PO4, total <= APPROVAL_THRESHOLD: Purchasing Supervisor approves -> 'approved' directly;
+//     the GM is not told.
+//   PO3: created straight into pending_approval_gm, and approved by the General Manager alone,
+//     whatever the amount -- the GM is notified of every one. (PO4 was GM-only too on 2026-10-19;
+//     back with the supervisor tier 2026-10-20.)
 // A General Manager (or System Admin) may also approve at the FIRST stage: that approves the PO
 // outright, skipping the supervisor tier.
 // A System Admin can also perform the GM-tier approval (matches the "GM" ~ admin-level
@@ -944,7 +947,8 @@ router.put('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve'),
       // created straight into pending_approval_gm, so without this a 500-peso service PO waited on
       // the General Manager while a 9,000-peso PO1 did not -- the amount, not the type, is what
       // the threshold is there to judge. Above it, still the GM alone.
-      // EXCEPT PO3/PO4 (2026-10-19): the General Manager approves those whatever the amount.
+      // EXCEPT PO3: the General Manager approves those whatever the amount. (A PO4 created here
+      // before 2026-10-20 can still be cleared by a supervisor under the threshold.)
       const gmOnly = GM_ONLY_TYPES.includes(po.type);
       const isSupervisorUnderThreshold = !gmOnly && !!actingUser.is_purchasing_supervisor
         && Number(po.total_amount) <= APPROVAL_THRESHOLD;
@@ -1169,11 +1173,10 @@ router.post('/direct', requireAuth, requirePermission(ROUTE, 'can_add'), async (
       return { ...l, lineDiscAmount, lineNetOfTax, lineTaxAmount, extPrice };
     });
     const totalAmount = netOfTax + taxAmount;
-    // PO3 (Services with JO) / PO4 (Services/Non-Inventory without JO) skip the
-    // Purchasing Supervisor tier entirely and go straight to the General Manager --
-    // unlike PO1/PO2, which always start with the Purchasing Supervisor regardless of
-    // amount (see the /:id/approve route for the full tier breakdown).
-    const initialStatus = 'pending_approval_gm';
+    // PO3 (Services with JO) skips the Purchasing Supervisor tier and goes straight to the General
+    // Manager. PO4 (Services/Non-Inventory without JO) starts with the Purchasing Supervisor, as
+    // PO1/PO2 do (2026-10-20) -- see the /:id/approve route for the full tier breakdown.
+    const initialStatus = GM_ONLY_TYPES.includes(poCategory) ? 'pending_approval_gm' : 'pending_approval';
 
     await conn.beginTransaction();
     const { id: poId, no: poNo } = await insertNumbered(conn, {

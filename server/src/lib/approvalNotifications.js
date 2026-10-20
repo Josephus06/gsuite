@@ -44,10 +44,10 @@ const PO_APPROVAL_THRESHOLD = 10000; // routes/purchaseOrders.js APPROVAL_THRESH
 //   pending_approval     a Purchasing Supervisor
 //   pending_approval_gm  above the threshold, the General Manager; within it, the Purchasing
 //                        Supervisors only -- a PO of 10,000 or less no longer goes to the GM, so the GM
-//                        is not told about it (2026-10-14). PO3/PO4 enter this tier directly.
-// PO3/PO4 (2026-10-19): the General Manager approves those whatever the amount, so the GM is told
-// about every one -- routes/purchaseOrders.js GM_ONLY_TYPES.
-const PO_GM_ONLY_TYPES = ['PO3', 'PO4'];
+//                        is not told about it (2026-10-14). PO3 enters this tier directly.
+// PO3: the General Manager approves those whatever the amount, so the GM is told about every one --
+// routes/purchaseOrders.js GM_ONLY_TYPES. PO4 follows PO1/PO2 again (2026-10-20).
+const PO_GM_ONLY_TYPES = ['PO3'];
 function notifyPoPending({ id, poNo, status, total, type }, actorId) {
   return safely(`PO ${poNo} ${status}`, async () => {
     // A General Manager is never told at the supervisor tier, even with the Purchasing Supervisor box
