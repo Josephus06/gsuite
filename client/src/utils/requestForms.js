@@ -14,6 +14,7 @@ export const TYPE_LABELS = {
   attendance_adjustment: 'Attendance Adjustment Form',
   overtime: 'Overtime Request',
   leave: 'Leave Application',
+  undertime: 'Undertime Form',
   gate_pass: 'Employee Gate Pass',
   hmo_enrollment: 'Life & Health - Enrollment',
   hmo_deletion: 'Life & Health - Deletion',
@@ -22,10 +23,10 @@ export const TYPE_LABELS = {
 };
 
 // Which forms are HR's (2026-10-13) -- the form picker shows them as their own group.
-export const HR_TYPES = ['leave', 'overtime', 'attendance_adjustment', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion'];
+export const HR_TYPES = ['leave', 'undertime', 'overtime', 'attendance_adjustment', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion'];
 
 // Forms with no expense lines (and so no amount): a trip sheet, and the attendance adjustment slip.
-export const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel'];
+export const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'undertime', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel'];
 
 // HR's member lists (2026-10-19), after HR's own sheets -- kept in step with server/src/routes/forms.js
 // MEMBER_FORMS. Each column: key, the sheet's heading, and how it is entered.
@@ -95,6 +96,19 @@ export function leaveDays(from, to, part) {
 }
 export const leaveTypeLabel = (d) => (d?.leave_type === 'others' && d.leave_type_other
   ? d.leave_type_other : LEAVE_TYPE_LABELS[d?.leave_type] || d?.leave_type || '');
+
+// Undertime Form (2026-10-20): minutes between the time out and the scheduled time out, same day.
+export function undertimeMinutes(timeOut, shiftEnd) {
+  if (!timeOut || !shiftEnd) return null;
+  const m = (t) => { const [h, mi] = String(t).slice(0, 5).split(':').map(Number); return h * 60 + mi; };
+  return m(shiftEnd) - m(timeOut);
+}
+// 90 -> "1 hr 30 min"
+export function hoursMinutes(mins) {
+  if (mins == null || !Number.isFinite(Number(mins))) return '';
+  const n = Math.max(0, Number(mins)); const h = Math.floor(n / 60); const m = n % 60;
+  return [h ? `${h} hr${h === 1 ? '' : 's'}` : '', m || !h ? `${m} min` : ''].filter(Boolean).join(' ');
+}
 
 // Overtime Request (2026-10-13): hours between two "HH:MM" times; past midnight counts on.
 export function overtimeHours(from, to) {

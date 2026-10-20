@@ -90,7 +90,7 @@ function notifyPoApproved({ id, poNo, createdBy }, actorId) {
 const FORM_LABEL = {
   liquidation: 'Liquidation', payment: 'Request for Payment', fund_transfer: 'Fund Transfer Request',
   business_trip: 'Business Trip', revolving_fund: 'Revolving Fund', attendance_adjustment: 'Attendance Adjustment',
-  overtime: 'Overtime Request', leave: 'Leave Application', gate_pass: 'Employee Gate Pass', fuel: 'Fuel Request',
+  overtime: 'Overtime Request', leave: 'Leave Application', undertime: 'Undertime Form', gate_pass: 'Employee Gate Pass', fuel: 'Fuel Request',
   hmo_enrollment: 'Life & Health - Enrollment', hmo_deletion: 'Life & Health - Deletion', bpi_deletion: 'BPI Deletion',
 };
 
@@ -154,7 +154,8 @@ function notifyFormStatus(formId, actorId) {
     // Leave Application (2026-10-19): by the filer's reporting line (lib/leaveRoute.js) -- submitted
     // goes to the supervisor who notes it, or straight to its approver when there is nobody to note;
     // noted goes to the approver. approvers: [] there means the Forms Approval approvers.
-    if (doc.type === 'leave' && (doc.status === 'submitted' || doc.status === 'noted')) {
+    // An Undertime Form (2026-10-20) goes the same way.
+    if ((doc.type === 'leave' || doc.type === 'undertime') && (doc.status === 'submitted' || doc.status === 'noted')) {
       const route = await leaveRoute(doc);
       const approverIds = async () => (route.approvers.length
         ? route.approvers.map((u) => u.id) : usersWithPermission('/forms/approval', 'can_approve'));

@@ -41,7 +41,7 @@ const pool = require('../db');
 // Employee Gate Pass too (2026-10-14): "Approved by: Department Head" on the slip is this note.
 // HR's member lists too (2026-10-19): Life & Health enrollment / deletion, BPI deletion.
 // NOT a Fuel Request (2026-10-19): it goes straight to its tagged Fuel Approvers (routes/forms.js).
-const DEPARTMENT_NOTED_TYPES = ['payment', 'fund_transfer', 'revolving_fund', 'attendance_adjustment', 'business_trip', 'overtime', 'leave', 'gate_pass',
+const DEPARTMENT_NOTED_TYPES = ['payment', 'fund_transfer', 'revolving_fund', 'attendance_adjustment', 'business_trip', 'overtime', 'leave', 'undertime', 'gate_pass',
   'hmo_enrollment', 'hmo_deletion', 'bpi_deletion'];
 const AP_NOTED_TYPES = ['liquidation'];
 

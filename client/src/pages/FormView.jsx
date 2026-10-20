@@ -9,7 +9,7 @@ import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
 import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 import { useAuth } from '../context/useAuth';
-import { MEMBER_FORMS, ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, formBanks, money, pretty } from '../utils/requestForms';
+import { hoursMinutes, MEMBER_FORMS, ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, formBanks, money, pretty } from '../utils/requestForms';
 import OvertimeDecline from '../components/OvertimeDecline';
 import { parseUtc } from '../utils/datetime';
 
@@ -145,7 +145,8 @@ export default function FormView() {
   // A Leave Application follows the filer's reporting line (2026-10-19): noted by their supervisor
   // when there is one below the approver (leave_needs_note), otherwise straight to approval.
   // A Fuel Request behaves as a leave with nobody to note it: straight to its tagged approvers.
-  const isLeave = doc.type === 'leave' || doc.type === 'fuel';
+  // Routed by its own approvers: a Leave or Undertime by the reporting line, a Fuel Request by its tagged approvers.
+  const isLeave = doc.type === 'leave' || doc.type === 'undertime' || doc.type === 'fuel';
   const leaveDirect = isLeave && !doc.leave_needs_note;
   const noteBlocked = !leaveDirect && doc.status === 'submitted' && !doc.can_note && doc.note_blocked_reason;
   // Approving reads only from NOTED -- the head's sign-off is a gate, not a step to skip. Rejecting
@@ -452,6 +453,17 @@ export default function FormView() {
           <Line label="No. of Days">{d.days != null ? Number(d.days) : null}</Line>
           <Line label="Reason">{d.reason}</Line>
           <Line label="Contact while on leave">{d.contact_while_on_leave}</Line>
+        </div>
+      )}
+
+      {doc.type === 'undertime' && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3>Undertime Form</h3>
+          <Line label="Date">{fmtDate(d.ut_date)}</Line>
+          <Line label="Scheduled Time Out">{d.shift_end ? clock(d.shift_end) : null}</Line>
+          <Line label="Time Out">{d.time_out ? clock(d.time_out) : null}</Line>
+          <Line label="Undertime">{d.minutes != null ? hoursMinutes(d.minutes) : null}</Line>
+          <Line label="Reason">{d.reason}</Line>
         </div>
       )}
 

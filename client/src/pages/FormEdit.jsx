@@ -5,7 +5,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../context/useAuth';
 import {
   ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, MEMBER_FORMS, blankMemberLine, FUND_TYPES, HR_TYPES, LEAVE_TYPE_LABELS, NO_ITEM_TYPES, PAYMENT_TYPES,
-  PURPOSE_LABELS, TYPE_LABELS, leaveDays, money, overtimeHours,
+  PURPOSE_LABELS, TYPE_LABELS, hoursMinutes, leaveDays, money, overtimeHours, undertimeMinutes,
 } from '../utils/requestForms';
 import EntityPicker from '../components/EntityPicker';
 
@@ -51,6 +51,8 @@ export default function FormEdit() {
     ot_for_self: false, ot_target_user_id: '', ot_date: '', ot_time_from: '', ot_time_to: '', ot_purpose: '', ot_reference_no: '',
     // Leave Application (2026-10-13)
     leave_type: '', leave_type_other: '', leave_date_from: '', leave_date_to: '', leave_day_part: 'whole', leave_reason: '', leave_contact: '',
+    // Undertime Form (2026-10-20)
+    ut_date: '', ut_shift_end: '', ut_time_out: '', ut_reason: '',
     // Employee Gate Pass (2026-10-14)
     gp_location_id: '', gp_date: '', gp_destination: '', gp_purpose: '',
     // HR member lists (2026-10-19)
@@ -122,6 +124,12 @@ export default function FormEdit() {
       leave_date_to: data.type === 'leave' && d.date_to ? String(d.date_to).slice(0, 10) : '',
       leave_day_part: d.day_part || 'whole', leave_reason: data.type === 'leave' ? (d.reason || '') : '',
       leave_contact: d.contact_while_on_leave || '',
+      ...(data.type === 'undertime' ? {
+        ut_date: d.ut_date ? String(d.ut_date).slice(0, 10) : '',
+        ut_shift_end: d.shift_end ? String(d.shift_end).slice(0, 5) : '',
+        ut_time_out: d.time_out ? String(d.time_out).slice(0, 5) : '',
+        ut_reason: d.reason || '',
+      } : {}),
       gp_location_id: data.type === 'gate_pass' ? (d.location_id || '') : '',
       gp_date: data.type === 'gate_pass' && d.pass_date ? String(d.pass_date).slice(0, 10) : '',
       gp_destination: d.destination || '', gp_purpose: data.type === 'gate_pass' ? (d.purpose || '') : '',
@@ -627,6 +635,43 @@ export default function FormEdit() {
             <div className="field">
               <label>Contact number while on leave</label>
               <input value={form.leave_contact} onChange={(e) => set('leave_contact', e.target.value)} />
+            </div>
+          </div>
+        );
+      })()}
+
+      {type === 'undertime' && (() => {
+        const mins = undertimeMinutes(form.ut_time_out, form.ut_shift_end);
+        return (
+          <div className="card" style={{ marginTop: 16 }}>
+            <h3>Undertime Form</h3>
+            <div className="field-row">
+              <div className="field">
+                <label>Date *</label>
+                <input type="date" value={form.ut_date} onChange={(e) => set('ut_date', e.target.value)} />
+              </div>
+              <div className="field">
+                <label>Scheduled Time Out *</label>
+                <input type="time" value={form.ut_shift_end} onChange={(e) => set('ut_shift_end', e.target.value)} />
+              </div>
+              <div className="field">
+                <label>Time Out (leaving at) *</label>
+                <input type="time" value={form.ut_time_out} onChange={(e) => set('ut_time_out', e.target.value)} />
+              </div>
+              <div className="field">
+                <label>Undertime</label>
+                <input value={mins == null ? '' : mins > 0 ? hoursMinutes(mins) : '—'} readOnly />
+              </div>
+            </div>
+            {mins != null && mins <= 0 && (
+              <div className="error" style={{ marginTop: -6, marginBottom: 10 }}>The time you leave has to be before your scheduled time out.</div>
+            )}
+            <div className="field">
+              <label>Reason *</label>
+              <textarea rows={3} value={form.ut_reason} onChange={(e) => set('ut_reason', e.target.value)} />
+            </div>
+            <div className="muted" style={{ fontSize: 12 }}>
+              Goes to your supervisor and approver the same way a Leave Application does.
             </div>
           </div>
         );

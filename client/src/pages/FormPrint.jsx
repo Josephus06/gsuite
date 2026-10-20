@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { MEMBER_FORMS, ADJ_REASON_LABELS, DAY_PART_LABELS, LEAVE_TYPE_LABELS, PAYMENT_TYPES, PURPOSE_LABELS, bankLabel, clock } from '../utils/requestForms';
+import { MEMBER_FORMS, ADJ_REASON_LABELS, DAY_PART_LABELS, LEAVE_TYPE_LABELS, PAYMENT_TYPES, PURPOSE_LABELS, bankLabel, clock, hoursMinutes } from '../utils/requestForms';
 import letterhead from '../assets/graphicstar-letterhead.png';
 import { displayDate } from '../utils/dates';
 
@@ -459,6 +459,26 @@ export default function FormPrint() {
             {d.contact_while_on_leave && (
               <div className="rf-row"><Field label="Contact while on leave" value={d.contact_while_on_leave} /></div>
             )}
+          </>
+        )}
+
+        {/* Undertime Form (asked 2026-10-20): who, which day, the scheduled and actual time out, why. */}
+        {doc.type === 'undertime' && (
+          <>
+            <div className="rf-row">
+              <Field label="Name" value={doc.name} />
+              <Field label="Department" value={doc.department} />
+              <Field label="Date" value={fmtDate(d.ut_date)} />
+            </div>
+            <div className="rf-row">
+              <Field label="Scheduled Time Out" value={clock(d.shift_end)} />
+              <Field label="Time Out" value={clock(d.time_out)} />
+              <Field label="Undertime" value={d.minutes != null ? hoursMinutes(d.minutes) : ''} />
+            </div>
+            <div className="rf-box">
+              <h4>Reason</h4>
+              <div style={{ whiteSpace: 'pre-wrap', minHeight: 40 }}>{d.reason}</div>
+            </div>
           </>
         )}
 

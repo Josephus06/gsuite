@@ -48,9 +48,13 @@ const APPROVAL_ROUTE = '/forms/approval';
 // Forms with approvers of their own (2026-10-19): Leave (the filer's reporting line), Overtime (the
 // department heads), Fuel (tagged Fuel Approvers). The Forms Approval page's approvers rule on the
 // others -- and see only those, plus any of these three actually routed to them.
-const OWN_APPROVER_TYPES = ['leave', 'overtime', 'fuel'];
+const OWN_APPROVER_TYPES = ['leave', 'undertime', 'overtime', 'fuel'];
+// Routed by the filer's reporting line (lib/leaveRoute.js): a Leave Application, and an Undertime
+// Form (2026-10-20), which is time off the same way.
+const LEAVE_ROUTED = ['leave', 'undertime'];
+const routedWord = (doc) => (doc.type === 'undertime' ? 'undertime' : 'leave');
 
-const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund', 'attendance_adjustment', 'overtime', 'leave', 'gate_pass',
+const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund', 'attendance_adjustment', 'overtime', 'leave', 'undertime', 'gate_pass',
   'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel'];
 const TYPE_LABELS = {
   liquidation: 'Liquidation',
@@ -61,6 +65,7 @@ const TYPE_LABELS = {
   attendance_adjustment: 'Attendance Adjustment Form',
   overtime: 'Overtime Request',
   leave: 'Leave Application',
+  undertime: 'Undertime Form',
   gate_pass: 'Employee Gate Pass',
   hmo_enrollment: 'Life & Health - Enrollment',
   hmo_deletion: 'Life & Health - Deletion',
@@ -68,7 +73,7 @@ const TYPE_LABELS = {
   fuel: 'Fuel Request',
 };
 // Forms with no expense lines: a trip sheet, and the attendance adjustment slip.
-const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel'];
+const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'undertime', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel'];
 // HR's member lists (asked 2026-10-19; db/add-hr-member-forms.js): Life & Health HMO enrollment and
 // deletion, and the BPI payroll-account deletion letter. One lines table; each form its own columns
 // (kept in step with client/src/utils/requestForms.js MEMBER_FORMS). required = a line needs these.
@@ -176,6 +181,13 @@ const num = (v) => (v === undefined || v === null || v === '' ? null : Number(v)
 // would store '0000-00-00' for the latter and the printed form would show a date nobody entered.
 const date = (v) => (v == null || String(v).trim() === '' ? null : String(v).slice(0, 10));
 const time = (v) => (v == null || String(v).trim() === '' ? null : String(v).slice(0, 5));
+// Undertime (2026-10-20): minutes between the time the employee leaves and their scheduled time out,
+// both "HH:MM" on the same day. 0 or less = not early at all.
+function undertimeMinutes(timeOut, shiftEnd) {
+  if (!timeOut || !shiftEnd) return 0;
+  const m = (t) => { const [h, mi] = String(t).slice(0, 5).split(':').map(Number); return h * 60 + mi; };
+  return m(shiftEnd) - m(timeOut);
+}
 
 function badType(type) {
   return !TYPES.includes(type);
@@ -290,6 +302,10 @@ async function loadFull(id) {
     doc.detail = await overtimeDetail(id);
   } else if (doc.type === 'leave') {
     const [[d]] = await pool.query('SELECT * FROM form_leave_details WHERE form_request_id = ?', [id])
+      .catch((e) => { if (e.code === 'ER_NO_SUCH_TABLE') return [[null]]; throw e; });
+    doc.detail = d || null;
+  } else if (doc.type === 'undertime') {
+    const [[d]] = await pool.query('SELECT * FROM form_undertime_details WHERE form_request_id = ?', [id])
       .catch((e) => { if (e.code === 'ER_NO_SUCH_TABLE') return [[null]]; throw e; });
     doc.detail = d || null;
   } else if (doc.type === 'fuel') {
@@ -420,7 +436,7 @@ async function mayApprove(userId, doc) {
     else if (!atStep) reason = 'Not waiting on approval.';
     return { allowed: eligible && atStep, eligible, approvers, noters: [], reason };
   }
-  if (doc.type === 'leave') {
+  if (LEAVE_ROUTED.includes(doc.type)) {
     const route = await leaveRoute(doc);
     const atStep = route.noters.length ? doc.status === 'noted' : ['submitted', 'noted'].includes(doc.status);
     // Never your own leave, even holding Approve on the Forms Approval page.
@@ -430,7 +446,7 @@ async function mayApprove(userId, doc) {
     let reason = null;
     if (!eligible) {
       reason = route.approvers.length
-        ? `Only ${route.approvers.map((a) => a.display_name).join(' or ')} can approve this leave.`
+        ? `Only ${route.approvers.map((a) => a.display_name).join(' or ')} can approve this ${routedWord(doc)}.`
         : 'You do not have permission to perform this action';
     } else if (waitingNote) {
       reason = `This has to be noted first, by ${route.noters.map((a) => a.display_name).join(' or ')}.`;
@@ -465,7 +481,7 @@ async function maySee(userId, doc) {
   // A Fuel Request: its tagged approvers.
   if (doc.type === 'fuel' && isMember(await fuelApprovers(), userId)) return true;
   // A Leave Application: the supervisor who notes it and whoever approves it (lib/leaveRoute.js).
-  if (doc.type === 'leave') {
+  if (LEAVE_ROUTED.includes(doc.type)) {
     const route = await leaveRoute(doc);
     if (isMember(route.noters, userId) || isMember(route.approvers, userId)) return true;
     if (pageApprover && !route.approvers.length) return true; // falls to the page's approvers
@@ -487,11 +503,11 @@ async function mayNote(userId, doc) {
   if (doc.type === 'fuel') return { allowed: false, reason: 'A fuel request goes straight to its approver -- there is nothing to note.' };
   // A Leave Application is noted by the filer's direct supervisor, when the line has one below the
   // approver (lib/leaveRoute.js); otherwise it goes straight to approval.
-  if (doc.type === 'leave') {
+  if (LEAVE_ROUTED.includes(doc.type)) {
     const route = await leaveRoute(doc);
-    if (!route.noters.length) return { allowed: false, reason: 'This leave goes straight to approval -- there is nothing to note.' };
+    if (!route.noters.length) return { allowed: false, reason: `This ${routedWord(doc)} goes straight to approval -- there is nothing to note.` };
     if (isMember(route.noters, userId)) return { allowed: true };
-    return { allowed: false, reason: `Only ${route.noters.map((a) => a.display_name).join(' or ')} can note this leave.` };
+    return { allowed: false, reason: `Only ${route.noters.map((a) => a.display_name).join(' or ')} can note this ${routedWord(doc)}.` };
   }
   // An overtime request for yourself goes straight to your head for approval -- nothing to note.
   if (doc.type === 'overtime') {
@@ -582,7 +598,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 // form -- the line is a walk up user_supervisors, not something one SQL join expresses.
 async function leaveWaitingOn(userId, isPageApprover = false) {
   const [open] = await pool.query(
-    "SELECT id, type, status, user_id, department_id FROM form_requests WHERE type = 'leave' AND status IN ('submitted', 'noted')");
+    "SELECT id, type, status, user_id, department_id FROM form_requests WHERE type IN ('leave', 'undertime') AND status IN ('submitted', 'noted')");
   const ids = [];
   for (const doc of open) {
     const route = await leaveRoute(doc);
@@ -995,7 +1011,7 @@ router.get('/:id', requireAuth, async (req, res, next) => {
       doc.noters = [];
     }
     // A leave says who notes and who approves it, by the filer's reporting line.
-    if (doc.type === 'leave') {
+    if (LEAVE_ROUTED.includes(doc.type)) {
       doc.leave_approvers = appr.approvers.map((a) => a.display_name);
       doc.leave_needs_note = appr.noters.length > 0;
       doc.noters = appr.noters.map((a) => a.display_name);
@@ -1126,6 +1142,17 @@ async function writeDetail(conn, docId, type, body, items, ownerId = null) {
     return {};
   }
 
+  if (type === 'undertime') {
+    const shiftEnd = time(body.ut_shift_end);
+    const timeOut = time(body.ut_time_out);
+    await conn.query(
+      `INSERT INTO form_undertime_details (form_request_id, ut_date, shift_end, time_out, minutes, reason)
+       VALUES (?,?,?,?,?,?)`,
+      [docId, date(body.ut_date), shiftEnd, timeOut, undertimeMinutes(timeOut, shiftEnd), trunc(body.ut_reason, 4000)],
+    );
+    return {};
+  }
+
   if (type === 'leave') {
     const leaveType = LEAVE_TYPES.includes(body.leave_type) ? body.leave_type : 'others';
     const from = date(body.leave_date_from);
@@ -1221,6 +1248,13 @@ function validate(type, body, items) {
     if (!(Number(body.fuel_liters) > 0)) return 'Enter how many litres.';
     if (!Number(body.fuel_vehicle_asset_id) && !trunc(body.fuel_vehicle_label, 120)) return 'Choose the vehicle (or type it).';
     if (!trunc(body.fuel_purpose, 4000)) return 'Say what the fuel is for.';
+  }
+  if (type === 'undertime') {
+    if (!date(body.ut_date)) return 'The date of the undertime is required.';
+    if (!time(body.ut_shift_end)) return 'Enter your scheduled time out.';
+    if (!time(body.ut_time_out)) return 'Enter the time you will leave.';
+    if (!(undertimeMinutes(time(body.ut_time_out), time(body.ut_shift_end)) > 0)) return 'The time you leave has to be before your scheduled time out.';
+    if (!trunc(body.ut_reason, 4000)) return 'Say why you are leaving early.';
   }
   if (type === 'leave') {
     if (!LEAVE_TYPES.includes(body.leave_type)) return 'Choose the type of leave.';
@@ -1406,6 +1440,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       attendance_adjustment: 'form_attendance_adjustment_details',
       overtime: 'form_overtime_details',
       leave: 'form_leave_details',
+      undertime: 'form_undertime_details',
       fuel: 'form_fuel_details',
       gate_pass: 'form_gate_pass_details',
       hmo_enrollment: 'form_member_details',
@@ -1559,7 +1594,7 @@ router.post('/:id/approve', requireAuth, async (req, res, next) => {
     if (doc.type === 'overtime') return res.status(409).json({ error: "An overtime request is approved by the department head, from the request itself." });
     const appr = await mayApprove(req.user.id, doc);
     if (!appr.eligible) return res.status(403).json({ error: appr.reason });
-    if ((doc.type === 'leave' || doc.type === 'fuel') && !appr.allowed) return res.status(409).json({ error: appr.reason || 'Not waiting on approval.' });
+    if ((LEAVE_ROUTED.includes(doc.type) || doc.type === 'fuel') && !appr.allowed) return res.status(409).json({ error: appr.reason || 'Not waiting on approval.' });
 
     // NOTING IS A GATE, not a step that can be skipped. The source allowed submitted -> approved
     // directly; here a form must be noted by its department's head first, so the head's sign-off
@@ -1567,7 +1602,7 @@ router.post('/:id/approve', requireAuth, async (req, res, next) => {
     //
     // The cost of that is real and deliberate: a form from a department with no head recorded has
     // nowhere to go, so the refusal names who is missing rather than just saying no.
-    if (doc.status === 'submitted' && doc.type !== 'leave' && doc.type !== 'fuel') {
+    if (doc.status === 'submitted' && !LEAVE_ROUTED.includes(doc.type) && doc.type !== 'fuel') {
       const heads = await notersForDoc(doc);
       if (AP_NOTED_TYPES.includes(doc.type) && heads.length === 0) {
         return res.status(409).json({ error: 'This liquidation has to be noted by Accounts Payable first, and nobody is marked Accounts Payable.' });
@@ -1583,7 +1618,7 @@ router.post('/:id/approve', requireAuth, async (req, res, next) => {
           : 'This has to be noted before it can be approved.',
       });
     }
-    if (doc.type !== 'leave' && doc.type !== 'fuel' && doc.status !== 'noted') {
+    if (!LEAVE_ROUTED.includes(doc.type) && doc.type !== 'fuel' && doc.status !== 'noted') {
       return res.status(409).json({ error: 'Only a noted form can be approved.' });
     }
 
