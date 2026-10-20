@@ -92,6 +92,8 @@ const topCustomersReportRoutes = require('./routes/topCustomersReport');
 const budgetRoutes = require('./routes/budgets');
 const birReportRoutes = require('./routes/birReports');
 const collectionForecastRoutes = require('./routes/collectionForecast');
+// Managers Dashboard app (read-only figures; routes/managerDashboard.js).
+const managerDashboardRoutes = require('./routes/managerDashboard');
 const collectionAgingReportRoutes = require('./routes/collectionAgingReport');
 const collectionIncentiveRoutes = require('./routes/collectionIncentive');
 const unitOfMeasuresRoutes = require('./routes/unitOfMeasures');
@@ -365,6 +367,7 @@ app.use('/api/budgets', budgetRoutes);
 app.use('/api/reports/bir', birReportRoutes);
 // Treasury > Collection Forecast -- when Treasury expects to collect each open invoice.
 app.use('/api/collection-forecast', collectionForecastRoutes);
+app.use('/api/manager', managerDashboardRoutes);
 app.use('/api/reports/collection-aging', collectionAgingReportRoutes);
 app.use('/api/treasury/collection-incentive', collectionIncentiveRoutes);
 app.use('/api/unit-of-measures', unitOfMeasuresRoutes);
