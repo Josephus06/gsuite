@@ -3,7 +3,7 @@
 //
 //   form_business_trip_details.obt_confirmed_at         (new)  when HR confirmed it, else NULL
 //   form_business_trip_details.obt_confirmed_by_user_id (new)  who confirmed it
-//   pages /hrd/obt  "OBT"   View lists them; Edit confirms. System Admins get every right.
+//   pages /hrd/obt  "OBT"   View lists them; Update confirms. System Admins get every right.
 //
 // Idempotent. Droplet, office and SM replicate: run on ONE box (the droplet).
 //   node src/db/add-obt-confirmation.js

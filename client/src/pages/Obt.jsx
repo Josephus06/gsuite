@@ -7,7 +7,7 @@ import { fmtDate } from '../utils/requestForms';
 import { parseUtc } from '../utils/datetime';
 
 // HRD > OBT (asked 2026-10-20; routes/obt.js): every APPROVED Official Business Trip (Forms > Business
-// Trip) for HR, each with Confirm. View on /hrd/obt lists them; Edit confirms.
+// Trip) for HR, each with Confirm. View on /hrd/obt lists them; Update confirms.
 const TABS = [['pending', 'For Confirmation'], ['confirmed', 'Confirmed'], ['all', 'All']];
 const clock = (t) => {
   if (!t) return '';
@@ -19,7 +19,7 @@ const phDateTime = (v) => (v ? parseUtc(v).toLocaleString('en-US', { month: 'sho
 
 export default function Obt() {
   const { can } = useAuth();
-  const mayConfirm = can('/hrd/obt', 'can_edit');
+  const mayConfirm = can('/hrd/obt', 'can_update'); // Update on OBT confirms (2026-10-20)
   const [tab, setTab] = useState('pending');
   const [q, setQ] = useState('');
   const [data, setData] = useState({ rows: [], counts: {} });

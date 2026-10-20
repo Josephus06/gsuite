@@ -6,7 +6,7 @@ const router = express.Router();
 
 // HRD > OBT (asked 2026-10-20; db/add-obt-confirmation.js): every APPROVED Official Business Trip --
 // a Forms > Business Trip that cleared its approval -- for HR, who Confirms each one. View on /hrd/obt
-// lists them; Edit confirms. A form only lands here once approved, and a confirmation is recorded once.
+// lists them; Update (can_update) confirms. A form only lands here once approved, and a confirmation is recorded once.
 const ROUTE = '/hrd/obt';
 
 // Before the migration the confirmation columns do not exist: the list still answers, unconfirmed.
@@ -52,7 +52,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   } catch (err) { next(err); }
 });
 
-router.post('/:id/confirm', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.post('/:id/confirm', requireAuth, requirePermission(ROUTE, 'can_update'), async (req, res, next) => {
   try {
     if (!(await hasConfirmCols())) return res.status(409).json({ error: 'OBT confirmation is not set up yet (run db/add-obt-confirmation.js).' });
     const [[f]] = await pool.query(
