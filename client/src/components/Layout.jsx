@@ -212,6 +212,7 @@ const NAV_STRUCTURE = [
       { route: '/item-deliveries', label: 'Item Delivery' },
       { route: '/itineraries', label: 'Itinerary' },
       { route: '/reports/forecast', label: 'Forecast Report' },
+      { route: '/reports/delivery-vs-actual', label: 'Delivery Date Vs Actual' },
     ],
   },
   {

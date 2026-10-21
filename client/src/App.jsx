@@ -73,6 +73,7 @@ import DeliverySummary from './pages/reports/DeliverySummary';
 import PendingBilling from './pages/reports/PendingBilling';
 import DisbursementReport from './pages/reports/DisbursementReport';
 import ForecastReport from './pages/reports/ForecastReport';
+import DeliveryVsActualReport from './pages/reports/DeliveryVsActualReport';
 import WeightedSalesReport from './pages/reports/WeightedSalesReport';
 import TopCustomersReport from './pages/reports/TopCustomersReport';
 import ParkedBankItems from './pages/reports/ParkedBankItems';
@@ -491,6 +492,7 @@ function App() {
         <Route path="/reports/pending-billing" element={<PendingBilling />} />
         <Route path="/reports/disbursement" element={<DisbursementReport />} />
         <Route path="/reports/forecast" element={<ForecastReport />} />
+        <Route path="/reports/delivery-vs-actual" element={<DeliveryVsActualReport />} />
         <Route path="/reports/weighted-sales" element={<WeightedSalesReport />} />
         <Route path="/reports/top-customers" element={<TopCustomersReport />} />
         <Route path="/reports/parked-bank-items" element={<ParkedBankItems />} />
