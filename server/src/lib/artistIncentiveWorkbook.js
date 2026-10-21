@@ -25,6 +25,7 @@ const day = (v) => (v ? String(v).slice(0, 10) : '');
 const DETAIL_COLUMNS = [
   { header: 'Source', key: 'source', width: 10 },
   { header: 'Doc #', key: 'doc_no', width: 18 },
+  { header: 'SO #', key: 'order_no', width: 16 },
   { header: 'Artist', key: 'artist_name', width: 24 },
   { header: 'Customer', key: 'customer_name', width: 30 },
   { header: 'Sales Rep', key: 'sales_rep_name', width: 24 },
@@ -91,7 +92,7 @@ function writeCaption(sheet, title, filters, columnCount) {
   const sourceLabel = { JO: 'Job Orders only', NSTDJO: 'Non-Standard JOs only' }[filters.source] || 'JO and NSTDJO';
   sheet.mergeCells(2, 1, 2, columnCount);
   const sub = sheet.getCell(2, 1);
-  sub.value = `Actual End Date ${range}  ·  ${sourceLabel}  ·  ${filters.artist_label || 'All artists'}`;
+  sub.value = `Actual End Date ${range}  ·  ${sourceLabel}  ·  ${filters.artist_label || 'All artists'}${filters.q ? `  ·  Search "${filters.q}"` : ''}`;
   sub.font = { italic: true, color: { argb: 'FF666666' } };
 
   sheet.getRow(3).height = 6;
@@ -117,6 +118,7 @@ function detailRows(rows) {
   return rows.map((r) => ({
     source: r.source,
     doc_no: r.doc_no,
+    order_no: r.order_no || '',
     artist_name: r.artist_name || '',
     customer_name: r.customer_name || '',
     sales_rep_name: r.sales_rep_name || '',
@@ -170,6 +172,35 @@ function addSummarySheet(workbook, report, taken) {
   return sheet;
 }
 
+// By Order (2026-10-21): each Sales Order (an NSTDJO is its own) with its jobs and the incentive
+// they paid, then every job under it -- to review what was received per JO / SO.
+function addOrderSheet(workbook, report, taken) {
+  const cols = [
+    { header: 'SO # / Doc #', key: 'order', width: 18 }, { header: 'JO #', key: 'doc_no', width: 18 },
+    { header: 'Customer', key: 'customer', width: 30 }, { header: 'Artist', key: 'artist', width: 24 },
+    { header: 'Actual End', key: 'end', width: 13 }, { header: 'Basis', key: 'basis', width: 16 }, { header: 'Incentive', key: 'amount', width: 13 },
+  ];
+  const sheet = workbook.addWorksheet(safeSheetName('By Order', taken));
+  const headerRow = writeCaption(sheet, 'Artist Incentive by Order', report.filters, cols.length);
+  sheet.columns = cols.map((c) => ({ key: c.key, width: c.width }));
+  const header = sheet.getRow(headerRow);
+  cols.forEach((c, i) => { header.getCell(i + 1).value = c.header; });
+  header.commit();
+  styleHeader(sheet, headerRow);
+  for (const o of report.orders || []) {
+    const head = sheet.addRow({ order: o.order_no, customer: o.customer_name || '', artist: `${o.jobs} job(s)`, amount: o.total });
+    head.font = { bold: true };
+    head.eachCell((c) => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } }; });
+    for (const r of report.rows.filter((x) => (x.order_no || x.doc_no) === o.order_no)) {
+      sheet.addRow({ doc_no: r.doc_no, artist: r.artist_name || '', end: day(r.actual_end), basis: r.incentive_basis || '', amount: Number(r.incentive_amount || 0) });
+    }
+  }
+  const grand = sheet.addRow({ artist: 'Grand Total', amount: Number(report.grand_total || 0) });
+  grand.font = { bold: true };
+  sheet.getColumn(cols.length).numFmt = MONEY_FMT;
+  return sheet;
+}
+
 // `layout` is 'per-artist' or anything else, which means 'all'. Treating an unknown value as
 // 'all' rather than rejecting it keeps a stale bookmark or a typo giving someone the report
 // instead of an error page -- the same rule the `source` filter follows.
@@ -180,6 +211,7 @@ function buildArtistIncentiveWorkbook(report, layout) {
 
   const taken = new Set();
   addSummarySheet(workbook, report, taken);
+  addOrderSheet(workbook, report, taken);
 
   if (layout !== 'per-artist') {
     addDetailSheet(workbook, 'Detail', report.rows, report.filters, 'Detail', taken);

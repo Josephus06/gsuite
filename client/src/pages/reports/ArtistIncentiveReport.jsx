@@ -21,7 +21,7 @@ const DOWNLOAD_OPTIONS = [
   {
     layout: 'all',
     label: 'All',
-    hint: 'Everything generated: Summary by Artist, then one Detail sheet.',
+    hint: 'Everything generated: Summary by Artist, By Order (per SO / JO), then one Detail sheet.',
   },
   {
     layout: 'per-artist',
@@ -43,6 +43,10 @@ export default function ArtistIncentiveReport() {
   const [artistId, setArtistId] = useState('');
   // '' = both document types; 'JO' / 'NSTDJO' extract one on its own.
   const [source, setSource] = useState('');
+  // Search by JO / NSTDJO #, SO / NSSO #, customer or description (2026-10-21).
+  const [q, setQ] = useState('');
+  // 'detail' = one row per job; 'order' = grouped under its Sales Order with the order's total.
+  const [view, setView] = useState('detail');
   const [artists, setArtists] = useState([]);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -54,12 +58,12 @@ export default function ArtistIncentiveReport() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data: result } = await api.get(ROUTE, { params: { from, to, artist_id: artistId, source } });
+      const { data: result } = await api.get(ROUTE, { params: { from, to, artist_id: artistId, source, q } });
       setData(result);
     } finally {
       setLoading(false);
     }
-  }, [from, to, artistId, source]);
+  }, [from, to, artistId, source, q]);
 
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { api.get(`${ROUTE}/artists`).then(({ data: rows }) => setArtists(rows)); }, []);
@@ -90,7 +94,7 @@ export default function ArtistIncentiveReport() {
     setError('');
     try {
       const res = await api.get(ROUTE, {
-        params: { from, to, artist_id: artistId, source, format: 'xlsx', layout },
+        params: { from, to, artist_id: artistId, source, q, format: 'xlsx', layout },
         responseType: 'blob',
       });
       // The server already names the file, after the period it covers. Read that back rather
@@ -198,6 +202,11 @@ export default function ArtistIncentiveReport() {
               <option value="NSTDJO">Non-Standard JOs only</option>
             </select>
           </div>
+          <div className="field">
+            <label>Search</label>
+            <input value={q} onChange={(event) => setQ(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && load()}
+              placeholder="JO #, SO #, customer, description" />
+          </div>
         </div>
       </div>
 
@@ -239,18 +248,64 @@ export default function ArtistIncentiveReport() {
         </div>
 
         <div className="card">
-          <h3 className="subsection" style={{ marginTop: 0 }}>Detail</h3>
-          <div className="table-wrap">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <h3 className="subsection" style={{ margin: 0 }}>{view === 'order' ? 'By Order (SO / JO)' : 'Detail'}</h3>
+            <div className="status-tabs">
+              <button type="button" className={`status-tab ${view === 'detail' ? 'active' : ''}`} onClick={() => setView('detail')}>Detail</button>
+              <button type="button" className={`status-tab ${view === 'order' ? 'active' : ''}`} onClick={() => setView('order')}>By Order</button>
+            </div>
+          </div>
+          {view === 'order' ? (
+            <div className="table-wrap" style={{ marginTop: 8 }}>
+              <table className="table-centered">
+                <thead><tr><th>SO # / Doc #</th><th>JO #</th><th>Customer</th><th>Artist</th><th>Layout - Job Type</th><th>Actual End</th><th>Basis</th><th>Incentive</th></tr></thead>
+                <tbody>
+                  {(data.orders || []).length === 0 && (
+                    <tr><td colSpan={8} className="muted" style={{ padding: 20 }}>No completed layouts in this period.</td></tr>
+                  )}
+                  {(data.orders || []).map((o) => {
+                    const jobs = data.rows.filter((row) => (row.order_no || row.doc_no) === o.order_no);
+                    return [
+                      <tr key={`o-${o.order_no}`} style={{ background: 'var(--surface-2, #f1f5f9)', fontWeight: 600 }}>
+                        <td>{o.order_no}</td>
+                        <td className="muted">{o.jobs} job{o.jobs === 1 ? '' : 's'}</td>
+                        <td>{o.customer_name || ''}</td>
+                        <td colSpan={4} style={{ fontWeight: 400 }}>{o.artists.join(', ')}</td>
+                        <td>{money(o.total)}</td>
+                      </tr>,
+                      ...jobs.map((row) => (
+                        <tr key={`${row.source}-${row.id}`}>
+                          <td />
+                          <td><span className="badge" style={{ marginRight: 4 }}>{row.source}</span>{row.doc_no}</td>
+                          <td className="muted" style={{ fontSize: 12 }}>{row.description}</td>
+                          <td>{row.artist_name}</td>
+                          <td>{row.layout_job_type_name || ''}</td>
+                          <td>{day(row.actual_end)}</td>
+                          <td>{row.incentive_basis}</td>
+                          <td>{money(row.incentive_amount)}</td>
+                        </tr>
+                      )),
+                    ];
+                  })}
+                </tbody>
+                {(data.orders || []).length > 0 && (
+                  <tfoot><tr><th colSpan={7}>Grand Total ({data.orders.length} order{data.orders.length === 1 ? '' : 's'}, {data.rows.length} job{data.rows.length === 1 ? '' : 's'})</th><th>{money(data.grand_total)}</th></tr></tfoot>
+                )}
+              </table>
+            </div>
+          ) : (
+          <div className="table-wrap" style={{ marginTop: 8 }}>
             <table className="table-centered">
-              <thead><tr><th>Source</th><th>Doc #</th><th>Artist</th><th>Customer</th><th>Sales Rep</th><th>Job Desc</th><th>Layout - Job Type</th><th>Actual End</th><th>Archive</th><th>Basis</th><th>Incentive</th></tr></thead>
+              <thead><tr><th>Source</th><th>Doc #</th><th>SO #</th><th>Artist</th><th>Customer</th><th>Sales Rep</th><th>Job Desc</th><th>Layout - Job Type</th><th>Actual End</th><th>Archive</th><th>Basis</th><th>Incentive</th></tr></thead>
               <tbody>
                 {data.rows.length === 0 && (
-                  <tr><td colSpan={11} className="muted" style={{ padding: 20 }}>No completed layouts in this period.</td></tr>
+                  <tr><td colSpan={12} className="muted" style={{ padding: 20 }}>No completed layouts in this period.</td></tr>
                 )}
                 {data.rows.map((row) => (
                   <tr key={`${row.source}-${row.id}`}>
                     <td><span className="badge">{row.source}</span></td>
                     <td>{row.doc_no}</td>
+                    <td>{row.order_no || ''}</td>
                     <td>{row.artist_name}</td>
                     <td><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                     <td>{row.sales_rep_name || ''}</td>
@@ -273,6 +328,7 @@ export default function ArtistIncentiveReport() {
               </tbody>
             </table>
           </div>
+          )}
         </div>
       </>}
     </div>

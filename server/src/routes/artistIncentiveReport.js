@@ -47,6 +47,8 @@ const ARTIST_ACCOUNT_TYPE = 'Artist';
 // its own copy of this query is how the file and the screen it claims to copy drift apart.
 async function buildReport(req) {
   const { from = '', to = '', artist_id: artistId = '', source = '' } = req.query;
+  // Search (2026-10-21): a JO / NSTDJO #, its SO / NSSO #, the customer or the job description.
+  const q = String(req.query.q || '').trim();
   // Extract one document type only. Anything other than the two known values is treated
   // as "both" rather than rejected -- a stale bookmark should show the whole report, not
   // an error page.
@@ -72,6 +74,13 @@ async function buildReport(req) {
   if (from) { joWhere.push('DATE(jo.layout_ended_at) >= ?'); joParams.push(from); nWhere.push('DATE(n.layout_ended_at) >= ?'); nParams.push(from); }
   if (to) { joWhere.push('DATE(jo.layout_ended_at) <= ?'); joParams.push(to); nWhere.push('DATE(n.layout_ended_at) <= ?'); nParams.push(to); }
   if (artistId) { joWhere.push('jo.artist_id = ?'); joParams.push(artistId); nWhere.push('n.artist_employee_id = ?'); nParams.push(artistId); }
+  if (q) {
+    const like = `%${q}%`;
+    joWhere.push('(jo.job_order_no LIKE ? OR so.sales_order_no LIKE ? OR ns.nsso_no LIKE ? OR c.name LIKE ? OR jo.description LIKE ?)');
+    joParams.push(like, like, like, like, like);
+    nWhere.push('(n.nstdjo_no LIKE ? OR c.name LIKE ? OR n.description LIKE ?)');
+    nParams.push(like, like, like);
+  }
 
   // An Artist only ever sees their own incentives; everyone else with access to the
   // report sees all of them.
@@ -89,6 +98,7 @@ async function buildReport(req) {
             CONCAT(e.first_name, ' ', e.last_name) AS artist_name,
             CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
             c.id AS customer_id, c.name AS customer_name,
+            COALESCE(so.sales_order_no, ns.nsso_no) AS order_no,
             pjt.display_name AS layout_job_type_name,
             COALESCE(NULLIF(jo.layout_qty, 0), 1) AS layout_qty,
             ${joIncentiveBasis('jo')} AS incentive_basis,
@@ -97,8 +107,9 @@ async function buildReport(req) {
        FROM job_orders jo
        LEFT JOIN employees e ON e.id = jo.artist_id
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
-       LEFT JOIN employees sr ON sr.id = COALESCE(jo.sales_rep_id, so.sales_rep_id)
-       LEFT JOIN customers c ON c.id = so.customer_id
+       LEFT JOIN non_standard_sales_orders ns ON ns.id = jo.nsso_id
+       LEFT JOIN employees sr ON sr.id = COALESCE(jo.sales_rep_id, so.sales_rep_id, ns.sales_rep_id)
+       LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, ns.customer_id)
        LEFT JOIN pms_job_types pjt ON pjt.id = jo.layout_job_type_id
       WHERE ${joWhere.join(' AND ')}`,
     joParams,
@@ -110,6 +121,7 @@ async function buildReport(req) {
             CONCAT(e.first_name, ' ', e.last_name) AS artist_name,
             CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
             c.id AS customer_id, c.name AS customer_name,
+            n.nstdjo_no AS order_no,
             pjt.display_name AS layout_job_type_name,
             COALESCE(NULLIF(n.layout_qty, 0), 1) AS layout_qty,
             '${NSTDJO_INCENTIVE_BASIS}' AS incentive_basis,
@@ -154,12 +166,29 @@ async function buildReport(req) {
     }))
     .sort((a, b) => b.total - a.total);
 
+  // By Order (2026-10-21): the jobs grouped under the Sales Order they came from (an NSTDJO is its
+  // own order), each order's total and who earned on it -- to review what an order paid out.
+  const byOrder = new Map();
+  for (const row of rows) {
+    const key = row.order_no || row.doc_no;
+    if (!byOrder.has(key)) byOrder.set(key, { order_no: key, customer_name: row.customer_name, jobs: 0, total: 0, artists: new Set(), latest_end: row.actual_end });
+    const o = byOrder.get(key);
+    o.jobs += 1;
+    o.total += row.incentive_amount;
+    if (row.artist_name) o.artists.add(row.artist_name);
+    if (new Date(row.actual_end) > new Date(o.latest_end)) o.latest_end = row.actual_end;
+  }
+  const orders = [...byOrder.values()]
+    .map((o) => ({ ...o, total: Number(o.total.toFixed(2)), artists: [...o.artists].sort() }))
+    .sort((a, b) => new Date(b.latest_end) - new Date(a.latest_end));
+
   return {
     rows,
     summary,
+    orders,
     grand_total: Number(rows.reduce((sum, r) => sum + r.incentive_amount, 0).toFixed(2)),
     jo_incentive_amount: JO_INCENTIVE_AMOUNT,
-    filters: { from, to, artist_id: artistId, source },
+    filters: { from, to, artist_id: artistId, source, q },
   };
 }
 
