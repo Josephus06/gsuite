@@ -330,7 +330,18 @@ async function extractQuestions({ pdfBase64, fileName, text, topics }) {
   const content = [];
   if (pdfBase64) content.push({ type: 'file', file: { filename: fileName || 'questions.pdf', file_data: `data:application/pdf;base64,${pdfBase64}` } });
   content.push({ type: 'text', text: text ? `${instructions}\n\nDocument:\n${String(text).slice(0, 60000)}` : instructions });
-  const raw = await openai([{ role: 'user', content }], { json: true, temperature: 0 });
+  let raw;
+  try {
+    raw = await openai([{ role: 'user', content }], { json: true, temperature: 0 });
+  } catch (err) {
+    // A long, text-heavy PDF is more than the model reads at once: say so plainly.
+    if (/token|context|maximum/i.test(err.message)) {
+      const e = new Error('That document is too long for the AI to read at once. Split it into smaller PDFs (about 20 pages or 100 questions each) and import them one by one.');
+      e.status = 413;
+      throw e;
+    }
+    throw err;
+  }
   const parsed = parseJson(raw, {});
   return (Array.isArray(parsed.questions) ? parsed.questions : []).map((q) => {
     const c = cleanQuestion({ ...q, points: q.points ?? (q.type === 'essay' ? 5 : 1) });
