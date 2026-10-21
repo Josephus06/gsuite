@@ -294,6 +294,10 @@ const NAV_STRUCTURE = [
     children: [
       { route: '/reports/bir-sales', label: 'Sales Report' },
       { route: '/reports/bir-purchase', label: 'Purchase Report' },
+      // Tax reports (2026-10-21), each with its filing deadline: EWT the 5th, 2307s by month end, VAT the 15th.
+      { route: '/reports/bir-ewt', label: 'Expanded Withholding Tax' },
+      { route: '/reports/bir-cwt', label: 'Creditable Withholding Tax (2307)' },
+      { route: '/reports/bir-vat', label: 'VAT Computation' },
     ],
   },
   {

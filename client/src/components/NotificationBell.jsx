@@ -18,6 +18,7 @@ function formatTime(v) {
 function notificationTypeLabel(type) {
   switch (type) {
     case 'ticket_pending_approval': return 'Pending Approval';
+    case 'bir_deadline': return 'BIR Deadline';
     case 'vehicle_registration_due': case 'vehicle_insurance_due': case 'vehicle_emission_due': case 'vehicle_pms_due': return 'Vehicle Due';
     case 'vehicle_registration_overdue': case 'vehicle_insurance_overdue': case 'vehicle_emission_overdue': case 'vehicle_pms_overdue': return 'Vehicle Overdue';
     case 'ticket_received': return 'New Ticket';
@@ -132,6 +133,11 @@ export default function NotificationBell() {
     // Fleet reminders (lib/fleet.js): registration / insurance / emission / PMS due on a vehicle.
     if (n.related_type === 'Vehicle' && n.related_id) return `/assets/fleet/${n.related_id}`;
     if (n.related_type === 'Form' && n.related_id) return `/forms/${n.related_id}`;
+    // BIR filing deadlines (lib/birDeadlines.js): Bir:<ewt|cwt|vat>, the month as YYYYMM.
+    if (String(n.related_type || '').startsWith('Bir:')) {
+      const m = String(n.related_id || '');
+      return `/reports/bir-${n.related_type.slice(4)}${m.length === 6 ? `?month=${m.slice(0, 4)}-${m.slice(4)}` : ''}`;
+    }
     // Design hand-off notifications. An artist told the work is theirs goes straight to the
     // run screen where they start the timer; everyone else goes to the order itself.
     if (n.related_type === 'JobOrder' && n.related_id) {

@@ -537,6 +537,23 @@ if (process.env.FLEET_REMINDER_JOB === '1') {
   };
   scheduleNextFleetRun();
 }
+// BIR filing deadlines (lib/birDeadlines.js): EWT on the 5th, 2307s from customers by month end,
+// VAT on the 15th -- whoever can view each report is told 3 days before, the day before and on the
+// day, at 8:00 business time. OFF unless BIR_REMINDER_JOB=1 -- ONE box of the replicated set, or
+// everyone is told once per box.
+if (process.env.BIR_REMINDER_JOB === '1') {
+  const { runBirReminders } = require('./lib/birDeadlines');
+  const hour = Number(process.env.BIR_REMINDER_HOUR || 8);
+  const scheduleNextBirRun = () => {
+    const delayMs = msUntilBusinessTime(hour, 0);
+    console.log(`BIR deadline reminders scheduled for ${new Date(Date.now() + delayMs).toISOString()}`);
+    setTimeout(async () => {
+      try { console.log('BIR deadline reminders:', await runBirReminders()); } catch (err) { console.error('BIR deadline reminders failed:', err); }
+      scheduleNextBirRun();
+    }, delayMs);
+  };
+  scheduleNextBirRun();
+}
 // Unfinished feed video uploads, cleared after a day -- only those whose file is on this server.
 require('./lib/feedVideos').scheduleFeedVideoSweep();
 

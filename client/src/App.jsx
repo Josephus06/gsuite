@@ -182,6 +182,9 @@ import StatementOfAccount from './pages/StatementOfAccount';
 import ApAging from './pages/reports/ApAging';
 import BirSalesReport from './pages/reports/BirSalesReport';
 import BirPurchaseReport from './pages/reports/BirPurchaseReport';
+import BirEwtReport from './pages/reports/BirEwtReport';
+import BirCwtReport from './pages/reports/BirCwtReport';
+import BirVatReport from './pages/reports/BirVatReport';
 import CollectionForecast from './pages/treasury/CollectionForecast';
 import CollectionAgingReport from './pages/treasury/CollectionAgingReport';
 import CollectionIncentive from './pages/treasury/CollectionIncentive';
@@ -476,6 +479,9 @@ function App() {
         {/* BIR Reports -- its own module on the bar, mirroring the live system's menu. */}
         <Route path="/reports/bir-sales" element={<BirSalesReport />} />
         <Route path="/reports/bir-purchase" element={<BirPurchaseReport />} />
+        <Route path="/reports/bir-ewt" element={<BirEwtReport />} />
+        <Route path="/reports/bir-cwt" element={<BirCwtReport />} />
+        <Route path="/reports/bir-vat" element={<BirVatReport />} />
         {/* Treasury -- when the money is expected in. */}
         <Route path="/treasury/collection-forecast" element={<CollectionForecast />} />
         <Route path="/treasury/collection-aging" element={<CollectionAgingReport />} />
