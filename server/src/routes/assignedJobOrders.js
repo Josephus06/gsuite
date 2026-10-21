@@ -34,9 +34,11 @@ async function logAudit(conn, { jobOrderId, userId, eventType, fieldName = null,
 // their own clock.
 async function getOwnedJobOrder(conn, jobOrderId, userId) {
   const [[me]] = await conn.query('SELECT employee_id FROM users WHERE id = ?', [userId]);
-  const [[jo]] = await conn.query('SELECT artist_id, sub_status, layout_started_at, layout_ended_at FROM job_orders WHERE id = ?', [jobOrderId]);
+  const [[jo]] = await conn.query('SELECT artist_id, status, sub_status, layout_started_at, layout_ended_at FROM job_orders WHERE id = ?', [jobOrderId]);
   if (!jo) return { error: [404, 'Not found'] };
   if (!me?.employee_id || jo.artist_id !== me.employee_id) return { error: [403, 'This Job Order is not assigned to you.'] };
+  // A cancelled Job Order is no longer work: its clock cannot be started, held or stopped.
+  if (jo.status === CANCELLED_STATUS) return { error: [409, 'This Job Order has been cancelled.'] };
   return { jo };
 }
 
@@ -86,7 +88,10 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN employees jsr ON jsr.id = jo.sales_rep_id
        LEFT JOIN employees ssr ON ssr.id = so.sales_rep_id
        LEFT JOIN pms_job_types pjt ON pjt.id = jo.layout_job_type_id
-       WHERE jo.artist_id = ? AND jo.sub_status IN (?)${joLocationClause}
+       WHERE jo.artist_id = ? AND jo.sub_status IN (?)
+         -- A cancelled Job Order keeps its sub status too, the same as an NSTDJO below, so it stayed
+         -- in the artist's Not Started list (JO-197651-1..6-6, 2026-10-21) -- left out the same way.
+         AND jo.status <> '${CANCELLED_STATUS}'${joLocationClause}
        ORDER BY jo.id DESC`,
       [me.employee_id, ARTIST_QUEUE_SUB_STATUSES, ...locationParams]
     );
