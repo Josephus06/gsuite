@@ -85,7 +85,9 @@ async function sendMaterial(res, materialId, inline) {
   return res.send(m.file_data);
 }
 
+// Materials open only after the Pre-Test (when the course has one).
 async function ownMaterial(req, res, e) {
+  if ((await enrollmentProgress(e)).materials_locked) { res.status(409).json({ error: 'Take the Pre-Test first -- the materials open after it.' }); return null; }
   const [[m]] = await pool.query('SELECT id FROM training_materials WHERE id = ? AND course_id = ? AND is_active = 1', [req.params.mid, e.course_id]);
   if (!m) { res.status(404).json({ error: 'Material not found.' }); return null; }
   return m;
@@ -181,7 +183,7 @@ router.get('/courses/:id', requireAuth, requirePermission(HR, 'can_view'), async
     const [materials] = await pool.query(
       'SELECT id, title, description, file_name, mime_type, file_size, sort_order FROM training_materials WHERE course_id = ? AND is_active = 1 ORDER BY sort_order, id', [c.id]);
     const [quizzes] = await pool.query(
-      `SELECT cq.id, cq.set_id, cq.instructions, st.name AS set_name FROM training_course_quizzes cq JOIN exam_sets st ON st.id = cq.set_id
+      `SELECT cq.id, cq.set_id, cq.instructions, cq.kind, st.name AS set_name FROM training_course_quizzes cq JOIN exam_sets st ON st.id = cq.set_id
         WHERE cq.course_id = ? AND cq.is_active = 1 ORDER BY cq.sort_order, cq.id`, [c.id]);
     const [assignments] = await pool.query(
       `SELECT ta.*, COUNT(en.id) AS enrolled, SUM(en.completed_at IS NOT NULL) AS completed,
@@ -197,11 +199,17 @@ router.get('/courses/:id', requireAuth, requirePermission(HR, 'can_view'), async
 async function saveCourse(conn, id, b, userId) {
   const title = String(b.title || '').trim().slice(0, 200);
   if (!title) return { error: 'Give the course a title.' };
-  const quizzes = (Array.isArray(b.quizzes) ? b.quizzes : []).map((q) => ({ set_id: Number(q.set_id), instructions: String(q.instructions || '').trim() || null }))
+  const KINDS = ['pre_test', 'quiz', 'post_test'];
+  const quizzes = (Array.isArray(b.quizzes) ? b.quizzes : []).map((q) => ({
+    set_id: Number(q.set_id), instructions: String(q.instructions || '').trim() || null, kind: KINDS.includes(q.kind) ? q.kind : 'quiz',
+  }))
     .filter((q) => q.set_id);
   if (quizzes.length) {
     const [[{ n }]] = await conn.query('SELECT COUNT(*) AS n FROM exam_sets WHERE id IN (?) AND is_active = 1', [quizzes.map((q) => q.set_id)]);
     if (Number(n) !== new Set(quizzes.map((q) => q.set_id)).size) return { error: 'One of the quizzes is no longer an active exam set.' };
+    if (quizzes.filter((q) => q.kind === 'pre_test').length > 1 || quizzes.filter((q) => q.kind === 'post_test').length > 1) {
+      return { error: 'A course has at most one Pre-Test and one Post-Test.' };
+    }
   }
   const fields = [title, String(b.description || '').trim() || null, Number(b.department_id) || null];
   let courseId = id;
@@ -212,16 +220,17 @@ async function saveCourse(conn, id, b, userId) {
   }
   // Quizzes are matched by set: a kept quiz keeps its id (its schedules and attempts stay linked);
   // one taken off is retired, not deleted.
-  const [cur] = await conn.query('SELECT id, set_id FROM training_course_quizzes WHERE course_id = ? AND is_active = 1', [courseId]);
+  // Matched by set AND kind: a Pre-Test and a Post-Test may be the same exam set.
+  const [cur] = await conn.query('SELECT id, set_id, kind FROM training_course_quizzes WHERE course_id = ? AND is_active = 1', [courseId]);
   const keep = new Set();
   for (let i = 0; i < quizzes.length; i += 1) {
     const q = quizzes[i];
-    const found = cur.find((x) => Number(x.set_id) === q.set_id && !keep.has(x.id));
+    const found = cur.find((x) => Number(x.set_id) === q.set_id && (x.kind || 'quiz') === q.kind && !keep.has(x.id));
     if (found) {
       keep.add(found.id);
       await conn.query('UPDATE training_course_quizzes SET instructions = ?, sort_order = ? WHERE id = ?', [q.instructions, i, found.id]);
     } else {
-      await conn.query('INSERT INTO training_course_quizzes (course_id, set_id, instructions, sort_order) VALUES (?, ?, ?, ?)', [courseId, q.set_id, q.instructions, i]);
+      await conn.query('INSERT INTO training_course_quizzes (course_id, set_id, instructions, kind, sort_order) VALUES (?, ?, ?, ?, ?)', [courseId, q.set_id, q.instructions, q.kind, i]);
     }
   }
   for (const x of cur) if (!keep.has(x.id)) await conn.query('UPDATE training_course_quizzes SET is_active = 0 WHERE id = ?', [x.id]);
@@ -363,11 +372,12 @@ router.get('/assignments/:id', requireAuth, requirePermission(HR, 'can_view'), a
     let quizNames = [];
     for (const e of ens) {
       const p = await enrollmentProgress(e);
-      quizNames = p.quizzes.map((q) => ({ id: q.id, name: q.name }));
+      quizNames = p.quizzes.map((q) => ({ id: q.id, name: q.name, kind: q.kind }));
       rows.push({
         id: e.id, user_id: e.user_id, name: e.name, department: e.department, started_at: e.started_at, completed_at: p.completed_at,
         materials: p.materials.length, materials_done: p.materials_done, percent: p.percent,
-        quizzes: p.quizzes.map((q) => ({ id: q.id, state: q.state, percent: q.best_percent, attempt_id: q.attempt_id })),
+        quizzes: p.quizzes.map((q) => ({ id: q.id, kind: q.kind, state: q.state, done: q.done, percent: q.kind === 'pre_test' ? q.first_percent : q.best_percent, attempt_id: q.attempt_id })),
+        gain: p.gain,
       });
     }
     const [targets] = await pool.query(
@@ -412,6 +422,7 @@ router.get('/users/:userId', requireAuth, async (req, res, next) => {
       out.push({
         id: e.id, assignment_id: e.assignment_id, title: e.title, start_date: e.start_date, end_date: e.end_date, completed_at: p.completed_at,
         percent: p.percent, materials: p.materials.length, materials_done: p.materials_done, quizzes: p.quizzes.length, quizzes_passed: p.quizzes_passed,
+        gain: p.gain,
       });
     }
     return res.json(out);

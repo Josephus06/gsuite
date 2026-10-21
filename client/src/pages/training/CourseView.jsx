@@ -13,6 +13,11 @@ const QUIZ_STATE = {
   passed: ['badge-success', 'Passed'], failed: ['badge-danger', 'Below passing'], grading: ['badge-warning', 'Being graded'],
   in_progress: ['badge-info', 'In progress'], not_taken: ['badge-muted', 'Not taken'], missed: ['badge-danger', 'Missed'],
 };
+// Pre-Test / Post-Test (2026-10-21): the Pre-Test comes first (any score; the materials open after
+// it), the Post-Test once every material is Completed (must pass), a Quiz anytime.
+const KIND = { pre_test: 'Pre-Test', quiz: 'Quiz', post_test: 'Post-Test' };
+const qState = (q) => (q.kind === 'pre_test' && q.taken ? ['badge-success', 'Taken'] : QUIZ_STATE[q.state] || QUIZ_STATE.not_taken);
+const qScore = (q) => (q.kind === 'pre_test' ? q.first_percent : q.best_percent);
 const size = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 const ext = (name) => (String(name).match(/\.([a-z0-9]+)$/i) || [])[1]?.toUpperCase() || 'FILE';
 const viewable = (m) => /^application\/pdf$|^image\//.test(m.mime_type || '');
@@ -126,7 +131,8 @@ export default function CourseView() {
   if (!c) return error ? <div className="error-banner">{error}</div> : <LoadingSpinner />;
 
   // Every screen in order -- materials then quizzes -- for the ← / → buttons.
-  const steps = [...c.materials.map((m) => `m${m.id}`), ...c.quizzes.map((q) => `q${q.id}`)];
+  const byKind = (k) => c.quizzes.filter((q) => q.kind === k).map((q) => `q${q.id}`);
+  const steps = [...byKind('pre_test'), ...c.materials.map((m) => `m${m.id}`), ...byKind('quiz'), ...byKind('post_test')];
   const stepNav = (cur) => {
     const i = steps.indexOf(cur);
     return (
@@ -142,6 +148,11 @@ export default function CourseView() {
   );
 
   // ---- one material
+  const lockedNote = c.materials_locked && (view === 'materials' || (view.startsWith('m') && view !== 'materials'))
+    ? <div className="crs"><style>{CSS}</style>{bar('Learning Materials')}<div className="card">🔒 Take the <strong>Pre-Test</strong> first -- the learning materials open after it. <button className="btn btn-sm" onClick={() => go('home')}>Course Details</button></div></div>
+    : null;
+  if (lockedNote) return lockedNote;
+
   if (view.startsWith('m') && view !== 'materials') {
     const m = c.materials.find((x) => `m${x.id}` === view);
     if (!m) return <div className="crs"><div className="card muted">That is no longer part of this course. <button className="btn btn-sm" onClick={() => go('materials')}>Back</button></div></div>;
@@ -194,24 +205,26 @@ export default function CourseView() {
   if (view.startsWith('q')) {
     const q = c.quizzes.find((x) => `q${x.id}` === view);
     if (!q) return <div className="crs"><div className="card muted">That is no longer part of this course. <button className="btn btn-sm" onClick={() => go('home')}>Back</button></div></div>;
-    const [cls, label] = QUIZ_STATE[q.state] || QUIZ_STATE.not_taken;
-    const action = q.state === 'in_progress' ? 'Continue Quiz'
-      : ['passed', 'failed', 'grading'].includes(q.state) ? 'View Result' : 'Take Quiz';
+    const [cls, label] = qState(q);
+    const action = q.state === 'in_progress' ? `Continue ${KIND[q.kind]}`
+      : ['passed', 'failed', 'grading'].includes(q.state) ? 'View Result' : `Take ${KIND[q.kind]}`;
     return (
       <div className="crs"><style>{CSS}</style>
-        {bar('Quiz')}
+        {bar(KIND[q.kind])}
         <div className="crs-info">
           <span style={{ fontSize: 18 }}>ⓘ</span>
-          <div>A minimum of <strong>{pct(q.passing_percent)}</strong> is required to pass this quiz{c.quizzes.length ? ' and complete the course' : ''}.</div>
+          {q.kind === 'pre_test'
+            ? <div>Take this <strong>before</strong> the learning materials. Any score counts -- it shows what you know before the course, to compare with your Post-Test.</div>
+            : <div>A minimum of <strong>{pct(q.passing_percent)}</strong> is required to pass this {KIND[q.kind]} and complete the course.{q.kind === 'post_test' ? ' It opens once every learning material is Completed.' : ''}</div>}
         </div>
         <div className="card crs-kv" style={{ marginBottom: 10 }}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>{q.name}</div>
-          <div><span>Type:</span> Graded Quiz</div>
+          <div><span>Type:</span> {q.kind === 'pre_test' ? 'Pre-Test (not graded for passing)' : `Graded ${KIND[q.kind]}`}</div>
           <div><span>Questions:</span> {q.questions}</div>
           <div><span>Total Marks:</span> {q.total_marks ?? 'varies (questions drawn per person)'}</div>
           <div><span>Time Limit:</span> {q.time_limit_minutes ? `${q.time_limit_minutes} Mins` : 'None'}</div>
           <div><span>Status:</span> <span className={`badge ${cls}`}>{label}</span>
-            {q.best_percent != null && <span style={{ marginLeft: 6 }}>best score {pct(q.best_percent)}</span>}</div>
+            {qScore(q) != null && <span style={{ marginLeft: 6 }}>{q.kind === 'pre_test' ? 'score' : 'best score'} {pct(qScore(q))}</span>}</div>
         </div>
         {q.instructions && (
           <div className="card" style={{ marginBottom: 10 }}>
@@ -222,9 +235,10 @@ export default function CourseView() {
             {instrOpen && <div style={{ whiteSpace: 'pre-wrap', marginTop: 10, lineHeight: 1.5 }}>{q.instructions}</div>}
           </div>
         )}
-        {q.state === 'failed' && <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>Below passing. HR schedules a retake -- it will appear here.</div>}
+        {q.locked && <div className="card" style={{ marginBottom: 8 }}>🔒 Complete {c.materials_locked ? 'the Pre-Test and ' : ''}every learning material first ({c.materials_done} / {c.materials.length} done).</div>}
+        {q.state === 'failed' && q.kind !== 'pre_test' && <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>Below passing. HR schedules a retake -- it will appear here.</div>}
         {q.state === 'missed' && <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>The quiz window closed. Ask HR to schedule a retake.</div>}
-        {q.attempt_id && q.state !== 'missed' && (
+        {q.attempt_id && q.state !== 'missed' && !q.locked && (
           <Link className="btn btn-primary" to={`/exams/${q.attempt_id}`}>{action}</Link>
         )}
         {stepNav(view)}
@@ -233,6 +247,18 @@ export default function CourseView() {
   }
 
   // ---- course details (home)
+  function quizCard(q) {
+    const [cls, label] = qState(q);
+    return (
+      <button key={q.id} type="button" className={`crs-item ${q.locked ? 'locked' : ''}`} onClick={() => go(`q${q.id}`)}>
+        <span className="grow">
+          <span className="name">{KIND[q.kind]}{c.quizzes.filter((x) => x.kind === q.kind).length > 1 ? `: ${q.name}` : ''}</span>
+          <div className="meta">{q.locked ? '🔒 After all learning materials' : <>1 Assessment · <span className={`badge ${cls}`}>{label}</span>{qScore(q) != null ? ` ${pct(qScore(q))}` : ''}</>}</div>
+        </span>
+        <Arrow />
+      </button>
+    );
+  }
   const matPct = c.materials.length ? Math.round((c.materials_done / c.materials.length) * 100) : 0;
   return (
     <div className="crs"><style>{CSS}</style>
@@ -244,6 +270,7 @@ export default function CourseView() {
         <div className="crs-sub">{c.materials_done} / {c.materials.length} Materials · {c.quizzes_passed} / {c.quizzes.length} Assessments
           {' · '}{c.complete ? `completed ${fmtDay(c.completed_at)}` : `finish by ${fmtDay(c.end_date)}`}</div>
         <div className="crs-bar"><div><div style={{ width: `${c.percent}%` }} /></div><span style={{ fontSize: 12 }}>{c.percent}%</span></div>
+        {c.gain && <div className="crs-sub" style={{ marginTop: 6 }}>Pre-Test {pct(c.gain.pre)} → Post-Test {pct(c.gain.post)} <strong>({c.gain.change >= 0 ? '+' : ''}{c.gain.change} pts)</strong></div>}
         <div className="crs-cert">
           <div className="crs-cert-art">CERTIFICATE<br />OF COMPLETION<div style={{ fontWeight: 400, marginTop: 4, color: '#ec7601' }}>GRAPHICSTAR</div></div>
           <div style={{ flex: 1 }}>
@@ -264,28 +291,18 @@ export default function CourseView() {
       {tab === 'learning' && (
         <>
           {c.description && <div className="card" style={{ marginBottom: 10, whiteSpace: 'pre-wrap' }}>{c.description}</div>}
+          {c.quizzes.filter((q) => q.kind === 'pre_test').map((q) => quizCard(q))}
           {c.materials.length > 0 && (
-            <button type="button" className="crs-item" onClick={() => go('materials')}>
+            <button type="button" className={`crs-item ${c.materials_locked ? 'locked' : ''}`} onClick={() => !c.materials_locked && go('materials')}>
               <span className="grow">
                 <span className="name">Learning Materials</span>
                 <div className="meta">{c.materials.length} File{c.materials.length === 1 ? '' : 's'}</div>
-                <div className="meta"><span className="crs-mini"><div style={{ width: `${matPct}%` }} /></span>{matPct}%</div>
+                <div className="meta">{c.materials_locked ? '🔒 Take the Pre-Test first' : <><span className="crs-mini"><div style={{ width: `${matPct}%` }} /></span>{matPct}%</>}</div>
               </span>
               <Arrow />
             </button>
           )}
-          {c.quizzes.map((q) => {
-            const [cls, label] = QUIZ_STATE[q.state] || QUIZ_STATE.not_taken;
-            return (
-              <button key={q.id} type="button" className="crs-item" onClick={() => go(`q${q.id}`)}>
-                <span className="grow">
-                  <span className="name">Quiz{c.quizzes.length > 1 ? `: ${q.name}` : ''}</span>
-                  <div className="meta">1 Assessment · <span className={`badge ${cls}`}>{label}</span>{q.best_percent != null ? ` ${pct(q.best_percent)}` : ''}</div>
-                </span>
-                <Arrow />
-              </button>
-            );
-          })}
+          {c.quizzes.filter((q) => q.kind !== 'pre_test').map((q) => quizCard(q))}
           <button type="button" className={`crs-item ${c.complete ? '' : 'locked'}`} onClick={() => c.complete && certificate()}>
             <span className="grow">
               <span className="name">Claim your course certificate</span>

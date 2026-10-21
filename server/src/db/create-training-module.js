@@ -113,6 +113,11 @@ const PAGES = [['/trainings', 'My Training'], ['/hrd/training', 'Training Course
     else { await pool.query(`ALTER TABLE exam_schedules ADD COLUMN ${col} ${def}, ADD INDEX idx_exam_schedules_${col} (${col})`); console.log(`  added exam_schedules.${col}`); }
   }
 
+  // Pre-Test / Post-Test (2026-10-21): what each course quiz is -- pre_test, quiz or post_test.
+  const [kc] = await pool.query("SHOW COLUMNS FROM training_course_quizzes LIKE 'kind'");
+  if (kc.length) console.log('  training_course_quizzes.kind already there -- skipped');
+  else { await pool.query("ALTER TABLE training_course_quizzes ADD COLUMN kind VARCHAR(10) NOT NULL DEFAULT 'quiz'"); console.log('  added training_course_quizzes.kind'); }
+
   const ids = {};
   for (const [route, name] of PAGES) {
     const [[existing]] = await pool.query('SELECT id FROM pages WHERE route = ?', [route]);

@@ -110,7 +110,7 @@ export default function EmployeeRecord() {
           <h3 style={{ marginTop: 0 }}>Training Courses</h3>
           <div className="table-wrap">
             <table className="responsive-cards">
-              <thead><tr><th>Course</th><th>Window</th><th>Materials</th><th>Quizzes Passed</th><th style={{ textAlign: 'right' }}>Progress</th><th>Completed</th><th /></tr></thead>
+              <thead><tr><th>Course</th><th>Window</th><th>Materials</th><th>Quizzes Passed</th><th>Pre → Post</th><th style={{ textAlign: 'right' }}>Progress</th><th>Completed</th><th /></tr></thead>
               <tbody>
                 {courses.map((t) => (
                   <tr key={t.id}>
@@ -118,6 +118,7 @@ export default function EmployeeRecord() {
                     <td data-label="Window">{fmtDay(t.start_date)} — {fmtDay(t.end_date)}</td>
                     <td data-label="Materials">{t.materials_done} / {t.materials}</td>
                     <td data-label="Quizzes Passed">{t.quizzes_passed} / {t.quizzes}</td>
+                    <td data-label="Pre → Post">{t.gain ? `${pct(t.gain.pre)} → ${pct(t.gain.post)} (${t.gain.change >= 0 ? '+' : ''}${t.gain.change})` : '—'}</td>
                     <td data-label="Progress" style={{ textAlign: 'right', fontWeight: 600 }}>{t.percent}%</td>
                     <td data-label="Completed">{t.completed_at ? <span className="badge badge-success">{fmtDay(t.completed_at)}</span> : '—'}</td>
                     <td><Link className="btn btn-sm" to={`/hrd/training/assignments/${t.assignment_id}`}>Progress</Link></td>

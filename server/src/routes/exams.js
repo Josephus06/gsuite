@@ -6,6 +6,7 @@ const {
   topicBreakdown, setQuestionCount, drawQuestions,
 } = require('../lib/exams');
 const { certificatePdf } = require('../lib/examCertificate');
+const { enrollmentProgress } = require('../lib/training');
 
 const router = express.Router();
 
@@ -24,7 +25,7 @@ const slotsOf = (q) => (q.type === 'enumeration' ? Number(parseJson(q.answer, {}
 
 async function ownAttempt(req, res) {
   const [[a]] = await pool.query(
-    `SELECT a.*, s.title, s.start_date, s.end_date, s.status AS schedule_status,
+    `SELECT a.*, s.title, s.start_date, s.end_date, s.status AS schedule_status, s.training_assignment_id, s.training_course_quiz_id,
             st.name AS set_name, st.description, st.time_limit_minutes, st.passing_percent, st.mode, st.rules,
             u.display_name AS user_name,
             -- A course quiz (lib/training.js): the course it belongs to, to go back to.
@@ -184,6 +185,12 @@ router.post('/attempts/:id/start', requireAuth, requirePermission(ROUTE, 'can_vi
     if (a.status !== 'assigned') return res.status(409).json({ error: 'This exam is already closed.' });
     if (!openNow(a)) {
       return res.status(409).json({ error: phToday() < day(a.start_date) ? `This exam opens on ${day(a.start_date)}.` : 'This exam is no longer open.' });
+    }
+    // A course's Post-Test opens once the materials (and the Pre-Test) are done (2026-10-21).
+    if (a.training_course_quiz_id) {
+      const [[en]] = await pool.query('SELECT * FROM training_enrollments WHERE assignment_id = ? AND user_id = ?', [a.training_assignment_id, a.user_id]);
+      const cq = en ? (await enrollmentProgress(en)).quizzes.find((q) => Number(q.id) === Number(a.training_course_quiz_id)) : null;
+      if (cq?.locked) return res.status(409).json({ error: 'Finish the Pre-Test and every learning material of the course first.' });
     }
     // A fixed set: the same questions for everyone, each in their own order. A random set: this
     // examinee's own draw from the bank by the set's rules. Either way the choices are shuffled too.

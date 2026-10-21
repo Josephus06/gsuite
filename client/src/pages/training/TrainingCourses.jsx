@@ -87,7 +87,7 @@ export function CourseEditor() {
     api.get(`/training/courses/${id}`).then(({ data }) => {
       setCourse(data);
       setForm({ title: data.title, description: data.description || '', department_id: data.department_id || '',
-        quizzes: data.quizzes.map((q) => ({ set_id: String(q.set_id), instructions: q.instructions || '' })) });
+        quizzes: data.quizzes.map((q) => ({ set_id: String(q.set_id), instructions: q.instructions || '', kind: q.kind || 'quiz' })) });
     }).catch((e) => setError(e.response?.data?.error || 'Could not load the course.'));
   }, [id, isNew]);
   useEffect(() => { load(); }, [load]);
@@ -169,10 +169,15 @@ export function CourseEditor() {
           <textarea rows={4} value={form.description} disabled={!canEdit} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
 
         <h3 style={{ marginBottom: 6 }}>Quizzes</h3>
-        <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>Exam sets from HRD &gt; Examinations. Each is taken on the usual exam screen; passing all of them (with every material completed) completes the course.</div>
+        <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>Exam sets from HRD &gt; Examinations, taken on the usual exam screen. A <strong>Pre-Test</strong> is taken first (any score; the materials open after it); a <strong>Post-Test</strong> opens once every material is Completed and must be passed, like a Quiz. The progress page shows each person's Pre → Post gain.</div>
         {form.quizzes.map((q, i) => (
           <div key={i} className="card" style={{ marginBottom: 8, padding: 10 }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <select value={q.kind || 'quiz'} disabled={!canEdit} onChange={(e) => setQ(i, { kind: e.target.value })}>
+                <option value="pre_test">Pre-Test (first, any score)</option>
+                <option value="quiz">Quiz (anytime, must pass)</option>
+                <option value="post_test">Post-Test (after materials, must pass)</option>
+              </select>
               <select value={q.set_id} disabled={!canEdit} onChange={(e) => setQ(i, { set_id: e.target.value })} style={{ minWidth: 260 }}>
                 <option value="">-- pick an exam set --</option>
                 {sets.map((st) => <option key={st.id} value={st.id}>{st.name} ({st.question_count} q, pass {pct(st.passing_percent)})</option>)}
@@ -183,7 +188,7 @@ export function CourseEditor() {
               placeholder={'Instructions shown before the quiz, e.g.\nDear Participant, the Quiz has 5 multiple-choice questions...'} />
           </div>
         ))}
-        {canEdit && <button className="btn btn-sm" onClick={() => setForm({ ...form, quizzes: [...form.quizzes, { set_id: '', instructions: '' }] })}>+ Quiz</button>}
+        {canEdit && <button className="btn btn-sm" onClick={() => setForm({ ...form, quizzes: [...form.quizzes, { set_id: '', instructions: '', kind: 'quiz' }] })}>+ Quiz</button>}
         {canEdit && <div style={{ marginTop: 12 }}><button className="btn btn-primary" disabled={busy} onClick={save}>{isNew ? 'Create Course' : 'Save'}</button></div>}
       </div>
 
@@ -298,7 +303,8 @@ export function AssignmentProgress() {
           <table>
             <thead>
               <tr><th>Employee</th><th>Department</th><th>Materials</th>
-                {data.quizzes.map((q) => <th key={q.id}>{q.name}</th>)}
+                {data.quizzes.map((q) => <th key={q.id}>{q.kind === 'pre_test' ? 'Pre-Test' : q.kind === 'post_test' ? 'Post-Test' : 'Quiz'}<div className="muted" style={{ fontWeight: 400, fontSize: 11 }}>{q.name}</div></th>)}
+                {data.quizzes.some((q) => q.kind === 'pre_test') && data.quizzes.some((q) => q.kind === 'post_test') && <th style={{ textAlign: 'right' }}>Gain</th>}
                 <th style={{ textAlign: 'right' }}>Progress</th><th>Completed</th><th /></tr>
             </thead>
             <tbody>
@@ -308,7 +314,7 @@ export function AssignmentProgress() {
                   <td>{r.department}</td>
                   <td>{r.materials_done} / {r.materials}</td>
                   {r.quizzes.map((q) => {
-                    const [cls, label] = QUIZ_STATE[q.state] || QUIZ_STATE.not_taken;
+                    const [cls, label] = q.kind === 'pre_test' && q.done ? ['badge-success', 'Taken'] : QUIZ_STATE[q.state] || QUIZ_STATE.not_taken;
                     return (
                       <td key={q.id}>
                         {q.attempt_id && q.state !== 'not_taken' ? <Link to={`/hrd/exams/attempts/${q.attempt_id}`}><span className={`badge ${cls}`}>{label}</span></Link>
@@ -317,6 +323,10 @@ export function AssignmentProgress() {
                       </td>
                     );
                   })}
+                  {data.quizzes.some((q) => q.kind === 'pre_test') && data.quizzes.some((q) => q.kind === 'post_test') && (
+                    <td style={{ textAlign: 'right', fontWeight: 600, color: r.gain ? (r.gain.change >= 0 ? 'var(--success, #16a34a)' : 'var(--danger, #b91c1c)') : undefined }}>
+                      {r.gain ? `${r.gain.change >= 0 ? '+' : ''}${r.gain.change}` : '—'}</td>
+                  )}
                   <td style={{ textAlign: 'right', fontWeight: 600 }}>{r.percent}%</td>
                   <td>{r.completed_at ? fmtDay(r.completed_at) : '—'}</td>
                   <td>{r.completed_at && <button className="btn btn-sm" onClick={() => download(`/training/enrollments/${r.id}/certificate-hr`, `certificate-${r.name}.pdf`)}>Certificate</button>}</td>

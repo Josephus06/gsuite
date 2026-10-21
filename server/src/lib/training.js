@@ -42,6 +42,10 @@ function quizStanding(attempts) {
     state, attempt_id: shown?.id || null, status: shown?.status || null, percent: shown?.percent == null ? null : Number(shown.percent),
     best_percent: attempts.reduce((m, a) => (a.status === 'submitted' && a.percent != null ? Math.max(m ?? 0, Number(a.percent)) : m), null),
     attempts: attempts.filter((a) => a.status === 'submitted').length,
+    // The first submitted score: a Pre-Test's baseline.
+    first_percent: (() => { const f = attempts.filter((a) => a.status === 'submitted' && a.percent != null).sort((x, y) => Number(x.id) - Number(y.id))[0]; return f ? Number(f.percent) : null; })(),
+    // Submitted at all (any score) -- what a Pre-Test needs.
+    taken: attempts.some((a) => a.status === 'submitted'),
   };
 }
 
@@ -53,22 +57,36 @@ async function enrollmentProgress(enrollment) {
        FROM training_materials m LEFT JOIN training_material_progress p ON p.material_id = m.id AND p.enrollment_id = ?
       WHERE m.course_id = ? AND m.is_active = 1 ORDER BY m.sort_order, m.id`, [e.id, e.course_id]);
   const [cqs] = await pool.query(
-    `SELECT cq.id, cq.set_id, cq.instructions, st.name AS set_name, st.mode, st.rules, st.time_limit_minutes, st.passing_percent,
+    `SELECT cq.id, cq.set_id, cq.instructions, cq.kind, st.name AS set_name, st.mode, st.rules, st.time_limit_minutes, st.passing_percent,
             (SELECT COUNT(*) FROM exam_set_questions sq WHERE sq.set_id = st.id) AS fixed_count,
             (SELECT COALESCE(SUM(q.points), 0) FROM exam_set_questions sq JOIN exam_questions q ON q.id = sq.question_id WHERE sq.set_id = st.id) AS fixed_points
        FROM training_course_quizzes cq JOIN exam_sets st ON st.id = cq.set_id
-      WHERE cq.course_id = ? AND cq.is_active = 1 ORDER BY cq.sort_order, cq.id`, [e.course_id]);
+      WHERE cq.course_id = ? AND cq.is_active = 1
+      ORDER BY FIELD(COALESCE(cq.kind, 'quiz'), 'pre_test', 'quiz', 'post_test'), cq.sort_order, cq.id`, [e.course_id]);
   const quizzes = [];
   for (const cq of cqs) {
     const standing = quizStanding(await quizAttempts(e.assignment_id, cq.id, e.user_id));
     quizzes.push({
-      id: cq.id, set_id: cq.set_id, name: cq.set_name, instructions: cq.instructions,
+      id: cq.id, set_id: cq.set_id, name: cq.set_name, instructions: cq.instructions, kind: cq.kind || 'quiz',
       questions: setQuestionCount(cq, cq.fixed_count), total_marks: cq.mode === 'random' ? null : Number(cq.fixed_points),
       time_limit_minutes: cq.time_limit_minutes, passing_percent: Number(cq.passing_percent), ...standing,
     });
   }
   const materialsDone = materials.filter((m) => m.completed_at).length;
-  const quizzesPassed = quizzes.filter((q) => q.state === 'passed').length;
+  // PRE-TEST / POST-TEST (asked 2026-10-21). A Pre-Test is taken first -- any score, it is the
+  // baseline -- and the materials stay locked until it is; a Post-Test opens once every material is
+  // Completed and must be passed like a Quiz. The gain is the Post-Test's best less the Pre-Test's
+  // first score.
+  const preDone = quizzes.filter((q) => q.kind === 'pre_test').every((q) => q.taken);
+  const materialsLocked = !preDone;
+  for (const q of quizzes) {
+    q.done = q.kind === 'pre_test' ? q.taken : q.state === 'passed';
+    q.locked = q.kind === 'post_test' ? (!preDone || materialsDone < materials.length) : false;
+  }
+  const quizzesPassed = quizzes.filter((q) => q.done).length;
+  const pre = quizzes.find((q) => q.kind === 'pre_test' && q.first_percent != null);
+  const post = quizzes.find((q) => q.kind === 'post_test' && q.best_percent != null);
+  const gain = pre && post ? { pre: pre.first_percent, post: post.best_percent, change: Math.round((post.best_percent - pre.first_percent) * 10) / 10 } : null;
   const total = materials.length + quizzes.length;
   const done = materialsDone + quizzesPassed;
   let completedAt = e.completed_at;
@@ -81,7 +99,7 @@ async function enrollmentProgress(enrollment) {
   const complete = !!completedAt;
   return {
     materials: materials.map((m) => ({ ...m, file_size: Number(m.file_size) })), quizzes,
-    materials_done: materialsDone, quizzes_passed: quizzesPassed,
+    materials_done: materialsDone, quizzes_passed: quizzesPassed, materials_locked: materialsLocked, gain,
     percent: total ? Math.round((done / total) * 100) : 0, complete, completed_at: completedAt,
   };
 }
