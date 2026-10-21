@@ -379,7 +379,17 @@ async function extractQuestions({ pdfBase64, fileName, text, marked = false, top
     throw err;
   }
   const parsed = parseJson(raw, {});
-  return (Array.isArray(parsed.questions) ? parsed.questions : []).map((q) => {
+  return (Array.isArray(parsed.questions) ? parsed.questions : []).map((raw) => {
+    const q = { ...raw };
+    // A True/False sometimes comes back shaped as a choice ("True"/"False" choices, answer 0) or as
+    // the word: read it as the boolean the bank stores.
+    if (q.type === 'true_false') {
+      let a = q.answer;
+      if (typeof a === 'number' && Array.isArray(q.choices) && q.choices[a] != null) a = q.choices[a];
+      if (typeof a === 'string') a = /^\s*(true|t|tama|oo)\s*$/i.test(a) ? true : /^\s*(false|f|mali|hindi)\s*$/i.test(a) ? false : a;
+      q.answer = a;
+      q.choices = null;
+    }
     const c = cleanQuestion({ ...q, points: q.points ?? (q.type === 'essay' ? 5 : 1) });
     return {
       type: q.type, question: String(q.question || ''), choices: Array.isArray(q.choices) ? q.choices.map(String) : null,
