@@ -1010,7 +1010,9 @@ router.put('/:id/assembly-build', requireAuth, requireProductionFloor, async (re
     for (const l of lines) {
       if (!l.required || l.nonStock) continue;
       const onHand = Number(buildOnHand.get(`${l.item_id}|${l.location_id}`) || 0);
-      if (l.required > onHand) {
+      // Both sides to 4 decimals (the precision shown and stored), so a need that equals what is on
+      // hand is never refused over a floating-point remainder.
+      if (Math.round(l.required * 10000) > Math.round(onHand * 10000)) {
         return res.status(409).json({ error: `Not enough on hand for ${l.item_name}: need ${l.required.toFixed(4)}, only ${onHand.toFixed(4)} on hand.` });
       }
     }

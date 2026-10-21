@@ -359,6 +359,11 @@ async function deriveOnHand(db, itemIds) {
     const cutoff = cutoffs.sort()[0];
     for (const [pair, bal] of since.get(cutoff)) if (!byPair.has(pair)) byPair.set(pair, bal);
   }
+  // To the 4 decimals stock is kept in. The opening balance is a beginning qty times a conversion
+  // factor, added to summed movements in floating point, so 71 on hand could come back
+  // 70.99999999999 -- and an Assembly Build needing exactly 71 was refused "need 71.0000, only
+  // 71.0000 on hand" (JO-72534-1-15, 2026-10-21). Every caller compares against this figure.
+  for (const [pair, bal] of byPair) byPair.set(pair, Math.round(Number(bal) * 10000) / 10000);
   return byPair;
 }
 
