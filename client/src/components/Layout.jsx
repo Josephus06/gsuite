@@ -40,6 +40,9 @@ const NAV_STRUCTURE = [
       { route: '/hrd/incident-reports', label: 'Incident Report' },
       // Approved Official Business Trips, for HR to confirm (2026-10-20).
       { route: '/hrd/obt', label: 'OBT' },
+      // Examinations (2026-10-21): HR's sets, schedules and results; department heads' question bank.
+      { route: '/hrd/exams', label: 'Examinations' },
+      { route: '/hrd/exam-questions', label: 'Question Bank' },
     ],
   },
   // Forms. The four company request forms -- liquidation, payment, business trip, revolving fund --
@@ -50,6 +53,8 @@ const NAV_STRUCTURE = [
     children: [
       { route: '/forms', label: 'My Forms' },
       { route: '/forms/approval', label: 'Approval Queue' },
+      // The exams HR scheduled for you (2026-10-21) -- everyone has it, like the forms.
+      { route: '/exams', label: 'My Exams' },
     ],
   },
   // The company profile flipbook -- reference material anyone may show a customer,

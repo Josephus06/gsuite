@@ -133,6 +133,8 @@ export default function NotificationBell() {
     // Fleet reminders (lib/fleet.js): registration / insurance / emission / PMS due on a vehicle.
     if (n.related_type === 'Vehicle' && n.related_id) return `/assets/fleet/${n.related_id}`;
     if (n.related_type === 'Form' && n.related_id) return `/forms/${n.related_id}`;
+    // Examinations (2026-10-21): an exam scheduled for you, its result, an orientation date.
+    if (n.related_type === 'ExamAttempt' && n.related_id) return `/exams/${n.related_id}`;
     // BIR filing deadlines (lib/birDeadlines.js): Bir:<ewt|cwt|vat>, the month as YYYYMM.
     if (String(n.related_type || '').startsWith('Bir:')) {
       const m = String(n.related_id || '');

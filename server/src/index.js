@@ -76,6 +76,8 @@ const ticketRoutes = require('./routes/tickets');
 const hrdRoutes = require('./routes/hrd');
 const hrViolationRoutes = require('./routes/hrViolations');
 const obtRoutes = require('./routes/obt');
+const examRoutes = require('./routes/exams');
+const examAdminRoutes = require('./routes/examAdmin');
 const hrIncidentReportRoutes = require('./routes/hrIncidentReports');
 const formRoutes = require('./routes/forms');
 const bankReconciliationRoutes = require('./routes/bankReconciliation');
@@ -245,6 +247,8 @@ app.use((req, res, next) => {
       // A flipbook page is one exported brochure page at print resolution: 8MB of image
       // is ~10.7MB of base64, so it needs the raised parser too.
       || /^\/api\/product-flipbook\/?$/.test(req.path)
+      // Examinations: a PDF of questions (up to 10MB) for the AI to read into draft questions.
+      || /^\/api\/exam-admin\/questions\/import\/?$/.test(req.path)
       ))
     || isFeedWrite(req)
     ? attachmentUploadJson(req, res, next)
@@ -381,6 +385,8 @@ app.use('/api/tickets', ticketRoutes);
 app.use('/api/hrd', hrdRoutes);
 app.use('/api/hr-violations', hrViolationRoutes);
 app.use('/api/obt', obtRoutes);
+app.use('/api/exams', examRoutes);
+app.use('/api/exam-admin', examAdminRoutes);
 app.use('/api/hr-incident-reports', hrIncidentReportRoutes);
 app.use('/api/forms', formRoutes);
 app.use('/api/bank-reconciliation', bankReconciliationRoutes);
