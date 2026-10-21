@@ -4,7 +4,7 @@ const { requireAuth, requirePermission, userCan } = require('../middleware/auth'
 const { insertFor } = require('../lib/approvalNotifications');
 const {
   TYPES, CHOICE_TYPES, parseJson, phToday, day, cleanQuestion, targetUserIds, createAttempts, sweep, finalize,
-  topicBreakdown, recommendOrientations, aiAllowed, extractQuestions, evaluateAttempt, summarizeSchedule, nowUtc,
+  topicBreakdown, recommendOrientations, aiAllowed, extractQuestions, docxText, evaluateAttempt, summarizeSchedule, nowUtc,
 } = require('../lib/exams');
 
 const router = express.Router();
@@ -171,13 +171,23 @@ router.post('/questions/import', requireAuth, requirePermission(QB, 'can_add'), 
     const scope = await bankScope(req.user.id);
     const deptId = Number(req.body.department_id);
     if (!deptId || !inScope(scope, deptId)) return bad(res, 'Pick a department you keep questions for.', 403);
-    const pdf = String(req.body.file_data || '').replace(/^data:[^,]*,/, '');
-    const text = String(req.body.text || '').trim();
-    if (!pdf && !text) return bad(res, 'Attach a PDF or paste the questions.');
-    if (pdf && pdf.length > 14 * 1024 * 1024) return bad(res, 'The PDF is over 10MB.');
+    const file = String(req.body.file_data || '').replace(/^data:[^,]*,/, '');
+    let text = String(req.body.text || '').trim();
+    if (!file && !text) return bad(res, 'Attach a PDF or Word file, or paste the questions.');
+    if (file && file.length > 14 * 1024 * 1024) return bad(res, 'The file is over 10MB.');
+    // A Word file (2026-10-21) is read here into text -- the AI takes PDFs as files, not .docx.
+    const name = String(req.body.file_name || '').toLowerCase();
+    const isDocx = file && (name.endsWith('.docx') || /wordprocessingml/.test(String(req.body.file_data || '').slice(0, 100)));
+    if (file && !isDocx && name.endsWith('.doc')) return bad(res, 'Old .doc files cannot be read. Open it in Word and Save As .docx (or PDF).');
+    if (isDocx) {
+      try { text = await docxText(Buffer.from(file, 'base64')); } catch { return bad(res, 'That Word file could not be opened. Save it again as .docx and retry.'); }
+      if (!text.trim()) return bad(res, 'That Word file has no text in it (a scanned picture? Save it as PDF instead).');
+    }
+    if (text.length > 60000) return bad(res, 'That document is too long for the AI to read at once. Split it into smaller files (about 20 pages or 100 questions each) and import them one by one.', 413);
     if (!aiAllowed(req.user.id, 4)) return bad(res, 'Too many imports at once -- wait a minute.', 429);
     const [topics] = await pool.query('SELECT name FROM exam_topics WHERE is_active = 1 AND (department_id = ? OR department_id IS NULL)', [deptId]);
-    const drafts = await extractQuestions({ pdfBase64: pdf || null, fileName: req.body.file_name, text: pdf ? null : text, topics: topics.map((t) => t.name) });
+    const pdf = file && !isDocx ? file : null;
+    const drafts = await extractQuestions({ pdfBase64: pdf, fileName: req.body.file_name, text: pdf ? null : text, marked: isDocx, topics: topics.map((t) => t.name) });
     res.json({ drafts });
   } catch (err) { next(err); }
 });

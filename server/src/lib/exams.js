@@ -311,10 +311,44 @@ async function openai(messages, { json = false, temperature = 0.2 } = {}) {
   return String(data.choices?.[0]?.message?.content || '').trim();
 }
 
-// A PDF (or pasted text) of questions read into draft questions in the bank's format, for the
-// department head to review before anything is saved. Nothing the AI returns is trusted: every
-// draft goes through cleanQuestion, and a draft that fails it comes back with its problem shown.
-async function extractQuestions({ pdfBase64, fileName, text, topics }) {
+// A Word .docx (asked 2026-10-21) as plain text, one paragraph a line. A .docx is a zip; the text
+// is word/document.xml's runs. Text the document made BOLD, underlined or highlighted comes back
+// as **text** -- reviewers often mark the right answer that way -- and a numbered or bulleted
+// paragraph starts "- " so questions do not run together (Word keeps the numbers out of the text).
+async function docxText(buffer) {
+  const JSZip = require('jszip');
+  const zip = await JSZip.loadAsync(buffer);
+  const xml = await zip.file('word/document.xml')?.async('string');
+  if (xml == null) throw new Error('not a .docx');
+  const decode = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  const on = (rPr, tag) => new RegExp(`<w:${tag}(?:\\s[^>]*?)?/?>`).test(rPr) && !new RegExp(`<w:${tag}\\s+w:val="(?:0|false|none)"`).test(rPr);
+  const lines = [];
+  for (const p of xml.split(/<\/w:p>/)) {
+    const body = p.slice(p.lastIndexOf('<w:p ') >= 0 ? p.lastIndexOf('<w:p ') : p.lastIndexOf('<w:p>'));
+    let line = '';
+    let markOpen = false;
+    for (const r of body.match(/<w:r[ >][\s\S]*?<\/w:r>/g) || []) {
+      const rPr = (r.match(/<w:rPr>[\s\S]*?<\/w:rPr>/) || [''])[0];
+      const marked = on(rPr, 'b') || on(rPr, 'u') || /<w:highlight /.test(rPr) || /<w:shd [^>]*w:fill="(?!auto|FFFFFF)/i.test(rPr);
+      let t = '';
+      for (const m of r.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>|<w:tab\/>|<w:br\/>/g)) t += m[1] != null ? decode(m[1]) : m[0] === '<w:tab/>' ? '\t' : '\n';
+      if (!t) continue;
+      if (marked && !markOpen && t.trim()) { line += '**'; markOpen = true; }
+      if (!marked && markOpen) { line = `${line.replace(/\s+$/, '')}** `; markOpen = false; }
+      line += t;
+    }
+    if (markOpen) line = `${line.replace(/\s+$/, '')}**`;
+    if (!line.trim()) continue;
+    lines.push(/<w:numPr>/.test(body) ? `- ${line.trim()}` : line.trim());
+  }
+  return lines.join('\n');
+}
+
+// A PDF (or pasted text, or a Word file's text) of questions read into draft questions in the
+// bank's format, for the department head to review before anything is saved. Nothing the AI
+// returns is trusted: every draft goes through cleanQuestion, and a draft that fails it comes back
+// with its problem shown.
+async function extractQuestions({ pdfBase64, fileName, text, marked = false, topics }) {
   const instructions = [
     'You turn an exam or reviewer document from a Philippine printing and signage company into structured questions.',
     'Return JSON: {"questions":[{"type","question","choices","answer","topic","points"}]}.',
@@ -326,6 +360,8 @@ async function extractQuestions({ pdfBase64, fileName, text, topics }) {
     `topic: the subject the question tests. Prefer one of these existing topics when it fits: ${topics.length ? topics.join('; ') : '(none yet)'}; otherwise a short new topic name (2-4 words).`,
     'points: as the document says, else 1 (essay 5). Keep the wording of each question as written; fix only obvious OCR errors.',
     'Include every question in the document, in order. No commentary.',
+    ...(marked ? ['In this text, **double asterisks** mark words the document made bold, underlined or highlighted -- often the correct answer.',
+      'Do not copy the asterisks into the question or choices.'] : []),
   ].join(' ');
   const content = [];
   if (pdfBase64) content.push({ type: 'file', file: { filename: fileName || 'questions.pdf', file_data: `data:application/pdf;base64,${pdfBase64}` } });
@@ -398,5 +434,5 @@ async function summarizeSchedule({ title, setName, threshold, stats, topicAvg, w
 module.exports = {
   TYPES, TYPE_LABELS, CHOICE_TYPES, parseJson, nowUtc, phToday, day, utcText, windowEndUtc, shuffle,
   cleanQuestion, cleanGiven, grade, targetUserIds, createAttempts, syncLateJoiner, sweep, finalize,
-  topicBreakdown, recommendOrientations, aiAllowed, extractQuestions, evaluateAttempt, summarizeSchedule,
+  topicBreakdown, recommendOrientations, aiAllowed, docxText, extractQuestions, evaluateAttempt, summarizeSchedule,
 };

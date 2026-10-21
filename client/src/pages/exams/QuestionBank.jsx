@@ -140,8 +140,8 @@ function ImportModal({ departmentId, departments, topics, onClose, onSaved }) {
   const deptTopics = topics.filter((t) => !t.department_id || Number(t.department_id) === Number(dept));
 
   async function read() {
-    if (!file && !text.trim()) { setError('Attach a PDF or paste the questions.'); return; }
-    if (file && file.size > 10 * 1024 * 1024) { setError('The PDF is over 10MB.'); return; }
+    if (!file && !text.trim()) { setError('Attach a PDF or Word file, or paste the questions.'); return; }
+    if (file && file.size > 10 * 1024 * 1024) { setError('The file is over 10MB.'); return; }
     setBusy(true); setError('');
     try {
       const body = { department_id: dept };
@@ -179,8 +179,8 @@ function ImportModal({ departmentId, departments, topics, onClose, onSaved }) {
             <select value={dept} onChange={(e) => setDept(e.target.value)}>
               {departments.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
             </select></div>
-          <div className="field"><label>PDF (up to 10MB)</label>
-            <input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] || null)} /></div>
+          <div className="field"><label>PDF or Word .docx (up to 10MB)</label>
+            <input type="file" accept="application/pdf,.pdf,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(e) => setFile(e.target.files?.[0] || null)} /></div>
           {!file && (
             <div className="field"><label>…or paste the questions</label>
               <textarea rows={8} value={text} onChange={(e) => setText(e.target.value)} placeholder={'1. The press must be stopped before cleaning the rollers. (True/False)\n2. Which ink is used for... a) ... b) ...'} /></div>
@@ -359,7 +359,7 @@ export default function QuestionBank() {
         <h1>Question Bank</h1>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn" onClick={() => setTopicsOpen(true)}>Topics &amp; Orientations</button>
-          {can('/hrd/exam-questions', 'can_add') && <button className="btn" onClick={() => setImporting(true)}>Import PDF</button>}
+          {can('/hrd/exam-questions', 'can_add') && <button className="btn" onClick={() => setImporting(true)}>Import PDF / Word</button>}
           {can('/hrd/exam-questions', 'can_add') && (
             <button className="btn btn-primary" onClick={() => setEditing({ ...BLANK, department_id: filters.department_id || departments[0].id })}>Add Question</button>
           )}
