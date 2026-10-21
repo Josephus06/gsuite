@@ -1016,6 +1016,19 @@ router.put('/:id/assembly-build', requireAuth, requireProductionFloor, async (re
     }
 
     await conn.beginTransaction();
+    // Re-read the JO's built quantity UNDER A ROW LOCK and check again. The check above runs before
+    // the transaction, so two saves of the same build arriving together (a double click, a retry)
+    // both saw nothing built and both went through -- JO-199661-1-1 got AB-354253 and AB-354256 in
+    // the same second, its material taken twice (2026-10-21). The second one now waits for the
+    // first and is refused.
+    const [[locked]] = await conn.query('SELECT quantity_built FROM job_orders WHERE id = ? FOR UPDATE', [req.params.id]);
+    const lockedAvailable = Math.max(Math.floor(minFraction * jobQty) - Number(locked.quantity_built || 0), 0);
+    if (quantityToBuild > lockedAvailable) {
+      await conn.rollback();
+      return res.status(409).json({ error: lockedAvailable
+        ? `Quantity to Build exceeds the Available Qty to Build (${lockedAvailable}).`
+        : 'This has just been built -- nothing is left to build. Refresh the page.' });
+    }
     for (const l of lines) {
       if (l.required) {
         if (!l.nonStock) {
@@ -1027,7 +1040,8 @@ router.put('/:id/assembly-build', requireAuth, requireProductionFloor, async (re
         await conn.query('UPDATE job_order_processes SET total_built = total_built + ? WHERE id = ?', [l.required, l.id]);
       }
     }
-    const newQuantityBuilt = currentBuilt + quantityToBuild;
+    // From the locked figure, not the one read before the transaction.
+    const newQuantityBuilt = Number(locked.quantity_built || 0) + quantityToBuild;
     await conn.query(
       "UPDATE job_orders SET quantity_built = ?, production_stage = 'for_qi', updated_at = NOW() WHERE id = ?",
       [newQuantityBuilt, req.params.id]
@@ -1035,7 +1049,7 @@ router.put('/:id/assembly-build', requireAuth, requireProductionFloor, async (re
     await conn.query(
       `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
        VALUES ('JobOrder', ?, 'Updated', 'quantity_built', ?, ?, ?)`,
-      [req.params.id, String(currentBuilt), String(newQuantityBuilt), req.user.id]
+      [req.params.id, String(Number(locked.quantity_built || 0)), String(newQuantityBuilt), req.user.id]
     );
     // Every batch built needs its own inspection -- so a build always pushes the stage
     // back to "For QI", even if an earlier batch on this same JO already cleared it.

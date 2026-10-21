@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
@@ -244,6 +244,9 @@ function AssemblyBuildModal({ jo, onClose, onSaved }) {
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [quantityToBuild, setQuantityToBuild] = useState('');
   const [saving, setSaving] = useState(false);
+  // Set at once, unlike `saving`: a double click lands twice before the button re-renders disabled
+  // (JO-199661-1-1 was built twice in one second, 2026-10-21). The server refuses the second too.
+  const inFlight = useRef(false);
   const [error, setError] = useState('');
 
   const processes = jo.processes || [];
@@ -261,6 +264,8 @@ function AssemblyBuildModal({ jo, onClose, onSaved }) {
       setError(`Quantity to Build cannot exceed the Available Qty to Build (${availableQtyToBuild}).`);
       return;
     }
+    if (inFlight.current) return;
+    inFlight.current = true;
     setSaving(true);
     setError('');
     try {
@@ -269,6 +274,7 @@ function AssemblyBuildModal({ jo, onClose, onSaved }) {
     } catch (err) {
       setError(err.response?.data?.error || 'Build failed');
     } finally {
+      inFlight.current = false;
       setSaving(false);
     }
   }
