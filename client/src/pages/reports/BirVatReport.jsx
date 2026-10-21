@@ -77,7 +77,7 @@ export default function BirVatReport() {
               </table>
             </div>
             <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-              By each invoice line&apos;s tax code. Credit memos that only clear a customer&apos;s withholding tax are not sales returns and are left out.
+              By each invoice line&apos;s tax code. Returns are credit memos for returns or allowances only -- credit memos that clear a customer&apos;s withholding tax or write off a bad debt are not sales returns and are left out.
             </div>
           </div>
 

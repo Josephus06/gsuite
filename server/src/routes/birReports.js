@@ -403,9 +403,10 @@ router.put('/cwt/:invoiceId', requireAuth, requirePermission(CWT_ROUTE, 'can_edi
 //
 // Output Tax less Input Tax for the month (2550M/Q):
 //   Output   Sales Invoice lines by their tax code -- VATable (12%), Zero-rated, Exempt -- less the
-//            month's Credit Memo lines the same way (sales returns / allowances). A credit memo that
-//            only clears a customer's withholding (to Creditable Withholding Tax, 14200) is not a
-//            sale and is left out.
+//            month's Credit Memo lines the same way (sales returns / allowances). Credit memo lines
+//            that are not a return are left out (RETURN_LINE): those clearing a customer's
+//            withholding (item WITHHOLDING TAX, or the memo credited to Creditable Withholding Tax,
+//            14200) and write-offs (WRITE OFF/BAD DEBTS -- September's 2018-2020 balances).
 //   Input    Vendor Bills' tax, plus direct Cheques' tax, less Bill Credits' tax. A bill with no tax
 //            is a purchase that is not subject to VAT (non-VAT supplier, exempt).
 // Cancelled / voided documents are left out. Due the 15th of the following month.
@@ -414,6 +415,11 @@ const VAT_CLASS = (col) => `CASE
     WHEN ${col} LIKE '%EX%' THEN 'exempt'
     WHEN ${col} LIKE '%12%' THEN 'vatable'
     ELSE 'unclassified' END`;
+// A credit memo line that is a sales return / allowance -- not a withholding clearance or a write-off.
+const RETURN_LINE = `COALESCE(a.account_code, '') <> '14200'
+  AND UPPER(COALESCE(cml.item_name, cml.description, '')) NOT LIKE '%WITHHOLDING%'
+  AND UPPER(COALESCE(cml.item_name, cml.description, '')) NOT LIKE '%WRITE OFF%'
+  AND UPPER(COALESCE(cml.item_name, cml.description, '')) NOT LIKE '%BAD DEBT%'`;
 const OUTPUT_CLASSES = [['vatable', 'VATable sales (12%)'], ['zero_rated', 'Zero-rated sales'], ['exempt', 'VAT-exempt sales'], ['unclassified', 'No tax code']];
 
 router.get('/vat', requireAuth, requirePermission(VAT_ROUTE, 'can_view'), async (req, res, next) => {
@@ -430,7 +436,7 @@ router.get('/vat', requireAuth, requirePermission(VAT_ROUTE, 'can_view'), async 
               COALESCE(SUM(cml.net_of_tax), 0) AS net, COALESCE(SUM(cml.tax_amount), 0) AS tax
          FROM credit_memo_lines cml JOIN credit_memos cm ON cm.id = cml.credit_memo_id
          LEFT JOIN chart_of_accounts a ON a.id = cm.source_account_id
-        WHERE cm.voided_at IS NULL AND cm.date_created BETWEEN ? AND ? AND COALESCE(a.account_code, '') <> '14200'
+        WHERE cm.voided_at IS NULL AND cm.date_created BETWEEN ? AND ? AND ${RETURN_LINE}
         GROUP BY cls`, [m.from, m.to]);
     const sales = new Map(salesLines.map((r) => [r.cls, r]));
     const returns = new Map(cmLines.map((r) => [r.cls, r]));
@@ -473,10 +479,12 @@ router.get('/vat', requireAuth, requirePermission(VAT_ROUTE, 'can_view'), async 
            LEFT JOIN customers c ON c.id = COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id)
           WHERE si.status <> 'cancelled' AND si.date_created BETWEEN ? AND ?
          UNION ALL
-         SELECT 'Output', 'Credit Memo', cm.credit_memo_no, cm.date_created, c.name, c.tin, -cm.net_of_tax, -cm.tax_amount
-           FROM credit_memos cm LEFT JOIN customers c ON c.id = cm.customer_id
+         SELECT 'Output', 'Credit Memo', cm.credit_memo_no, cm.date_created, c.name, c.tin, -SUM(cml.net_of_tax), -SUM(cml.tax_amount)
+           FROM credit_memos cm JOIN credit_memo_lines cml ON cml.credit_memo_id = cm.id
+           LEFT JOIN customers c ON c.id = cm.customer_id
            LEFT JOIN chart_of_accounts a ON a.id = cm.source_account_id
-          WHERE cm.voided_at IS NULL AND cm.date_created BETWEEN ? AND ? AND COALESCE(a.account_code, '') <> '14200'
+          WHERE cm.voided_at IS NULL AND cm.date_created BETWEEN ? AND ? AND ${RETURN_LINE}
+          GROUP BY cm.id
          UNION ALL
          SELECT 'Input', 'Vendor Bill', vb.bill_no, vb.date_created, s.name, s.tin, vb.net_of_tax, vb.tax_amount
            FROM vendor_bills vb LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
