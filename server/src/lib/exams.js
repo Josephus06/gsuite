@@ -19,10 +19,12 @@ const TYPE_LABELS = {
 };
 const CHOICE_TYPES = ['multiple_choice', 'multiple_select'];
 
+// mysql2 already decodes JSON columns, so a text answer ("cyan", an essay) arrives as a plain
+// string that is not itself JSON: it is kept as it is, never dropped.
 const parseJson = (v, fallback = null) => {
   if (v == null) return fallback;
   if (typeof v !== 'string') return v;
-  try { return JSON.parse(v); } catch { return fallback; }
+  try { return JSON.parse(v); } catch { return v; }
 };
 
 // Times are UTC 'YYYY-MM-DD HH:MM:SS', written and compared here in JS so a database clock in
