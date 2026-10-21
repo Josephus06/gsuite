@@ -35,7 +35,8 @@ export default function MyExams() {
                 {rows.length === 0 && <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>No exams scheduled for you.</td></tr>}
                 {rows.map((r) => (
                   <tr key={r.id}>
-                    <td data-label="Exam" style={{ fontWeight: 600 }}>{r.title}</td>
+                    <td data-label="Exam" style={{ fontWeight: 600 }}>{r.title}
+                      {r.training_enrollment_id && <div><Link className="link-btn" style={{ fontSize: 11, fontWeight: 400 }} to={`/trainings/${r.training_enrollment_id}`}>Course quiz: {r.course_title}</Link></div>}</td>
                     <td data-label="Set">{r.set_name}</td>
                     <td data-label="Take it between">{fmtDay(r.start_date)} — {fmtDay(r.end_date)}</td>
                     <td data-label="Questions">{r.question_count}</td>

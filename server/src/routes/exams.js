@@ -26,7 +26,9 @@ async function ownAttempt(req, res) {
   const [[a]] = await pool.query(
     `SELECT a.*, s.title, s.start_date, s.end_date, s.status AS schedule_status,
             st.name AS set_name, st.description, st.time_limit_minutes, st.passing_percent, st.mode, st.rules,
-            u.display_name AS user_name
+            u.display_name AS user_name,
+            -- A course quiz (lib/training.js): the course it belongs to, to go back to.
+            (SELECT en.id FROM training_enrollments en WHERE en.assignment_id = s.training_assignment_id AND en.user_id = a.user_id LIMIT 1) AS training_enrollment_id
        FROM exam_attempts a JOIN exam_schedules s ON s.id = a.schedule_id JOIN exam_sets st ON st.id = a.set_id
        JOIN users u ON u.id = a.user_id
       WHERE a.id = ?`, [req.params.id]);
@@ -45,7 +47,8 @@ router.get('/my', requireAuth, requirePermission(ROUTE, 'can_view'), async (req,
       `SELECT a.id, a.status, a.started_at, a.submitted_at, a.auto_submitted, a.score, a.max_score, a.percent, a.passed, a.essays_pending,
               s.title, s.start_date, s.end_date, s.status AS schedule_status, st.name AS set_name, st.time_limit_minutes, st.passing_percent,
               st.mode, st.rules, (SELECT COUNT(*) FROM exam_set_questions sq WHERE sq.set_id = a.set_id) AS fixed_count,
-              JSON_LENGTH(a.question_order) AS drawn_count
+              JSON_LENGTH(a.question_order) AS drawn_count, (SELECT en.id FROM training_enrollments en WHERE en.assignment_id = s.training_assignment_id AND en.user_id = a.user_id LIMIT 1) AS training_enrollment_id,
+              (SELECT c.title FROM training_assignments ta JOIN training_courses c ON c.id = ta.course_id WHERE ta.id = s.training_assignment_id) AS course_title
          FROM exam_attempts a JOIN exam_schedules s ON s.id = a.schedule_id JOIN exam_sets st ON st.id = a.set_id
         WHERE a.user_id = ? AND s.status <> 'cancelled'
         ORDER BY FIELD(a.status, 'in_progress', 'assigned', 'submitted', 'missed'), s.end_date, a.id DESC`, [req.user.id]);
@@ -67,6 +70,7 @@ router.get('/attempts/:id', requireAuth, requirePermission(ROUTE, 'can_view'), a
     if (!a) return undefined;
     const head = {
       id: a.id, status: a.status, title: a.title, set_name: a.set_name, description: a.description,
+      training_enrollment_id: a.training_enrollment_id || null,
       start_date: a.start_date, end_date: a.end_date, time_limit_minutes: a.time_limit_minutes, passing_percent: a.passing_percent,
       can_start: ['assigned', 'in_progress'].includes(a.status) && openNow(a),
     };

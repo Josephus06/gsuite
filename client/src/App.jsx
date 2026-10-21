@@ -223,6 +223,9 @@ import QuestionBank from './pages/exams/QuestionBank';
 import Examinations from './pages/exams/Examinations';
 import { ScheduleResults, AttemptResult } from './pages/exams/ExamResults';
 import EmployeeRecord from './pages/exams/EmployeeRecord';
+import MyTraining from './pages/training/MyTraining';
+import CourseView from './pages/training/CourseView';
+import { TrainingCourses, CourseEditor, AssignmentProgress } from './pages/training/TrainingCourses';
 import HrIncidentReports from './pages/HrIncidentReports';
 import HrIncidentReportView from './pages/HrIncidentReportView';
 import NonStandardJobOrders from './pages/NonStandardJobOrders';
@@ -327,6 +330,11 @@ function App() {
         <Route path="/hrd/exams/schedules/:id" element={<ScheduleResults />} />
         <Route path="/hrd/exams/attempts/:id" element={<AttemptResult />} />
         <Route path="/hrd/exams/employees/:userId" element={<EmployeeRecord />} />
+        <Route path="/hrd/training" element={<TrainingCourses />} />
+        <Route path="/hrd/training/courses/:id" element={<CourseEditor />} />
+        <Route path="/hrd/training/assignments/:id" element={<AssignmentProgress />} />
+        <Route path="/trainings" element={<MyTraining />} />
+        <Route path="/trainings/:id" element={<CourseView />} />
         <Route path="/hrd/exam-questions" element={<QuestionBank />} />
         <Route path="/exams" element={<MyExams />} />
         <Route path="/exams/:id" element={<TakeExam />} />

@@ -11,6 +11,8 @@ export default function EmployeeRecord() {
   const { userId } = useParams();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const [courses, setCourses] = useState([]);
+  useEffect(() => { api.get(`/training/users/${userId}`).then(({ data: d }) => setCourses(d)).catch(() => setCourses([])); }, [userId]);
   useEffect(() => {
     api.get(`/exam-admin/employees/${userId}`).then(({ data: d }) => setData(d)).catch((e) => setError(e.response?.data?.error || 'Could not load the record.'));
   }, [userId]);
@@ -102,6 +104,30 @@ export default function EmployeeRecord() {
           </table>
         </div>
       </div>
+
+      {courses.length > 0 && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <h3 style={{ marginTop: 0 }}>Training Courses</h3>
+          <div className="table-wrap">
+            <table className="responsive-cards">
+              <thead><tr><th>Course</th><th>Window</th><th>Materials</th><th>Quizzes Passed</th><th style={{ textAlign: 'right' }}>Progress</th><th>Completed</th><th /></tr></thead>
+              <tbody>
+                {courses.map((t) => (
+                  <tr key={t.id}>
+                    <td data-label="Course" style={{ fontWeight: 600 }}>{t.title}</td>
+                    <td data-label="Window">{fmtDay(t.start_date)} — {fmtDay(t.end_date)}</td>
+                    <td data-label="Materials">{t.materials_done} / {t.materials}</td>
+                    <td data-label="Quizzes Passed">{t.quizzes_passed} / {t.quizzes}</td>
+                    <td data-label="Progress" style={{ textAlign: 'right', fontWeight: 600 }}>{t.percent}%</td>
+                    <td data-label="Completed">{t.completed_at ? <span className="badge badge-success">{fmtDay(t.completed_at)}</span> : '—'}</td>
+                    <td><Link className="btn btn-sm" to={`/hrd/training/assignments/${t.assignment_id}`}>Progress</Link></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="card">
         <h3 style={{ marginTop: 0 }}>Re-orientation</h3>

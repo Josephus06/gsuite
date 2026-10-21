@@ -43,6 +43,8 @@ const NAV_STRUCTURE = [
       // Examinations (2026-10-21): HR's sets, schedules and results; department heads' question bank.
       { route: '/hrd/exams', label: 'Examinations' },
       { route: '/hrd/exam-questions', label: 'Question Bank' },
+      // Training courses (2026-10-21): materials + quizzes + certificate.
+      { route: '/hrd/training', label: 'Training Courses' },
     ],
   },
   // Forms. The four company request forms -- liquidation, payment, business trip, revolving fund --
@@ -55,6 +57,7 @@ const NAV_STRUCTURE = [
       { route: '/forms/approval', label: 'Approval Queue' },
       // The exams HR scheduled for you (2026-10-21) -- everyone has it, like the forms.
       { route: '/exams', label: 'My Exams' },
+      { route: '/trainings', label: 'My Training' },
     ],
   },
   // The company profile flipbook -- reference material anyone may show a customer,

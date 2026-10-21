@@ -243,7 +243,9 @@ export default function TakeExam() {
       <h1>{exam.title} <span className="muted" style={{ fontSize: '0.55em', fontWeight: 400 }}>{exam.set_name}</span></h1>
       {exam.status === 'in_progress'
         ? <div style={{ fontSize: 22, fontWeight: 700, color: left != null && left < 300 ? 'var(--danger, #b91c1c)' : undefined }}>⏱ {clock(Math.max(0, left || 0))}</div>
-        : <Link className="btn btn-sm" to="/exams">Back to My Exams</Link>}
+        : exam.training_enrollment_id
+          ? <Link className="btn btn-sm" to={`/trainings/${exam.training_enrollment_id}`}>Back to Course</Link>
+          : <Link className="btn btn-sm" to="/exams">Back to My Exams</Link>}
     </div>
   );
 

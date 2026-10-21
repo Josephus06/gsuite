@@ -14,7 +14,8 @@ const LEGAL = 'CEBU GRAPHICSTAR IMAGING CORP.';
 const longDate = (ymd) => new Date(`${String(ymd).slice(0, 10)}T00:00:00`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 
 // { name, title, setName, percent, date (YYYY-MM-DD), certificateNo } -> Buffer
-function certificatePdf({ name, title, setName, percent, date, certificateNo }) {
+// heading / detail replace the exam wording, for a training course's certificate (lib/training.js).
+function certificatePdf({ name, title, setName, percent, date, certificateNo, heading, detail }) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 0, info: { Title: `Certificate - ${name} - ${title}` } });
     const chunks = [];
@@ -42,12 +43,12 @@ function certificatePdf({ name, title, setName, percent, date, certificateNo }) 
     y += 44;
     doc.moveTo(W / 2 - 210, y).lineTo(W / 2 + 210, y).lineWidth(0.8).strokeColor(ORANGE).stroke();
     y += 18;
-    doc.font('Helvetica').fontSize(13).fillColor(MUTED).text('has successfully completed the examination', 0, y, { width: W, align: 'center' });
+    doc.font('Helvetica').fontSize(13).fillColor(MUTED).text(heading || 'has successfully completed the examination', 0, y, { width: W, align: 'center' });
     y += 24;
     doc.font('Helvetica-Bold').fontSize(19).fillColor(BLUE).text(title, 60, y, { width: W - 120, align: 'center' });
     y += 30;
     doc.font('Helvetica').fontSize(12).fillColor(MUTED)
-      .text(`${setName ? `${setName} · ` : ''}with a score of ${Number(percent).toFixed(1).replace(/\.0$/, '')}% on ${longDate(date)}`, 0, y, { width: W, align: 'center' });
+      .text(detail || `${setName ? `${setName} · ` : ''}with a score of ${Number(percent).toFixed(1).replace(/\.0$/, '')}% on ${longDate(date)}`, 0, y, { width: W, align: 'center' });
 
     // Signature line and the company.
     const sy = H - 132;

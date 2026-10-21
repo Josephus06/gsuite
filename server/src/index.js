@@ -78,6 +78,7 @@ const hrViolationRoutes = require('./routes/hrViolations');
 const obtRoutes = require('./routes/obt');
 const examRoutes = require('./routes/exams');
 const examAdminRoutes = require('./routes/examAdmin');
+const trainingRoutes = require('./routes/training');
 const hrIncidentReportRoutes = require('./routes/hrIncidentReports');
 const formRoutes = require('./routes/forms');
 const bankReconciliationRoutes = require('./routes/bankReconciliation');
@@ -227,6 +228,10 @@ app.use((req, res, next) => {
   // Chat messages carry photos and files (2026-10-13): up to 25MB together (lib/chatMedia.js), ~34MB of
   // base64 -- one-to-one and group sends.
   if (req.method === 'POST' && (/^\/api\/chat\/send\/?$/.test(req.path) || /^\/api\/chat\/groups\/\d+\/send\/?$/.test(req.path))) {
+    return carouselUploadJson(req, res, next);
+  }
+  // Training course materials (2026-10-21): a file up to 25MB, kept in the database as the Archiver does.
+  if (req.method === 'POST' && /^\/api\/training\/courses\/\d+\/materials\/?$/.test(req.path)) {
     return carouselUploadJson(req, res, next);
   }
   // AI Rendering takes a site photo and a logo, up to 10MB each: ~27MB of base64 together.
@@ -387,6 +392,7 @@ app.use('/api/hr-violations', hrViolationRoutes);
 app.use('/api/obt', obtRoutes);
 app.use('/api/exams', examRoutes);
 app.use('/api/exam-admin', examAdminRoutes);
+app.use('/api/training', trainingRoutes);
 app.use('/api/hr-incident-reports', hrIncidentReportRoutes);
 app.use('/api/forms', formRoutes);
 app.use('/api/bank-reconciliation', bankReconciliationRoutes);

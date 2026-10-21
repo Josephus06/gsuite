@@ -632,7 +632,9 @@ async function runExamReminders() {
     }, null);
     sent += 1;
   }
-  return { reminders: sent };
+  // Training courses (lib/training.js) are reminded on the same daily run.
+  const training = await require('./training').runTrainingReminders();
+  return { reminders: sent, ...training };
 }
 
 module.exports = {
