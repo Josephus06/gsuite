@@ -100,12 +100,14 @@ export default function TransferOrderPrint() {
             www.graphicstar.com.ph
           </div>
         </div>
-        {/* No memo on the printout -- neither the order's nor the lines' (asked 2026-10-07). */}
+        {/* The order's memo prints under Transfer To, as the screen shows it (asked 2026-10-21); the
+            lines' memos stay off the printout (asked 2026-10-07). */}
         <div className="top-title">Transfer Order</div>
         <div className="top-cols">
           <div>
             <div>Withdraw From : {to.withdraw_from_name || ''}</div>
             <div>Transfer To : {to.transfer_to_name || ''}</div>
+            {to.memo && <div style={{ whiteSpace: 'pre-wrap' }}>Memo : {to.memo}</div>}
             <div>Requestor : {to.requestor_name || ''}</div>
             {to.job_order_no && <div>Job Order : {to.job_order_no}</div>}
           </div>
