@@ -28,12 +28,13 @@ export default function SalesOrderEdit() {
     (async () => {
       try {
         const { data } = await api.get(`/sales-orders/${id}`);
-        const [cust, reps, locs, taxes, terms] = await Promise.all([
+        const [cust, reps, locs, taxes, terms, divisions] = await Promise.all([
           data.customer_id ? api.get(`/customers/${data.customer_id}`).catch(() => ({ data: {} })) : Promise.resolve({ data: {} }),
           api.get('/employees').catch(() => ({ data: [] })), api.get('/lookups/locations'), api.get('/lookups/taxes'),
           api.get('/lookups/payment-terms').catch(() => ({ data: [] })),
+          api.get('/lookups/sales-divisions').catch(() => ({ data: [] })),
         ]);
-        setLk({ contacts: cust.data.contacts || [], reps: reps.data, locations: locs.data, taxes: taxes.data, terms: terms.data || [] });
+        setLk({ contacts: cust.data.contacts || [], reps: reps.data, locations: locs.data, taxes: taxes.data, terms: terms.data || [], divisions: divisions.data || [] });
         if (!data.customer_locked) api.get('/customers').then((r) => setCustomers(r.data)).catch(() => {});
         setSo(data);
         setHead({ ...data, date_created: day(data.date_created) });
@@ -87,7 +88,8 @@ export default function SalesOrderEdit() {
     try {
       const body = { customer_id: head.customer_id, ...Object.fromEntries(['ref_no', 'date_created', 'contact_person_id', 'contact_email', 'contact_title', 'contact_phone',
         'blanket_po_memo', 'sales_rep_id', 'office_location_id', 'contract_description', 'memo', 'shipping_address',
-        'production_lead_time', 'price_validity', 'order_confirmation_type', 'order_confirmation_ref', 'credit_term', 'bill_to_contact_number']
+        'production_lead_time', 'price_validity', 'order_confirmation_type', 'order_confirmation_ref', 'credit_term', 'bill_to_contact_number',
+        'sales_division_id']
         .map((k) => [k, head[k] ?? null])),
       lines: lines.map((l) => ({
         id: l.id, job_location_id: l.job_location_id || null, description: l.description, quantity: l.quantity, units: l.units, price_per_unit: l.price_per_unit,
@@ -160,6 +162,15 @@ export default function SalesOrderEdit() {
               <select {...h('office_location_id')}>
                 <option value="">—</option>
                 {lk.locations.map((l) => <option key={l.id} value={l.id}>{l.location_name}</option>)}
+              </select>
+            </div>
+            {/* Sales Division (asked 2026-10-21): editing a Sales Order is a System Admin's alone. */}
+            <div className="field">
+              <label>Sales Division</label>
+              <select {...h('sales_division_id')}>
+                <option value="">—</option>
+                {(lk.divisions || []).filter((d) => d.is_active === undefined || Number(d.is_active) || String(d.id) === String(so.sales_division_id))
+                  .map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
             </div>
           </div>

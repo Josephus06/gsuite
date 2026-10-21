@@ -242,7 +242,10 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
 const SO_HEADER_EDIT = ['ref_no', 'date_created', 'contact_person_id', 'contact_email', 'contact_title', 'contact_phone',
   'blanket_po_memo', 'sales_rep_id', 'office_location_id', 'contract_description', 'memo', 'shipping_address',
   'production_lead_time', 'price_validity', 'order_confirmation_type', 'order_confirmation_ref', 'credit_term',
-  'bill_to_contact_number'];
+  'bill_to_contact_number',
+  // Sales Division (asked 2026-10-21) -- like every field here, a System Admin's to change (PUT below).
+  // Its Job Orders read the division through the SO, so they follow it.
+  'sales_division_id'];
 const SO_LINE_EDIT = ['description', 'job_location_id', 'quantity', 'units', 'price_per_unit', 'tax_code_id', 'length', 'width', 'height', 'uom',
   'shipping', 'remarks', 'memo', 'delivery_date', 'delivery_time'];
 
@@ -544,6 +547,10 @@ router.put('/:id', requireAuth, requireOpenPeriod('sales_orders', 'non_gl'), asy
     if (head.sales_rep_id && String(head.sales_rep_id) !== String(so.sales_rep_id ?? '')) {
       const [[emp]] = await conn.query('SELECT is_active FROM employees WHERE id = ?', [head.sales_rep_id]);
       if (!emp || !Number(emp.is_active)) throw Object.assign(new Error('That Sales Rep is an inactive employee record. Choose the active one.'), { status: 400 });
+    }
+    if (head.sales_division_id && String(head.sales_division_id) !== String(so.sales_division_id ?? '')) {
+      const [[div]] = await conn.query('SELECT id FROM sales_divisions WHERE id = ?', [head.sales_division_id]);
+      if (!div) throw Object.assign(new Error('That Sales Division does not exist.'), { status: 400 });
     }
     head.date_created = day(head.date_created) || day(so.date_created);
     await conn.query(`UPDATE sales_orders SET ${SO_HEADER_EDIT.map((f) => `${f} = ?`).join(', ')}, updated_at = NOW() WHERE id = ?`,
