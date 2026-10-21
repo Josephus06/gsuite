@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
+import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
 
@@ -149,18 +150,22 @@ function ChargeModal({ types, onClose, onSaved }) {
       <div className="review-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
         <div className="field">
           <label>Violation *</label>
-          {/* Grouped under the code-of-conduct headings rather than prefixed with them. These run
-              to 78 characters, so "heading — name" on every line would push the actual violation
-              off the end of the dropdown. */}
-          <select value={form.violation_type_id}
-            onChange={(e) => setForm({ ...form, violation_type_id: e.target.value })}>
-            <option value="">--Select--</option>
-            {grouped.map(([category, items]) => (
-              <optgroup key={category} label={category}>
-                {items.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </optgroup>
-            ))}
-          </select>
+          {/* A searchable list in a modal (asked 2026-10-21) -- the dropdown ran past the screen. In the
+              code of conduct's own order (grouped by heading), each with its heading beside it;
+              searchable by violation, heading or severity. */}
+          <EntityPicker
+            label="Violation" items={grouped.flatMap(([, items]) => items)} value={form.violation_type_id}
+            getLabel={(t) => t.name}
+            columns={[
+              { key: 'name', label: 'Violation' },
+              { key: 'category', label: 'Category', render: (t) => t.category || 'Uncategorised' },
+              { key: 'severity', label: 'Severity', render: (t) => <span className={`badge ${SEVERITY_BADGE[t.severity] || 'badge-muted'}`}>{t.severity}</span> },
+            ]}
+            searchKeys={['name', 'category', 'severity']}
+            placeholder="--Select Violation--"
+            onSelect={(t) => setForm({ ...form, violation_type_id: t ? t.id : '' })}
+            onClear={() => setForm({ ...form, violation_type_id: '' })}
+          />
           {types.length === 0 && (
             <div style={{ color: '#b45309', fontSize: 12, marginTop: 4 }}>
               No violations defined yet. HR must set up the list first.
