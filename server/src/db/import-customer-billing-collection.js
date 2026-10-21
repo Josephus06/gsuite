@@ -7,8 +7,8 @@
 //   Address_OD         address               ReleasingLoc_OD    releasing_location
 //   PaymentMethod_OD   payment_method        OtherInfo_OD       other_info
 //
-// Customers matched as import-customers-full.js does: by customer_code = UserPK_Cust, else by a name
-// only one T1S customer has. A customer that already has Billing and Collection rows in T1S is left
+// Customers matched as import-customers-full.js does: by customer_code = UserPK_Cust, else by name --
+// a name T1S has more than once by its TIN, then its address. A customer that already has Billing and Collection rows in T1S is left
 // alone (entered or edited here since), so re-running adds nothing twice.
 //
 //   node src/db/import-customer-billing-collection.js            preview
@@ -51,17 +51,31 @@ async function main() {
   const withRows = src.filter((s) => Array.isArray(s.customer_billings) && s.customer_billings.length);
   console.log(`Source: ${src.length} customers, ${withRows.length} with Billing and Collection rows (${withRows.reduce((n, s) => n + s.customer_billings.length, 0)} rows).`);
 
-  const [cust] = await pool.query('SELECT id, customer_code, name FROM customers');
+  const [cust] = await pool.query('SELECT id, customer_code, name, tin, address FROM customers');
   const byCode = new Map(cust.filter((c) => c.customer_code).map((c) => [String(c.customer_code).trim().toUpperCase(), c]));
   const byName = new Map();
-  for (const c of cust) { const k = nk(c.name); byName.set(k, byName.has(k) ? null : c); } // null = more than one
+  for (const c of cust) { const k = nk(c.name); if (!byName.has(k)) byName.set(k, []); byName.get(k).push(c); }
+  // A name T1S has more than once (ROBINSONS LAND CORPORATION: Dusit Thani, Ortigas, NUSTAR) is told
+  // apart by TIN (digits; the source pads the branch code differently), then by address.
+  const digits = (v) => String(v || '').replace(/\D/g, '');
+  const tinKey = (v) => digits(v).slice(0, 9) + digits(v).slice(9).replace(/^0+/, '');
+  const pickByName = (s) => {
+    const list = byName.get(nk(s.Name_Cust)) || [];
+    if (list.length <= 1) return list[0] || null;
+    const t = tinKey(s.TIN_Cust);
+    const byTin = t.length >= 9 ? list.filter((c) => tinKey(c.tin) === t) : [];
+    if (byTin.length === 1) return byTin[0];
+    const a = nk(s.Address_Cust).slice(0, 30);
+    const byAddr = a ? (byTin.length ? byTin : list).filter((c) => nk(c.address).slice(0, 30) === a) : [];
+    return byAddr.length === 1 ? byAddr[0] : null;
+  };
   const [have] = await pool.query('SELECT DISTINCT customer_id FROM customer_billing_contacts');
   const hasRows = new Set(have.map((h) => Number(h.customer_id)));
 
   const out = { customers: 0, rows: 0, alreadyHave: 0, unmatched: [] };
   for (const s of withRows) {
-    const c = (clean(s.UserPK_Cust) && byCode.get(clean(s.UserPK_Cust).toUpperCase())) || byName.get(nk(s.Name_Cust)) || null;
-    if (!c) { out.unmatched.push(clean(s.Name_Cust) || clean(s.UserPK_Cust)); continue; }
+    const c = (clean(s.UserPK_Cust) && byCode.get(clean(s.UserPK_Cust).toUpperCase())) || pickByName(s);
+    if (!c) { out.unmatched.push(`${clean(s.Name_Cust) || clean(s.UserPK_Cust)} (TIN ${clean(s.TIN_Cust) || 'none'})`); continue; }
     if (hasRows.has(Number(c.id))) { out.alreadyHave += 1; continue; }
     const rows = s.customer_billings.map((b) => [
       cut(clean(b.ContactPerson_OD), 255), cut(clean(b.ContactNumber_OD), 255), cut(clean(b.EmailAdd_OD), 255), cut(clean(b.Address_OD), 500),
