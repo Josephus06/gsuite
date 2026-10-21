@@ -348,6 +348,8 @@ export default function PurchaseOrderView() {
                   <th>Item</th>
                   <th>Purchase Desc.</th>
                   {po.type === 'PO1' && <th>PR #</th>}
+                  {/* The PR line's own quantity beside it (2026-10-21), to compare with what the PO buys. */}
+                  {po.type === 'PO1' && <th>PR Qty</th>}
                   {/* Every PO type carries these now, Landed Cost included -- it used to be
                       the one type that could not say which warehouse or cost centre a
                       freight charge belonged to. */}
@@ -385,6 +387,7 @@ export default function PurchaseOrderView() {
                       ) : (l.purchase_description || '—')}
                     </td>
                     {po.type === 'PO1' && <td>{l.pr_no || '—'}</td>}
+                    {po.type === 'PO1' && <td>{l.pr_qty != null ? Number(l.pr_qty).toFixed(4) : '—'}</td>}
                     <td>{l.location_name || '—'}</td>
                     <td>{l.department_name || '—'}</td>
                     {po.type === 'PO3' && <td>{l.job_order_no || '—'}</td>}

@@ -292,7 +292,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     if (!po) return res.status(404).json({ error: 'Not found' });
 
     const [lines] = await pool.query(
-      `SELECT pol.*, i.item_code, i.display_name AS item_name, pr.pr_no, t.code AS tax_code,
+      `SELECT pol.*, i.item_code, i.display_name AS item_name, pr.pr_no, prl.qty AS pr_qty, t.code AS tax_code,
               loc.location_name, d.name AS department_name, jo.job_order_no
        FROM purchase_order_lines pol
        LEFT JOIN inventories i ON i.id = pol.item_id
