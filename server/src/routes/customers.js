@@ -103,7 +103,9 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     const [contacts] = await pool.query('SELECT * FROM customer_contacts WHERE customer_id = ? ORDER BY id', [req.params.id]);
     const [addresses] = await pool.query('SELECT * FROM customer_addresses WHERE customer_id = ? ORDER BY id', [req.params.id]);
     const [relationships] = await pool.query('SELECT * FROM customer_relationships WHERE customer_id = ? ORDER BY id', [req.params.id]);
-    res.json({ ...customer, contacts, addresses, relationships });
+    const [billingContacts] = await pool.query('SELECT * FROM customer_billing_contacts WHERE customer_id = ? ORDER BY id', [req.params.id])
+      .catch((e) => { if (e.code === 'ER_NO_SUCH_TABLE') return [[]]; throw e; }); // db/add-customer-billing-collection.js not run yet
+    res.json({ ...customer, contacts, addresses, relationships, billing_contacts: billingContacts });
   } catch (err) {
     next(err);
   }
@@ -170,8 +172,26 @@ async function syncChildren(conn, customerId, body) {
       else await conn.query('INSERT INTO customer_relationships (customer_id, related_customer_id, name, address, contact_no) VALUES (?, ?, ?, ?, ?)', [customerId, ...v]);
     }
   }
+  // Billing and Collection (2026-10-21; db/add-customer-billing-collection.js): who to bill / collect
+  // from and how. Nothing else points at these rows, so the set sent simply replaces the old one.
+  const [hasBillingTable] = await conn.query("SHOW TABLES LIKE 'customer_billing_contacts'");
+  if (Array.isArray(body.billing_contacts) && hasBillingTable.length) {
+    const rows = body.billing_contacts.filter((r) => BILLING_CONTACT_FIELDS.some((f) => String(r[f] ?? '').trim()));
+    const ids = rows.map((r) => Number(r.id)).filter(Boolean);
+    await conn.query('DELETE FROM customer_billing_contacts WHERE customer_id = ? AND id NOT IN (?)', [customerId, ids.length ? ids : [0]]);
+    for (const r of rows) {
+      const v = BILLING_CONTACT_FIELDS.map((f) => (String(r[f] ?? '').trim() ? String(r[f]).trim().slice(0, f === 'billing_requirements' || f === 'other_info' ? 1000 : 255) : null));
+      if (r.id) {
+        await conn.query(`UPDATE customer_billing_contacts SET ${BILLING_CONTACT_FIELDS.map((f) => `${f} = ?`).join(', ')} WHERE id = ? AND customer_id = ?`, [...v, r.id, customerId]);
+      } else {
+        await conn.query(`INSERT INTO customer_billing_contacts (customer_id, ${BILLING_CONTACT_FIELDS.join(', ')}) VALUES (?, ${BILLING_CONTACT_FIELDS.map(() => '?').join(', ')})`, [customerId, ...v]);
+      }
+    }
+  }
   return kept;
 }
+const BILLING_CONTACT_FIELDS = ['contact_person', 'contact_number', 'email', 'address', 'billing_collection',
+  'billing_requirements', 'releasing_schedule', 'releasing_location', 'payment_method', 'other_info'];
 
 router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
   const conn = await pool.getConnection();
@@ -241,6 +261,7 @@ router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async
     await conn.query('DELETE FROM customer_contacts WHERE customer_id = ?', [req.params.id]);
     await conn.query('DELETE FROM customer_addresses WHERE customer_id = ?', [req.params.id]);
     await conn.query('DELETE FROM customer_relationships WHERE customer_id = ?', [req.params.id]);
+    await conn.query('DELETE FROM customer_billing_contacts WHERE customer_id = ?', [req.params.id]).catch((e) => { if (e.code !== 'ER_NO_SUCH_TABLE') throw e; });
     await conn.query('DELETE FROM customers WHERE id = ?', [req.params.id]);
     await conn.commit();
     res.status(204).send();

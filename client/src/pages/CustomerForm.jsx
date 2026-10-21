@@ -15,10 +15,21 @@ const EMPTY = {
   birthdate: '', gender: '', contact_no: '', customer_type: '',
   is_charge_to_location: false, is_ewt: false, is_final_tax: false, is_charge_to: false, include_90_commission: false,
   credit_limit: '', payment_term_id: '', bill_to_name: '', bill_to_address: '', bill_to_contact_no: '',
-  contacts: [], addresses: [], relationships: [],
+  contacts: [], addresses: [], relationships: [], billing_contacts: [],
 };
 const EMPTY_CONTACT = { contact_name: '', address: '', email: '', title: '', phone: '', is_primary: false, is_default_bill_to: false, is_approver: false, is_certifier: false };
 const EMPTY_ADDRESS = { address_type: 'Shipping', address_line: '', is_default: false };
+// Billing and Collection rows (2026-10-21), as on the source system's customer page.
+const EMPTY_BILLING = {
+  contact_person: '', contact_number: '', email: '', address: '', billing_collection: '',
+  billing_requirements: '', releasing_schedule: '', releasing_location: '', payment_method: '', other_info: '',
+};
+const BILLING_COLUMNS = [
+  ['contact_person', 'Contact Person'], ['contact_number', 'Contact number'], ['email', 'Email Address'], ['address', 'Address'],
+  ['billing_collection', 'Billing / Collection'], ['billing_requirements', 'Billing Requirements'], ['releasing_schedule', 'Releasing Schedule'],
+  ['releasing_location', 'Releasing Location'], ['payment_method', 'Payment Method'], ['other_info', 'Other Info'],
+];
+const BILLING_COLLECTION_OPTIONS = ['Billing', 'Collection', 'Billing & Collection'];
 // A relationship is another customer from the list (2026-10-19): a payment from this customer may
 // then be applied to that customer's invoices (server: lib/customerRelations.js).
 const EMPTY_RELATIONSHIP = { related_customer_id: '', name: '', address: '', contact_no: '' };
@@ -75,6 +86,7 @@ export default function CustomerForm() {
         d.contacts = (data.contacts || []).map((c) => ({ ...EMPTY_CONTACT, ...c, is_primary: !!c.is_primary, is_default_bill_to: !!c.is_default_bill_to, is_approver: !!c.is_approver, is_certifier: !!c.is_certifier }));
         d.addresses = (data.addresses || []).filter((a) => String(a.address_type || '').toLowerCase() !== 'billing');
         d.billingAddresses = (data.addresses || []).filter((a) => String(a.address_type || '').toLowerCase() === 'billing');
+        d.billing_contacts = (data.billing_contacts || []).map((r) => ({ ...EMPTY_BILLING, ...Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v ?? ''])) }));
         setForm(d);
       }
       setLoading(false);
@@ -129,6 +141,7 @@ export default function CustomerForm() {
           addresses: fresh.data.addresses.filter((a) => String(a.address_type || '').toLowerCase() !== 'billing'),
           billingAddresses: fresh.data.addresses.filter((a) => String(a.address_type || '').toLowerCase() === 'billing'),
           relationships: fresh.data.relationships,
+          billing_contacts: (fresh.data.billing_contacts || []).map((r) => ({ ...EMPTY_BILLING, ...Object.fromEntries(Object.entries(r).map(([k, v]) => [k, v ?? ''])) })),
         }));
       }
     } catch (e) {
@@ -346,7 +359,42 @@ export default function CustomerForm() {
           )}
 
           {tab === 'financial' && (isNew ? <p className="muted">Save the customer first — its balance shows here.</p> : <Financial customerId={id} />)}
-          {tab === 'billing' && (isNew ? <p className="muted">Save the customer first — its open invoices show here.</p> : <Billing customerId={id} />)}
+          {tab === 'billing' && (
+            <>
+              {/* Who to bill / collect from, and how (2026-10-21) -- saved with the customer. */}
+              <div className="table-wrap">
+                <table>
+                  <thead><tr>{BILLING_COLUMNS.map(([k, label]) => <th key={k}>{label}</th>)}<th /></tr></thead>
+                  <tbody>
+                    {form.billing_contacts.length === 0 && (
+                      <tr><td colSpan={BILLING_COLUMNS.length + 1} className="muted" style={{ textAlign: 'center', padding: 12 }}>No billing / collection contacts yet.</td></tr>
+                    )}
+                    {form.billing_contacts.map((r, i) => (
+                      <tr key={r.id || `b${i}`}>
+                        {BILLING_COLUMNS.map(([k]) => (
+                          <td key={k} style={{ minWidth: k === 'billing_collection' ? 150 : 130 }}>
+                            {k === 'billing_collection' ? (
+                              <select value={r[k] ?? ''} onChange={(e) => setRow('billing_contacts', i, k, e.target.value)}>
+                                <option value="" />
+                                {BILLING_COLLECTION_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                                {r[k] && !BILLING_COLLECTION_OPTIONS.includes(r[k]) && <option value={r[k]}>{r[k]}</option>}
+                              </select>
+                            ) : (
+                              <input type={k === 'email' ? 'email' : 'text'} value={r[k] ?? ''} onChange={(e) => setRow('billing_contacts', i, k, e.target.value)} />
+                            )}
+                          </td>
+                        ))}
+                        <td><button type="button" className="btn btn-sm btn-danger" onClick={() => removeRow('billing_contacts', i)}>Delete</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button type="button" className="btn btn-primary" style={{ marginTop: 8 }} onClick={() => addRow('billing_contacts', EMPTY_BILLING)}>Add</button>
+              <h4 style={{ margin: '20px 0 8px' }}>Open Invoices</h4>
+              {isNew ? <p className="muted">Save the customer first — its open invoices show here.</p> : <Billing customerId={id} />}
+            </>
+          )}
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 20, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
