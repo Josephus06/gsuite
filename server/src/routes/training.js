@@ -112,6 +112,7 @@ router.post('/enrollments/:id/materials/:mid/complete', requireAuth, requirePerm
     if (!(await ownMaterial(req, res, e))) return undefined;
     if (phToday() < day(e.start_date)) return bad(res, `This course opens on ${day(e.start_date)}.`, 409);
     const done = req.body?.completed !== false;
+    if (!done && e.completed_at) return bad(res, 'This course is already completed.', 409);
     await pool.query(
       `INSERT INTO training_material_progress (enrollment_id, material_id, opened_at, completed_at) VALUES (?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE completed_at = VALUES(completed_at), opened_at = COALESCE(opened_at, VALUES(opened_at))`,

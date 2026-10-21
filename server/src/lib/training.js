@@ -71,12 +71,14 @@ async function enrollmentProgress(enrollment) {
   const quizzesPassed = quizzes.filter((q) => q.state === 'passed').length;
   const total = materials.length + quizzes.length;
   const done = materialsDone + quizzesPassed;
-  const complete = total > 0 && done === total;
   let completedAt = e.completed_at;
-  if (complete && !completedAt) {
+  if (total > 0 && done === total && !completedAt) {
     completedAt = nowUtc();
     await pool.query('UPDATE training_enrollments SET completed_at = ? WHERE id = ? AND completed_at IS NULL', [completedAt, e.id]);
   }
+  // Once completed it stays completed (its certificate stands) -- a material HR adds afterwards
+  // does not take it back.
+  const complete = !!completedAt;
   return {
     materials: materials.map((m) => ({ ...m, file_size: Number(m.file_size) })), quizzes,
     materials_done: materialsDone, quizzes_passed: quizzesPassed,

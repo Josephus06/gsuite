@@ -158,7 +158,7 @@ export default function CourseView() {
           {m.completed_at ? (
             <>
               <span className="crs-done">✓ Completed {fmtDay(m.completed_at)}</span>
-              <button className="btn btn-sm" disabled={busy} onClick={() => markDone(m, false)}>Undo</button>
+              {!c.complete && <button className="btn btn-sm" disabled={busy} onClick={() => markDone(m, false)}>Undo</button>}
             </>
           ) : (
             <button className="btn btn-primary" disabled={busy || !c.open} onClick={() => markDone(m, true)}>✓ Mark as Completed</button>
