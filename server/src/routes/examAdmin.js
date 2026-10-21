@@ -9,6 +9,7 @@ const {
 } = require('../lib/exams');
 const ExcelJS = require('exceljs');
 const { sendCertificate } = require('./exams');
+const { certificatePdf, signatories } = require('../lib/examCertificate');
 
 const router = express.Router();
 
@@ -934,6 +935,47 @@ router.get('/employees/:userId', requireAuth, requirePermission(EX, 'can_view'),
       orientations,
     });
   } catch (err) { return next(err); }
+});
+
+// ---------------------------------------------------------------- Certificate signatories (2026-10-21)
+
+// Who signs the certificates (lib/examCertificate.js): two users and their positions.
+router.get('/certificate-settings', requireAuth, requirePermission(EX, 'can_view'), async (req, res, next) => {
+  try {
+    const [users] = await pool.query(
+      `SELECT u.id, u.display_name, e.position_title, d.name AS department, u.signature_data IS NOT NULL AS has_signature
+         FROM users u LEFT JOIN employees e ON e.id = u.employee_id LEFT JOIN departments d ON d.id = e.department_id
+        WHERE u.is_active = 1 ORDER BY u.display_name`);
+    const s = await signatories();
+    const strip = (x) => ({ user_id: x.user_id, name: x.name, title: x.title, has_signature: !!x.signature });
+    res.json({ left: strip(s.left), right: strip(s.right), users: users.map((u) => ({ ...u, has_signature: !!Number(u.has_signature) })) });
+  } catch (err) { next(err); }
+});
+
+router.put('/certificate-settings', requireAuth, requirePermission(EX, 'can_edit'), async (req, res, next) => {
+  try {
+    const vals = {
+      cert_left_user_id: Number(req.body.left_user_id) || '', cert_left_title: String(req.body.left_title || '').trim().slice(0, 120),
+      cert_right_user_id: Number(req.body.right_user_id) || '', cert_right_title: String(req.body.right_title || '').trim().slice(0, 120),
+    };
+    for (const [name, value] of Object.entries(vals)) {
+      await pool.query('INSERT INTO app_settings (name, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)', [name, String(value)]);
+    }
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// A sample certificate with the current signatories.
+router.get('/certificate-preview', requireAuth, requirePermission(EX, 'can_view'), async (req, res, next) => {
+  try {
+    const pdf = await certificatePdf({
+      name: 'Juan Dela Cruz', title: 'Customer Service Manual 2026', heading: 'has successfully read, understood and completed the',
+      date: phToday(), certificateNo: 'SAMPLE',
+    });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="certificate-sample.pdf"');
+    res.send(pdf);
+  } catch (err) { next(err); }
 });
 
 module.exports = router;

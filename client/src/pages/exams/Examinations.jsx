@@ -5,7 +5,7 @@ import EntityPicker from '../../components/EntityPicker';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Modal from '../../components/Modal';
 import { useAuth } from '../../context/useAuth';
-import { ORIENTATION_BADGE, ORIENTATION_LABELS, TYPES, TYPE_LABELS, fmtDay, pct } from '../../utils/exams';
+import { ORIENTATION_BADGE, ORIENTATION_LABELS, TYPES, TYPE_LABELS, download, fmtDay, pct } from '../../utils/exams';
 
 // HRD > Examinations (2026-10-21; routes/examAdmin.js). HR builds exam SETS from the departments'
 // question banks, SCHEDULES a set for departments and/or people over a date window (each examinee
@@ -509,6 +509,68 @@ function EmployeesTab({ meta }) {
   );
 }
 
+// Who signs the exam and course certificates (2026-10-21; lib/examCertificate.js): a person and a
+// position on each side. Their e-signature (set on their T1S profile) is printed above the line.
+function CertificateSettings({ onClose }) {
+  const { can } = useAuth();
+  const [data, setData] = useState(null);
+  const [form, setForm] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    api.get('/exam-admin/certificate-settings').then(({ data: d }) => {
+      setData(d);
+      setForm({ left_user_id: d.left.user_id || '', left_title: d.left.title || '', right_user_id: d.right.user_id || '', right_title: d.right.title || '' });
+    }).catch((e) => setError(e.response?.data?.error || 'Could not load.'));
+  }, []);
+  async function save(preview) {
+    setBusy(true); setError('');
+    try {
+      if (can(ROUTE, 'can_edit')) await api.put('/exam-admin/certificate-settings', form);
+      if (preview) await download('/exam-admin/certificate-preview', 'certificate-sample.pdf');
+      else onClose();
+    } catch (e) { setError(e.response?.data?.error || 'Could not save.'); }
+    finally { setBusy(false); }
+  }
+  const side = (k, label) => {
+    const u = data.users.find((x) => Number(x.id) === Number(form[`${k}_user_id`]));
+    return (
+      <div className="card" style={{ padding: 12 }}>
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>{label}</div>
+        <div className="field"><label>Signatory</label>
+          <EntityPicker
+            items={data.users} value={form[`${k}_user_id`]} getLabel={(x) => x.display_name}
+            searchKeys={['display_name', 'position_title', 'department']}
+            columns={[{ key: 'display_name', label: 'Name' }, { key: 'position_title', label: 'Position' }, { key: 'department', label: 'Department' },
+              { key: 'has_signature', label: 'E-signature', render: (x) => (x.has_signature ? '✓' : '') }]}
+            onSelect={(x) => setForm({ ...form, [`${k}_user_id`]: x.id })}
+          />
+          <div className="muted" style={{ fontSize: 11 }}>{u ? (u.has_signature ? 'Their e-signature prints above the line.' : 'No e-signature on their profile -- the line is left for signing.') : ''}</div>
+        </div>
+        <div className="field"><label>Position (printed under the name)</label>
+          <input value={form[`${k}_title`]} onChange={(e) => setForm({ ...form, [`${k}_title`]: e.target.value })} /></div>
+      </div>
+    );
+  };
+  return (
+    <Modal title="Certificate Signatories" onClose={onClose} large>
+      {error && <div className="error-banner">{error}</div>}
+      {!form ? <LoadingSpinner /> : (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+            {side('left', 'Left')}
+            {side('right', 'Right')}
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            {can(ROUTE, 'can_edit') && <button className="btn btn-primary" disabled={busy} onClick={() => save(false)}>Save</button>}
+            <button className="btn" disabled={busy} onClick={() => save(true)}>{can(ROUTE, 'can_edit') ? 'Save & Preview' : 'Preview'}</button>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
 const TABS = [['schedules', 'Schedules & Results'], ['sets', 'Exam Sets'], ['orientation', 'Re-orientation'], ['employees', 'Employees']];
 
 export default function Examinations() {
@@ -516,12 +578,16 @@ export default function Examinations() {
   const tab = TABS.some(([k]) => k === params.get('tab')) ? params.get('tab') : 'schedules';
   const [meta, setMeta] = useState(null);
   const [error, setError] = useState('');
+  const [certOpen, setCertOpen] = useState(false);
   useEffect(() => { api.get('/exam-admin/meta').then(({ data }) => setMeta(data)).catch((e) => setError(e.response?.data?.error || 'Could not load.')); }, []);
   return (
     <div>
       <div className="page-header">
         <h1>Examinations</h1>
-        <Link className="btn" to="/hrd/exam-questions">Question Bank</Link>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className="btn" onClick={() => setCertOpen(true)}>Certificate Signatories</button>
+          <Link className="btn" to="/hrd/exam-questions">Question Bank</Link>
+        </div>
       </div>
       {error && <div className="error-banner">{error}</div>}
       <div className="status-tabs" style={{ marginBottom: 12 }}>
@@ -537,6 +603,7 @@ export default function Examinations() {
           {tab === 'employees' && <EmployeesTab meta={meta} />}
         </>
       )}
+      {certOpen && <CertificateSettings onClose={() => setCertOpen(false)} />}
     </div>
   );
 }

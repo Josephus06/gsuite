@@ -168,7 +168,7 @@ router.get('/attempts/:id/certificate', requireAuth, requirePermission(ROUTE, 'c
 
 async function sendCertificate(res, a) {
   const pdf = await certificatePdf({
-    name: a.user_name, title: a.title, setName: a.set_name, percent: a.percent,
+    name: a.user_name, title: a.title, heading: 'has successfully completed the',
     date: day(a.submitted_at), certificateNo: `EXC-${String(a.id).padStart(6, '0')}`,
   });
   res.setHeader('Content-Type', 'application/pdf');

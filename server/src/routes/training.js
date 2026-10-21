@@ -137,12 +137,9 @@ router.put('/enrollments/:id/notes', requireAuth, requirePermission(MY, 'can_vie
 async function sendCourseCertificate(res, e) {
   const p = await enrollmentProgress(e);
   if (!p.complete) return bad(res, 'Finish every material and pass every quiz to get the certificate.', 409);
-  const scores = p.quizzes.map((q) => q.best_percent).filter((v) => v != null);
-  const avg = scores.length ? scores.reduce((m, v) => m + v, 0) / scores.length : null;
   const pdf = await certificatePdf({
     name: e.user_name, title: e.title, date: day(p.completed_at),
-    heading: 'has successfully completed the training course',
-    detail: `${p.materials.length} learning material(s)${p.quizzes.length ? ` · quiz score ${avg.toFixed(1).replace(/\.0$/, '')}%` : ''} · completed on ${new Date(`${day(p.completed_at)}T00:00:00`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
+    heading: 'has successfully read, understood and completed the',
     certificateNo: `TRC-${String(e.id).padStart(6, '0')}`,
   });
   res.setHeader('Content-Type', 'application/pdf');
