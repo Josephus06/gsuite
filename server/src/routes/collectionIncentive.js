@@ -109,7 +109,7 @@ async function buildReport(q) {
     const month = isMonth(q.month) ? q.month : `${lm.getFullYear()}-${pad(lm.getMonth() + 1)}`;
     const [y, m] = month.split('-').map(Number);
     const s = await settingsFor(y);
-    const data = await fetchCollections({ from: `${month}-01`, to: `${month}-${pad(lastDay(y, m))}`, ...loc });
+    const data = await fetchCollections({ from: `${month}-01`, to: `${month}-${pad(lastDay(y, m))}`, ...loc, credit_memos: '0' });
     return { mode: 'monthly', month, label: `${MONTHS[m - 1]} ${y}`, from: data.from, to: data.to, settings: s,
       result: compute(bucketTotals(data.rows), 1, s) };
   }
@@ -120,7 +120,7 @@ async function buildReport(q) {
     : (year < today.getFullYear() ? 12 : Math.max(1, today.getMonth()));
   if (year === today.getFullYear()) through = Math.min(through, today.getMonth() + 1);
   const s = await settingsFor(year);
-  const data = await fetchCollections({ from: `${year}-01-01`, to: `${year}-${pad(through)}-${pad(lastDay(year, through))}`, ...loc });
+  const data = await fetchCollections({ from: `${year}-01-01`, to: `${year}-${pad(through)}-${pad(lastDay(year, through))}`, ...loc, credit_memos: '0' });
   const byMonth = Array.from({ length: through }, () => []);
   for (const r of data.rows) {
     const mi = Number(ym(r.payment_date).slice(5, 7)) - 1;

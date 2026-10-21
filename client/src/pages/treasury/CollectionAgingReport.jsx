@@ -87,6 +87,7 @@ export default function CollectionAgingReport() {
   const rows = data?.rows || [];
   const summary = data?.summary || [];
   const summaryTotal = summary.reduce((s, b) => s + b.amount, 0);
+  const sum = (k) => summary.reduce((s, b) => s + Number(b[k] || 0), 0);
   // Clicking a bucket filters to it; clicking it again clears.
   const pickBucket = (key) => {
     const next = { ...applied, bucket: applied.bucket === key ? '' : key };
@@ -145,7 +146,7 @@ export default function CollectionAgingReport() {
           </div>
           <div className="field">
             <label>Search</label>
-            <input value={range.search} placeholder="CPAY #, Invoice #, OR #, customer"
+            <input value={range.search} placeholder="CPAY #, CM #, Invoice #, OR #, customer"
               onChange={(e) => setRange({ ...range, search: e.target.value })}
               onKeyDown={(e) => e.key === 'Enter' && setApplied({ ...range })} />
           </div>
@@ -170,7 +171,7 @@ export default function CollectionAgingReport() {
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Aging</th><th style={{ textAlign: 'right' }}>Rows</th><th style={{ textAlign: 'right' }}>Amount Collected</th><th style={{ textAlign: 'right' }}>% of Total</th></tr>
+                  <tr><th>Aging</th><th style={{ textAlign: 'right' }}>Rows</th><th style={{ textAlign: 'right' }}>Payments</th><th style={{ textAlign: 'right' }}>Credit Memo</th><th style={{ textAlign: 'right' }}>Amount Collected</th><th style={{ textAlign: 'right' }}>% of Total</th></tr>
                 </thead>
                 <tbody>
                   {summary.map((b) => (
@@ -178,6 +179,8 @@ export default function CollectionAgingReport() {
                       title="Show only this bucket (click again for all)">
                       <td>{b.label}</td>
                       <td style={{ textAlign: 'right' }}>{b.count.toLocaleString()}</td>
+                      <td style={{ textAlign: 'right' }}>{money(b.payment_amount)}</td>
+                      <td style={{ textAlign: 'right' }} title={`${b.cm_count || 0} credit memo row(s)`}>{money(b.cm_amount)}</td>
                       <td style={{ textAlign: 'right' }}>{money(b.amount)}</td>
                       <td style={{ textAlign: 'right' }}>{summaryTotal ? `${((b.amount / summaryTotal) * 100).toFixed(1)}%` : '—'}</td>
                     </tr>
@@ -187,6 +190,8 @@ export default function CollectionAgingReport() {
                   <tr>
                     <td style={{ fontWeight: 700 }}>Total</td>
                     <td style={{ textAlign: 'right', fontWeight: 700 }}>{summary.reduce((s, b) => s + b.count, 0).toLocaleString()}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700 }}>{money(sum('payment_amount'))}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700 }}>{money(sum('cm_amount'))}</td>
                     <td style={{ textAlign: 'right', fontWeight: 700 }}>{money(summaryTotal)}</td>
                     <td />
                   </tr>
@@ -201,13 +206,14 @@ export default function CollectionAgingReport() {
               {rows.length > 0 && <> — total {money(data?.total_amount)}</>}.
               {' '}Age at Collection = payment date − invoice date; Days Past Due = payment date − invoice due date.
               {' '}Applied Date = the later of the payment date and the invoice date.
+              {' '}Credit memos applied to invoices count as collected (dated by the memo); write-off memos do not.
               {' '}&ldquo;Advances from Customers&rdquo; is money a payment has not applied to any invoice (e.g. a down payment); it moves onto the invoice once applied.
             </div>
             <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>CPAY #</th><th>Payment Date</th><th>OR #</th><th>Applied Date</th><th>Invoice #</th>
+                    <th>Type</th><th>CPAY / CM #</th><th>Payment Date</th><th>OR #</th><th>Applied Date</th><th>Invoice #</th>
                     <th>Invoice Date</th><th>Invoice Due Date</th><th>Term</th><th>Customer</th>
                     <th style={{ textAlign: 'right' }}>Age at Collection</th><th style={{ textAlign: 'right' }}>Days Past Due</th>
                     <th>Aging</th><th style={{ textAlign: 'right' }}>Amount Collected</th>
@@ -215,11 +221,12 @@ export default function CollectionAgingReport() {
                 </thead>
                 <tbody>
                   {rows.length === 0 && (
-                    <tr><td colSpan={13} className="muted" style={{ textAlign: 'center', padding: 20 }}>No collections in this range.</td></tr>
+                    <tr><td colSpan={14} className="muted" style={{ textAlign: 'center', padding: 20 }}>No collections in this range.</td></tr>
                   )}
                   {rows.map((r, i) => (
-                    <tr key={`${r.payment_id}-${r.invoice_id}-${i}`} style={r.bucket === 'advance' ? { background: 'var(--surface-2, #f3f4f6)' } : undefined}>
-                      <td><Link className="link-btn" to={`/customer-payments/${r.payment_id}`}>{r.customer_payment_no}</Link></td>
+                    <tr key={`${r.source}-${r.payment_id || r.credit_memo_id}-${r.invoice_id}-${i}`} style={r.bucket === 'advance' ? { background: 'var(--surface-2, #f3f4f6)' } : undefined}>
+                      <td>{r.source === 'credit_memo' ? <span className="badge badge-info">Credit Memo</span> : 'Payment'}</td>
+                      <td><Link className="link-btn" to={r.source === 'credit_memo' ? `/credit-memos/${r.credit_memo_id}` : `/customer-payments/${r.payment_id}`}>{r.customer_payment_no}</Link></td>
                       <td>{day(r.payment_date)}</td>
                       <td>{r.or_no || '—'}</td>
                       <td>{day(r.applied_date) || '—'}</td>

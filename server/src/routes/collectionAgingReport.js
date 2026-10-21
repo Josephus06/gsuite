@@ -26,6 +26,13 @@ const router = express.Router();
 // exists. Not customer_payment_lines.created_at: the import stamped 9,668 of 2026's lines with the
 // day it ran (2026-10-03). An advance not yet applied has no applied date and is dated by payment.
 //
+// CREDIT MEMOS (2026-10-21). A credit memo applied to an invoice settles it as a payment does -- most
+// are the customer's creditable withholding tax -- so each application is a row too, dated by the
+// memo (Type "Credit Memo"; CM # in the CPAY # column, no OR #). WRITE-OFFS are not: a memo booked
+// to Bad Debts Expense, one with a WRITE OFF / BAD DEBTS line, or one whose memo says it writes off
+// the account forgave the money, nobody collected it. Collection Incentive asks without them
+// (credit_memos: '0') -- it pays on what Treasury actually received.
+//
 // Its own permission page, like the Disbursement Report: reading collections across customers is
 // Treasury's question, not the same right as raising a Customer Payment.
 const ROUTE = '/treasury/collection-aging';
@@ -122,7 +129,55 @@ async function fetchRows(query) {
     advParams,
   );
 
+  // Credit memo rows: one per invoice a (not voided, not write-off) credit memo was applied to.
+  let memoRows = [];
+  if (query.credit_memos !== '0') {
+    const cmWhere = ["cm.status <> 'voided'", 'cm.voided_at IS NULL', 'cma.sales_invoice_id IS NOT NULL', 'cma.applied_amount > 0',
+      `NOT (COALESCE(sa.account_name, '') LIKE '%bad debt%'
+        OR COALESCE(cm.memo, '') LIKE '%write%off%' OR COALESCE(cm.memo, '') LIKE '%written off%'
+        OR EXISTS (SELECT 1 FROM credit_memo_lines wl WHERE wl.credit_memo_id = cm.id
+                    AND (wl.item_name LIKE '%write%off%' OR wl.item_name LIKE '%bad debt%')))`,
+      byApplied ? 'GREATEST(cm.date_created, si.date_created) BETWEEN ? AND ?' : 'cm.date_created BETWEEN ? AND ?'];
+    const cmParams = [from, to];
+    if (Number(query.customer_id) > 0) { cmWhere.push('cm.customer_id = ?'); cmParams.push(Number(query.customer_id)); }
+    if (Number(query.location_id) > 0) {
+      const [[loc]] = await pool.query('SELECT location_name FROM locations WHERE id = ?', [Number(query.location_id)]);
+      const isHeadOffice = /^head office/i.test(String(loc?.location_name || '').trim());
+      cmWhere.push(isHeadOffice ? '(cm.office_location_id = ? OR cm.office_location_id IS NULL)' : 'cm.office_location_id = ?');
+      cmParams.push(Number(query.location_id));
+    }
+    if (like) {
+      cmWhere.push('(cm.credit_memo_no LIKE ? OR si.invoice_no LIKE ? OR c.name LIKE ?)');
+      cmParams.push(like, like, like);
+    }
+    const [cms] = await pool.query(
+      `SELECT cm.id AS credit_memo_id, cm.credit_memo_no, cm.date_created AS payment_date,
+              c.name AS customer_name, si.id AS invoice_id, si.invoice_no, si.date_created AS invoice_date,
+              si.date_due, si.term, cma.applied_amount,
+              GREATEST(cm.date_created, si.date_created) AS applied_date,
+              DATEDIFF(cm.date_created, si.date_created) AS age_days,
+              DATEDIFF(cm.date_created, si.date_due) AS days_past_due
+         FROM credit_memo_applications cma
+         JOIN credit_memos cm ON cm.id = cma.credit_memo_id
+         JOIN sales_invoices si ON si.id = cma.sales_invoice_id
+         LEFT JOIN customers c ON c.id = cm.customer_id
+         LEFT JOIN chart_of_accounts sa ON sa.id = cm.source_account_id
+        WHERE ${cmWhere.join(' AND ')}`,
+      cmParams,
+    );
+    memoRows = cms.map((r) => ({
+      source: 'credit_memo', payment_id: null, credit_memo_id: r.credit_memo_id, customer_payment_no: r.credit_memo_no,
+      payment_date: r.payment_date, or_no: null, customer_name: r.customer_name, invoice_id: r.invoice_id,
+      invoice_no: r.invoice_no, invoice_date: r.invoice_date, date_due: r.date_due, term: r.term, applied_date: r.applied_date,
+      age_days: r.age_days == null ? null : Number(r.age_days),
+      days_past_due: r.days_past_due == null ? null : Number(r.days_past_due),
+      applied_amount: Number(r.applied_amount || 0),
+      bucket: bucketOf(r.days_past_due != null ? Number(r.days_past_due) : (r.age_days == null ? null : Number(r.age_days))),
+    }));
+  }
+
   const invoiceRows = rows.map((r) => ({
+    source: 'payment',
     ...r,
     age_days: r.age_days == null ? null : Number(r.age_days),
     days_past_due: r.days_past_due == null ? null : Number(r.days_past_due),
@@ -130,19 +185,23 @@ async function fetchRows(query) {
     bucket: bucketOf(r.days_past_due != null ? Number(r.days_past_due) : (r.age_days == null ? null : Number(r.age_days))),
   }));
   const advanceRows = adv.map((r) => ({
-    payment_id: r.payment_id, customer_payment_no: r.customer_payment_no, payment_date: r.payment_date, or_no: r.or_no,
+    source: 'payment', payment_id: r.payment_id, customer_payment_no: r.customer_payment_no, payment_date: r.payment_date, or_no: r.or_no,
     customer_name: r.customer_name, invoice_id: null, invoice_no: null, invoice_date: null, date_due: null, term: null,
     applied_date: null, age_days: null, days_past_due: null, applied_amount: Number(r.unapplied || 0), bucket: ADVANCE.key,
   }));
   // In date order (applied date when dating by it), a payment's invoices together, its advance last.
   const sortDay = (r) => day(byApplied ? (r.applied_date || r.payment_date) : r.payment_date);
-  let out = [...invoiceRows, ...advanceRows].sort((a, b) => sortDay(a).localeCompare(sortDay(b))
+  let out = [...invoiceRows, ...memoRows, ...advanceRows].sort((a, b) => sortDay(a).localeCompare(sortDay(b))
     || String(a.customer_payment_no).localeCompare(String(b.customer_payment_no))
     || String(a.invoice_no || '￿').localeCompare(String(b.invoice_no || '￿')));
   // The summary is over the whole range; the bucket filter only narrows the rows listed.
   const summary = ALL_BUCKETS.map((b) => {
     const inB = out.filter((r) => r.bucket === b.key);
-    return { key: b.key, label: b.label, count: inB.length, amount: inB.reduce((s, r) => s + r.applied_amount, 0) };
+    // Credit memos kept apart too (2026-10-21) -- "so we know how much CM".
+    const cm = inB.filter((r) => r.source === 'credit_memo');
+    const cmAmount = cm.reduce((s, r) => s + r.applied_amount, 0);
+    const amount = inB.reduce((s, r) => s + r.applied_amount, 0);
+    return { key: b.key, label: b.label, count: inB.length, amount, cm_count: cm.length, cm_amount: cmAmount, payment_amount: amount - cmAmount };
   });
   if (ALL_BUCKETS.some((b) => b.key === query.bucket)) out = out.filter((r) => r.bucket === query.bucket);
   return { from, to, date_by: byApplied ? 'applied' : 'payment', rows: out, summary };
@@ -173,7 +232,8 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Collection Aging');
     ws.columns = [
-      { header: 'CPAY #', key: 'cpay', width: 16 },
+      { header: 'Type', key: 'type', width: 12 },
+      { header: 'CPAY / CM #', key: 'cpay', width: 16 },
       { header: 'Payment Date', key: 'payment_date', width: 13 },
       { header: 'OR #', key: 'or_no', width: 12 },
       { header: 'Applied Date', key: 'applied_date', width: 13 },
@@ -189,13 +249,13 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
     ];
     ws.getRow(1).font = { bold: true };
     rows.forEach((r) => ws.addRow({
-      cpay: r.customer_payment_no, payment_date: day(r.payment_date), or_no: r.or_no || '',
+      type: r.source === 'credit_memo' ? 'Credit Memo' : 'Payment', cpay: r.customer_payment_no, payment_date: day(r.payment_date), or_no: r.or_no || '',
       applied_date: day(r.applied_date), customer: r.customer_name || '', invoice_no: r.invoice_no || '',
       invoice_date: day(r.invoice_date), date_due: day(r.date_due), term: r.term || '', age: r.age_days,
       past_due: r.days_past_due, bucket: bucketLabel(r.bucket), amount: r.applied_amount,
     }));
     ws.getColumn('amount').numFmt = '#,##0.00';
-    ws.autoFilter = { from: 'A1', to: `M${rows.length + 1}` };
+    ws.autoFilter = { from: 'A1', to: `N${rows.length + 1}` };
     ws.views = [{ state: 'frozen', ySplit: 1 }];
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="collection-aging-${from}-to-${to}.xlsx"`);
