@@ -155,15 +155,19 @@ async function certificatePdf({ name, title, heading, date, certificateNo }) {
     doc.circle(cx, cy, 40).lineWidth(1.4).strokeColor(ORANGE).stroke();
     doc.circle(cx, cy, 36).fill(BLUE);
     doc.circle(cx, cy, 19).lineWidth(0.8).strokeColor(ORANGE).stroke();
-    const ring = 'GRAPHICSTAR \u00B7 CERTIFIED \u00B7 GRAPHICSTAR \u00B7 CERTIFIED \u00B7 ';
-    doc.font('sansBold').fontSize(5.6).fillColor('#ffffff');
-    const step = 360 / ring.length;
-    [...ring].forEach((ch, i) => {
-      const ang = -90 + i * step;
+    // Once round, each letter given its own width of the circle so the spacing is even.
+    const ring = [...'GRAPHICSTAR \u00B7 CERTIFIED \u00B7 '];
+    doc.font('sansBold').fontSize(6.6).fillColor('#ffffff');
+    const r = 27.3;
+    const widths = ring.map((ch) => doc.widthOfString(ch) + 1.1);
+    const scale = 360 / widths.reduce((m, w) => m + w, 0);
+    let at = -90;
+    ring.forEach((ch, i) => {
+      const ang = at + (widths[i] * scale) / 2;
+      at += widths[i] * scale;
       const rad = (ang * Math.PI) / 180;
-      const r = 27.5;
       doc.save().translate(cx + r * Math.cos(rad), cy + r * Math.sin(rad)).rotate(ang + 90)
-        .text(ch, -3, -2.6, { width: 6, align: 'center', lineBreak: false }).restore();
+        .text(ch, -4, -3.1, { width: 8, align: 'center', lineBreak: false }).restore();
     });
     doc.moveTo(cx - 8, cy + 0.5).lineTo(cx - 2.5, cy + 6).lineTo(cx + 8.5, cy - 6).lineWidth(2.6).lineCap('round').lineJoin('round').strokeColor('#ffffff').stroke();
     doc.font('sansBold').fontSize(8).fillColor('#4b5563');
