@@ -443,6 +443,10 @@ async function generalManagerRings() {
 // deliberately excluding "For Design Supervisor" (no artist yet, that's the assignment
 // queue below, not a schedule row) and anything Released/Cancelled.
 const ARTIST_ACTIVE_SUB_STATUSES = ['For Artist', 'For Artist (Revision)', 'Sales Approval'];
+// Cancelling a JO leaves its sub_status where it was (so the record says where it was cancelled), so
+// one cancelled at "For Artist" still read as artist load (asked 2026-10-21: cancelled JOs out of the
+// artist load). Every artist count / schedule / calendar below carries this.
+const NOT_CANCELLED = "status <> 'Cancelled'";
 
 async function scheduleRows(whereSql, params) {
   const [rows] = await pool.query(
@@ -475,28 +479,29 @@ async function designSupervisorMetrics() {
 
   const [[notStarted]] = await pool.query(
     `SELECT COUNT(*) AS count FROM job_orders
-     WHERE sub_status IN ('For Artist', 'For Artist (Revision)') AND layout_started_at IS NULL`
+     WHERE sub_status IN ('For Artist', 'For Artist (Revision)') AND layout_started_at IS NULL AND ${NOT_CANCELLED}`
   );
 
   const [[inProgress]] = await pool.query(
     `SELECT COUNT(DISTINCT jo.id) AS count
-     FROM job_orders jo JOIN job_order_layout_sessions s ON s.job_order_id = jo.id AND s.ended_at IS NULL`
+     FROM job_orders jo JOIN job_order_layout_sessions s ON s.job_order_id = jo.id AND s.ended_at IS NULL
+     WHERE jo.${NOT_CANCELLED}`
   );
 
   const [[pendingSalesApproval]] = await pool.query(
-    `SELECT COUNT(*) AS count FROM job_orders WHERE sub_status = 'Sales Approval'`
+    `SELECT COUNT(*) AS count FROM job_orders WHERE sub_status = 'Sales Approval' AND ${NOT_CANCELLED}`
   );
 
   const subStatusPlaceholders = ARTIST_ACTIVE_SUB_STATUSES.map(() => '?').join(', ');
   const schedule = await scheduleRows(
-    `WHERE jo.artist_id IS NOT NULL AND jo.sub_status IN (${subStatusPlaceholders})`,
+    `WHERE jo.artist_id IS NOT NULL AND jo.sub_status IN (${subStatusPlaceholders}) AND jo.${NOT_CANCELLED}`,
     ARTIST_ACTIVE_SUB_STATUSES
   );
 
   const [workload] = await pool.query(
     `SELECT jo.artist_id, CONCAT(ar.first_name, ' ', ar.last_name) AS name, COUNT(*) AS count
      FROM job_orders jo JOIN employees ar ON ar.id = jo.artist_id
-     WHERE jo.artist_id IS NOT NULL AND jo.sub_status IN (${subStatusPlaceholders})
+     WHERE jo.artist_id IS NOT NULL AND jo.sub_status IN (${subStatusPlaceholders}) AND jo.${NOT_CANCELLED}
      GROUP BY jo.artist_id, name ORDER BY count DESC`,
     ARTIST_ACTIVE_SUB_STATUSES
   );
@@ -510,7 +515,7 @@ async function designSupervisorMetrics() {
      FROM job_orders jo
      JOIN job_order_layout_sessions s ON s.job_order_id = jo.id AND s.ended_at IS NULL
      LEFT JOIN employees ar ON ar.id = jo.artist_id
-     WHERE jo.planned_end_at IS NOT NULL AND jo.planned_end_at < NOW()
+     WHERE jo.planned_end_at IS NOT NULL AND jo.planned_end_at < NOW() AND jo.${NOT_CANCELLED}
      GROUP BY jo.id, jo.job_order_no, jo.planned_end_at, ar.first_name, ar.last_name
      ORDER BY jo.planned_end_at ASC`
   );
@@ -614,7 +619,7 @@ async function artistCalendar(employeeId, monthStart, monthEnd) {
        FROM job_orders jo
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
        LEFT JOIN customers c ON c.id = COALESCE(so.customer_id, (SELECT COALESCE(nx.customer_id, ex.customer_id, sx.customer_id) FROM non_standard_sales_orders nx LEFT JOIN estimates ex ON ex.id = nx.nested_estimate_id LEFT JOIN sales_orders sx ON sx.id = nx.nested_sales_order_id WHERE nx.id = jo.nsso_id))
-      WHERE jo.artist_id = ?
+      WHERE jo.artist_id = ? AND jo.${NOT_CANCELLED}
         AND jo.planned_start_at >= ? AND jo.planned_start_at < ?
       ORDER BY jo.planned_start_at`,
     [employeeId, monthStart, monthEnd]
@@ -637,7 +642,7 @@ async function artistCalendar(employeeId, monthStart, monthEnd) {
                       WHERE s.non_standard_job_order_id = n.id AND s.ended_at IS NULL) AS is_running
          FROM non_standard_job_orders n
          LEFT JOIN customers c ON c.id = n.customer_id
-        WHERE n.artist_employee_id = ?
+        WHERE n.artist_employee_id = ? AND n.${NOT_CANCELLED}
           AND n.planned_start_at >= ? AND n.planned_start_at < ?
         ORDER BY n.planned_start_at`,
       [employeeId, monthStart, monthEnd]
@@ -681,12 +686,12 @@ async function artistMetrics(employeeId) {
   }
 
   const [[active]] = await pool.query(
-    `SELECT COUNT(*) AS count FROM job_orders WHERE artist_id = ? AND sub_status IN ('For Artist', 'For Artist (Revision)')`,
+    `SELECT COUNT(*) AS count FROM job_orders WHERE artist_id = ? AND sub_status IN ('For Artist', 'For Artist (Revision)') AND ${NOT_CANCELLED}`,
     [employeeId]
   );
   const [[notStarted]] = await pool.query(
     `SELECT COUNT(*) AS count FROM job_orders
-     WHERE artist_id = ? AND sub_status IN ('For Artist', 'For Artist (Revision)') AND layout_started_at IS NULL`,
+     WHERE artist_id = ? AND sub_status IN ('For Artist', 'For Artist (Revision)') AND layout_started_at IS NULL AND ${NOT_CANCELLED}`,
     [employeeId]
   );
 
@@ -739,7 +744,7 @@ async function artistMetrics(employeeId) {
     : null;
 
   const schedule = await scheduleRows(
-    `WHERE jo.artist_id = ? AND jo.sub_status IN ('For Artist', 'For Artist (Revision)')`,
+    `WHERE jo.artist_id = ? AND jo.sub_status IN ('For Artist', 'For Artist (Revision)') AND jo.${NOT_CANCELLED}`,
     [employeeId]
   );
 
