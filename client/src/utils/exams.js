@@ -42,6 +42,7 @@ export const TYPE_LABELS = {
   multiple_choice: 'Multiple Choice',
   multiple_select: 'Multiple Select',
   identification: 'Identification',
+  enumeration: 'Enumeration',
   essay: 'Essay',
 };
 export const TYPES = Object.keys(TYPE_LABELS);
@@ -68,6 +69,13 @@ export function answerText(type, value, choices) {
   if (type === 'multiple_choice') return (choices || []).find((c) => Number(c.i) === Number(value))?.text ?? '';
   if (type === 'multiple_select') return (choices || []).filter((c) => (value || []).map(Number).includes(Number(c.i))).map((c) => c.text).join('; ');
   if (type === 'identification' && Array.isArray(value)) return value.join(' | ');
+  // Enumeration: the key's items (alternatives with " / "), or the examinee's boxes.
+  if (type === 'enumeration') {
+    if (Array.isArray(value)) return value.filter((v) => String(v ?? '').trim()).join('; ');
+    const items = Array.isArray(value?.items) ? value.items : [];
+    const req = Number(value?.required) || items.length;
+    return items.map((alts) => (Array.isArray(alts) ? alts.join(' / ') : alts)).join('; ') + (req < items.length ? ` (any ${req})` : '');
+  }
   if (type === 'essay' && typeof value === 'object') return value.guide || '';
   return String(value);
 }

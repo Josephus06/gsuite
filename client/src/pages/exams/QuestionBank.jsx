@@ -27,6 +27,7 @@ export function QuestionForm({ value, topics, onChange }) {
     if (type === 'multiple_select') patch.answer = [];
     if (type === 'essay') { patch.answer = { guide: '' }; if (Number(q.points) === 1) patch.points = 5; }
     if (type === 'identification') patch.answer = [];
+    if (type === 'enumeration') patch.answer = { items: '', required: '' };
     set(patch);
   };
   const choices = q.choices || [];
@@ -116,6 +117,25 @@ export function QuestionForm({ value, topics, onChange }) {
             {choices.length < 8 && <button type="button" className="btn btn-sm" style={{ justifySelf: 'start' }} onClick={() => set({ choices: [...choices, ''] })}>+ Choice</button>}
           </div></div>
       )}
+
+      {q.type === 'enumeration' && (() => {
+        const items = q.answer?.items;
+        const text = Array.isArray(items) ? items.map((a) => (Array.isArray(a) ? a.join(' | ') : a)).join('\n') : (items || '');
+        const count = text.split('\n').filter((l) => l.trim()).length;
+        return (
+          <div className="field"><label>Accepted items -- one per line; alternative names separated by |</label>
+            <textarea rows={6} value={text} onChange={(e) => set({ answer: { ...q.answer, items: e.target.value } })}
+              placeholder={'Gloves | Hand gloves\nGoggles | Safety glasses\nFace mask\nSafety shoes\nEar plugs'} />
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 6, flexWrap: 'wrap' }}>
+              <span>The examinee gives</span>
+              <input type="number" min="1" max={count || 1} style={{ width: 70 }} value={q.answer?.required ?? ''} placeholder={String(count || '')}
+                onChange={(e) => set({ answer: { ...q.answer, items: text, required: e.target.value } })} />
+              <span>of the {count} item(s){!q.answer?.required ? ' (blank = all)' : ''}.</span>
+            </div>
+            <div className="muted" style={{ fontSize: 11 }}>Any order; capital letters and extra spaces do not matter. Points are shared per item: 2 of 3 right earns 2/3 of the points. HR can mark a misspelled answer right on the result.</div>
+          </div>
+        );
+      })()}
 
       {q.type === 'identification' && (
         <div className="field"><label>Accepted answer(s) -- separate alternatives with |</label>

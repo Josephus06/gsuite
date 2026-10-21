@@ -9,14 +9,22 @@ const pool = require('../db');
 //   multiple_choice  index into choices
 //   multiple_select  [indices] -- right only when exactly the right set is picked
 //   identification   [accepted answers]; the examinee types text, compared case/space-insensitively
+//   enumeration      { items: [[alternatives], ...], required } -- the examinee types `required`
+//                    answers (any `required` of the items), in any order; each one that matches an
+//                    item not already matched earns points / required (2026-10-21)
 //   essay            { guide } -- what a good answer covers, for whoever grades it
 // Choice answers are always ORIGINAL indices: the examinee's choices are shown shuffled, and the
 // shuffle is mapped back before it is stored, so grading never depends on the order shown.
-const TYPES = ['true_false', 'multiple_choice', 'multiple_select', 'identification', 'essay'];
+//
+// Typed answers (identification, enumeration) match exactly, ignoring case and spacing. HR may
+// mark a wrong one right on the result (a misspelling): exam_attempt_answers.item_overrides, one
+// entry per answer box, and the score is re-totalled.
+const TYPES = ['true_false', 'multiple_choice', 'multiple_select', 'identification', 'enumeration', 'essay'];
 const TYPE_LABELS = {
   true_false: 'True or False', multiple_choice: 'Multiple Choice', multiple_select: 'Multiple Select',
-  identification: 'Identification', essay: 'Essay',
+  identification: 'Identification', enumeration: 'Enumeration', essay: 'Essay',
 };
+const TYPED_TYPES = ['identification', 'enumeration'];
 const CHOICE_TYPES = ['multiple_choice', 'multiple_select'];
 
 // mysql2 already decodes JSON columns, so a text answer ("cyan", an essay) arrives as a plain
@@ -74,6 +82,16 @@ function cleanQuestion(q) {
     const list = Array.isArray(q.answer) ? q.answer : String(q.answer || '').split('|');
     answer = list.map((s) => String(s ?? '').trim()).filter(Boolean);
     if (!answer.length) return { error: 'Give the accepted answer (separate alternatives with | ).' };
+  } else if (type === 'enumeration') {
+    // Items as [[alternatives]], or as lines / strings with alternatives split by "|".
+    const raw = q.answer?.items ?? q.answer;
+    const lines = Array.isArray(raw) ? raw : String(raw || '').split('\n');
+    const items = lines.map((it) => (Array.isArray(it) ? it : String(it ?? '').split('|'))
+      .map((s) => String(s ?? '').trim()).filter(Boolean)).filter((alts) => alts.length);
+    if (!items.length) return { error: 'List the accepted items, one per line (alternatives separated by | ).' };
+    const required = q.answer?.required == null || q.answer?.required === '' ? items.length : Math.floor(Number(q.answer.required));
+    if (!(required >= 1 && required <= items.length)) return { error: `"How many to give" must be 1 to ${items.length}.` };
+    answer = { items, required };
   } else {
     answer = { guide: String(q.answer?.guide ?? q.guide ?? '').trim() || null };
   }
@@ -97,8 +115,43 @@ function grade(type, key, given) {
   }
 }
 
-// An examinee's answer, checked against the question's shape before it is stored.
-function cleanGiven(type, choicesLen, given) {
+// An enumeration's answer boxes, each matched to an item not already matched (any order; typing
+// the same item twice, or two names for it, counts once). -> [true/false per box]
+function enumMarks(key, given) {
+  const items = Array.isArray(key?.items) ? key.items : [];
+  const used = new Set();
+  return (Array.isArray(given) ? given : []).map((g) => {
+    if (!norm(g)) return false;
+    const i = items.findIndex((alts, n) => !used.has(n) && alts.some((a) => norm(a) === norm(g)));
+    if (i < 0) return false;
+    used.add(i);
+    return true;
+  });
+}
+
+// Marks per answer box for a typed question, HR's overrides applied. Identification has one box.
+function typedMarks(type, key, given, overrides) {
+  const auto = type === 'enumeration' ? enumMarks(key, given) : [!!grade(type, key, given)];
+  const ov = Array.isArray(overrides) ? overrides : [];
+  return auto.map((m, i) => (ov[i] === true || ov[i] === false ? ov[i] : m));
+}
+
+// The points a typed answer earns: enumeration pays per correct box out of the number asked for.
+function typedPoints(type, key, marks, pts) {
+  const right = marks.filter(Boolean).length;
+  if (type !== 'enumeration') return right ? pts : 0;
+  const required = Number(key?.required) || 1;
+  return Math.round((pts * Math.min(right, required)) / required * 100) / 100;
+}
+
+// An examinee's answer, checked against the question's shape before it is stored. `slots` is the
+// number of answer boxes of an enumeration.
+function cleanGiven(type, choicesLen, given, slots = 0) {
+  if (type === 'enumeration') {
+    const list = (Array.isArray(given) ? given : []).slice(0, slots || 20).map((s) => String(s ?? '').trim().slice(0, 200));
+    while (list.length < slots) list.push('');
+    return list.some(Boolean) ? list : undefined;
+  }
   if (type === 'true_false') return given === true || given === 'true' ? true : given === false || given === 'false' ? false : undefined;
   if (type === 'multiple_choice') { const i = Number(given); return Number.isInteger(i) && i >= 0 && i < choicesLen ? i : undefined; }
   if (type === 'multiple_select') {
@@ -203,6 +256,19 @@ async function finalize(attemptId, { auto = false, regrade = false } = {}) {
         score += Number(x.points_awarded);
         continue;
       }
+      // Typed answers: marked box by box (HR's overrides applied), partial points for enumeration.
+      // Re-marked on a regrade too, so an override moves the score.
+      if (TYPED_TYPES.includes(q.type)) {
+        const key = parseJson(q.answer);
+        const marks = confirmed ? typedMarks(q.type, key, parseJson(x.answer), parseJson(x.item_overrides, null)) : [];
+        const awarded = confirmed ? typedPoints(q.type, key, marks, pts) : 0;
+        score += awarded;
+        await conn.query(
+          `INSERT INTO exam_attempt_answers (attempt_id, question_id, is_correct, points_awarded, item_marks) VALUES (?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE is_correct = VALUES(is_correct), points_awarded = VALUES(points_awarded), item_marks = VALUES(item_marks)`,
+          [attemptId, qid, awarded >= pts ? 1 : 0, awarded, JSON.stringify(marks)]);
+        continue;
+      }
       const ok = confirmed ? grade(q.type, parseJson(q.answer), parseJson(x.answer)) : false;
       const awarded = ok ? pts : 0;
       score += awarded;
@@ -273,7 +339,12 @@ async function recommendOrientations(attemptId) {
   if (!a) return;
   const topics = (await topicBreakdown(attemptId)).get(Number(attemptId)) || [];
   for (const t of topics) {
-    if (!t.topic_id || t.percent >= Number(a.reorient_below_percent)) continue;
+    if (!t.topic_id) continue;
+    if (t.percent >= Number(a.reorient_below_percent)) {
+      // Back over the line after a re-grade (an override): a recommendation nobody acted on goes.
+      await pool.query("DELETE FROM exam_orientations WHERE attempt_id = ? AND topic_id = ? AND status = 'recommended'", [a.id, t.topic_id]);
+      continue;
+    }
     await pool.query(
       `INSERT INTO exam_orientations (user_id, topic_id, attempt_id, topic_percent, status) VALUES (?, ?, ?, ?, 'recommended')
        ON DUPLICATE KEY UPDATE topic_percent = VALUES(topic_percent)`,
@@ -355,6 +426,8 @@ async function extractQuestions({ pdfBase64, fileName, text, marked = false, top
     'type is one of: true_false, multiple_choice, multiple_select, identification, essay.',
     'true_false: answer true or false. multiple_choice: choices = array of strings WITHOUT the letter labels, answer = 0-based index of the right choice.',
     'multiple_select: answer = array of 0-based indices. identification: answer = array of accepted answers (alternatives).',
+    'enumeration (the question asks to list / enumerate / give N things): answer = {"items": [["item", "alternative name", ...], ...], "required": N},',
+    'one inner array per accepted item; required = how many the examinee must give (all of them unless the question says a number).',
     'essay: answer = {"guide": <the points a good answer must cover, ONLY if the document lists them>}, otherwise {"guide": null}.',
     'If the document marks the answers (answer key, bold, check, asterisk, "Ans:"), use them. If it does not, give your best answer.',
     `topic: the subject the question tests. Prefer one of these existing topics when it fits: ${topics.length ? topics.join('; ') : '(none yet)'}; otherwise a short new topic name (2-4 words).`,
@@ -564,7 +637,7 @@ async function runExamReminders() {
 
 module.exports = {
   TYPES, TYPE_LABELS, CHOICE_TYPES, parseJson, nowUtc, phToday, day, utcText, windowEndUtc, shuffle,
-  cleanQuestion, cleanGiven, grade, targetUserIds, createAttempts, syncLateJoiner, sweep, finalize,
+  TYPED_TYPES, cleanQuestion, cleanGiven, grade, typedMarks, targetUserIds, createAttempts, syncLateJoiner, sweep, finalize,
   topicBreakdown, recommendOrientations, aiAllowed, docxText, extractQuestions, evaluateAttempt, summarizeSchedule,
   DIFFICULTIES, cleanRules, ruleAvailability, setQuestionCount, drawQuestions, cleanImage, runExamReminders,
 };

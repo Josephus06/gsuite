@@ -3,7 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { insertFor } = require('../lib/approvalNotifications');
 const {
-  TYPES, CHOICE_TYPES, parseJson, phToday, day, cleanQuestion, targetUserIds, createAttempts, sweep, finalize,
+  TYPES, CHOICE_TYPES, TYPED_TYPES, parseJson, phToday, day, cleanQuestion, targetUserIds, createAttempts, sweep, finalize,
   topicBreakdown, recommendOrientations, aiAllowed, extractQuestions, docxText, evaluateAttempt, summarizeSchedule, nowUtc,
   cleanRules, ruleAvailability, setQuestionCount, cleanImage,
 } = require('../lib/exams');
@@ -618,7 +618,7 @@ router.get('/attempts/:id', requireAuth, requirePermission(EX, 'can_view'), asyn
     let qs;
     if (order && order.length) {
       [qs] = await pool.query(
-        `SELECT q.*, t.name AS topic, x.answer AS given, x.confirmed_at, x.is_correct, x.points_awarded, x.feedback, x.choice_order, gu.display_name AS graded_by
+        `SELECT q.*, t.name AS topic, x.answer AS given, x.confirmed_at, x.is_correct, x.points_awarded, x.feedback, x.choice_order, x.item_marks, x.item_overrides, gu.display_name AS graded_by
            FROM JSON_TABLE(?, '$[*]' COLUMNS (n FOR ORDINALITY, qid BIGINT PATH '$')) o
            JOIN exam_questions q ON q.id = o.qid LEFT JOIN exam_topics t ON t.id = q.topic_id
            LEFT JOIN exam_attempt_answers x ON x.attempt_id = ? AND x.question_id = q.id
@@ -635,6 +635,7 @@ router.get('/attempts/:id', requireAuth, requirePermission(EX, 'can_view'), asyn
         choices: parseJson(q.choices, null), answer_key: parseJson(q.answer, null), given: q.confirmed_at ? parseJson(q.given, null) : null,
         confirmed: !!q.confirmed_at, is_correct: q.is_correct == null ? null : !!Number(q.is_correct),
         points_awarded: q.points_awarded == null ? null : Number(q.points_awarded), feedback: q.feedback, graded_by: q.graded_by,
+        marks: parseJson(q.item_marks, null), overrides: parseJson(q.item_overrides, null),
       })),
     });
   } catch (err) { return next(err); }
@@ -688,6 +689,37 @@ router.post('/attempts/:id/ai-evaluation', requireAuth, requirePermission(EX, 'c
     await pool.query('UPDATE exam_attempts SET ai_evaluation = ?, ai_evaluation_at = ? WHERE id = ?', [text, nowUtc(), a.id]);
     await recommendOrientations(a.id);
     return res.json({ ai_evaluation: text });
+  } catch (err) { return next(err); }
+});
+
+// HR marks a typed answer box right (a misspelling: "gogles") -- or wrong, or back to automatic
+// (correct: null). Identification has one box (index 0). The attempt is re-totalled, and the
+// examinee is told when their score moves.
+router.post('/attempts/:id/override', requireAuth, requirePermission(EX, 'can_edit'), async (req, res, next) => {
+  try {
+    const [[a]] = await pool.query('SELECT a.*, s.title FROM exam_attempts a JOIN exam_schedules s ON s.id = a.schedule_id WHERE a.id = ?', [req.params.id]);
+    if (!a || a.status !== 'submitted') return bad(res, 'Only a submitted exam can be re-marked.', 409);
+    const [[q]] = await pool.query('SELECT id, type, answer FROM exam_questions WHERE id = ?', [req.body.question_id]);
+    if (!q || !TYPED_TYPES.includes(q.type)) return bad(res, 'Only typed answers (identification, enumeration) can be marked by hand.');
+    const [[x]] = await pool.query('SELECT * FROM exam_attempt_answers WHERE attempt_id = ? AND question_id = ?', [a.id, q.id]);
+    if (!x || !x.confirmed_at) return bad(res, 'That question was not answered.');
+    const boxes = q.type === 'enumeration' ? (parseJson(x.answer, []) || []).length : 1;
+    const i = Number(req.body.index);
+    if (!Number.isInteger(i) || i < 0 || i >= boxes) return bad(res, 'No such answer.');
+    const correct = req.body.correct === true ? true : req.body.correct === false ? false : null;
+    const ov = Array.from({ length: boxes }, (_, n) => (parseJson(x.item_overrides, []) || [])[n] ?? null);
+    ov[i] = correct;
+    await pool.query('UPDATE exam_attempt_answers SET item_overrides = ?, graded_by_user_id = ?, graded_at = ? WHERE id = ?',
+      [ov.some((v) => v !== null) ? JSON.stringify(ov) : null, req.user.id, nowUtc(), x.id]);
+    const before = Number(a.percent);
+    const done = await finalize(a.id, { regrade: true });
+    if (done && Number(done.percent) !== before && !done.essays_pending) {
+      await insertFor([a.user_id], {
+        type: 'exam', title: `Exam result updated: ${a.title}`, message: `HR re-checked an answer -- your score is now ${done.percent}%.`,
+        relatedType: 'ExamAttempt', relatedId: a.id,
+      }, req.user.id).catch(() => {});
+    }
+    return res.json({ ok: true, percent: done?.percent });
   } catch (err) { return next(err); }
 });
 

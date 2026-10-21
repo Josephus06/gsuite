@@ -18,7 +18,7 @@ const clock = (s) => {
   const sec = s % 60;
   return `${h ? `${h}:` : ''}${String(m).padStart(h ? 2 : 1, '0')}:${String(sec).padStart(2, '0')}`;
 };
-const hasAnswer = (v) => v != null && v !== '' && !(Array.isArray(v) && !v.length);
+const hasAnswer = (v) => v != null && v !== '' && !(Array.isArray(v) && !v.some((x) => x != null && x !== ''));
 
 function AnswerInput({ q, value, onChange }) {
   if (q.type === 'true_false') {
@@ -50,6 +50,21 @@ function AnswerInput({ q, value, onChange }) {
             </label>
           );
         })}
+      </div>
+    );
+  }
+  // Enumeration: one box per item asked for, in any order.
+  if (q.type === 'enumeration') {
+    const list = Array.from({ length: q.slots || 1 }, (_, i) => (Array.isArray(value) ? value[i] ?? '' : ''));
+    return (
+      <div style={{ display: 'grid', gap: 6, maxWidth: 480 }}>
+        <div className="muted" style={{ fontSize: 12 }}>Give {q.slots} answer{q.slots === 1 ? '' : 's'}, in any order.</div>
+        {list.map((v, i) => (
+          <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <strong style={{ width: 20 }}>{i + 1}.</strong>
+            <input value={v} onChange={(e) => onChange(list.map((x, j) => (j === i ? e.target.value : x)))} />
+          </div>
+        ))}
       </div>
     );
   }
@@ -107,7 +122,10 @@ function Review({ exam }) {
             </div>
             {q.has_image && <QuestionImage url={`/exams/attempts/${exam.id}/questions/${q.id}/image`} maxHeight={160} />}
             <div style={{ marginTop: 4, whiteSpace: 'pre-wrap' }}>
-              <span className="muted">Your answer: </span>{q.confirmed ? (answerText(q.type, q.answer, q.choices) || '—') : <em className="muted">not answered / not confirmed</em>}
+              <span className="muted">Your answer: </span>{!q.confirmed ? <em className="muted">not answered / not confirmed</em>
+                : q.type === 'enumeration' ? (q.answer || []).map((v, i) => (
+                  <span key={i} style={{ marginRight: 12 }}>{i + 1}. {v || <em className="muted">blank</em>} {q.marks?.[i] ? '✓' : '✗'}</span>
+                )) : (answerText(q.type, q.answer, q.choices) || '—')}
             </div>
             {q.feedback && <div style={{ marginTop: 4, fontSize: 13 }}><span className="muted">Grader&apos;s note: </span>{q.feedback}</div>}
           </div>

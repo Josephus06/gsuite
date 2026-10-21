@@ -20,6 +20,9 @@ const COLUMNS = [
   ['exam_attempts', 'reminded_3_at', 'DATETIME NULL'],
   ['exam_attempts', 'reminded_1_at', 'DATETIME NULL'],
   ['exam_schedules', 'overdue_notified_at', 'DATETIME NULL'],
+  // Enumeration (2026-10-21): each answer box marked, and HR's overrides of a box (a misspelling).
+  ['exam_attempt_answers', 'item_marks', 'JSON NULL'],
+  ['exam_attempt_answers', 'item_overrides', 'JSON NULL'],
 ];
 
 (async () => {

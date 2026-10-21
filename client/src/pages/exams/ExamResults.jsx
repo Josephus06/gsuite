@@ -156,6 +156,42 @@ export function ScheduleResults() {
   );
 }
 
+// A typed answer box by box (an enumeration's items, an identification's one answer), each marked,
+// with HR's hand override for a misspelling: Mark right / Mark wrong / back to Automatic.
+function TypedMarks({ q, attempt, canEdit, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const boxes = q.type === 'enumeration' ? (Array.isArray(q.given) ? q.given : []) : [q.given];
+  async function mark(index, correct) {
+    setBusy(true);
+    try { await api.post(`/exam-admin/attempts/${attempt.id}/override`, { question_id: q.id, index, correct }); onDone(); }
+    catch (e) { window.alert(e.response?.data?.error || 'Could not re-mark the answer.'); }
+    finally { setBusy(false); }
+  }
+  return (
+    <div style={{ marginTop: 4 }}>
+      <span className="muted">Answer given:</span>
+      {boxes.map((v, i) => {
+        const ok = q.marks ? !!q.marks[i] : !!q.is_correct;
+        const ov = q.overrides?.[i];
+        return (
+          <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginLeft: 8 }}>
+            <span>{boxes.length > 1 ? `${i + 1}. ` : ''}{String(v ?? '').trim() || <em className="muted">blank</em>}</span>
+            <span style={{ color: ok ? 'var(--success, #16a34a)' : 'var(--danger, #b91c1c)', fontWeight: 700 }}>{ok ? '✓' : '✗'}</span>
+            {ov != null && <span className="badge badge-muted" title="Marked by hand">by HR</span>}
+            {canEdit && String(v ?? '').trim() && (
+              <>
+                {!ok && <button className="btn btn-sm" disabled={busy} onClick={() => mark(i, true)}>Mark right</button>}
+                {ok && ov == null && <button className="btn btn-sm" disabled={busy} onClick={() => mark(i, false)}>Mark wrong</button>}
+                {ov != null && <button className="btn btn-sm" disabled={busy} onClick={() => mark(i, null)}>Automatic</button>}
+              </>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function EssayGrade({ q, attemptId, onDone }) {
   const [points, setPoints] = useState(q.points_awarded ?? '');
   const [feedback, setFeedback] = useState(q.feedback || '');
@@ -290,8 +326,12 @@ export function AttemptResult() {
               </div>
               {q.has_image && <QuestionImage url={`/exam-admin/questions/${q.id}/image`} maxHeight={160} />}
               {CHOICE_TYPES.includes(q.type) && <div className="muted" style={{ fontSize: 12 }}>{(q.choices || []).map((c, j) => `${LETTERS[j]}. ${c}`).join('   ')}</div>}
-              <div style={{ marginTop: 4, whiteSpace: 'pre-wrap' }}><span className="muted">Answer given: </span>
-                {q.confirmed ? (answerText(q.type, q.given, indexed(q.choices)) || '—') : <em className="muted">not answered / not confirmed</em>}</div>
+              {q.confirmed && (q.type === 'enumeration' || q.type === 'identification') ? (
+                <TypedMarks q={q} attempt={a} canEdit={can(ROUTE, 'can_edit') && a.status === 'submitted'} onDone={load} />
+              ) : (
+                <div style={{ marginTop: 4, whiteSpace: 'pre-wrap' }}><span className="muted">Answer given: </span>
+                  {q.confirmed ? (answerText(q.type, q.given, indexed(q.choices)) || '—') : <em className="muted">not answered / not confirmed</em>}</div>
+              )}
               {q.type !== 'essay' && <div style={{ fontSize: 13 }}><span className="muted">Correct: </span>{answerText(q.type, q.answer_key, indexed(q.choices))}</div>}
               {q.type === 'essay' && q.answer_key?.guide && <div style={{ fontSize: 13 }}><span className="muted">Grading guide: </span>{q.answer_key.guide}</div>}
               {q.type === 'essay' && q.confirmed && a.status === 'submitted' && can(ROUTE, 'can_edit') && <EssayGrade q={q} attemptId={a.id} onDone={load} />}

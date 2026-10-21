@@ -19,6 +19,9 @@ const router = express.Router();
 // schedule HR makes.
 const ROUTE = '/exams';
 
+// How many answer boxes an enumeration shows -- the only thing about its key the examinee sees.
+const slotsOf = (q) => (q.type === 'enumeration' ? Number(parseJson(q.answer, {})?.required) || 1 : undefined);
+
 async function ownAttempt(req, res) {
   const [[a]] = await pool.query(
     `SELECT a.*, s.title, s.start_date, s.end_date, s.status AS schedule_status,
@@ -73,7 +76,7 @@ router.get('/attempts/:id', requireAuth, requirePermission(ROUTE, 'can_view'), a
     }
     const order = parseJson(a.question_order, []);
     const [qs] = order.length ? await pool.query(
-      'SELECT id, type, question, choices, points, image_data IS NOT NULL AS has_image FROM exam_questions WHERE id IN (?)', [order]) : [[]];
+      'SELECT id, type, question, choices, answer, points, image_data IS NOT NULL AS has_image FROM exam_questions WHERE id IN (?)', [order]) : [[]];
     const byId = new Map(qs.map((q) => [Number(q.id), q]));
     const [ans] = await pool.query('SELECT * FROM exam_attempt_answers WHERE attempt_id = ?', [a.id]);
     const ansBy = new Map(ans.map((x) => [Number(x.question_id), x]));
@@ -92,7 +95,7 @@ router.get('/attempts/:id', requireAuth, requirePermission(ROUTE, 'can_view'), a
         if (x?.confirmed_at) return { id: q.id, n: n + 1, confirmed: true, type: q.type, points: Number(q.points) };
         return {
           id: q.id, n: n + 1, confirmed: false, type: q.type, question: q.question, points: Number(q.points),
-          has_image: !!Number(q.has_image),
+          has_image: !!Number(q.has_image), slots: slotsOf(q),
           choices: CHOICE_TYPES.includes(q.type) ? shownChoices(q, x) : null, answer: parseJson(x?.answer, null),
         };
       }).filter(Boolean);
@@ -112,7 +115,9 @@ router.get('/attempts/:id', requireAuth, requirePermission(ROUTE, 'can_view'), a
         is_correct: x?.is_correct == null ? null : !!Number(x.is_correct),
         points_awarded: x?.points_awarded == null ? null : Number(x.points_awarded),
         pending: q.type === 'essay' && !!x?.confirmed_at && x?.points_awarded == null,
-        feedback: x?.feedback || null,
+        feedback: x?.feedback || null, slots: slotsOf(q),
+        // A typed answer marked box by box (an enumeration's each item) -- right or wrong, never the key.
+        marks: x?.confirmed_at ? parseJson(x.item_marks, null) : null,
       };
     }).filter(Boolean);
     return res.json({
@@ -220,10 +225,10 @@ async function answerable(req, res) {
   if (a.status !== 'in_progress') { res.status(409).json({ error: 'This exam is closed.', closed: true }); return null; }
   const qid = Number(req.params.qid);
   if (!(parseJson(a.question_order, []) || []).map(Number).includes(qid)) { res.status(404).json({ error: 'Not a question in this exam.' }); return null; }
-  const [[q]] = await pool.query('SELECT id, type, choices FROM exam_questions WHERE id = ?', [qid]);
+  const [[q]] = await pool.query('SELECT id, type, choices, answer FROM exam_questions WHERE id = ?', [qid]);
   const [[x]] = await pool.query('SELECT confirmed_at FROM exam_attempt_answers WHERE attempt_id = ? AND question_id = ?', [a.id, qid]);
   if (x?.confirmed_at) { res.status(409).json({ error: 'That answer is already confirmed and final.' }); return null; }
-  const given = cleanGiven(q.type, (parseJson(q.choices, []) || []).length, req.body?.answer);
+  const given = cleanGiven(q.type, (parseJson(q.choices, []) || []).length, req.body?.answer, slotsOf(q));
   return { a, q, given };
 }
 
