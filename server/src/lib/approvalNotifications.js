@@ -1,6 +1,7 @@
 const pool = require('../db');
 const { notersForDoc, DEPARTMENT_NOTED_TYPES, AP_NOTED_TYPES, notersFor } = require('./formNoters');
 const { leaveRoute } = require('./leaveRoute');
+const { businessTripApprovers } = require('./businessTripRoute');
 
 // The bell for documents waiting on somebody's decision -- Purchase Orders and the request Forms.
 // Until 2026-10-07 neither wrote a notification at all, so an approver only found a PO or a form
@@ -138,6 +139,16 @@ function notifyFormStatus(formId, actorId) {
       } else if (doc.status === 'rejected') {
         await insertFor([doc.user_id], { ...base, type: 'form_rejected', title: `${otWhat} was rejected`, message: doc.rejection_reason ? `Reason: ${doc.rejection_reason}` : `${otWhat} was rejected.` }, actorId);
       }
+      return;
+    }
+
+    // Business Trip (2026-10-21): noted by the department head as before (below), then approved by
+    // the requestor's supervisor(s) -- lib/businessTripRoute.js; none set, the Forms Approval approvers.
+    if (doc.type === 'business_trip' && doc.status === 'noted') {
+      const sups = await businessTripApprovers(doc.user_id);
+      const to = sups.length ? sups.map((u) => u.id) : await usersWithPermission('/forms/approval', 'can_approve');
+      await insertFor(to, { ...base, type: 'form_pending_approval', title: `${what} needs your approval`, message: `${what} has been noted and is waiting for your approval.` }, actorId);
+      await insertFor([doc.user_id], { ...base, type: 'form_noted', title: `${what} was noted`, message: `${what} has been noted and is now waiting for approval.` }, actorId);
       return;
     }
 

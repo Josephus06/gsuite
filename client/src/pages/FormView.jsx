@@ -148,7 +148,9 @@ export default function FormView() {
   // when there is one below the approver (leave_needs_note), otherwise straight to approval.
   // A Fuel Request behaves as a leave with nobody to note it: straight to its tagged approvers.
   // Routed by its own approvers: a Leave or Undertime by the reporting line, a Fuel Request by its tagged approvers.
-  const isLeave = doc.type === 'leave' || doc.type === 'undertime' || doc.type === 'fuel';
+  // A Business Trip (2026-10-21) too: noted as before, then approved by the requestor's supervisor --
+  // the server marks it as needing a note, so only the "waiting on approval by" line comes from here.
+  const isLeave = doc.type === 'leave' || doc.type === 'undertime' || doc.type === 'fuel' || doc.type === 'business_trip';
   const leaveDirect = isLeave && !doc.leave_needs_note;
   const noteBlocked = !leaveDirect && doc.status === 'submitted' && !doc.can_note && doc.note_blocked_reason;
   // Approving reads only from NOTED -- the head's sign-off is a gate, not a step to skip. Rejecting

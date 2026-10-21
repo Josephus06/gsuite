@@ -10,6 +10,7 @@ const {
   AP_NOTED_TYPES, isAccountsPayable, notersForDoc,
 } = require('../lib/formNoters');
 const { leaveRoute } = require('../lib/leaveRoute');
+const { businessTripApprovers } = require('../lib/businessTripRoute');
 const { notifyFormStatus } = require('../lib/approvalNotifications');
 
 const router = express.Router();
@@ -48,7 +49,8 @@ const APPROVAL_ROUTE = '/forms/approval';
 // Forms with approvers of their own (2026-10-19): Leave (the filer's reporting line), Overtime (the
 // department heads), Fuel (tagged Fuel Approvers). The Forms Approval page's approvers rule on the
 // others -- and see only those, plus any of these three actually routed to them.
-const OWN_APPROVER_TYPES = ['leave', 'undertime', 'overtime', 'fuel'];
+// Business Trip (2026-10-21): approved by the requestor's supervisor(s) (lib/businessTripRoute.js).
+const OWN_APPROVER_TYPES = ['leave', 'undertime', 'overtime', 'fuel', 'business_trip'];
 // Routed by the filer's reporting line (lib/leaveRoute.js): a Leave Application, and an Undertime
 // Form (2026-10-20), which is time off the same way.
 const LEAVE_ROUTED = ['leave', 'undertime'];
@@ -455,6 +457,20 @@ async function mayApprove(userId, doc) {
     }
     return { allowed: eligible && atStep, eligible, approvers: route.approvers, noters: route.noters, reason };
   }
+  // A Business Trip: noted by the department head (as every department-noted form), then approved by
+  // the requestor's supervisor(s); none set, the Forms Approval page's approvers.
+  if (doc.type === 'business_trip') {
+    const approvers = await businessTripApprovers(doc.user_id);
+    const eligible = Number(userId) !== Number(doc.user_id)
+      && (approvers.length ? isMember(approvers, userId) : await userCan(userId, APPROVAL_ROUTE, 'can_approve'));
+    let reason = null;
+    if (!eligible) {
+      reason = Number(userId) === Number(doc.user_id) ? 'You cannot approve your own business trip.'
+        : approvers.length ? `Only ${approvers.map((a) => a.display_name).join(' or ')} (the requestor's supervisor) can approve this business trip.`
+          : 'You do not have permission to perform this action';
+    }
+    return { allowed: eligible && doc.status === 'noted', eligible, approvers, noters: [], reason };
+  }
   const eligible = await userCan(userId, APPROVAL_ROUTE, 'can_approve');
   return { allowed: eligible && doc.status === 'noted', eligible, approvers: [], noters: [], reason: eligible ? null : 'You do not have permission to perform this action' };
 }
@@ -480,6 +496,12 @@ async function maySee(userId, doc) {
   if (await userCan(userId, APPROVAL_ROUTE, 'can_view_all')) return true;
   // One they have already acted on -- noted, approved or rejected.
   if ([doc.noted_by, doc.approved_by, doc.rejected_by].some((u) => u != null && Number(u) === Number(userId))) return true;
+  // A Business Trip: the requestor's supervisor(s), who approve it.
+  if (doc.type === 'business_trip') {
+    const sups = await businessTripApprovers(doc.user_id);
+    if (isMember(sups, userId)) return true;
+    if (pageApprover && !sups.length) return true; // no supervisor set: falls to the page's approvers
+  }
   // A Fuel Request: its tagged approvers.
   if (doc.type === 'fuel' && isMember(await fuelApprovers(), userId)) return true;
   // A Leave Application: the supervisor who notes it and whoever approves it (lib/leaveRoute.js).
@@ -630,7 +652,10 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
     const leaveIds = canSeeAll ? [] : await leaveWaitingOn(req.user.id, pageApprover);
     // Tagged Fuel Approver: every fuel request (2026-10-19).
     const fuelApprover = canSeeAll ? false : isMember(await fuelApprovers(), req.user.id);
-    if (!canSeeAll && !pageApprover && !pageViewer && headOf.length === 0 && !isAp && !otMine && !leaveIds.length && !fuelApprover) {
+    // Supervisor of someone (user_supervisors): their people's Business Trips (2026-10-21).
+    const [[supOf]] = canSeeAll ? [[null]] : await pool.query(
+      'SELECT 1 AS x FROM user_supervisors WHERE supervisor_id = ? AND user_id <> ? LIMIT 1', [req.user.id, req.user.id]).catch(() => [[null]]);
+    if (!canSeeAll && !pageApprover && !pageViewer && headOf.length === 0 && !isAp && !otMine && !leaveIds.length && !fuelApprover && !supOf) {
       return res.status(403).json({ error: 'You do not have permission to perform this action' });
     }
 
@@ -660,6 +685,16 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
       }
       if (leaveIds.length) { mine.push('f.id IN (?)'); params.push(leaveIds); }
       if (fuelApprover) mine.push("f.type = 'fuel'");
+      // Business Trips of the people this user supervises; and, for the page's approvers, those of
+      // requestors with no active supervisor set (the fallback in lib/businessTripRoute.js).
+      if (supOf) {
+        mine.push("(f.type = 'business_trip' AND EXISTS (SELECT 1 FROM user_supervisors us WHERE us.user_id = f.user_id AND us.supervisor_id = ? AND us.user_id <> us.supervisor_id))");
+        params.push(req.user.id);
+      }
+      if (pageApprover) {
+        mine.push(`(f.type = 'business_trip' AND NOT EXISTS (SELECT 1 FROM user_supervisors us JOIN users su ON su.id = us.supervisor_id
+                    WHERE us.user_id = f.user_id AND su.is_active = 1 AND su.id <> f.user_id))`);
+      }
       if (pageApprover) { mine.push('f.type NOT IN (?)'); params.push(OWN_APPROVER_TYPES); }
       // Their own forms, and the ones they noted, approved or rejected.
       mine.push('(f.user_id = ? OR f.noted_by = ? OR f.approved_by = ? OR f.rejected_by = ?)');
@@ -1032,6 +1067,11 @@ router.get('/:id', requireAuth, async (req, res, next) => {
 
     const appr = await mayApprove(req.user.id, doc);
     doc.can_approve = appr.eligible;
+    // A business trip names its approvers -- the requestor's supervisor(s) -- and is noted first.
+    if (doc.type === 'business_trip') {
+      doc.leave_approvers = appr.approvers.map((a) => a.display_name);
+      doc.leave_needs_note = true;
+    }
     // A fuel request names its tagged approvers, and is never waiting on a note (as a leave with none).
     if (doc.type === 'fuel') {
       doc.leave_approvers = appr.approvers.map((a) => a.display_name);
