@@ -18,8 +18,11 @@ const WINDOW_BADGE = { open: 'badge-success', upcoming: 'badge-info', closed: 'b
 // ---------------------------------------------------------------- Sets
 
 function SetEditor({ meta, setId, onClose, onSaved }) {
-  const [form, setForm] = useState({ name: '', department_id: '', description: '', time_limit_minutes: '', passing_percent: 75, reorient_below_percent: 60 });
+  const [form, setForm] = useState({ name: '', mode: 'fixed', department_id: '', description: '', time_limit_minutes: '', passing_percent: 75, reorient_below_percent: 60 });
   const [selected, setSelected] = useState([]);
+  // A random set's rules: "N questions from this department / topic / type / difficulty".
+  const [rules, setRules] = useState([{ department_id: '', topic_id: '', type: '', difficulty: '', count: 10 }]);
+  const [avail, setAvail] = useState([]);
   const [locked, setLocked] = useState(false);
   const [pool, setPool] = useState([]);
   const [f, setF] = useState({ department_id: '', topic_id: '', type: '', q: '' });
@@ -31,9 +34,12 @@ function SetEditor({ meta, setId, onClose, onSaved }) {
     if (!setId) return;
     api.get(`/exam-admin/sets/${setId}`).then(({ data }) => {
       setForm({
-        name: data.name, department_id: data.department_id || '', description: data.description || '', time_limit_minutes: data.time_limit_minutes || '',
+        name: data.name, mode: data.mode || 'fixed', department_id: data.department_id || '', description: data.description || '', time_limit_minutes: data.time_limit_minutes || '',
         passing_percent: Number(data.passing_percent), reorient_below_percent: Number(data.reorient_below_percent),
       });
+      if (Array.isArray(data.rules) && data.rules.length) {
+        setRules(data.rules.map((r) => ({ department_id: r.department_id || '', topic_id: r.topic_id || '', type: r.type || '', difficulty: r.difficulty || '', count: r.count })));
+      }
       setSelected(data.questions.map((q) => ({ id: q.id, question: q.question, type: q.type, topic: q.topic, department: q.department, points: q.points })));
       setLocked(data.locked);
       setF((x) => ({ ...x, department_id: data.department_id || '' }));
@@ -47,6 +53,17 @@ function SetEditor({ meta, setId, onClose, onSaved }) {
     }, 250);
     return () => clearTimeout(t);
   }, [f]);
+
+  // How many bank questions each rule can draw from.
+  useEffect(() => {
+    if (form.mode !== 'random') return undefined;
+    const t = setTimeout(() => {
+      api.post('/exam-admin/sets/rule-check', { rules }).then(({ data }) => setAvail(data.available || [])).catch(() => setAvail([]));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [rules, form.mode]);
+  const setRule = (i, patch) => setRules((list) => list.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const ruleTotal = rules.reduce((m, r) => m + (Number(r.count) || 0), 0);
 
   const chosen = new Set(selected.map((q) => q.id));
   const available = pool.filter((q) => !chosen.has(q.id));
@@ -66,7 +83,9 @@ function SetEditor({ meta, setId, onClose, onSaved }) {
   async function save() {
     setBusy(true); setError('');
     try {
-      const body = { ...form, question_ids: selected.map((q) => q.id) };
+      const body = form.mode === 'random'
+        ? { ...form, rules: rules.map((r) => ({ ...r, count: Number(r.count) })) }
+        : { ...form, question_ids: selected.map((q) => q.id) };
       if (setId) await api.put(`/exam-admin/sets/${setId}`, body); else await api.post('/exam-admin/sets', body);
       onSaved();
     } catch (e) { setError(e.response?.data?.error || 'Could not save the set.'); }
@@ -80,6 +99,11 @@ function SetEditor({ meta, setId, onClose, onSaved }) {
       {locked && <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>This set has already been taken: its questions and passing score are fixed. Make a new set to change them.</div>}
       <div className="filter-grid">
         <div className="field"><label>Set Name</label><input value={form.name} onChange={s('name')} placeholder="e.g. SET 1 -- Production" /></div>
+        <div className="field"><label>Questions</label>
+          <select value={form.mode} disabled={locked} onChange={s('mode')}>
+            <option value="fixed">Fixed -- the same questions for everyone</option>
+            <option value="random">Random -- drawn per examinee from the bank</option>
+          </select></div>
         <div className="field"><label>Department (optional)</label>
           <select value={form.department_id} onChange={(e) => { s('department_id')(e); setF((x) => ({ ...x, department_id: e.target.value, topic_id: '' })); }}>
             <option value="">Mixed / any</option>
@@ -91,6 +115,43 @@ function SetEditor({ meta, setId, onClose, onSaved }) {
       </div>
       <div className="field"><label>Instructions (shown before the exam starts)</label><textarea rows={2} value={form.description} onChange={s('description')} /></div>
 
+      {form.mode === 'random' ? (
+        <div style={{ marginTop: 8 }}>
+          <h3 style={{ margin: '4px 0' }}>Draw Rules: {ruleTotal} question(s) per examinee</h3>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+            Each examinee gets their own questions, drawn when they start -- so co-workers do not get the same paper. Rules are drawn in order and never repeat a question.
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>#</th><th>Department</th><th>Topic</th><th>Type</th><th>Difficulty</th><th>How many</th><th>In the bank</th><th /></tr></thead>
+              <tbody>
+                {rules.map((r, i) => {
+                  const rt = meta.topics.filter((t) => !r.department_id || !t.department_id || Number(t.department_id) === Number(r.department_id));
+                  const short = avail[i] != null && avail[i] < Number(r.count);
+                  return (
+                    <tr key={i}>
+                      <td>{i + 1}</td>
+                      <td><select value={r.department_id} disabled={locked} onChange={(e) => setRule(i, { department_id: e.target.value, topic_id: '' })}>
+                        <option value="">Any</option>{meta.departments.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}</select></td>
+                      <td><select value={r.topic_id} disabled={locked} onChange={(e) => setRule(i, { topic_id: e.target.value })}>
+                        <option value="">Any</option>{rt.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select></td>
+                      <td><select value={r.type} disabled={locked} onChange={(e) => setRule(i, { type: e.target.value })}>
+                        <option value="">Any</option>{TYPES.map((t) => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}</select></td>
+                      <td><select value={r.difficulty} disabled={locked} onChange={(e) => setRule(i, { difficulty: e.target.value })}>
+                        <option value="">Any</option><option value="easy">Easy</option><option value="average">Average</option><option value="hard">Hard</option></select></td>
+                      <td><input type="number" min="1" style={{ width: 80 }} value={r.count} disabled={locked} onChange={(e) => setRule(i, { count: e.target.value })} /></td>
+                      <td style={{ color: short ? 'var(--danger, #b91c1c)' : undefined, fontWeight: short ? 700 : undefined }}>{avail[i] ?? '…'}{short ? ' -- not enough' : ''}</td>
+                      <td>{!locked && rules.length > 1 && <button className="btn btn-sm" onClick={() => setRules(rules.filter((_, j) => j !== i))}>✕</button>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {!locked && <button className="btn btn-sm" style={{ marginTop: 6 }} onClick={() => setRules([...rules, { department_id: form.department_id || '', topic_id: '', type: '', difficulty: '', count: 5 }])}>+ Rule</button>}
+          <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>A bank with more questions than a rule draws makes every paper more different. Questions on a picture count like any other.</div>
+        </div>
+      ) : (
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 16, marginTop: 8 }}>
         <div>
           <h3 style={{ margin: '4px 0' }}>Question Bank</h3>
@@ -145,6 +206,7 @@ function SetEditor({ meta, setId, onClose, onSaved }) {
           <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>Each examinee gets these in their own shuffled order.</div>
         </div>
       </div>
+      )}
       <div style={{ marginTop: 12 }}><button className="btn btn-primary" disabled={busy} onClick={save}>Save Set</button></div>
     </Modal>
   );
@@ -173,10 +235,10 @@ function SetsTab({ meta }) {
               {rows.length === 0 && <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 20 }}>No exam sets yet.</td></tr>}
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td data-label="Set" style={{ fontWeight: 600 }}>{r.name}</td>
+                  <td data-label="Set" style={{ fontWeight: 600 }}>{r.name}{r.mode === 'random' && <span className="badge badge-info" style={{ marginLeft: 6 }} title="Questions drawn per examinee">Random</span>}</td>
                   <td data-label="Department">{r.department || 'Mixed'}</td>
                   <td data-label="Questions">{r.question_count}</td>
-                  <td data-label="Points">{r.total_points}</td>
+                  <td data-label="Points">{r.total_points ?? <span className="muted">varies</span>}</td>
                   <td data-label="Time Limit">{r.time_limit_minutes ? `${r.time_limit_minutes} min` : 'None'}</td>
                   <td data-label="Passing">{pct(r.passing_percent)}</td>
                   <td data-label="Re-orient below">{pct(r.reorient_below_percent)}</td>
@@ -395,7 +457,59 @@ function OrientationTab() {
   );
 }
 
-const TABS = [['schedules', 'Schedules & Results'], ['sets', 'Exam Sets'], ['orientation', 'Re-orientation']];
+// Employees (2026-10-21): everyone given an exam, with how they have done -- each opens their record.
+function EmployeesTab({ meta }) {
+  const [q, setQ] = useState('');
+  const [dept, setDept] = useState('');
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      api.get('/exam-admin/employees', { params: { q: q.trim() || undefined, department_id: dept || undefined } })
+        .then(({ data }) => setRows(data)).catch(() => setRows([]));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [q, dept]);
+  return (
+    <div className="card">
+      <div className="filter-grid" style={{ marginBottom: 8 }}>
+        <div className="field"><label>Search</label><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Employee name" /></div>
+        <div className="field"><label>Department</label>
+          <select value={dept} onChange={(e) => setDept(e.target.value)}>
+            <option value="">All</option>
+            {meta.departments.map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}
+          </select></div>
+      </div>
+      {!rows ? <LoadingSpinner /> : (
+        <div className="table-wrap">
+          <table className="responsive-cards">
+            <thead><tr><th>Employee</th><th>Department</th><th>Exams</th><th>Taken</th><th>Passed</th><th>Missed</th><th>Pending</th><th>Average</th><th>Last Taken</th><th>Orientations</th><th /></tr></thead>
+            <tbody>
+              {rows.length === 0 && <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: 20 }}>Nobody has been given an exam yet.</td></tr>}
+              {rows.map((r) => (
+                <tr key={r.id}>
+                  <td data-label="Employee" style={{ fontWeight: 600 }}>{r.name}</td>
+                  <td data-label="Department">{r.department}</td>
+                  <td data-label="Exams">{r.assigned}</td>
+                  <td data-label="Taken">{Number(r.taken || 0)}</td>
+                  <td data-label="Passed">{Number(r.passed || 0)}</td>
+                  <td data-label="Missed" style={{ color: Number(r.missed) ? 'var(--danger, #b91c1c)' : undefined }}>{Number(r.missed || 0)}</td>
+                  <td data-label="Pending">{Number(r.pending || 0)}</td>
+                  <td data-label="Average">{pct(r.avg_percent)}</td>
+                  <td data-label="Last Taken">{fmtDay(r.last_submitted_at) || '—'}</td>
+                  <td data-label="Orientations">{Number(r.orientations_open) ? <span className="badge badge-warning">{r.orientations_open} open</span> : null}
+                    {Number(r.orientations_attended) ? <span className="muted" style={{ marginLeft: 4 }}>{r.orientations_attended} attended</span> : null}</td>
+                  <td><Link className="btn btn-sm btn-primary" to={`/hrd/exams/employees/${r.id}`}>Record</Link></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const TABS = [['schedules', 'Schedules & Results'], ['sets', 'Exam Sets'], ['orientation', 'Re-orientation'], ['employees', 'Employees']];
 
 export default function Examinations() {
   const [params, setParams] = useSearchParams();
@@ -420,6 +534,7 @@ export default function Examinations() {
           {tab === 'schedules' && <SchedulesTab meta={meta} />}
           {tab === 'sets' && <SetsTab meta={meta} />}
           {tab === 'orientation' && <OrientationTab />}
+          {tab === 'employees' && <EmployeesTab meta={meta} />}
         </>
       )}
     </div>

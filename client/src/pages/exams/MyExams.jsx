@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
-import { STATUS_BADGE, STATUS_LABELS, fmtDay, pct } from '../../utils/exams';
+import { STATUS_BADGE, STATUS_LABELS, download, fmtDay, pct } from '../../utils/exams';
 
 // Forms > My Exams (2026-10-21; routes/exams.js): the exams HR scheduled for you -- to take while
 // the window is open, and your results after.
@@ -47,6 +47,12 @@ export default function MyExams() {
                       {r.can_start && <Link className="btn btn-sm btn-primary" to={`/exams/${r.id}`}>{r.status === 'in_progress' ? 'Continue' : 'Take Exam'}</Link>}
                       {r.not_yet_open && <span className="muted" style={{ fontSize: 12 }}>Opens {fmtDay(r.start_date)}</span>}
                       {r.status === 'submitted' && <Link className="btn btn-sm" to={`/exams/${r.id}`}>View Result</Link>}
+                      {r.certificate && (
+                        <button className="btn btn-sm" style={{ marginLeft: 4 }} title="Certificate of Completion"
+                          onClick={() => download(`/exams/attempts/${r.id}/certificate`, `certificate-${r.id}.pdf`).catch(() => window.alert('Could not download the certificate.'))}>
+                          Certificate
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

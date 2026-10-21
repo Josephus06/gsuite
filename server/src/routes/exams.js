@@ -3,8 +3,9 @@ const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const {
   CHOICE_TYPES, parseJson, nowUtc, phToday, day, utcText, windowEndUtc, shuffle, cleanGiven, sweep, finalize, syncLateJoiner,
-  topicBreakdown,
+  topicBreakdown, setQuestionCount, drawQuestions,
 } = require('../lib/exams');
+const { certificatePdf } = require('../lib/examCertificate');
 
 const router = express.Router();
 
@@ -21,8 +22,10 @@ const ROUTE = '/exams';
 async function ownAttempt(req, res) {
   const [[a]] = await pool.query(
     `SELECT a.*, s.title, s.start_date, s.end_date, s.status AS schedule_status,
-            st.name AS set_name, st.description, st.time_limit_minutes, st.passing_percent
+            st.name AS set_name, st.description, st.time_limit_minutes, st.passing_percent, st.mode, st.rules,
+            u.display_name AS user_name
        FROM exam_attempts a JOIN exam_schedules s ON s.id = a.schedule_id JOIN exam_sets st ON st.id = a.set_id
+       JOIN users u ON u.id = a.user_id
       WHERE a.id = ?`, [req.params.id]);
   if (!a || Number(a.user_id) !== Number(req.user.id)) { res.status(404).json({ error: 'Exam not found.' }); return null; }
   return a;
@@ -38,12 +41,16 @@ router.get('/my', requireAuth, requirePermission(ROUTE, 'can_view'), async (req,
     const [rows] = await pool.query(
       `SELECT a.id, a.status, a.started_at, a.submitted_at, a.auto_submitted, a.score, a.max_score, a.percent, a.passed, a.essays_pending,
               s.title, s.start_date, s.end_date, s.status AS schedule_status, st.name AS set_name, st.time_limit_minutes, st.passing_percent,
-              (SELECT COUNT(*) FROM exam_set_questions sq WHERE sq.set_id = a.set_id) AS question_count
+              st.mode, st.rules, (SELECT COUNT(*) FROM exam_set_questions sq WHERE sq.set_id = a.set_id) AS fixed_count,
+              JSON_LENGTH(a.question_order) AS drawn_count
          FROM exam_attempts a JOIN exam_schedules s ON s.id = a.schedule_id JOIN exam_sets st ON st.id = a.set_id
         WHERE a.user_id = ? AND s.status <> 'cancelled'
         ORDER BY FIELD(a.status, 'in_progress', 'assigned', 'submitted', 'missed'), s.end_date, a.id DESC`, [req.user.id]);
     res.json(rows.map((r) => ({
-      ...r,
+      ...r, rules: undefined, fixed_count: undefined, drawn_count: undefined,
+      // What was drawn once started; before that what the set will give (a random set's rules).
+      question_count: r.drawn_count != null ? Number(r.drawn_count) : setQuestionCount(r, r.fixed_count),
+      certificate: r.status === 'submitted' && Number(r.passed) === 1 && !Number(r.essays_pending),
       can_start: ['assigned', 'in_progress'].includes(r.status) && openNow(r),
       not_yet_open: r.status === 'assigned' && phToday() < day(r.start_date),
     })));
@@ -62,10 +69,11 @@ router.get('/attempts/:id', requireAuth, requirePermission(ROUTE, 'can_view'), a
     };
     if (a.status === 'assigned' || a.status === 'missed') {
       const [[{ n }]] = await pool.query('SELECT COUNT(*) AS n FROM exam_set_questions WHERE set_id = ?', [a.set_id]);
-      return res.json({ ...head, question_count: Number(n) });
+      return res.json({ ...head, question_count: setQuestionCount(a, n) });
     }
     const order = parseJson(a.question_order, []);
-    const [qs] = order.length ? await pool.query('SELECT id, type, question, choices, points FROM exam_questions WHERE id IN (?)', [order]) : [[]];
+    const [qs] = order.length ? await pool.query(
+      'SELECT id, type, question, choices, points, image_data IS NOT NULL AS has_image FROM exam_questions WHERE id IN (?)', [order]) : [[]];
     const byId = new Map(qs.map((q) => [Number(q.id), q]));
     const [ans] = await pool.query('SELECT * FROM exam_attempt_answers WHERE attempt_id = ?', [a.id]);
     const ansBy = new Map(ans.map((x) => [Number(x.question_id), x]));
@@ -84,6 +92,7 @@ router.get('/attempts/:id', requireAuth, requirePermission(ROUTE, 'can_view'), a
         if (x?.confirmed_at) return { id: q.id, n: n + 1, confirmed: true, type: q.type, points: Number(q.points) };
         return {
           id: q.id, n: n + 1, confirmed: false, type: q.type, question: q.question, points: Number(q.points),
+          has_image: !!Number(q.has_image),
           choices: CHOICE_TYPES.includes(q.type) ? shownChoices(q, x) : null, answer: parseJson(x?.answer, null),
         };
       }).filter(Boolean);
@@ -97,7 +106,7 @@ router.get('/attempts/:id', requireAuth, requirePermission(ROUTE, 'can_view'), a
       const x = ansBy.get(Number(qid));
       if (!q) return null;
       return {
-        id: q.id, n: n + 1, type: q.type, question: q.question, points: Number(q.points),
+        id: q.id, n: n + 1, type: q.type, question: q.question, points: Number(q.points), has_image: !!Number(q.has_image),
         choices: CHOICE_TYPES.includes(q.type) ? shownChoices(q, x) : null,
         answer: x?.confirmed_at ? parseJson(x.answer, null) : null, confirmed: !!x?.confirmed_at,
         is_correct: x?.is_correct == null ? null : !!Number(x.is_correct),
@@ -110,10 +119,52 @@ router.get('/attempts/:id', requireAuth, requirePermission(ROUTE, 'can_view'), a
       ...head, submitted_at: a.submitted_at, auto_submitted: !!a.auto_submitted, score: a.score == null ? null : Number(a.score),
       max_score: a.max_score == null ? null : Number(a.max_score), percent: a.percent == null ? null : Number(a.percent),
       passed: a.passed == null ? null : !!a.passed, essays_pending: Number(a.essays_pending || 0),
+      certificate: Number(a.passed) === 1 && !Number(a.essays_pending),
       topics: topics.map((t) => ({ topic: t.topic, earned: t.earned, max: t.max, percent: t.percent })), questions,
     });
   } catch (err) { return next(err); }
 });
+
+// A question's picture, loaded on its own so the exam itself stays light. Only for a question in
+// this examinee's exam that they may see now: an open one while taking it, any once submitted.
+router.get('/attempts/:id/questions/:qid/image', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const a = await ownAttempt(req, res);
+    if (!a) return undefined;
+    const qid = Number(req.params.qid);
+    if (!['in_progress', 'submitted'].includes(a.status) || !(parseJson(a.question_order, []) || []).map(Number).includes(qid)) {
+      return res.status(404).json({ error: 'Not found.' });
+    }
+    if (a.status === 'in_progress') {
+      const [[x]] = await pool.query('SELECT confirmed_at FROM exam_attempt_answers WHERE attempt_id = ? AND question_id = ?', [a.id, qid]);
+      if (x?.confirmed_at) return res.status(404).json({ error: 'Not found.' });
+    }
+    const [[q]] = await pool.query('SELECT image_data FROM exam_questions WHERE id = ?', [qid]);
+    return res.json({ image: q?.image_data || null });
+  } catch (err) { return next(err); }
+});
+
+// Certificate of Completion -- a passed exam with nothing left to grade.
+router.get('/attempts/:id/certificate', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const a = await ownAttempt(req, res);
+    if (!a) return undefined;
+    if (a.status !== 'submitted' || Number(a.passed) !== 1 || Number(a.essays_pending)) {
+      return res.status(409).json({ error: 'A certificate is issued for a passed exam once it is fully graded.' });
+    }
+    return sendCertificate(res, a);
+  } catch (err) { return next(err); }
+});
+
+async function sendCertificate(res, a) {
+  const pdf = await certificatePdf({
+    name: a.user_name, title: a.title, setName: a.set_name, percent: a.percent,
+    date: day(a.submitted_at), certificateNo: `EXC-${String(a.id).padStart(6, '0')}`,
+  });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="certificate-${String(a.user_name || 'exam').replace(/[^\w.-]+/g, '-')}-${a.id}.pdf"`);
+  return res.send(pdf);
+}
 
 router.post('/attempts/:id/start', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   const conn = await pool.getConnection();
@@ -125,13 +176,12 @@ router.post('/attempts/:id/start', requireAuth, requirePermission(ROUTE, 'can_vi
     if (!openNow(a)) {
       return res.status(409).json({ error: phToday() < day(a.start_date) ? `This exam opens on ${day(a.start_date)}.` : 'This exam is no longer open.' });
     }
-    const [qs] = await conn.query(
-      `SELECT q.id, q.type, q.choices FROM exam_set_questions sq JOIN exam_questions q ON q.id = sq.question_id
-        WHERE sq.set_id = ? ORDER BY sq.sort_order, sq.id`, [a.set_id]);
-    if (!qs.length) return res.status(409).json({ error: 'This exam has no questions yet. Tell HR.' });
+    // A fixed set: the same questions for everyone, each in their own order. A random set: this
+    // examinee's own draw from the bank by the set's rules. Either way the choices are shuffled too.
+    const order = await drawQuestions(conn, { id: a.set_id, mode: a.mode, rules: a.rules });
+    if (!order.length) return res.status(409).json({ error: 'This exam has no questions yet. Tell HR.' });
+    const [qs] = await conn.query('SELECT id, type, choices FROM exam_questions WHERE id IN (?)', [order]);
     await conn.beginTransaction();
-    // Same set for everyone, each in their own order -- questions and, within each, the choices.
-    const order = shuffle(qs.map((q) => Number(q.id)));
     for (const q of qs) {
       const choices = parseJson(q.choices, []) || [];
       const choiceOrder = CHOICE_TYPES.includes(q.type) ? shuffle(choices.map((_, i) => i)) : null;
@@ -225,3 +275,4 @@ router.post('/attempts/:id/tab-switch', requireAuth, requirePermission(ROUTE, 'c
 });
 
 module.exports = router;
+module.exports.sendCertificate = sendCertificate;

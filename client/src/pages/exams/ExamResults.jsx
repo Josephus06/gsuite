@@ -6,8 +6,9 @@ import Modal from '../../components/Modal';
 import { useAuth } from '../../context/useAuth';
 import {
   CHOICE_TYPES, LETTERS, ORIENTATION_BADGE, ORIENTATION_LABELS, STATUS_BADGE, STATUS_LABELS, TYPE_LABELS,
-  answerText, fmtDay, fmtWhen, indexed, pct,
+  answerText, download, fmtDay, fmtWhen, indexed, pct,
 } from '../../utils/exams';
+import QuestionImage from './QuestionImage';
 import { TargetPicker } from './Examinations';
 
 // HRD > Examinations results (2026-10-21; routes/examAdmin.js): one schedule's examinees by topic,
@@ -68,6 +69,7 @@ export function ScheduleResults() {
         <h1>{s.title} <span className="muted" style={{ fontSize: '0.55em', fontWeight: 400 }}>{s.set_name}</span></h1>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Link className="btn btn-sm" to="/hrd/exams">Back</Link>
+          <button className="btn btn-sm" onClick={() => download(`/exam-admin/schedules/${id}/export`, `exam-results-${id}.xlsx`).catch(() => setError('Could not export.'))}>Export Excel</button>
           {open && can(ROUTE, 'can_add') && <button className="btn btn-sm" onClick={openAdd}>Add Examinees</button>}
           {s.status === 'active' && can(ROUTE, 'can_delete') && <button className="btn btn-sm" onClick={cancel}>Cancel Schedule</button>}
         </div>
@@ -109,7 +111,7 @@ export function ScheduleResults() {
             <tbody>
               {data.attempts.map((a) => (
                 <tr key={a.id}>
-                  <td style={{ fontWeight: 600 }}>{a.name}</td>
+                  <td style={{ fontWeight: 600 }}><Link className="link-btn" to={`/hrd/exams/employees/${a.user_id}`}>{a.name}</Link></td>
                   <td>{a.department}</td>
                   <td><span className={`badge ${STATUS_BADGE[a.status]}`}>{STATUS_LABELS[a.status]}</span>
                     {a.essays_pending > 0 && <span className="badge badge-warning" style={{ marginLeft: 4 }}>{a.essays_pending} to grade</span>}</td>
@@ -215,6 +217,10 @@ export function AttemptResult() {
         <h1>{a.name} <span className="muted" style={{ fontSize: '0.55em', fontWeight: 400 }}>{a.title} · {a.set_name}</span></h1>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Link className="btn btn-sm" to={`/hrd/exams/schedules/${a.schedule_id}`}>Back to Results</Link>
+          <Link className="btn btn-sm" to={`/hrd/exams/employees/${a.user_id}`}>Training Record</Link>
+          {a.status === 'submitted' && Number(a.passed) === 1 && !Number(a.essays_pending) && (
+            <button className="btn btn-sm" onClick={() => download(`/exam-admin/attempts/${a.id}/certificate`, `certificate-${a.id}.pdf`).catch(() => setError('Could not download the certificate.'))}>Certificate</button>
+          )}
           {can(ROUTE, 'can_add') && ['submitted', 'missed'].includes(a.status) && <button className="btn btn-sm btn-primary" onClick={openRetake}>Schedule Retake</button>}
         </div>
       </div>
@@ -282,6 +288,7 @@ export function AttemptResult() {
                     : q.is_correct ? <span className="badge badge-success">✓ {q.points_awarded}</span> : <span className="badge badge-danger">✗ {q.points_awarded ?? 0}</span>}
                 </div>
               </div>
+              {q.has_image && <QuestionImage url={`/exam-admin/questions/${q.id}/image`} maxHeight={160} />}
               {CHOICE_TYPES.includes(q.type) && <div className="muted" style={{ fontSize: 12 }}>{(q.choices || []).map((c, j) => `${LETTERS[j]}. ${c}`).join('   ')}</div>}
               <div style={{ marginTop: 4, whiteSpace: 'pre-wrap' }}><span className="muted">Answer given: </span>
                 {q.confirmed ? (answerText(q.type, q.given, indexed(q.choices)) || '—') : <em className="muted">not answered / not confirmed</em>}</div>

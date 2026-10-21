@@ -4,7 +4,8 @@ import LoadingSpinner from '../../components/LoadingSpinner';
 import Modal from '../../components/Modal';
 import Pagination from '../../components/Pagination';
 import { useAuth } from '../../context/useAuth';
-import { CHOICE_TYPES, LETTERS, TYPES, TYPE_LABELS, answerText, indexed } from '../../utils/exams';
+import { CHOICE_TYPES, LETTERS, TYPES, TYPE_LABELS, answerText, indexed, shrinkImage } from '../../utils/exams';
+import QuestionImage from './QuestionImage';
 
 // HRD > Question Bank (2026-10-21; routes/examAdmin.js): department heads keep their department's
 // questions -- typed in, or a PDF the AI reads into drafts that are reviewed before saving. Each
@@ -55,6 +56,23 @@ export function QuestionForm({ value, topics, onChange }) {
       </div>
       <div className="field"><label>Question</label>
         <textarea rows={3} value={q.question} onChange={(e) => set({ question: e.target.value })} /></div>
+
+      {/* A picture on the question (2026-10-21): "identify this part", a print defect, a sign. */}
+      <div className="field"><label>Picture (optional)</label>
+        {q.imageChanged
+          ? (q.image_data && <QuestionImage src={q.image_data} maxHeight={180} />)
+          : (q.has_image && q.id && <QuestionImage url={`/exam-admin/questions/${q.id}/image`} maxHeight={180} />)}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input type="file" accept="image/*" onChange={async (e) => {
+            const f = e.target.files?.[0];
+            if (!f) return;
+            try { set({ image_data: await shrinkImage(f), imageChanged: true }); } catch { window.alert('That file is not a picture.'); }
+            e.target.value = '';
+          }} />
+          {(q.imageChanged ? q.image_data : q.has_image) && (
+            <button type="button" className="btn btn-sm" onClick={() => set({ image_data: null, imageChanged: true })}>Remove picture</button>
+          )}
+        </div></div>
 
       {q.type === 'true_false' && (
         <div className="field"><label>Correct answer</label>
@@ -117,6 +135,8 @@ const payload = (q, departmentId) => ({
   department_id: departmentId, type: q.type, question: q.question, choices: q.choices, points: Number(q.points),
   difficulty: q.difficulty || null, topic_id: q.topic_id ? Number(q.topic_id) : null, topic: q.newTopic ? (q.topic || '').trim() || null : null,
   answer: q.type === 'identification' ? (Array.isArray(q.answer) ? q.answer.map((s) => s.trim()).filter(Boolean) : q.answer) : q.answer,
+  // The picture goes up only when it was changed (a new one, or null to remove it).
+  ...(q.imageChanged ? { image_data: q.image_data || null } : {}),
 });
 
 function readFile(file) {
@@ -398,7 +418,7 @@ export default function QuestionBank() {
                 {data.rows.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>No questions yet. Add one or import a PDF.</td></tr>}
                 {data.rows.map((q) => (
                   <tr key={q.id}>
-                    <td data-label="Question" style={{ maxWidth: 420, whiteSpace: 'normal' }}>{q.question}
+                    <td data-label="Question" style={{ maxWidth: 420, whiteSpace: 'normal' }}>{q.has_image && <span title="Has a picture">🖼 </span>}{q.question}
                       {CHOICE_TYPES.includes(q.type) && <div className="muted" style={{ fontSize: 11 }}>{(q.choices || []).map((c, j) => `${LETTERS[j]}. ${c}`).join('   ')}</div>}</td>
                     <td data-label="Type">{TYPE_LABELS[q.type]}</td>
                     <td data-label="Topic">{q.topic || <span className="muted">General</span>}</td>

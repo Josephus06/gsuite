@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
-import { LETTERS, TYPE_LABELS, answerText, fmtDay, fmtWhen, pct } from '../../utils/exams';
+import { LETTERS, TYPE_LABELS, answerText, download, fmtDay, fmtWhen, pct } from '../../utils/exams';
+import QuestionImage from './QuestionImage';
 
 // One exam (2026-10-21; routes/exams.js), taken and then reviewed.
 //
@@ -74,6 +75,11 @@ function Review({ exam }) {
                 : <span className="badge badge-danger">Below passing ({pct(exam.passing_percent)})</span>}
           </div>
           <div className="muted" style={{ fontSize: 12 }}>Submitted {fmtWhen(exam.submitted_at)}{exam.auto_submitted ? ' -- time ran out' : ''}</div>
+          {exam.certificate && (
+            <button className="btn btn-primary btn-sm" onClick={() => download(`/exams/attempts/${exam.id}/certificate`, `certificate-${exam.id}.pdf`).catch(() => window.alert('Could not download the certificate.'))}>
+              Download Certificate
+            </button>
+          )}
         </div>
         {exam.topics?.length > 0 && (
           <div className="table-wrap" style={{ marginTop: 12 }}>
@@ -99,6 +105,7 @@ function Review({ exam }) {
                     : <span className="badge badge-danger">✗ {q.points_awarded ?? 0}</span>}
               </div>
             </div>
+            {q.has_image && <QuestionImage url={`/exams/attempts/${exam.id}/questions/${q.id}/image`} maxHeight={160} />}
             <div style={{ marginTop: 4, whiteSpace: 'pre-wrap' }}>
               <span className="muted">Your answer: </span>{q.confirmed ? (answerText(q.type, q.answer, q.choices) || '—') : <em className="muted">not answered / not confirmed</em>}
             </div>
@@ -287,6 +294,7 @@ export default function TakeExam() {
           <>
             <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>Question {q.n} · {TYPE_LABELS[q.type]} · {q.points} pt{q.points === 1 ? '' : 's'}</div>
             <div style={{ fontSize: 17, marginBottom: 14, whiteSpace: 'pre-wrap' }}>{q.question}</div>
+            {q.has_image && <QuestionImage key={q.id} url={`/exams/attempts/${id}/questions/${q.id}/image`} maxHeight={340} />}
             <AnswerInput q={q} value={answers[q.id]} onChange={(v) => change(q.id, v)} />
             <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
               <button className="btn btn-primary" disabled={busy || !hasAnswer(answers[q.id])} onClick={confirmAnswer}>Confirm Final Answer</button>

@@ -441,8 +441,130 @@ async function summarizeSchedule({ title, setName, threshold, stats, topicAvg, w
   ]);
 }
 
+// ---- Random sets (2026-10-21; db/add-exam-advanced.js) ----
+// A random set is a list of rules, each "N questions from this department / topic / difficulty".
+// Each examinee's questions are drawn when they START, so co-workers do not share one paper.
+// Rules are drawn in order and never repeat a question.
+const DIFFICULTIES = ['easy', 'average', 'hard'];
+
+function cleanRules(list) {
+  const rules = (Array.isArray(list) ? list : []).map((r) => ({
+    department_id: Number(r.department_id) || null,
+    topic_id: Number(r.topic_id) || null,
+    type: TYPES.includes(r.type) ? r.type : null,
+    difficulty: DIFFICULTIES.includes(r.difficulty) ? r.difficulty : null,
+    count: Math.floor(Number(r.count) || 0),
+  }));
+  if (!rules.length) return { error: 'Add at least one rule (how many questions from which topic).' };
+  if (rules.some((r) => r.count < 1 || r.count > 200)) return { error: 'Each rule draws 1 to 200 questions.' };
+  return { rules };
+}
+
+function ruleWhere(r) {
+  const where = ['q.is_active = 1'];
+  const params = [];
+  if (r.department_id) { where.push('q.department_id = ?'); params.push(r.department_id); }
+  if (r.topic_id) { where.push('q.topic_id = ?'); params.push(r.topic_id); }
+  if (r.type) { where.push('q.type = ?'); params.push(r.type); }
+  if (r.difficulty) { where.push('q.difficulty = ?'); params.push(r.difficulty); }
+  return { sql: where.join(' AND '), params };
+}
+
+// How many bank questions each rule can draw from (ignoring overlap between rules).
+async function ruleAvailability(conn, rules) {
+  const out = [];
+  for (const r of rules) {
+    const w = ruleWhere(r);
+    const [[{ n }]] = await conn.query(`SELECT COUNT(*) AS n FROM exam_questions q WHERE ${w.sql}`, w.params);
+    out.push(Number(n));
+  }
+  return out;
+}
+
+// The number of questions an examinee of this set gets.
+const setQuestionCount = (st, fixedCount) => (st.mode === 'random'
+  ? (parseJson(st.rules, []) || []).reduce((m, r) => m + Number(r.count || 0), 0) : Number(fixedCount || 0));
+
+// The question ids one examinee gets, in their own order.
+async function drawQuestions(conn, st) {
+  if (st.mode !== 'random') {
+    const [qs] = await conn.query('SELECT question_id FROM exam_set_questions WHERE set_id = ? ORDER BY sort_order, id', [st.id]);
+    return shuffle(qs.map((q) => Number(q.question_id)));
+  }
+  const picked = [];
+  for (const r of parseJson(st.rules, []) || []) {
+    const w = ruleWhere(r);
+    const [rows] = await conn.query(
+      `SELECT q.id FROM exam_questions q WHERE ${w.sql}${picked.length ? ' AND q.id NOT IN (?)' : ''} ORDER BY RAND() LIMIT ?`,
+      [...w.params, ...(picked.length ? [picked] : []), Number(r.count)]);
+    picked.push(...rows.map((x) => Number(x.id)));
+  }
+  return shuffle(picked);
+}
+
+// ---- Question pictures ----
+// A data URL of a JPEG / PNG / WebP / GIF. The page shrinks a photo before sending it; this only
+// refuses what is not a picture or is still too big for the request (the 2MB body limit).
+function cleanImage(v) {
+  if (v === undefined) return { keep: true };
+  if (v === null || v === '') return { value: null };
+  const s = String(v);
+  if (!/^data:image\/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(s)) return { error: 'The picture must be a JPEG, PNG, WebP or GIF.' };
+  if (s.length > 1.6 * 1024 * 1024) return { error: 'The picture is too large. Use a smaller photo (under about 1MB).' };
+  return { value: s };
+}
+
+// ---- Deadline reminders (daily; EXAM_REMINDER_JOB=1 on ONE box) ----
+// Anyone who has not finished an open exam is told 3 days before the deadline and again the day
+// before (or on the day). Once a window has closed, the person who scheduled it is told how many
+// did not take it. Each reminder is stamped on its row, so a run never repeats one.
+async function runExamReminders() {
+  const { insertFor, usersWithPermission } = require('./approvalNotifications');
+  await sweep();
+  const today = phToday();
+  let sent = 0;
+  const [due] = await pool.query(
+    `SELECT a.id, a.user_id, a.status, a.reminded_3_at, a.reminded_1_at, s.title, s.end_date, DATEDIFF(s.end_date, ?) AS days_left
+       FROM exam_attempts a JOIN exam_schedules s ON s.id = a.schedule_id
+      WHERE s.status = 'active' AND a.status IN ('assigned', 'in_progress') AND s.start_date <= ? AND s.end_date >= ?`,
+    [today, today, today]);
+  for (const a of due) {
+    const left = Number(a.days_left);
+    let col = null;
+    if (left <= 1 && !a.reminded_1_at) col = 'reminded_1_at';
+    else if (left <= 3 && left > 1 && !a.reminded_3_at) col = 'reminded_3_at';
+    if (!col) continue;
+    const [r] = await pool.query(`UPDATE exam_attempts SET ${col} = ? WHERE id = ? AND ${col} IS NULL`, [nowUtc(), a.id]);
+    if (!r.affectedRows) continue;
+    const when = left === 0 ? 'today' : left === 1 ? 'tomorrow' : `in ${left} days`;
+    await insertFor([a.user_id], {
+      type: 'exam_reminder', title: `Exam due ${when}: ${a.title}`,
+      message: `${a.status === 'in_progress' ? 'Finish' : 'Take'} it by ${day(a.end_date)} (Forms > My Exams).`,
+      relatedType: 'ExamAttempt', relatedId: a.id,
+    }, null);
+    sent += 1;
+  }
+  const [closed] = await pool.query(
+    `SELECT s.id, s.title, s.created_by_user_id, SUM(a.status = 'missed') AS missed, COUNT(a.id) AS assigned
+       FROM exam_schedules s LEFT JOIN exam_attempts a ON a.schedule_id = s.id
+      WHERE s.status = 'active' AND s.end_date < ? AND s.overdue_notified_at IS NULL GROUP BY s.id`, [today]);
+  for (const s of closed) {
+    const [r] = await pool.query('UPDATE exam_schedules SET overdue_notified_at = ? WHERE id = ? AND overdue_notified_at IS NULL', [nowUtc(), s.id]);
+    if (!r.affectedRows || !Number(s.missed)) continue;
+    const to = s.created_by_user_id ? [s.created_by_user_id] : await usersWithPermission('/hrd/exams', 'can_add');
+    await insertFor(to, {
+      type: 'exam_overdue', title: `${s.missed} of ${s.assigned} did not take ${s.title}`,
+      message: 'The exam window has closed. Schedule a retake for them from their result.',
+      relatedType: 'ExamSchedule', relatedId: s.id,
+    }, null);
+    sent += 1;
+  }
+  return { reminders: sent };
+}
+
 module.exports = {
   TYPES, TYPE_LABELS, CHOICE_TYPES, parseJson, nowUtc, phToday, day, utcText, windowEndUtc, shuffle,
   cleanQuestion, cleanGiven, grade, targetUserIds, createAttempts, syncLateJoiner, sweep, finalize,
   topicBreakdown, recommendOrientations, aiAllowed, docxText, extractQuestions, evaluateAttempt, summarizeSchedule,
+  DIFFICULTIES, cleanRules, ruleAvailability, setQuestionCount, drawQuestions, cleanImage, runExamReminders,
 };

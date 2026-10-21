@@ -5,7 +5,10 @@ const { insertFor } = require('../lib/approvalNotifications');
 const {
   TYPES, CHOICE_TYPES, parseJson, phToday, day, cleanQuestion, targetUserIds, createAttempts, sweep, finalize,
   topicBreakdown, recommendOrientations, aiAllowed, extractQuestions, docxText, evaluateAttempt, summarizeSchedule, nowUtc,
+  cleanRules, ruleAvailability, setQuestionCount, cleanImage,
 } = require('../lib/exams');
+const ExcelJS = require('exceljs');
+const { sendCertificate } = require('./exams');
 
 const router = express.Router();
 
@@ -41,9 +44,10 @@ async function bankScope(userId) {
 }
 const inScope = (scope, deptId) => scope.all || scope.ids.includes(Number(deptId));
 
+// The picture is fetched on its own (GET /questions/:id/image): lists carry only whether there is one.
 const shapeQuestion = (q) => ({
   ...q, choices: parseJson(q.choices, null), answer: parseJson(q.answer, null), points: Number(q.points),
-  used: Number(q.used || 0) > 0,
+  used: Number(q.used || 0) > 0, has_image: !!q.image_data, image_data: undefined,
 });
 
 // ---------------------------------------------------------------- Question Bank
@@ -131,7 +135,11 @@ async function saveQuestions(req, res, list, source) {
   const scope = await bankScope(req.user.id);
   const deptId = Number(req.body.department_id);
   if (!deptId || !inScope(scope, deptId)) return bad(res, 'Pick a department you keep questions for.', 403);
-  const cleaned = list.map((q, i) => ({ i, q, c: cleanQuestion(q) }));
+  const cleaned = list.map((q, i) => {
+    const c = cleanQuestion(q);
+    const img = cleanImage(q.image_data);
+    return { i, q, c: c.error ? c : img.error ? { error: img.error } : { ...c, image: img.keep ? null : img.value } };
+  });
   const errors = cleaned.filter((x) => x.c.error).map((x) => `#${x.i + 1}: ${x.c.error}`);
   if (errors.length) return bad(res, errors.slice(0, 8).join(' '));
   const conn = await pool.getConnection();
@@ -141,9 +149,10 @@ async function saveQuestions(req, res, list, source) {
     for (const { q, c } of cleaned) {
       const topicId = await topicIdFor(conn, deptId, q, req.user.id);
       const [r] = await conn.query(
-        `INSERT INTO exam_questions (department_id, topic_id, type, question, choices, answer, points, difficulty, source, created_by_user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [deptId, topicId, c.type, c.question, c.choices ? JSON.stringify(c.choices) : null, JSON.stringify(c.answer), c.points, c.difficulty, source, req.user.id]);
+        `INSERT INTO exam_questions (department_id, topic_id, type, question, choices, answer, points, difficulty, image_data, source, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [deptId, topicId, c.type, c.question, c.choices ? JSON.stringify(c.choices) : null, JSON.stringify(c.answer), c.points, c.difficulty,
+          c.image, source, req.user.id]);
       ids.push(r.insertId);
     }
     await conn.commit();
@@ -206,11 +215,29 @@ router.put('/questions/:id', requireAuth, requirePermission(QB, 'can_edit'), asy
       || JSON.stringify(c.answer) !== JSON.stringify(parseJson(q.answer, null)) || c.points !== Number(q.points))) {
       return bad(res, 'This question has already been answered in an exam, so its choices, answer and points cannot change. Add a new question instead.');
     }
+    // The picture: unchanged unless image_data is sent (a new one, or null to remove it).
+    const img = cleanImage(req.body.image_data);
+    if (img.error) return bad(res, img.error);
     const topicId = await topicIdFor(pool, q.department_id, req.body, req.user.id);
-    await pool.query('UPDATE exam_questions SET topic_id = ?, type = ?, question = ?, choices = ?, answer = ?, points = ?, difficulty = ? WHERE id = ?',
-      [topicId, c.type, c.question, c.choices ? JSON.stringify(c.choices) : null, JSON.stringify(c.answer), c.points, c.difficulty, q.id]);
+    await pool.query(
+      `UPDATE exam_questions SET topic_id = ?, type = ?, question = ?, choices = ?, answer = ?, points = ?, difficulty = ?${img.keep ? '' : ', image_data = ?'} WHERE id = ?`,
+      [topicId, c.type, c.question, c.choices ? JSON.stringify(c.choices) : null, JSON.stringify(c.answer), c.points, c.difficulty,
+        ...(img.keep ? [] : [img.value]), q.id]);
     res.json({ ok: true });
   } catch (err) { next(err); }
+});
+
+// A question's picture, for the bank's editor and HR's pages.
+router.get('/questions/:id/image', requireAuth, async (req, res, next) => {
+  try {
+    const [[q]] = await pool.query('SELECT department_id, image_data FROM exam_questions WHERE id = ?', [req.params.id]);
+    if (!q) return bad(res, 'Not found.', 404);
+    const hr = await userCan(req.user.id, EX, 'can_view');
+    if (!hr && !(await userCan(req.user.id, QB, 'can_view') && inScope(await bankScope(req.user.id), q.department_id))) {
+      return bad(res, 'You do not have permission to perform this action', 403);
+    }
+    return res.json({ image: q.image_data || null });
+  } catch (err) { return next(err); }
 });
 
 // Removed from the bank. One already in a set or an exam is only retired, so results keep it.
@@ -251,10 +278,20 @@ router.get('/question-pool', requireAuth, requirePermission(EX, 'can_view'), asy
     if (TYPES.includes(req.query.type)) { where.push('q.type = ?'); params.push(req.query.type); }
     if (req.query.q) { where.push('q.question LIKE ?'); params.push(`%${req.query.q}%`); }
     const [rows] = await pool.query(
-      `SELECT q.id, q.department_id, q.topic_id, q.type, q.question, q.points, q.difficulty, t.name AS topic, d.name AS department
+      `SELECT q.id, q.department_id, q.topic_id, q.type, q.question, q.points, q.difficulty, q.image_data IS NOT NULL AS has_image,
+              t.name AS topic, d.name AS department
          FROM exam_questions q LEFT JOIN exam_topics t ON t.id = q.topic_id LEFT JOIN departments d ON d.id = q.department_id
         WHERE ${where.join(' AND ')} ORDER BY t.name, q.id LIMIT 2000`, params);
-    res.json(rows.map((r) => ({ ...r, points: Number(r.points) })));
+    res.json(rows.map((r) => ({ ...r, points: Number(r.points), has_image: !!Number(r.has_image) })));
+  } catch (err) { next(err); }
+});
+
+// How many bank questions each random-set rule has to draw from.
+router.post('/sets/rule-check', requireAuth, requirePermission(EX, 'can_view'), async (req, res, next) => {
+  try {
+    const c = cleanRules(req.body.rules);
+    if (c.error) return res.json({ available: [] });
+    res.json({ available: await ruleAvailability(pool, c.rules) });
   } catch (err) { next(err); }
 });
 
@@ -262,12 +299,16 @@ router.get('/sets', requireAuth, requirePermission(EX, 'can_view'), async (req, 
   try {
     const [rows] = await pool.query(
       `SELECT st.*, d.name AS department, u.display_name AS created_by,
-              (SELECT COUNT(*) FROM exam_set_questions sq WHERE sq.set_id = st.id) AS question_count,
+              (SELECT COUNT(*) FROM exam_set_questions sq WHERE sq.set_id = st.id) AS fixed_count,
               (SELECT COALESCE(SUM(q.points), 0) FROM exam_set_questions sq JOIN exam_questions q ON q.id = sq.question_id WHERE sq.set_id = st.id) AS total_points,
               (SELECT COUNT(*) FROM exam_schedules s WHERE s.set_id = st.id AND s.status <> 'cancelled') AS schedule_count
          FROM exam_sets st LEFT JOIN departments d ON d.id = st.department_id LEFT JOIN users u ON u.id = st.created_by_user_id
         WHERE st.is_active = 1 ORDER BY st.id DESC`);
-    res.json(rows.map((r) => ({ ...r, total_points: Number(r.total_points) })));
+    // A random set's points depend on what each examinee draws.
+    res.json(rows.map((r) => ({
+      ...r, rules: parseJson(r.rules, null), question_count: setQuestionCount(r, r.fixed_count),
+      total_points: r.mode === 'random' ? null : Number(r.total_points),
+    })));
   } catch (err) { next(err); }
 });
 
@@ -281,24 +322,41 @@ router.get('/sets/:id', requireAuth, requirePermission(EX, 'can_view'), async (r
         WHERE sq.set_id = ? ORDER BY sq.sort_order, sq.id`, [st.id]);
     const [[{ started }]] = await pool.query(
       "SELECT COUNT(*) AS started FROM exam_attempts WHERE set_id = ? AND status IN ('in_progress', 'submitted')", [st.id]);
-    return res.json({ ...st, questions: qs.map(shapeQuestion), locked: Number(started) > 0 });
+    return res.json({ ...st, rules: parseJson(st.rules, null), questions: qs.map(shapeQuestion), locked: Number(started) > 0 });
   } catch (err) { return next(err); }
 });
 
+// A FIXED set is a list of questions; a RANDOM set is rules drawn per examinee (lib/exams.js).
 function cleanSet(b) {
   const name = String(b.name || '').trim().slice(0, 150);
   if (!name) return { error: 'Name the set (e.g. SET 1).' };
-  const ids = [...new Set((Array.isArray(b.question_ids) ? b.question_ids : []).map(Number).filter(Boolean))];
-  if (!ids.length) return { error: 'Add at least one question.' };
+  const mode = b.mode === 'random' ? 'random' : 'fixed';
+  let ids = [];
+  let rules = null;
+  if (mode === 'random') {
+    const r = cleanRules(b.rules);
+    if (r.error) return r;
+    rules = r.rules;
+  } else {
+    ids = [...new Set((Array.isArray(b.question_ids) ? b.question_ids : []).map(Number).filter(Boolean))];
+    if (!ids.length) return { error: 'Add at least one question.' };
+  }
   const passing = Number(b.passing_percent ?? 75);
   const reorient = Number(b.reorient_below_percent ?? 60);
   if (!(passing > 0 && passing <= 100) || !(reorient >= 0 && reorient <= 100)) return { error: 'Percentages must be between 0 and 100.' };
   const limit = b.time_limit_minutes === '' || b.time_limit_minutes == null ? null : Number(b.time_limit_minutes);
   if (limit != null && !(limit > 0 && limit <= 600)) return { error: 'The time limit is in minutes (1 to 600), or blank for none.' };
   return {
-    name, ids, passing, reorient, limit, department_id: Number(b.department_id) || null,
+    name, mode, ids, rules, passing, reorient, limit, department_id: Number(b.department_id) || null,
     description: String(b.description || '').trim().slice(0, 500) || null,
   };
+}
+
+// A rule asking for more questions than the bank has is refused, so no examinee is short-changed.
+async function rulesShortfall(conn, rules) {
+  const avail = await ruleAvailability(conn, rules);
+  const i = rules.findIndex((r, n) => avail[n] < r.count);
+  return i < 0 ? null : `Rule ${i + 1} draws ${rules[i].count} question(s) but the bank has only ${avail[i]} that match.`;
 }
 
 async function writeSetQuestions(conn, setId, ids) {
@@ -313,12 +371,18 @@ router.post('/sets', requireAuth, requirePermission(EX, 'can_add'), async (req, 
   try {
     const c = cleanSet(req.body);
     if (c.error) return bad(res, c.error);
-    const [[{ n }]] = await conn.query('SELECT COUNT(*) AS n FROM exam_questions WHERE id IN (?) AND is_active = 1', [c.ids]);
-    if (Number(n) !== c.ids.length) return bad(res, 'Some of those questions are no longer in the bank.');
+    if (c.mode === 'random') {
+      const short = await rulesShortfall(conn, c.rules);
+      if (short) return bad(res, short);
+    } else {
+      const [[{ n }]] = await conn.query('SELECT COUNT(*) AS n FROM exam_questions WHERE id IN (?) AND is_active = 1', [c.ids]);
+      if (Number(n) !== c.ids.length) return bad(res, 'Some of those questions are no longer in the bank.');
+    }
     await conn.beginTransaction();
     const [r] = await conn.query(
-      `INSERT INTO exam_sets (name, department_id, description, time_limit_minutes, passing_percent, reorient_below_percent, created_by_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`, [c.name, c.department_id, c.description, c.limit, c.passing, c.reorient, req.user.id]);
+      `INSERT INTO exam_sets (name, mode, rules, department_id, description, time_limit_minutes, passing_percent, reorient_below_percent, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [c.name, c.mode, c.rules ? JSON.stringify(c.rules) : null, c.department_id, c.description, c.limit, c.passing, c.reorient, req.user.id]);
     await writeSetQuestions(conn, r.insertId, c.ids);
     await conn.commit();
     return res.json({ id: r.insertId });
@@ -334,16 +398,23 @@ router.put('/sets/:id', requireAuth, requirePermission(EX, 'can_edit'), async (r
     if (c.error) return bad(res, c.error);
     const [[{ started }]] = await conn.query("SELECT COUNT(*) AS started FROM exam_attempts WHERE set_id = ? AND status IN ('in_progress', 'submitted')", [st.id]);
     const [cur] = await conn.query('SELECT question_id FROM exam_set_questions WHERE set_id = ? ORDER BY sort_order, id', [st.id]);
-    const same = JSON.stringify(cur.map((r) => Number(r.question_id))) === JSON.stringify(c.ids);
-    // Once anyone has taken it, the set's questions and scoring are what their result was measured
-    // against -- copy it to a new set instead.
+    const same = c.mode === (st.mode || 'fixed')
+      && JSON.stringify(cur.map((r) => Number(r.question_id))) === JSON.stringify(c.ids)
+      && JSON.stringify(parseJson(st.rules, null)) === JSON.stringify(c.rules);
+    // Once anyone has taken it, the set's questions (or rules) and scoring are what their result was
+    // measured against -- copy it to a new set instead.
     if (Number(started) && (!same || c.passing !== Number(st.passing_percent))) {
       return bad(res, 'This set has already been taken, so its questions and passing score cannot change. Make a new set.');
     }
+    if (!same && c.mode === 'random') {
+      const short = await rulesShortfall(conn, c.rules);
+      if (short) return bad(res, short);
+    }
     await conn.beginTransaction();
     await conn.query(
-      'UPDATE exam_sets SET name = ?, department_id = ?, description = ?, time_limit_minutes = ?, passing_percent = ?, reorient_below_percent = ? WHERE id = ?',
-      [c.name, c.department_id, c.description, c.limit, c.passing, c.reorient, st.id]);
+      `UPDATE exam_sets SET name = ?, mode = ?, rules = ?, department_id = ?, description = ?, time_limit_minutes = ?, passing_percent = ?,
+              reorient_below_percent = ? WHERE id = ?`,
+      [c.name, c.mode, c.rules ? JSON.stringify(c.rules) : null, c.department_id, c.description, c.limit, c.passing, c.reorient, st.id]);
     if (!same) await writeSetQuestions(conn, st.id, c.ids);
     await conn.commit();
     return res.json({ ok: true });
@@ -415,9 +486,13 @@ function cleanWindow(b) {
 router.post('/schedules', requireAuth, requirePermission(EX, 'can_add'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[st]] = await conn.query('SELECT id, name, (SELECT COUNT(*) FROM exam_set_questions WHERE set_id = exam_sets.id) AS n FROM exam_sets WHERE id = ? AND is_active = 1', [req.body.set_id]);
+    const [[st]] = await conn.query('SELECT id, name, mode, rules, (SELECT COUNT(*) FROM exam_set_questions WHERE set_id = exam_sets.id) AS n FROM exam_sets WHERE id = ? AND is_active = 1', [req.body.set_id]);
     if (!st) return bad(res, 'Pick the exam set.');
-    if (!Number(st.n)) return bad(res, 'That set has no questions.');
+    if (!setQuestionCount(st, st.n)) return bad(res, 'That set has no questions.');
+    if (st.mode === 'random') {
+      const short = await rulesShortfall(conn, parseJson(st.rules, []) || []);
+      if (short) return bad(res, `${short} Add questions to the bank or lower the rule.`);
+    }
     const w = cleanWindow(req.body);
     if (w.error) return bad(res, w.error);
     const departmentIds = [...new Set((req.body.department_ids || []).map(Number).filter(Boolean))];
@@ -556,7 +631,7 @@ router.get('/attempts/:id', requireAuth, requirePermission(EX, 'can_view'), asyn
     return res.json({
       ...a, question_order: undefined, topics, orientations,
       questions: qs.map((q) => ({
-        id: q.id, type: q.type, question: q.question, topic: q.topic, points: Number(q.points),
+        id: q.id, type: q.type, question: q.question, topic: q.topic, points: Number(q.points), has_image: !!q.image_data,
         choices: parseJson(q.choices, null), answer_key: parseJson(q.answer, null), given: q.confirmed_at ? parseJson(q.given, null) : null,
         confirmed: !!q.confirmed_at, is_correct: q.is_correct == null ? null : !!Number(q.is_correct),
         points_awarded: q.points_awarded == null ? null : Number(q.points_awarded), feedback: q.feedback, graded_by: q.graded_by,
@@ -681,6 +756,151 @@ router.put('/orientations/:id', requireAuth, requirePermission(EX, 'can_edit'), 
       }, req.user.id).catch(() => {});
     }
     return res.json({ ok: true });
+  } catch (err) { return next(err); }
+});
+
+// ---------------------------------------------------------------- Excel, certificate (2026-10-21)
+
+// One schedule's results as a workbook: every examinee with their score and percent per topic (the
+// results grid), the averages, and the questions most people missed.
+router.get('/schedules/:id/export', requireAuth, requirePermission(EX, 'can_view'), async (req, res, next) => {
+  try {
+    await sweep({ scheduleId: Number(req.params.id) });
+    const r = await scheduleResults(Number(req.params.id));
+    if (!r) return bad(res, 'Schedule not found.', 404);
+    const s = r.schedule;
+    const line = Number(s.reorient_below_percent);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Results', { views: [{ state: 'frozen', ySplit: 4, xSplit: 1 }] });
+    ws.addRow([`${s.title} -- ${s.set_name}`]).font = { bold: true, size: 13 };
+    ws.addRow([`${day(s.start_date)} to ${day(s.end_date)} · passing ${Number(s.passing_percent)}% · re-orientation below ${line}% in a topic`]);
+    ws.addRow([]);
+    const head = ['Employee', 'Department', 'Status', 'Submitted', 'Score', 'Out of', '%', 'Result', ...r.topics.map((t) => t.topic), 'Left tab'];
+    const hr = ws.addRow(head);
+    hr.font = { bold: true };
+    hr.alignment = { wrapText: true, vertical: 'middle' };
+    hr.eachCell((c) => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E7EB' } }; });
+    const STATUS = { assigned: 'Not started', in_progress: 'In progress', submitted: 'Submitted', missed: 'Missed' };
+    for (const a of r.attempts) {
+      const done = a.status === 'submitted';
+      const result = !done ? '' : Number(a.essays_pending) ? 'Essays to grade' : Number(a.passed) ? 'Passed' : 'Below passing';
+      const row = ws.addRow([
+        a.name, a.department || '', STATUS[a.status] || a.status, done ? day(a.submitted_at) : '',
+        done ? Number(a.score) : null, done ? Number(a.max_score) : null, done ? Number(a.percent) / 100 : null, result,
+        ...r.topics.map((t) => (a.topics[t.topic_id || 0] ? a.topics[t.topic_id || 0].percent / 100 : null)),
+        Number(a.tab_switches || 0),
+      ]);
+      row.getCell(7).numFmt = '0.0%';
+      r.topics.forEach((t, i) => {
+        const cell = row.getCell(9 + i);
+        cell.numFmt = '0.0%';
+        if (t.topic_id && cell.value != null && cell.value * 100 < line) cell.font = { color: { argb: 'FFB91C1C' }, bold: true };
+      });
+      if (result === 'Below passing') row.getCell(8).font = { color: { argb: 'FFB91C1C' } };
+    }
+    const avg = ws.addRow(['Average', '', '', '', null, null, null, '', ...r.topics.map((t) => (r.topic_avg[t.topic_id || 0] == null ? null : r.topic_avg[t.topic_id || 0] / 100))]);
+    avg.font = { bold: true };
+    r.topics.forEach((_, i) => { avg.getCell(9 + i).numFmt = '0.0%'; });
+    ws.addRow(['Below the line', '', '', '', null, null, null, '', ...r.topics.map((t) => (t.topic_id ? r.weak_counts[t.topic_id] || 0 : null))]);
+    ws.columns.forEach((c, i) => { c.width = i === 0 ? 28 : i === 1 ? 20 : i < 8 ? 12 : 14; });
+
+    const [missed] = await pool.query(
+      `SELECT q.question, t.name AS topic, COUNT(*) AS n, SUM(COALESCE(x.points_awarded, 0) < q.points) AS wrong
+         FROM exam_attempt_answers x JOIN exam_attempts a ON a.id = x.attempt_id JOIN exam_questions q ON q.id = x.question_id
+         LEFT JOIN exam_topics t ON t.id = q.topic_id
+        WHERE a.schedule_id = ? AND a.status = 'submitted' AND NOT (q.type = 'essay' AND x.points_awarded IS NULL)
+        GROUP BY q.id ORDER BY SUM(COALESCE(x.points_awarded, 0) < q.points) / COUNT(*) DESC, q.id LIMIT 200`, [s.id]);
+    const ms = wb.addWorksheet('Questions');
+    ms.columns = [{ header: 'Question', key: 'q', width: 70 }, { header: 'Topic', key: 't', width: 24 },
+      { header: 'Answered', key: 'n', width: 10 }, { header: 'Wrong', key: 'w', width: 10 }, { header: '% Wrong', key: 'p', width: 10 }];
+    ms.getRow(1).font = { bold: true };
+    for (const m of missed) {
+      const row = ms.addRow({ q: m.question, t: m.topic || 'General', n: Number(m.n), w: Number(m.wrong), p: Number(m.n) ? Number(m.wrong) / Number(m.n) : 0 });
+      row.getCell('p').numFmt = '0%';
+      row.getCell('q').alignment = { wrapText: true };
+    }
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="exam-results-${String(s.title).replace(/[^\w.-]+/g, '-')}.xlsx"`);
+    await wb.xlsx.write(res);
+    return res.end();
+  } catch (err) { return next(err); }
+});
+
+router.get('/attempts/:id/certificate', requireAuth, requirePermission(EX, 'can_view'), async (req, res, next) => {
+  try {
+    const [[a]] = await pool.query(
+      `SELECT a.*, s.title, st.name AS set_name, u.display_name AS user_name FROM exam_attempts a
+         JOIN exam_schedules s ON s.id = a.schedule_id JOIN exam_sets st ON st.id = a.set_id JOIN users u ON u.id = a.user_id WHERE a.id = ?`,
+      [req.params.id]);
+    if (!a) return bad(res, 'Not found.', 404);
+    if (a.status !== 'submitted' || Number(a.passed) !== 1 || Number(a.essays_pending)) {
+      return bad(res, 'A certificate is issued for a passed exam once it is fully graded.', 409);
+    }
+    return sendCertificate(res, a);
+  } catch (err) { return next(err); }
+});
+
+// ---------------------------------------------------------------- Training record (2026-10-21)
+
+// Everyone who has been given an exam, with how they have done.
+router.get('/employees', requireAuth, requirePermission(EX, 'can_view'), async (req, res, next) => {
+  try {
+    const where = ["s.status <> 'cancelled'"];
+    const params = [];
+    if (req.query.q) { where.push('u.display_name LIKE ?'); params.push(`%${req.query.q}%`); }
+    if (Number(req.query.department_id)) { where.push('e.department_id = ?'); params.push(Number(req.query.department_id)); }
+    const [rows] = await pool.query(
+      `SELECT u.id, u.display_name AS name, d.name AS department,
+              COUNT(a.id) AS assigned, SUM(a.status = 'submitted') AS taken, SUM(a.status = 'missed') AS missed,
+              SUM(a.status IN ('assigned', 'in_progress')) AS pending, SUM(a.passed = 1) AS passed,
+              AVG(CASE WHEN a.status = 'submitted' AND a.essays_pending = 0 THEN a.percent END) AS avg_percent,
+              MAX(a.submitted_at) AS last_submitted_at,
+              (SELECT COUNT(*) FROM exam_orientations o WHERE o.user_id = u.id AND o.status IN ('recommended', 'scheduled')) AS orientations_open,
+              (SELECT COUNT(*) FROM exam_orientations o WHERE o.user_id = u.id AND o.status = 'attended') AS orientations_attended
+         FROM exam_attempts a JOIN exam_schedules s ON s.id = a.schedule_id JOIN users u ON u.id = a.user_id
+         LEFT JOIN employees e ON e.id = u.employee_id LEFT JOIN departments d ON d.id = e.department_id
+        WHERE ${where.join(' AND ')} GROUP BY u.id ORDER BY u.display_name LIMIT 2000`, params);
+    res.json(rows.map((r) => ({ ...r, avg_percent: r.avg_percent == null ? null : Math.round(Number(r.avg_percent) * 10) / 10 })));
+  } catch (err) { next(err); }
+});
+
+// One employee's record: every exam, each topic's score over time, and their orientations.
+router.get('/employees/:userId', requireAuth, requirePermission(EX, 'can_view'), async (req, res, next) => {
+  try {
+    await sweep({ userId: Number(req.params.userId) });
+    const [[u]] = await pool.query(
+      `SELECT u.id, u.display_name AS name, e.employee_code, e.position_title, d.name AS department
+         FROM users u LEFT JOIN employees e ON e.id = u.employee_id LEFT JOIN departments d ON d.id = e.department_id WHERE u.id = ?`,
+      [req.params.userId]);
+    if (!u) return bad(res, 'Not found.', 404);
+    const [attempts] = await pool.query(
+      `SELECT a.id, a.schedule_id, a.status, a.score, a.max_score, a.percent, a.passed, a.essays_pending, a.submitted_at, a.auto_submitted,
+              s.title, s.start_date, s.end_date, s.retake_of_attempt_id, st.name AS set_name, st.passing_percent
+         FROM exam_attempts a JOIN exam_schedules s ON s.id = a.schedule_id JOIN exam_sets st ON st.id = a.set_id
+        WHERE a.user_id = ? AND s.status <> 'cancelled' ORDER BY COALESCE(a.submitted_at, s.end_date) DESC, a.id DESC`, [u.id]);
+    const done = attempts.filter((a) => a.status === 'submitted');
+    const breakdown = await topicBreakdown(done.map((a) => a.id));
+    // Each topic's score in every exam that tested it, oldest first -- is the employee improving?
+    const topics = new Map();
+    for (const a of [...done].reverse()) {
+      for (const t of breakdown.get(Number(a.id)) || []) {
+        const k = t.topic_id || 0;
+        const v = topics.get(k) || { topic_id: t.topic_id, topic: t.topic, scores: [] };
+        v.scores.push({ attempt_id: a.id, title: a.title, date: day(a.submitted_at), percent: t.percent });
+        topics.set(k, v);
+      }
+    }
+    const [orientations] = await pool.query(
+      `SELECT o.*, t.name AS topic, t.orientation_name, s.title AS exam_title FROM exam_orientations o
+         LEFT JOIN exam_topics t ON t.id = o.topic_id LEFT JOIN exam_attempts a ON a.id = o.attempt_id
+         LEFT JOIN exam_schedules s ON s.id = a.schedule_id
+        WHERE o.user_id = ? ORDER BY o.created_at DESC`, [u.id]);
+    return res.json({
+      employee: u, attempts,
+      topics: [...topics.values()].map((t) => ({ ...t, latest: t.scores[t.scores.length - 1].percent, first: t.scores[0].percent }))
+        .sort((x, y) => x.latest - y.latest),
+      orientations,
+    });
   } catch (err) { return next(err); }
 });
 

@@ -560,6 +560,22 @@ if (process.env.BIR_REMINDER_JOB === '1') {
   };
   scheduleNextBirRun();
 }
+// Exam deadline reminders (lib/exams.js runExamReminders): whoever has not finished an open exam is
+// told 3 days before and the day before; when a window closes its scheduler hears how many missed
+// it. 8:00 business time. OFF unless EXAM_REMINDER_JOB=1 -- ONE box of the replicated set.
+if (process.env.EXAM_REMINDER_JOB === '1') {
+  const { runExamReminders } = require('./lib/exams');
+  const hour = Number(process.env.EXAM_REMINDER_HOUR || 8);
+  const scheduleNextExamRun = () => {
+    const delayMs = msUntilBusinessTime(hour, 0);
+    console.log(`Exam reminders scheduled for ${new Date(Date.now() + delayMs).toISOString()}`);
+    setTimeout(async () => {
+      try { console.log('Exam reminders:', await runExamReminders()); } catch (err) { console.error('Exam reminders failed:', err); }
+      scheduleNextExamRun();
+    }, delayMs);
+  };
+  scheduleNextExamRun();
+}
 // Unfinished feed video uploads, cleared after a day -- only those whose file is on this server.
 require('./lib/feedVideos').scheduleFeedVideoSweep();
 

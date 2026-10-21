@@ -1,4 +1,39 @@
+import api from '../api/client';
 import { parseUtc } from './datetime';
+
+// A file from the API (Excel results, a certificate) saved by the browser.
+export async function download(path, filename) {
+  const res = await api.get(path, { responseType: 'blob' });
+  const url = URL.createObjectURL(res.data);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// A photo shrunk to at most 1280px on its longer side as a JPEG data URL, so a phone picture
+// (several MB) goes up as a few hundred KB. PNGs with transparency keep a white background.
+export function shrinkImage(file, max = 1280) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onerror = reject;
+    r.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('not an image'));
+      img.onload = () => {
+        const k = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement('canvas');
+        c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL('image/jpeg', 0.85));
+      };
+      img.src = String(r.result);
+    };
+    r.readAsDataURL(file);
+  });
+}
 
 // HRD > Examinations (2026-10-21; server lib/exams.js). Shared by My Exams, the exam itself, the
 // Question Bank and HR's pages.
