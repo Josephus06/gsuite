@@ -53,7 +53,9 @@ function shuffle(list) {
   return a;
 }
 
-const norm = (s) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+// Typed answers compare without capitals, spacing or punctuation -- quotes, periods, commas, dashes
+// ("“Thank you for your patience.”" matches "thank you for your patience").
+const norm = (s) => String(s ?? '').toLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}\s]/gu, ' ').trim().replace(/\s+/g, ' ');
 
 // A question as the bank stores it, checked: returns { error } or the clean fields to save.
 function cleanQuestion(q) {
