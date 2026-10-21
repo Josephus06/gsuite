@@ -386,7 +386,7 @@ async function adminMetrics(userId) {
 }
 
 // The General Manager's three rings (asked 2026-10-05), over the last 30 days:
-//   Sales Index           Sales Invoices net of VAT / Vendor Bills net of VAT -- pesos of sales
+//   Purchase Index        (named Sales Index until 2026-10-21) Sales Invoices net of VAT / Vendor Bills net of VAT -- pesos of sales
 //                         per peso of purchases. Shown as "3.2x"; the ring is full at 5x.
 //   Gross Profit          (Revenue - Cost of Goods Sold - Cost of Services) / Revenue, from the
 //                         Income Statement itself so the two can never disagree.
@@ -428,7 +428,7 @@ async function generalManagerRings() {
   const pct = (v) => (v == null ? '—' : `${v}%`);
   const peso = (n) => `₱${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   return [
-    { label: 'Sales Index', value: index == null ? 0 : Math.min(100, Math.round((index / RING_INDEX_FULL) * 100)),
+    { label: 'Purchase Index', value: index == null ? 0 : Math.min(100, Math.round((index / RING_INDEX_FULL) * 100)),
       display: index == null ? '—' : `${index.toFixed(1)}×`, color: '#7c6fe8',
       hint: `Last 30 days: ₱${index == null ? '—' : index.toFixed(2)} of sales per ₱1 of purchases (invoiced ${peso(sales)} / billed ${peso(purchases)}, net of VAT)` },
     { label: 'Gross Profit', value: gp == null ? 0 : Math.max(0, Math.min(100, gp)), display: pct(gp), color: '#4f8cf7',
