@@ -321,7 +321,7 @@ async function extractQuestions({ pdfBase64, fileName, text, topics }) {
     'type is one of: true_false, multiple_choice, multiple_select, identification, essay.',
     'true_false: answer true or false. multiple_choice: choices = array of strings WITHOUT the letter labels, answer = 0-based index of the right choice.',
     'multiple_select: answer = array of 0-based indices. identification: answer = array of accepted answers (alternatives).',
-    'essay: answer = {"guide": "what a good answer covers"} if the document says, else {"guide": null}.',
+    'essay: answer = {"guide": <the points a good answer must cover, ONLY if the document lists them>}, otherwise {"guide": null}.',
     'If the document marks the answers (answer key, bold, check, asterisk, "Ans:"), use them. If it does not, give your best answer.',
     `topic: the subject the question tests. Prefer one of these existing topics when it fits: ${topics.length ? topics.join('; ') : '(none yet)'}; otherwise a short new topic name (2-4 words).`,
     'points: as the document says, else 1 (essay 5). Keep the wording of each question as written; fix only obvious OCR errors.',
