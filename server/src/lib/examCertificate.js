@@ -14,17 +14,23 @@ const pool = require('../db');
 // position. Until set: the HRD department head, and the General Manager.
 const ASSETS = path.join(__dirname, '..', 'assets');
 const LOGO = path.join(ASSETS, 'brand', 'graphicstar-letterhead.png');
+const MARK = path.join(ASSETS, 'brand', 'graphicstar-mark.png');
 const FONT = {
-  regular: path.join(ASSETS, 'fonts', 'Montserrat-400.ttf'),
-  semibold: path.join(ASSETS, 'fonts', 'Montserrat-600.ttf'),
-  bold: path.join(ASSETS, 'fonts', 'Montserrat-700.ttf'),
-  black: path.join(ASSETS, 'fonts', 'Montserrat-800.ttf'),
+  sans: path.join(ASSETS, 'fonts', 'Montserrat-400.ttf'),
+  sansBold: path.join(ASSETS, 'fonts', 'Montserrat-600.ttf'),
+  serif: path.join(ASSETS, 'fonts', 'Cormorant-400-normal.ttf'),
+  serifItalic: path.join(ASSETS, 'fonts', 'Cormorant-400-italic.ttf'),
+  serifItalicMed: path.join(ASSETS, 'fonts', 'Cormorant-500-italic.ttf'),
+  serifSemi: path.join(ASSETS, 'fonts', 'Cormorant-600-normal.ttf'),
+  serifBold: path.join(ASSETS, 'fonts', 'Cormorant-700-normal.ttf'),
   script: path.join(ASSETS, 'fonts', 'GreatVibes-Regular.ttf'),
 };
+const PAPER = '#faf6ef';
 const BLUE = '#0b3d9a';
-const ORANGE = '#ec7601';
-const INK = '#333333';
-const MUTED = '#6b7280';
+const ORANGE = '#e8912d';
+const BRONZE = '#b5651d';
+const INK = '#2f3640';
+const MUTED = '#5f6672';
 const COMPANY = 'Cebu Graphicstar Imaging Corp.';
 
 const SETTING_KEYS = ['cert_left_user_id', 'cert_left_title', 'cert_right_user_id', 'cert_right_title'];
@@ -76,93 +82,105 @@ const dataImage = (v) => {
 // { name, title, heading?, date (YYYY-MM-DD), certificateNo } -> Buffer. `heading` is the line before
 // the title: an exam "has successfully completed the", a course "has successfully read, understood
 // and completed the".
+//
+// The design (second version, asked 2026-10-21): cream paper, a blue frame with an orange inner
+// rule and orange diamonds at its corners, the GraphicStar mark faint behind the text, CERTIFICATE
+// in spaced serif capitals, "OF COMPLETION" between two orange rules, the name in script over a
+// fading orange line, the title in serif, a round "GRAPHICSTAR · CERTIFIED" seal with the number.
 async function certificatePdf({ name, title, heading, date, certificateNo }) {
   const sign = await signatories();
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 0, info: { Title: `Certificate - ${name} - ${title}` } });
     const chunks = [];
-    doc.on('data', (c) => chunks.push(c));
+    doc.on('data', (x) => chunks.push(x));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
-    Object.entries(FONT).forEach(([k, f]) => doc.registerFont(k, f));
+    Object.entries(FONT).forEach(([k, file]) => doc.registerFont(k, file));
     const W = doc.page.width;
     const H = doc.page.height;
-    const center = (text, y, opts = {}) => doc.text(text, 0, y, { width: W, align: 'center', ...opts });
+    const center = (text, y, opts = {}) => doc.text(text, 0, y, { width: W, align: 'center', lineBreak: false, ...opts });
 
-    // Bands top and bottom: blue with an orange rule.
-    doc.rect(0, 0, W, 12).fill(BLUE);
-    doc.rect(0, 12, W, 3.5).fill(ORANGE);
-    doc.rect(0, H - 15.5, W, 3.5).fill(ORANGE);
-    doc.rect(0, H - 12, W, 12).fill(BLUE);
-    // Frame: blue outside, orange inside.
-    doc.roundedRect(30, 36, W - 60, H - 72, 5).lineWidth(1.6).strokeColor(BLUE).stroke();
-    doc.rect(38, 44, W - 76, H - 88).lineWidth(0.7).strokeColor(ORANGE).stroke();
+    doc.rect(0, 0, W, H).fill(PAPER);
+    // Frame: blue outside, orange inside, a diamond on each inner corner.
+    doc.rect(24, 24, W - 48, H - 48).lineWidth(1.4).strokeColor(BLUE).stroke();
+    doc.rect(32, 32, W - 64, H - 64).lineWidth(0.6).strokeColor(ORANGE).stroke();
+    for (const [x, y] of [[32, 32], [W - 32, 32], [32, H - 32], [W - 32, H - 32]]) {
+      doc.save().translate(x, y).rotate(45).rect(-4, -4, 8, 8).fill(ORANGE).restore();
+    }
+    // The mark, faint, behind everything.
+    if (fs.existsSync(MARK)) { doc.save().opacity(0.07).image(MARK, W / 2 - 140, H / 2 - 150, { fit: [280, 280], align: 'center', valign: 'center' }).restore(); }
 
-    // Logo, then a blue-to-orange rule.
-    let y = 64;
-    if (fs.existsSync(LOGO)) { const lw = 230; doc.image(LOGO, (W - lw) / 2, y, { width: lw }); y += lw * (148 / 900) + 12; }
-    const grad = doc.linearGradient(W / 2 - 150, 0, W / 2 + 150, 0);
-    grad.stop(0, BLUE).stop(1, ORANGE);
-    doc.rect(W / 2 - 150, y, 300, 2.6).fill(grad);
-    y += 12;
+    let y = 56;
+    if (fs.existsSync(LOGO)) { const lw = 196; doc.image(LOGO, (W - lw) / 2, y, { width: lw }); y += lw * (148 / 900) + 16; }
 
-    doc.font('black').fontSize(40).fillColor(BLUE);
-    center('CERTIFICATE', y, { characterSpacing: 1.5 });
-    y += 50;
-    // The orange pill.
-    const pw = 180;
-    doc.roundedRect((W - pw) / 2, y, pw, 25, 12.5).fill(ORANGE);
-    doc.font('bold').fontSize(9.5).fillColor('#ffffff');
-    center('OF COMPLETION', y + 8, { characterSpacing: 3.2 });
-    y += 40;
+    doc.font('serif').fontSize(46).fillColor(BLUE);
+    center('CERTIFICATE', y, { characterSpacing: 7 });
+    y += 58;
+    // OF COMPLETION between two orange rules.
+    doc.font('sansBold').fontSize(9).fillColor(BRONZE);
+    const label = 'OF COMPLETION';
+    const lwid = doc.widthOfString(label, { characterSpacing: 3.6 });
+    center(label, y, { characterSpacing: 3.6 });
+    doc.moveTo(W / 2 - lwid / 2 - 82, y + 5).lineTo(W / 2 - lwid / 2 - 16, y + 5).lineWidth(0.7).strokeColor(ORANGE).stroke();
+    doc.moveTo(W / 2 + lwid / 2 + 16, y + 5).lineTo(W / 2 + lwid / 2 + 82, y + 5).stroke();
+    y += 30;
 
-    doc.font('regular').fontSize(12).fillColor(INK);
-    center('This certifies that', y);
-    y += 14;
-    // The name in script, shrunk to fit a long one.
-    let ns = 46;
-    doc.font('script');
-    while (ns > 26 && doc.fontSize(ns).widthOfString(name) > W - 260) ns -= 2;
-    doc.fillColor(BLUE).fontSize(ns);
-    center(name, y + (46 - ns) / 2);
-    y += 62;
-    doc.moveTo(W / 2 - 175, y).lineTo(W / 2 + 175, y).lineWidth(0.7).strokeColor('#b8bcc8').stroke();
-    y += 14;
-
-    doc.font('regular').fontSize(11.5).fillColor(INK);
-    center(heading || 'has successfully completed the', y);
+    doc.font('serifItalic').fontSize(17).fillColor(MUTED);
+    center('This is to certify that', y);
     y += 20;
-    doc.font('bold').fontSize(18).fillColor(ORANGE);
-    doc.text(String(title).toUpperCase(), 100, y, { width: W - 200, align: 'center' });
+    let ns = 52;
+    doc.font('script');
+    while (ns > 28 && doc.fontSize(ns).widthOfString(name) > W - 300) ns -= 2;
+    doc.fillColor(BLUE).fontSize(ns);
+    center(name, y + (52 - ns) / 2);
+    y += 66;
+    // A line fading out to both ends.
+    const fade = doc.linearGradient(W / 2 - 230, 0, W / 2 + 230, 0);
+    fade.stop(0, ORANGE, 0).stop(0.5, ORANGE, 0.9).stop(1, ORANGE, 0);
+    doc.rect(W / 2 - 230, y, 460, 1.2).fill(fade);
+    y += 14;
+
+    doc.font('serifItalic').fontSize(15).fillColor(MUTED);
+    center(heading || 'has successfully completed the', y);
+    y += 22;
+    doc.font('serifSemi').fontSize(25).fillColor(BLUE);
+    doc.text(String(title), 110, y, { width: W - 220, align: 'center', characterSpacing: 0.5 });
     y = doc.y + 6;
-    doc.font('regular').fontSize(9.5).fillColor(MUTED);
-    center(`of ${COMPANY}, ${givenOn(date)}.`, y);
+    doc.font('sans').fontSize(8.6).fillColor(MUTED);
+    center(`Cebu Graphicstar Imaging Corp.  ·  ${givenOn(date).replace(/^given/, 'Given')}`, y, { characterSpacing: 0.6 });
 
-    // The seal: an orange ring round a blue disc with a rosette and check.
+    // The seal: orange ring, blue disc, "GRAPHICSTAR · CERTIFIED ·" round it, a thin orange ring and a check.
     const cx = W / 2;
-    const cy = H - 128;
-    doc.circle(cx, cy, 37).lineWidth(1.6).strokeColor(ORANGE).stroke();
-    doc.circle(cx, cy, 32).fill(BLUE);
-    doc.lineWidth(1.8).strokeColor('#ffffff').lineJoin('round').lineCap('round');
-    doc.circle(cx, cy - 4, 9).stroke();
-    doc.moveTo(cx - 4, cy - 4).lineTo(cx - 1, cy - 1).lineTo(cx + 4.5, cy - 7).stroke();
-    doc.moveTo(cx - 6, cy + 3.5).lineTo(cx - 8, cy + 14).lineTo(cx - 4, cy + 11.5).lineTo(cx - 1.5, cy + 14.5).lineTo(cx - 0.5, cy + 5).stroke();
-    doc.moveTo(cx + 6, cy + 3.5).lineTo(cx + 8, cy + 14).lineTo(cx + 4, cy + 11.5).lineTo(cx + 1.5, cy + 14.5).lineTo(cx + 0.5, cy + 5).stroke();
-    doc.font('bold').fontSize(8.5).fillColor('#4b5563');
-    center(`CERT. NO. ${certificateNo}`, cy + 46, { characterSpacing: 1 });
+    const cy = H - 112;
+    doc.circle(cx, cy, 40).lineWidth(1.4).strokeColor(ORANGE).stroke();
+    doc.circle(cx, cy, 36).fill(BLUE);
+    doc.circle(cx, cy, 19).lineWidth(0.8).strokeColor(ORANGE).stroke();
+    const ring = 'GRAPHICSTAR \u00B7 CERTIFIED \u00B7 GRAPHICSTAR \u00B7 CERTIFIED \u00B7 ';
+    doc.font('sansBold').fontSize(5.6).fillColor('#ffffff');
+    const step = 360 / ring.length;
+    [...ring].forEach((ch, i) => {
+      const ang = -90 + i * step;
+      const rad = (ang * Math.PI) / 180;
+      const r = 27.5;
+      doc.save().translate(cx + r * Math.cos(rad), cy + r * Math.sin(rad)).rotate(ang + 90)
+        .text(ch, -3, -2.6, { width: 6, align: 'center', lineBreak: false }).restore();
+    });
+    doc.moveTo(cx - 8, cy + 0.5).lineTo(cx - 2.5, cy + 6).lineTo(cx + 8.5, cy - 6).lineWidth(2.6).lineCap('round').lineJoin('round').strokeColor('#ffffff').stroke();
+    doc.font('sansBold').fontSize(8).fillColor('#4b5563');
+    center(`NO. ${certificateNo}`, cy + 49, { characterSpacing: 1.2 });
 
-    // Signatories: the e-signature above the line (when they have one), then name and position.
-    const lineY = H - 132;
-    const signatory = (s, x) => {
-      const half = 115;
-      const img = dataImage(s.signature);
+    // Signatories: the e-signature above the line, the name in serif, the position in small capitals.
+    const lineY = H - 120;
+    const signatory = (sg, x) => {
+      const half = 120;
+      const img = dataImage(sg.signature);
       if (img) { try { doc.image(img, x - 70, lineY - 46, { fit: [140, 42], align: 'center', valign: 'bottom' }); } catch { /* unreadable signature: leave the line blank */ } }
-      doc.moveTo(x - half, lineY).lineTo(x + half, lineY).lineWidth(0.8).strokeColor('#6b7280').stroke();
-      doc.font('bold').fontSize(10.5).fillColor('#111827').text(s.name || ' ', x - half, lineY + 8, { width: half * 2, align: 'center' });
-      doc.font('regular').fontSize(8.5).fillColor(MUTED).text(s.title || ' ', x - half, lineY + 23, { width: half * 2, align: 'center' });
+      doc.moveTo(x - half, lineY).lineTo(x + half, lineY).lineWidth(0.8).strokeColor('#4b5563').stroke();
+      doc.font('serifBold').fontSize(15).fillColor('#1f2937').text(sg.name || ' ', x - half, lineY + 6, { width: half * 2, align: 'center', lineBreak: false });
+      doc.font('sans').fontSize(7.8).fillColor(MUTED).text(String(sg.title || ' ').toUpperCase(), x - half, lineY + 26, { width: half * 2, align: 'center', characterSpacing: 1.2, lineBreak: false });
     };
-    signatory(sign.left, 190);
-    signatory(sign.right, W - 190);
+    signatory(sign.left, 205);
+    signatory(sign.right, W - 205);
     doc.end();
   });
 }
