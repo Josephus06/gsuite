@@ -12,6 +12,7 @@ import { parseUtc } from '../utils/datetime';
 import { isPlanner } from '../utils/plannerRoles';
 import CollectionForecastCalendar from '../components/CollectionForecastCalendar';
 import GmDocumentCalendar from '../components/GmDocumentCalendar';
+import SearchInput from '../components/SearchInput';
 import { useCalendarRange, CalendarRangeSwitch } from '../utils/calendarRange';
 import SystemHealthCard from '../components/SystemHealthCard';
 import SalesBreakdownCard from '../components/SalesBreakdownCard';
@@ -879,6 +880,15 @@ const DEPT_COLOURS = [
   { key: null, label: 'Other', cls: 'jo-c7' },
 ];
 const deptColour = (j) => (DEPT_COLOURS.find((d) => d.key === jobDepartment(j)) || DEPT_COLOURS[DEPT_COLOURS.length - 1]).cls;
+// The GM card's Search (asked 2026-10-21): JO number, customer, description, SO / NSSO number, job
+// type or location -- every word typed has to appear in one of them.
+const matchesSearch = (j, term) => {
+  const words = String(term || '').toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = [j.jobOrderNo, j.customerName, j.description, j.salesOrderNo, j.jobTypeName, j.jobLocationName]
+    .filter(Boolean).join(' ').toLowerCase();
+  return words.every((w) => hay.includes(w));
+};
 
 // `range` is the GM card's Day / Week / Month switch (utils/calendarRange.jsx); the standalone
 // Production Schedule card stays on Month. The endpoint is monthly, so a week across a month end
@@ -929,7 +939,8 @@ function ForecastCalendarCard({ navigate, embedded = false, range = 'month' }) {
   // A job occupies every day of its forecast window, not just the start -- that span is the
   // whole point of the calendar, so the walk happens here rather than the server sending the
   // same job once per day it covers.
-  const jobs = allJobs.filter((j) => (!dept || jobDepartment(j) === dept) && matchesStatus(j, status));
+  const [search, setSearch] = useState('');
+  const jobs = allJobs.filter((j) => (!dept || jobDepartment(j) === dept) && matchesStatus(j, status) && matchesSearch(j, search));
   const byDay = new Map();
   for (const j of jobs) {
     const start = String(j.plannedStart || '').slice(0, 10);
@@ -978,8 +989,13 @@ function ForecastCalendarCard({ navigate, embedded = false, range = 'month' }) {
           <strong>{title}</strong>
           <button type="button" className="btn btn-sm" onClick={() => shift(1)} disabled={loading}>&rsaquo;</button>
           <span className="muted artist-calendar-count">
-            {loading ? 'Loading...' : `${shownJobs.length} scheduled · ${money2(shownAmount)}`}
+            {loading ? 'Loading...' : `${shownJobs.length} scheduled · ${money2(shownAmount)}${search.trim() ? ' (matching)' : ''}`}
           </span>
+          {embedded && (
+            <div style={{ minWidth: 220 }}>
+              <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search JO #, customer, SO #..." />
+            </div>
+          )}
           {embedded && (
             <select value={status} onChange={(e) => chooseStatus(e.target.value)} title="Filter by production status"
               style={{ width: 'auto', minWidth: 170 }}>

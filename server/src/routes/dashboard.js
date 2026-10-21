@@ -1297,6 +1297,8 @@ router.get('/production-calendar', requireAuth, async (req, res, next) => {
               jo.planned_start_date AS plannedStart, jo.planned_end_date AS plannedEnd,
               jo.delivery_date AS deliveryDate, jo.production_stage AS stage, jo.is_on_hold AS onHold,
               c.name AS customerName, jt.display_name AS jobTypeName, loc.location_name AS jobLocationName,
+              -- Its SO / NSSO number, so the GM card's search finds a job by it (2026-10-21).
+              COALESCE(so.sales_order_no, (SELECT nso.nsso_no FROM non_standard_sales_orders nso WHERE nso.id = jo.nsso_id)) AS salesOrderNo,
               -- The JO's sales value (asked 2026-10-06): its Sales Order line's Net of Tax, the basis
               -- Weighted Sales uses. A rework order (RWIP / RFQC, which has a parent) carries none --
               -- its parent's line already counts that sale.
