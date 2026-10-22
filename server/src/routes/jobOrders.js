@@ -670,9 +670,14 @@ router.put('/:id', requireAuth, requireJobOrderEdit, async (req, res, next) => {
     // edited later.
     const schedulingNow = req.body.planned_start_date && req.body.planned_end_date
       && oldRow.production_stage === 'pending_for_scheduling';
+    // A JO already fully built and inspected (one migrated with its quantities, no build in T1S) is
+    // done, not starting: scheduling it sets Completed rather than In-Process (2026-10-21, JO-71094-3-4).
+    const alreadyDone = Number(oldRow.quantity) > 0 && Number(oldRow.quantity_built) >= Number(oldRow.quantity)
+      && Number(oldRow.quantity_inspected) >= Number(oldRow.quantity);
+    const scheduledStage = alreadyDone ? 'completed' : 'in_process';
 
     await conn.query(
-      `UPDATE job_orders SET ${EDIT_FIELDS.map((f) => `${f} = ?`).join(', ')}${schedulingNow ? ", production_stage = 'in_process'" : ''}, updated_at = NOW() WHERE id = ?`,
+      `UPDATE job_orders SET ${EDIT_FIELDS.map((f) => `${f} = ?`).join(', ')}${schedulingNow ? `, production_stage = '${scheduledStage}'` : ''}, updated_at = NOW() WHERE id = ?`,
       [...values, req.params.id]
     );
     for (let i = 0; i < EDIT_FIELDS.length; i++) {
@@ -683,7 +688,7 @@ router.put('/:id', requireAuth, requireJobOrderEdit, async (req, res, next) => {
       await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: f, oldValue: oldVal, newValue: newVal });
     }
     if (schedulingNow) {
-      await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'production_stage', oldValue: 'pending_for_scheduling', newValue: 'in_process' });
+      await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'production_stage', oldValue: 'pending_for_scheduling', newValue: scheduledStage });
       // Design / Layout lines are done by the time a JO is In-Process (lib/designAutoComplete.js).
       await completeDesignProcesses(conn, req.params.id);
     }
