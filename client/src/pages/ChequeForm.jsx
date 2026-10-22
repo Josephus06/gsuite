@@ -213,7 +213,15 @@ export default function ChequeForm() {
             <div className="field"><label>Cheque No</label><input value={header.cheque_number} onChange={(e) => setH({ cheque_number: e.target.value })} /></div>
             {editing && <div className="field"><label>Date Released</label><input type="date" value={header.date_released} onChange={(e) => setH({ date_released: e.target.value })} /></div>}
             <div style={{ display: 'flex', gap: 10 }}>
-              <div className="field" style={{ flex: 1 }}><label>Currency</label><input value={header.currency} onChange={(e) => setH({ currency: e.target.value })} /></div>
+              {/* PHP or USD (USD added 2026-10-22). Back to PHP resets the rate to 1. A cheque saved
+                  earlier with some other code keeps it as an option rather than losing it. */}
+              <div className="field" style={{ flex: 1 }}>
+                <label>Currency</label>
+                <select value={header.currency || 'PHP'}
+                  onChange={(e) => setH(e.target.value === 'PHP' ? { currency: 'PHP', conversion_rate: 1 } : { currency: e.target.value })}>
+                  {[...new Set(['PHP', 'USD', header.currency || 'PHP'])].map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
               <div className="field" style={{ flex: 1 }}><label>Conversion Rate</label><input type="number" step="0.000001" value={header.conversion_rate} onChange={(e) => setH({ conversion_rate: e.target.value })} /></div>
             </div>
           </div>
