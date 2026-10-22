@@ -216,7 +216,14 @@ router.get('/:id/print', requireAuth, requirePermission(ROUTE, 'can_print'), asy
   try {
     const [[row]] = await pool.query(`${BASE_SELECT} WHERE c.id = ?`, [req.params.id]);
     if (!row) return res.status(404).json({ error: 'Certificate not found' });
-    res.json(parseRow(row));
+    // The approving GM's e-signature (their profile signature), only once approved -- an unapproved
+    // certificate must not carry anyone's signature.
+    let signature = null;
+    if (row.status === 'approved' && row.approver_user_id) {
+      const [[u]] = await pool.query('SELECT signature_data FROM users WHERE id = ?', [row.approver_user_id]);
+      signature = u?.signature_data || null;
+    }
+    res.json({ ...parseRow(row), signature });
   } catch (err) { next(err); }
 });
 

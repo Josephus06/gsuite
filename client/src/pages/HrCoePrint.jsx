@@ -81,7 +81,10 @@ export default function HrCoePrint() {
         .coep-title { text-align: center; font-weight: 700; text-decoration: underline; }
         .coep-body p { text-align: justify; margin: 0; }
         .coep-indent { text-indent: 12.7mm; }
-        .coep-sign { margin-top: 18mm; }
+        .coep-sign { margin-top: 18mm; position: relative; }
+        /* The approving GM's e-signature, its foot just over the name as ink would sit. */
+        .coep-esign { position: absolute; left: -4mm; top: -15mm; height: 20mm; width: auto; max-width: 70mm;
+          object-fit: contain; mix-blend-mode: multiply; pointer-events: none; }
         .coep-sign div { margin-bottom: 2mm; }
         .coep-table { width: 100%; border-collapse: collapse; font-size: 10pt; margin: 2mm 0 4mm; }
         .coep-table th, .coep-table td { border: 1px solid #000; padding: 1.2mm 1.6mm; vertical-align: middle; background: none;
@@ -153,6 +156,7 @@ export default function HrCoePrint() {
               Issued this {givenOn} at Basak, Mandaue City, Cebu, Philippines.
             </p>
             <div className="coep-sign" style={{ fontSize: '13pt', marginTop: '14mm' }}>
+              {approved && coe.signature && <img className="coep-esign" src={coe.signature} alt="" />}
               <div><b>{signedBy || <span>&nbsp;</span>}</b></div>
               <div>{approved ? coe.signatory_title : 'General Manager'}</div>
             </div>
@@ -169,6 +173,7 @@ export default function HrCoePrint() {
             </p>
             <p>Given this {givenOn} at Basak, Mandaue City, Cebu, Philippines.</p>
             <div className="coep-sign" style={{ marginTop: '24mm' }}>
+              {approved && coe.signature && <img className="coep-esign" src={coe.signature} alt="" />}
               <div><b>{signedBy || <span>&nbsp;</span>}</b></div>
               <div>{approved ? coe.signatory_title : 'General Manager'}</div>
               <div>Cebu Graphicstar Imaging Corporation</div>
