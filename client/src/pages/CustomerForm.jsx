@@ -24,7 +24,7 @@ const EMPTY_BILLING = {
   contact_person: '', contact_number: '', email: '', address: '', billing_collection: '',
   billing_requirements: '', releasing_schedule: '', releasing_location: '', payment_method: '', other_info: '',
 };
-const BILLING_COLUMNS = [
+export const BILLING_COLUMNS = [
   ['contact_person', 'Contact Person'], ['contact_number', 'Contact number'], ['email', 'Email Address'], ['address', 'Address'],
   ['billing_collection', 'Billing / Collection'], ['billing_requirements', 'Billing Requirements'], ['releasing_schedule', 'Releasing Schedule'],
   ['releasing_location', 'Releasing Location'], ['payment_method', 'Payment Method'], ['other_info', 'Other Info'],
@@ -471,7 +471,8 @@ function Transactions({ customerId, reps }) {
   );
 }
 
-function Financial({ customerId }) {
+// Shared with the customer view page (CustomerView.jsx), read-only there.
+export function Financial({ customerId }) {
   const [d, setD] = useState(null);
   useEffect(() => { api.get(`/customers/${customerId}/financial`).then((r) => setD(r.data)).catch(() => setD({})); }, [customerId]);
   if (!d) return <LoadingSpinner />;
@@ -493,7 +494,7 @@ function Financial({ customerId }) {
   );
 }
 
-function Billing({ customerId }) {
+export function Billing({ customerId }) {
   const [rows, setRows] = useState(null);
   useEffect(() => { api.get(`/customers/${customerId}/open-invoices`).then((r) => setRows(r.data)).catch(() => setRows([])); }, [customerId]);
   if (!rows) return <LoadingSpinner />;

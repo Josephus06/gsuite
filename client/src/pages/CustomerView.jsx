@@ -8,6 +8,7 @@ import CrmProfileModal from '../components/CrmProfileModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../context/useAuth';
 import { displayDate } from '../utils/dates';
+import { BILLING_COLUMNS, Billing, Financial } from './CustomerForm';
 
 const PRIORITY_BADGE = { high: 'badge-danger', normal: 'badge-muted', low: 'badge-info' };
 
@@ -227,6 +228,10 @@ export default function CustomerView() {
         <button className={`status-tab ${tab === 'pipeline' ? 'active' : ''}`} onClick={() => setTab('pipeline')}>Pipeline ({pipeline.length})</button>
         <button className={`status-tab ${tab === 'activity' ? 'active' : ''}`} onClick={() => setTab('activity')}>Activity</button>
         <button className={`status-tab ${tab === 'transactions' ? 'active' : ''}`} onClick={() => setTab('transactions')}>Transactions</button>
+        {/* The edit page's other tabs, read-only here (2026-10-22). */}
+        <button className={`status-tab ${tab === 'relationships' ? 'active' : ''}`} onClick={() => setTab('relationships')}>Relationships</button>
+        <button className={`status-tab ${tab === 'financial' ? 'active' : ''}`} onClick={() => setTab('financial')}>Financial</button>
+        <button className={`status-tab ${tab === 'billing' ? 'active' : ''}`} onClick={() => setTab('billing')}>Billing and Collection</button>
       </div>
 
       {tab === 'overview' && (
@@ -263,6 +268,49 @@ export default function CustomerView() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {tab === 'relationships' && (
+        <div className="card">
+          <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>A payment from this customer may settle these related customers' invoices.</div>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Customer</th><th>Address</th><th>Contact No.</th></tr></thead>
+              <tbody>
+                {(customer.relationships || []).length === 0 && <tr><td colSpan={3} className="muted" style={{ textAlign: 'center', padding: 20 }}>No related customers.</td></tr>}
+                {(customer.relationships || []).map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.related_customer_id ? <Link to={`/customers/${r.related_customer_id}`}>{r.name}</Link> : r.name}</td>
+                    <td>{r.address || '—'}</td><td>{r.contact_no || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {tab === 'financial' && <div className="card"><Financial customerId={id} /></div>}
+
+      {tab === 'billing' && (
+        <div className="card">
+          <h3 className="subsection" style={{ marginTop: 0 }}>Billing and Collection</h3>
+          <div className="table-wrap">
+            <table>
+              <thead><tr>{BILLING_COLUMNS.map(([k, label]) => <th key={k}>{label}</th>)}</tr></thead>
+              <tbody>
+                {(customer.billing_contacts || []).length === 0 && (
+                  <tr><td colSpan={BILLING_COLUMNS.length} className="muted" style={{ textAlign: 'center', padding: 20 }}>No billing / collection contacts yet.</td></tr>
+                )}
+                {(customer.billing_contacts || []).map((b) => (
+                  <tr key={b.id}>{BILLING_COLUMNS.map(([k]) => <td key={k} style={{ whiteSpace: 'pre-wrap' }}>{b[k] || '—'}</td>)}</tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <h3 className="subsection">Open Invoices</h3>
+          <Billing customerId={id} />
         </div>
       )}
 
