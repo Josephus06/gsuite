@@ -514,6 +514,8 @@ async function maySee(userId, doc) {
   if (doc.type === 'overtime') {
     const d = await overtimeDetail(doc.id);
     if (d && Number(d.target_user_id) === Number(userId)) return true;
+    // An artist's overtime: the Design Supervisors, who confirm its actual time.
+    if (d && (await otConfirmRule(doc, d)).confirmers.some((c) => Number(c.id) === Number(userId))) return true;
     if (d && d.target_department_id && await isDepartmentNoter(userId, d.target_department_id)) return true;
   }
   // Your own form, provided you still hold the module at all.
@@ -844,9 +846,28 @@ router.get('/meta/fuel', requireAuth, requirePermission(ROUTE, 'can_view'), asyn
   } catch (err) { next(err); }
 });
 
+// Who confirms an overtime's ACTUAL time: the person who filed it -- except overtime FOR AN ARTIST
+// (the employee it is for is account type Artist), which the Design Supervisors confirm (asked
+// 2026-10-21): users ticked Design Supervisor whose account type is Artist (or Design Supervisor) --
+// the design leads; Sales users also carry the tick, to assign artists, and do not confirm. None: the filer.
+//   { byDesignSupervisor, confirmers: [{ id, display_name }] }
+async function otConfirmRule(doc, d) {
+  const targetId = d && !Number(d.for_self) ? Number(d.target_user_id) : Number(doc.user_id);
+  const [[t]] = await pool.query('SELECT account_type FROM users WHERE id = ?', [targetId]);
+  if (String(t?.account_type || '').toLowerCase() === 'artist') {
+    const [sups] = await pool.query(
+      "SELECT id, display_name FROM users WHERE is_design_supervisor = 1 AND is_active = 1 AND LOWER(account_type) IN ('artist', 'design supervisor') AND id <> ? ORDER BY display_name", [targetId])
+      .catch(() => [[]]);
+    if (sups.length) return { byDesignSupervisor: true, confirmers: sups };
+  }
+  const [[filer]] = await pool.query('SELECT id, display_name FROM users WHERE id = ?', [doc.user_id]);
+  return { byDesignSupervisor: false, confirmers: filer ? [filer] : [] };
+}
+
 // Overtime waiting on its ACTUAL time (2026-10-20, see /:id/ot-confirm): final -- approved for
 // yourself, accepted for someone else -- and not yet confirmed. Each row says whose move it is: the
-// FILER confirms; the employee it is for (an artist whose supervisor filed it) sees it to monitor.
+// FILER confirms, or for an artist the Design Supervisors (otConfirmRule); the employee it is for sees
+// it to monitor.
 router.get('/meta/ot-to-confirm', requireAuth, async (req, res, next) => {
   try {
     const me = req.user.id;
@@ -860,10 +881,22 @@ router.get('/meta/ot-to-confirm', requireAuth, async (req, res, next) => {
          LEFT JOIN users tu ON tu.id = o.target_user_id
         WHERE f.type = 'overtime' AND o.ot_confirmed_at IS NULL
           AND ((o.for_self = 1 AND f.status = 'approved') OR (o.for_self = 0 AND f.status = 'accepted'))
-          AND (f.user_id = ? OR o.target_user_id = ?)
+          AND (f.user_id = ? OR o.target_user_id = ?
+               -- a Design Supervisor: every artist's overtime, which they confirm
+               OR (EXISTS (SELECT 1 FROM users me WHERE me.id = ? AND me.is_design_supervisor = 1 AND LOWER(me.account_type) IN ('artist', 'design supervisor'))
+                   AND (SELECT LOWER(au.account_type) FROM users au WHERE au.id = IF(o.for_self = 1, f.user_id, o.target_user_id)) = 'artist'))
         ORDER BY o.ot_date DESC, f.id DESC
-        LIMIT 200`, [me, me]);
-    res.json(rows.map((r) => ({ ...r, for_self: !!Number(r.for_self), mine_to_confirm: Number(r.user_id) === Number(me) })));
+        LIMIT 200`, [me, me, me]);
+    const out = [];
+    for (const r of rows) {
+      const rule = await otConfirmRule({ user_id: r.user_id }, r);
+      out.push({
+        ...r, for_self: !!Number(r.for_self),
+        mine_to_confirm: rule.confirmers.some((c) => Number(c.id) === Number(me)),
+        confirmed_by: rule.byDesignSupervisor ? 'Design Supervisor' : r.filed_by,
+      });
+    }
+    res.json(out);
   } catch (err) {
     if (err.code === 'ER_BAD_FIELD_ERROR' || err.code === 'ER_NO_SUCH_TABLE') return res.json([]); // add-ot-confirmation.js not run
     next(err);
@@ -1096,7 +1129,11 @@ router.get('/:id', requireAuth, async (req, res, next) => {
         && Number(doc.detail.target_user_id) === Number(req.user.id);
       // Confirm the ACTUAL time (2026-10-20): the filer, once it is final -- approved (for themself) or
       // accepted (for someone else) -- and not yet confirmed.
-      doc.can_ot_confirm = !!doc.detail && doc.is_owner && !doc.detail.ot_confirmed_at
+      const otRule = doc.detail ? await otConfirmRule(doc, doc.detail) : { confirmers: [] };
+      doc.ot_confirmers = otRule.confirmers.map((c) => c.display_name);
+      doc.ot_confirm_by_design_supervisor = !!otRule.byDesignSupervisor;
+      doc.can_ot_confirm = !!doc.detail && otRule.confirmers.some((c) => Number(c.id) === Number(req.user.id))
+        && !doc.detail.ot_confirmed_at
         && doc.status === (doc.detail.for_self ? 'approved' : 'accepted') && ('actual_hours' in doc.detail);
     }
     return res.json(doc);
@@ -1771,8 +1808,13 @@ router.post('/:id/ot-confirm', requireAuth, async (req, res, next) => {
   try {
     const [[doc]] = await pool.query('SELECT id, type, status, user_id FROM form_requests WHERE id = ?', [req.params.id]);
     if (!doc || doc.type !== 'overtime') return res.status(404).json({ error: 'Not found' });
-    if (Number(doc.user_id) !== Number(req.user.id)) return res.status(403).json({ error: 'Only the person who filed this overtime request confirms it.' });
     const d = await overtimeDetail(doc.id);
+    const rule = await otConfirmRule(doc, d);
+    if (!rule.confirmers.some((c) => Number(c.id) === Number(req.user.id))) {
+      return res.status(403).json({ error: rule.byDesignSupervisor
+        ? "An artist's overtime is confirmed by the Design Supervisor."
+        : 'Only the person who filed this overtime request confirms it.' });
+    }
     if (!d || !('actual_hours' in d)) return res.status(409).json({ error: 'Overtime confirmation is not set up yet (run db/add-ot-confirmation.js).' });
     const finalStatus = d.for_self ? 'approved' : 'accepted';
     if (doc.status !== finalStatus) {

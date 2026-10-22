@@ -31,7 +31,7 @@ function OvertimeToConfirm() {
         Overtime to Confirm <span className="badge badge-warning" style={{ marginLeft: 6 }}>{rows.length}</span>
       </h3>
       <div className="muted" style={{ fontSize: 12, marginTop: -6, marginBottom: 8 }}>
-        Approved overtime still waiting on its actual time.{mine ? ` ${mine} ${mine === 1 ? 'is' : 'are'} yours to confirm.` : ''} The person who filed it confirms.
+        Approved overtime still waiting on its actual time.{mine ? ` ${mine} ${mine === 1 ? 'is' : 'are'} yours to confirm.` : ''} The person who filed it confirms -- an artist's overtime, the Design Supervisor.
       </div>
       <div className="table-wrap">
         <table className="responsive-cards">
@@ -51,7 +51,7 @@ function OvertimeToConfirm() {
                 <td>
                   {r.mine_to_confirm
                     ? <Link className="btn btn-sm btn-primary" to={`/forms/${r.id}`}>Confirm</Link>
-                    : <><Link className="btn btn-sm" to={`/forms/${r.id}`}>View</Link> <span className="muted" style={{ fontSize: 11 }}>waiting on {r.filed_by}</span></>}
+                    : <><Link className="btn btn-sm" to={`/forms/${r.id}`}>View</Link> <span className="muted" style={{ fontSize: 11 }}>waiting on {r.confirmed_by || r.filed_by}</span></>}
                 </td>
               </tr>
             ))}

@@ -373,6 +373,12 @@ export default function FormView() {
               <Line label="Confirmed">{fmtDate(d.ot_confirmed_at)}</Line>
             </>
           )}
+          {/* Whose move the actual time is, when it is not this user's: the filer, or for an artist the
+              Design Supervisor (2026-10-21). */}
+          {!doc.can_ot_confirm && !d.ot_confirmed_at && 'actual_hours' in d && doc.status === (d.for_self ? 'approved' : 'accepted')
+            && (doc.ot_confirmers || []).length > 0 && (
+            <Line label="Actual Time">{`To be confirmed by ${doc.ot_confirm_by_design_supervisor ? 'the Design Supervisor — ' : ''}${doc.ot_confirmers.join(' or ')}`}</Line>
+          )}
           {doc.can_ot_confirm && (() => {
             const from = otActual.from || (d.time_from ? String(d.time_from).slice(0, 5) : '');
             const to = otActual.to || (d.time_to ? String(d.time_to).slice(0, 5) : '');
