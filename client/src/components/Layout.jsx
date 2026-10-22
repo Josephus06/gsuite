@@ -45,6 +45,8 @@ const NAV_STRUCTURE = [
       { route: '/hrd/exam-questions', label: 'Question Bank' },
       // Training courses (2026-10-21): materials + quizzes + certificate.
       { route: '/hrd/training', label: 'Training Courses' },
+      // Certificate of Employment (2026-10-22): the plain COE and the COE with rating, on the letterhead.
+      { route: '/hrd/coe', label: 'Certificate of Employment' },
     ],
   },
   // Forms. The four company request forms -- liquidation, payment, business trip, revolving fund --
