@@ -9,7 +9,9 @@
 //                           and dates as printed: a certificate is a document already handed out,
 //                           and a later edit to the employee must not reword it.
 //   pages /hrd/coe   "Certificate of Employment"  View lists; Add issues; Edit; Delete; Print.
-//                    System Admins get every right.
+//                    System Admins get every right; General Managers view, print, approve.
+//   hr_coes.status / approver_user_id / approved_at / rejected_reason / decided_at  (added later the
+//                    same day) -- the GM approval. Existing rows go to the first GM for approval.
 //
 // Idempotent. Droplet, office and SM replicate: run on ONE box (the droplet).
 //   node src/db/add-hr-coe.js
@@ -46,6 +48,28 @@ const pool = require('../db');
     )`);
   console.log('  hr_coes ready');
 
+  // General Manager approval (asked 2026-10-22): HR picks which GM approves -- there can be two --
+  // and the certificate is signed in the name of the GM who approved it.
+  for (const [col, def] of [
+    ['status', "ENUM('for_approval', 'approved', 'rejected') NOT NULL DEFAULT 'for_approval' AFTER coe_type"],
+    ['approver_user_id', 'BIGINT NULL AFTER status'],
+    ['approved_at', 'DATETIME NULL AFTER approver_user_id'],
+    ['rejected_reason', 'VARCHAR(500) NULL AFTER approved_at'],
+    ['decided_at', 'DATETIME NULL AFTER rejected_reason'],
+  ]) {
+    const [c] = await pool.query('SHOW COLUMNS FROM hr_coes LIKE ?', [col]);
+    if (c.length) console.log(`  hr_coes.${col} already there -- skipped`);
+    else { await pool.query(`ALTER TABLE hr_coes ADD COLUMN ${col} ${def}`); console.log(`  added hr_coes.${col}`); }
+  }
+  const [gms] = await pool.query(
+    `SELECT u.id FROM users u WHERE u.is_active = 1
+        AND (u.id IN (SELECT user_id FROM general_managers) OR u.account_type = 'General Manager')
+      ORDER BY u.id`);
+  if (gms.length) {
+    const [r] = await pool.query('UPDATE hr_coes SET approver_user_id = ? WHERE approver_user_id IS NULL', [gms[0].id]);
+    if (r.affectedRows) console.log(`  ${r.affectedRows} existing certificate(s) sent to the first General Manager for approval`);
+  }
+
   const ROUTE = '/hrd/coe';
   const [[existing]] = await pool.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
   let pageId = existing?.id;
@@ -63,5 +87,12 @@ const pool = require('../db');
     else await pool.query(`INSERT INTO user_page_permissions (user_id, page_id, ${flags.join(', ')}) VALUES (?, ?, ${flags.map(() => 'TRUE').join(', ')})`, [a.id, pageId]);
   }
   console.log(`  ${admins.length} System Admin(s) given every right on Certificate of Employment`);
+  // The General Managers see the list (it is where they approve) and preview what they sign.
+  for (const g of gms) {
+    const [[p]] = await pool.query('SELECT id FROM user_page_permissions WHERE user_id = ? AND page_id = ?', [g.id, pageId]);
+    if (p) await pool.query('UPDATE user_page_permissions SET can_view = TRUE, can_approve = TRUE, can_print = TRUE WHERE id = ?', [p.id]);
+    else await pool.query('INSERT INTO user_page_permissions (user_id, page_id, can_view, can_approve, can_print) VALUES (?, ?, TRUE, TRUE, TRUE)', [g.id, pageId]);
+  }
+  console.log(`  ${gms.length} General Manager(s) can view, preview and approve`);
   await pool.end();
 })().catch(async (e) => { console.error('Failed:', e.message); await pool.end(); process.exit(1); });

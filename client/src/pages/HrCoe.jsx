@@ -19,7 +19,13 @@ const pronounFromSex = (sex) => {
   return 'either';
 };
 
-function blankForm(criteria) {
+const STATUS = {
+  for_approval: { label: 'For Approval', badge: 'badge-warning' },
+  approved: { label: 'Approved', badge: 'badge-success' },
+  rejected: { label: 'Rejected', badge: 'badge-danger' },
+};
+
+function blankForm(criteria, approvers = []) {
   return {
     coe_type: 'standard',
     employee_id: null,
@@ -33,16 +39,15 @@ function blankForm(criteria) {
     ratings: criteria.map((c) => ({ key: c.key, label: c.label, rating: '', remarks: c.remarks })),
     mode_of_separation: '',
     clearance_status: '',
-    signatory_name: 'JIMMY W. WU',
-    signatory_title: 'General Manager',
+    approver_user_id: approvers[0]?.id || '',
     remarks: '',
   };
 }
 
-function CoeModal({ criteria, existing, onClose, onSaved }) {
+function CoeModal({ criteria, approvers, existing, onClose, onSaved }) {
   const [form, setForm] = useState(() => {
-    if (!existing) return blankForm(criteria);
-    const base = blankForm(criteria);
+    if (!existing) return blankForm(criteria, approvers);
+    const base = blankForm(criteria, approvers);
     const ratings = base.ratings.map((r) => ({ ...r, ...((existing.ratings || []).find((x) => x.key === r.key) || {}) }));
     const pick = (k) => {
       if (existing[k] == null) return base[k];
@@ -239,14 +244,16 @@ function CoeModal({ criteria, existing, onClose, onSaved }) {
             </>
           )}
 
-          <div className="review-grid" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
-            <div className="field">
-              <label>Signatory</label>
-              <input value={form.signatory_name} maxLength={150} onChange={(e) => set({ signatory_name: e.target.value })} />
-            </div>
-            <div className="field">
-              <label>Signatory title</label>
-              <input value={form.signatory_title} maxLength={150} onChange={(e) => set({ signatory_title: e.target.value })} />
+          {/* The General Manager who approves -- and whose name the certificate is signed in. */}
+          <div className="field">
+            <label>Approver (General Manager) *</label>
+            <select value={form.approver_user_id} onChange={(e) => set({ approver_user_id: e.target.value })}>
+              {approvers.map((a) => <option key={a.id} value={a.id}>{a.display_name}</option>)}
+            </select>
+            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+              {existing?.status === 'approved'
+                ? 'Saving changes sends it back to the approver; it prints unsigned until approved again.'
+                : 'The certificate is signed in the name of the General Manager who approves it.'}
             </div>
           </div>
           <div className="field">
@@ -266,10 +273,64 @@ function CoeModal({ criteria, existing, onClose, onSaved }) {
   );
 }
 
+// The approver's decision. Approving confirms the name printed above "General Manager" -- it starts
+// as the name they signed with last time (or their employee record), so it is typed once.
+function DecisionModal({ coe, approve, signAs, onClose, onDone }) {
+  const [name, setName] = useState(signAs || '');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function submit() {
+    setBusy(true); setError('');
+    try {
+      const { data } = approve
+        ? await api.put(`/hr-coe/${coe.id}/approve`, { signatory_name: name })
+        : await api.put(`/hr-coe/${coe.id}/reject`, { reason });
+      onDone(data);
+    } catch (e) {
+      setError(e.response?.data?.error || 'Could not save your decision.');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal title={`${approve ? 'Approve' : 'Reject'} ${coe.coe_no}`} onClose={onClose}>
+      {error && <div className="error-banner">{error}</div>}
+      <p style={{ marginTop: 0 }}>
+        {TYPE_LABEL[coe.coe_type]} for <strong>{coe.employee_name}</strong>
+        {coe.position_title ? `, ${coe.position_title}` : ''}.{' '}
+        <a href={`/hrd/coe/${coe.id}/print`} target="_blank" rel="noreferrer">Preview</a>
+      </p>
+      {approve ? (
+        <div className="field">
+          <label>Your name as printed on the certificate *</label>
+          <input autoFocus value={name} maxLength={150} onChange={(e) => setName(e.target.value)} placeholder="e.g. JIMMY W. WU" />
+          <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>Printed above &ldquo;General Manager&rdquo;.</div>
+        </div>
+      ) : (
+        <div className="field">
+          <label>Reason *</label>
+          <textarea autoFocus rows={3} value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} />
+        </div>
+      )}
+      <div className="modal-actions">
+        <button type="button" className="btn" onClick={onClose}>Cancel</button>
+        <button type="button" className={`btn ${approve ? 'btn-primary' : 'btn-danger'}`} disabled={busy || (approve ? !name.trim() : !reason.trim())} onClick={submit}>
+          {busy ? 'Saving...' : approve ? 'Approve' : 'Reject'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 export default function HrCoe() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const [rows, setRows] = useState([]);
   const [criteria, setCriteria] = useState([]);
+  const [approvers, setApprovers] = useState([]);
+  const [deciding, setDeciding] = useState(null); // { coe, approve }
+  const [status, setStatus] = useState('');
   const [type, setType] = useState('');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -284,14 +345,20 @@ export default function HrCoe() {
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const { data } = await api.get('/hr-coe', { params: { type: type || undefined, search: search || undefined } });
+      const { data } = await api.get('/hr-coe', {
+        params: { type: type || undefined, status: status || undefined, search: search || undefined },
+      });
       setRows(data);
     } catch (e) { setError(e.response?.data?.error || 'Could not load certificates.'); }
     setLoading(false);
-  }, [type, search]);
+  }, [type, status, search]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { api.get('/hr-coe/meta').then(({ data }) => setCriteria(data.criteria)).catch(() => {}); }, []);
+  useEffect(() => {
+    api.get('/hr-coe/meta').then(({ data }) => { setCriteria(data.criteria); setApprovers(data.approvers || []); }).catch(() => {});
+  }, []);
+  const isMine = (r) => r.status === 'for_approval' && Number(r.approver_user_id) === Number(user?.id);
+  const mySignAs = approvers.find((a) => Number(a.id) === Number(user?.id))?.sign_as || '';
 
   const print = (r) => window.open(`/hrd/coe/${r.id}/print`, '_blank');
 
@@ -315,6 +382,10 @@ export default function HrCoe() {
       <div className="card" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
         <input style={{ flex: '1 1 240px' }} placeholder="Search COE #, employee, position or requested by"
           value={search} onChange={(e) => setSearch(e.target.value)} />
+        <select style={{ flex: '0 0 180px', width: 180 }} value={status} onChange={(e) => setStatus(e.target.value)}>
+          <option value="">Every status</option>
+          {Object.entries(STATUS).map(([k, s]) => <option key={k} value={k}>{s.label}</option>)}
+        </select>
         <select style={{ flex: '0 0 220px', width: 220 }} value={type} onChange={(e) => setType(e.target.value)}>
           <option value="">All certificates</option>
           <option value="standard">COE</option>
@@ -328,12 +399,12 @@ export default function HrCoe() {
             <thead>
               <tr>
                 <th>COE #</th><th>Certificate</th><th>Employee</th><th>Position</th>
-                <th>Employed</th><th>Issued</th><th>Issued To</th><th>By</th><th />
+                <th>Employed</th><th>Issued</th><th>Issued To</th><th>By</th><th>Status</th><th />
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={9} className="muted" style={{ padding: 16, textAlign: 'center' }}>No certificates yet.</td></tr>
+                <tr><td colSpan={10} className="muted" style={{ padding: 16, textAlign: 'center' }}>No certificates yet.</td></tr>
               )}
               {rows.map((r) => (
                 <tr key={r.id}>
@@ -345,7 +416,22 @@ export default function HrCoe() {
                   <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(r.issued_date)}</td>
                   <td>{r.issued_to}</td>
                   <td>{r.created_by_name}</td>
+                  <td>
+                    <span className={`badge ${STATUS[r.status]?.badge || 'badge-muted'}`}>{STATUS[r.status]?.label || r.status}</span>
+                    <div className="muted" style={{ fontSize: 11 }}>
+                      {r.status === 'approved' ? r.signatory_name : r.approver_name}
+                    </div>
+                    {r.status === 'rejected' && r.rejected_reason && (
+                      <div style={{ fontSize: 11, color: '#b91c1c' }}>{r.rejected_reason}</div>
+                    )}
+                  </td>
                   <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                    {isMine(r) && (
+                      <>
+                        <button type="button" className="btn btn-sm btn-primary" onClick={() => setDeciding({ coe: r, approve: true })}>Approve</button>{' '}
+                        <button type="button" className="btn btn-sm btn-danger" onClick={() => setDeciding({ coe: r, approve: false })}>Reject</button>{' '}
+                      </>
+                    )}
                     {canPrint && <button type="button" className="btn btn-sm" onClick={() => print(r)}>Print</button>}{' '}
                     {canEdit && <button type="button" className="btn btn-sm" onClick={() => setEditing(r)}>Edit</button>}{' '}
                     {canDelete && <button type="button" className="btn btn-sm btn-danger" onClick={() => remove(r)}>Delete</button>}
@@ -360,9 +446,19 @@ export default function HrCoe() {
       {editing && (
         <CoeModal
           criteria={criteria}
+          approvers={approvers}
           existing={editing.id ? editing : null}
           onClose={() => setEditing(null)}
-          onSaved={(saved) => { setEditing(null); load(); if (canPrint) print(saved); }}
+          onSaved={() => { setEditing(null); load(); }}
+        />
+      )}
+      {deciding && (
+        <DecisionModal
+          coe={deciding.coe}
+          approve={deciding.approve}
+          signAs={mySignAs}
+          onClose={() => setDeciding(null)}
+          onDone={() => { setDeciding(null); load(); }}
         />
       )}
     </div>

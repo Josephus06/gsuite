@@ -137,6 +137,8 @@ export default function NotificationBell() {
     if (n.related_type === 'ExamAttempt' && n.related_id) return `/exams/${n.related_id}`;
     if (n.related_type === 'ExamSchedule' && n.related_id) return `/hrd/exams/schedules/${n.related_id}`;
     if (n.related_type === 'TrainingEnrollment' && n.related_id) return `/trainings/${n.related_id}`;
+    // Certificate of Employment (2026-10-22): waiting for the GM's approval, or approved / rejected.
+    if (n.related_type === 'HrCoe') return '/hrd/coe';
     // BIR filing deadlines (lib/birDeadlines.js): Bir:<ewt|cwt|vat>, the month as YYYYMM.
     if (String(n.related_type || '').startsWith('Bir:')) {
       const m = String(n.related_id || '');

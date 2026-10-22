@@ -54,6 +54,9 @@ export default function HrCoePrint() {
   const givenOn = issued ? `${ordinal(issued.d)} day of ${MONTHS[issued.m - 1]} ${issued.y}` : '';
   const to = coe.date_to ? longDate(coe.date_to) : 'present';
   const rating = coe.coe_type === 'with_rating';
+  // Signed in the name of the General Manager who approved it; nobody's name before that.
+  const approved = coe.status === 'approved';
+  const signedBy = approved ? coe.signatory_name : '';
   const issuedTo = coe.issued_to || coe.employee_name;
 
   return (
@@ -70,6 +73,8 @@ export default function HrCoePrint() {
         .coep-logo img { position: absolute; height: 100%; width: 142.2mm; left: -19.27mm; top: 0; }
         .coep-rule { position: absolute; left: 0; top: 16.9mm; width: 100%; height: 3.2mm; overflow: hidden; }
         .coep-rule img { position: absolute; width: 100%; height: 16mm; left: 0; bottom: 0; }
+        .coep-draft { position: absolute; top: 42%; left: 0; right: 0; text-align: center; font: 700 54pt Arial, sans-serif;
+          color: rgba(220,38,38,.16); transform: rotate(-28deg); pointer-events: none; }
         .coep-foot { position: absolute; bottom: 8mm; left: 2.6mm; width: 201.2mm; height: 25.7mm; overflow: hidden; }
         .coep-foot img { position: absolute; width: 215.8mm; height: 28.2mm; left: -6.75mm; top: 0; }
         .coep-addr { font-size: 10.5pt; line-height: 1.15; }
@@ -93,6 +98,13 @@ export default function HrCoePrint() {
       `}</style>
 
       <div className="coep-toolbar coep-no-print">
+        {!approved && (
+          <span style={{ marginRight: 'auto', alignSelf: 'center', color: '#b45309', font: '13px system-ui, sans-serif' }}>
+            {coe.status === 'rejected'
+              ? `Rejected: ${coe.rejected_reason || ''}`
+              : `Waiting for ${coe.approver_name || 'the General Manager'} to approve.`}
+          </span>
+        )}
         <button type="button" className="btn btn-primary" onClick={() => window.print()}>Print</button>
       </div>
 
@@ -141,8 +153,8 @@ export default function HrCoePrint() {
               Issued this {givenOn} at Basak, Mandaue City, Cebu, Philippines.
             </p>
             <div className="coep-sign" style={{ fontSize: '13pt', marginTop: '14mm' }}>
-              <div><b>{coe.signatory_name}</b></div>
-              <div>{coe.signatory_title}</div>
+              <div><b>{signedBy || <span>&nbsp;</span>}</b></div>
+              <div>{approved ? coe.signatory_title : 'General Manager'}</div>
             </div>
           </div>
         ) : (
@@ -157,13 +169,14 @@ export default function HrCoePrint() {
             </p>
             <p>Given this {givenOn} at Basak, Mandaue City, Cebu, Philippines.</p>
             <div className="coep-sign" style={{ marginTop: '24mm' }}>
-              <div><b>{coe.signatory_name}</b></div>
-              <div>{coe.signatory_title}</div>
+              <div><b>{signedBy || <span>&nbsp;</span>}</b></div>
+              <div>{approved ? coe.signatory_title : 'General Manager'}</div>
               <div>Cebu Graphicstar Imaging Corporation</div>
             </div>
           </div>
         )}
 
+        {!approved && <div className="coep-draft">NOT YET APPROVED</div>}
         <div className="coep-foot"><img src={footer} alt="" /></div>
       </div>
     </div>

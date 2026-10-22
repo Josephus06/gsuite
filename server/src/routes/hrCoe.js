@@ -12,6 +12,11 @@ const router = express.Router();
 //   with_rating  the separation COE -- "was employed with ...", then the Performance Appraisal prior
 //                to separation, Mode of Separation and Clearance Status.
 //
+// Every certificate goes to a General Manager for approval (2026-10-22). HR picks which one -- there
+// can be two -- and it is signed in the name of the GM who approved it: the approver confirms the
+// name as it is printed when approving. Until then it prints with a NOT YET APPROVED watermark and
+// no name on the signature line. Editing a certificate sends it back for approval.
+//
 // The row keeps its own copy of what was printed. A certificate is a document already handed to
 // somebody; renaming the employee or changing their position afterwards must not reword it.
 const ROUTE = '/hrd/coe';
@@ -86,37 +91,89 @@ function readBody(body) {
       ratings: coeType === 'with_rating' ? JSON.stringify(cleanRatings(body.ratings)) : null,
       mode_of_separation: coeType === 'with_rating' ? trunc(body.mode_of_separation, 150) : null,
       clearance_status: coeType === 'with_rating' ? trunc(body.clearance_status, 150) : null,
-      signatory_name: trunc(body.signatory_name, 150) || 'JIMMY W. WU',
-      signatory_title: trunc(body.signatory_title, 150) || 'General Manager',
+      approver_user_id: Number(body.approver_user_id) || null,
       remarks: trunc(body.remarks, 500),
     },
   };
 }
 
 const BASE_SELECT = `
-  SELECT c.*, u.display_name AS created_by_name, e.employee_code
+  SELECT c.*, u.display_name AS created_by_name, e.employee_code, a.display_name AS approver_name
     FROM hr_coes c
     LEFT JOIN users u ON u.id = c.created_by_user_id
+    LEFT JOIN users a ON a.id = c.approver_user_id
     LEFT JOIN employees e ON e.id = c.employee_id`;
+
+// The General Managers: whoever is assigned in general_managers, plus any General Manager account.
+// Each with the name a certificate would carry: the one they confirmed on their last approval, else
+// the name on their employee record, else their display name.
+async function generalManagers() {
+  const [rows] = await pool.query(
+    `SELECT u.id, u.display_name, e.first_name, e.middle_initial, e.last_name,
+            (SELECT c.signatory_name FROM hr_coes c WHERE c.approver_user_id = u.id AND c.status = 'approved'
+              ORDER BY c.approved_at DESC LIMIT 1) AS last_signed_as
+       FROM users u
+       LEFT JOIN employees e ON e.id = u.employee_id
+      WHERE u.is_active = 1
+        AND (u.id IN (SELECT user_id FROM general_managers) OR u.account_type = 'General Manager')
+      ORDER BY u.id`);
+  return rows.map((r) => {
+    const mi = r.middle_initial ? `${String(r.middle_initial).replace(/\.$/, '')}.` : '';
+    const fromEmployee = [r.first_name, mi, r.last_name].filter(Boolean).join(' ');
+    return {
+      id: Number(r.id),
+      display_name: r.display_name,
+      sign_as: (r.last_signed_as || fromEmployee || r.display_name || '').toUpperCase(),
+    };
+  });
+}
+
+async function checkApprover(values) {
+  const gms = await generalManagers();
+  if (!gms.length) return 'There is no General Manager to approve it. Assign one first.';
+  if (!values.approver_user_id) values.approver_user_id = gms[0].id;
+  if (!gms.some((g) => g.id === values.approver_user_id)) return 'The approver must be a General Manager.';
+  return null;
+}
+
+// After the change has committed; a failed notification is logged, never fatal.
+async function notify(userIds, { type, title, message }, coeId, actorId) {
+  const ids = [...new Set(userIds.map(Number).filter((id) => id && id !== Number(actorId)))];
+  for (const userId of ids) {
+    await pool.query(
+      `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
+       VALUES (?, ?, ?, ?, 'HrCoe', ?)`,
+      [userId, type, String(title).slice(0, 255), String(message).slice(0, 500), coeId],
+    ).catch((err) => console.error('[notifications] COE:', err.message));
+  }
+}
+
+const askApproval = (row, actorId) => notify([row.approver_user_id], {
+  type: 'coe_for_approval',
+  title: `${row.coe_no} needs your approval`,
+  message: `Certificate of Employment for ${row.employee_name} is waiting for your approval.`,
+}, row.id, actorId);
 
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const where = [];
     const params = [];
     if (TYPES.includes(req.query.type)) { where.push('c.coe_type = ?'); params.push(req.query.type); }
+    if (['for_approval', 'approved', 'rejected'].includes(req.query.status)) { where.push('c.status = ?'); params.push(req.query.status); }
     if (req.query.search) {
       where.push('(c.coe_no LIKE ? OR c.employee_name LIKE ? OR c.position_title LIKE ? OR c.issued_to LIKE ?)');
       const q = `%${req.query.search}%`;
       params.push(q, q, q, q);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const [rows] = await pool.query(`${BASE_SELECT} ${whereSql} ORDER BY c.issued_date DESC, c.id DESC LIMIT 500`, params);
+    const [rows] = await pool.query(
+      `${BASE_SELECT} ${whereSql} ORDER BY c.status = 'for_approval' DESC, c.issued_date DESC, c.id DESC LIMIT 500`, params);
     res.json(rows.map(parseRow));
   } catch (err) { next(err); }
 });
 
-router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), (req, res) => {
-  res.json({ criteria: RATING_CRITERIA });
+router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try { res.json({ criteria: RATING_CRITERIA, approvers: await generalManagers() }); } catch (err) { next(err); }
 });
 
 // Employee lookup. Separated employees included -- the rating COE is issued on separation, so the
@@ -166,6 +223,8 @@ router.get('/:id/print', requireAuth, requirePermission(ROUTE, 'can_print'), asy
 router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, res, next) => {
   const { error, values } = readBody(req.body || {});
   if (error) return res.status(400).json({ error });
+  const approverError = await checkApprover(values);
+  if (approverError) return res.status(400).json({ error: approverError });
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
@@ -177,6 +236,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     );
     await conn.commit();
     const [[row]] = await pool.query(`${BASE_SELECT} WHERE c.id = ?`, [r.insertId]);
+    askApproval(row, req.user.id);
     res.status(201).json(parseRow(row));
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
@@ -185,14 +245,69 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
   try {
     const { error, values } = readBody(req.body || {});
     if (error) return res.status(400).json({ error });
+    const approverError = await checkApprover(values);
+    if (approverError) return res.status(400).json({ error: approverError });
+    // A changed certificate is a different document: it goes back to the approver, unsigned.
     const cols = Object.keys(values);
     const [r] = await pool.query(
-      `UPDATE hr_coes SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`,
+      `UPDATE hr_coes SET ${cols.map((c) => `${c} = ?`).join(', ')}, status = 'for_approval',
+              approved_at = NULL, rejected_reason = NULL, decided_at = NULL WHERE id = ?`,
       [...cols.map((c) => values[c]), req.params.id],
     );
     if (!r.affectedRows) return res.status(404).json({ error: 'Certificate not found' });
     const [[row]] = await pool.query(`${BASE_SELECT} WHERE c.id = ?`, [req.params.id]);
+    askApproval(row, req.user.id);
     res.json(parseRow(row));
+  } catch (err) { next(err); }
+});
+
+// Approve / reject: only the General Manager the certificate was sent to. Approving confirms the name
+// printed above "General Manager" -- it starts as the name they signed with last time.
+async function loadForDecision(req, res) {
+  const [[row]] = await pool.query('SELECT * FROM hr_coes WHERE id = ?', [req.params.id]);
+  if (!row) { res.status(404).json({ error: 'Certificate not found' }); return null; }
+  if (Number(row.approver_user_id) !== Number(req.user.id)) {
+    res.status(403).json({ error: 'Only the General Manager this certificate was sent to can approve it.' });
+    return null;
+  }
+  if (row.status !== 'for_approval') { res.status(409).json({ error: `This certificate is already ${row.status}.` }); return null; }
+  return row;
+}
+
+router.put('/:id/approve', requireAuth, async (req, res, next) => {
+  try {
+    const row = await loadForDecision(req, res);
+    if (!row) return;
+    const me = (await generalManagers()).find((g) => g.id === Number(req.user.id));
+    const name = trunc(req.body?.signatory_name, 150) || me?.sign_as;
+    if (!name) return res.status(400).json({ error: 'Enter your name as it is printed on the certificate.' });
+    await pool.query(
+      `UPDATE hr_coes SET status = 'approved', signatory_name = ?, signatory_title = ?, approved_at = NOW(),
+              decided_at = NOW(), rejected_reason = NULL WHERE id = ?`,
+      [name.toUpperCase(), trunc(req.body?.signatory_title, 150) || 'General Manager', row.id],
+    );
+    notify([row.created_by_user_id], {
+      type: 'coe_approved', title: `${row.coe_no} was approved`,
+      message: `Certificate of Employment for ${row.employee_name} is approved and ready to print.`,
+    }, row.id, req.user.id);
+    const [[out]] = await pool.query(`${BASE_SELECT} WHERE c.id = ?`, [row.id]);
+    res.json(parseRow(out));
+  } catch (err) { next(err); }
+});
+
+router.put('/:id/reject', requireAuth, async (req, res, next) => {
+  try {
+    const reason = trunc(req.body?.reason, 500);
+    if (!reason) return res.status(400).json({ error: 'Say why it is rejected.' });
+    const row = await loadForDecision(req, res);
+    if (!row) return;
+    await pool.query("UPDATE hr_coes SET status = 'rejected', rejected_reason = ?, decided_at = NOW() WHERE id = ?", [reason, row.id]);
+    notify([row.created_by_user_id], {
+      type: 'coe_rejected', title: `${row.coe_no} was rejected`,
+      message: `Certificate of Employment for ${row.employee_name}: ${reason}`,
+    }, row.id, req.user.id);
+    const [[out]] = await pool.query(`${BASE_SELECT} WHERE c.id = ?`, [row.id]);
+    res.json(parseRow(out));
   } catch (err) { next(err); }
 });
 
