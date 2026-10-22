@@ -10,6 +10,9 @@ const { sendXlsx, day } = require('../lib/xlsxExport');
 // The filters are the source's, except that its SO Date is Invoice Date here (as asked). Date Created
 // is the JO's, Need By Date the JO's delivery date. Each date is "As of" (up to a date) or "Period
 // from" (between two); a date left blank does not filter. GET only; ?format=xlsx for the download.
+//
+// An invoice created from, or converted from, a Delivery Ticket shows the DT in the SO # column and
+// the DT's date as SO Date, as the source does (asked 2026-10-22).
 const router = express.Router();
 const ROUTE = '/reports/invoiced-job-orders';
 
@@ -38,12 +41,14 @@ const FROM = `
     LEFT JOIN employees sr ON sr.id = si.sales_rep_id
     LEFT JOIN locations ol ON ol.id = si.office_location_id
     LEFT JOIN locations jl ON jl.id = COALESCE(l.job_location_id, jo.job_location_id)
-    LEFT JOIN departments d ON d.id = si.department_id`;
+    LEFT JOIN departments d ON d.id = si.department_id
+    LEFT JOIN delivery_tickets dt ON dt.id = si.delivery_ticket_id`;
 
 const SELECT = `
   SELECT si.id AS invoice_id, si.invoice_no, si.date_created AS invoice_date,
-         so.id AS so_id, ns.id AS nsso_id, COALESCE(so.sales_order_no, ns.nsso_no) AS so_no,
-         COALESCE(so.date_created, ns.date_created) AS so_date,
+         so.id AS so_id, ns.id AS nsso_id, dt.id AS dt_id,
+         COALESCE(dt.dt_no, so.sales_order_no, ns.nsso_no) AS so_no,
+         COALESCE(dt.date_created, so.date_created, ns.date_created) AS so_date,
          jo.id AS job_order_id, jo.job_order_no,
          CONCAT_WS(' ', sr.first_name, sr.last_name) AS sales_rep, sol.gp_rate,
          jo.delivery_date AS date_needed, ol.location_name AS office_location, jl.location_name AS location,
@@ -72,8 +77,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     if (q.customer) { where.push('c.name LIKE ?'); params.push(`%${q.customer}%`); }
     if (q.search) {
       where.push(`(si.invoice_no LIKE ? OR so.sales_order_no LIKE ? OR ns.nsso_no LIKE ? OR jo.job_order_no LIKE ?
-                   OR c.name LIKE ? OR l.description LIKE ? OR so.contract_description LIKE ?)`);
-      params.push(...Array(7).fill(`%${q.search}%`));
+                   OR c.name LIKE ? OR l.description LIKE ? OR so.contract_description LIKE ? OR dt.dt_no LIKE ?)`);
+      params.push(...Array(8).fill(`%${q.search}%`));
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const order = 'ORDER BY si.date_created DESC, si.invoice_no DESC, l.id';

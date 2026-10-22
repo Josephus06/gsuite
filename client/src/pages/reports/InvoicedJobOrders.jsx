@@ -127,7 +127,9 @@ export default function InvoicedJobOrders() {
                       <td><Link to={`/sales-invoices/${r.invoice_id}`}>{r.invoice_no}</Link></td>
                       <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(r.invoice_date)}</td>
                       <td>
-                        {r.so_id ? <Link to={`/sales-orders/${r.so_id}`}>{r.so_no}</Link>
+                        {/* Invoiced from a Delivery Ticket: the DT and its date stand in for the SO, as on the source. */}
+                        {r.dt_id ? <Link to={`/delivery-tickets/${r.dt_id}`}>{r.so_no}</Link>
+                          : r.so_id ? <Link to={`/sales-orders/${r.so_id}`}>{r.so_no}</Link>
                           : r.nsso_id ? <Link to={`/non-standard-sales-orders/${r.nsso_id}`}>{r.so_no}</Link> : r.so_no}
                       </td>
                       <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(r.so_date)}</td>
