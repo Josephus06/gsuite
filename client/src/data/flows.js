@@ -8,6 +8,7 @@
 // one chart never renders at a different scale from another.
 import * as regular from './processFlow';
 import * as bankReconciliation from './bankReconciliationFlow';
+import * as forms from './formsFlow';
 
 export const FLOWS = [
   {
@@ -23,6 +24,13 @@ export const FLOWS = [
     title: 'Bank Reconciliation',
     blurb: 'How a bank statement is reconciled, from downloading it to closing the period. Click any box for what to do at that step, and what the buttons on that screen actually mean.',
     data: bankReconciliation,
+  },
+  {
+    key: 'forms',
+    label: 'Filing Request Forms',
+    title: 'Filing Request Forms',
+    blurb: 'How to file any request form and choose who notes and approves it, and what the noter and approver do. Click any box for the step-by-step guide. Green is the requestor, pink the noter, blue the approver.',
+    data: forms,
   },
 ];
 
