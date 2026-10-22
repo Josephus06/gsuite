@@ -144,6 +144,7 @@ export const STATUS_BADGE = {
   rejected: 'badge-danger',
   accepted: 'badge-success',
   declined: 'badge-danger',
+  cancelled: 'badge-muted',
 };
 
 // The six purposes printed on the liquidation form. 'others' is the one carrying free text.

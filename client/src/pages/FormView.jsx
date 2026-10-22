@@ -137,6 +137,9 @@ export default function FormView() {
   const mayEdit = !!doc.can_edit;
   const maySubmit = doc.is_owner && doc.status === 'draft' && can('/forms', 'can_add');
   const mayDiscard = doc.is_owner && doc.status === 'draft' && can('/forms', 'can_delete');
+  // A Leave Application can be withdrawn by its filer until it is approved (2026-10-22). Same rule as
+  // the server's LEAVE_CANCELLABLE.
+  const mayCancel = doc.is_owner && doc.type === 'leave' && ['submitted', 'noted', 'rejected'].includes(doc.status);
   // Noting a liquidation or a payment belongs to the head of the department it came from, not to a
   // permission, so the server decides and this only draws the answer. When it says no, it says WHY
   // -- most departments have no head recorded yet, and a missing button with no explanation reads
@@ -174,6 +177,12 @@ export default function FormView() {
   const ftrUnposted = doc.type === 'fund_transfer' && doc.status === 'approved' && !doc.vouchers_post;
   const mayCheckVoucher = ftrUnposted && can('/cheques', 'can_add');
   const hasRelated = doc.billable || doc.type === 'fund_transfer';
+
+  function cancelLeave() {
+    const reason = prompt(`Cancel ${doc.request_no}?\n\nIt is withdrawn from approval and cannot be reopened. Reason (optional):`);
+    if (reason === null) return;
+    act('cancel', { reason }, 'Leave cancelled.');
+  }
 
   async function discard() {
     if (!confirm(`Discard ${doc.request_no}? This cannot be undone.`)) return;
@@ -226,6 +235,7 @@ export default function FormView() {
             <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setRejecting(true)}>Reject</button>
           )}
           {mayDiscard && <button className="btn btn-sm btn-danger" disabled={busy} onClick={discard}>Discard</button>}
+          {mayCancel && <button className="btn btn-sm btn-danger" disabled={busy} onClick={cancelLeave}>Cancel Leave</button>}
           {mayBill && (
             <button className="btn btn-sm btn-primary" onClick={() => setBilling(true)}>
               {doc.partly_billed ? 'Bill Remaining Items' : 'Create Vendor Bill'}

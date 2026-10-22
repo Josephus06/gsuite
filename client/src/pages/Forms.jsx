@@ -135,6 +135,7 @@ export default function Forms() {
               <option value="noted">Noted</option>
               <option value="approved">Approved</option>
               <option value="rejected">Rejected</option>
+              <option value="cancelled">Cancelled</option>
             </select>
           </div>
         </div>
