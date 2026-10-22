@@ -61,6 +61,8 @@ export default function FormEdit() {
     fuel_date: isNew ? new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10) : '', fuel_vehicle_asset_id: '', fuel_vehicle_label: '',
     fuel_liters: '', fuel_price_per_liter: '', fuel_amount: '', fuel_odometer_km: '', fuel_station: '', fuel_purpose: '',
     remarks: '',
+    // Who approves (required, the General Manager by default) and who notes (optional) -- 2026-10-22.
+    approver_user_id: '', noter_user_id: '',
   });
   const [memberLines, setMemberLines] = useState([]);
   // Fuel Request: the Fleet vehicles, and this user's monthly limit and what is left (GET /forms/meta/fuel).
@@ -85,7 +87,11 @@ export default function FormEdit() {
 
   useEffect(() => {
     api.get('/forms/meta/options')
-      .then(({ data }) => { setDepartments(data.departments || []); setBankAccounts(data.bank_accounts || []); setOtPeople(data.ot_people || []); setLocations(data.locations || []); })
+      .then(({ data }) => {
+        setDepartments(data.departments || []); setBankAccounts(data.bank_accounts || []); setOtPeople(data.ot_people || []); setLocations(data.locations || []);
+        // A new form's approver starts as the General Manager.
+        if (isNew && data.default_approver_id) setForm((f) => (f.approver_user_id ? f : { ...f, approver_user_id: String(data.default_approver_id) }));
+      })
       .catch(() => {});
   }, []);
 
@@ -94,6 +100,7 @@ export default function FormEdit() {
     const d = data.detail || {};
     setForm({
       department: data.department || '', name: data.name || '', remarks: data.remarks || '',
+      approver_user_id: data.approver_user_id ? String(data.approver_user_id) : '', noter_user_id: data.noter_user_id ? String(data.noter_user_id) : '',
       week_no: d.week_no || '', form_no: d.form_no || '',
       date_from: d.date_from ? String(d.date_from).slice(0, 10) : '',
       date_to: d.date_to ? String(d.date_to).slice(0, 10) : '',
@@ -842,6 +849,30 @@ export default function FormEdit() {
           </div>
         </div>
       )}
+
+      {/* Who notes and who approves this form (2026-10-22): the requestor's choice, on every form type. */}
+      <div className="card" style={{ marginTop: 16 }}>
+        <h3 style={{ marginTop: 0 }}>Approval</h3>
+        <div className="field-row">
+          <div className="field">
+            <label>Noter</label>
+            <select value={form.noter_user_id} onChange={(e) => set('noter_user_id', e.target.value)}>
+              <option value="">— None (goes straight to approval) —</option>
+              {otPeople.map((p) => <option key={p.id} value={p.id}>{p.name}{p.department ? ` — ${p.department}` : ''}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label>Approver *</label>
+            <select value={form.approver_user_id} onChange={(e) => set('approver_user_id', e.target.value)}>
+              <option value="">— Choose —</option>
+              {otPeople.map((p) => <option key={p.id} value={p.id}>{p.name}{p.department ? ` — ${p.department}` : ''}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="muted" style={{ fontSize: 12 }}>
+          {form.noter_user_id ? 'Once submitted it goes to the noter, then to the approver.' : 'No noter: once submitted it goes straight to the approver.'}
+        </div>
+      </div>
 
       {/* The filer's own note on the request, on every form type -- shown on the form and printed. */}
       <div className="card" style={{ marginTop: 16 }}>

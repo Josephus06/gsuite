@@ -9,7 +9,7 @@ import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
 import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 import { useAuth } from '../context/useAuth';
-import { hoursMinutes, overtimeHours, MEMBER_FORMS, ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, formBanks, money, pretty } from '../utils/requestForms';
+import { hoursMinutes, overtimeHours, statusLabel, MEMBER_FORMS, ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, formBanks, money, pretty } from '../utils/requestForms';
 import OvertimeDecline from '../components/OvertimeDecline';
 import { parseUtc } from '../utils/datetime';
 
@@ -150,7 +150,8 @@ export default function FormView() {
   // Routed by its own approvers: a Leave or Undertime by the reporting line, a Fuel Request by its tagged approvers.
   // A Business Trip (2026-10-21) too: noted as before, then approved by the requestor's supervisor --
   // the server marks it as needing a note, so only the "waiting on approval by" line comes from here.
-  const isLeave = doc.type === 'leave' || doc.type === 'undertime' || doc.type === 'fuel' || doc.type === 'business_trip';
+  // ...and every form whose approver / noter the requestor chose (2026-10-22, doc.chosen_route).
+  const isLeave = doc.chosen_route || doc.type === 'leave' || doc.type === 'undertime' || doc.type === 'fuel' || doc.type === 'business_trip';
   const leaveDirect = isLeave && !doc.leave_needs_note;
   const noteBlocked = !leaveDirect && doc.status === 'submitted' && !doc.can_note && doc.note_blocked_reason;
   // Approving reads only from NOTED -- the head's sign-off is a gate, not a step to skip. Rejecting
@@ -187,7 +188,7 @@ export default function FormView() {
         {/* Frozen while scrolling (2026-10-13), so it says which form it is acting on. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600 }}>
           {TYPE_LABELS[doc.type] || pretty(doc.type)} {doc.request_no}
-          {doc.status && <span className={`badge ${STATUS_BADGE[doc.status] || 'badge-muted'}`}>{pretty(doc.status)}</span>}
+          {doc.status && <span className={`badge ${STATUS_BADGE[doc.status] || 'badge-muted'}`}>{statusLabel(doc.status)}</span>}
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Link className="btn btn-sm" to={'/forms'}>Back</Link>
@@ -257,7 +258,7 @@ export default function FormView() {
           <span className="estimate-no">{doc.request_no}</span>
         </div>
         <div className="estimate-status">
-          <span className={`badge ${STATUS_BADGE[doc.status] || 'badge-muted'}`}>{pretty(doc.status)}</span>
+          <span className={`badge ${STATUS_BADGE[doc.status] || 'badge-muted'}`}>{statusLabel(doc.status)}</span>
         </div>
       </div>
 
@@ -289,6 +290,9 @@ export default function FormView() {
 
       <div className="card" style={{ marginTop: 16 }}>
         <Line label="Filed By">{doc.owner_name}</Line>
+        {/* The noter and approver the requestor chose (2026-10-22). */}
+        {doc.chosen_route && <Line label="Noter">{doc.noter_name || 'None — straight to approval'}</Line>}
+        {doc.chosen_route && <Line label="Approver">{doc.approver_name}</Line>}
         <Line label="Department">{doc.department}</Line>
         <Line label="Name">{doc.name}</Line>
         <Line label="Date Created">{fmtDate(doc.created_at)}</Line>

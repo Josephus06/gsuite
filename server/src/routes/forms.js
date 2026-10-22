@@ -56,6 +56,46 @@ const OWN_APPROVER_TYPES = ['leave', 'undertime', 'overtime', 'fuel', 'business_
 const LEAVE_ROUTED = ['leave', 'undertime'];
 const routedWord = (doc) => (doc.type === 'undertime' ? 'undertime' : 'leave');
 
+// THE REQUESTOR CHOOSES who approves and who notes (asked 2026-10-22) -- every form type. The Approver
+// is required (the form picker defaults it to the General Manager); the Noter is optional, and with
+// none a submitted form goes straight to For Approval (status 'noted'). Only those two act on the form.
+// A form saved before this (no approver chosen) keeps the routing it was filed under -- the
+// type-by-type rules below (department heads, leave line, fuel approvers, ...).
+async function chosenRoute(formId, q = pool) {
+  const [[r]] = await q.query(
+    `SELECT f.approver_user_id, f.noter_user_id, au.display_name AS approver_name, nu.display_name AS noter_name
+       FROM form_requests f LEFT JOIN users au ON au.id = f.approver_user_id LEFT JOIN users nu ON nu.id = f.noter_user_id
+      WHERE f.id = ?`, [formId]).catch((e) => { if (e.code === 'ER_BAD_FIELD_ERROR') return [[null]]; throw e; });
+  if (!r || !r.approver_user_id) return null;
+  return {
+    approver: { id: Number(r.approver_user_id), display_name: r.approver_name },
+    noter: r.noter_user_id ? { id: Number(r.noter_user_id), display_name: r.noter_name } : null,
+  };
+}
+// mayApprove's answer for a chosen route.
+function chosenApproval(userId, doc, ch) {
+  const atStep = ch.noter ? doc.status === 'noted' : ['submitted', 'noted'].includes(doc.status);
+  const eligible = Number(userId) === ch.approver.id && Number(userId) !== Number(doc.user_id);
+  let reason = null;
+  if (!eligible) reason = `Only ${ch.approver.display_name}, the approver chosen on this form, can approve it.`;
+  else if (ch.noter && doc.status === 'submitted') reason = `This has to be noted first, by ${ch.noter.display_name}.`;
+  else if (!atStep) reason = 'Not waiting on approval.';
+  return { allowed: eligible && atStep, eligible, approvers: [ch.approver], noters: ch.noter ? [ch.noter] : [], reason };
+}
+// The Approver / Noter sent with a save: an approver required, neither the requestor, two people.
+async function readChosen(q, body, ownerId) {
+  const approverId = Number(body.approver_user_id) || null;
+  const noterId = Number(body.noter_user_id) || null;
+  if (!approverId) return { error: 'Choose who approves this form.' };
+  if (approverId === Number(ownerId)) return { error: 'You cannot approve your own form -- choose another approver.' };
+  if (noterId && noterId === Number(ownerId)) return { error: 'You cannot note your own form -- choose another noter, or leave it blank.' };
+  if (noterId && noterId === approverId) return { error: 'The noter and the approver have to be two different people.' };
+  const ids = [approverId, noterId].filter(Boolean);
+  const [rows] = await q.query('SELECT id FROM users WHERE id IN (?) AND is_active = 1', [ids]);
+  if (rows.length !== ids.length) return { error: 'The approver or noter chosen is not an active user.' };
+  return { approverId, noterId };
+}
+
 const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund', 'attendance_adjustment', 'overtime', 'leave', 'undertime', 'gate_pass',
   'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel'];
 const TYPE_LABELS = {
@@ -401,6 +441,8 @@ async function userDepartmentId(q, userId) {
 //   for themself  -- the filer's department heads, while SUBMITTED
 //   for another   -- the employee's department heads, once NOTED
 async function overtimeApproval(userId, doc, d) {
+  const ch = await chosenRoute(doc.id);
+  if (ch) { const a = chosenApproval(userId, doc, ch); return { allowed: a.allowed, approvers: a.approvers, reason: a.reason }; }
   if (!d) return { allowed: false, approvers: [], reason: 'This overtime request has no details.' };
   const deptId = d.for_self ? doc.department_id : d.target_department_id;
   const atStep = d.for_self ? doc.status === 'submitted' : doc.status === 'noted';
@@ -428,6 +470,8 @@ async function overtimeApproval(userId, doc, d) {
 //   { allowed: may approve it now, eligible: is one of its approvers, approvers, noters }
 const isMember = (list, userId) => list.some((a) => Number(a.id) === Number(userId));
 async function mayApprove(userId, doc) {
+  const ch = await chosenRoute(doc.id);
+  if (ch) return chosenApproval(userId, doc, ch);
   if (doc.type === 'fuel') {
     const approvers = await fuelApprovers();
     const atStep = ['submitted', 'noted'].includes(doc.status);
@@ -479,6 +523,9 @@ async function mayApprove(userId, doc) {
 // who cannot rule on what they cannot read; and the head of the department it came from, for the
 // same reason -- they are the one who has to note it.
 async function maySee(userId, doc) {
+  // The approver and noter the requestor chose.
+  const ch = await chosenRoute(doc.id);
+  if (ch && [ch.approver.id, ch.noter && ch.noter.id].includes(Number(userId))) return true;
   // Heading the department comes first because it is the one route in that does NOT depend on a
   // page grant -- a head may hold nothing on /forms and still have to note this.
   if (await isDepartmentNoter(userId, doc.department_id)) return true;
@@ -525,6 +572,12 @@ async function maySee(userId, doc) {
 // May this user note this particular form, and if not, why not? One answer used by the button, the
 // endpoint and the explanation on screen, so the three cannot disagree.
 async function mayNote(userId, doc) {
+  const ch = await chosenRoute(doc.id);
+  if (ch) {
+    if (!ch.noter) return { allowed: false, reason: 'No noter was chosen -- this form goes straight to approval.' };
+    if (Number(userId) !== ch.noter.id) return { allowed: false, reason: `Only ${ch.noter.display_name}, the noter chosen on this form, can note it.` };
+    return { allowed: true };
+  }
   // A Fuel Request is not noted -- it goes straight to its tagged approvers (2026-10-19).
   if (doc.type === 'fuel') return { allowed: false, reason: 'A fuel request goes straight to its approver -- there is nothing to note.' };
   // A Leave Application is noted by the filer's direct supervisor, when the line has one below the
@@ -657,7 +710,10 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
     // Supervisor of someone (user_supervisors): their people's Business Trips (2026-10-21).
     const [[supOf]] = canSeeAll ? [[null]] : await pool.query(
       'SELECT 1 AS x FROM user_supervisors WHERE supervisor_id = ? AND user_id <> ? LIMIT 1', [req.user.id, req.user.id]).catch(() => [[null]]);
-    if (!canSeeAll && !pageApprover && !pageViewer && headOf.length === 0 && !isAp && !otMine && !leaveIds.length && !fuelApprover && !supOf) {
+    // Chosen as a form's approver or noter (2026-10-22).
+    const [[chosenMine]] = canSeeAll ? [[null]] : await pool.query(
+      'SELECT 1 AS x FROM form_requests WHERE approver_user_id = ? OR noter_user_id = ? LIMIT 1', [req.user.id, req.user.id]).catch(() => [[null]]);
+    if (!canSeeAll && !pageApprover && !pageViewer && headOf.length === 0 && !isAp && !otMine && !leaveIds.length && !fuelApprover && !supOf && !chosenMine) {
       return res.status(403).json({ error: 'You do not have permission to perform this action' });
     }
 
@@ -698,10 +754,14 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
                     WHERE us.user_id = f.user_id AND su.is_active = 1 AND su.id <> f.user_id))`);
       }
       if (pageApprover) { mine.push('f.type NOT IN (?)'); params.push(OWN_APPROVER_TYPES); }
-      // Their own forms, and the ones they noted, approved or rejected.
-      mine.push('(f.user_id = ? OR f.noted_by = ? OR f.approved_by = ? OR f.rejected_by = ?)');
-      params.push(req.user.id, req.user.id, req.user.id, req.user.id);
-      where.push(`(${mine.join(' OR ')})`);
+      // The role-based routes above apply only to forms with no chosen approver (filed before
+      // 2026-10-22); a chosen route reaches its own approver and noter, and nobody else.
+      const legacy = mine.length ? `(f.approver_user_id IS NULL AND (${mine.join(' OR ')}))` : null;
+      const any = [legacy, '(f.approver_user_id = ? OR f.noter_user_id = ?)',
+        // Their own forms, and the ones they noted, approved or rejected.
+        '(f.user_id = ? OR f.noted_by = ? OR f.approved_by = ? OR f.rejected_by = ?)'].filter(Boolean);
+      params.push(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id);
+      where.push(`(${any.join(' OR ')})`);
     }
     if (req.query.status && WORKFLOW_STATUSES.includes(req.query.status)) {
       where.push('f.status = ?'); params.push(req.query.status);
@@ -923,6 +983,9 @@ router.get('/meta/options', requireAuth, requirePermission(ROUTE, 'can_view'), a
         `SELECT u.id, u.display_name AS name, d.name AS department
            FROM users u LEFT JOIN employees e ON e.id = u.employee_id LEFT JOIN departments d ON d.id = e.department_id
           WHERE u.is_active = 1 ORDER BY u.display_name`))[0],
+      // The General Manager: every form's default approver (2026-10-22).
+      default_approver_id: ((await pool.query(
+        "SELECT id FROM users WHERE account_type = 'General Manager' AND is_active = 1 ORDER BY id LIMIT 1"))[0][0] || {}).id || null,
       can: {
         note: await userCan(req.user.id, APPROVAL_ROUTE, 'can_edit'),
         approve: await userCan(req.user.id, APPROVAL_ROUTE, 'can_approve'),
@@ -1116,6 +1179,16 @@ router.get('/:id', requireAuth, async (req, res, next) => {
       doc.leave_approvers = appr.approvers.map((a) => a.display_name);
       doc.leave_needs_note = appr.noters.length > 0;
       doc.noters = appr.noters.map((a) => a.display_name);
+    }
+    // A chosen route (2026-10-22): its approver and noter, and whether it waits on a note.
+    const chD = await chosenRoute(doc.id);
+    if (chD) {
+      doc.chosen_route = true;
+      doc.approver_user_id = chD.approver.id; doc.approver_name = chD.approver.display_name;
+      doc.noter_user_id = chD.noter ? chD.noter.id : null; doc.noter_name = chD.noter ? chD.noter.display_name : null;
+      doc.leave_approvers = [chD.approver.display_name];
+      doc.leave_needs_note = !!chD.noter;
+      doc.noters = chD.noter ? [chD.noter.display_name] : [];
     }
     doc.can_reject = await mayReject(req.user.id, doc);
     if (doc.type === 'overtime') {
@@ -1398,6 +1471,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
   const problem = validate(type, req.body, items) || await badBanks(type, req.body, items);
   if (problem) return res.status(400).json({ error: problem });
+  const chosen = await readChosen(pool, req.body, req.user.id);
+  if (chosen.error) return res.status(400).json({ error: chosen.error });
 
   const conn = await pool.getConnection();
   try {
@@ -1419,6 +1494,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       ),
     });
 
+    await conn.query('UPDATE form_requests SET approver_user_id = ?, noter_user_id = ? WHERE id = ?', [chosen.approverId, chosen.noterId, id]);
     for (const it of items) {
       await conn.query(
         'INSERT INTO form_request_items (form_request_id, item_date, particulars, amount, from_account_id, to_account_id) VALUES (?, ?, ?, ?, ?, ?)',
@@ -1497,8 +1573,20 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 
     const problem = validate(doc.type, req.body, items) || await badBanks(doc.type, req.body, items);
     if (problem) return res.status(400).json({ error: problem });
+    const chosen = await readChosen(pool, req.body, doc.user_id);
+    if (chosen.error) return res.status(400).json({ error: chosen.error });
 
     await conn.beginTransaction();
+
+    // The chosen Approver / Noter (2026-10-22), recorded when they change.
+    if (Number(doc.approver_user_id || 0) !== chosen.approverId || Number(doc.noter_user_id || 0) !== Number(chosen.noterId || 0)) {
+      const [ppl] = await conn.query('SELECT id, display_name FROM users WHERE id IN (?)',
+        [[doc.approver_user_id, doc.noter_user_id, chosen.approverId, chosen.noterId].filter(Boolean).concat(0)]);
+      const nm = (uid) => (uid ? (ppl.find((u) => Number(u.id) === Number(uid))?.display_name || uid) : 'none');
+      await conn.query('UPDATE form_requests SET approver_user_id = ?, noter_user_id = ? WHERE id = ?', [chosen.approverId, chosen.noterId, doc.id]);
+      await logFormAudit(conn, doc.id, req.user.id, 'Updated', 'Approver / Noter',
+        `${nm(doc.approver_user_id)} / ${nm(doc.noter_user_id)}`, `${nm(chosen.approverId)} / ${nm(chosen.noterId)}`);
+    }
 
     const departmentName = trunc(req.body.department, 255);
     const [[{ oldTotal }]] = await conn.query(
@@ -1572,7 +1660,17 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       }
     }
 
-    const status = await restoreAfterRevision(conn, doc);
+    let status = await restoreAfterRevision(conn, doc);
+    // A form waiting on a note nobody has given yet follows the noter choice: a noter -> For Noting,
+    // none -> For Approval.
+    if (['submitted', 'noted'].includes(status)) {
+      const [[now]] = await conn.query('SELECT noted_by FROM form_requests WHERE id = ?', [doc.id]);
+      const want = chosen.noterId ? 'submitted' : 'noted';
+      if (!now.noted_by && want !== status) {
+        await conn.query('UPDATE form_requests SET status = ? WHERE id = ?', [want, doc.id]);
+        status = want;
+      }
+    }
     if (status !== doc.status) await logFormAudit(conn, doc.id, req.user.id, 'Status Change', 'Status', STATUS_LABEL[doc.status], STATUS_LABEL[status]);
     await conn.commit();
     // A rejected form the owner has just revised is back in somebody's queue.
@@ -1625,11 +1723,16 @@ router.post('/:id/submit', requireAuth, requirePermission(ROUTE, 'can_add'), asy
       }
     }
 
+    // Every form needs its chosen approver (2026-10-22). With a noter it waits on them; without, it
+    // goes straight to For Approval ('noted', nobody's note on it).
+    const ch = await chosenRoute(doc.id);
+    if (!ch) return res.status(409).json({ error: 'Choose who approves this form first -- edit it and pick an Approver.' });
+    const next = ch.noter ? 'submitted' : 'noted';
     await pool.query(
-      "UPDATE form_requests SET status = 'submitted', submitted_at = NOW(), updated_at = NOW() WHERE id = ?", [doc.id]);
-    await logFormAudit(pool, doc.id, req.user.id, 'Status Change', 'Status', 'Draft', 'Submitted');
+      'UPDATE form_requests SET status = ?, submitted_at = NOW(), updated_at = NOW() WHERE id = ?', [next, doc.id]);
+    await logFormAudit(pool, doc.id, req.user.id, 'Status Change', 'Status', 'Draft', ch.noter ? 'For Noting' : 'For Approval (no noter)');
     notifyFormStatus(doc.id, req.user.id);
-    return res.json({ ok: true, status: 'submitted' });
+    return res.json({ ok: true, status: next });
   } catch (err) { return next(err); }
 });
 
@@ -1645,7 +1748,9 @@ router.post('/:id/note', requireAuth, async (req, res, next) => {
     if (!allowed) return res.status(403).json({ error: reason });
 
     if (doc.status !== 'submitted') return res.status(409).json({ error: 'Only a submitted form can be noted.' });
-    if (AP_NOTED_TYPES.includes(doc.type)) {
+    // Accounts Payable's account-per-line step belongs to the old routing; a chosen noter (2026-10-22)
+    // need not be AP.
+    if (AP_NOTED_TYPES.includes(doc.type) && !(await chosenRoute(doc.id))) {
       const [[m]] = await pool.query(
         'SELECT COUNT(*) AS n FROM form_request_items WHERE form_request_id = ? AND cogs_account_id IS NULL', [doc.id]);
       if (Number(m.n)) {
@@ -1703,7 +1808,10 @@ router.post('/:id/approve', requireAuth, async (req, res, next) => {
     if (doc.type === 'overtime') return res.status(409).json({ error: "An overtime request is approved by the department head, from the request itself." });
     const appr = await mayApprove(req.user.id, doc);
     if (!appr.eligible) return res.status(403).json({ error: appr.reason });
-    if ((LEAVE_ROUTED.includes(doc.type) || doc.type === 'fuel') && !appr.allowed) return res.status(409).json({ error: appr.reason || 'Not waiting on approval.' });
+    // A chosen route: the chosen approver, once noted (or at once with no noter) -- nothing else applies.
+    const ch = await chosenRoute(doc.id);
+    if (ch && !appr.allowed) return res.status(409).json({ error: appr.reason || 'Not waiting on approval.' });
+    if (!ch && (LEAVE_ROUTED.includes(doc.type) || doc.type === 'fuel') && !appr.allowed) return res.status(409).json({ error: appr.reason || 'Not waiting on approval.' });
 
     // NOTING IS A GATE, not a step that can be skipped. The source allowed submitted -> approved
     // directly; here a form must be noted by its department's head first, so the head's sign-off
@@ -1711,7 +1819,7 @@ router.post('/:id/approve', requireAuth, async (req, res, next) => {
     //
     // The cost of that is real and deliberate: a form from a department with no head recorded has
     // nowhere to go, so the refusal names who is missing rather than just saying no.
-    if (doc.status === 'submitted' && !LEAVE_ROUTED.includes(doc.type) && doc.type !== 'fuel') {
+    if (!ch && doc.status === 'submitted' && !LEAVE_ROUTED.includes(doc.type) && doc.type !== 'fuel') {
       const heads = await notersForDoc(doc);
       if (AP_NOTED_TYPES.includes(doc.type) && heads.length === 0) {
         return res.status(409).json({ error: 'This liquidation has to be noted by Accounts Payable first, and nobody is marked Accounts Payable.' });
@@ -1727,7 +1835,7 @@ router.post('/:id/approve', requireAuth, async (req, res, next) => {
           : 'This has to be noted before it can be approved.',
       });
     }
-    if (!LEAVE_ROUTED.includes(doc.type) && doc.type !== 'fuel' && doc.status !== 'noted') {
+    if (!ch && !LEAVE_ROUTED.includes(doc.type) && doc.type !== 'fuel' && doc.status !== 'noted') {
       return res.status(409).json({ error: 'Only a noted form can be approved.' });
     }
 

@@ -4,7 +4,7 @@ import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Pagination from '../components/Pagination';
 import { useAuth } from '../context/useAuth';
-import { NO_ITEM_TYPES, STATUS_BADGE, TYPE_LABELS, clock, fmtDate, money, pretty } from '../utils/requestForms';
+import { NO_ITEM_TYPES, STATUS_BADGE, TYPE_LABELS, clock, fmtDate, money, pretty, statusLabel } from '../utils/requestForms';
 import useAutoSearch from '../utils/useAutoSearch';
 import SearchInput from '../components/SearchInput';
 
@@ -174,7 +174,7 @@ export default function Forms() {
                         read as "this trip cost nothing" rather than "this form is not about money". */}
                     <td data-label="Amount">{NO_ITEM_TYPES.includes(r.type) ? '—' : money(r.total_amount)}</td>
                     <td data-label="Status">
-                      <span className={`badge ${STATUS_BADGE[r.status] || 'badge-muted'}`}>{pretty(r.status)}</span>
+                      <span className={`badge ${STATUS_BADGE[r.status] || 'badge-muted'}`}>{statusLabel(r.status)}</span>
                     </td>
                     <td>
                       <Link className="btn btn-sm btn-primary" to={`/forms/${r.id}`}>Open</Link>

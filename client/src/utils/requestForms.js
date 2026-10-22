@@ -173,6 +173,8 @@ export function money(v) {
 export function fmtDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 export const pretty = (s) => (s ? String(s).replace(/_/g, ' ') : '');
+// A form's status as people read it (2026-10-22): submitted waits on the noter, noted on the approver.
+export const statusLabel = (s) => ({ submitted: 'For Noting', noted: 'For Approval' }[s] || pretty(s));
 
 // Fund Transfer (2026-10-14): every bank a form's lines move money From (side 'from') or To ('to'),
 // each once, in line order -- printed in place of "Several". Falls back to the form's own pair.

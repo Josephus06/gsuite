@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { NO_ITEM_TYPES, STATUS_BADGE, TYPE_LABELS, fmtDate, money, pretty } from '../utils/requestForms';
+import { NO_ITEM_TYPES, STATUS_BADGE, TYPE_LABELS, fmtDate, money, pretty, statusLabel } from '../utils/requestForms';
 
 // The approval queue -- what is waiting on a decision, rather than what you filed.
 //
@@ -97,7 +97,7 @@ export default function FormsApproval() {
                     <td data-label="Submitted">{fmtDate(r.submitted_at)}</td>
                     <td data-label="Amount">{NO_ITEM_TYPES.includes(r.type) ? '—' : money(r.total_amount)}</td>
                     <td data-label="Status">
-                      <span className={`badge ${STATUS_BADGE[r.status] || 'badge-muted'}`}>{pretty(r.status)}</span>
+                      <span className={`badge ${STATUS_BADGE[r.status] || 'badge-muted'}`}>{statusLabel(r.status)}</span>
                     </td>
                     <td>
                       <Link className="btn btn-sm btn-primary" to={`/forms/${r.id}`}>Review</Link>

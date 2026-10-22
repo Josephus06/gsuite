@@ -111,6 +111,22 @@ function notifyFormStatus(formId, actorId) {
     const what = `${FORM_LABEL[doc.type] || 'Form'} ${doc.request_no || ''}`.trim();
     const base = { relatedType: 'Form', relatedId: doc.id };
 
+    // The approver and noter the requestor chose (2026-10-22): submitted -> the noter; noted (or
+    // submitted with no noter, which is filed straight as noted) -> the approver. Later steps
+    // (approved, rejected, an overtime's accept / decline) are told as before, below.
+    const [[ch]] = await pool.query('SELECT approver_user_id, noter_user_id, noted_by FROM form_requests WHERE id = ?', [doc.id]).catch(() => [[null]]);
+    if (ch && ch.approver_user_id && (doc.status === 'submitted' || doc.status === 'noted')) {
+      const from = doc.department ? ` from ${doc.department}` : '';
+      if (doc.status === 'submitted' && ch.noter_user_id) {
+        await insertFor([ch.noter_user_id], { ...base, type: 'form_pending_note', title: `${what} needs your noting`, message: `${what}${from} is waiting to be noted.` }, actorId);
+      } else {
+        await insertFor([ch.approver_user_id], { ...base, type: 'form_pending_approval', title: `${what} needs your approval`,
+          message: ch.noted_by ? `${what} has been noted and is waiting for your approval.` : `${what}${from} is waiting for your approval.` }, actorId);
+        if (ch.noted_by) await insertFor([doc.user_id], { ...base, type: 'form_noted', title: `${what} was noted`, message: `${what} has been noted and is now waiting for approval.` }, actorId);
+      }
+      return;
+    }
+
     // Overtime Request (2026-10-13) has its own chain -- see routes/forms.js.
     if (doc.type === 'overtime') {
       const [[d]] = await pool.query(
