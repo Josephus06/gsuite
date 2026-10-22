@@ -88,6 +88,8 @@ const productFlipbookRoutes = require('./routes/productFlipbook');
 const ticketReportRoutes = require('./routes/ticketReport');
 const driverRunRoutes = require('./routes/driverRuns');
 const deliverySummaryReportRoutes = require('./routes/deliverySummaryReport');
+// Accounting > Reports > Sales Orders / Invoices (Commission) (routes/commissionReports.js).
+const commissionReportRoutes = require('./routes/commissionReports');
 const pendingBillingReportRoutes = require('./routes/pendingBillingReport');
 const disbursementReportRoutes = require('./routes/disbursementReport');
 const forecastReportRoutes = require('./routes/forecastReport');
@@ -367,6 +369,7 @@ app.use('/api/ai-renderings', aiRenderingRoutes);
 app.use('/api/reports/artist-incentive', artistIncentiveReportRoutes);
 app.use('/api/reports/tickets', ticketReportRoutes);
 app.use('/api/reports/delivery-summary', deliverySummaryReportRoutes);
+app.use('/api/reports/commission', commissionReportRoutes);
 app.use('/api/reports/pending-billing', pendingBillingReportRoutes);
 app.use('/api/reports/disbursement', disbursementReportRoutes);
 app.use('/api/reports/forecast', forecastReportRoutes);

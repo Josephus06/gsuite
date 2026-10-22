@@ -285,6 +285,9 @@ const NAV_STRUCTURE = [
           // the other reports rather than in the Sales menu beside the documents it reads.
           { route: '/reports/profitability', label: 'Profitability Report' },
           { route: '/reports/delivery-summary', label: 'Delivery Summary' },
+          // The source's two commission listings (2026-10-22, routes/commissionReports.js).
+          { route: '/reports/commission-sales-orders', label: 'Sales Orders (Commission)' },
+          { route: '/reports/commission-invoices', label: 'Invoices (Commission)' },
           { route: '/reports/disbursement', label: 'Disbursement Report' },
           { route: '/reports/parked-bank-items', label: 'Unidentified Bank Items' },
         ],
