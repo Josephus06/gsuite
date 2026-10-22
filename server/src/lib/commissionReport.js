@@ -173,6 +173,10 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
   params.push(year);
   // Cancelled sales orders never count toward weighted sales (or anything downstream).
   whereParts.push("(so.status IS NULL OR so.status <> 'cancelled')");
+  // Nor does a line whose job order was cancelled -- the SO's own total already leaves it out
+  // (routes/salesOrders.js LIVE_LINE), and Weighted Sales must agree (SO-70642's 250 delivery fee,
+  // 2026-10-22).
+  whereParts.push("(jo.id IS NULL OR jo.status <> 'Cancelled')");
   if (filters.salesDivisionId) { whereParts.push('so.sales_division_id = ?'); params.push(filters.salesDivisionId); }
 
   // Weighted sales is every (non-cancelled) sales-order LINE -- including lines on orders that
@@ -345,8 +349,10 @@ async function buildCommissionJoDetail(employeeId, year, month, filters = {}) {
   const params = [...scope.params];
   whereParts.push('YEAR(so.date_created) = ?'); params.push(Number(year));
   whereParts.push('MONTH(so.date_created) = ?'); params.push(Number(month));
-  // Cancelled sales orders are excluded here too, so the detail matches the monthly totals.
+  // Cancelled sales orders are excluded here too, so the detail matches the monthly totals -- and
+  // cancelled job orders, as the monthly report leaves them out (2026-10-22).
   whereParts.push("(so.status IS NULL OR so.status <> 'cancelled')");
+  whereParts.push("jo.status <> 'Cancelled'");
   if (filters.salesDivisionId) { whereParts.push('so.sales_division_id = ?'); params.push(filters.salesDivisionId); }
   // Only the JO its sales-order line belongs to. A rework JO (RWIP) hangs off the same line as the
   // original, but the line points at the original: counting both put the line's net in twice
