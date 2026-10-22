@@ -290,6 +290,8 @@ const NAV_STRUCTURE = [
           // The source's two commission listings (2026-10-22, routes/commissionReports.js).
           { route: '/reports/commission-sales-orders', label: 'Sales Orders (Commission)' },
           { route: '/reports/commission-invoices', label: 'Invoices (Commission)' },
+          // The source's Invoiced Job Orders (2026-10-22): every invoice line that bills a JO.
+          { route: '/reports/invoiced-job-orders', label: 'Invoiced Job Orders' },
           { route: '/reports/disbursement', label: 'Disbursement Report' },
           { route: '/reports/parked-bank-items', label: 'Unidentified Bank Items' },
         ],

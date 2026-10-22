@@ -72,6 +72,7 @@ import AiRenderings from './pages/AiRenderings';
 import DeliverySummary from './pages/reports/DeliverySummary';
 import CommissionSalesOrders from './pages/reports/CommissionSalesOrders';
 import CommissionInvoices from './pages/reports/CommissionInvoices';
+import InvoicedJobOrders from './pages/reports/InvoicedJobOrders';
 import PendingBilling from './pages/reports/PendingBilling';
 import DisbursementReport from './pages/reports/DisbursementReport';
 import ForecastReport from './pages/reports/ForecastReport';
@@ -524,6 +525,7 @@ function App() {
         <Route path="/reports/delivery-summary" element={<DeliverySummary />} />
         <Route path="/reports/commission-sales-orders" element={<CommissionSalesOrders />} />
         <Route path="/reports/commission-invoices" element={<CommissionInvoices />} />
+        <Route path="/reports/invoiced-job-orders" element={<InvoicedJobOrders />} />
         <Route path="/reports/pending-billing" element={<PendingBilling />} />
         <Route path="/reports/disbursement" element={<DisbursementReport />} />
         <Route path="/reports/forecast" element={<ForecastReport />} />
