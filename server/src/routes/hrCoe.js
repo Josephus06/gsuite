@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -266,8 +266,10 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 async function loadForDecision(req, res) {
   const [[row]] = await pool.query('SELECT * FROM hr_coes WHERE id = ?', [req.params.id]);
   if (!row) { res.status(404).json({ error: 'Certificate not found' }); return null; }
-  if (Number(row.approver_user_id) !== Number(req.user.id)) {
-    res.status(403).json({ error: 'Only the General Manager this certificate was sent to can approve it.' });
+  // A System Admin can decide too (asked 2026-10-22) -- on the GM's behalf: the certificate is still
+  // signed in the chosen General Manager's name.
+  if (Number(row.approver_user_id) !== Number(req.user.id) && !(await isSystemAdmin(req.user.id))) {
+    res.status(403).json({ error: 'Only the General Manager this certificate was sent to, or a System Admin, can approve it.' });
     return null;
   }
   if (row.status !== 'for_approval') { res.status(409).json({ error: `This certificate is already ${row.status}.` }); return null; }
@@ -278,8 +280,8 @@ router.put('/:id/approve', requireAuth, async (req, res, next) => {
   try {
     const row = await loadForDecision(req, res);
     if (!row) return;
-    const me = (await generalManagers()).find((g) => g.id === Number(req.user.id));
-    const name = trunc(req.body?.signatory_name, 150) || me?.sign_as;
+    const gm = (await generalManagers()).find((g) => g.id === Number(row.approver_user_id));
+    const name = trunc(req.body?.signatory_name, 150) || gm?.sign_as;
     if (!name) return res.status(400).json({ error: 'Enter your name as it is printed on the certificate.' });
     await pool.query(
       `UPDATE hr_coes SET status = 'approved', signatory_name = ?, signatory_title = ?, approved_at = NOW(),

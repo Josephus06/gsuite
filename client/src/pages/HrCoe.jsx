@@ -304,7 +304,7 @@ function DecisionModal({ coe, approve, signAs, onClose, onDone }) {
       </p>
       {approve ? (
         <div className="field">
-          <label>Your name as printed on the certificate *</label>
+          <label>General Manager's name as printed on the certificate *</label>
           <input autoFocus value={name} maxLength={150} onChange={(e) => setName(e.target.value)} placeholder="e.g. JIMMY W. WU" />
           <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>Printed above &ldquo;General Manager&rdquo;.</div>
         </div>
@@ -357,8 +357,11 @@ export default function HrCoe() {
   useEffect(() => {
     api.get('/hr-coe/meta').then(({ data }) => { setCriteria(data.criteria); setApprovers(data.approvers || []); }).catch(() => {});
   }, []);
-  const isMine = (r) => r.status === 'for_approval' && Number(r.approver_user_id) === Number(user?.id);
-  const mySignAs = approvers.find((a) => Number(a.id) === Number(user?.id))?.sign_as || '';
+  // The chosen General Manager decides; a System Admin can too, on the GM's behalf -- either way the
+  // certificate is signed in the chosen GM's name.
+  const isAdmin = user?.account_type === 'System Admin';
+  const canDecide = (r) => r.status === 'for_approval' && (isAdmin || Number(r.approver_user_id) === Number(user?.id));
+  const signAsFor = (r) => approvers.find((a) => Number(a.id) === Number(r.approver_user_id))?.sign_as || '';
 
   const print = (r) => window.open(`/hrd/coe/${r.id}/print`, '_blank');
 
@@ -426,7 +429,7 @@ export default function HrCoe() {
                     )}
                   </td>
                   <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
-                    {isMine(r) && (
+                    {canDecide(r) && (
                       <>
                         <button type="button" className="btn btn-sm btn-primary" onClick={() => setDeciding({ coe: r, approve: true })}>Approve</button>{' '}
                         <button type="button" className="btn btn-sm btn-danger" onClick={() => setDeciding({ coe: r, approve: false })}>Reject</button>{' '}
@@ -456,7 +459,7 @@ export default function HrCoe() {
         <DecisionModal
           coe={deciding.coe}
           approve={deciding.approve}
-          signAs={mySignAs}
+          signAs={signAsFor(deciding.coe)}
           onClose={() => setDeciding(null)}
           onDone={() => { setDeciding(null); load(); }}
         />
