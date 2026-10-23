@@ -339,6 +339,15 @@ async function deriveOnHand(db, itemIds) {
   // Every row of one ledger import shares a window, so this is one cutoff in practice; looping
   // keeps it correct if a partial re-import ever leaves two.
   const cutoffs = [...new Set([...anchors.values()].map((a) => a.from))];
+  // Items the snapshot has NO row for still have a snapshot to start from -- the install's -- as the
+  // Bin Card reads it. Asking only about the items in hand, an item the source held none of (no row)
+  // looked like an install with no snapshot at all and fell back to its whole history from zero:
+  // 3M 3630-53 CARDINAL RED showed 7,231.98 sqft on hand from a 2022 receipt the source had long
+  // since used, while its Bin Card read 31.98 (2026-10-23).
+  if (!cutoffs.length) {
+    const [[g]] = await db.query('SELECT MIN(window_from) AS window_from FROM live_stock_ledger').catch(() => [[null]]);
+    if (g && g.window_from) cutoffs.push(String(g.window_from).slice(0, 10));
+  }
   const since = new Map();
   for (const c of cutoffs) since.set(c, await sumByPair(c));
 
@@ -353,7 +362,7 @@ async function deriveOnHand(db, itemIds) {
   // source's whole position -- every item and location with a balance), so it starts from zero at
   // the snapshot date and counts only the movements since. Falling back to full history there
   // showed stock -- negative, often -- that the source never had, from the migration's gaps.
-  if (anchors.size === 0 || cutoffs.length === 0) {
+  if (cutoffs.length === 0) {
     for (const [pair, bal] of await sumByPair(null)) byPair.set(pair, bal);
   } else {
     const cutoff = cutoffs.sort()[0];
