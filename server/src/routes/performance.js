@@ -366,7 +366,8 @@ router.post('/templates/:id/assign', requireAuth, requirePermission(HR, 'can_edi
 // Import a PEF workbook (2026-10-23): each sheet's position becomes (or updates) its template, and the
 // employee named on the sheet is put in that position. Preview first (apply: false) -- what each sheet
 // reads as, and who it matched -- then apply.
-const normName = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+// Lower case, accents and punctuation off, middle initials dropped ("Jean Mika V. Pecolados" = "JEAN MIKA PECOLADOS").
+const normName = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z ]/g, ' ').split(/\s+/).filter((w) => w.length > 1).join(' ');
 async function matchUser(name) {
   const n = normName(name);
   if (!n) return null;
