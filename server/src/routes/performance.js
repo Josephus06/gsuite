@@ -45,6 +45,8 @@ async function roleOf(userId, e) {
   role.canRemark = e.status === 'open' && (role.employee || role.rater);
   role.canSelfRate = e.status === 'self_rating' && role.employee;
   role.canRate = e.status === 'supervisor_rating' && role.rater;
+  // The rater's remarks on the core values stay open to the rater the whole way, until approved.
+  role.canRaterRemark = e.status !== 'approved' && role.rater;
   role.canConforme = e.status === 'discussion' && role.employee;
   role.canReview = (e.status === 'dept_head_review' && role.head) || (e.status === 'hr_review' && hr) || (e.status === 'gm_approval' && gm);
   return role;
@@ -167,6 +169,21 @@ async function storeScores(e) {
     [s.kra, s.cv, s.overall, p.kra, p.cv, p.overall, e.id]);
   return { items, self: s, sup: p };
 }
+
+// The rater's remarks on the core values (the blue box) -- at any step until the evaluation is approved.
+router.put('/evaluations/:id/rater-remarks', requireAuth, async (req, res, next) => {
+  try {
+    const ctx = await seeOr404(req, res);
+    if (!ctx) return undefined;
+    const { e, role } = ctx;
+    if (!role.canRaterRemark) return bad(res, "Only the employee's supervisor writes the rater's remarks, until the evaluation is approved.", 409);
+    for (const it of Array.isArray(req.body.items) ? req.body.items : []) {
+      await pool.query("UPDATE perf_evaluation_items SET rater_results = ? WHERE id = ? AND evaluation_id = ? AND section = 'cv'",
+        [String(it.rater_results || '').slice(0, 8000) || null, it.id, e.id]);
+    }
+    return res.json({ ok: true });
+  } catch (err) { return next(err); }
+});
 
 // The employee's self rating (save, or submit to the supervisor).
 router.put('/evaluations/:id/self', requireAuth, async (req, res, next) => {

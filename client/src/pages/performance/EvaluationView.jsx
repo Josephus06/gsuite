@@ -60,6 +60,9 @@ export default function EvaluationView() {
   const saveRate = (submit) => run(() => api.put(`/performance/evaluations/${id}/rate`, {
     submit, ...form, items: items.map((i) => ({ id: i.id, superior_rating: i.superior_rating, actual_results: i.actual_results, rater_results: i.rater_results })),
   }), submit ? 'Rating submitted -- the employee is asked to sign conforme after your discussion.' : 'Saved.');
+  const saveRaterRemarks = () => run(() => api.put(`/performance/evaluations/${id}/rater-remarks`, {
+    items: items.filter((i) => i.section === 'cv').map((i) => ({ id: i.id, rater_results: i.rater_results })),
+  }), "Rater's remarks saved.");
   const addRemark = () => run(async () => {
     await api.post(`/performance/evaluations/${id}/remarks`, remark);
     setRemark((x) => ({ ...x, body: '' }));
@@ -104,7 +107,7 @@ export default function EvaluationView() {
       ) : (
         <>
           <td style={{ minWidth: 200, background: CV_SELF_BG }}>{remarkBox(i, 'actual_results', r.canSelfRate)}</td>
-          <td style={{ minWidth: 200, background: CV_RATER_BG }}>{showSup ? remarkBox(i, 'rater_results', r.canRate) : <span className="muted" style={{ fontSize: 12 }}>— (after the supervisor rates)</span>}</td>
+          <td style={{ minWidth: 200, background: CV_RATER_BG }}>{showSup ? remarkBox(i, 'rater_results', r.canRaterRemark) : <span className="muted" style={{ fontSize: 12 }}>— (after the supervisor rates)</span>}</td>
         </>
       )}
       <td>{r.canSelfRate ? <RatingSelect value={i.self_rating} onChange={(v) => setItem(i.id, { self_rating: v })} /> : (i.self_rating || '—')}</td>
@@ -190,6 +193,11 @@ export default function EvaluationView() {
                 <tbody>{itemRows(cvs, 'cv')}</tbody>
               </table>
             </div>
+            {r.canRaterRemark && !r.canRate && (
+              <div className="pe-noprint" style={{ marginTop: 8 }}>
+                <button className="btn btn-sm" disabled={busy} onClick={saveRaterRemarks}>Save Rater&apos;s Remarks</button>
+              </div>
+            )}
           </div>
 
           <div className="card" style={{ marginBottom: 12 }}>
