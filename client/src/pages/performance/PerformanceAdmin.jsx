@@ -226,7 +226,7 @@ function TemplateEditor({ meta, id, onClose, onSaved }) {
               onSelect={(u) => assign({ employee_ids: [u.employee_id] })}
             />
           )}
-          <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>Sets the Position Title on their employee record. Their next quarter uses this template.</div>
+          <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>The employees listed are those whose <strong>Position Description</strong> (HRD &gt; Employees &gt; Employment Info) is this position -- adding one here sets it for them. Their next quarter uses this template.</div>
         </>
       )}
     </Modal>

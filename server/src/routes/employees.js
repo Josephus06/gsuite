@@ -123,6 +123,11 @@ router.get('/meta/profile-options', requireAuth, requirePermission(ROUTE, 'can_v
         .catch((e) => { if (e.code === 'ER_BAD_FIELD_ERROR') return [[]]; throw e; });
       out[c] = rows.map((r) => r.v);
     }
+    // Position Description is what links an employee to their Performance Evaluation template
+    // (2026-10-23): offer the templates' positions first, so it is picked rather than retyped.
+    const [tpl] = await pool.query('SELECT position_title AS v FROM perf_templates WHERE is_active = 1 ORDER BY position_title')
+      .catch(() => [[]]);
+    out.position_title = [...new Set([...tpl.map((r) => r.v), ...(out.position_title || [])])];
     res.json(out);
   } catch (err) { next(err); }
 });

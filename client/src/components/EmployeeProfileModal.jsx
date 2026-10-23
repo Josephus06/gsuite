@@ -188,7 +188,7 @@ export default function EmployeeProfileModal({ employeeId, isHr, departments, em
                   {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
               </div>
-              {F({ k: 'position_title', label: 'Position' })}
+              {F({ k: 'position_title', label: 'Position', type: 'suggest' })}
               {F({ k: 'email', label: 'Email', type: 'email' })}
               {F({ k: 'phone', label: 'Telephone No.' })}
               {F({ k: 'date_hired', label: 'Date Hired', type: 'date' })}
@@ -260,7 +260,8 @@ export default function EmployeeProfileModal({ employeeId, isHr, departments, em
                   <div style={grid}>
                     {F({ k: 'employment_status', label: 'Status', type: 'suggest' })}
                     {F({ k: 'position_code', label: 'Position Code', type: 'suggest' })}
-                    {F({ k: 'position_title', label: 'Position Description' })}
+                    {/* Picks the Performance Evaluation template too (its position) -- 2026-10-23. */}
+                    {F({ k: 'position_title', label: 'Position Description', type: 'suggest' })}
                     <div className="field"><label>Division / Department</label>
                       <select value={form.department_id} onChange={(e) => set('department_id', e.target.value)}>
                         <option value="">—</option>
