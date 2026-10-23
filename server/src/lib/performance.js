@@ -110,17 +110,23 @@ async function generateEvaluations(cycleId) {
 
 // The remarks of the quarter written into each item's Actual Results / Critical Incidents, oldest
 // first, marked by who logged them -- the starting point the employee and supervisor rate from.
+// On a core value the supervisor's remarks go to the rater's own field (rater_results).
 async function prefillFromRemarks(evaluationId) {
   const [remarks] = await pool.query(
-    `SELECT r.item_id, r.remark_date, r.author_role, r.body, u.display_name FROM perf_remarks r JOIN users u ON u.id = r.author_user_id
-      WHERE r.evaluation_id = ? AND r.item_id IS NOT NULL ORDER BY r.remark_date, r.id`, [evaluationId]);
-  const byItem = new Map();
+    `SELECT r.item_id, r.remark_date, r.author_role, r.body, i.section FROM perf_remarks r
+       JOIN perf_evaluation_items i ON i.id = r.item_id
+      WHERE r.evaluation_id = ? ORDER BY r.remark_date, r.id`, [evaluationId]);
+  const byField = new Map();
   for (const r of remarks) {
-    const line = `${String(r.remark_date).slice(0, 10)} (${r.author_role === 'supervisor' ? 'Supervisor' : 'Employee'}): ${r.body}`;
-    byItem.set(r.item_id, [...(byItem.get(r.item_id) || []), line]);
+    const sup = r.author_role === 'supervisor';
+    const col = r.section === 'cv' && sup ? 'rater_results' : 'actual_results';
+    const line = `${String(r.remark_date).slice(0, 10)} (${sup ? 'Supervisor' : 'Employee'}): ${r.body}`;
+    const k = `${r.item_id}|${col}`;
+    byField.set(k, [...(byField.get(k) || []), line]);
   }
-  for (const [itemId, lines] of byItem) {
-    await pool.query("UPDATE perf_evaluation_items SET actual_results = ? WHERE id = ? AND (actual_results IS NULL OR actual_results = '')",
+  for (const [k, lines] of byField) {
+    const [itemId, col] = k.split('|');
+    await pool.query(`UPDATE perf_evaluation_items SET ${col} = ? WHERE id = ? AND (${col} IS NULL OR ${col} = '')`,
       [lines.join('\n'), itemId]);
   }
 }

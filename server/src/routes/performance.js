@@ -94,7 +94,7 @@ router.get('/evaluations/:id', requireAuth, async (req, res, next) => {
     const sup = hideSup ? { kra: null, cv: null, overall: null } : scores(items, 'sup', e.kra_weight, e.cv_weight);
     return res.json({
       ...e, status_label: STATUS_LABELS[e.status], role,
-      items: items.map((i) => ({ ...i, weight: Number(i.weight), superior_rating: hideSup ? null : i.superior_rating })),
+      items: items.map((i) => ({ ...i, weight: Number(i.weight), superior_rating: hideSup ? null : i.superior_rating, rater_results: hideSup ? null : i.rater_results })),
       remarks,
       ...(hideSup ? { superior_comments: null, strengths: null, improvements: null, coaching: null, career_plans: null } : {}),
       self_scores: { ...self, label: overallLabel(self.overall) }, sup_scores: { ...sup, label: overallLabel(sup.overall) },
@@ -138,17 +138,22 @@ router.delete('/remarks/:rid', requireAuth, async (req, res, next) => {
   } catch (err) { return next(err); }
 });
 
-// Saves ratings (and actual results) for `field`; returns the items or an error.
+// Saves ratings (and actual results) for `field`; returns the items or an error. A core value's
+// Critical Incidents are two remarks: the employee writes actual_results, the rater rater_results.
 async function saveItems(e, list, field) {
-  const [items] = await pool.query('SELECT id FROM perf_evaluation_items WHERE evaluation_id = ?', [e.id]);
-  const ids = new Set(items.map((i) => Number(i.id)));
+  const [items] = await pool.query('SELECT id, section FROM perf_evaluation_items WHERE evaluation_id = ?', [e.id]);
+  const sections = new Map(items.map((i) => [Number(i.id), i.section]));
+  const rater = field === 'superior_rating';
+  const txt = (v) => String(v || '').slice(0, 8000) || null;
   for (const it of Array.isArray(list) ? list : []) {
-    if (!ids.has(Number(it.id))) continue;
+    if (!sections.has(Number(it.id))) continue;
+    const cv = sections.get(Number(it.id)) === 'cv';
     const v = rating(it[field]);
     if (v === undefined) return 'Ratings are 1 to 4.';
     const sets = [`${field} = ?`];
     const params = [v];
-    if (it.actual_results !== undefined) { sets.push('actual_results = ?'); params.push(String(it.actual_results || '').slice(0, 8000) || null); }
+    if (it.actual_results !== undefined && !(rater && cv)) { sets.push('actual_results = ?'); params.push(txt(it.actual_results)); }
+    if (it.rater_results !== undefined && rater && cv) { sets.push('rater_results = ?'); params.push(txt(it.rater_results)); }
     await pool.query(`UPDATE perf_evaluation_items SET ${sets.join(', ')} WHERE id = ?`, [...params, it.id]);
   }
   return null;

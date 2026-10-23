@@ -114,6 +114,7 @@ const TABLES = [
      kpi VARCHAR(500) NULL,
      timeframe VARCHAR(100) NULL,
      actual_results TEXT NULL,
+     rater_results TEXT NULL,
      self_rating TINYINT NULL,
      superior_rating TINYINT NULL,
      KEY idx_perf_items_eval (evaluation_id)
@@ -165,6 +166,13 @@ const PAGES = [['/performance', 'My Performance'], ['/hrd/performance', 'Perform
 (async () => {
   console.log(`DB ${process.env.DB_NAME} on ${process.env.DB_HOST}`);
   for (const sql of TABLES) { await pool.query(sql); console.log(`  table ${sql.match(/EXISTS (\w+)/)[1]} ready`); }
+  // Core values carry two remarks: the employee's (actual_results) and the rater's (2026-10-23).
+  const [[hasRater]] = await pool.query(
+    "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'perf_evaluation_items' AND COLUMN_NAME = 'rater_results'");
+  if (!hasRater.n) {
+    await pool.query('ALTER TABLE perf_evaluation_items ADD COLUMN rater_results TEXT NULL AFTER actual_results');
+    console.log('  perf_evaluation_items.rater_results added');
+  }
   // The same collation as employees / users (utf8mb4_unicode_ci): the server default made these
   // utf8mb4_0900_ai_ci, and comparing a template's position with an employee's then failed with
   // "Illegal mix of collations" (2026-10-23).

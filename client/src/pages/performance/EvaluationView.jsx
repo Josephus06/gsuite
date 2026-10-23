@@ -11,6 +11,10 @@ import { RATINGS, STEPS, fmtScore, pts, ratingLabel } from './perfUtils';
 const fmtDay = (v) => (v ? new Date(`${String(v).slice(0, 10)}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '');
 const fmtWhen = (v) => (v ? new Date(`${String(v).replace(' ', 'T')}Z`).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Manila' }) : '');
 
+// A core value's Critical Incidents, as on the PEF: the employee's remarks (yellow), the rater's (blue).
+const CV_SELF_BG = 'rgba(253, 230, 138, 0.35)';
+const CV_RATER_BG = 'rgba(147, 197, 253, 0.3)';
+
 function RatingSelect({ value, onChange, disabled }) {
   return (
     <select value={value ?? ''} disabled={disabled} onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))} style={{ minWidth: 64 }}>
@@ -54,7 +58,7 @@ export default function EvaluationView() {
     submit, items: items.map((i) => ({ id: i.id, self_rating: i.self_rating, actual_results: i.actual_results })),
   }), submit ? 'Self rating submitted to your supervisor.' : 'Saved.');
   const saveRate = (submit) => run(() => api.put(`/performance/evaluations/${id}/rate`, {
-    submit, ...form, items: items.map((i) => ({ id: i.id, superior_rating: i.superior_rating, actual_results: i.actual_results })),
+    submit, ...form, items: items.map((i) => ({ id: i.id, superior_rating: i.superior_rating, actual_results: i.actual_results, rater_results: i.rater_results })),
   }), submit ? 'Rating submitted -- the employee is asked to sign conforme after your discussion.' : 'Saved.');
   const addRemark = () => run(async () => {
     await api.post(`/performance/evaluations/${id}/remarks`, remark);
@@ -81,6 +85,10 @@ export default function EvaluationView() {
   const showSup = !(r.employee && !r.rater && ['open', 'self_rating', 'supervisor_rating'].includes(e.status));
   const remarksFor = (iid) => e.remarks.filter((x) => Number(x.item_id) === Number(iid));
 
+  const remarkBox = (i, k, editable) => (editable
+    ? <textarea rows={3} style={{ width: '100%', fontSize: 12 }} value={i[k] || ''} onChange={(ev) => setItem(i.id, { [k]: ev.target.value })} />
+    : <div style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>{i[k] || <span className="muted">—</span>}</div>);
+
   const itemRows = (list, kind) => list.map((i) => (
     <tr key={i.id}>
       <td style={{ whiteSpace: 'normal', minWidth: 220 }}>
@@ -91,11 +99,14 @@ export default function EvaluationView() {
       <td style={{ textAlign: 'right' }}>{Number(i.weight)}%</td>
       {kind === 'kra' && <td style={{ whiteSpace: 'normal', minWidth: 180, fontSize: 12 }}>{i.kpi}</td>}
       {kind === 'kra' && <td style={{ fontSize: 12 }}>{i.timeframe}</td>}
-      <td style={{ minWidth: 220 }}>
-        {editResults
-          ? <textarea rows={3} style={{ width: '100%', fontSize: 12 }} value={i.actual_results || ''} onChange={(ev) => setItem(i.id, { actual_results: ev.target.value })} />
-          : <div style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>{i.actual_results || <span className="muted">—</span>}</div>}
-      </td>
+      {kind === 'kra' ? (
+        <td style={{ minWidth: 220 }}>{remarkBox(i, 'actual_results', editResults)}</td>
+      ) : (
+        <>
+          <td style={{ minWidth: 200, background: CV_SELF_BG }}>{remarkBox(i, 'actual_results', r.canSelfRate)}</td>
+          <td style={{ minWidth: 200, background: CV_RATER_BG }}>{showSup ? remarkBox(i, 'rater_results', r.canRate) : <span className="muted" style={{ fontSize: 12 }}>— (after the supervisor rates)</span>}</td>
+        </>
+      )}
       <td>{r.canSelfRate ? <RatingSelect value={i.self_rating} onChange={(v) => setItem(i.id, { self_rating: v })} /> : (i.self_rating || '—')}</td>
       <td style={{ textAlign: 'right' }}>{fmtScore(pts(i.self_rating, i.weight))}</td>
       <td>{r.canRate ? <RatingSelect value={i.superior_rating} onChange={(v) => setItem(i.id, { superior_rating: v })} /> : (showSup ? (i.superior_rating || '—') : '—')}</td>
@@ -121,6 +132,7 @@ export default function EvaluationView() {
         .pe-print td, .pe-print th { padding: 3px 4px !important; }
         .pe-print select { appearance: none; border: none; padding: 0; }
         .pe-print .card { break-inside: avoid; box-shadow: none; }
+        .pe-print td, .pe-print th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       }`}</style>
       <div className="page-header pe-noprint">
         <h1>Performance Evaluation <span className="muted" style={{ fontSize: '0.55em', fontWeight: 400 }}>Q{e.quarter} {e.year}</span></h1>
@@ -174,7 +186,7 @@ export default function EvaluationView() {
             <h3 style={{ marginTop: 0 }}>B. Core Values ({Number(e.cv_weight)}%)</h3>
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Core Value</th><th style={{ textAlign: 'right' }}>Weight</th><th>Critical Incidents / Behavior</th><th>Self</th><th style={{ textAlign: 'right' }}>Pts</th><th>Superior</th><th style={{ textAlign: 'right' }}>Pts</th></tr></thead>
+                <thead><tr><th>Core Value</th><th style={{ textAlign: 'right' }}>Weight</th><th style={{ background: CV_SELF_BG }}>Employee&apos;s Remarks</th><th style={{ background: CV_RATER_BG }}>Rater&apos;s Remarks</th><th>Self</th><th style={{ textAlign: 'right' }}>Pts</th><th>Superior</th><th style={{ textAlign: 'right' }}>Pts</th></tr></thead>
                 <tbody>{itemRows(cvs, 'cv')}</tbody>
               </table>
             </div>
