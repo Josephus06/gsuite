@@ -72,6 +72,7 @@ export default function ReceivingReportEdit() {
             location_id: rl.location_id || '', department_name: rl.department_name || '',
             qty_received: Number(rl.qty_received), rate: rl.rate, disc_percent: rl.disc_percent,
             tax_code_id: rl.tax_code_id || '',
+            po_rate: pl.rate, po_disc: pl.disc_percent, po_tax: pl.tax_code_id || '', po_ext: pl.ext_price,
           };
         }));
         setLoading(false);
@@ -93,18 +94,30 @@ export default function ReceivingReportEdit() {
             qty_received: Number(l.qty) - Number(l.received_qty),
             rate: l.rate, disc_percent: l.disc_percent,
             tax_code_id: l.tax_code_id || '',
+            po_rate: l.rate, po_disc: l.disc_percent, po_tax: l.tax_code_id || '', po_ext: l.ext_price,
           }))
       );
       setLoading(false);
     })().catch((e) => { setError(e.response?.data?.error || 'Could not load.'); setLoading(false); });
   }, [poParam, receiptId, isEdit]);
 
+  // Quantities are kept to 4 decimals.
+  const qty4 = (v) => Math.round(Number(v || 0) * 10000) / 10000;
+
   function updateLine(key, patch) {
     setLines((prev) => prev.map((l) => (l.purchase_order_line_id === key ? { ...l, ...patch } : l)));
   }
 
+  // Received at the PO line's own terms, a line is priced as the server prices it: its share of the
+  // PO line's own amount -- PO-21208's 0.0533 at 51,000 is the PO's 2,720.00, not 0.0533 x 51,000 =
+  // 2,718.30 (which had people typing 0.053333 to make it match, and being told it was over, 2026-10-23).
   function lineCalc(l) {
-    const q = Number(l.qty_received || 0);
+    const q = qty4(l.qty_received);
+    const poQty = Number(l.po_qty || 0);
+    const sameTerms = Math.abs(Number(l.rate || 0) - Number(l.po_rate || 0)) < 1e-9
+      && Math.abs(Number(l.disc_percent || 0) - Number(l.po_disc || 0)) < 1e-9
+      && String(l.tax_code_id || '') === String(l.po_tax || '');
+    if (poQty > 0 && l.po_ext != null && sameTerms) return { extPrice: Math.round(Number(l.po_ext) * (q / poQty) * 100) / 100 };
     const rate = Number(l.rate || 0);
     const subtotal = q * rate;
     const discAmount = subtotal * (Number(l.disc_percent || 0) / 100);
@@ -223,6 +236,7 @@ export default function ReceivingReportEdit() {
                       <input
                         type="number" step="0.0001" max={remaining} style={{ width: 90 }}
                         value={l.qty_received} onChange={(e) => updateLine(l.purchase_order_line_id, { qty_received: e.target.value })}
+                        onBlur={(e) => e.target.value !== '' && updateLine(l.purchase_order_line_id, { qty_received: String(qty4(e.target.value)) })}
                       />
                     </td>
                     <td><input type="number" step="0.000001" style={{ width: 90 }} value={l.rate} onChange={(e) => updateLine(l.purchase_order_line_id, { rate: e.target.value })} /></td>

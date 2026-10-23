@@ -49,6 +49,8 @@ function resolveLineDiscounts(lines) {
 // figures on the page -- 9,392.86 less 469.64 -- say 8,923.22. Rates keep their 6 decimals.
 // toFixed(6) first, so a binary float like 1.005 does not round to 1.00.
 const cents = (n) => Math.round(Number((Number(n) * 100).toFixed(6))) / 100;
+// A quantity at the 4 decimals the PO / receipt lines keep (DECIMAL(14,4)).
+const qty4 = (n) => Math.round(Number((Number(n || 0) * 10000).toFixed(6))) / 10000;
 const router = express.Router();
 const ROUTE = '/purchase-orders';
 const APPROVAL_THRESHOLD = 10000;
@@ -1292,7 +1294,12 @@ router.post('/:id/receipts', requireAuth, requireReceiveRight, async (req, res, 
     }
 
     const { date_created: dateCreated, ref_no: refNo, memo, is_on_hold: isOnHold, lines } = req.body;
-    const submitted = (Array.isArray(lines) ? lines : []).filter((l) => l.purchase_order_line_id && Number(l.qty_received) > 0);
+    // Quantities are kept to 4 decimals (purchase_order_lines.qty / qty_received are DECIMAL(14,4)), so a
+    // Rec. Qty typed with more is read at 4 -- 0.053333 is the 0.0533 the PO line holds, its rest, not
+    // "more than is open" (2026-10-23: PO-21208, typed to make the total match the PO's 2,720.00).
+    const submitted = (Array.isArray(lines) ? lines : [])
+      .map((l) => ({ ...l, qty_received: qty4(l.qty_received) }))
+      .filter((l) => l.purchase_order_line_id && Number(l.qty_received) > 0);
     if (!submitted.length) return res.status(400).json({ error: 'Enter a Qty Received greater than 0 for at least one line.' });
     // Receiving lands stock and makes the line billable.
     await assertPeriodOpen(dateCreated, 'non_gl', conn);
@@ -1314,8 +1321,8 @@ router.post('/:id/receipts', requireAuth, requireReceiveRight, async (req, res, 
     for (const l of submitted) {
       const poLine = poLineById.get(l.purchase_order_line_id);
       if (!poLine) return res.status(400).json({ error: 'One of the selected lines does not belong to this Purchase Order.' });
-      const remaining = Number(poLine.qty) - Number(poLine.received_qty);
-      if (Number(l.qty_received) > remaining) {
+      const remaining = qty4(Number(poLine.qty) - Number(poLine.received_qty));
+      if (Number(l.qty_received) > remaining + 1e-9) {
         return res.status(409).json({ error: `Qty Received exceeds what's still open on this line (${remaining}).` });
       }
       if (!l.location_id && !poLine.location_id) {
@@ -1472,7 +1479,8 @@ router.put('/receipts/:receiptId', requireAuth, requireReceiveRight, async (req,
     const plans = [];
     for (const o of oldLines) {
       const s = sent.get(Number(o.id)) || {};
-      const qty = s.qty_received !== undefined ? Number(s.qty_received) : Number(o.qty_received);
+      // To 4 decimals, as the quantities are kept (see Receive).
+      const qty = qty4(s.qty_received !== undefined ? s.qty_received : o.qty_received);
       const locationId = s.location_id !== undefined ? (Number(s.location_id) || null) : o.location_id;
       const rate = s.rate !== undefined ? Number(s.rate || 0) : Number(o.rate || 0);
       const discPercent = s.disc_percent !== undefined ? Number(s.disc_percent || 0) : Number(o.disc_percent || 0);
