@@ -233,17 +233,78 @@ function TemplateEditor({ meta, id, onClose, onSaved }) {
   );
 }
 
+// Import a PEF workbook: each sheet's position becomes (or updates) its template and its employee is put
+// in that position. Read first, check, then apply.
+function ImportPef({ onClose, onDone }) {
+  const [file, setFile] = useState(null);
+  const [data, setData] = useState(null);
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const read = (f) => new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(String(r.result)); r.onerror = reject; r.readAsDataURL(f); });
+  const send = async (apply) => {
+    setBusy(true); setError('');
+    try {
+      const { data: d } = await api.post('/performance/templates/import', { file_data: data?.file || await read(file), apply });
+      if (apply) { setResult(d.applied); onDone(); } else setData({ ...d, file: await read(file) });
+    } catch (e) { setError(e.response?.data?.error || 'Could not read the workbook.'); } finally { setBusy(false); }
+  };
+  return (
+    <Modal title="Import PEF (Excel)" onClose={onClose} xl>
+      {error && <div className="error-banner">{error}</div>}
+      {result ? (
+        <div>
+          {result.map((r) => <div key={r.sheet}>✓ {r.position_title}: template {r.updated ? 'updated' : 'created'}{r.assigned ? `, ${r.assigned} assigned` : ''}</div>)}
+          <button className="btn btn-primary" style={{ marginTop: 10 }} onClick={onClose}>Done</button>
+        </div>
+      ) : !data ? (
+        <div style={{ display: 'grid', gap: 10 }}>
+          <div className="muted" style={{ fontSize: 13 }}>The Performance Evaluation Form workbook -- one sheet per employee. Each sheet&apos;s POSITION TITLE and its A. Productivity &amp; Efficiency KRAs (weight, KPI, timeframe) become that position&apos;s template; the NAME OF EMPLOYEE is put in the position.</div>
+          <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+          <div><button className="btn btn-primary" disabled={!file || busy} onClick={() => send(false)}>{busy ? 'Reading…' : 'Read Workbook'}</button></div>
+        </div>
+      ) : (
+        <>
+          {data.sheets.map((s) => (
+            <div key={s.sheet} className="card" style={{ marginBottom: 10, padding: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                <strong>{s.position_title || '(no position)'} <span className="muted" style={{ fontWeight: 400 }}>sheet &quot;{s.sheet}&quot;</span></strong>
+                {s.problem ? <span className="badge badge-danger">{s.problem}</span> : <span className={`badge ${s.template_exists ? 'badge-warning' : 'badge-success'}`}>{s.template_exists ? 'updates the template' : 'new template'}</span>}
+              </div>
+              <div style={{ fontSize: 12, margin: '4px 0' }}>
+                Employee: {s.employee_name || '—'} {s.employee ? <span className="badge badge-success">→ {s.employee.name}</span> : <span className="badge badge-muted">not matched -- assign later</span>}
+                {' · '}Rater on the form: {s.rater_name || '—'} {s.rater ? <span className="muted">({s.rater.name})</span> : ''}
+                {' · '}Department: {s.department || '—'}
+              </div>
+              <table style={{ fontSize: 12 }}>
+                <thead><tr><th>KRA</th><th style={{ textAlign: 'right' }}>Weight</th><th>KPI</th></tr></thead>
+                <tbody>{s.kras.map((k, i) => <tr key={i}><td>{k.kra}</td><td style={{ textAlign: 'right' }}>{k.weight}%</td><td>{k.kpi}</td></tr>)}</tbody>
+                <tfoot><tr><th>Total</th><th style={{ textAlign: 'right' }}>{s.total}%</th><th /></tr></tfoot>
+              </table>
+            </div>
+          ))}
+          <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>The rater is read from each employee&apos;s supervisor in T1S, not from the form -- check it under Users if it differs.</div>
+          <button className="btn btn-primary" disabled={busy || data.sheets.every((s) => s.problem)} onClick={() => send(true)}>Apply {data.sheets.filter((s) => !s.problem).length} Sheet(s)</button>
+        </>
+      )}
+    </Modal>
+  );
+}
+
 function Templates({ meta }) {
   const { can } = useAuth();
   const [rows, setRows] = useState(null);
   const [edit, setEdit] = useState(null);
+  const [importing, setImporting] = useState(false);
   const load = useCallback(() => api.get('/performance/templates').then(({ data }) => setRows(data)).catch(() => setRows([])), []);
   useEffect(() => { load(); }, [load]);
   return (
     <div className="card">
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 8 }}>
+        {can(ROUTE, 'can_add') && <button className="btn" onClick={() => setImporting(true)}>Import PEF (Excel)</button>}
         {can(ROUTE, 'can_add') && <button className="btn btn-primary" onClick={() => setEdit({})}>New Position Template</button>}
       </div>
+      {importing && <ImportPef onClose={() => { setImporting(false); load(); }} onDone={load} />}
       {!rows ? <LoadingSpinner /> : (
         <div className="table-wrap">
           <table className="responsive-cards">

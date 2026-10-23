@@ -363,6 +363,53 @@ router.post('/templates/:id/assign', requireAuth, requirePermission(HR, 'can_edi
   } catch (err) { return next(err); }
 });
 
+// Import a PEF workbook (2026-10-23): each sheet's position becomes (or updates) its template, and the
+// employee named on the sheet is put in that position. Preview first (apply: false) -- what each sheet
+// reads as, and who it matched -- then apply.
+const normName = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+async function matchUser(name) {
+  const n = normName(name);
+  if (!n) return null;
+  const [rows] = await pool.query(
+    `SELECT u.id AS user_id, u.display_name, e.id AS employee_id, e.first_name, e.last_name
+       FROM users u LEFT JOIN employees e ON e.id = u.employee_id WHERE u.is_active = 1`);
+  const initials = (r) => normName(`${r.first_name || ''} ${r.last_name || ''}`).split(' ').filter(Boolean).map((w) => w[0]).join('');
+  return rows.find((r) => normName(r.display_name) === n || normName(`${r.first_name} ${r.last_name}`) === n)
+    || rows.find((r) => n.length <= 4 && !n.includes(' ') && (initials(r) === n || normName(r.display_name).split(' ').map((w) => w[0]).join('') === n))
+    || null;
+}
+
+router.post('/templates/import', requireAuth, requirePermission(HR, 'can_add'), async (req, res, next) => {
+  try {
+    const { readPef } = require('../lib/pefImport');
+    const raw = String(req.body.file_data || '').replace(/^data:[^,]*,/, '');
+    if (!raw) return bad(res, 'Attach the PEF workbook (.xlsx).');
+    let sheets;
+    try { sheets = await readPef(Buffer.from(raw, 'base64')); } catch { return bad(res, 'That file could not be read as an Excel workbook (.xlsx).'); }
+    if (!sheets.length) return bad(res, 'No evaluation form was found in that workbook.');
+    const out = [];
+    for (const s of sheets) {
+      const employee = await matchUser(s.employee_name);
+      const rater = await matchUser(s.rater_name);
+      const [[existing]] = await pool.query('SELECT id FROM perf_templates WHERE LOWER(TRIM(position_title)) = LOWER(TRIM(?))', [s.position_title]);
+      const problem = !s.position_title ? 'No POSITION TITLE on the sheet.' : !s.kras.length ? 'No Key Result Areas found.' : s.total !== 100 ? `KRA weights add up to ${s.total}%, not 100%.` : null;
+      out.push({ ...s, template_exists: !!existing, employee: employee ? { user_id: employee.user_id, employee_id: employee.employee_id, name: employee.display_name } : null,
+        rater: rater ? { user_id: rater.user_id, name: rater.display_name } : null, problem });
+    }
+    if (!req.body.apply) return res.json({ sheets: out });
+    const pick = Array.isArray(req.body.sheets) ? new Set(req.body.sheets) : null;
+    const done = [];
+    for (const s of out) {
+      if (s.problem || (pick && !pick.has(s.sheet))) continue;
+      const [[existing]] = await pool.query('SELECT id FROM perf_templates WHERE LOWER(TRIM(position_title)) = LOWER(TRIM(?))', [s.position_title]);
+      const tid = await writeTemplate(existing?.id || null, { position: s.position_title, kras: s.kras, department_id: null, is_active: 1 }, req.user.id);
+      if (s.employee?.employee_id) await pool.query('UPDATE employees SET position_title = ? WHERE id = ?', [s.position_title, s.employee.employee_id]);
+      done.push({ sheet: s.sheet, template_id: tid, position_title: s.position_title, updated: !!existing, assigned: s.employee?.name || null });
+    }
+    return res.json({ applied: done });
+  } catch (err) { return next(err); }
+});
+
 // Core values (company-wide).
 router.get('/core-values', requireAuth, requirePermission(HR, 'can_view'), async (req, res, next) => {
   try {
