@@ -165,6 +165,18 @@ const PAGES = [['/performance', 'My Performance'], ['/hrd/performance', 'Perform
 (async () => {
   console.log(`DB ${process.env.DB_NAME} on ${process.env.DB_HOST}`);
   for (const sql of TABLES) { await pool.query(sql); console.log(`  table ${sql.match(/EXISTS (\w+)/)[1]} ready`); }
+  // The same collation as employees / users (utf8mb4_unicode_ci): the server default made these
+  // utf8mb4_0900_ai_ci, and comparing a template's position with an employee's then failed with
+  // "Illegal mix of collations" (2026-10-23).
+  const [[{ coll }]] = await pool.query("SELECT TABLE_COLLATION AS coll FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employees'");
+  for (const sql of TABLES) {
+    const name = sql.match(/EXISTS (\w+)/)[1];
+    const [[t]] = await pool.query('SELECT TABLE_COLLATION AS c FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?', [name]);
+    if (t && t.c !== coll) {
+      await pool.query(`ALTER TABLE ${name} CONVERT TO CHARACTER SET utf8mb4 COLLATE ${coll}`);
+      console.log(`  ${name}: collation ${t.c} -> ${coll}`);
+    }
+  }
 
   const [[{ n: cv }]] = await pool.query('SELECT COUNT(*) AS n FROM perf_core_values');
   if (!Number(cv)) {
