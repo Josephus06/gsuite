@@ -3,7 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { insertFor } = require('../lib/approvalNotifications');
 const {
-  STATUS_LABELS, phToday, nowUtc, quarterDates, scores, overallLabel, generateEvaluations, closeCycle,
+  STATUSES, STATUS_LABELS, phToday, nowUtc, quarterDates, scores, overallLabel, generateEvaluations, closeCycle,
 } = require('../lib/performance');
 
 const router = express.Router();
@@ -94,7 +94,28 @@ router.get('/evaluations/:id', requireAuth, async (req, res, next) => {
     const hideSup = role.employee && !role.rater && ['open', 'self_rating', 'supervisor_rating'].includes(e.status);
     const self = scores(items, 'self', e.kra_weight, e.cv_weight);
     const sup = hideSup ? { kra: null, cv: null, overall: null } : scores(items, 'sup', e.kra_weight, e.cv_weight);
+    // Part 3's sign-offs: each signer's name, and their profile e-signature once they have signed.
+    // A department head who was also the rater skips their review -- the rating is their signature.
+    const headSkipped = !e.dept_head_at && e.rated_at && Number(e.dept_head_user_id) === Number(e.rater_user_id)
+      && STATUSES.indexOf(e.status) > STATUSES.indexOf('dept_head_review');
+    const steps = [
+      { key: 'rater', label: 'Immediate head (rated)', user_id: e.rater_user_id, at: e.rated_at },
+      { key: 'employee', label: 'Employee (conforme)', user_id: e.user_id, at: e.employee_conforme_at },
+      { key: 'dept_head', label: 'Department head', user_id: e.dept_head_by_user_id || e.dept_head_user_id,
+        at: e.dept_head_at || (headSkipped ? e.rated_at : null), remarks: e.dept_head_remarks, note: headSkipped ? 'also the immediate head' : null },
+      { key: 'hr', label: 'Reviewed by HR', user_id: e.hr_by_user_id, at: e.hr_at, remarks: e.hr_remarks },
+      { key: 'gm', label: 'Approved by the GM', user_id: e.gm_by_user_id, at: e.gm_at, remarks: e.gm_remarks },
+    ];
+    const signerIds = [...new Set(steps.map((s) => Number(s.user_id)).filter(Boolean))];
+    const [signers] = signerIds.length
+      ? await pool.query('SELECT id, display_name, signature_data FROM users WHERE id IN (?)', [signerIds]) : [[]];
+    const byId = new Map(signers.map((u) => [Number(u.id), u]));
+    const signoffs = steps.map(({ user_id: uid, ...s }) => {
+      const u = byId.get(Number(uid));
+      return { ...s, name: u?.display_name || null, signature: s.at ? (u?.signature_data || null) : null };
+    });
     return res.json({
+      signoffs,
       ...e, status_label: STATUS_LABELS[e.status], role,
       items: items.map((i) => ({ ...i, weight: Number(i.weight), superior_rating: hideSup ? null : i.superior_rating, rater_results: hideSup ? null : i.rater_results })),
       remarks,

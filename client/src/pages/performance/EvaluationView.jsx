@@ -229,12 +229,20 @@ export default function EvaluationView() {
 
           <div className="card" style={{ marginBottom: 12 }}>
             <h3 style={{ marginTop: 0 }}>Part 3: Discussion, Agreement and Approval</h3>
-            <div className="filter-grid">
-              <div><span className="muted">Immediate head (rated)</span><div>{e.rater_name || '—'}</div><div className="muted" style={{ fontSize: 11 }}>{fmtWhen(e.rated_at)}</div></div>
-              <div><span className="muted">Employee (conforme)</span><div>{e.employee_name}</div><div className="muted" style={{ fontSize: 11 }}>{e.employee_conforme_at ? fmtWhen(e.employee_conforme_at) : 'not yet'}</div></div>
-              <div><span className="muted">Department head</span><div>{e.dept_head_name || '— (none)'}</div><div className="muted" style={{ fontSize: 11 }}>{fmtWhen(e.dept_head_at)}{e.dept_head_remarks ? ` · ${e.dept_head_remarks}` : ''}</div></div>
-              <div><span className="muted">Reviewed by HR</span><div className="muted" style={{ fontSize: 11 }}>{fmtWhen(e.hr_at) || 'not yet'}{e.hr_remarks ? ` · ${e.hr_remarks}` : ''}</div></div>
-              <div><span className="muted">Approved by the GM</span><div className="muted" style={{ fontSize: 11 }}>{fmtWhen(e.gm_at) || 'not yet'}{e.gm_remarks ? ` · ${e.gm_remarks}` : ''}</div></div>
+            {/* Each sign-off as a signature line: the e-signature (from the signer's profile) once signed, then the name. */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 16 }}>
+              {e.signoffs.map((s) => (
+                <div key={s.key} style={{ textAlign: 'center' }}>
+                  <div style={{ height: 56, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
+                    {s.signature && <img src={s.signature} alt="" style={{ maxHeight: 56, maxWidth: '100%', objectFit: 'contain' }} />}
+                  </div>
+                  <div style={{ borderTop: '1px solid var(--text, #111)', paddingTop: 2, fontWeight: 600 }}>{s.name || '—'}</div>
+                  <div className="muted" style={{ fontSize: 12 }}>{s.label}</div>
+                  <div className="muted" style={{ fontSize: 11 }}>
+                    {s.at ? fmtWhen(s.at) : 'not yet'}{s.note ? ` · ${s.note}` : ''}{s.remarks ? ` · ${s.remarks}` : ''}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 
