@@ -396,11 +396,26 @@ router.post('/templates/import', requireAuth, requirePermission(HR, 'can_add'), 
       out.push({ ...s, template_exists: !!existing, employee: employee ? { user_id: employee.user_id, employee_id: employee.employee_id, name: employee.display_name } : null,
         rater: rater ? { user_id: rater.user_id, name: rater.display_name } : null, problem });
     }
+    // One position on several sheets (an original and its REV): the LAST valid sheet sets the
+    // template; the earlier ones still put their employee in the position.
+    for (let i = 0; i < out.length; i += 1) {
+      const later = out.slice(i + 1).find((x) => !x.problem && x.position_title.toLowerCase() === out[i].position_title.toLowerCase());
+      if (later && !out[i].problem) out[i].superseded_by = later.sheet;
+    }
     if (!req.body.apply) return res.json({ sheets: out });
     const pick = Array.isArray(req.body.sheets) ? new Set(req.body.sheets) : null;
     const done = [];
     for (const s of out) {
-      if (s.problem || (pick && !pick.has(s.sheet))) continue;
+      if (pick && !pick.has(s.sheet)) continue;
+      // A sheet with a problem, or one a later sheet supersedes, does not set the template -- but
+      // its employee is still put in the position when that position gets a template.
+      if (s.problem || s.superseded_by) {
+        if (s.employee?.employee_id && s.position_title && out.some((x) => !x.problem && !x.superseded_by && x.position_title.toLowerCase() === s.position_title.toLowerCase())) {
+          await pool.query('UPDATE employees SET position_title = ? WHERE id = ?', [s.position_title, s.employee.employee_id]);
+          done.push({ sheet: s.sheet, position_title: s.position_title, template_from: out.find((x) => !x.problem && !x.superseded_by && x.position_title.toLowerCase() === s.position_title.toLowerCase()).sheet, assigned: s.employee.name });
+        }
+        continue;
+      }
       const [[existing]] = await pool.query('SELECT id FROM perf_templates WHERE LOWER(TRIM(position_title)) = LOWER(TRIM(?))', [s.position_title]);
       const tid = await writeTemplate(existing?.id || null, { position: s.position_title, kras: s.kras, department_id: null, is_active: 1 }, req.user.id);
       if (s.employee?.employee_id) await pool.query('UPDATE employees SET position_title = ? WHERE id = ?', [s.position_title, s.employee.employee_id]);
