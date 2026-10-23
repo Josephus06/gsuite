@@ -111,8 +111,17 @@ export default function EvaluationView() {
   );
 
   return (
-    <div>
-      <style>{`@media print { .pe-noprint { display: none !important; } .pe-grid { display: block !important; } }`}</style>
+    <div className="pe-print">
+      {/* On paper the tables print whole (no scroll box to clip the rating columns) in a smaller type. */}
+      <style>{`@media print {
+        .pe-noprint { display: none !important; }
+        .pe-grid { display: block !important; }
+        .pe-print .table-wrap { overflow: visible !important; }
+        .pe-print table { font-size: 10px; width: 100%; }
+        .pe-print td, .pe-print th { padding: 3px 4px !important; }
+        .pe-print select { appearance: none; border: none; padding: 0; }
+        .pe-print .card { break-inside: avoid; box-shadow: none; }
+      }`}</style>
       <div className="page-header pe-noprint">
         <h1>Performance Evaluation <span className="muted" style={{ fontSize: '0.55em', fontWeight: 400 }}>Q{e.quarter} {e.year}</span></h1>
         <div style={{ display: 'flex', gap: 8 }}>
