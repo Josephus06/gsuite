@@ -229,6 +229,9 @@ import EmployeeRecord from './pages/exams/EmployeeRecord';
 import MyTraining from './pages/training/MyTraining';
 import CourseView from './pages/training/CourseView';
 import { TrainingCourses, CourseEditor, AssignmentProgress } from './pages/training/TrainingCourses';
+import MyPerformance from './pages/performance/MyPerformance';
+import EvaluationView from './pages/performance/EvaluationView';
+import PerformanceAdmin from './pages/performance/PerformanceAdmin';
 import HrIncidentReports from './pages/HrIncidentReports';
 import HrIncidentReportView from './pages/HrIncidentReportView';
 import HrCoe from './pages/HrCoe';
@@ -341,6 +344,9 @@ function App() {
         <Route path="/hrd/training/assignments/:id" element={<AssignmentProgress />} />
         <Route path="/trainings" element={<MyTraining />} />
         <Route path="/trainings/:id" element={<CourseView />} />
+        <Route path="/performance" element={<MyPerformance />} />
+        <Route path="/performance/:id" element={<EvaluationView />} />
+        <Route path="/hrd/performance" element={<PerformanceAdmin />} />
         <Route path="/hrd/exam-questions" element={<QuestionBank />} />
         <Route path="/exams" element={<MyExams />} />
         <Route path="/exams/:id" element={<TakeExam />} />

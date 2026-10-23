@@ -636,7 +636,10 @@ async function runExamReminders() {
   }
   // Training courses (lib/training.js) are reminded on the same daily run.
   const training = await require('./training').runTrainingReminders();
-  return { reminders: sent, ...training };
+  // Performance Evaluation (lib/performance.js): a quarter past its end closes; supervisors with no
+  // remarks two weeks before it ends are reminded.
+  const performance = await require('./performance').runPerformanceJobs();
+  return { reminders: sent, ...training, ...performance };
 }
 
 module.exports = {

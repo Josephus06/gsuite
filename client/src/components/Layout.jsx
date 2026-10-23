@@ -45,6 +45,8 @@ const NAV_STRUCTURE = [
       { route: '/hrd/exam-questions', label: 'Question Bank' },
       // Training courses (2026-10-21): materials + quizzes + certificate.
       { route: '/hrd/training', label: 'Training Courses' },
+      // Quarterly performance evaluation (2026-10-23).
+      { route: '/hrd/performance', label: 'Performance Evaluation' },
       // Certificate of Employment (2026-10-22): the plain COE and the COE with rating, on the letterhead.
       { route: '/hrd/coe', label: 'Certificate of Employment' },
     ],
@@ -60,6 +62,7 @@ const NAV_STRUCTURE = [
       // The exams HR scheduled for you (2026-10-21) -- everyone has it, like the forms.
       { route: '/exams', label: 'My Exams' },
       { route: '/trainings', label: 'My Training' },
+      { route: '/performance', label: 'My Performance' },
     ],
   },
   // The company profile flipbook -- reference material anyone may show a customer,
