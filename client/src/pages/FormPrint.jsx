@@ -77,6 +77,25 @@ function GatePassSignatures({ doc }) {
   );
 }
 
+// Office Supply Requisition Form (2026-10-23), as on the paper form: Requested by / Noted by (the
+// Department Head), then Released by (HR) / Received by (the employee) signed on paper when the
+// supplies are handed over. Approved by is the approver the requestor chose.
+function OfficeSupplySignatures({ doc }) {
+  return (
+    <>
+      <div className="rf-signs">
+        <Signature image={doc.owner_signature} name={doc.name || doc.owner_name} role="Requested by" />
+        <Signature image={doc.noted_signature} name={doc.noted_by_name} role="Noted by: Department Head's Signature" />
+        <Signature image={doc.approved_signature} name={doc.approved_by_name} role="Approved by" />
+      </div>
+      <div className="rf-signs">
+        <Signature role="Released by: HR Department" />
+        <Signature role="Received by: Employee's Signature" />
+      </div>
+    </>
+  );
+}
+
 // HR's member lists: prepared / requested by HR, approved by the General Manager, as on the sheets.
 function MemberSignatures({ doc }) {
   return (
@@ -90,6 +109,7 @@ function MemberSignatures({ doc }) {
 
 function Signatures({ doc }) {
   if (doc.type === 'gate_pass') return <GatePassSignatures doc={doc} />;
+  if (doc.type === 'office_supply') return <OfficeSupplySignatures doc={doc} />;
   if (MEMBER_FORMS[doc.type]) return <MemberSignatures doc={doc} />;
   // A Leave Application is not noted (2026-10-19) -- no Noted By line, unless it was noted before then.
   const noted = doc.type !== 'leave' || !!doc.noted_by_name;
@@ -364,6 +384,29 @@ export default function FormPrint() {
               </tbody>
             </table>
             {doc.type === 'bpi_deletion' && <div style={{ fontSize: 12, marginTop: 12 }}>Thank you.<br /><br />Sincerely yours,</div>}
+          </>
+        )}
+
+        {/* Office Supply Requisition Form (asked 2026-10-23), after the paper form: Department and
+            Date, then QTY / PARTICULARS / REMARKS on ruled lines. */}
+        {doc.type === 'office_supply' && (
+          <>
+            <div className="rf-row">
+              <Field label="Department" value={doc.department} />
+              <Field label="Date" value={fmtDate(d.osr_date)} />
+            </div>
+            <table className="rf-table">
+              <thead><tr><th style={{ width: '14%' }}>QTY</th><th style={{ width: '46%' }}>PARTICULARS</th><th>REMARKS</th></tr></thead>
+              <tbody>
+                {[...(d.items || []), ...Array.from({ length: Math.max(0, 12 - (d.items || []).length) }, () => null)].map((it, i) => (
+                  <tr key={i}>
+                    <td style={{ textAlign: 'center' }}>{it ? Number(it.quantity) : ' '}</td>
+                    <td>{it ? it.particulars : ''}</td>
+                    <td>{it ? it.remarks || '' : ''}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </>
         )}
 

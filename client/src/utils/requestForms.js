@@ -20,13 +20,14 @@ export const TYPE_LABELS = {
   hmo_deletion: 'Life & Health - Deletion',
   bpi_deletion: 'BPI Deletion',
   fuel: 'Fuel Request',
+  office_supply: 'Office Supply Requisition Form',
 };
 
 // Which forms are HR's (2026-10-13) -- the form picker shows them as their own group.
-export const HR_TYPES = ['leave', 'undertime', 'overtime', 'attendance_adjustment', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion'];
+export const HR_TYPES = ['leave', 'undertime', 'overtime', 'attendance_adjustment', 'gate_pass', 'office_supply', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion'];
 
 // Forms with no expense lines (and so no amount): a trip sheet, and the attendance adjustment slip.
-export const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'undertime', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel'];
+export const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'undertime', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel', 'office_supply'];
 
 // HR's member lists (2026-10-19), after HR's own sheets -- kept in step with server/src/routes/forms.js
 // MEMBER_FORMS. Each column: key, the sheet's heading, and how it is entered.

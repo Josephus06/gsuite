@@ -444,6 +444,29 @@ export default function FormView() {
         </div>
       )}
 
+      {doc.type === 'office_supply' && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3>Office Supply Requisition</h3>
+          <Line label="Department">{doc.department}</Line>
+          <Line label="Date">{d.osr_date ? fmtDate(d.osr_date) : null}</Line>
+          <div className="table-wrap" style={{ marginTop: 12 }}>
+            <table>
+              <thead><tr><th style={{ width: 40 }}>#</th><th className="text-right" style={{ width: 90 }}>Qty</th><th>Particulars</th><th>Remarks</th></tr></thead>
+              <tbody>
+                {(d.items || []).length === 0 && (
+                  <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 12 }}>No items.</td></tr>
+                )}
+                {(d.items || []).map((it, i) => (
+                  <tr key={it.id || i}>
+                    <td>{i + 1}</td><td className="text-right">{Number(it.quantity)}</td><td>{it.particulars}</td><td>{it.remarks}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {doc.type === 'gate_pass' && (
         <div className="card" style={{ marginTop: 16 }}>
           <h3>Employee Gate Pass</h3>

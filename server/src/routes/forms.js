@@ -97,7 +97,7 @@ async function readChosen(q, body, ownerId) {
 }
 
 const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund', 'attendance_adjustment', 'overtime', 'leave', 'undertime', 'gate_pass',
-  'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel'];
+  'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel', 'office_supply'];
 const TYPE_LABELS = {
   liquidation: 'Liquidation',
   payment: 'Request for Payment',
@@ -113,9 +113,10 @@ const TYPE_LABELS = {
   hmo_deletion: 'Life & Health - Deletion',
   bpi_deletion: 'BPI Deletion',
   fuel: 'Fuel Request',
+  office_supply: 'Office Supply Requisition Form',
 };
 // Forms with no expense lines: a trip sheet, and the attendance adjustment slip.
-const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'undertime', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel'];
+const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'undertime', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel', 'office_supply'];
 // HR's member lists (asked 2026-10-19; db/add-hr-member-forms.js): Life & Health HMO enrollment and
 // deletion, and the BPI payroll-account deletion letter. One lines table; each form its own columns
 // (kept in step with client/src/utils/requestForms.js MEMBER_FORMS). required = a line needs these.
@@ -168,6 +169,23 @@ async function gatePassDetail(id) {
          LEFT JOIN users ui ON ui.id = g.time_in_by_user_id
         WHERE g.form_request_id = ?`, [id]);
     const [items] = await pool.query('SELECT id, line_no, description, department FROM form_gate_pass_items WHERE form_request_id = ? ORDER BY line_no, id', [id]);
+    return d ? { ...d, items } : null;
+  } catch (e) { if (e.code === 'ER_NO_SUCH_TABLE') return null; throw e; }
+}
+// Office Supply Requisition Form (asked 2026-10-23; db/add-office-supply-form.js): a date and lines of
+// QTY / PARTICULARS / REMARKS, after the paper form.
+const MAX_OFFICE_SUPPLY_ITEMS = 30;
+function officeSupplyLines(body) {
+  return (Array.isArray(body.os_items) ? body.os_items : [])
+    .map((it) => ({ quantity: num(it && it.quantity), particulars: trunc(it && it.particulars, 500), remarks: trunc(it && it.remarks, 500) }))
+    .filter((it) => it.particulars || it.quantity)
+    .slice(0, MAX_OFFICE_SUPPLY_ITEMS);
+}
+async function officeSupplyDetail(id) {
+  try {
+    const [[d]] = await pool.query('SELECT * FROM form_office_supply_details WHERE form_request_id = ?', [id]);
+    const [items] = await pool.query(
+      'SELECT id, line_no, quantity, particulars, remarks FROM form_office_supply_items WHERE form_request_id = ? ORDER BY line_no, id', [id]);
     return d ? { ...d, items } : null;
   } catch (e) { if (e.code === 'ER_NO_SUCH_TABLE') return null; throw e; }
 }
@@ -369,6 +387,8 @@ async function loadFull(id) {
     doc.fuel_usage = await fuelUsage(doc.user_id, d?.fuel_date, doc.id);
   } else if (doc.type === 'gate_pass') {
     doc.detail = await gatePassDetail(id);
+  } else if (doc.type === 'office_supply') {
+    doc.detail = await officeSupplyDetail(id);
   } else if (MEMBER_FORMS[doc.type]) {
     doc.detail = await memberDetail(id);
   }
@@ -1309,6 +1329,17 @@ async function writeDetail(conn, docId, type, body, items, ownerId = null) {
     return {};
   }
 
+  if (type === 'office_supply') {
+    await conn.query('INSERT INTO form_office_supply_details (form_request_id, osr_date) VALUES (?, ?)', [docId, date(body.os_date)]);
+    let n = 0;
+    for (const it of officeSupplyLines(body)) {
+      n += 1;
+      await conn.query('INSERT INTO form_office_supply_items (form_request_id, line_no, quantity, particulars, remarks) VALUES (?, ?, ?, ?, ?)',
+        [docId, n, it.quantity, it.particulars, it.remarks]);
+    }
+    return {};
+  }
+
   if (type === 'fuel') {
     const liters = num(body.fuel_liters);
     const price = num(body.fuel_price_per_liter);
@@ -1417,6 +1448,15 @@ function validate(type, body, items) {
       const miss = MEMBER_FORMS[type].required.filter((f) => !lines[i][f]);
       if (miss.length) return `Line ${i + 1}: ${miss.map((f) => LABEL[f] || f).join(', ')} required.`;
       if (lines[i].member_type && !['P', 'D'].includes(lines[i].member_type)) return `Line ${i + 1}: P / D must be P (principal) or D (dependent).`;
+    }
+  }
+  if (type === 'office_supply') {
+    if (!date(body.os_date)) return 'The date is required.';
+    const lines = officeSupplyLines(body);
+    if (!lines.length) return 'Add at least one item: its quantity and particulars.';
+    for (let i = 0; i < lines.length; i += 1) {
+      if (!lines[i].particulars) return `Line ${i + 1}: say what is requested (Particulars).`;
+      if (!(lines[i].quantity > 0)) return `Line ${i + 1}: enter the quantity.`;
     }
   }
   if (type === 'gate_pass') {
@@ -1640,12 +1680,14 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       undertime: 'form_undertime_details',
       fuel: 'form_fuel_details',
       gate_pass: 'form_gate_pass_details',
+      office_supply: 'form_office_supply_details',
       hmo_enrollment: 'form_member_details',
       hmo_deletion: 'form_member_details',
       bpi_deletion: 'form_member_details',
     }[doc.type];
     await conn.query(`DELETE FROM ${detailTable} WHERE form_request_id = ?`, [doc.id]);
     if (doc.type === 'gate_pass') await conn.query('DELETE FROM form_gate_pass_items WHERE form_request_id = ?', [doc.id]);
+    if (doc.type === 'office_supply') await conn.query('DELETE FROM form_office_supply_items WHERE form_request_id = ?', [doc.id]);
     if (MEMBER_FORMS[doc.type]) await conn.query('DELETE FROM form_member_lines WHERE form_request_id = ?', [doc.id]);
     await writeDetail(conn, doc.id, doc.type, req.body, items, doc.user_id);
 

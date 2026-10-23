@@ -55,6 +55,8 @@ export default function FormEdit() {
     ut_date: '', ut_shift_end: '', ut_time_out: '', ut_reason: '',
     // Employee Gate Pass (2026-10-14)
     gp_location_id: '', gp_date: '', gp_destination: '', gp_purpose: '',
+    // Office Supply Requisition Form (2026-10-23)
+    os_date: '',
     // HR member lists (2026-10-19)
     enrollment_for: 'HEALTH INSURANCE', letter_date: '',
     // Fuel Request (2026-10-19)
@@ -74,6 +76,7 @@ export default function FormEdit() {
   }, [type, form.fuel_date, id]);
   // Employee Gate Pass items: what is carried out, and the department it belongs to.
   const [gpItems, setGpItems] = useState([{ description: '', department: '' }]);
+  const [osItems, setOsItems] = useState([{ quantity: '', particulars: '', remarks: '' }]);
   const [locations, setLocations] = useState([]);
   const [otPeople, setOtPeople] = useState([]);
   const [items, setItems] = useState([blankItem()]);
@@ -152,6 +155,12 @@ export default function FormEdit() {
         ? d.lines.map((l) => Object.fromEntries(MEMBER_FORMS[data.type].columns.map((c) => [c.key, c.type === 'date' && l[c.key] ? String(l[c.key]).slice(0, 10) : (l[c.key] ?? '')])))
         : [blankMemberLine(data.type)]);
     }
+    if (data.type === 'office_supply') {
+      setForm((f) => ({ ...f, os_date: d.osr_date ? String(d.osr_date).slice(0, 10) : '' }));
+      setOsItems((d.items || []).length
+        ? d.items.map((it) => ({ quantity: it.quantity == null ? '' : Number(it.quantity), particulars: it.particulars || '', remarks: it.remarks || '' }))
+        : [{ quantity: '', particulars: '', remarks: '' }]);
+    }
     if (data.type === 'gate_pass') {
       setGpItems((d.items || []).length ? d.items.map((it) => ({ description: it.description || '', department: it.department || '' })) : [{ description: '', department: '' }]);
     }
@@ -197,6 +206,7 @@ export default function FormEdit() {
     const payload = {
       ...form, type,
       gp_items: type === 'gate_pass' ? gpItems.filter((r) => String(r.description || '').trim()) : undefined,
+      os_items: type === 'office_supply' ? osItems.filter((r) => String(r.particulars || '').trim() || r.quantity !== '') : undefined,
       member_lines: MEMBER_FORMS[type] ? memberLines : undefined,
       items: hasItems
         ? items.filter((r) => r.particulars || r.amount).map((r) => ({
@@ -490,6 +500,47 @@ export default function FormEdit() {
           </div>
         );
       })()}
+
+      {/* Office Supply Requisition Form (asked 2026-10-23), after the paper form: the date, then
+          QTY / PARTICULARS / REMARKS. Department above is the requesting department. */}
+      {type === 'office_supply' && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3>Office Supply Requisition</h3>
+          <div className="muted" style={{ fontSize: 12, marginTop: -6, marginBottom: 10 }}>
+            Department above is the requesting department. Noted by the Department Head, then released by HR.
+          </div>
+          <div className="field-row">
+            <div className="field">
+              <label>Date *</label>
+              <input type="date" value={form.os_date} onChange={(e) => set('os_date', e.target.value)} />
+            </div>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th style={{ width: 40 }}>#</th><th style={{ width: 110 }}>Qty *</th><th>Particulars *</th><th>Remarks</th><th style={{ width: 40 }}></th></tr></thead>
+              <tbody>
+                {osItems.map((r, i) => {
+                  const setOs = (k) => (e) => setOsItems((rs) => rs.map((x, xi) => (xi === i ? { ...x, [k]: e.target.value } : x)));
+                  return (
+                    <tr key={i}>
+                      <td>{i + 1}</td>
+                      <td><input type="number" min="0" step="any" value={r.quantity} onChange={setOs('quantity')} /></td>
+                      <td><input value={r.particulars} placeholder="e.g. Correction tape" onChange={setOs('particulars')} /></td>
+                      <td><input value={r.remarks} placeholder="e.g. For production" onChange={setOs('remarks')} /></td>
+                      <td>
+                        <button type="button" className="btn btn-sm btn-danger" title="Remove"
+                          onClick={() => setOsItems((rs) => (rs.length > 1 ? rs.filter((_, xi) => xi !== i) : [{ quantity: '', particulars: '', remarks: '' }]))}>×</button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <button type="button" className="btn btn-sm" style={{ marginTop: 8 }}
+            onClick={() => setOsItems((rs) => [...rs, { quantity: '', particulars: '', remarks: '' }])}>Add Item</button>
+        </div>
+      )}
 
       {type === 'gate_pass' && (
         <div className="card" style={{ marginTop: 16 }}>
