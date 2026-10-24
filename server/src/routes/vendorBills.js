@@ -351,7 +351,16 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
       [req.params.id]
     );
 
-    const glImpact = await computeGlImpact(vb, lines);
+    // An imported bill posts from the source's own GL entry (live_gl_entries) until it is edited --
+    // as the reports already read it -- so that is what GL Impact shows. Computing it instead left a
+    // PO bill with no header account without its expense debit (VB-24367, 2026-10-24).
+    const [liveGl] = await pool.query(
+      `SELECT account_code, MAX(account_name) AS account_name, ROUND(SUM(debit), 2) AS debit, ROUND(SUM(credit), 2) AS credit
+         FROM live_gl_entries WHERE source_type = 'vendor_bill' AND source_id = ?
+        GROUP BY account_code ORDER BY MIN(id)`, [vb.id]);
+    const glImpact = liveGl.length
+      ? liveGl.map((r) => ({ ...r, debit: Number(r.debit), credit: Number(r.credit) })).filter((r) => r.debit || r.credit)
+      : await computeGlImpact(vb, lines);
     res.json({ ...vb, gl_impact: glImpact, lines });
   } catch (err) {
     next(err);
