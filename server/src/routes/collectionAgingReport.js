@@ -95,7 +95,7 @@ async function fetchRows(query) {
     invParams.push(like, like, like, like);
   }
   const [rows] = await pool.query(
-    `SELECT cp.id AS payment_id, cp.customer_payment_no, cp.date_created AS payment_date, cp.or_no,
+    `SELECT cp.id AS payment_id, cp.customer_payment_no, cp.date_created AS payment_date, cp.or_no, cp.receipt_type,
             c.name AS customer_name, si.id AS invoice_id, si.invoice_no, si.date_created AS invoice_date,
             si.date_due, si.term, cpl.applied_amount,
             GREATEST(cp.date_created, si.date_created) AS applied_date,
@@ -118,7 +118,7 @@ async function fetchRows(query) {
   }
   const [adv] = await pool.query(
     `SELECT * FROM (
-       SELECT cp.id AS payment_id, cp.customer_payment_no, cp.date_created AS payment_date, cp.or_no,
+       SELECT cp.id AS payment_id, cp.customer_payment_no, cp.date_created AS payment_date, cp.or_no, cp.receipt_type,
               c.name AS customer_name,
               ROUND(cp.payment_amount - COALESCE((SELECT SUM(l.applied_amount) FROM customer_payment_lines l
                                                    WHERE l.customer_payment_id = cp.id AND l.sales_invoice_id IS NOT NULL), 0), 2) AS unapplied
@@ -185,7 +185,7 @@ async function fetchRows(query) {
     bucket: bucketOf(r.days_past_due != null ? Number(r.days_past_due) : (r.age_days == null ? null : Number(r.age_days))),
   }));
   const advanceRows = adv.map((r) => ({
-    source: 'payment', payment_id: r.payment_id, customer_payment_no: r.customer_payment_no, payment_date: r.payment_date, or_no: r.or_no,
+    source: 'payment', payment_id: r.payment_id, customer_payment_no: r.customer_payment_no, payment_date: r.payment_date, or_no: r.or_no, receipt_type: r.receipt_type,
     customer_name: r.customer_name, invoice_id: null, invoice_no: null, invoice_date: null, date_due: null, term: null,
     applied_date: null, age_days: null, days_past_due: null, applied_amount: Number(r.unapplied || 0), bucket: ADVANCE.key,
   }));
@@ -235,7 +235,8 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
       { header: 'Type', key: 'type', width: 12 },
       { header: 'CPAY / CM #', key: 'cpay', width: 16 },
       { header: 'Payment Date', key: 'payment_date', width: 13 },
-      { header: 'OR #', key: 'or_no', width: 12 },
+      { header: 'OR / CR #', key: 'or_no', width: 12 },
+      { header: 'PR #', key: 'pr_no', width: 12 },
       { header: 'Applied Date', key: 'applied_date', width: 13 },
       { header: 'Invoice #', key: 'invoice_no', width: 15 },
       { header: 'Invoice Date', key: 'invoice_date', width: 13 },
@@ -249,13 +250,15 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
     ];
     ws.getRow(1).font = { bold: true };
     rows.forEach((r) => ws.addRow({
-      type: r.source === 'credit_memo' ? 'Credit Memo' : 'Payment', cpay: r.customer_payment_no, payment_date: day(r.payment_date), or_no: r.or_no || '',
+      type: r.source === 'credit_memo' ? 'Credit Memo' : 'Payment', cpay: r.customer_payment_no, payment_date: day(r.payment_date),
+      // A Provisional Receipt's number in its own PR # column (2026-10-24), apart from OR / CR numbers.
+      ...(/provisional/i.test(r.receipt_type || '') ? { or_no: '', pr_no: r.or_no || '' } : { or_no: r.or_no || '', pr_no: '' }),
       applied_date: day(r.applied_date), customer: r.customer_name || '', invoice_no: r.invoice_no || '',
       invoice_date: day(r.invoice_date), date_due: day(r.date_due), term: r.term || '', age: r.age_days,
       past_due: r.days_past_due, bucket: bucketLabel(r.bucket), amount: r.applied_amount,
     }));
     ws.getColumn('amount').numFmt = '#,##0.00';
-    ws.autoFilter = { from: 'A1', to: `N${rows.length + 1}` };
+    ws.autoFilter = { from: 'A1', to: `O${rows.length + 1}` };
     ws.views = [{ state: 'frozen', ySplit: 1 }];
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="collection-aging-${from}-to-${to}.xlsx"`);

@@ -5,6 +5,7 @@ import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import CustomerPaymentModal from '../components/CustomerPaymentModal';
+import DocumentAttachments from '../components/DocumentAttachments';
 import CreditMemoModal from '../components/CreditMemoModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
@@ -296,6 +297,7 @@ export default function SalesInvoiceView() {
         <button className={`status-tab ${tab === 'gl' ? 'active' : ''}`} onClick={() => setTab('gl')}>GL Impact</button>
         <button className={`status-tab ${tab === 'related' ? 'active' : ''}`} onClick={() => setTab('related')}>Related Records</button>
         <button className={`status-tab ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}>System Info</button>
+        <button className={`status-tab ${tab === 'attachments' ? 'active' : ''}`} onClick={() => setTab('attachments')}>Attachments</button>
       </div>
 
       {tab === 'items' && (
@@ -422,6 +424,7 @@ export default function SalesInvoiceView() {
         </div>
       )}
 
+      {tab === 'attachments' && <DocumentAttachments docType="sales_invoice" docId={id} />}
       {tab === 'system' && (
         <div className="card">
           <DataTable

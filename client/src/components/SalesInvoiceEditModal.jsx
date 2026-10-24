@@ -4,6 +4,7 @@ import Modal from './Modal';
 import EntityPicker from './EntityPicker';
 import LoadingSpinner from './LoadingSpinner';
 import { headerDepartmentError } from '../utils/requireDepartment';
+import { useAuth } from '../context/useAuth';
 
 // Editing an OPEN invoice: the header, and the items.
 //
@@ -30,6 +31,10 @@ function addDays(dateStr, days) {
 const day = (v) => (v ? String(v).slice(0, 10) : '');
 
 export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
+  // Sales Rep, Office Location and Department come from the order the invoice bills; only a System
+  // Admin changes them (asked 2026-10-24) -- one the invoice has none of stays open to fill.
+  const { user } = useAuth();
+  const isAdmin = user?.account_type === 'System Admin';
   const [dateCreated, setDateCreated] = useState(day(invoice.date_created));
   const [dateDue, setDateDue] = useState(day(invoice.date_due));
   const [term, setTerm] = useState(invoice.term || '');
@@ -245,7 +250,7 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
             <div className="field">
               <label>Sales Rep</label>
               <EntityPicker
-                label="Sales Rep" items={employees} value={salesRep?.id || ''}
+                label="Sales Rep" items={employees} value={salesRep?.id || ''} disabled={!isAdmin && !!invoice.sales_rep_id}
                 getLabel={(e) => (e.name ? e.name : `${e.first_name} ${e.last_name}`)}
                 columns={[{ key: 'name', label: 'Name', render: (e) => `${e.first_name} ${e.last_name}` }]}
                 searchKeys={['first_name', 'last_name']}
@@ -256,7 +261,7 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
             <div className="field">
               <label>Office Location</label>
               <EntityPicker
-                label="Office Location" items={locations} value={officeLocation?.id || ''}
+                label="Office Location" items={locations} value={officeLocation?.id || ''} disabled={!isAdmin && !!invoice.office_location_id}
                 getLabel={(l) => l.location_name}
                 columns={[{ key: 'location_name', label: 'Location' }]}
                 searchKeys={['location_name']}
@@ -267,7 +272,7 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
             <div className="field">
               <label>Department *</label>
               <EntityPicker
-                label="Department" items={departments} value={department?.id || ''}
+                label="Department" items={departments} value={department?.id || ''} disabled={!isAdmin && !!invoice.department_id}
                 getLabel={(d) => d.name}
                 columns={[{ key: 'name', label: 'Department' }]}
                 searchKeys={['name']}

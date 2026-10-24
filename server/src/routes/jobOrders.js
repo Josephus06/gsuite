@@ -1191,6 +1191,32 @@ router.put('/:id/processes/:procId', requireAuth, requireJobOrderEdit, async (re
   }
 });
 
+// ▲ ▼ on the Materials tab (2026-10-24): `ids` is every process line of the JO in its new order.
+router.post('/:id/processes/reorder', requireAuth, requireJobOrderEdit, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [rows] = await conn.query('SELECT id FROM job_order_processes WHERE job_order_id = ?', [req.params.id]);
+    const have = new Set(rows.map((r) => Number(r.id)));
+    const want = (Array.isArray(req.body.ids) ? req.body.ids : []).map(Number);
+    if (want.length !== have.size || new Set(want).size !== want.length || !want.every((x) => have.has(x))) {
+      await conn.rollback();
+      return res.status(409).json({ error: 'The process lines changed since this form was opened. Reload and try again.' });
+    }
+    for (let i = 0; i < want.length; i++) {
+      await conn.query('UPDATE job_order_processes SET line_no = ? WHERE id = ?', [i + 1, want[i]]);
+    }
+    await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'process order' });
+    await conn.commit();
+    res.status(204).send();
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
 router.delete('/:id/processes/:procId', requireAuth, requireJobOrderEdit, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {

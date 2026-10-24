@@ -3,7 +3,7 @@ const ExcelJS = require('exceljs');
 const pool = require('../db');
 const { grossDueSql } = require('../lib/invoiceDue');
 const { assignDocNo } = require('../lib/docNumber');
-const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
+const { requireAuth, requirePermission, userCan, isSystemAdmin } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeSalesOrderStatus, invoicedOrTicketedSql, openDtQtySql } = require('../lib/salesOrderStatus');
 const { recomputeNssoStatus } = require('../lib/nssoStatus');
@@ -281,6 +281,20 @@ function priceOverrideFor(body, lineId) {
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0) {
     const err = new Error('Price/Unit must be a number of zero or more.');
+    err.status = 400;
+    throw err;
+  }
+  return n;
+}
+
+// The quantity to bill on a Sales Order line when the person billing chose less than all of it --
+// partial invoicing, one unit of a line of 5 (asked 2026-10-24). null = bill all that is billable.
+function qtyOverrideFor(body, lineId, billable, lineNo) {
+  const raw = body?.qty_overrides?.[lineId];
+  if (raw === undefined || raw === null || raw === '') return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || n > billable + 1e-9) {
+    const err = new Error(`Line ${lineNo}: the quantity to invoice must be more than 0 and at most ${billable}.`);
     err.status = 400;
     throw err;
   }
@@ -1346,7 +1360,8 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
     // disc_percent/tax rate are fixed per-unit rates, so Subtotal/Disc/Net/Tax/Gross are
     // recomputed against that billable qty rather than copied from the line's full-Qty totals.
     const lines = rawLines.map((l) => {
-      const invoicedNow = Number(l.quantity_delivered) - Number(l.quantity_invoiced) - Number(l.open_dt_qty);
+      const billable = Number(l.quantity_delivered) - Number(l.quantity_invoiced) - Number(l.open_dt_qty);
+      const invoicedNow = qtyOverrideFor(req.body, l.id, billable, l.line_no) ?? billable;
       const price = priceOverrideFor(req.body, l.id);
       if (price === null) return { ...l, invoicedNow, ...soLineBillableAmounts(l, l.quantity, invoicedNow) };
       const amounts = computeBillableLineAmounts({
@@ -1486,6 +1501,12 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (!si) return res.status(404).json({ error: 'Not found' });
     const refusal = await whyNotEditable(conn, si);
     if (refusal) return res.status(409).json({ error: refusal });
+    // Sales Rep, Office Location and Department come from the order the invoice bills; only a System
+    // Admin changes them (asked 2026-10-24). Anyone else's edit keeps what the invoice has; one it
+    // has none of can still be filled.
+    if (!(await isSystemAdmin(req.user.id))) {
+      for (const f of ['sales_rep_id', 'office_location_id', 'department_id']) if (si[f] != null) delete req.body[f];
+    }
     // An edit leaves out fields it is not changing, so the department checked is the one the
     // invoice will have after this save.
     const deptError = headerDepartmentError(req.body.department_id === undefined ? si.department_id : req.body.department_id);

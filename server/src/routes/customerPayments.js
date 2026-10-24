@@ -452,6 +452,11 @@ function listFilter(query) {
   return { search, where, params };
 }
 
+// A Provisional Receipt's number goes in its own PR # column, not with the OR / CR numbers
+// (asked 2026-10-24): all three are kept in or_no, told apart by receipt_type.
+const receiptNos = (r) => (/provisional/i.test(r.receipt_type || '')
+  ? { or_no: '', pr_no: r.or_no || '' } : { or_no: r.or_no || '', pr_no: '' });
+
 // Extract: EVERY payment under the list's current filters, as a workbook -- the whole list, where
 // Extract Unapplied is only the part with money still on account. Same listFilter as the list, so
 // the file holds exactly what the screen is filtered to, voids included when Status is ALL.
@@ -463,7 +468,7 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(
       `SELECT cp.customer_payment_no, cp.date_created, c.name AS customer_name, loc.location_name,
-              d.name AS department_name, cp.or_no, pm.name AS payment_method_name, cp.payment_amount,
+              d.name AS department_name, cp.receipt_type, cp.or_no, pm.name AS payment_method_name, cp.payment_amount,
               cp.applied_amount, cp.unapplied_amount, cp.status, cp.memo
        FROM customer_payments cp
        LEFT JOIN customers c ON c.id = cp.customer_id
@@ -487,7 +492,8 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
       { header: 'Customer', key: 'customer', width: 38 },
       { header: 'Location', key: 'location', width: 22 },
       { header: 'Department', key: 'department', width: 20 },
-      { header: 'OR #', key: 'or_no', width: 14 },
+      { header: 'OR / CR #', key: 'or_no', width: 14 },
+      { header: 'PR #', key: 'pr_no', width: 14 },
       { header: 'Payment Method', key: 'method', width: 18 },
       { header: 'Payment Amount', key: 'payment', width: 16, style: money },
       { header: 'Applied Amount', key: 'applied', width: 16, style: money },
@@ -495,7 +501,7 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
       { header: 'Status', key: 'status', width: 14 },
       { header: 'Memo', key: 'memo', width: 40 },
     ];
-    ws.autoFilter = 'A1:L1';
+    ws.autoFilter = 'A1:M1';
     ws.getRow(1).font = { bold: true };
     ws.getRow(1).commit();
 
@@ -505,7 +511,7 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
       ws.addRow({
         no: r.customer_payment_no, date: day(r.date_created),
         customer: r.customer_name || '', location: r.location_name || '', department: r.department_name || '',
-        or_no: r.or_no || '', method: r.payment_method_name || '',
+        ...receiptNos(r), method: r.payment_method_name || '',
         // Numbers, not preformatted strings, so the columns can be totalled.
         payment: Number(r.payment_amount || 0), applied: Number(r.applied_amount || 0),
         unapplied: Number(r.unapplied_amount || 0),
@@ -532,7 +538,7 @@ router.get('/export-unapplied', requireAuth, requirePermission(ROUTE, 'can_view'
     where.push('cp.unapplied_amount > 0.005', "cp.status <> 'voided'");
     const [rows] = await pool.query(
       `SELECT cp.customer_payment_no, cp.date_created, c.name AS customer_name, loc.location_name,
-              d.name AS department_name, cp.or_no, pm.name AS payment_method_name, cp.payment_amount,
+              d.name AS department_name, cp.receipt_type, cp.or_no, pm.name AS payment_method_name, cp.payment_amount,
               cp.applied_amount, cp.unapplied_amount, cp.status, cp.memo
        FROM customer_payments cp
        LEFT JOIN customers c ON c.id = cp.customer_id
@@ -552,7 +558,8 @@ router.get('/export-unapplied', requireAuth, requirePermission(ROUTE, 'can_view'
       { header: 'Customer', key: 'customer', width: 38 },
       { header: 'Location', key: 'location', width: 22 },
       { header: 'Department', key: 'department', width: 20 },
-      { header: 'OR #', key: 'or_no', width: 14 },
+      { header: 'OR / CR #', key: 'or_no', width: 14 },
+      { header: 'PR #', key: 'pr_no', width: 14 },
       { header: 'Payment Method', key: 'method', width: 18 },
       { header: 'Payment Amount', key: 'payment', width: 16 },
       { header: 'Applied Amount', key: 'applied', width: 16 },
@@ -566,7 +573,7 @@ router.get('/export-unapplied', requireAuth, requirePermission(ROUTE, 'can_view'
       ws.addRow({
         no: r.customer_payment_no, date: r.date_created ? String(r.date_created instanceof Date ? r.date_created.toISOString() : r.date_created).slice(0, 10) : '',
         customer: r.customer_name || '', location: r.location_name || '', department: r.department_name || '',
-        or_no: r.or_no || '', method: r.payment_method_name || '',
+        ...receiptNos(r), method: r.payment_method_name || '',
         // Numbers with a display format, not preformatted strings, so the columns can be totalled.
         payment: Number(r.payment_amount || 0), applied: Number(r.applied_amount || 0), unapplied: Number(r.unapplied_amount || 0),
         status: STATUS[r.status] || r.status, memo: r.memo || '',
@@ -576,7 +583,7 @@ router.get('/export-unapplied', requireAuth, requirePermission(ROUTE, 'can_view'
     const totalRow = ws.addRow({ customer: `TOTAL (${rows.length} payment${rows.length === 1 ? '' : 's'})`,
       unapplied: rows.reduce((s, r) => s + Number(r.unapplied_amount || 0), 0) });
     totalRow.font = { bold: true };
-    ws.autoFilter = { from: 'A1', to: `L${rows.length + 1}` };
+    ws.autoFilter = { from: 'A1', to: `M${rows.length + 1}` };
     ws.views = [{ state: 'frozen', ySplit: 1 }];
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

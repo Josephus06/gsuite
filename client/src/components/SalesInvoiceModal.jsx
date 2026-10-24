@@ -4,6 +4,7 @@ import EntityPicker from './EntityPicker';
 import EstimatePicker from './EstimatePicker';
 import LoadingSpinner from './LoadingSpinner';
 import { headerDepartmentError } from '../utils/requireDepartment';
+import { useAuth } from '../context/useAuth';
 
 function qty(v) {
   const n = Number(v);
@@ -78,6 +79,11 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
   const [salesRep, setSalesRep] = useState(null);
   const [officeLocation, setOfficeLocation] = useState(null);
   const [department, setDepartment] = useState(null);
+  // Sales Rep, Office Location and Department come from the order being billed; only a System Admin
+  // changes them (asked 2026-10-24). One the order does not give stays open to fill.
+  const { user } = useAuth();
+  const isAdmin = user?.account_type === 'System Admin';
+  const [fromOrder, setFromOrder] = useState({});
   const [billToAddress, setBillToAddress] = useState('');
   const [memo, setMemo] = useState('');
   const [withholdingPct, setWithholdingPct] = useState(0);
@@ -85,6 +91,9 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
   // Price/Unit typed over a line's own, keyed like excludedIds. Not offered when billing an
   // Estimate, whose save path does not take it.
   const [priceEdits, setPriceEdits] = useState({});
+  // Partial invoicing (asked 2026-10-24): a Sales Order line with more than 1 to bill can be billed
+  // a part at a time -- the rest stays billable for the next invoice.
+  const [qtyEdits, setQtyEdits] = useState({});
   const [employees, setEmployees] = useState([]);
   const [locations, setLocations] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -139,6 +148,7 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
       setPaymentTerm(terms.find((t) => norm(t.term_name) === norm(sourceTerm)) || null);
       setPoNo(d.po_no || '');
       setMemo(d.memo || '');
+      setFromOrder({ rep: !!d.sales_rep_id, loc: !!d.office_location_id, dept: !!d.department_id });
       if (d.sales_rep_id) setSalesRep({ id: d.sales_rep_id, first_name: d.sales_rep_name?.split(' ')[0], last_name: d.sales_rep_name?.split(' ').slice(1).join(' ') });
       if (d.office_location_id) setOfficeLocation({ id: d.office_location_id, location_name: d.office_location_name });
       if (d.department_id) {
@@ -153,7 +163,7 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
         // department, so collapsing whitespace alone would miss three of the eleven.
         const key = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
         const division = deptRes.data.find((x) => key(x.name) === key(d.sales_division_name));
-        if (division) setDepartment(division);
+        if (division) { setDepartment(division); setFromOrder((x) => ({ ...x, dept: true })); }
       }
       // From the matched term's own No. of Days where there is one. The flat +30 remains the
       // fallback for a document carrying no term, or one that matches nothing in the list --
@@ -197,8 +207,30 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
   // it needs its own key; SO-sourced lines keep using theirs, and estimate-sourced lines
   // are keyed on the estimate line they came from.
   const lineKey = (l, idx) => l.delivery_ticket_line_id ?? l.sales_order_line_id ?? l.nsso_line_id ?? l.estimate_job_order_id ?? idx;
-  const shownLines = data.lines.map((l, idx) => repriced(l, priceEdits[lineKey(l, idx)]));
+  const canEditQty = !fromEstimate && !fromTicket && !nssoId;
+  // The quantity typed for a line, when it is a valid part of what is billable; else null.
+  const partQty = (l, key) => {
+    const v = qtyEdits[key];
+    if (!canEditQty || v === undefined || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 && n < Number(l.quantity) ? n : null;
+  };
+  const badQty = canEditQty ? data.lines.map((l, idx) => {
+    const key = lineKey(l, idx);
+    const v = qtyEdits[key];
+    if (excludedIds.has(key) || v === undefined || v === '') return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 && n <= Number(l.quantity) ? null : idx + 1;
+  }).filter(Boolean) : [];
+  const shownLines = data.lines.map((l, idx) => {
+    const key = lineKey(l, idx);
+    const q = partQty(l, key);
+    return q == null ? repriced(l, priceEdits[key]) : repriced({ ...l, quantity: q }, priceEdits[key] ?? String(l.price_per_unit ?? 0));
+  });
   const includedLines = shownLines.filter((l, idx) => !excludedIds.has(lineKey(data.lines[idx], idx)));
+  const qtyOverrides = Object.fromEntries(data.lines
+    .map((l, idx) => [lineKey(l, idx), partQty(l, lineKey(l, idx))])
+    .filter(([key, q]) => q != null && !excludedIds.has(key)));
   const canEditPrice = !fromEstimate;
   // Only the lines whose price actually changed are sent, keyed by the source line id the
   // server bills from.
@@ -222,6 +254,7 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
     setError('');
     if (fromEstimate && !estimate) { setError('Choose an Estimate first.'); return; }
     if (!includedLines.length) { setError('Include at least one item.'); return; }
+    if (badQty.length) { setError(`Line ${badQty.join(', ')}: the quantity to invoice must be more than 0 and no more than what is left to bill.`); return; }
     const deptError = headerDepartmentError(department?.id);
     if (deptError) { setError(deptError); return; }
     setSaving(true);
@@ -255,6 +288,7 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
         memo,
         withholding_tax_pct: withholdingPct,
         ...(canEditPrice && Object.keys(priceOverrides).length ? { price_overrides: priceOverrides } : {}),
+        ...(Object.keys(qtyOverrides).length ? { qty_overrides: qtyOverrides } : {}),
       });
       onSaved(si);
     } catch (err) {
@@ -340,7 +374,7 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
               <div className="field">
                 <label>Sales Rep</label>
                 <EntityPicker
-                  label="Sales Rep" items={employees} value={salesRep?.id || ''}
+                  label="Sales Rep" items={employees} value={salesRep?.id || ''} disabled={!isAdmin && fromOrder.rep}
                   getLabel={(e) => `${e.first_name} ${e.last_name}`}
                   columns={[{ key: 'name', label: 'Name', render: (e) => `${e.first_name} ${e.last_name}` }]}
                   searchKeys={['first_name', 'last_name']}
@@ -350,7 +384,7 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
               <div className="field">
                 <label>Office Location</label>
                 <EntityPicker
-                  label="Office Location" items={locations} value={officeLocation?.id || ''} getLabel={(l) => l.location_name}
+                  label="Office Location" items={locations} value={officeLocation?.id || ''} getLabel={(l) => l.location_name} disabled={!isAdmin && fromOrder.loc}
                   columns={[{ key: 'location_name', label: 'Name' }]} searchKeys={['location_name']}
                   onSelect={setOfficeLocation}
                 />
@@ -358,7 +392,7 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
               <div className="field">
                 <label>Department *</label>
                 <EntityPicker
-                  label="Department" items={departments} value={department?.id || ''} getLabel={(d) => d.name}
+                  label="Department" items={departments} value={department?.id || ''} getLabel={(d) => d.name} disabled={!isAdmin && fromOrder.dept}
                   columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']}
                   onSelect={setDepartment}
                 />
@@ -467,7 +501,16 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
                       <td>{l.item_name}</td>
                       <td>{l.description}</td>
                       <td>{l.job_location_name}</td>
-                      <td>{qty(l.quantity)}</td>
+                      <td>
+                        {canEditQty && !excluded && Number(data.lines[idx].quantity) > 1 ? (
+                          <input
+                            type="number" min="0" step="any" style={{ width: 80, textAlign: 'right' }}
+                            value={qtyEdits[key] ?? data.lines[idx].quantity ?? ''}
+                            title={`Bill part of it: up to ${qty(data.lines[idx].quantity)}; the rest stays billable`}
+                            onChange={(e) => setQtyEdits((prev) => ({ ...prev, [key]: e.target.value }))}
+                          />
+                        ) : qty(l.quantity)}
+                      </td>
                       <td>{l.units}</td>
                       <td>
                         {canEditPrice && !excluded ? (

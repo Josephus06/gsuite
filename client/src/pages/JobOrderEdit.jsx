@@ -210,6 +210,21 @@ export default function JobOrderEdit() {
     await commitMaterial(procId, { ...overrides, total });
   }
 
+  // ▲ ▼ put the processes in sequence, as on the estimate.
+  async function moveMaterial(idx, dir) {
+    if (idx + dir < 0 || idx + dir >= processes.length) return;
+    const before = processes;
+    const next = [...processes];
+    [next[idx], next[idx + dir]] = [next[idx + dir], next[idx]];
+    setProcesses(next);
+    try {
+      await api.post(`/job-orders/${id}/processes/reorder`, { ids: next.map((p) => p.id) });
+    } catch (err) {
+      setProcesses(before);
+      setError(err.response?.data?.error || 'Could not move the process line.');
+    }
+  }
+
   async function deleteMaterial(procId) {
     if (!confirm('Delete this material line?')) return;
     await api.delete(`/job-orders/${id}/processes/${procId}`);
@@ -387,7 +402,11 @@ export default function JobOrderEdit() {
                   <tr key={p.id}>
                     <td>{idx + 1}</td>
                     {PROCESS_COLUMNS.map((c) => <td key={c.key}>{materialCell(c, p)}</td>)}
-                    <td><button className="btn btn-sm btn-danger" onClick={() => deleteMaterial(p.id)}>Delete</button></td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <button type="button" className="btn btn-sm" title="Move this process up" disabled={idx === 0} onClick={() => moveMaterial(idx, -1)}>▲</button>
+                      <button type="button" className="btn btn-sm" title="Move this process down" disabled={idx === processes.length - 1} onClick={() => moveMaterial(idx, 1)}>▼</button>
+                      <button className="btn btn-sm btn-danger" onClick={() => deleteMaterial(p.id)}>Delete</button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

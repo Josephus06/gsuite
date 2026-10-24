@@ -42,6 +42,7 @@ const itemDeliveryRoutes = require('./routes/itemDeliveries');
 const salesInvoiceRoutes = require('./routes/salesInvoices');
 const deliveryTicketRoutes = require('./routes/deliveryTickets');
 const customerPaymentRoutes = require('./routes/customerPayments');
+const documentAttachmentRoutes = require('./routes/documentAttachments');
 const statementOfAccountRoutes = require('./routes/statementOfAccounts');
 const creditMemoRoutes = require('./routes/creditMemos');
 const customerRefundRoutes = require('./routes/customerRefunds');
@@ -341,6 +342,8 @@ app.use('/api/item-deliveries', itemDeliveryRoutes);
 app.use('/api/sales-invoices', salesInvoiceRoutes);
 app.use('/api/delivery-tickets', deliveryTicketRoutes);
 app.use('/api/customer-payments', customerPaymentRoutes);
+// BIR 2307 copies and other files on a Customer Payment / Sales Invoice (2026-10-24).
+app.use('/api/document-attachments', documentAttachmentRoutes);
 app.use('/api/statement-of-accounts', statementOfAccountRoutes);
 app.use('/api/credit-memos', creditMemoRoutes);
 app.use('/api/customer-refunds', customerRefundRoutes);

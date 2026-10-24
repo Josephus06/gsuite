@@ -3,6 +3,7 @@ import api from '../api/client';
 import EntityPicker from './EntityPicker';
 import LoadingSpinner from './LoadingSpinner';
 import { headerDepartmentError } from '../utils/requireDepartment';
+import { useAuth } from '../context/useAuth';
 
 function money(v) {
   const n = Number(v);
@@ -37,6 +38,10 @@ const blankLine = () => ({ key: Math.random().toString(36).slice(2), item: null,
 // printed form, and two invoices cannot share one. Only an invoice with no order behind it is
 // offered this (see SalesInvoiceView).
 export default function StandaloneInvoiceModal({ onClose, onSaved, replicateFrom }) {
+  // A replica keeps the original's Sales Rep, Office Location and Department; only a System Admin
+  // changes them (asked 2026-10-24). A new standalone invoice has no order to take them from.
+  const { user } = useAuth();
+  const lockHeader = !!replicateFrom && user?.account_type !== 'System Admin';
   const [replicatedFrom, setReplicatedFrom] = useState('');
   const [meta, setMeta] = useState(null);
   const [employees, setEmployees] = useState([]);
@@ -243,7 +248,7 @@ export default function StandaloneInvoiceModal({ onClose, onSaved, replicateFrom
               <div className="field">
                 <label>Sales Rep</label>
                 <EntityPicker
-                  label="Sales Rep" items={employees} value={salesRep?.id || ''}
+                  label="Sales Rep" items={employees} value={salesRep?.id || ''} disabled={lockHeader && !!salesRep}
                   getLabel={(e) => `${e.first_name} ${e.last_name}`}
                   columns={[{ key: 'name', label: 'Name', render: (e) => `${e.first_name} ${e.last_name}` }]}
                   searchKeys={['first_name', 'last_name']} onSelect={setSalesRep}
@@ -252,14 +257,14 @@ export default function StandaloneInvoiceModal({ onClose, onSaved, replicateFrom
               <div className="field">
                 <label>Office Location</label>
                 <EntityPicker
-                  label="Office Location" items={locations} value={officeLocation?.id || ''} getLabel={(l) => l.location_name}
+                  label="Office Location" items={locations} value={officeLocation?.id || ''} getLabel={(l) => l.location_name} disabled={lockHeader && !!officeLocation}
                   columns={[{ key: 'location_name', label: 'Name' }]} searchKeys={['location_name']} onSelect={setOfficeLocation}
                 />
               </div>
               <div className="field">
                 <label>Department *</label>
                 <EntityPicker
-                  label="Department" items={departments} value={department?.id || ''} getLabel={(d) => d.name}
+                  label="Department" items={departments} value={department?.id || ''} getLabel={(d) => d.name} disabled={lockHeader && !!department}
                   columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']} onSelect={setDepartment}
                 />
               </div>

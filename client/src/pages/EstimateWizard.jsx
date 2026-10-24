@@ -616,7 +616,26 @@ export default function EstimateWizard() {
 
   // --- Process row helpers ---
 
+  // A process line needs its Process Qty, and its Material Qty when it carries an item, before the
+  // next process is added or the estimate moves on (asked 2026-10-24). Returns "process 2 (Process
+  // Qty)"-style labels for one job line.
+  const qtyMissing = (v) => !(Number(v) > 0);
+  function processQtyGaps(jo) {
+    return (jo?.processes || []).map((p, pi) => {
+      const miss = [qtyMissing(p.process_qty) && 'Process Qty', p.item_id && qtyMissing(p.qty) && 'Material Qty'].filter(Boolean);
+      return miss.length ? `process ${pi + 1} (${miss.join(', ')})` : null;
+    }).filter(Boolean);
+  }
+  function blockOnProcessGaps(joIdx) {
+    const gaps = processQtyGaps(jobOrdersRef.current[joIdx]);
+    if (!gaps.length) return false;
+    setError(`Line ${joIdx + 1}: fill in ${gaps.join(', ')} before adding the next process.`);
+    return true;
+  }
+
   function addProcessRow(joIdx) {
+    if (blockOnProcessGaps(joIdx)) return;
+    setError('');
     setJobOrders((prev) => prev.map((r, i) => (i === joIdx
       ? { ...r, processes: [...(r.processes || []), { _tempId: `draft-${Date.now()}`, id: null, ...EMPTY_PROC }] }
       : r)));
@@ -1037,6 +1056,8 @@ export default function EstimateWizard() {
 
   async function openProcessPicker(joIdx, jobTypeId) {
     if (!jobTypeId) return;
+    if (blockOnProcessGaps(joIdx)) return;
+    setError('');
     setProcessPicker({ joIdx, jobTypeId, rows: [], selected: new Set(), loading: true, search: '' });
     try {
       const { data } = await api.get(`/job-types/${jobTypeId}/processes`);
@@ -1693,6 +1714,14 @@ export default function EstimateWizard() {
                   const noTax = jobOrders.map((jo, i) => (jo.tax_code_id ? null : i + 1)).filter(Boolean);
                   if (noTax.length) {
                     setError(`Tax Code is required on every job line: line ${noTax.slice(0, 8).join(', ')}${noTax.length > 8 ? ` and ${noTax.length - 8} more` : ''}.`);
+                    return;
+                  }
+                  const qtyGaps = jobOrders.map((jo, i) => {
+                    const g = processQtyGaps(jo);
+                    return g.length ? `line ${i + 1} ${g.join(', ')}` : null;
+                  }).filter(Boolean);
+                  if (qtyGaps.length) {
+                    setError(`Process Qty and Material Qty are required: ${qtyGaps.slice(0, 5).join('; ')}${qtyGaps.length > 5 ? `; and ${qtyGaps.length - 5} more line(s)` : ''}.`);
                     return;
                   }
                   saveHeaderAndGoTo(3);

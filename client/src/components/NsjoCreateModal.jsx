@@ -38,6 +38,13 @@ export default function NsjoCreateModal({ nssoId, lineId, nssoType, onClose, onS
   const setRow = (i, patch) => setRows((r) => r.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
   const addRow = () => setRows((r) => [...r, { process_id: null, process_name: '', process_qty: 0, process_uom: '', category: '', parts: '', item_id: null, item_name: '', length: '', width: '', uom: '', qty: 0, unit: '', remarks: '' }]);
   const delRow = (i) => setRows((r) => r.filter((_, idx) => idx !== i));
+  // ▲ ▼ put the processes in sequence, as on the estimate; the JO takes them in this order.
+  const moveRow = (i, dir) => setRows((r) => {
+    if (i + dir < 0 || i + dir >= r.length) return r;
+    const next = [...r];
+    [next[i], next[i + dir]] = [next[i + dir], next[i]];
+    return next;
+  });
 
   async function save() {
     setError('');
@@ -110,7 +117,11 @@ export default function NsjoCreateModal({ nssoId, lineId, nssoType, onClose, onS
                 {rows.length === 0 && <tr><td colSpan={13} className="muted" style={{ textAlign: 'center', padding: 12 }}>No processes. Click Add.</td></tr>}
                 {rows.map((r, i) => (
                   <tr key={i}>
-                    <td><button type="button" className="btn btn-sm btn-warning" onClick={() => delRow(i)}>✕</button></td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <button type="button" className="btn btn-sm" title="Move this process up" disabled={i === 0} onClick={() => moveRow(i, -1)}>▲</button>
+                      <button type="button" className="btn btn-sm" title="Move this process down" disabled={i === rows.length - 1} onClick={() => moveRow(i, 1)}>▼</button>
+                      <button type="button" className="btn btn-sm btn-warning" onClick={() => delRow(i)}>✕</button>
+                    </td>
                     <td style={{ minWidth: 200 }}>
                       <EntityPicker label="Process" items={meta?.processes || []} value={r.process_id || ''} getLabel={(p) => p.process_name}
                         columns={[{ key: 'process_code', label: 'Code' }, { key: 'process_name', label: 'Name' }]} searchKeys={['process_code', 'process_name']}

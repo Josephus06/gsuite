@@ -6,6 +6,7 @@ import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import CustomerPaymentModal from '../components/CustomerPaymentModal';
+import DocumentAttachments from '../components/DocumentAttachments';
 import ApplyPaymentModal from '../components/ApplyPaymentModal';
 
 import { displayDate, displayAuditTime } from '../utils/dates';
@@ -203,6 +204,7 @@ export default function CustomerPaymentView() {
         <button className={`status-tab ${tab === 'credits' ? 'active' : ''}`} onClick={() => setTab('credits')}>Credits</button>
         <button className={`status-tab ${tab === 'gl' ? 'active' : ''}`} onClick={() => setTab('gl')}>GL Impact</button>
         <button className={`status-tab ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}>System Info</button>
+        <button className={`status-tab ${tab === 'attachments' ? 'active' : ''}`} onClick={() => setTab('attachments')}>Attachments</button>
       </div>
 
       {tab === 'apply' && (
@@ -286,6 +288,7 @@ export default function CustomerPaymentView() {
         </div>
       )}
 
+      {tab === 'attachments' && <DocumentAttachments docType="customer_payment" docId={id} />}
       {tab === 'system' && (
         <div className="card">
           <DataTable
