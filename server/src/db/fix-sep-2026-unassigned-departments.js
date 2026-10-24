@@ -1,7 +1,7 @@
 // September 2026 postings the source saved with no department, so the department reports showed
 // them as Unassigned (2026-10-24). Departments as the user confirmed:
 //
-//   VB-24623  30506 Freight In         3,571.43  -> Production-SIGNAGE  (freight on brass sheets)
+//   VB-24623  30506 Freight In         3,571.43  -> Supply Chain        (freight on brass sheets)
 //   CHK-9205  30619 Interest Expense   1,197.81  -> Accounting          (China Bank vehicle loans,
 //   CHK-9284  30619 Interest Expense   3,611.50  -> Accounting           as the rest of September's
 //   CHK-9241  30619 Interest Expense   1,445.97  -> Accounting           interest is)
@@ -20,7 +20,7 @@ const pool = require('../db');
 
 const APPLY = process.argv.includes('--apply');
 const FIXES = [
-  { kind: 'bill', no: 'VB-24623', account: '30506', amount: 3571.43, dept: 'Production-SIGNAGE' },
+  { kind: 'bill', no: 'VB-24623', account: '30506', amount: 3571.43, dept: 'Supply Chain' },
   { kind: 'cheque', no: 'CHK-9205', account: '30619', amount: 1197.81, dept: 'Accounting' },
   { kind: 'cheque', no: 'CHK-9284', account: '30619', amount: 3611.5, dept: 'Accounting' },
   { kind: 'cheque', no: 'CHK-9241', account: '30619', amount: 1445.97, dept: 'Accounting' },
