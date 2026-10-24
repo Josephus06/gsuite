@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { deriveOnHand, movementsSql, movementParams } = require('../lib/stockLedger');
+const { followItemExpenseAccount } = require('../lib/itemAccountFollow');
 
 const router = express.Router();
 const ROUTE = '/inventory';
@@ -432,7 +433,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
-    const [[before]] = await pool.query('SELECT id FROM inventories WHERE id = ?', [req.params.id]);
+    const [[before]] = await pool.query('SELECT id, expense_account_id FROM inventories WHERE id = ?', [req.params.id]);
     if (!before) return res.status(404).json({ error: 'Not found' });
 
     const body = { ...req.body };
@@ -445,7 +446,14 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     );
 
     const [[row]] = await pool.query('SELECT * FROM inventories WHERE id = ?', [req.params.id]);
-    res.json(row);
+    // A changed Expense Account: the item's bills in open A/P periods follow it (lib/itemAccountFollow.js).
+    let accountFollow = null;
+    if (before.expense_account_id && row.expense_account_id && Number(before.expense_account_id) !== Number(row.expense_account_id)) {
+      accountFollow = await followItemExpenseAccount({
+        itemId: row.id, oldAccountId: before.expense_account_id, newAccountId: row.expense_account_id, userId: req.user.id,
+      });
+    }
+    res.json({ ...row, account_follow: accountFollow });
   } catch (err) {
     next(err);
   }

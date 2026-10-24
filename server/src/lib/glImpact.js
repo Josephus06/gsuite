@@ -781,7 +781,12 @@ async function computeVendorBillGl(vb, lines) {
   }
   // A standalone (expense) bill's lines each name the account they debit; a PO bill debits its one
   // header account for the whole net, as it always has.
+  // A PO bill's line carries an account too when its item is Non-Inventory (2026-10-24): the source
+  // debits that item's expense account (VB-24370: Dr 17400 Office Equipments), not 20300, and the
+  // line follows the item when its account is changed (lib/itemAccountFollow.js). The rest of a PO
+  // bill -- its inventory lines -- debits the header offset as before.
   const acctLines = lines.filter((l) => l.account_id && Number(l.net_of_tax));
+  let rest = netOfTax;
   if (acctLines.length) {
     const byAcct = new Map();
     for (const l of acctLines) byAcct.set(l.account_id, (byAcct.get(l.account_id) || 0) + Number(l.net_of_tax));
@@ -789,10 +794,12 @@ async function computeVendorBillGl(vb, lines) {
       const amt = Number(byAcct.get(acct.id).toFixed(2));
       if (amt) rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: amt, credit: 0 });
     }
-  } else if (netOfTax && poHeaderIsPayable && irnbAcct) {
-    rows.push({ account_code: irnbAcct.account_code, account_name: irnbAcct.account_name, debit: netOfTax, credit: 0 });
-  } else if (netOfTax && vb.account_code) {
-    rows.push({ account_code: vb.account_code, account_name: vb.account_name, debit: netOfTax, credit: 0 });
+    rest = vb.purchase_order_id ? Number((netOfTax - acctLines.reduce((s, l) => s + Number(l.net_of_tax), 0)).toFixed(2)) : 0;
+  }
+  if (Math.abs(rest) >= 0.005 && poHeaderIsPayable && irnbAcct) {
+    rows.push({ account_code: irnbAcct.account_code, account_name: irnbAcct.account_name, debit: rest, credit: 0 });
+  } else if (Math.abs(rest) >= 0.005 && vb.account_code) {
+    rows.push({ account_code: vb.account_code, account_name: vb.account_name, debit: rest, credit: 0 });
   }
   if (taxAmount && vatAcct) rows.push({ account_code: vatAcct.account_code, account_name: vatAcct.account_name, debit: taxAmount, credit: 0 });
   return sideNegatives(rows);
@@ -1560,11 +1567,11 @@ async function computePostedGlLines({ toDate, fromDate }) {
               OR EXISTS (SELECT 1 FROM journals rj WHERE rj.source_type = 'vendor_bill' AND rj.source_id = vb.id AND rj.status <> 'void'))
          AND ${sql}`, params
     );
-    // A standalone (no-PO) bill debits its lines' own accounts, so its lines have to come along;
-    // a PO bill's entry is its header alone, as before.
-    const standaloneIds = headers.filter((h) => !h.purchase_order_id).map((h) => h.id);
-    const standaloneLines = standaloneIds.length
-      ? await linesByParent('SELECT * FROM vendor_bill_lines WHERE vendor_bill_id IN (?)', 'vendor_bill_id', standaloneIds)
+    // A standalone (no-PO) bill debits its lines' own accounts, so its lines have to come along; so
+    // does a PO bill's now, for the Non-Inventory lines that carry an account (computeVendorBillGl).
+    const billIds = headers.map((h) => h.id);
+    const standaloneLines = billIds.length
+      ? await linesByParent('SELECT vendor_bill_id, account_id, net_of_tax FROM vendor_bill_lines WHERE vendor_bill_id IN (?) AND account_id IS NOT NULL', 'vendor_bill_id', billIds)
       : new Map();
     for (const vb of headers) {
       const rows = glFor('vendor_bill', vb.id, await computeVendorBillGl(vb, standaloneLines.get(vb.id) || []));

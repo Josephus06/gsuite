@@ -555,9 +555,12 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const [poLines] = await conn.query(
       `SELECT pol.id, pol.item_id, pol.location_id, pol.department_id, pol.received_qty, pol.billed_qty,
               pol.rate, pol.tax_code_id, t.rate AS tax_rate,
-              pol.qty, pol.disc_percent, pol.disc_amount, pol.net_of_tax, pol.tax_amount
+              pol.qty, pol.disc_percent, pol.disc_amount, pol.net_of_tax, pol.tax_amount,
+              -- A Non-Inventory item's line debits its expense account (computeVendorBillGl, 2026-10-24).
+              CASE WHEN inv.item_type = 'Non-Inventory' THEN inv.expense_account_id END AS line_account_id
        FROM purchase_order_lines pol
        LEFT JOIN taxes t ON t.id = pol.tax_code_id
+       LEFT JOIN inventories inv ON inv.id = pol.item_id
        WHERE pol.purchase_order_id = ? AND pol.id IN (?)`,
       [purchaseOrderId, lineIds]
     );
@@ -591,7 +594,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       const w = lineWtax({ ...s, is_withhold: isWithhold }, amounts.net_of_tax, wtaxRate);
       const lineWtaxAmount = w.wtax_amount;
       computedLines.push({
-        purchase_order_line_id: poLine.id, item_id: poLine.item_id, location_id: poLine.location_id,
+        purchase_order_line_id: poLine.id, item_id: poLine.item_id, account_id: poLine.line_account_id || null, location_id: poLine.location_id,
         // The PO line's department, or -- where the PO never had one -- the one chosen on the bill.
         department_id: poLine.department_id || Number(s.department_id) || null, qty, rate: poLine.rate, unit_price: unitPrice, disc_percent: discPercent,
         tax_code_id: poLine.tax_code_id, is_withhold: w.is_withhold, wtax_amount: lineWtaxAmount,
@@ -643,11 +646,11 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     for (const l of computedLines) {
       await conn.query(
         `INSERT INTO vendor_bill_lines
-           (vendor_bill_id, purchase_order_line_id, item_id, location_id, department_id, qty, rate, unit_price,
+           (vendor_bill_id, purchase_order_line_id, item_id, account_id, location_id, department_id, qty, rate, unit_price,
             disc_percent, disc_amount, net_of_tax, tax_code_id, tax_amount, ext_price, is_withhold, wtax_amount, amount_due)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          billId, l.purchase_order_line_id, l.item_id, l.location_id, l.department_id, l.qty, l.rate, l.unit_price,
+          billId, l.purchase_order_line_id, l.item_id, l.account_id, l.location_id, l.department_id, l.qty, l.rate, l.unit_price,
           l.disc_percent, l.disc_amount, l.net_of_tax, l.tax_code_id, l.tax_amount, l.ext_price, l.is_withhold,
           l.wtax_amount, l.amount_due,
         ]
