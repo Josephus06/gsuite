@@ -29,6 +29,10 @@ const argVal = (n, d) => {
   return a ? a.split('=')[1] : d;
 };
 const LIMIT = Number(argVal('limit', 0)) || 0;
+// Only bills dated in this window (2026-10-24: the Aug-Sep 2026 bills were never imported, so
+// VB-24367 showed no expense debit). Bills after the books' start keep T1S's own GL: --to=2026-09-30.
+const FROM = argVal('from', '');
+const TO = argVal('to', '');
 
 const norm = (s) => (s || '').toString().trim().toLowerCase();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -123,7 +127,9 @@ async function main() {
   for (const b of bills) if (b.UserPK_TransH) livePkByNo.set(norm(b.UserPK_TransH), b.SysPK_TransH);
   console.log(`\nlive vendor bills: ${bills.length}`);
 
-  const [locals] = await pool.query("SELECT id, bill_no FROM vendor_bills WHERE status <> 'cancelled'");
+  const [locals] = await pool.query(
+    `SELECT id, bill_no FROM vendor_bills WHERE status <> 'cancelled'
+       ${FROM ? 'AND date_created >= ?' : ''} ${TO ? 'AND date_created <= ?' : ''}`, [FROM, TO].filter(Boolean));
   let work = locals
     .map((l) => ({ id: l.id, bill_no: l.bill_no, live_pk: livePkByNo.get(norm(l.bill_no)) }))
     .filter((w) => w.live_pk);
