@@ -291,6 +291,11 @@ async function main() {
              job_location_id = COALESCE(?, job_location_id) WHERE id = ?`,
           [empById.get(norm(header.artist_name)) ?? null, layoutJtId ?? null,
            locById.get(norm(header.joloc_name)) ?? null, t.joId]);
+        // The Sales Order line shows the same Job Location; import-sales.js leaves it empty (SO-55598).
+        await conn.query(
+          `UPDATE sales_order_lines sol JOIN job_orders jo ON jo.id = sol.job_order_id
+              SET sol.job_location_id = jo.job_location_id
+            WHERE jo.id = ? AND sol.job_location_id IS NULL AND jo.job_location_id IS NOT NULL`, [t.joId]);
       }
       // --missing-only is a header backfill: JOs that already have processes keep them as-is.
       // Re-deleting them would trip assembly_build_lines' FK (those rows point at existing
