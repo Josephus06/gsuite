@@ -135,6 +135,15 @@ async function main() {
     .filter((w) => w.live_pk);
   console.log(`local vendor bills: ${locals.length} | matched to live: ${work.length}`);
 
+  // --redo=VB-1,VB-2: re-import these bills from scratch (their stored entries are dropped first).
+  const REDO = argVal('redo', '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (REDO.length) {
+    work = work.filter((w) => REDO.map(norm).includes(norm(w.bill_no)));
+    if (!DRY_RUN && work.length) {
+      const [del] = await pool.query("DELETE FROM live_gl_entries WHERE source_type = 'vendor_bill' AND source_id IN (?)", [work.map((w) => w.id)]);
+      console.log(`--redo: dropped ${del.affectedRows} stored entries of ${work.length} bill(s)`);
+    }
+  }
   // Skip bills already imported, so a re-run resumes instead of re-fetching everything.
   const [done] = await pool.query("SELECT DISTINCT source_id FROM live_gl_entries WHERE source_type = 'vendor_bill'");
   const doneSet = new Set(done.map((d) => d.source_id));
@@ -152,9 +161,15 @@ async function main() {
       const w = work[i];
       let entries = [];
       try {
-        entries = listRows(await api(token, 'get_transaction_ledger_entries', {
-          where: { SysFK_TransH_LdgrEntries: w.live_pk }, limit: 100, offset: 0,
-        }));
+        // Paged: a bill of many lines has more than 100 entries (VB-24357: 60+ debits, and the
+        // AP credit past the first page -- imported unbalanced by 42,526.71 before this, 2026-10-24).
+        for (let offset = 0; ; offset += 100) {
+          const page = listRows(await api(token, 'get_transaction_ledger_entries', {
+            where: { SysFK_TransH_LdgrEntries: w.live_pk }, limit: 100, offset,
+          }));
+          entries.push(...page);
+          if (page.length < 100) break;
+        }
       } catch {
         failed += 1;
         continue;
