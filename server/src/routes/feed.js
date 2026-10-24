@@ -296,6 +296,26 @@ router.get('/images/:imageId', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// A comment's photo, as bytes -- checked through its post's audience rule like a post's photos.
+router.get('/comment-images/:commentId', requireAuth, async (req, res, next) => {
+  try {
+    const { groupId } = await viewerContext(req.user.id);
+    const vis = visiblePostsWhere(req.user.id, groupId);
+    const [[row]] = await pool.query(
+      `SELECT c.image_data FROM feed_comments c
+         JOIN feed_posts p ON p.id = c.post_id
+        WHERE c.id = ? AND c.is_deleted = 0 AND c.image_data IS NOT NULL AND ${vis.sql}`,
+      [req.params.commentId, ...vis.params],
+    );
+    if (!row) return res.status(404).json({ error: 'Not found' });
+    const match = /^data:([\w.+-]+\/[\w.+-]+);base64,(.*)$/s.exec(row.image_data || '');
+    const buf = Buffer.from(match ? match[2] : String(row.image_data || ''), 'base64');
+    res.setHeader('Content-Type', match ? match[1] : 'application/octet-stream');
+    res.setHeader('Cache-Control', 'private, max-age=604800, immutable');
+    res.send(buf);
+  } catch (err) { next(err); }
+});
+
 const ONLINE_MINUTES = 5;
 
 router.get('/contacts', requireAuth, async (req, res, next) => {
@@ -628,7 +648,7 @@ router.get('/:id/comments', requireAuth, async (req, res, next) => {
     if (!post) return res.status(404).json({ error: 'Post not found' });
 
     const [rows] = await pool.query(
-      `SELECT c.id, c.post_id, c.parent_comment_id, c.body, c.created_at, c.edited_at,
+      `SELECT c.id, c.post_id, c.parent_comment_id, c.body, (c.image_data IS NOT NULL) AS has_image, c.created_at, c.edited_at,
               c.user_id AS author_id, u.display_name AS author_name, u.avatar_data AS author_avatar
          FROM feed_comments c JOIN users u ON u.id = c.user_id
         WHERE c.post_id = ? AND c.is_deleted = 0
@@ -660,7 +680,11 @@ router.post('/:id/comments', requireAuth, async (req, res, next) => {
     if (!post) return res.status(404).json({ error: 'Post not found' });
 
     const body = (req.body.body || '').trim();
-    if (!body) return res.status(400).json({ error: 'Comment cannot be empty.' });
+    // One photo per comment (2026-10-24); a photo alone is a comment too.
+    const image = typeof req.body.image_data === 'string' && req.body.image_data.trim() ? req.body.image_data : null;
+    if (image && !image.startsWith('data:image/')) return res.status(400).json({ error: 'That is not an image.' });
+    if (image && image.length > MAX_IMAGE_CHARS) return res.status(400).json({ error: 'Image is too large.' });
+    if (!body && !image) return res.status(400).json({ error: 'Comment cannot be empty.' });
     if (body.length > MAX_BODY) return res.status(400).json({ error: 'Comment is too long.' });
 
     // Replies only nest one level: replying to a reply attaches to its parent, matching FB.
@@ -680,12 +704,12 @@ router.post('/:id/comments', requireAuth, async (req, res, next) => {
     }
 
     const [result] = await pool.query(
-      'INSERT INTO feed_comments (post_id, parent_comment_id, user_id, body) VALUES (?, ?, ?, ?)',
-      [post.id, parentId, req.user.id, body]
+      'INSERT INTO feed_comments (post_id, parent_comment_id, user_id, body, image_data) VALUES (?, ?, ?, ?, ?)',
+      [post.id, parentId, req.user.id, body, image]
     );
 
     const [[row]] = await pool.query(
-      `SELECT c.id, c.post_id, c.parent_comment_id, c.body, c.created_at, c.edited_at,
+      `SELECT c.id, c.post_id, c.parent_comment_id, c.body, (c.image_data IS NOT NULL) AS has_image, c.created_at, c.edited_at,
               c.user_id AS author_id, u.display_name AS author_name, u.avatar_data AS author_avatar
          FROM feed_comments c JOIN users u ON u.id = c.user_id
         WHERE c.id = ?`,
@@ -698,7 +722,7 @@ router.post('/:id/comments', requireAuth, async (req, res, next) => {
     );
     res.status(201).json({ comment: shapeComment(row, req.user.id, isAdmin), comment_count: Number(n) });
 
-    notifyComment(post, { id: req.user.id, display_name: req.user.display_name }, body, parentAuthorId)
+    notifyComment(post, { id: req.user.id, display_name: req.user.display_name }, body || '📷 Photo', parentAuthorId)
       .catch((e) => console.error('feed: comment notify failed', e));
   } catch (err) {
     next(err);

@@ -117,6 +117,8 @@ function shapeComment(row, viewerId, isAdmin) {
     post_id: row.post_id,
     parent_comment_id: row.parent_comment_id,
     body: row.body,
+    // The comment's photo, fetched by URL (GET /feed/comment-images/:id) rather than inlined.
+    has_image: !!Number(row.has_image),
     created_at: row.created_at,
     edited_at: row.edited_at,
     author: {
@@ -235,7 +237,7 @@ async function decoratePosts(posts, viewerId, isAdmin) {
   // Preview = the newest few TOP-LEVEL comments, returned oldest-first so they read in order.
   const [preview] = await pool.query(
     `SELECT * FROM (
-       SELECT c.id, c.post_id, c.parent_comment_id, c.body, c.created_at, c.edited_at,
+       SELECT c.id, c.post_id, c.parent_comment_id, c.body, (c.image_data IS NOT NULL) AS has_image, c.created_at, c.edited_at,
               c.user_id AS author_id, u.display_name AS author_name, u.avatar_data AS author_avatar,
               ROW_NUMBER() OVER (PARTITION BY c.post_id ORDER BY c.created_at DESC, c.id DESC) AS rn
          FROM feed_comments c JOIN users u ON u.id = c.user_id

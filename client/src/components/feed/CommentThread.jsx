@@ -6,12 +6,46 @@ import ReactionButton from './ReactionButton';
 import Linkify from './Linkify';
 import { REACTION_BY_KEY, topReactionKeys, reactorTooltip, allReactorNames } from './reactions';
 import { fbTime, fbTimeFull } from './time';
+import { fileToScaledDataUrl } from '../../utils/image';
+
+// A comment's photo (2026-10-24). Fetched with the auth header and shown as an object URL, like a
+// post's photos (useFeedImages); clicking opens it full size.
+const commentImageCache = new Map();
+function CommentImage({ commentId }) {
+  const [url, setUrl] = useState(commentImageCache.get(commentId) || null);
+  useEffect(() => {
+    if (commentImageCache.has(commentId)) { setUrl(commentImageCache.get(commentId)); return undefined; }
+    let stale = false;
+    api.get(`/feed/comment-images/${commentId}`, { responseType: 'blob' })
+      .then(({ data }) => { const u = URL.createObjectURL(data); commentImageCache.set(commentId, u); if (!stale) setUrl(u); })
+      .catch(() => {});
+    return () => { stale = true; };
+  }, [commentId]);
+  if (!url) return null;
+  return (
+    <img
+      src={url} alt="" className="fb-comment-image"
+      style={{ display: 'block', maxWidth: 240, maxHeight: 240, borderRadius: 12, marginTop: 4, cursor: 'zoom-in', objectFit: 'cover' }}
+      onClick={() => window.open(url, '_blank')}
+    />
+  );
+}
 
 // Auto-growing single-line-until-it-isn't comment box. Enter submits, Shift+Enter newlines.
 function CommentBox({ user, placeholder, autoFocus, onSubmit, onCancel }) {
   const [text, setText] = useState('');
+  const [image, setImage] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const ref = useRef(null);
+  const fileRef = useRef(null);
+
+  async function pickImage(file) {
+    if (!file) return;
+    setError('');
+    try { setImage(await fileToScaledDataUrl(file)); } catch (e) { setError(e.message); }
+    if (fileRef.current) fileRef.current.value = '';
+  }
 
   useEffect(() => {
     if (autoFocus) ref.current?.focus();
@@ -19,12 +53,16 @@ function CommentBox({ user, placeholder, autoFocus, onSubmit, onCancel }) {
 
   async function send() {
     const body = text.trim();
-    if (!body || busy) return;
+    if ((!body && !image) || busy) return;
     setBusy(true);
+    setError('');
     try {
-      await onSubmit(body);
+      await onSubmit(body, image);
       setText('');
+      setImage(null);
       if (ref.current) ref.current.style.height = 'auto';
+    } catch (e) {
+      setError(e.response?.data?.error || 'Could not post that comment.');
     } finally {
       setBusy(false);
     }
@@ -33,6 +71,7 @@ function CommentBox({ user, placeholder, autoFocus, onSubmit, onCancel }) {
   return (
     <div className="fb-comment-input-row">
       <Avatar user={user} size={32} />
+      <div style={{ flex: 1, minWidth: 0 }}>
       <div className="fb-comment-input-wrap">
         <textarea
           ref={ref}
@@ -51,9 +90,24 @@ function CommentBox({ user, placeholder, autoFocus, onSubmit, onCancel }) {
             if (e.key === 'Escape' && onCancel) onCancel();
           }}
         />
-        <button type="button" className="fb-comment-send" disabled={!text.trim() || busy} onClick={send} aria-label="Send">
+        <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => pickImage(e.target.files?.[0])} />
+        <button type="button" className="fb-comment-send" disabled={busy} onClick={() => fileRef.current?.click()} aria-label="Add a photo" title="Add a photo">
+          📷
+        </button>
+        <button type="button" className="fb-comment-send" disabled={(!text.trim() && !image) || busy} onClick={send} aria-label="Send">
           ➤
         </button>
+      </div>
+      {image && (
+        <div style={{ position: 'relative', display: 'inline-block', marginTop: 6 }}>
+          <img src={image} alt="" style={{ maxWidth: 160, maxHeight: 160, borderRadius: 10, display: 'block' }} />
+          <button
+            type="button" aria-label="Remove photo" onClick={() => setImage(null)}
+            style={{ position: 'absolute', top: 4, right: 4, border: 'none', borderRadius: '50%', width: 22, height: 22, cursor: 'pointer', background: 'rgba(0,0,0,0.6)', color: '#fff', lineHeight: '22px', padding: 0 }}
+          >✕</button>
+        </div>
+      )}
+      {error && <div style={{ color: 'var(--danger, #b91c1c)', fontSize: 12, marginTop: 4 }}>{error}</div>}
       </div>
     </div>
   );
@@ -103,8 +157,9 @@ function CommentItem({ comment, user, depth, onReply, onDelete, onReact }) {
                 <span className="fb-comment-author" onClick={() => navigate(`/profile/${comment.author.id}`)}>
                   {comment.author.display_name}
                 </span>
-                <div className="fb-comment-text"><Linkify text={comment.body} /></div>
+                {comment.body && <div className="fb-comment-text"><Linkify text={comment.body} /></div>}
               </div>
+              {comment.has_image && <CommentImage commentId={comment.id} />}
               {comment.reaction_total > 0 && (
                 <div className="fb-comment-reacts">
                   {top.map((k) => (
@@ -142,8 +197,8 @@ function CommentItem({ comment, user, depth, onReply, onDelete, onReact }) {
               autoFocus
               placeholder={`Reply to ${comment.author.display_name}…`}
               onCancel={() => setReplying(false)}
-              onSubmit={async (body) => {
-                await onReply(comment, body);
+              onSubmit={async (body, image) => {
+                await onReply(comment, body, image);
                 setReplying(false);
               }}
             />
@@ -196,9 +251,10 @@ export default function CommentThread({ postId, initialComments, total, user, au
     onCountChange?.(n);
   }
 
-  async function addComment(body, parent) {
+  async function addComment(body, parent, image) {
     const { data } = await api.post(`/feed/${postId}/comments`, {
       body,
+      image_data: image || null,
       parent_comment_id: parent?.id || null,
     });
     setComments((prev) => {
@@ -246,7 +302,7 @@ export default function CommentThread({ postId, initialComments, total, user, au
           comment={c}
           user={user}
           depth={0}
-          onReply={(parent, body) => addComment(body, parent)}
+          onReply={(parent, body, image) => addComment(body, parent, image)}
           onDelete={deleteComment}
           onReact={reactComment}
         />
@@ -256,7 +312,7 @@ export default function CommentThread({ postId, initialComments, total, user, au
         user={user}
         autoFocus={autoFocus}
         placeholder="Write a comment…"
-        onSubmit={(body) => addComment(body, null)}
+        onSubmit={(body, image) => addComment(body, null, image)}
       />
     </div>
   );
