@@ -3,6 +3,7 @@ import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import { REPORT_TIMING } from '../../utils/reportTiming';
 import { money } from './CoaTreeRows';
+import { downloadFile } from '../../utils/downloadFile';
 
 import { displayDate } from '../../utils/dates';
 
@@ -44,6 +45,27 @@ export default function GeneralLedger() {
     } finally {
       setLoading(false);
     }
+  }
+
+  // Expand All / Collapse All (asked 2026-10-26): every account with lines (or an opening balance).
+  const expandableCodes = () => (report?.rows || [])
+    .filter((r) => r.ledgers.length > 0 || (!!report.from_date && !!r.opening_balance)).map((r) => r.account_code);
+  const allOpen = !!report && expandableCodes().length > 0 && expandableCodes().every((c) => open.has(c));
+  function toggleAll() { setOpen(allOpen ? new Set() : new Set(expandableCodes())); }
+
+  // Extract: the ledger as on screen, every account expanded, as Excel (GET /reports/general-ledger/export).
+  const [extracting, setExtracting] = useState(false);
+  async function extract() {
+    setExtracting(true); setError('');
+    try {
+      const params = { asOf: report.as_of };
+      if (report.from_date) params.from = report.from_date;
+      await downloadFile('/reports/general-ledger/export', params,
+        `general-ledger-${report.from_date ? `${report.from_date}-to-` : 'as-of-'}${report.as_of}.xlsx`);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not extract the General Ledger.');
+    }
+    setExtracting(false);
   }
 
   function toggle(code) {
@@ -91,8 +113,10 @@ export default function GeneralLedger() {
 
       {!loading && report && (
         <div className="card">
-          <div style={{ marginBottom: 12 }}>
-            <strong>{report.from_date ? `${report.from_date} to ${report.as_of}` : `As of ${report.as_of}`}</strong>
+          <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <strong style={{ marginRight: 'auto' }}>{report.from_date ? `${report.from_date} to ${report.as_of}` : `As of ${report.as_of}`}</strong>
+            <button className="btn btn-sm" onClick={toggleAll} disabled={!expandableCodes().length}>{allOpen ? 'Collapse All' : 'Expand All'}</button>
+            <button className="btn btn-sm" onClick={extract} disabled={extracting || !report.rows.length}>{extracting ? 'Extracting...' : 'Extract'}</button>
           </div>
           <div className="table-wrap">
             <table className="responsive-cards">

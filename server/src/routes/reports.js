@@ -269,6 +269,53 @@ router.get('/general-ledger', requireAuth, requirePermission('/reports/general-l
   }
 });
 
+// Extract (asked 2026-10-26): the General Ledger as on screen with every account expanded -- each
+// account's row (code, title, balance), its opening balance in period mode, then its transactions
+// (date, transaction #, memo, debit, credit, running balance). Amounts kept as numbers.
+const GL_SOURCE_LABELS = {
+  sales_invoice: 'Invoice', assembly_build: 'Assembly Build', item_delivery: 'Item Delivery',
+  item_fulfillment: 'Item Fulfillment', item_receipt: 'Item Receipt', vendor_bill: 'Vendor Bill',
+  inventory_adjustment: 'Inventory Adjustment', bill_credit: 'Bill Credit',
+};
+router.get('/general-ledger/export', requireAuth, requirePermission('/reports/general-ledger', 'can_view'), async (req, res, next) => {
+  try {
+    const r = await buildGeneralLedger(req.query.asOf || today(), req.query.from || null);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('General Ledger', { views: [{ state: 'frozen', ySplit: 4 }] });
+    ws.columns = [{ width: 13 }, { width: 14 }, { width: 30 }, { width: 50 }, { width: 16 }, { width: 16 }, { width: 18 }];
+    ws.addRow(['General Ledger']).font = { bold: true, size: 14 };
+    ws.addRow([r.from_date ? `${r.from_date} to ${r.as_of}` : `As of ${r.as_of}`]);
+    ws.addRow([]);
+    const head = ws.addRow(['Account #', 'Date', 'Transaction #', 'Account Title / Memo', 'Debit', 'Credit', 'Balance']);
+    head.font = { bold: true };
+    const moneyFmt = '#,##0.00;(#,##0.00);-';
+    const fmt = (row) => { for (const c of [5, 6, 7]) row.getCell(c).numFmt = moneyFmt; return row; };
+    for (const a of r.rows) {
+      const acct = fmt(ws.addRow([a.account_code, '', '', a.account_name, null, null, Number(a.balance) || 0]));
+      acct.font = { bold: true };
+      acct.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F4F6' } };
+      if (r.from_date) {
+        const ob = fmt(ws.addRow(['', '', '', 'Opening balance', null, null, Number(a.opening_balance) || 0]));
+        ob.font = { italic: true };
+      }
+      for (const l of a.ledgers || []) {
+        fmt(ws.addRow([
+          '', l.entry_date ? String(l.entry_date).slice(0, 10) : '',
+          `${GL_SOURCE_LABELS[l.source_type] || l.source_type || ''} ${l.source_no || ''}`.trim(),
+          l.memo || '', Number(l.debit) || null, Number(l.credit) || null, Number(l.balance) || 0,
+        ]));
+      }
+    }
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="general-ledger-${r.from_date ? `${r.from_date}-to-` : 'as-of-'}${r.as_of}.xlsx"`);
+    await wb.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    if (res.headersSent) { res.destroy(err); return; }
+    next(err);
+  }
+});
+
 // Drill-down behind an income-statement amount: the transactions for one account, scoped to
 // the clicked column (department/location/month) over the report period.
 router.get('/income-statement/transactions', requireAuth, requirePermission('/reports/income-statement', 'can_view'), async (req, res, next) => {
