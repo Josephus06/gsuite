@@ -96,8 +96,8 @@ export default function CommissionVoucherEdit() {
       setCashAccounts(data.cash_accounts || []);
       setExpenseAccounts(data.expense_accounts || []);
       setPayeeName(e.name);
-      // Default: nothing checked, released 0 -- the user ticks a commission and enters an amount
-      // (a refund-only voucher ticks a row, leaves it 0, and adds a positive expense).
+      // Default: nothing checked, released 0 -- ticking a commission fills in its full amount
+      // (toggleCommission); a refund-only voucher clears it back to 0 and adds a positive expense.
       const rl = {};
       (data.payables || []).forEach((p) => { rl[p.commission_payable_id] = '0'; });
       setChecked({}); setReleased(rl);
@@ -105,6 +105,16 @@ export default function CommissionVoucherEdit() {
       setError(err.response?.data?.error || 'Could not load this employee\'s commissions.');
     }
   }
+
+  // Ticking a commission releases all of it (Released = its commissionable); unticking puts it back
+  // to 0. The Commissionable column shows what is left after this release -- 0 when released in
+  // full, 2,347.54 when 1,000.00 of CP-27's 3,347.54 is. A refund-only row is ticked and cleared to 0.
+  function toggleCommission(p, on) {
+    setChecked((c) => ({ ...c, [p.commission_payable_id]: on }));
+    setReleased((r) => ({ ...r, [p.commission_payable_id]: on ? String(Number(p.commissionable_amount).toFixed(2)) : '0' }));
+  }
+  const remaining = (p) => Number(p.commissionable_amount)
+    - (checked[p.commission_payable_id] ? (Number(released[p.commission_payable_id]) || 0) : 0);
 
   function addExpense() { setExpenses((x) => [...x, { account: null, description: '', amount: '', applies_to_payable_id: null }]); }
   // Switching the account away from Commission Payable drops any month it was pointed at: the
@@ -252,11 +262,11 @@ export default function CommissionVoucherEdit() {
                 {employee && payables.length === 0 && <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 20 }}>This employee has no unpaid commissions.</td></tr>}
                 {payables.map((p) => (
                   <tr key={p.commission_payable_id}>
-                    <td><input type="checkbox" checked={!!checked[p.commission_payable_id]} onChange={(e) => setChecked((c) => ({ ...c, [p.commission_payable_id]: e.target.checked }))} /></td>
+                    <td><input type="checkbox" checked={!!checked[p.commission_payable_id]} onChange={(e) => toggleCommission(p, e.target.checked)} /></td>
                     <td>{p.commission_payable_no}</td>
                     <td>{formatDate(p.date_created)}</td>
                     <td>{formatMonth(p.period_from)}</td>
-                    <td style={{ textAlign: 'right' }}>{money(p.commissionable_amount)}</td>
+                    <td style={{ textAlign: 'right' }}>{money(remaining(p))}</td>
                     <td>
                       <input type="number" min="0" step="0.01" max={p.commissionable_amount}
                         value={released[p.commission_payable_id] ?? ''}
