@@ -10,6 +10,8 @@ import { downloadFile } from '../utils/downloadFile';
 import { CustomerLink } from './PartyLink';
 import FilterPicker from './FilterPicker';
 import SearchInput from './SearchInput';
+import Modal from './Modal';
+import { useAuth } from '../context/useAuth';
 
 const PAGE_SIZE = 10;
 const STAGE_LABELS = {
@@ -81,6 +83,34 @@ export default function ReworkJobOrderList({ prefix }) {
     setLoading(false);
   }
 
+  // Cancel an RFQC (2026-10-26): System Admin, with a Cancellation reason -- the server's rules
+  // (routes/rfqcJobOrders.js). Not offered once it is cancelled or completed.
+  const { user } = useAuth();
+  const canCancel = (row) => prefix === 'RFQC' && user?.account_type === 'System Admin'
+    && row.status !== 'Cancelled' && row.status !== 'Completed' && !['completed', 'invoiced'].includes(row.production_stage);
+  const [cancelling, setCancelling] = useState(null); // the row
+  const [cancelReasons, setCancelReasons] = useState([]);
+  const [cancelReasonId, setCancelReasonId] = useState('');
+  const [cancelRemarks, setCancelRemarks] = useState('');
+  const [cancelError, setCancelError] = useState('');
+  const [cancelBusy, setCancelBusy] = useState(false);
+  function openCancel(row) {
+    setCancelling(row); setCancelReasonId(''); setCancelRemarks(''); setCancelError('');
+    api.get(`${base}/cancel-reasons`).then(({ data }) => setCancelReasons(data))
+      .catch((e) => setCancelError(e.response?.data?.error || 'Could not load the cancellation reasons.'));
+  }
+  async function confirmCancel() {
+    if (!cancelReasonId) { setCancelError('Choose a reason.'); return; }
+    setCancelBusy(true); setCancelError('');
+    try {
+      await api.put(`${base}/${cancelling.id}/cancel`, { reason_id: Number(cancelReasonId), remarks: cancelRemarks });
+      setCancelling(null);
+      load();
+    } catch (e) {
+      setCancelError(e.response?.data?.error || 'Cancel failed.');
+    } finally { setCancelBusy(false); }
+  }
+
   // Extract: every job order under the filters above, as a workbook.
   async function extract() {
     setExtracting(true);
@@ -102,6 +132,28 @@ export default function ReworkJobOrderList({ prefix }) {
 
   return (
     <div>
+      {cancelling && (
+        <Modal title={`Cancel ${cancelling.job_order_no}`} onClose={() => !cancelBusy && setCancelling(null)}>
+          {cancelError && <div className="error-banner">{cancelError}</div>}
+          <div className="field">
+            <label>Reason <span className="req">*</span></label>
+            <select value={cancelReasonId} onChange={(e) => setCancelReasonId(e.target.value)}>
+              <option value="">--Select--</option>
+              {cancelReasons.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>From Master Lists &gt; Reasons, type Cancellation.</div>
+          </div>
+          <div className="field"><label>Remarks</label><textarea rows={3} value={cancelRemarks} onChange={(e) => setCancelRemarks(e.target.value)} /></div>
+          <p className="muted" style={{ fontSize: 13 }}>
+            The rework is dropped; {cancelling.parent_job_order_no || 'the mother JO'} no longer waits on it.
+            An RFQC already completed, billed or delivered cannot be cancelled.
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <button className="btn" disabled={cancelBusy} onClick={() => setCancelling(null)}>Back</button>
+            <button className="btn btn-danger" disabled={cancelBusy} onClick={confirmCancel}>{cancelBusy ? 'Cancelling...' : 'Cancel RFQC'}</button>
+          </div>
+        </Modal>
+      )}
       <div className="page-header">
         <h1>{prefix} Job Orders</h1>
         <button type="button" className="btn" onClick={extract} disabled={extracting}
@@ -196,7 +248,12 @@ export default function ReworkJobOrderList({ prefix }) {
                     <td data-label="Status">{statusLabel(row)}</td>
                     {/* Pending approval -> Sales JO view (Approve lives there); once approved it's in
                         production, so link into the Production view to Build / Quality Inspect it. */}
-                    <td><Link className="btn btn-sm btn-primary" to={row.production_stage ? `/production/${row.id}` : `/job-orders/${row.id}`}>View</Link></td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <Link className="btn btn-sm btn-primary" to={row.production_stage ? `/production/${row.id}` : `/job-orders/${row.id}`}>View</Link>
+                      {canCancel(row) && (
+                        <button type="button" className="btn btn-sm btn-danger" style={{ marginLeft: 6 }} onClick={() => openCancel(row)}>Cancel</button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
