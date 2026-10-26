@@ -46,4 +46,20 @@ function requireOpenPeriod(table, category, dateColumn = 'date_created') {
   };
 }
 
-module.exports = { periodLock, assertPeriodOpen, requireOpenPeriod };
+// The Sales Rep on a Sales Order is what its month's commission is worked on, so it is fixed once
+// the month is closed for ANYTHING -- A/R, A/P, Other GL, Non-GL or Close All (asked 2026-10-26:
+// SO-71491/71492, August, moved from Nina Ann Solano to Jessa Mae Lagat on 17 Oct with August's A/R,
+// A/P and Other GL closed but Non-GL still open). Throws a 409 naming what is closed.
+async function assertRepChangeAllowed(dateStr, conn = pool) {
+  if (!dateStr) return;
+  const [y, m] = String(dateStr).slice(0, 10).split('-').map(Number);
+  const [[row]] = await conn.query('SELECT * FROM accounting_periods WHERE fiscal_year = ? AND period_month = ?', [y, m]);
+  if (!row) return;
+  const closed = row.close_all ? ['All'] : Object.entries(CATEGORY_FLAG).filter(([, f]) => row[f]).map(([c]) => CATEGORY_LABEL[c]);
+  if (!closed.length) return;
+  const err = new Error(`The accounting period for ${String(dateStr).slice(0, 7)} is closed (${closed.map((c) => `Close ${c}`).join(', ')}). The Sales Rep of an order in a closed period can no longer be changed.`);
+  err.status = 409;
+  throw err;
+}
+
+module.exports = { periodLock, assertPeriodOpen, requireOpenPeriod, assertRepChangeAllowed };

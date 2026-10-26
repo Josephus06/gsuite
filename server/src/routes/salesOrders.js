@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireOpenPeriod } = require('../lib/accountingPeriod');
+const { requireOpenPeriod, assertRepChangeAllowed } = require('../lib/accountingPeriod');
 const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { computeSalesOrderStatus, invoicedOrTicketedSql, openDtQtySql } = require('../lib/salesOrderStatus');
@@ -307,6 +307,8 @@ async function assignableRepIds(userId) {
 router.get('/:id/sales-rep-options', requireAuth, async (req, res, next) => {
   try {
     if (!(await mayChangeSalesRep(req.user.id))) return res.status(403).json({ error: 'Only a sales supervisor or SBU head can change the Sales Rep.' });
+    const [[so]] = await pool.query('SELECT date_created FROM sales_orders WHERE id = ?', [req.params.id]);
+    if (so) await assertRepChangeAllowed(so.date_created);
     const allowed = await assignableRepIds(req.user.id);
     if (allowed && !allowed.length) return res.json([]);
     const [rows] = await pool.query(
@@ -323,9 +325,10 @@ router.put('/:id/sales-rep', requireAuth, requireOpenPeriod('sales_orders', 'non
     const repId = Number(req.body?.sales_rep_id) || null;
     if (!repId) return res.status(400).json({ error: 'Choose a Sales Rep.' });
     const [[so]] = await conn.query(
-      `SELECT so.id, so.status, so.sales_rep_id, CONCAT(e.first_name, ' ', e.last_name) AS rep_name
+      `SELECT so.id, so.status, so.sales_rep_id, so.date_created, CONCAT(e.first_name, ' ', e.last_name) AS rep_name
          FROM sales_orders so LEFT JOIN employees e ON e.id = so.sales_rep_id WHERE so.id = ?`, [req.params.id]);
     if (!so) return res.status(404).json({ error: 'Not found' });
+    await assertRepChangeAllowed(so.date_created, conn);
     if (REP_LOCKED_STATUSES.includes(so.status)) {
       return res.status(409).json({ error: `This Sales Order is ${so.status === 'billed' ? 'Billed' : 'Cancelled'}; its Sales Rep can no longer be changed.` });
     }
@@ -545,6 +548,7 @@ router.put('/:id', requireAuth, requireOpenPeriod('sales_orders', 'non_gl'), asy
     const head = {};
     for (const f of SO_HEADER_EDIT) head[f] = b[f] === undefined ? so[f] : blank(b[f]);
     if (head.sales_rep_id && String(head.sales_rep_id) !== String(so.sales_rep_id ?? '')) {
+      await assertRepChangeAllowed(day(so.date_created), conn);
       const [[emp]] = await conn.query('SELECT is_active FROM employees WHERE id = ?', [head.sales_rep_id]);
       if (!emp || !Number(emp.is_active)) throw Object.assign(new Error('That Sales Rep is an inactive employee record. Choose the active one.'), { status: 400 });
     }
