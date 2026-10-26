@@ -111,16 +111,25 @@ router.get('/income-statement/export', requireAuth, requirePermission('/reports/
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Income Statement', { views: [{ state: 'frozen', ySplit: 4 }] });
     const n = r.columns.length;
-    ws.columns = [{ width: 12 }, { width: 46 }, ...r.columns.map(() => ({ width: 18 }))];
+    // Each breakdown column is an amount and its % -- the percent of that column's total revenue,
+    // as the screen shows beside every account (asked 2026-10-26); subtotals, totals and Net Income
+    // carry theirs too. Kept as numbers (a fraction shown as %), so they total and sort.
+    ws.columns = [{ width: 12 }, { width: 46 }, ...r.columns.flatMap(() => [{ width: 18 }, { width: 10 }])];
     ws.addRow(['Income Statement']).font = { bold: true, size: 14 };
     ws.addRow([`${r.from_date} to ${r.as_of}`]);
     ws.addRow([]);
-    const head = ws.addRow(['Account', '', ...r.columns.map((c) => c.label)]);
+    const head = ws.addRow(['Account', '', ...r.columns.flatMap((c) => [c.label, '%'])]);
     head.font = { bold: true };
+    for (let i = 0; i < n; i += 1) head.getCell(4 + i * 2).alignment = { horizontal: 'right' };
     const moneyFmt = '#,##0.00;(#,##0.00);-';
+    const pctFmt = '0.00%;(0.00%);-';
+    const pctOf = (v, i) => (Number(r.revenue_totals[i]) ? (Number(v) || 0) / Number(r.revenue_totals[i]) : 0);
     const amountRow = (values, label, code = '', opts = {}) => {
-      const row = ws.addRow([code, label, ...values.map((v) => Number(v) || 0)]);
-      for (let i = 0; i < n; i += 1) row.getCell(3 + i).numFmt = moneyFmt;
+      const row = ws.addRow([code, label, ...values.flatMap((v, i) => [Number(v) || 0, pctOf(v, i)])]);
+      for (let i = 0; i < n; i += 1) {
+        row.getCell(3 + i * 2).numFmt = moneyFmt;
+        row.getCell(4 + i * 2).numFmt = pctFmt;
+      }
       if (opts.bold) row.font = { bold: true };
       if (opts.indent) row.getCell(2).alignment = { indent: opts.indent };
       return row;
