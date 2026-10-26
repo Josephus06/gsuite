@@ -151,16 +151,27 @@ export default function CommissionVoucherEdit() {
     // A voucher needs at least a commission line OR an expense -- an expense-only voucher is a
     // pure refund (no commission released).
     if (!lines.length && !exp.length) { setError('Select a commission or add an expense.'); return; }
-    // A release can never exceed that commission's commissionable (its unpaid amount).
-    const over = payables.find((p) => checked[p.commission_payable_id]
-      && (Number(released[p.commission_payable_id]) || 0) > Number(p.commissionable_amount) + 0.005);
-    if (over) { setError(`Released amount for ${over.commission_payable_no} exceeds its commissionable (${money(over.commissionable_amount)}).`); return; }
+    // A release above that commission's commissionable (its unpaid amount) is asked about, not refused
+    // (2026-10-26): T1S's figure can trail the source's. What this voucher already released counts as
+    // within it -- kept or lowered needs no question. Confirmed, the server records each one.
+    const ceilingOf = (p) => Math.max(Number(p.commissionable_amount), Number(p.already_released) || 0);
+    const overs = payables.filter((p) => checked[p.commission_payable_id]
+      && (Number(released[p.commission_payable_id]) || 0) > ceilingOf(p) + 0.005);
+    if (overs.length) {
+      const list = overs.map((p) => {
+        const r = Number(released[p.commission_payable_id]) || 0;
+        return `${p.commission_payable_no}: releasing ${money(r)}, commissionable ${money(ceilingOf(p))} (over by ${money(r - ceilingOf(p))})`;
+      }).join('\n');
+      if (!confirm(`Released more than the commissionable:\n\n${list}\n\nSave anyway?`)) return;
+    }
+    setError('');
     setSaving(true);
     try {
       const payload = {
         employee_id: employee.id, date_created: date, date_released: dateReleased || null, payment_type: paymentType,
         payee_name: payeeName || employee.name, reference_no: refNo || null, memo: memo || null,
         payment_method_id: method?.id || null, cash_bank_account_id: cashAccount?.id || null, lines, expenses: exp,
+        allow_over_release: overs.length > 0,
       };
       const { data } = isEdit
         ? await api.put(`/commission-vouchers/${id}`, payload)
@@ -268,7 +279,7 @@ export default function CommissionVoucherEdit() {
                     <td>{formatMonth(p.period_from)}</td>
                     <td style={{ textAlign: 'right' }}>{money(remaining(p))}</td>
                     <td>
-                      <input type="number" min="0" step="0.01" max={p.commissionable_amount}
+                      <input type="number" min="0" step="0.01" max={Math.max(Number(p.commissionable_amount), Number(p.already_released) || 0)}
                         value={released[p.commission_payable_id] ?? ''}
                         onChange={(e) => setReleased((r) => ({ ...r, [p.commission_payable_id]: e.target.value }))}
                         style={{ width: 140 }} disabled={!checked[p.commission_payable_id]} />

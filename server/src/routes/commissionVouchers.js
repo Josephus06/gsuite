@@ -61,6 +61,22 @@ async function logAudit(conn, { cvId, userId, eventType, fieldName = null, oldVa
   );
 }
 
+// A release above its commission's commissionable (asked 2026-10-26): no longer refused outright --
+// T1S's figure can trail the source's (a cancelled job order taken out, a corrected line) and the
+// voucher is released all the same. The first save is answered with what is over and by how much
+// (over_release: the page asks to confirm); saved again with allow_over_release, it goes through and
+// each over-release is written to the voucher's audit trail.
+function overReleaseError(overs, body) {
+  if (!overs.length || body?.allow_over_release) return null;
+  const list = overs.map((o) => `${o.cp.commission_payable_no}: ${o.released.toFixed(2)} released, ${Number(o.ceiling).toFixed(2)} commissionable (over by ${round2(o.released - o.ceiling).toFixed(2)})`);
+  return { error: `Released more than the commissionable -- ${list.join('; ')}.`, over_release: overs.map((o) => ({ commission_payable_no: o.cp.commission_payable_no, released: o.released, commissionable: o.ceiling })) };
+}
+async function logOverReleases(conn, cvId, userId, overs) {
+  for (const o of overs) {
+    await logAudit(conn, { cvId, userId, eventType: 'Updated', fieldName: `Released over commissionable (${o.cp.commission_payable_no})`, oldValue: Number(o.ceiling).toFixed(2), newValue: o.released.toFixed(2) });
+  }
+}
+
 // The "commissionable" a voucher may release against is the UNPAID commission from the Commission
 // report for that payable's month (Confirmed − Released − Deducted) -- NOT the payable's stored
 // commissionable_amount. Pull the rep's report once per year and match each payable by month.
@@ -144,6 +160,9 @@ router.get('/for-employee/:employeeId', requireAuth, requirePermission(ROUTE, 'c
       date_created: p.date_created,
       period_from: p.period_from,
       commissionable_amount: round2((unpaidMap.get(p.commission_payable_id) ?? 0) + (ownReleased.get(Number(p.commission_payable_id)) || 0)),
+      // What this voucher already released on it: kept even when the month's commission has since
+      // dropped below it (PUT /:id allows keeping or lowering it, not raising it).
+      already_released: ownReleased.get(Number(p.commission_payable_id)) || 0,
     }));
     // Only postable (non-summary) accounts belong in the pickers -- the x00 header accounts
     // (11000 Cash in Bank, 11100 BPI, ...) are parent groupings, not real bank/expense accounts.
@@ -312,13 +331,14 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       commission_payable_id: x.cp.id, period_year: x.cp.period_year, period_month: x.cp.period_month,
     })));
     const prepared = [];
+    const overs = [];
     for (const { cp, released } of payableRows) {
       const unpaid = unpaidMap.get(cp.id) ?? 0;
-      if (released > unpaid + 0.005) {
-        return res.status(409).json({ error: `Released amount for ${cp.commission_payable_no} (${released}) exceeds its commissionable (${unpaid}).` });
-      }
+      if (released > unpaid + 0.005) overs.push({ cp, released, ceiling: unpaid });
       prepared.push({ cp, released });
     }
+    const overError = overReleaseError(overs, req.body);
+    if (overError) return res.status(409).json(overError);
 
     const totalReleased = round2(prepared.reduce((s, p) => s + p.released, 0));
     const expSum = round2(preparedExpenses.reduce((s, e) => s + e.amount, 0));
@@ -351,6 +371,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       );
     }
     await logAudit(conn, { cvId, userId: req.user.id, eventType: 'Created', fieldName: 'voucher_no', newValue: cvNo });
+    await logOverReleases(conn, cvId, req.user.id, overs);
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM commission_vouchers WHERE id = ?', [cvId]);
@@ -415,13 +436,17 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       commission_payable_id: x.cp.id, period_year: x.cp.period_year, period_month: x.cp.period_month,
     })));
     const prepared = [];
+    const overs = [];
     for (const { cp, released } of payableRows) {
-      const ceiling = round2((unpaidMap.get(cp.id) ?? 0) + (ownReleased.get(Number(cp.id)) || 0));
-      if (released > ceiling + 0.005) {
-        return res.status(409).json({ error: `Released amount for ${cp.commission_payable_no} (${released}) exceeds its commissionable (${ceiling}).` });
-      }
+      // The month's commission can drop after the release (a cancelled order, a corrected line), leaving
+      // this voucher's existing release above the ceiling: keeping or lowering it needs no confirmation.
+      const own = ownReleased.get(Number(cp.id)) || 0;
+      const ceiling = round2(Math.max((unpaidMap.get(cp.id) ?? 0) + own, own));
+      if (released > ceiling + 0.005) overs.push({ cp, released, ceiling });
       prepared.push({ cp, released });
     }
+    const overError = overReleaseError(overs, req.body);
+    if (overError) return res.status(409).json(overError);
 
     const totalReleased = round2(prepared.reduce((s, p) => s + p.released, 0));
     const expSum = round2(preparedExpenses.reduce((s, e) => s + e.amount, 0));
@@ -464,6 +489,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       );
     }
     await logAudit(conn, { cvId, userId: req.user.id, eventType: 'Updated', fieldName: 'total_payments', oldValue: existing.total_payments, newValue: totalPayments });
+    await logOverReleases(conn, cvId, req.user.id, overs);
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM commission_vouchers WHERE id = ?', [cvId]);
