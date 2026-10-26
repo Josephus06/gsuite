@@ -567,6 +567,7 @@ router.put('/:id', requireAuth, requireOpenPeriod('sales_orders', 'non_gl'), asy
     }
     // lines
     let qtyChanged = false; let pricingChanged = false;
+    const isAdmin = await isSystemAdmin(req.user.id);
     for (const l of sent) {
       const old = byId.get(Number(l.id));
       const v = {};
@@ -579,11 +580,10 @@ router.put('/:id', requireAuth, requireOpenPeriod('sales_orders', 'non_gl'), asy
       // code). Migrated lines often do not reconcile (a tax-inclusive Price/Unit, no tax code), so
       // rewriting them on a memo-only save would silently move money.
       const oldPerPiece = Number(old.quantity) ? Number(old.disc_amount || 0) / Number(old.quantity) : 0;
-      const linePricing = Math.abs(qty - Number(old.quantity || 0)) > 0.00005
+      let linePricing = Math.abs(qty - Number(old.quantity || 0)) > 0.00005
         || Math.abs(Number(v.price_per_unit || 0) - Number(old.price_per_unit || 0)) > 0.00005
         || (l.disc_per_piece !== undefined && Math.abs(Number(l.disc_per_piece || 0) - oldPerPiece) > 0.0001)
         || String(v.tax_code_id ?? '') !== String(old.tax_code_id ?? '');
-      if (linePricing) pricingChanged = true;
       // In centavos: price_per_unit is DECIMAL(14,2), so a 4-decimal price was computed with here and
       // then stored rounded -- the saved price and subtotal could disagree once qty > 1 (2026-10-26).
       const price = r2(v.price_per_unit);
@@ -592,12 +592,27 @@ router.put('/:id', requireAuth, requireOpenPeriod('sales_orders', 'non_gl'), asy
       const discAmount = r2(perPiece * qty);
       const net = r2(subtotal - discAmount);
       const taxRate = v.tax_code_id ? (rate.get(Number(v.tax_code_id)) ?? 0) : 0;
-      const taxAmount = r2(net * taxRate / 100);
+      let taxAmount = r2(net * taxRate / 100);
+      let gross = r2(net + taxAmount);
+      // A System Admin may set the line's Gross Amount to the exact centavo (asked 2026-10-26): with VAT
+      // computed on a centavo-rounded net some totals cannot be reached (6,367.99 on SO-201931). The
+      // net stays as computed; the tax takes the difference (Gross - Net). Anyone else: refused.
+      const override = l.gross_override === undefined || l.gross_override === null || l.gross_override === '' ? null : Number(l.gross_override);
+      if (override != null) {
+        if (!isAdmin) throw Object.assign(new Error('Only a System Admin can set a line\'s Gross Amount.'), { status: 403 });
+        if (!Number.isFinite(override)) throw Object.assign(new Error(`Line ${old.line_no}: the Gross Amount is not a number.`), { status: 400 });
+        if (Math.abs(r2(override) - gross) > 0.005 || Math.abs(r2(override) - Number(old.gross_amount || 0)) > 0.005) {
+          gross = r2(override);
+          taxAmount = r2(gross - net);
+          linePricing = true;
+        }
+      }
+      if (linePricing) pricingChanged = true;
       // GP keeps the line's cost as it was: cost = old net - old GP.
       const cost = Number(old.net_of_tax || 0) - Number(old.gp_amount || 0);
       const amounts = {
         price_per_unit: price, subtotal, disc_amount: discAmount, disc_percent: subtotal ? r2(discAmount / subtotal * 100) : 0,
-        disc_price_per_unit: r4(net / qty), net_of_tax: net, tax_amount: taxAmount, gross_amount: r2(net + taxAmount),
+        disc_price_per_unit: r4(net / qty), net_of_tax: net, tax_amount: taxAmount, gross_amount: gross,
         gp_amount: old.gp_amount == null ? null : r2(net - cost), gp_rate: old.gp_amount == null ? old.gp_rate : (net ? r2((net - cost) / net * 100) : null),
       };
       const cols = linePricing ? { ...v, ...amounts } : v;

@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EntityPicker from '../components/EntityPicker';
+import { useAuth } from '../context/useAuth';
 
 // Edit a Sales Order -- System Admin only (PUT /sales-orders/:id). Header details and every line:
 // description, qty, price, Disc Amt PER PIECE (Disc Price/Unit = Price/Unit - Disc Amt, Net of Tax =
@@ -16,6 +17,9 @@ const day = (v) => (v ? String(v).slice(0, 10) : '');
 export default function SalesOrderEdit() {
   const { id } = useParams();
   const navigate = useNavigate();
+  // A System Admin may type a line's Gross Amount to the centavo (2026-10-26; the server's rule).
+  const { user } = useAuth();
+  const isAdmin = user?.account_type === 'System Admin';
   const [so, setSo] = useState(null);
   const [head, setHead] = useState({});
   const [lines, setLines] = useState([]);
@@ -41,6 +45,7 @@ export default function SalesOrderEdit() {
         setLines(data.lines.map((l) => ({
           ...l, delivery_date: day(l.delivery_date),
           disc_per_piece: Number(l.quantity) ? Number((Number(l.disc_amount || 0) / Number(l.quantity)).toFixed(4)) : 0,
+          pricing_touched: false,
         })));
       } catch (e) { setError(e.response?.data?.error || 'Could not load the Sales Order.'); }
     })();
@@ -55,6 +60,16 @@ export default function SalesOrderEdit() {
     const qty = Number(l.quantity) || 0; const price = r2(Number(l.price_per_unit) || 0);
     const subtotal = r2(qty * price); const disc = r2((Number(l.disc_per_piece) || 0) * qty); const net = r2(subtotal - disc);
     const tax = r2(net * rateOf(l.tax_code_id) / 100);
+    // An admin's typed Gross: the net stands, the tax takes the difference -- as the server saves it.
+    if (l.gross_override !== undefined && l.gross_override !== '') {
+      const gross = r2(l.gross_override);
+      return { subtotal, disc, discPrice: qty ? net / qty : 0, net, tax: r2(gross - net), gross, overridden: true };
+    }
+    // An untouched line shows its saved Tax and Gross -- a Gross an admin typed earlier stays as saved
+    // until the line's pricing is changed.
+    if (!l.pricing_touched && l.gross_amount != null && Math.abs(Number(l.net_of_tax || 0) - net) < 0.005) {
+      return { subtotal, disc, discPrice: qty ? net / qty : 0, net, tax: Number(l.tax_amount || 0), gross: Number(l.gross_amount) };
+    }
     return { subtotal, disc, discPrice: qty ? net / qty : 0, net, tax, gross: r2(net + tax) };
   };
   const totals = useMemo(() => lines.reduce((t, l) => {
@@ -82,7 +97,10 @@ export default function SalesOrderEdit() {
     const first = contacts.find((k) => k.is_primary) || (contacts.length === 1 ? contacts[0] : null);
     setHead((x) => ({ ...x, customer_id: c.id, customer_name: c.name, ...fillContact(first) }));
   }
-  const setLine = (i, k, v) => setLines((ls) => ls.map((l, j) => (j === i || (k === 'tax_code_id' && i === 0) ? { ...l, [k]: v } : l)));
+  // Changing what the Gross is computed from drops a typed Gross on that line: it was for the old figures.
+  const PRICING = ['quantity', 'price_per_unit', 'disc_per_piece', 'tax_code_id'];
+  const setLine = (i, k, v) => setLines((ls) => ls.map((l, j) => (j === i || (k === 'tax_code_id' && i === 0)
+    ? { ...l, [k]: v, ...(PRICING.includes(k) ? { gross_override: undefined, pricing_touched: true } : {}) } : l)));
 
   async function save() {
     setSaving(true); setError('');
@@ -99,6 +117,7 @@ export default function SalesOrderEdit() {
         id: l.id, job_location_id: l.job_location_id || null, description: l.description, quantity: l.quantity, units: l.units, price_per_unit: l.price_per_unit,
         disc_per_piece: l.disc_per_piece, tax_code_id: l.tax_code_id || null, length: l.length, width: l.width, height: l.height,
         uom: l.uom, shipping: l.shipping, remarks: l.remarks, memo: l.memo, delivery_date: l.delivery_date || null, delivery_time: l.delivery_time || null,
+        ...(isAdmin && l.gross_override !== undefined && l.gross_override !== '' ? { gross_override: Number(l.gross_override) } : {}),
       })) };
       await api.put(`/sales-orders/${id}`, body);
       navigate(`/sales-orders/${id}`);
@@ -245,7 +264,18 @@ export default function SalesOrderEdit() {
                       </select>
                     </td>
                     <td className="text-right">{money(c.tax)}</td>
-                    <td className="text-right">{money(c.gross)}</td>
+                    {isAdmin ? (
+                      <td>
+                        {/* System Admin: type the exact Gross; the tax becomes Gross - Net. */}
+                        <input type="number" step="0.01" style={{ width: 110, textAlign: 'right', ...(c.overridden ? { borderColor: '#d97706' } : {}) }}
+                          value={l.gross_override !== undefined ? l.gross_override : c.gross.toFixed(2)}
+                          title="System Admin: type the exact Gross Amount. Tax Amt becomes Gross - Net of Tax."
+                          onChange={(e) => setLines((ls) => ls.map((x, j) => (j === i ? { ...x, gross_override: e.target.value } : x)))} />
+                        {c.overridden && <div style={{ fontSize: 10, color: '#b45309' }}>typed — tax adjusted</div>}
+                      </td>
+                    ) : (
+                      <td className="text-right">{money(c.gross)}</td>
+                    )}
                     <td>{inp('length', 60, 'number')}</td>
                     <td>{inp('width', 60, 'number')}</td>
                     <td>{inp('height', 60, 'number')}</td>
