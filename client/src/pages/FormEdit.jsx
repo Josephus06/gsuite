@@ -931,19 +931,30 @@ export default function FormEdit() {
       <div className="card" style={{ marginTop: 16 }}>
         <h3 style={{ marginTop: 0 }}>Approval</h3>
         <div className="field-row">
+          {/* A searchable picker window, not a dropdown (asked 2026-10-26): the list is every user and
+              ran off the screen. Searchable by name or department. */}
           <div className="field">
             <label>Noter</label>
-            <select value={form.noter_user_id} onChange={(e) => set('noter_user_id', e.target.value)}>
-              <option value="">— None (goes straight to approval) —</option>
-              {otPeople.map((p) => <option key={p.id} value={p.id}>{p.name}{p.department ? ` — ${p.department}` : ''}</option>)}
-            </select>
+            <EntityPicker
+              label="Noter" items={otPeople} value={form.noter_user_id}
+              getLabel={(p) => `${p.name}${p.department ? ` — ${p.department}` : ''}`}
+              columns={[{ key: 'name', label: 'Name' }, { key: 'department', label: 'Department' }]}
+              searchKeys={['name', 'department']}
+              placeholder="None (goes straight to approval)"
+              onSelect={(p) => set('noter_user_id', p ? String(p.id) : '')}
+              onClear={() => set('noter_user_id', '')}
+            />
           </div>
           <div className="field">
             <label>Approver *</label>
-            <select value={form.approver_user_id} onChange={(e) => set('approver_user_id', e.target.value)}>
-              <option value="">— Choose —</option>
-              {otPeople.map((p) => <option key={p.id} value={p.id}>{p.name}{p.department ? ` — ${p.department}` : ''}</option>)}
-            </select>
+            <EntityPicker
+              label="Approver" items={otPeople} value={form.approver_user_id}
+              getLabel={(p) => `${p.name}${p.department ? ` — ${p.department}` : ''}`}
+              columns={[{ key: 'name', label: 'Name' }, { key: 'department', label: 'Department' }]}
+              searchKeys={['name', 'department']}
+              placeholder="Choose the approver"
+              onSelect={(p) => set('approver_user_id', p ? String(p.id) : '')}
+            />
           </div>
         </div>
         <div className="muted" style={{ fontSize: 12 }}>
