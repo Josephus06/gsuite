@@ -1262,6 +1262,14 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .picker-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+/* A date filter on any list page (2026-10-26, RWIP and the rest): the As of / Period choice and its
+   date box(es) share the field's width instead of overflowing it -- in Period mode the second date
+   was pushed out of sight behind the next filter. With two dates the field takes two columns. */
+.filter-grid .field:has(input[type="date"] ~ input[type="date"]) { grid-column: span 2; }
+.filter-grid .field > div:has(> input[type="date"]) { display: flex; gap: 6px; min-width: 0; }
+.filter-grid .field > div:has(> input[type="date"]) > select { flex: 0 0 auto; width: auto; min-width: 0; }
+.filter-grid .field > div:has(> input[type="date"]) > input[type="date"] { flex: 1 1 0; min-width: 0; }
+@media (max-width: 640px) { .filter-grid .field:has(input[type="date"] ~ input[type="date"]) { grid-column: auto; } }
 /* A report's filter panel laid out in four even columns (2026-10-26, Invoiced Job Orders): a date
    filter (As of / Period from + one or two dates) takes two columns so its inputs are not squeezed.
    Two columns, then one, on narrower screens. */
