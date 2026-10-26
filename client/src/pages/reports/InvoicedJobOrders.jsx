@@ -74,7 +74,9 @@ export default function InvoicedJobOrders() {
       {error && <div className="error-banner">{error}</div>}
 
       <div className="card" style={{ marginBottom: 16 }}>
-        <div className="filter-grid">
+        {/* Four even columns: who and where on the first two rows, the three dates (two columns
+            each) below, then Search. */}
+        <div className="report-filters">
           <div className="field">
             <label>General Searching</label>
             <SearchInput placeholder="Search" value={form.search} onChange={(e) => set('search', e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') search(); }} />
@@ -90,8 +92,10 @@ export default function InvoicedJobOrders() {
               {lk.divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           </div>
-          <div className="field"><RepPicker reps={lk.reps} value={form.salesRepId} onChange={(v) => set('salesRepId', v)} /></div>
-          <DateFilter label="Date Created" value={form.created} onChange={(v) => set('created', v)} />
+          <div className="field">
+            <label>Sales Rep</label>
+            <RepPicker reps={lk.reps} value={form.salesRepId} onChange={(v) => set('salesRepId', v)} />
+          </div>
           <div className="field"><label>Location</label>{locationSelect('locationId')}</div>
           <div className="field"><label>Office Location</label>{locationSelect('officeLocationId')}</div>
           <div className="field">
@@ -100,10 +104,15 @@ export default function InvoicedJobOrders() {
               <option value="">— All —</option><option value="OPEN">OPEN</option><option value="PAID IN FULL">PAID IN FULL</option><option value="VOID">VOID</option>
             </select>
           </div>
-          <DateFilter label="Need By Date" value={form.need} onChange={(v) => set('need', v)} />
-          <DateFilter label="Invoice Date" value={form.invoice} onChange={(v) => set('invoice', v)} />
+          <div />
+          <div className="span-2"><DateFilter label="Date Created" value={form.created} onChange={(v) => set('created', v)} /></div>
+          <div className="span-2"><DateFilter label="Need By Date" value={form.need} onChange={(v) => set('need', v)} /></div>
+          <div className="span-2"><DateFilter label="Invoice Date" value={form.invoice} onChange={(v) => set('invoice', v)} /></div>
+          <div className="field" style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-primary" onClick={search}>Search</button>
+            <button className="btn" onClick={() => { const b = blank(); setForm(b); setApplied(b); setPage(1); }}>Clear</button>
+          </div>
         </div>
-        <button className="btn btn-primary" style={{ marginTop: 10 }} onClick={search}>Search</button>
       </div>
 
       <div className="card">

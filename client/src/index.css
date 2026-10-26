@@ -1260,6 +1260,14 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 .picker-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+/* A report's filter panel laid out in four even columns (2026-10-26, Invoiced Job Orders): a date
+   filter (As of / Period from + one or two dates) takes two columns so its inputs are not squeezed.
+   Two columns, then one, on narrower screens. */
+.report-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 16px; align-items: end; }
+.report-filters .span-2 { grid-column: span 2; }
+.report-filters .field { margin-bottom: 0; }
+@media (max-width: 1100px) { .report-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .report-filters { grid-template-columns: minmax(0, 1fr); } .report-filters .span-2 { grid-column: auto; } }
 
 .estimate-banner {
   background: linear-gradient(135deg, #1e3a8a, #1e40af);

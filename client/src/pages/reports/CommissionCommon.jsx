@@ -26,14 +26,15 @@ export function DateFilter({ label, value, onChange }) {
   return (
     <div className="field">
       <label>{label}</label>
-      <div style={{ display: 'flex', gap: 6 }}>
-        <select value={value.filter} style={{ maxWidth: 130 }}
+      {/* The choice keeps its width; the dates share the rest, and none overflows its column. */}
+      <div style={{ display: 'flex', gap: 6, minWidth: 0 }}>
+        <select value={value.filter} style={{ flex: '0 0 125px', minWidth: 0 }}
           onChange={(e) => onChange({ ...value, filter: e.target.value })}>
           <option value="as of">As of</option>
           <option value="period from">Period from</option>
         </select>
-        <input type="date" value={value.d1} onChange={(e) => onChange({ ...value, d1: e.target.value })} />
-        {value.filter === 'period from' && <input type="date" value={value.d2} onChange={(e) => onChange({ ...value, d2: e.target.value })} />}
+        <input type="date" style={{ flex: '1 1 0', minWidth: 0 }} value={value.d1} onChange={(e) => onChange({ ...value, d1: e.target.value })} />
+        {value.filter === 'period from' && <input type="date" style={{ flex: '1 1 0', minWidth: 0 }} value={value.d2} onChange={(e) => onChange({ ...value, d2: e.target.value })} />}
       </div>
     </div>
   );
