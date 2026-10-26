@@ -496,11 +496,11 @@ router.put('/:id/approve-accounting', requireAuth, requirePermission(ROUTE, 'can
     const [[item]] = await conn.query('SELECT * FROM inventories WHERE id = ?', [req.params.id]);
     if (!item) { conn.release(); return res.status(404).json({ error: 'Not found' }); }
     if (item.is_accounting_approved) { conn.release(); return res.status(400).json({ error: 'Accounting is already approved.' }); }
-    // Expense is commonly left blank even on real Approved items -- Asset/COGS/Income
-    // are the three that actually gate approval (see schema.sql's cogs_account_id note).
-    if (!item.asset_account_id || !item.cogs_account_id || !item.income_account_id) {
+    // At least one of Asset / COGS / Income set (asked 2026-10-26; until then all three were required).
+    // Expense is commonly left blank even on real Approved items and does not count.
+    if (!item.asset_account_id && !item.cogs_account_id && !item.income_account_id) {
       conn.release();
-      return res.status(400).json({ error: 'Asset, COGS, and Income accounts must all be set before accounting can be approved.' });
+      return res.status(400).json({ error: 'Set at least one of the Asset, COGS or Income accounts before accounting can be approved.' });
     }
 
     await conn.beginTransaction();

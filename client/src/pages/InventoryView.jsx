@@ -132,7 +132,8 @@ export default function InventoryView() {
   const otherInventories = inventoryItems.filter((i) => i.id !== item.id);
 
   const costingReady = Number(item.selling_price) > 0;
-  const accountingReady = !!(item.asset_account_id && item.cogs_account_id && item.income_account_id);
+  // Any one of Asset / COGS / Income set is enough to approve (2026-10-26) -- the server's rule.
+  const accountingReady = !!(item.asset_account_id || item.cogs_account_id || item.income_account_id);
   // Only stock items go through Costing / Accounting approval, as on the source (and the list's
   // tabs, routes/inventories.js NON_STOCK_SQL); a Non-Inventory, Service, Discount or Landed Cost
   // item is simply approved.
