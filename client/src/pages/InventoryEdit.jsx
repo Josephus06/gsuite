@@ -379,6 +379,7 @@ export default function InventoryEdit() {
               columns={[{ key: 'account_code', label: 'Code' }, { key: 'account_name', label: 'Name' }, { key: 'account_type', label: 'Type' }]}
               searchKeys={['account_code', 'account_name']}
               onSelect={(a) => setForm({ ...form, expense_account_id: a.id })}
+              onClear={() => setForm({ ...form, expense_account_id: '' })}
             />
           </div>
           <div className="field">
@@ -388,6 +389,7 @@ export default function InventoryEdit() {
               columns={[{ key: 'account_code', label: 'Code' }, { key: 'account_name', label: 'Name' }, { key: 'account_type', label: 'Type' }]}
               searchKeys={['account_code', 'account_name']}
               onSelect={(a) => setForm({ ...form, cogs_account_id: a.id })}
+              onClear={() => setForm({ ...form, cogs_account_id: '' })}
             />
           </div>
           <div className="field">
@@ -397,6 +399,7 @@ export default function InventoryEdit() {
               columns={[{ key: 'account_code', label: 'Code' }, { key: 'account_name', label: 'Name' }, { key: 'account_type', label: 'Type' }]}
               searchKeys={['account_code', 'account_name']}
               onSelect={(a) => setForm({ ...form, asset_account_id: a.id })}
+              onClear={() => setForm({ ...form, asset_account_id: '' })}
             />
           </div>
           <div className="field">
@@ -406,6 +409,7 @@ export default function InventoryEdit() {
               columns={[{ key: 'account_code', label: 'Code' }, { key: 'account_name', label: 'Name' }, { key: 'account_type', label: 'Type' }]}
               searchKeys={['account_code', 'account_name']}
               onSelect={(a) => setForm({ ...form, income_account_id: a.id })}
+              onClear={() => setForm({ ...form, income_account_id: '' })}
             />
           </div>
         </div>

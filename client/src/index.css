@@ -1239,6 +1239,8 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
   border-left: none;
   padding: 7px 10px;
 }
+/* A picker with a Clear (×) beside its search button: the middle button is square on both sides. */
+.picker-input .btn:not(:last-child) { border-radius: 0; }
 .picker-search { padding: 16px; border-bottom: 1px solid var(--border); }
 .picker-row { cursor: pointer; }
 .picker-pagination {

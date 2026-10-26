@@ -109,6 +109,13 @@ export default function EntityPicker({
             onClick={openPicker}
             disabled={disabled}
           />
+          {/* Clear straight from the field (2026-10-26), not only from inside the picker -- where the
+              caller allows it to be empty and there is something to clear. */}
+          {onClear && selected && !disabled && (
+            <button type="button" className="btn" onClick={() => onClear()} aria-label={`Clear ${label}`} title={`Clear ${label}`}>
+              ×
+            </button>
+          )}
           <button type="button" className="btn" onClick={openPicker} disabled={disabled} aria-label={`Search ${label}`}>
             🔍
           </button>
