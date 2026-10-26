@@ -14,6 +14,8 @@
 //
 //   node src/db/backfill-journal-line-departments.js            # preview
 //   node src/db/backfill-journal-line-departments.js --apply    # backs up to /root/match2026/
+// Re-run whenever a department is added to T1S that the source already used (E-Commerce, 2026-10-26):
+// lines left blank because it was missing are filled then.
 // Droplet and office replicate: run on ONE box (the droplet).
 require('dotenv').config();
 const fs = require('fs');
@@ -82,6 +84,12 @@ async function api(t, ep, payload) {
     if (page.length < PAGE) break;
   }
   console.log(`\n${JSON.stringify(stats)}`);
+  // Where the filled lines go, by T1S department (2026-10-26: E-Commerce, added that day, and the
+  // other departments created after the first run).
+  const nameById = new Map(localDepts.map((d) => [d.id, d.name]));
+  const perDept = new Map();
+  for (const [, dept] of updates) perDept.set(dept, (perDept.get(dept) || 0) + 1);
+  for (const [dept, n] of [...perDept].sort((a, b) => b[1] - a[1])) console.log(`  ${String(n).padStart(5)}  ${nameById.get(dept) || `#${dept}`}`);
   if (unmappedDepts.size) {
     const names = liveDepts.filter((d) => unmappedDepts.has(d.SysPK_Dept)).map((d) => d.Name_Dept || d.Title_Dept);
     console.log(`Source departments with no T1S match (${unmappedDepts.size}): ${names.join(', ')}`);
