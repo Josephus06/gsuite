@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { assignDocNo } = require('../lib/docNumber');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeCommissionVoucherGl } = require('../lib/glImpact');
 const { buildCommissionReport } = require('../lib/commissionReport');
@@ -177,49 +177,82 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   } catch (err) { next(err); }
 });
 
+// One voucher with its commissions, expenses and (posted) GL impact: the detail view and the print.
+async function loadVoucher(id) {
+  const [[cv]] = await pool.query(
+    `SELECT cv.*, CONCAT(e.first_name, ' ', e.last_name) AS employee_name, pm.name AS payment_method_name,
+            coa.account_code AS cash_account_code, coa.account_name AS cash_account_name, u.display_name AS created_by_name,
+            u.signature_data AS prepared_signature
+     FROM commission_vouchers cv
+     LEFT JOIN employees e ON e.id = cv.employee_id
+     LEFT JOIN payment_methods pm ON pm.id = cv.payment_method_id
+     LEFT JOIN chart_of_accounts coa ON coa.id = cv.cash_bank_account_id
+     LEFT JOIN users u ON u.id = cv.created_by_user_id
+     WHERE cv.id = ?`,
+    [id]
+  );
+  if (!cv) return null;
+
+  const [lines] = await pool.query(
+    `SELECT cvl.*, cp.commission_payable_no, cp.date_created AS payable_date, cp.period_from
+     FROM commission_voucher_lines cvl
+     LEFT JOIN commission_payables cp ON cp.id = cvl.commission_payable_id
+     WHERE cvl.commission_voucher_id = ? ORDER BY cp.period_from`,
+    [id]
+  );
+  const [expenses] = await pool.query(
+    `SELECT cve.*, coa.account_code, coa.account_name
+     FROM commission_voucher_expenses cve LEFT JOIN chart_of_accounts coa ON coa.id = cve.account_id
+     WHERE cve.commission_voucher_id = ?`,
+    [id]
+  );
+  // The month a payback is pointed at, resolved separately rather than joined above so this
+  // page still loads on a database where the migration has not been run yet -- `cve.*` simply
+  // returns no such column there, and this block is skipped.
+  const targetIds = [...new Set(expenses.map((e) => e.applies_to_payable_id).filter(Boolean))];
+  if (targetIds.length) {
+    const [periods] = await pool.query(
+      'SELECT id, period_from FROM commission_payables WHERE id IN (?)', [targetIds],
+    );
+    const periodById = new Map(periods.map((p) => [String(p.id), p.period_from]));
+    for (const e of expenses) {
+      e.applies_to_period_from = e.applies_to_payable_id ? periodById.get(String(e.applies_to_payable_id)) || null : null;
+    }
+  }
+  const glImpact = await computeCommissionVoucherGl(cv, lines, expenses);
+  return { ...cv, lines, expenses, gl_impact: glImpact };
+}
+
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const [[cv]] = await pool.query(
-      `SELECT cv.*, CONCAT(e.first_name, ' ', e.last_name) AS employee_name, pm.name AS payment_method_name,
-              coa.account_code AS cash_account_code, coa.account_name AS cash_account_name, u.display_name AS created_by_name
-       FROM commission_vouchers cv
-       LEFT JOIN employees e ON e.id = cv.employee_id
-       LEFT JOIN payment_methods pm ON pm.id = cv.payment_method_id
-       LEFT JOIN chart_of_accounts coa ON coa.id = cv.cash_bank_account_id
-       LEFT JOIN users u ON u.id = cv.created_by_user_id
-       WHERE cv.id = ?`,
-      [req.params.id]
-    );
+    const cv = await loadVoucher(req.params.id);
     if (!cv) return res.status(404).json({ error: 'Not found' });
+    // The preparer's signature image is for the print only.
+    const { prepared_signature: _sig, ...rest } = cv;
+    res.json(rest);
+  } catch (err) { next(err); }
+});
 
-    const [lines] = await pool.query(
-      `SELECT cvl.*, cp.commission_payable_no, cp.date_created AS payable_date, cp.period_from
-       FROM commission_voucher_lines cvl
-       LEFT JOIN commission_payables cp ON cp.id = cvl.commission_payable_id
-       WHERE cvl.commission_voucher_id = ? ORDER BY cp.period_from`,
-      [req.params.id]
-    );
-    const [expenses] = await pool.query(
-      `SELECT cve.*, coa.account_code, coa.account_name
-       FROM commission_voucher_expenses cve LEFT JOIN chart_of_accounts coa ON coa.id = cve.account_id
-       WHERE cve.commission_voucher_id = ?`,
-      [req.params.id]
-    );
-    // The month a payback is pointed at, resolved separately rather than joined above so this
-    // page still loads on a database where the migration has not been run yet -- `cve.*` simply
-    // returns no such column there, and this block is skipped.
-    const targetIds = [...new Set(expenses.map((e) => e.applies_to_payable_id).filter(Boolean))];
-    if (targetIds.length) {
-      const [periods] = await pool.query(
-        'SELECT id, period_from FROM commission_payables WHERE id IN (?)', [targetIds],
-      );
-      const periodById = new Map(periods.map((p) => [String(p.id), p.period_from]));
-      for (const e of expenses) {
-        e.applies_to_period_from = e.applies_to_payable_id ? periodById.get(String(e.applies_to_payable_id)) || null : null;
-      }
+// The printed voucher (asked 2026-10-26), as the source prints it -- a "Payment Voucher": the entry's
+// lines with each released commission's Month beside its Commission Payable debit, the total and
+// the amount in words. A voided voucher still prints its entry, marked VOID (client/src/pages/
+// CommissionVoucherPrint.jsx). can_print on Commission Voucher, or a System Admin.
+router.get('/:id/print', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await isSystemAdmin(req.user.id)) && !(await userCan(req.user.id, ROUTE, 'can_print'))) {
+      return res.status(403).json({ error: 'You do not have permission to print a Commission Voucher.' });
     }
-    const glImpact = await computeCommissionVoucherGl(cv, lines, expenses);
-    res.json({ ...cv, lines, expenses, gl_impact: glImpact });
+    const cv = await loadVoucher(req.params.id);
+    if (!cv) return res.status(404).json({ error: 'Not found' });
+    const rows = cv.status === 'void'
+      ? await computeCommissionVoucherGl({ ...cv, status: 'posted' }, cv.lines, cv.expenses)
+      : cv.gl_impact;
+    // computeCommissionVoucherGl puts one Commission Payable debit per released commission first, in
+    // the lines' order -- so the first N rows take those commissions' months.
+    const released = cv.lines.filter((l) => Math.round(Number(l.released_amount || 0) * 100) !== 0);
+    const entries = rows.map((r, i) => (i < released.length && Number(r.debit) > 0
+      ? { ...r, month: released[i].period_from } : r));
+    res.json({ ...cv, entries });
   } catch (err) { next(err); }
 });
 

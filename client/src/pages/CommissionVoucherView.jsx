@@ -58,6 +58,10 @@ export default function CommissionVoucherView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm" onClick={() => navigate(-1)}>Back to Lists</button>
+          {/* The printed Payment Voucher (2026-10-26); a voided one prints marked VOID. */}
+          {can('/commission-vouchers', 'can_print') && (
+            <button className="btn btn-sm" onClick={() => window.open(`/commission-vouchers/${id}/print`, '_blank')}>Print</button>
+          )}
           {canEdit && isOpen && <Link className="btn btn-sm btn-primary" to={`/commission-vouchers/${id}/edit`}>Edit</Link>}
           {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
