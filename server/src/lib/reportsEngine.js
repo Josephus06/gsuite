@@ -320,6 +320,34 @@ function partitionGlLines(glLines, breakdown, fromDate, asOfDate) {
   return [{ key: 'total', label: 'Total', lines: glLines }];
 }
 
+// Sub-departments shown as their parent in a by-department report (asked 2026-10-26): Support-IT,
+// Support-System and Support-Technical are parts of Support, so their amounts are lumped into its
+// column -- T1S lines by department id, the source's months by name (`src:<name>`). The departments
+// themselves stay separate everywhere else (forms, bills, budgets).
+const DEPARTMENT_ROLLUP = { Support: ['Support-IT', 'Support-System', 'Support-Technical'] };
+const normDept = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+async function rollupDepartments(lines) {
+  const [rows] = await pool.query('SELECT id, name FROM departments');
+  const idByName = new Map(rows.map((r) => [normDept(r.name), String(r.id)]));
+  const parentOf = new Map(); // child key (T1S id, or `src:` normalised name) -> parent's id
+  for (const [parent, children] of Object.entries(DEPARTMENT_ROLLUP)) {
+    const parentId = idByName.get(normDept(parent));
+    if (!parentId) continue;
+    for (const child of children) {
+      const childId = idByName.get(normDept(child));
+      if (childId) parentOf.set(childId, parentId);
+      parentOf.set(`src:${normDept(child)}`, parentId);
+    }
+  }
+  if (!parentOf.size) return lines;
+  return lines.map((l) => {
+    if (l.department_id == null) return l;
+    const k = String(l.department_id);
+    const parent = parentOf.get(k.startsWith('src:') ? `src:${normDept(k.slice(4))}` : k);
+    return parent ? { ...l, department_id: Number(parent) } : l;
+  });
+}
+
 async function resolvePartitionLabels(partitions, breakdown) {
   const table = breakdown === 'location' ? 'locations' : 'departments';
   const nameCol = breakdown === 'location' ? 'location_name' : 'name';
@@ -353,7 +381,7 @@ async function buildIncomeStatement(asOfDate, fromDateOverride, breakdown = 'tot
   ]);
   // Months before the cut-over are the source's trial balance; by department / location they are
   // split by the source's own department / location income statement.
-  const glLines = breakdown === 'department' ? await splitSourceLinesByDepartment(posted)
+  const glLines = breakdown === 'department' ? await rollupDepartments(await splitSourceLinesByDepartment(posted))
     : breakdown === 'location' ? await splitSourceLinesByLocation(posted) : posted;
 
   let partitions = partitionGlLines(glLines, breakdown, fromDate, asOfDate);
@@ -475,7 +503,9 @@ async function buildGlTransactions({ accountCode, breakdown = 'total', columnKey
   const [coaRows, posted] = await Promise.all([loadCoa(), getPostedGlLines({ toDate: asOfDate, fromDate: from })]);
   // Split in every mode but Location: a source month split by department is what lets its documents
   // be listed. By location the source's months are split by location and listed one line per month.
-  const glLines = breakdown === 'location' ? await splitSourceLinesByLocation(posted) : await splitSourceLinesByDepartment(posted);
+  // By department, sub-departments are drilled under their parent's column (rollupDepartments).
+  const glLines = breakdown === 'location' ? await splitSourceLinesByLocation(posted)
+    : breakdown === 'department' ? await rollupDepartments(await splitSourceLinesByDepartment(posted)) : await splitSourceLinesByDepartment(posted);
   const monthKey = (d) => { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`; };
 
   // A clicked account may be a summary; its transactions post to descendant leaf accounts, so
