@@ -28,7 +28,8 @@ function SectionRows({ sections, columns, onDrill }) {
         <td style={{ paddingLeft: 24 + depth * 20 }}>{a.account_code}</td>
         <td style={depth === 0 && a.children && a.children.length ? { fontWeight: 600 } : undefined}>{a.account_name}</td>
         {a.amounts.map((v, i) => (
-          <td key={i} style={{ textAlign: 'right' }}>
+          // The breakdown's Total column (2026-10-26) in bold, so the row's sum reads apart from its parts.
+          <td key={i} style={{ textAlign: 'right', ...(columns[i]?.key === '__total' ? { fontWeight: 600 } : {}) }}>
             {v ? (
               <button type="button" className="link-btn" style={{ color: 'var(--link, #2563eb)', textDecoration: 'underline', cursor: 'pointer' }}
                 onClick={() => onDrill(a, columns[i])}>{money(v)}</button>

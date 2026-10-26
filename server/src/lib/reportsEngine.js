@@ -12,6 +12,10 @@ function round2(n) {
 // Account the balance sheet folds prior-years unclosed earnings into (see buildBalanceSheet).
 const RETAINED_EARNINGS_CODE = '29000';
 
+// The Total column a department / location / month breakdown ends with (buildIncomeStatement), and
+// the drill-down's key for it (buildGlTransactions). Not a department or location id, nor a month.
+const TOTAL_COLUMN_KEY = '__total';
+
 function yearStart(dateStr) {
   return `${String(dateStr).slice(0, 4)}-01-01`;
 }
@@ -357,6 +361,11 @@ async function buildIncomeStatement(asOfDate, fromDateOverride, breakdown = 'tot
     partitions = await resolvePartitionLabels(partitions, breakdown);
   }
   if (!partitions.length) partitions = [{ key: 'total', label: 'Total', lines: [] }];
+  // By department / location / month: a Total column last (asked 2026-10-26) -- every column's lines
+  // together, so it is the sum across the row and drills down to all of them (TOTAL_COLUMN_KEY).
+  if (breakdown !== 'total') {
+    partitions.push({ key: TOTAL_COLUMN_KEY, label: 'Total', lines: partitions.flatMap((p) => p.lines) });
+  }
   const columns = partitions.map((p) => ({ key: p.key, label: p.label }));
 
   const balanceMaps = partitions.map((p) => netBalancesByCode(p.lines));
@@ -478,7 +487,9 @@ async function buildGlTransactions({ accountCode, breakdown = 'total', columnKey
   if (target) { const q = [target.id]; while (q.length) { for (const ch of childrenByParent.get(q.shift()) || []) { codes.add(ch.account_code); q.push(ch.id); } } }
 
   let lines = glLines.filter((l) => codes.has(l.account_code) && ((Number(l.debit) || 0) || (Number(l.credit) || 0)));
-  if (breakdown === 'department') lines = lines.filter((l) => String(l.department_id || 'unassigned') === String(columnKey));
+  // The breakdown's Total column keeps every line of the period (already fetched from `from`).
+  if (String(columnKey) === TOTAL_COLUMN_KEY) { /* all columns */ }
+  else if (breakdown === 'department') lines = lines.filter((l) => String(l.department_id || 'unassigned') === String(columnKey));
   else if (breakdown === 'location') lines = lines.filter((l) => String(l.location_id || 'unassigned') === String(columnKey));
   else if (breakdown === 'months') lines = lines.filter((l) => monthKey(l.entry_date) === String(columnKey));
 
