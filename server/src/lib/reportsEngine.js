@@ -321,10 +321,10 @@ function partitionGlLines(glLines, breakdown, fromDate, asOfDate) {
 }
 
 // Sub-departments shown as their parent in a by-department report (asked 2026-10-26): Support-IT,
-// Support-System and Support-Technical are parts of Support, so their amounts are lumped into its
-// column -- T1S lines by department id, the source's months by name (`src:<name>`). The departments
-// themselves stay separate everywhere else (forms, bills, budgets).
-const DEPARTMENT_ROLLUP = { Support: ['Support-IT', 'Support-System', 'Support-Technical'] };
+// Support-System, Support-Technical, Support-Costing and Support-Operations Audit are parts of Support,
+// so their amounts are lumped into its column -- T1S lines by department id, the source's months by
+// name (`src:<name>`). The departments themselves stay separate everywhere else (forms, bills, budgets).
+const DEPARTMENT_ROLLUP = { Support: ['Support-IT', 'Support-System', 'Support-Technical', 'Support-Costing', 'Support-Operations Audit'] };
 const normDept = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 async function rollupDepartments(lines) {
   const [rows] = await pool.query('SELECT id, name FROM departments');
