@@ -145,8 +145,6 @@ export default function FormView() {
   // -- most departments have no head recorded yet, and a missing button with no explanation reads
   // as the module being broken rather than as the form waiting on somebody.
   const mayNote = doc.can_note && doc.status === 'submitted';
-  // A liquidation is noted by Accounts Payable only once every item has a COGS account.
-  const cogsBlocksNote = mayNote && doc.needs_cogs && doc.cogs_missing > 0;
   // A Leave Application follows the filer's reporting line (2026-10-19): noted by their supervisor
   // when there is one below the approver (leave_needs_note), otherwise straight to approval.
   // A Fuel Request behaves as a leave with nobody to note it: straight to its tagged approvers.
@@ -172,6 +170,10 @@ export default function FormView() {
   const unposted = !!doc.billable && doc.status === 'approved' && !doc.gl_posts;
   const mayBill = unposted && can('/vendor-bills', 'can_add');
   const mayJournal = unposted && doc.type === 'liquidation' && !(doc.vendor_bills || []).length && can('/journals', 'can_add');
+  // A liquidation's items need their accounts before it is posted (2026-10-26 -- no longer before
+  // noting). A Journal posts every item, so it waits for all of them; a Vendor Bill is refused by the
+  // server for the items on it that have none.
+  const accountsMissing = unposted && doc.needs_cogs && doc.cogs_missing > 0;
   // An approved Fund Transfer Request is posted by a Check Voucher raised from it (2026-10-14) --
   // offered until its vouchers cover its total. Check Voucher only (asked 2026-10-14).
   const ftrUnposted = doc.type === 'fund_transfer' && doc.status === 'approved' && !doc.vouchers_post;
@@ -210,8 +212,7 @@ export default function FormView() {
               onClick={() => act('submit', null, 'Submitted for approval.')}>Submit</button>
           )}
           {mayNote && (
-            <button className="btn btn-sm btn-primary" disabled={busy || cogsBlocksNote}
-              title={cogsBlocksNote ? `Select an account for every item first (${doc.cogs_missing} missing)` : undefined}
+            <button className="btn btn-sm btn-primary" disabled={busy}
               onClick={() => act('note', null, 'Noted.')}>Note</button>
           )}
           {mayApprove && (
@@ -241,9 +242,11 @@ export default function FormView() {
               {doc.partly_billed ? 'Bill Remaining Items' : 'Create Vendor Bill'}
             </button>
           )}
-          {mayJournal && (
+          {mayJournal && (accountsMissing ? (
+            <button className="btn btn-sm btn-primary" disabled title={`Select an account for every item first (${doc.cogs_missing} missing)`}>Create Journal</button>
+          ) : (
             <Link className="btn btn-sm btn-primary" to={`/journals/new?liquidation=${doc.id}`}>Create Journal</Link>
-          )}
+          ))}
           {(doc.vendor_bills || []).map((b) => (
             <Link key={b.id} className="btn btn-sm" to={`/vendor-bills/${b.id}`}>{b.bill_no}</Link>
           ))}
@@ -577,9 +580,9 @@ export default function FormView() {
       {hasItems && (
         <div className="card" style={{ marginTop: 16 }}>
           <h3>{PAYMENT_TYPES.includes(doc.type) ? 'Particulars' : 'Expenses'}</h3>
-          {cogsBlocksNote && (
+          {accountsMissing && (
             <div className="muted" style={{ marginBottom: 8, color: 'var(--danger, #b91c1c)' }}>
-              Select an account for every item before noting -- {doc.cogs_missing} still missing.
+              Select an account for every item before the Vendor Bill or Journal -- {doc.cogs_missing} still missing.
             </div>
           )}
           {canSetCogs && doc.cogs_missing > 0 && (

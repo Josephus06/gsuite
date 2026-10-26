@@ -55,9 +55,20 @@ async function liquidationPostError(conn, formId, { via = 'journal', itemIds = n
   if (form.status !== 'approved') return `${form.request_no} is not approved yet.`;
   const b = await liquidationBilling(conn, formId);
   if (b.journal) return `${form.request_no} is already posted on ${b.journal.journal_no}.`;
+  // A liquidation's items need their accounts before they are posted (asked 2026-10-26 -- no longer
+  // before noting): every item for a Journal, the items on this bill for a Vendor Bill.
+  async function missingAccounts(ids) {
+    if (form.type !== 'liquidation') return null;
+    const [rows] = await conn.query(
+      `SELECT id FROM form_request_items WHERE form_request_id = ? AND cogs_account_id IS NULL${ids ? ' AND id IN (?)' : ''}`,
+      ids ? [formId, ids] : [formId]);
+    return rows.length
+      ? `Accounts Payable has to select an account for every item of ${form.request_no} first -- ${rows.length} item(s) still have none.`
+      : null;
+  }
   if (via !== 'bill') {
     if (b.bills.length) return `${form.request_no} is already billed on ${b.bills.map((x) => x.bill_no).join(', ')}; the rest of it goes on Vendor Bills too.`;
-    return null;
+    return missingAccounts(null);
   }
   if (!b.unbilledItemIds.length) return `Every item of ${form.request_no} is already billed (${b.bills.map((x) => x.bill_no).join(', ')}).`;
   const ids = (itemIds || []).map(Number).filter(Boolean);
@@ -66,7 +77,7 @@ async function liquidationPostError(conn, formId, { via = 'journal', itemIds = n
     if (!b.itemIds.includes(id)) return `An item on this bill is not one of ${form.request_no}'s.`;
     if (b.billOfItem.has(id)) return `An item on this bill is already billed on ${b.billOfItem.get(id)}.`;
   }
-  return null;
+  return missingAccounts(ids);
 }
 
 module.exports = { BILLABLE_FORM_TYPES, liquidationBilling, liquidationPostedBy, liquidationPostError };

@@ -870,10 +870,11 @@ router.get('/meta/cogs-accounts', requireAuth, async (req, res, next) => {
 });
 
 // Assign one liquidation item's COGS account (asked 2026-10-06). Accounts Payable (or a System Admin)
-// while it waits to be noted -- every item needs one before AP can note it -- and, since 2026-10-19,
-// after it is noted too; once approved, a System Admin only (REQ-89). Never once the item
-// is posted: a line on a live Vendor Bill, or a liquidation posted by Journal, keeps the account the
-// books already carry -- change it there (cancel the bill / void the journal) instead.
+// while it is submitted, noted or approved. Since 2026-10-26 the accounts are not needed to note it --
+// they are required before its Vendor Bill / Journal -- so AP sets them on the approved liquidation
+// too (until then, 2026-10-19, approved was System Admin only). Never once the item is posted: a line
+// on a live Vendor Bill, or a liquidation posted by Journal, keeps the account the books already
+// carry -- change it there (cancel the bill / void the journal) instead.
 async function cogsEditBlock(doc, itemId) {
   if (!['submitted', 'noted', 'approved'].includes(doc.status)) return 'The accounts can only be changed while the liquidation is submitted, noted or approved.';
   if (doc.status === 'submitted') return null;
@@ -887,10 +888,7 @@ router.put('/:id/items/:itemId/cogs', requireAuth, async (req, res, next) => {
     const [[doc]] = await pool.query('SELECT id, type, status FROM form_requests WHERE id = ?', [req.params.id]);
     if (!doc) return res.status(404).json({ error: 'Not found' });
     if (!AP_NOTED_TYPES.includes(doc.type)) return res.status(409).json({ error: 'Only a liquidation\'s items take a COGS account.' });
-    // Once approved, only a System Admin may change what was set (asked 2026-10-19); before that,
-    // Accounts Payable (or a System Admin).
     const admin = await isSystemAdmin(req.user.id);
-    if (doc.status === 'approved' && !admin) return res.status(403).json({ error: 'This liquidation is approved -- only a System Admin can change its accounts.' });
     if (!admin && !(await isAccountsPayable(req.user.id))) return res.status(403).json({ error: 'Only Accounts Payable assigns COGS.' });
     const blocked = await cogsEditBlock(doc, req.params.itemId);
     if (blocked) return res.status(409).json({ error: blocked });
@@ -1101,16 +1099,15 @@ router.get('/:id', requireAuth, async (req, res, next) => {
     doc.note_blocked_reason = note.allowed ? null : note.reason;
     // Who it is waiting on, named, whoever is looking. The owner wants to know who to chase.
     doc.noters = (await notersForDoc(doc)).map((h) => h.display_name);
-    // A liquidation's items each need a COGS account before it can be noted; AP assigns them.
+    // A liquidation's items each need a COGS account before its Vendor Bill / Journal (2026-10-26; no
+    // longer before noting); Accounts Payable assigns them.
     doc.needs_cogs = AP_NOTED_TYPES.includes(doc.type);
     doc.cogs_missing = doc.needs_cogs ? doc.items.filter((i) => !i.cogs_account_id).length : 0;
-    // While it waits to be noted, whoever notes it (AP); once noted or approved, AP or a System Admin,
-    // until it is posted (cogsEditBlock -- a line already on a Vendor Bill stays as it is).
-    // Approved: a System Admin only (asked 2026-10-19).
-    doc.can_set_cogs = doc.needs_cogs && (doc.status === 'submitted'
-      ? note.allowed
-      : (['noted', 'approved'].includes(doc.status) && !(await cogsEditBlock(doc, null))
-        && ((await isSystemAdmin(req.user.id)) || (doc.status === 'noted' && (await isAccountsPayable(req.user.id))))));
+    // Accounts Payable or a System Admin, while submitted, noted or approved, until it is posted
+    // (cogsEditBlock -- a line already on a Vendor Bill stays as it is).
+    doc.can_set_cogs = doc.needs_cogs && ['submitted', 'noted', 'approved'].includes(doc.status)
+      && !(await cogsEditBlock(doc, null))
+      && ((await isSystemAdmin(req.user.id)) || (await isAccountsPayable(req.user.id)));
     // The entry its Vendor Bill or Journal will post (lib/glImpact.js computeLiquidationGl), shown as
     // it stands now. The liquidation itself posts nothing (2026-10-09): once approved, Accounts
     // Payable raises a Vendor Bill or a Journal from it, and that is what reaches the books.
@@ -1830,15 +1827,8 @@ router.post('/:id/note', requireAuth, async (req, res, next) => {
     if (!allowed) return res.status(403).json({ error: reason });
 
     if (doc.status !== 'submitted') return res.status(409).json({ error: 'Only a submitted form can be noted.' });
-    // Accounts Payable's account-per-line step belongs to the old routing; a chosen noter (2026-10-22)
-    // need not be AP.
-    if (AP_NOTED_TYPES.includes(doc.type) && !(await chosenRoute(doc.id))) {
-      const [[m]] = await pool.query(
-        'SELECT COUNT(*) AS n FROM form_request_items WHERE form_request_id = ? AND cogs_account_id IS NULL', [doc.id]);
-      if (Number(m.n)) {
-        return res.status(409).json({ error: `Select an account for every item first -- ${m.n} item(s) still have none.` });
-      }
-    }
+    // A liquidation's accounts are not needed to note it (asked 2026-10-26): they are required once it
+    // is approved, before its Vendor Bill / Journal (lib/liquidationPosting.js liquidationPostError).
 
     await pool.query(
       "UPDATE form_requests SET status = 'noted', noted_at = NOW(), noted_by = ?, updated_at = NOW() WHERE id = ?",
