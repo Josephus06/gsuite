@@ -5,6 +5,7 @@ const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { liquidationPostError } = require('../lib/liquidationPosting');
+const { journalLinesInPesos } = require('../lib/glImpact');
 
 const router = express.Router();
 // Journal (JRNL-####): a manual general-journal entry. Balanced debit/credit lines posted straight
@@ -87,7 +88,8 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
        WHERE jl.journal_id = ? ORDER BY jl.line_no`,
       [req.params.id]
     );
-    res.json({ ...j, lines });
+    // gl_lines: what posts -- the lines in pesos when the journal is in another currency.
+    res.json({ ...j, lines, gl_lines: journalLinesInPesos(j, lines) });
   } catch (err) { next(err); }
 });
 

@@ -1331,7 +1331,7 @@ async function computePostedGlLines({ toDate, fromDate }) {
            FROM journal_lines jl LEFT JOIN chart_of_accounts coa ON coa.id = jl.account_id
           WHERE jl.journal_id IN (?) ORDER BY jl.line_no`, 'journal_id', headers.map((h) => h.id));
       for (const j of headers) {
-        const lines = linesBy.get(j.id) || [];
+        const lines = journalLinesInPesos(j, linesBy.get(j.id) || []);
         const rows = glFor('journal', j.id, lines.map((l) => ({
           account_code: l.account_code, account_name: l.account_name,
           debit: Number(l.debit) || 0, credit: Number(l.credit) || 0, department_id: l.department_id || null,
@@ -1696,6 +1696,24 @@ async function computePostedGlLines({ toDate, fromDate }) {
 // adds_to_source_figures (db/flag-unposted-source-journals.js): JRNL-6087, the 1st-half September
 // payroll, is in the source as a document but not in its ledger, so its September figures have no
 // payroll for that half at all (2026-10-26).
+// A journal in another currency is keyed in that currency with its rate in journals.conversion (USD
+// interest on the PNB/BPI dollar accounts: JRNL-6430, USD 0.66 at 62.485). The ledger is in pesos,
+// as the source posts it (JRNL-5383: USD 300.00 x 59.50 = 17,850.00 on 11602), so each line is
+// converted and rounded; a cent the rounding leaves goes on the largest line so the entry balances.
+function journalLinesInPesos(j, lines) {
+  const rate = Number(j.conversion);
+  const cur = String(j.currency || '').trim().toUpperCase();
+  if (!cur || cur === 'PHP' || !(rate > 0) || rate === 1) return lines;
+  const r2 = (n) => Math.round(Number(n) * 100) / 100;
+  const out = lines.map((l) => ({ ...l, debit: r2((Number(l.debit) || 0) * rate), credit: r2((Number(l.credit) || 0) * rate) }));
+  const gap = r2(out.reduce((s, l) => s + l.debit - l.credit, 0));
+  if (gap && out.length) {
+    const big = out.reduce((a, l) => (Math.max(l.debit, l.credit) > Math.max(a.debit, a.credit) ? l : a));
+    if (big.debit) big.debit = r2(big.debit - gap); else big.credit = r2(big.credit + gap);
+  }
+  return out;
+}
+
 const preStartEnd = (books, to) => (to < books.start ? to : (() => { const d = new Date(`${books.start}T00:00:00Z`); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); })());
 async function preStartT1sJournalLines(books, to, from) {
   const upTo = preStartEnd(books, to);
@@ -1714,7 +1732,10 @@ async function preStartT1sJournalLines(books, to, from) {
        FROM journal_lines jl LEFT JOIN chart_of_accounts coa ON coa.id = jl.account_id
       WHERE jl.journal_id IN (?) ORDER BY jl.journal_id, jl.line_no`, [headers.map((h) => h.id)]);
   const byId = new Map(headers.map((h) => [h.id, h]));
-  return lines.filter((l) => Number(l.debit) || Number(l.credit)).map((l) => {
+  const linesBy = new Map();
+  for (const l of lines) linesBy.set(l.journal_id, [...(linesBy.get(l.journal_id) || []), l]);
+  const pesos = [...linesBy].flatMap(([id, ls]) => journalLinesInPesos(byId.get(id), ls));
+  return pesos.filter((l) => Number(l.debit) || Number(l.credit)).map((l) => {
     const j = byId.get(l.journal_id);
     return {
       account_code: l.account_code, account_name: l.account_name, debit: Number(l.debit) || 0, credit: Number(l.credit) || 0,
@@ -1837,4 +1858,5 @@ module.exports = {
   computeAssetDisposalGl,
   computeLiquidationGl,
   getPostedGlLines,
+  journalLinesInPesos,
 };

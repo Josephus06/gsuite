@@ -11,7 +11,8 @@ function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleS
 function formatDate(v) { return v ? displayDate(v) : ''; }
 
 // A manual journal's GL Impact is its lines verbatim -- so both tabs render the same rows; the
-// LINES tab is the entered document, the GL IMPACT tab is what posts to the ledger.
+// LINES tab is the entered document, the GL IMPACT tab is what posts to the ledger (in pesos: a
+// USD journal's lines times its conversion, from the server's gl_lines).
 function LinesTable({ lines }) {
   const totalDebit = lines.reduce((s, l) => s + (Number(l.debit) || 0), 0);
   const totalCredit = lines.reduce((s, l) => s + (Number(l.credit) || 0), 0);
@@ -137,7 +138,7 @@ export default function JournalView() {
       {tab === 'lines' && <div className="card"><LinesTable lines={lines} /></div>}
       {tab === 'gl' && <div className="card">{j.status === 'void'
         ? <p className="muted" style={{ padding: 16 }}>This journal is voided — it posts nothing to the GL.</p>
-        : <LinesTable lines={lines} />}</div>}
+        : <LinesTable lines={j.gl_lines || lines} />}</div>}
 
       {tab === 'system' && (
         <div className="card">
