@@ -21,6 +21,8 @@ import EntityPicker from '../components/EntityPicker';
 
 
 const blankItem = () => ({ date: '', particulars: '', amount: '' });
+// One line of the Office Supply Requisition, HR's sheet columns (2026-10-26).
+const blankOsItem = () => ({ particulars: '', brand: '', quantity: '', unit: '', remarks: '', accountable: '', last_purchase_date: '', purpose: '' });
 
 export default function FormEdit() {
   const { id } = useParams();
@@ -56,7 +58,7 @@ export default function FormEdit() {
     // Employee Gate Pass (2026-10-14)
     gp_location_id: '', gp_date: '', gp_destination: '', gp_purpose: '',
     // Office Supply Requisition Form (2026-10-23)
-    os_date: '',
+    os_month: '',
     // HR member lists (2026-10-19)
     enrollment_for: 'HEALTH INSURANCE', letter_date: '',
     // Fuel Request (2026-10-19)
@@ -76,7 +78,7 @@ export default function FormEdit() {
   }, [type, form.fuel_date, id]);
   // Employee Gate Pass items: what is carried out, and the department it belongs to.
   const [gpItems, setGpItems] = useState([{ description: '', department: '' }]);
-  const [osItems, setOsItems] = useState([{ quantity: '', particulars: '', remarks: '' }]);
+  const [osItems, setOsItems] = useState([blankOsItem()]);
   const [locations, setLocations] = useState([]);
   const [otPeople, setOtPeople] = useState([]);
   const [items, setItems] = useState([blankItem()]);
@@ -156,10 +158,15 @@ export default function FormEdit() {
         : [blankMemberLine(data.type)]);
     }
     if (data.type === 'office_supply') {
-      setForm((f) => ({ ...f, os_date: d.osr_date ? String(d.osr_date).slice(0, 10) : '' }));
+      setForm((f) => ({ ...f, os_month: d.osr_date ? String(d.osr_date).slice(0, 7) : '' }));
       setOsItems((d.items || []).length
-        ? d.items.map((it) => ({ quantity: it.quantity == null ? '' : Number(it.quantity), particulars: it.particulars || '', remarks: it.remarks || '' }))
-        : [{ quantity: '', particulars: '', remarks: '' }]);
+        ? d.items.map((it) => ({
+          ...blankOsItem(),
+          ...Object.fromEntries(Object.keys(blankOsItem()).map((k) => [k, it[k] == null ? '' : String(it[k])])),
+          quantity: it.quantity == null ? '' : Number(it.quantity),
+          last_purchase_date: it.last_purchase_date ? String(it.last_purchase_date).slice(0, 10) : '',
+        }))
+        : [blankOsItem()]);
     }
     if (data.type === 'gate_pass') {
       setGpItems((d.items || []).length ? d.items.map((it) => ({ description: it.description || '', department: it.department || '' })) : [{ description: '', department: '' }]);
@@ -501,35 +508,54 @@ export default function FormEdit() {
         );
       })()}
 
-      {/* Office Supply Requisition Form (asked 2026-10-23), after the paper form: the date, then
-          QTY / PARTICULARS / REMARKS. Department above is the requesting department. */}
+      {/* Office Supply Requisition Form (asked 2026-10-23), laid out as HR's sheet since 2026-10-26:
+          the MONTH, then OFFICE SUPPLIES / BRAND / QUANTITY (+ unit) / REMARKS / ACCOUNTABLE /
+          DATE OF LAST PURCHASE / PURPOSE. Department above is the requesting department. */}
       {type === 'office_supply' && (
         <div className="card" style={{ marginTop: 16 }}>
-          <h3>Office Supply Requisition</h3>
+          <h3>Office Supplies Requisition</h3>
           <div className="muted" style={{ fontSize: 12, marginTop: -6, marginBottom: 10 }}>
             Department above is the requesting department. Noted by the Department Head, then released by HR.
           </div>
           <div className="field-row">
-            <div className="field">
-              <label>Date *</label>
-              <input type="date" value={form.os_date} onChange={(e) => set('os_date', e.target.value)} />
+            <div className="field" style={{ maxWidth: 260 }}>
+              <label>Month *</label>
+              <input type="month" value={form.os_month} onChange={(e) => set('os_month', e.target.value)} />
             </div>
           </div>
           <div className="table-wrap">
             <table>
-              <thead><tr><th style={{ width: 40 }}>#</th><th style={{ width: 110 }}>Qty *</th><th>Particulars *</th><th>Remarks</th><th style={{ width: 40 }}></th></tr></thead>
+              <thead>
+                <tr>
+                  <th style={{ width: 34 }}>#</th>
+                  <th style={{ minWidth: 200 }}>Office Supplies *</th>
+                  <th style={{ minWidth: 110 }}>Brand</th>
+                  <th style={{ width: 90 }}>Quantity *</th>
+                  <th style={{ width: 90 }}>Unit</th>
+                  <th style={{ minWidth: 110 }}>Remarks</th>
+                  <th style={{ minWidth: 110 }}>Accountable</th>
+                  <th style={{ width: 150 }}>Date of Last Purchase</th>
+                  <th style={{ minWidth: 140 }}>Purpose</th>
+                  <th style={{ width: 40 }}></th>
+                </tr>
+              </thead>
               <tbody>
                 {osItems.map((r, i) => {
                   const setOs = (k) => (e) => setOsItems((rs) => rs.map((x, xi) => (xi === i ? { ...x, [k]: e.target.value } : x)));
                   return (
                     <tr key={i}>
                       <td>{i + 1}</td>
+                      <td><input value={r.particulars} placeholder="e.g. Correction tape wiper" onChange={setOs('particulars')} /></td>
+                      <td><input value={r.brand} onChange={setOs('brand')} /></td>
                       <td><input type="number" min="0" step="any" value={r.quantity} onChange={setOs('quantity')} /></td>
-                      <td><input value={r.particulars} placeholder="e.g. Correction tape" onChange={setOs('particulars')} /></td>
-                      <td><input value={r.remarks} placeholder="e.g. For production" onChange={setOs('remarks')} /></td>
+                      <td><input value={r.unit} placeholder="PCS, BOX" onChange={setOs('unit')} /></td>
+                      <td><input value={r.remarks} placeholder="e.g. Short" onChange={setOs('remarks')} /></td>
+                      <td><input value={r.accountable} placeholder="e.g. HR" onChange={setOs('accountable')} /></td>
+                      <td><input type="date" value={r.last_purchase_date} onChange={setOs('last_purchase_date')} /></td>
+                      <td><input value={r.purpose} placeholder="e.g. Replacement" onChange={setOs('purpose')} /></td>
                       <td>
                         <button type="button" className="btn btn-sm btn-danger" title="Remove"
-                          onClick={() => setOsItems((rs) => (rs.length > 1 ? rs.filter((_, xi) => xi !== i) : [{ quantity: '', particulars: '', remarks: '' }]))}>×</button>
+                          onClick={() => setOsItems((rs) => (rs.length > 1 ? rs.filter((_, xi) => xi !== i) : [blankOsItem()]))}>×</button>
                       </td>
                     </tr>
                   );
@@ -538,7 +564,7 @@ export default function FormEdit() {
             </table>
           </div>
           <button type="button" className="btn btn-sm" style={{ marginTop: 8 }}
-            onClick={() => setOsItems((rs) => [...rs, { quantity: '', particulars: '', remarks: '' }])}>Add Item</button>
+            onClick={() => setOsItems((rs) => [...rs, blankOsItem()])}>Add Item</button>
         </div>
       )}
 

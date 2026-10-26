@@ -172,20 +172,29 @@ async function gatePassDetail(id) {
     return d ? { ...d, items } : null;
   } catch (e) { if (e.code === 'ER_NO_SUCH_TABLE') return null; throw e; }
 }
-// Office Supply Requisition Form (asked 2026-10-23; db/add-office-supply-form.js): a date and lines of
-// QTY / PARTICULARS / REMARKS, after the paper form.
-const MAX_OFFICE_SUPPLY_ITEMS = 30;
+// Office Supply Requisition Form (asked 2026-10-23; db/add-office-supply-form.js), laid out as HR's
+// sheet since 2026-10-26: the MONTH (osr_date = its 1st), then lines of OFFICE SUPPLIES / BRAND /
+// QUANTITY (+ unit) / REMARKS / ACCOUNTABLE / DATE OF LAST PURCHASE / PURPOSE.
+const MAX_OFFICE_SUPPLY_ITEMS = 50;
+const osMonth = (body) => {
+  const m = String(body.os_month || body.os_date || '').slice(0, 7);
+  return /^\d{4}-\d{2}$/.test(m) ? `${m}-01` : null;
+};
 function officeSupplyLines(body) {
   return (Array.isArray(body.os_items) ? body.os_items : [])
-    .map((it) => ({ quantity: num(it && it.quantity), particulars: trunc(it && it.particulars, 500), remarks: trunc(it && it.remarks, 500) }))
+    .map((it) => ({
+      particulars: trunc(it && it.particulars, 500), brand: trunc(it && it.brand, 150),
+      quantity: num(it && it.quantity), unit: trunc(it && it.unit, 30), remarks: trunc(it && it.remarks, 500),
+      accountable: trunc(it && it.accountable, 150), last_purchase_date: date(it && it.last_purchase_date),
+      purpose: trunc(it && it.purpose, 255),
+    }))
     .filter((it) => it.particulars || it.quantity)
     .slice(0, MAX_OFFICE_SUPPLY_ITEMS);
 }
 async function officeSupplyDetail(id) {
   try {
     const [[d]] = await pool.query('SELECT * FROM form_office_supply_details WHERE form_request_id = ?', [id]);
-    const [items] = await pool.query(
-      'SELECT id, line_no, quantity, particulars, remarks FROM form_office_supply_items WHERE form_request_id = ? ORDER BY line_no, id', [id]);
+    const [items] = await pool.query('SELECT * FROM form_office_supply_items WHERE form_request_id = ? ORDER BY line_no, id', [id]);
     return d ? { ...d, items } : null;
   } catch (e) { if (e.code === 'ER_NO_SUCH_TABLE') return null; throw e; }
 }
@@ -1327,12 +1336,15 @@ async function writeDetail(conn, docId, type, body, items, ownerId = null) {
   }
 
   if (type === 'office_supply') {
-    await conn.query('INSERT INTO form_office_supply_details (form_request_id, osr_date) VALUES (?, ?)', [docId, date(body.os_date)]);
+    await conn.query('INSERT INTO form_office_supply_details (form_request_id, osr_date) VALUES (?, ?)', [docId, osMonth(body)]);
     let n = 0;
     for (const it of officeSupplyLines(body)) {
       n += 1;
-      await conn.query('INSERT INTO form_office_supply_items (form_request_id, line_no, quantity, particulars, remarks) VALUES (?, ?, ?, ?, ?)',
-        [docId, n, it.quantity, it.particulars, it.remarks]);
+      await conn.query(
+        `INSERT INTO form_office_supply_items
+           (form_request_id, line_no, particulars, brand, quantity, unit, remarks, accountable, last_purchase_date, purpose)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [docId, n, it.particulars, it.brand, it.quantity, it.unit, it.remarks, it.accountable, it.last_purchase_date, it.purpose]);
     }
     return {};
   }
@@ -1448,11 +1460,11 @@ function validate(type, body, items) {
     }
   }
   if (type === 'office_supply') {
-    if (!date(body.os_date)) return 'The date is required.';
+    if (!osMonth(body)) return 'The month is required.';
     const lines = officeSupplyLines(body);
-    if (!lines.length) return 'Add at least one item: its quantity and particulars.';
+    if (!lines.length) return 'Add at least one item: the office supply and its quantity.';
     for (let i = 0; i < lines.length; i += 1) {
-      if (!lines[i].particulars) return `Line ${i + 1}: say what is requested (Particulars).`;
+      if (!lines[i].particulars) return `Line ${i + 1}: say which office supply is requested.`;
       if (!(lines[i].quantity > 0)) return `Line ${i + 1}: enter the quantity.`;
     }
   }

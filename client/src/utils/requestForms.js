@@ -178,6 +178,15 @@ export const pretty = (s) => (s ? String(s).replace(/_/g, ' ') : '');
 // A form's status as people read it (2026-10-22): submitted waits on the noter, noted on the approver.
 export const statusLabel = (s) => ({ submitted: 'For Noting', noted: 'For Approval' }[s] || pretty(s));
 
+// Office Supply Requisition (2026-10-26): its month, "NOVEMBER 2026" as on HR's sheet; a line's
+// quantity with its unit, "2 BOX".
+const MONTH_NAMES = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
+export function osMonthLabel(v) {
+  const m = /^(\d{4})-(\d{2})/.exec(String(v || ''));
+  return m ? `${MONTH_NAMES[Number(m[2]) - 1]} ${m[1]}` : '';
+}
+export const osQty = (it) => (it && it.quantity != null ? `${Number(it.quantity)}${it.unit ? ` ${it.unit}` : ''}` : '');
+
 // Fund Transfer (2026-10-14): every bank a form's lines move money From (side 'from') or To ('to'),
 // each once, in line order -- printed in place of "Several". Falls back to the form's own pair.
 export function formBanks(doc, side) {

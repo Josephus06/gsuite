@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { MEMBER_FORMS, ADJ_REASON_LABELS, DAY_PART_LABELS, LEAVE_TYPE_LABELS, PAYMENT_TYPES, PURPOSE_LABELS, bankLabel, clock, hoursMinutes } from '../utils/requestForms';
+import { osMonthLabel, osQty, MEMBER_FORMS, ADJ_REASON_LABELS, DAY_PART_LABELS, LEAVE_TYPE_LABELS, PAYMENT_TYPES, PURPOSE_LABELS, bankLabel, clock, hoursMinutes } from '../utils/requestForms';
 import letterhead from '../assets/graphicstar-letterhead.png';
 import { displayDate } from '../utils/dates';
 
@@ -387,22 +387,37 @@ export default function FormPrint() {
           </>
         )}
 
-        {/* Office Supply Requisition Form (asked 2026-10-23), after the paper form: Department and
-            Date, then QTY / PARTICULARS / REMARKS on ruled lines. */}
+        {/* Office Supply Requisition Form (asked 2026-10-23), laid out as HR's sheet since 2026-10-26:
+            MONTH, then OFFICE SUPPLIES / BRAND / QUANTITY / REMARKS / ACCOUNTABLE / DATE OF LAST
+            PURCHASE / PURPOSE, the requesting department as the yellow band over its lines. */}
         {doc.type === 'office_supply' && (
           <>
             <div className="rf-row">
-              <Field label="Department" value={doc.department} />
-              <Field label="Date" value={fmtDate(d.osr_date)} />
+              <Field label="Month" value={osMonthLabel(d.osr_date)} />
             </div>
-            <table className="rf-table">
-              <thead><tr><th style={{ width: '14%' }}>QTY</th><th style={{ width: '46%' }}>PARTICULARS</th><th>REMARKS</th></tr></thead>
+            <table className="rf-table" style={{ fontSize: 10 }}>
+              <thead>
+                <tr>
+                  <th style={{ width: '22%' }}>OFFICE SUPPLIES</th><th style={{ width: '11%' }}>BRAND</th>
+                  <th style={{ width: '10%' }}>QUANTITY</th><th style={{ width: '11%' }}>REMARKS</th>
+                  <th style={{ width: '12%' }}>ACCOUNTABLE</th><th style={{ width: '13%' }}>DATE OF LAST PURCHASE</th><th>PURPOSE</th>
+                </tr>
+              </thead>
               <tbody>
-                {[...(d.items || []), ...Array.from({ length: Math.max(0, 12 - (d.items || []).length) }, () => null)].map((it, i) => (
+                <tr>
+                  <td colSpan={7} style={{ background: '#ffff00', fontWeight: 700, fontStyle: 'italic', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
+                    {doc.department || ' '}
+                  </td>
+                </tr>
+                {[...(d.items || []), ...Array.from({ length: Math.max(0, 10 - (d.items || []).length) }, () => null)].map((it, i) => (
                   <tr key={i}>
-                    <td style={{ textAlign: 'center' }}>{it ? Number(it.quantity) : ' '}</td>
-                    <td>{it ? it.particulars : ''}</td>
-                    <td>{it ? it.remarks || '' : ''}</td>
+                    <td>{it ? it.particulars : ' '}</td>
+                    <td>{it ? it.brand || '' : ''}</td>
+                    <td style={{ textAlign: 'center' }}>{it ? osQty(it) : ''}</td>
+                    <td style={{ textAlign: 'center' }}>{it ? it.remarks || '' : ''}</td>
+                    <td style={{ textAlign: 'center' }}>{it ? it.accountable || '' : ''}</td>
+                    <td style={{ textAlign: 'center' }}>{it && it.last_purchase_date ? fmtDate(it.last_purchase_date) : ''}</td>
+                    <td style={{ textAlign: 'center' }}>{it ? it.purpose || '' : ''}</td>
                   </tr>
                 ))}
               </tbody>

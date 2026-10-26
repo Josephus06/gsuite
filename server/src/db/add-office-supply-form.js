@@ -7,8 +7,9 @@
 //
 // Routed like every form since 2026-10-22: the requestor picks the Noter (optional) and the Approver.
 //
-//   form_office_supply_details  (new)  one row per form: its date
-//   form_office_supply_items    (new)  the lines: qty, particulars, remarks
+//   form_office_supply_details  (new)  one row per form: its month (osr_date = the 1st of it)
+//   form_office_supply_items    (new)  the lines: office supply, brand, qty + unit, remarks,
+//                                      accountable, date of last purchase, purpose
 //
 // form_requests.type is a VARCHAR, so the new type needs no change there.
 //
@@ -53,6 +54,23 @@ async function tableExists(name) {
       CONSTRAINT fk_fosi_form FOREIGN KEY (form_request_id) REFERENCES form_requests(id) ON DELETE CASCADE
     )`);
     console.log('  created form_office_supply_items');
+  }
+
+  // The HR sheet's columns (asked 2026-10-26): OFFICE SUPPLIES / BRAND / QUANTITY (with its unit, e.g.
+  // 2 BOX) / REMARKS / ACCOUNTABLE / DATE OF LAST PURCHASE / PURPOSE. The form's date is now its MONTH
+  // (osr_date holds the 1st of that month).
+  for (const [c, def] of [
+    ['brand', 'VARCHAR(150) NULL AFTER particulars'],
+    ['unit', 'VARCHAR(30) NULL AFTER quantity'],
+    ['accountable', 'VARCHAR(150) NULL AFTER remarks'],
+    ['last_purchase_date', 'DATE NULL AFTER accountable'],
+    ['purpose', 'VARCHAR(255) NULL AFTER last_purchase_date'],
+  ]) {
+    const [[has]] = await pool.query(
+      'SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+      ['form_office_supply_items', c]);
+    if (Number(has.n)) console.log(`  form_office_supply_items.${c} already there -- skipped`);
+    else { await pool.query(`ALTER TABLE form_office_supply_items ADD COLUMN ${c} ${def}`); console.log(`  added form_office_supply_items.${c}`); }
   }
   await pool.end();
 })().catch(async (e) => { console.error('Failed:', e.message); await pool.end(); process.exit(1); });

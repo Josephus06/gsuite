@@ -9,7 +9,7 @@ import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
 import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 import { useAuth } from '../context/useAuth';
-import { hoursMinutes, overtimeHours, statusLabel, MEMBER_FORMS, ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, formBanks, money, pretty } from '../utils/requestForms';
+import { hoursMinutes, osMonthLabel, osQty, overtimeHours, statusLabel, MEMBER_FORMS, ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, formBanks, money, pretty } from '../utils/requestForms';
 import OvertimeDecline from '../components/OvertimeDecline';
 import { parseUtc } from '../utils/datetime';
 
@@ -449,19 +449,26 @@ export default function FormView() {
 
       {doc.type === 'office_supply' && (
         <div className="card" style={{ marginTop: 16 }}>
-          <h3>Office Supply Requisition</h3>
+          <h3>Office Supplies Requisition</h3>
           <Line label="Department">{doc.department}</Line>
-          <Line label="Date">{d.osr_date ? fmtDate(d.osr_date) : null}</Line>
+          <Line label="Month">{osMonthLabel(d.osr_date)}</Line>
           <div className="table-wrap" style={{ marginTop: 12 }}>
             <table>
-              <thead><tr><th style={{ width: 40 }}>#</th><th className="text-right" style={{ width: 90 }}>Qty</th><th>Particulars</th><th>Remarks</th></tr></thead>
+              <thead>
+                <tr>
+                  <th style={{ width: 34 }}>#</th><th>Office Supplies</th><th>Brand</th><th>Quantity</th><th>Remarks</th>
+                  <th>Accountable</th><th>Date of Last Purchase</th><th>Purpose</th>
+                </tr>
+              </thead>
               <tbody>
                 {(d.items || []).length === 0 && (
-                  <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: 12 }}>No items.</td></tr>
+                  <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 12 }}>No items.</td></tr>
                 )}
                 {(d.items || []).map((it, i) => (
                   <tr key={it.id || i}>
-                    <td>{i + 1}</td><td className="text-right">{Number(it.quantity)}</td><td>{it.particulars}</td><td>{it.remarks}</td>
+                    <td>{i + 1}</td><td>{it.particulars}</td><td>{it.brand}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>{osQty(it)}</td><td>{it.remarks}</td><td>{it.accountable}</td>
+                    <td>{it.last_purchase_date ? fmtDate(it.last_purchase_date) : ''}</td><td>{it.purpose}</td>
                   </tr>
                 ))}
               </tbody>
