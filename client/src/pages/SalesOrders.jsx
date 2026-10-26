@@ -46,11 +46,16 @@ export default function SalesOrders() {
   // Head Office by default (2026-10-14; utils/useHeadOffice); null until known, and the list waits for it.
   const [officeLocationId, setOfficeLocationId] = useHeadOfficeFilter();
   const [asOf, setAsOf] = useState('');
+  // Customer, and Date Created as "As of" or "Period from" (added 2026-10-26).
+  const [customerId, setCustomerId] = useState('');
+  const [dateMode, setDateMode] = useState('as of');
+  const [dateFrom, setDateFrom] = useState('');
   const [page, setPage] = useState(1);
   const limit = 10;
 
   const [employees, setEmployees] = useState([]);
   const [locations, setLocations] = useState([]);
+  const [customers, setCustomers] = useState([]);
 
   // The filters on screen. status '' = every status (the All tab / Status filter, 2026-10-14).
   function filterParams() {
@@ -59,6 +64,8 @@ export default function SalesOrders() {
     if (search) params.search = search;
     if (salesRepId) params.sales_rep_id = salesRepId;
     if (officeLocationId) params.office_location_id = officeLocationId;
+    if (customerId) params.customer_id = customerId;
+    if (dateMode === 'period from' && dateFrom) params.date_from = dateFrom;
     if (asOf) params.as_of = asOf;
     return params;
   }
@@ -88,6 +95,7 @@ export default function SalesOrders() {
   useEffect(() => {
     api.get('/employees').then(({ data }) => setEmployees(data));
     api.get('/lookups/locations').then(({ data }) => setLocations(data));
+    api.get('/customers').then(({ data }) => setCustomers(Array.isArray(data) ? data : (data?.rows || []))).catch(() => setCustomers([]));
   }, []);
 
   useEffect(() => { if (officeLocationId === null) return; load(); }, [status, page, officeLocationId === null]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -136,8 +144,24 @@ export default function SalesOrders() {
               </select>
             </div>
             <div className="field">
-              <label>Date Created (As of)</label>
-              <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+              <label>Customer</label>
+              <FilterPicker label="Customer" items={customers} value={customerId} onChange={(v) => setCustomerId(v)}
+                getLabel={(c) => c.name} allLabel="All" />
+            </div>
+            {/* As of: up to the date. Period from: between the two dates. */}
+            <div className="field" style={{ gridColumn: dateMode === 'period from' ? 'span 2' : undefined }}>
+              <label>Date Created</label>
+              <div style={{ display: 'flex', gap: 6, minWidth: 0 }}>
+                <select value={dateMode} style={{ flex: '0 0 125px', minWidth: 0 }} onChange={(e) => setDateMode(e.target.value)}>
+                  <option value="as of">As of</option>
+                  <option value="period from">Period from</option>
+                </select>
+                {dateMode === 'period from' && (
+                  <input type="date" style={{ flex: '1 1 0', minWidth: 0 }} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+                )}
+                <input type="date" style={{ flex: '1 1 0', minWidth: 0 }} value={asOf} onChange={(e) => setAsOf(e.target.value)}
+                  title={dateMode === 'period from' ? 'To' : 'As of'} />
+              </div>
             </div>
           </div>
           <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>

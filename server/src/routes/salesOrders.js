@@ -42,13 +42,15 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   try {
     const {
       status, search, sales_rep_id: salesRepId, office_location_id: officeLocationId, as_of: asOf,
-      customer_id: customerId, page = '1', limit = '10',
+      date_from: dateFrom, customer_id: customerId, page = '1', limit = '10',
     } = req.query;
 
     const commonWhere = [];
     const commonParams = [];
     if (salesRepId) { commonWhere.push('so.sales_rep_id = ?'); commonParams.push(salesRepId); }
     if (officeLocationId) { commonWhere.push('so.office_location_id = ?'); commonParams.push(officeLocationId); }
+    // Date Created: "As of" (up to as_of) or, with date_from, "Period from" date_from to as_of (2026-10-26).
+    if (dateFrom) { commonWhere.push('so.date_created >= ?'); commonParams.push(dateFrom); }
     if (asOf) { commonWhere.push('so.date_created <= ?'); commonParams.push(asOf); }
     if (customerId) { commonWhere.push('so.customer_id = ?'); commonParams.push(customerId); }
     if (search) {
