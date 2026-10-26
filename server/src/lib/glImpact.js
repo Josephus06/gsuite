@@ -485,7 +485,24 @@ async function computeCreditMemoGl(cm, lines, applications = []) {
   const rows = [];
   const netOfTax = Number(cm.net_of_tax) || 0;
   const grossAmount = Number(cm.gross_amount) || 0;
-  if (netOfTax) rows.push({ account_code: salesAcct.account_code, account_name: salesAcct.account_name, debit: netOfTax, credit: 0 });
+  // The Sales debit goes to each line's own department (CM-5528.., 2026-10-26: all under
+  // Unassigned); whatever the lines do not cover stays on one row with none, so the total is the
+  // memo's net exactly as before.
+  if (netOfTax) {
+    const byDept = new Map();
+    for (const l of lines) {
+      const amt = Number(l.net_of_tax) || 0;
+      if (amt && l.department_id) byDept.set(l.department_id, (byDept.get(l.department_id) || 0) + amt);
+    }
+    let rest = netOfTax;
+    for (const [dept, amt] of byDept) {
+      const v = Number(amt.toFixed(2));
+      rows.push({ account_code: salesAcct.account_code, account_name: salesAcct.account_name, debit: v, credit: 0, department_id: dept });
+      rest -= v;
+    }
+    rest = Number(rest.toFixed(2));
+    if (rest) rows.push({ account_code: salesAcct.account_code, account_name: salesAcct.account_name, debit: rest, credit: 0, department_id: null });
+  }
 
   const taxTotals = new Map(); // tax_code -> amount
   for (const l of lines) {
@@ -788,11 +805,19 @@ async function computeVendorBillGl(vb, lines) {
   const acctLines = lines.filter((l) => l.account_id && Number(l.net_of_tax));
   let rest = netOfTax;
   if (acctLines.length) {
-    const byAcct = new Map();
-    for (const l of acctLines) byAcct.set(l.account_id, (byAcct.get(l.account_id) || 0) + Number(l.net_of_tax));
-    for (const acct of await coaByIds([...byAcct.keys()])) {
-      const amt = Number(byAcct.get(acct.id).toFixed(2));
-      if (amt) rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: amt, credit: 0 });
+    // One debit per account AND department: each line names the department it was spent for
+    // (VB-24738 / VB-24740 sat under Unassigned in the Income Statement, 2026-10-26).
+    const byKey = new Map(); // "account_id|department_id" -> amount
+    for (const l of acctLines) {
+      const k = `${l.account_id}|${l.department_id || ''}`;
+      byKey.set(k, (byKey.get(k) || 0) + Number(l.net_of_tax));
+    }
+    const acctById = new Map((await coaByIds([...new Set(acctLines.map((l) => l.account_id))])).map((a) => [Number(a.id), a]));
+    for (const [k, total] of byKey) {
+      const [accountId, deptId] = k.split('|');
+      const acct = acctById.get(Number(accountId));
+      const amt = Number(total.toFixed(2));
+      if (acct && amt) rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: amt, credit: 0, department_id: deptId ? Number(deptId) : null });
     }
     rest = vb.purchase_order_id ? Number((netOfTax - acctLines.reduce((s, l) => s + Number(l.net_of_tax), 0)).toFixed(2)) : 0;
   }
@@ -1123,6 +1148,16 @@ async function computePostedGlLines({ toDate, fromDate }) {
   }
   const glFor = (sourceType, sourceId, computed) => importedGl.get(`${sourceType}|${sourceId}`) || computed;
 
+  // The department a sales-side document posts to when it names none: its order's Sales Division,
+  // matched to the department of the same name ("Sales-3" -> "Sales - 3"), read off the Sales Order
+  // or, for a non-standard order, the NSSO. Leaving out the NSSO put October's builds and deliveries
+  // for Marketing / Sales-1..4 / Branch-SM_Cebu under Unassigned (AB-351607, ID-82762; 2026-10-26).
+  const divisionDept = (soExpr, nssoExpr) => `(SELECT dept.id FROM sales_divisions sd
+      JOIN departments dept ON REPLACE(REPLACE(LOWER(dept.name),' ',''),'-','') = REPLACE(REPLACE(LOWER(sd.name),' ',''),'-','')
+     WHERE sd.id = COALESCE((SELECT so.sales_division_id FROM sales_orders so WHERE so.id = ${soExpr}),
+                            ${nssoExpr ? `(SELECT ns.sales_division_id FROM non_standard_sales_orders ns WHERE ns.id = ${nssoExpr})` : 'NULL'})
+     LIMIT 1)`;
+
   // Hold the reference-data snapshot open for the whole run (see top of file).
   await beginRefRun();
   try {
@@ -1136,7 +1171,8 @@ async function computePostedGlLines({ toDate, fromDate }) {
   {
     const { sql, params } = dateFilter('si.date_created');
     const [headers] = await pool.query(
-      `SELECT si.* FROM sales_invoices si WHERE ${sql}`, params
+      `SELECT si.*, COALESCE(si.department_id, ${divisionDept('si.sales_order_id', 'si.nsso_id')}) AS department_id
+         FROM sales_invoices si WHERE ${sql}`, params
     );
     const linesBy = await linesByParent(
       'SELECT * FROM sales_invoice_lines WHERE sales_invoice_id IN (?)', 'sales_invoice_id',
@@ -1156,10 +1192,7 @@ async function computePostedGlLines({ toDate, fromDate }) {
     const { sql, params } = dateFilter('ab.date_created');
     const [headers] = await pool.query(
       `SELECT ab.*, jt.asset_account_id AS fg_account_id, jo.job_location_id AS location_id,
-              (SELECT dept.id FROM sales_orders so
-                 JOIN sales_divisions sd ON sd.id = so.sales_division_id
-                 JOIN departments dept ON REPLACE(REPLACE(LOWER(dept.name),' ',''),'-','') = REPLACE(REPLACE(LOWER(sd.name),' ',''),'-','')
-                WHERE so.id = jo.sales_order_id LIMIT 1) AS dept_id
+              ${divisionDept('jo.sales_order_id', 'jo.nsso_id')} AS dept_id
        FROM assembly_builds ab
        JOIN job_orders jo ON jo.id = ab.job_order_id
        LEFT JOIN job_types jt ON jt.id = jo.job_type_id
@@ -1188,10 +1221,7 @@ async function computePostedGlLines({ toDate, fromDate }) {
               (SELECT jo.job_location_id FROM item_delivery_lines idl2
                LEFT JOIN job_orders jo ON jo.id = idl2.job_order_id
                WHERE idl2.item_delivery_id = del.id LIMIT 1) AS location_id,
-              (SELECT dept.id FROM sales_orders so
-                 JOIN sales_divisions sd ON sd.id = so.sales_division_id
-                 JOIN departments dept ON REPLACE(REPLACE(LOWER(dept.name),' ',''),'-','') = REPLACE(REPLACE(LOWER(sd.name),' ',''),'-','')
-                WHERE so.id = del.sales_order_id LIMIT 1) AS dept_id
+              ${divisionDept('del.sales_order_id', 'del.nsso_id')} AS dept_id
        FROM item_deliveries del WHERE del.status != 'cancelled' AND ${sql}`, params
     );
     const linesBy = await linesByParent(
@@ -1296,7 +1326,7 @@ async function computePostedGlLines({ toDate, fromDate }) {
       const rows = glFor('credit_memo', cm.id, await computeCreditMemoGl(cm, lines, appsBy.get(cm.id) || []));
       push(rows, {
         entry_date: cm.date_created, source_type: 'credit_memo', source_no: cm.credit_memo_no, source_id: cm.id, memo: cm.memo || null,
-        location_id: cm.office_location_id || null, department_id: null,
+        location_id: cm.office_location_id || null,
       });
     }
   }
@@ -1458,7 +1488,14 @@ async function computePostedGlLines({ toDate, fromDate }) {
     const [tbl] = await pool.query("SHOW TABLES LIKE 'osr_fulfillments'");
     if (tbl.length) {
       const { sql, params } = dateFilter('f.date_created');
-      const [headers] = await pool.query(`SELECT f.* FROM osr_fulfillments f WHERE f.status <> 'void' AND ${sql}`, params);
+      // Posted to the requisition's department, or its requestor's where the requisition has none
+      // (those saved before Department was required) -- OSRF-1.. sat under Unassigned (2026-10-26).
+      const [headers] = await pool.query(
+        `SELECT f.*, COALESCE(o.department_id, e.department_id) AS department_id
+           FROM osr_fulfillments f
+           LEFT JOIN office_supply_requisitions o ON o.id = f.osr_id
+           LEFT JOIN employees e ON e.id = COALESCE(o.requestor_id, f.requestor_id)
+          WHERE f.status <> 'void' AND ${sql}`, params);
       if (headers.length) {
         const dr = await coaByCode('30504');
         const cr = await coaByCode('15400');
@@ -1469,7 +1506,7 @@ async function computePostedGlLines({ toDate, fromDate }) {
             { account_code: dr?.account_code || '30504', account_name: dr?.account_name || 'Materials, Tools & Supplies', debit: amt, credit: 0 },
             { account_code: cr?.account_code || '15400', account_name: cr?.account_name || 'Supplies Inventory', debit: 0, credit: amt },
           ];
-          push(rows, { entry_date: f.date_created, source_type: 'osr_fulfillment', source_no: f.osrf_no, source_id: f.id, memo: f.memo || null, location_id: f.transfer_to_location_id || null });
+          push(rows, { entry_date: f.date_created, source_type: 'osr_fulfillment', source_no: f.osrf_no, source_id: f.id, memo: f.memo || null, location_id: f.transfer_to_location_id || null, department_id: f.department_id || null });
         }
       }
     }
@@ -1528,7 +1565,8 @@ async function computePostedGlLines({ toDate, fromDate }) {
   {
     const { sql, params } = dateFilter('dt.date_created');
     const [headers] = await pool.query(
-      `SELECT dt.*, so.office_location_id FROM delivery_tickets dt
+      `SELECT dt.*, so.office_location_id, COALESCE(dt.department_id, ${divisionDept('dt.sales_order_id')}) AS department_id
+         FROM delivery_tickets dt
        JOIN sales_orders so ON so.id = dt.sales_order_id
        WHERE dt.status IN ('open', 'void') AND ${sql}`, params
     );
@@ -1571,13 +1609,13 @@ async function computePostedGlLines({ toDate, fromDate }) {
     // does a PO bill's now, for the Non-Inventory lines that carry an account (computeVendorBillGl).
     const billIds = headers.map((h) => h.id);
     const standaloneLines = billIds.length
-      ? await linesByParent('SELECT vendor_bill_id, account_id, net_of_tax FROM vendor_bill_lines WHERE vendor_bill_id IN (?) AND account_id IS NOT NULL', 'vendor_bill_id', billIds)
+      ? await linesByParent('SELECT vendor_bill_id, account_id, department_id, net_of_tax FROM vendor_bill_lines WHERE vendor_bill_id IN (?) AND account_id IS NOT NULL', 'vendor_bill_id', billIds)
       : new Map();
     for (const vb of headers) {
       const rows = glFor('vendor_bill', vb.id, await computeVendorBillGl(vb, standaloneLines.get(vb.id) || []));
       push(rows, {
         entry_date: vb.date_created, source_type: 'vendor_bill', source_no: vb.bill_no, source_id: vb.id, memo: vb.memo || null,
-        location_id: vb.office_location_id || null, department_id: null,
+        location_id: vb.office_location_id || null,
       });
     }
   }
@@ -1802,14 +1840,14 @@ async function preStartVendorBillLines(books, to, from) {
     params,
   );
   if (!headers.length) return [];
-  const billLines = await linesByParent('SELECT vendor_bill_id, account_id, net_of_tax FROM vendor_bill_lines WHERE vendor_bill_id IN (?) AND account_id IS NOT NULL', 'vendor_bill_id', headers.map((h) => h.id));
+  const billLines = await linesByParent('SELECT vendor_bill_id, account_id, department_id, net_of_tax FROM vendor_bill_lines WHERE vendor_bill_id IN (?) AND account_id IS NOT NULL', 'vendor_bill_id', headers.map((h) => h.id));
   const out = [];
   for (const vb of headers) {
     for (const r of await computeVendorBillGl(vb, billLines.get(vb.id) || [])) {
       if (!r.debit && !r.credit) continue;
       out.push({
         ...r, entry_date: vb.date_created, source_type: 'vendor_bill', source_no: vb.bill_no, source_id: vb.id,
-        memo: vb.memo || null, location_id: vb.office_location_id || null, department_id: null,
+        memo: vb.memo || null, location_id: vb.office_location_id || null,
       });
     }
   }
