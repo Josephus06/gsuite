@@ -543,13 +543,13 @@ async function buildBalanceSheetTransactions({ accountCode, asOfDate, limit = 10
             name: t.name || t.memo || '', debit: t.debit, credit: t.credit, account_code: code });
         }
       }
-      // Journals keyed in T1S for the source period (lib/glImpact.js preStartT1sJournalLines) are
-      // part of the balance but not of the source's documents: listed as themselves, not folded
-      // into the Difference line.
+      // Journals and vendor bills keyed in T1S for the source period (lib/glImpact.js
+      // preStartT1sJournalLines / preStartVendorBillLines) are part of the balance but not of the
+      // source's documents: listed as themselves, not folded into the Difference line.
       for (const l of upTo) {
-        if (l.source_type !== 'journal' || !codes.has(l.account_code)) continue;
+        if (!['journal', 'vendor_bill'].includes(l.source_type) || !codes.has(l.account_code)) continue;
         listed += (Number(l.debit) || 0) - (Number(l.credit) || 0);
-        rows.push({ source_no: l.source_no, source_type: 'journal', source_id: l.source_id, entry_date: l.entry_date,
+        rows.push({ source_no: l.source_no, source_type: l.source_type, source_id: l.source_id, entry_date: l.entry_date,
           name: l.memo || '', debit: Number(l.debit) || 0, credit: Number(l.credit) || 0, account_code: l.account_code });
       }
       const gap = round2(expected - listed);

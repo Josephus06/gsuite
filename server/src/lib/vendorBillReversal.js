@@ -30,12 +30,17 @@ async function postedBillGlRows(db, billId) {
 
 // Is this bill in the ledger at all? Up to the books start the GL is the old system's own figures
 // (lib/openingBalances.js), so a bill dated before it is there only if the old system had it when
-// those figures were loaded. One keyed in T1S after that, dated earlier, posted nowhere -- reversing
+// those figures were loaded, or if it was keyed in T1S after the source closed -- those are added
+// on top of its figures (lib/glImpact.js preStartVendorBillLines, 2026-10-26). Any other, reversing
 // it would take out what was never put in. From the books start, every bill posts.
 async function billInLedger(db, vb) {
   const books = await booksStart();
   const dated = String(vb.date_created instanceof Date ? vb.date_created.toISOString() : vb.date_created).slice(0, 10);
   if (!books || dated >= books.start) return true;
+  const [[keyed]] = await db.query(
+    "SELECT 1 AS y FROM audit_logs WHERE auditable_type = 'VendorBill' AND auditable_id = ? AND event_type = 'Created' AND set_at >= ? LIMIT 1",
+    [vb.id, books.start]);
+  if (keyed) return true;
   const [[snap]] = await db.query('SELECT MIN(created_at) AS loaded FROM opening_gl_balances WHERE as_of = ?', [books.asOf]);
   if (!snap?.loaded) return true;
   return !vb.created_at || new Date(vb.created_at) <= new Date(snap.loaded);

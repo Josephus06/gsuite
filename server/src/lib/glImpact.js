@@ -1692,14 +1692,20 @@ async function computePostedGlLines({ toDate, fromDate }) {
 // September payroll entry made 2026-10-03). Asked 2026-10-03 to count them in T1S on top of the
 // source's figures, so T1S's books for that period knowingly differ from the source by exactly
 // these entries. Reversal journals (source_type set) are left out -- they belong to their document.
+// A MIGRATED journal the source never posted counts the same way, once flagged
+// adds_to_source_figures (db/flag-unposted-source-journals.js): JRNL-6087, the 1st-half September
+// payroll, is in the source as a document but not in its ledger, so its September figures have no
+// payroll for that half at all (2026-10-26).
+const preStartEnd = (books, to) => (to < books.start ? to : (() => { const d = new Date(`${books.start}T00:00:00Z`); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); })());
 async function preStartT1sJournalLines(books, to, from) {
-  const upTo = to < books.start ? to : (() => { const d = new Date(`${books.start}T00:00:00Z`); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); })();
+  const upTo = preStartEnd(books, to);
   const params = [upTo, books.first]; let fromSql = '';
   if (from) { fromSql = ' AND j.date_created >= ?'; params.push(from); }
   const [headers] = await pool.query(
     `SELECT j.* FROM journals j
       WHERE j.status <> 'void' AND j.source_type IS NULL AND j.date_created <= ? AND j.date_created > ?${fromSql}
-        AND EXISTS (SELECT 1 FROM audit_logs a WHERE a.auditable_type = 'Journal' AND a.auditable_id = j.id AND a.event_type = 'Created')`,
+        AND (j.adds_to_source_figures = 1
+             OR EXISTS (SELECT 1 FROM audit_logs a WHERE a.auditable_type = 'Journal' AND a.auditable_id = j.id AND a.event_type = 'Created'))`,
     params,
   );
   if (!headers.length) return [];
@@ -1723,7 +1729,7 @@ async function preStartT1sJournalLines(books, to, from) {
 // source's figures. Like a journal keyed late (above), it is added to those figures; otherwise it
 // would be in no month at all. Payables raised before the cutoff post on their own dates, as before.
 async function preStartCommissionLines(books, to, from) {
-  const upTo = to < books.start ? to : (() => { const d = new Date(`${books.start}T00:00:00Z`); d.setUTCDate(d.getUTCDate() - 1); return d.toISOString().slice(0, 10); })();
+  const upTo = preStartEnd(books, to);
   const posting = 'LAST_DAY(COALESCE(cp.period_to, cp.date_created))';
   const params = [COMMISSION_DATE_POSTING_FROM, upTo, books.first];
   let fromSql = '';
@@ -1752,6 +1758,43 @@ async function preStartCommissionLines(books, to, from) {
   return out;
 }
 
+// Vendor Bills keyed in T1S after the source closed (a 'Created' audit row on or after the books
+// start -- migrated bills have none, and VB-2/VB-5 were July tests) but dated before it: September's
+// rent, retainers, security, janitorial, utilities (VB-24736, VB-24679, VB-24820, ...), entered from
+// 2026-10-02 on. The source's September figures, loaded 2026-10-02, have none of them -- checked
+// against its ledger -- so like a late journal (above) they are added on top; otherwise they are in
+// no month at all while their October payments still take the payable out. Posted as the main
+// ledger posts a bill with no imported source entry (one keyed in T1S never has one).
+async function preStartVendorBillLines(books, to, from) {
+  const upTo = preStartEnd(books, to);
+  const params = [upTo, books.first, books.start]; let fromSql = '';
+  if (from) { fromSql = ' AND vb.date_created >= ?'; params.push(from); }
+  const [headers] = await pool.query(
+    `SELECT vb.*, coa.account_code, coa.account_name
+       FROM vendor_bills vb
+       LEFT JOIN chart_of_accounts coa ON coa.id = vb.account_id
+      WHERE (vb.status != 'cancelled'
+             OR EXISTS (SELECT 1 FROM journals rj WHERE rj.source_type = 'vendor_bill' AND rj.source_id = vb.id AND rj.status <> 'void'))
+        AND vb.date_created <= ? AND vb.date_created > ?
+        AND EXISTS (SELECT 1 FROM audit_logs a WHERE a.auditable_type = 'VendorBill' AND a.auditable_id = vb.id
+                       AND a.event_type = 'Created' AND a.set_at >= ?)${fromSql}`,
+    params,
+  );
+  if (!headers.length) return [];
+  const billLines = await linesByParent('SELECT vendor_bill_id, account_id, net_of_tax FROM vendor_bill_lines WHERE vendor_bill_id IN (?) AND account_id IS NOT NULL', 'vendor_bill_id', headers.map((h) => h.id));
+  const out = [];
+  for (const vb of headers) {
+    for (const r of await computeVendorBillGl(vb, billLines.get(vb.id) || [])) {
+      if (!r.debit && !r.credit) continue;
+      out.push({
+        ...r, entry_date: vb.date_created, source_type: 'vendor_bill', source_no: vb.bill_no, source_id: vb.id,
+        memo: vb.memo || null, location_id: vb.office_location_id || null, department_id: null,
+      });
+    }
+  }
+  return out;
+}
+
 async function getPostedGlLines({ toDate, fromDate }) {
   const books = await booksStart();
   const to = String(toDate).slice(0, 10);
@@ -1763,7 +1806,8 @@ async function getPostedGlLines({ toDate, fromDate }) {
   // in T1S for that period, above): up to the cut-over the source is the book of record.
   const source = await openingGlLines(to, from);
   const late = (!from || from < books.start)
-    ? [...await preStartT1sJournalLines(books, to, from), ...await preStartCommissionLines(books, to, from)]
+    ? [...await preStartT1sJournalLines(books, to, from), ...await preStartCommissionLines(books, to, from),
+      ...await preStartVendorBillLines(books, to, from)]
     : [];
   if (to < books.start) return [...source, ...late];
   // After the last source date, T1S's own ledger from its documents.
