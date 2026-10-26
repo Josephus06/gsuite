@@ -15,6 +15,17 @@ const { isHeadOfficeUser } = require('../lib/userLocation');
 const { postReversalJournal, mirror, listReversalJournals } = require('../lib/reversalJournal');
 const { headerDepartmentError } = require('../lib/requireDepartment');
 
+// An invoice with nothing to collect -- a fully discounted order or JO, gross and amount due both
+// zero -- is Paid in Full the moment it exists, not Open (asked 2026-10-26, INV-84790). Called after
+// every create and edit; only an Open invoice is touched, never a voided one. db/settle-zero-invoices.js
+// settles those already saved.
+async function settleZeroInvoice(conn, invoiceId) {
+  await conn.query(
+    `UPDATE sales_invoices SET status = 'paid_in_full'
+      WHERE id = ? AND status = 'saved' AND ABS(COALESCE(gross_amount, 0)) <= 0.005 AND ABS(COALESCE(amount_due, 0)) <= 0.005`,
+    [invoiceId]);
+}
+
 const router = express.Router();
 // Unlike Item Fulfillment/Receipt/Quality Inspection/Item Delivery (all reached only by
 // drilling into a parent record and reusing its permission scope), Sales Invoices also
@@ -884,6 +895,7 @@ async function billDeliveryTicket(req, res, conn) {
   );
   const invoiceId = result.insertId;
   const invoiceNo = await assignDocNo(conn, { table: 'sales_invoices', column: 'invoice_no', prefix: 'INV-', id: invoiceId });
+  await settleZeroInvoice(conn, invoiceId);
 
   for (const l of lines) {
     await conn.query(
@@ -1028,6 +1040,7 @@ async function billEstimate(req, res, conn) {
   );
   const invoiceId = result.insertId;
   const invoiceNo = await assignDocNo(conn, { table: 'sales_invoices', column: 'invoice_no', prefix: 'INV-', id: invoiceId });
+  await settleZeroInvoice(conn, invoiceId);
 
   for (const l of lines) {
     await conn.query(
@@ -1126,6 +1139,7 @@ async function billNsso(req, res, conn) {
   );
   const invoiceId = result.insertId;
   const invoiceNo = await assignDocNo(conn, { table: 'sales_invoices', column: 'invoice_no', prefix: 'INV-', id: invoiceId });
+  await settleZeroInvoice(conn, invoiceId);
 
   for (const l of lines) {
     await conn.query(
@@ -1229,6 +1243,7 @@ async function billStandalone(req, res, conn) {
   );
   const invoiceId = result.insertId;
   const invoiceNo = await assignDocNo(conn, { table: 'sales_invoices', column: 'invoice_no', prefix: 'INV-', id: invoiceId });
+  await settleZeroInvoice(conn, invoiceId);
 
   for (const l of lines) {
     await conn.query(
@@ -1397,6 +1412,7 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
     // The record itself is always an "Invoice" (INV-#), regardless of which Bill
     // dropdown option created it -- SI/BS/DR/DT is only ever its Type, not its number.
     const invoiceNo = await assignDocNo(conn, { table: 'sales_invoices', column: 'invoice_no', prefix: 'INV-', id: invoiceId });
+    await settleZeroInvoice(conn, invoiceId);
 
     for (const l of lines) {
       await conn.query(
@@ -1704,6 +1720,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       `UPDATE sales_invoices SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`,
       [...cols.map((c) => next[c]), req.params.id],
     );
+    await settleZeroInvoice(conn, req.params.id);
 
     // One audit row per field that actually moved -- an edit that changed the PO number should not
     // read as though it touched the whole invoice.
