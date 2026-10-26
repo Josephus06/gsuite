@@ -584,7 +584,9 @@ router.put('/:id', requireAuth, requireOpenPeriod('sales_orders', 'non_gl'), asy
         || (l.disc_per_piece !== undefined && Math.abs(Number(l.disc_per_piece || 0) - oldPerPiece) > 0.0001)
         || String(v.tax_code_id ?? '') !== String(old.tax_code_id ?? '');
       if (linePricing) pricingChanged = true;
-      const price = r4(v.price_per_unit);
+      // In centavos: price_per_unit is DECIMAL(14,2), so a 4-decimal price was computed with here and
+      // then stored rounded -- the saved price and subtotal could disagree once qty > 1 (2026-10-26).
+      const price = r2(v.price_per_unit);
       const subtotal = r2(qty * price);
       const perPiece = l.disc_per_piece === undefined ? (Number(old.quantity) ? Number(old.disc_amount || 0) / Number(old.quantity) : 0) : Number(l.disc_per_piece) || 0;
       const discAmount = r2(perPiece * qty);

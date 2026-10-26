@@ -47,11 +47,15 @@ export default function SalesOrderEdit() {
   }, [id]);
 
   const rateOf = (taxId) => Number(lk.taxes.find((t) => String(t.id) === String(taxId))?.rate) || 0;
+  // The line as the server will save it (routes/salesOrders.js): price in centavos (the column holds
+  // two decimals), then subtotal, discount, net and tax each rounded to the centavo. Unrounded, a
+  // 5,703.387 price showed 6,367.99 here and saved as 6,368.00 (SO-201931, 2026-10-26).
+  const r2 = (v) => Math.round((Number(v) + Number.EPSILON) * 100) / 100;
   const calc = (l) => {
-    const qty = Number(l.quantity) || 0; const price = Number(l.price_per_unit) || 0;
-    const subtotal = qty * price; const disc = (Number(l.disc_per_piece) || 0) * qty; const net = subtotal - disc;
-    const tax = net * rateOf(l.tax_code_id) / 100;
-    return { subtotal, disc, discPrice: qty ? net / qty : 0, net, tax, gross: net + tax };
+    const qty = Number(l.quantity) || 0; const price = r2(Number(l.price_per_unit) || 0);
+    const subtotal = r2(qty * price); const disc = r2((Number(l.disc_per_piece) || 0) * qty); const net = r2(subtotal - disc);
+    const tax = r2(net * rateOf(l.tax_code_id) / 100);
+    return { subtotal, disc, discPrice: qty ? net / qty : 0, net, tax, gross: r2(net + tax) };
   };
   const totals = useMemo(() => lines.reduce((t, l) => {
     const c = calc(l); return { sub: t.sub + c.subtotal, disc: t.disc + c.disc, net: t.net + c.net, tax: t.tax + c.tax, gross: t.gross + c.gross };
