@@ -74,13 +74,17 @@ export default function NonStandardSalesOrderWizard() {
   // Load nestable Sales Orders when the type calls for them. The server returns at most 300, newest
   // first, so the picker searches the server as you type (SO-72404 was older than the newest 300
   // and could not be found). include_id keeps the chosen SO in the list so its number still shows.
+  // Only the selected customer's Sales Orders (asked 2026-10-26); none chosen yet, every customer's.
   function loadNestableSos(search) {
     if (!nestsToSalesOrder(header.type)) return;
     api.get('/non-standard-sales-orders/nestable-sales-orders', {
-      params: { type: header.type, search: search || undefined, include_id: header.nested_sales_order_id || undefined },
+      params: {
+        type: header.type, search: search || undefined, customer_id: header.customer_id || undefined,
+        include_id: header.nested_sales_order_id || undefined,
+      },
     }).then(({ data }) => setNestableSos(data)).catch(() => setNestableSos([]));
   }
-  useEffect(() => { loadNestableSos(''); }, [header.type]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadNestableSos(''); }, [header.type, header.customer_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // On entering step 2 for an SO-nested type, load the nested SO's job orders.
   useEffect(() => {
@@ -142,9 +146,10 @@ export default function NonStandardSalesOrderWizard() {
   }, [header.customer_id]);
 
   function onCustomerSelect(c) {
-    // A different customer: an Estimate picked for the previous one no longer belongs (its list is that customer's).
+    // A different customer: an Estimate or Sales Order picked for the previous one no longer belongs
+    // (both lists are that customer's).
     const changed = String(c?.id || '') !== String(header.customer_id || '');
-    setH({ customer_id: c?.id || '', contact_person_id: '', contact_email: '', contact_title: '', contact_phone: '', ...(changed ? { nested_estimate_id: '' } : {}) });
+    setH({ customer_id: c?.id || '', contact_person_id: '', contact_email: '', contact_title: '', contact_phone: '', ...(changed ? { nested_estimate_id: '', nested_sales_order_id: '' } : {}) });
   }
   function onSalesOrderSelect(so) {
     setH({ nested_sales_order_id: so?.id || '' });

@@ -116,6 +116,9 @@ router.get('/nestable-sales-orders', requireAuth, requirePermission(ROUTE, 'can_
     if (type === 'rma') {
       where.push("EXISTS (SELECT 1 FROM job_orders jo WHERE jo.sales_order_id = so.id AND jo.production_stage IN ('completed','invoiced'))");
     }
+    // Only the selected customer's Sales Orders (asked 2026-10-26).
+    const customerId = Number(req.query.customer_id) || null;
+    if (customerId) { where.push('so.customer_id = ?'); params.push(customerId); }
     if (search) { where.push('(so.sales_order_no LIKE ? OR c.name LIKE ?)'); params.push(search, search); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const cols = `SELECT so.id, so.sales_order_no, so.date_created, so.status, so.total_amount,
