@@ -237,6 +237,8 @@ import HrIncidentReports from './pages/HrIncidentReports';
 import HrIncidentReportView from './pages/HrIncidentReportView';
 import HrCoe from './pages/HrCoe';
 import HrCoePrint from './pages/HrCoePrint';
+import HrMemos from './pages/HrMemos';
+import HrMemoPrint from './pages/HrMemoPrint';
 import NonStandardJobOrders from './pages/NonStandardJobOrders';
 import NonStandardJobOrderView from './pages/NonStandardJobOrderView';
 import NonStandardSalesOrders from './pages/NonStandardSalesOrders';
@@ -285,6 +287,7 @@ function App() {
       <Route path="/fund-transfers/:id/print" element={<ProtectedRoute><FundTransferPrint /></ProtectedRoute>} />
       <Route path="/commission-vouchers/:id/print" element={<ProtectedRoute><CommissionVoucherPrint /></ProtectedRoute>} />
       <Route path="/hrd/coe/:id/print" element={<ProtectedRoute><HrCoePrint /></ProtectedRoute>} />
+      <Route path="/hrd/memo/:id/print" element={<ProtectedRoute><HrMemoPrint /></ProtectedRoute>} />
       <Route path="/transfer-orders/:id/print" element={<ProtectedRoute><TransferOrderPrint /></ProtectedRoute>} />
       {/* The four request forms, printed on their own sheet -- standalone for the same reason. */}
       <Route path="/forms/:id/print" element={<ProtectedRoute><FormPrint /></ProtectedRoute>} />
@@ -355,6 +358,7 @@ function App() {
         <Route path="/hrd/incident-reports" element={<HrIncidentReports />} />
         <Route path="/hrd/incident-reports/:id" element={<HrIncidentReportView />} />
         <Route path="/hrd/coe" element={<HrCoe />} />
+        <Route path="/hrd/memo" element={<HrMemos />} />
         {/* Forms. /new and /approval are literal segments, so they must precede /:id -- the
             router matches in order and "new" would otherwise be read as a form id. */}
         <Route path="/forms" element={<Forms />} />

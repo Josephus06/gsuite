@@ -49,6 +49,8 @@ const NAV_STRUCTURE = [
       { route: '/hrd/performance', label: 'Performance Evaluation' },
       // Certificate of Employment (2026-10-22): the plain COE and the COE with rating, on the letterhead.
       { route: '/hrd/coe', label: 'Certificate of Employment' },
+      // Memo (2026-10-27): HR's memos to employees on the letterhead, approved by a General Manager.
+      { route: '/hrd/memo', label: 'Memo' },
     ],
   },
   // Forms. The four company request forms -- liquidation, payment, business trip, revolving fund --

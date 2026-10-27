@@ -143,6 +143,7 @@ export default function NotificationBell() {
     if (n.related_type === 'PerfEvaluation' && n.related_id) return `/performance/${n.related_id}`;
     // Certificate of Employment (2026-10-22): waiting for the GM's approval, or approved / rejected.
     if (n.related_type === 'HrCoe') return '/hrd/coe';
+    if (n.related_type === 'HrMemo') return '/hrd/memo';
     // BIR filing deadlines (lib/birDeadlines.js): Bir:<ewt|cwt|vat>, the month as YYYYMM.
     if (String(n.related_type || '').startsWith('Bir:')) {
       const m = String(n.related_id || '');
