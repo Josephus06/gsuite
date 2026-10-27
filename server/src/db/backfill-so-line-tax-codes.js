@@ -12,6 +12,8 @@
 //
 //   node src/db/backfill-so-line-tax-codes.js            dry run (default)
 //   node src/db/backfill-so-line-tax-codes.js --apply
+//   node src/db/backfill-so-line-tax-codes.js --mismatched [--year=2026]          also 12%-coded lines with no tax (SO-61290)
+//   node src/db/backfill-so-line-tax-codes.js --mismatched [--year=2026] --apply
 //
 // Run it against ONE box of the droplet/office pair; replication carries it to the other.
 require('dotenv').config();
@@ -19,6 +21,11 @@ const pool = require('../db');
 const L = require('./lib/liveWindow');
 
 const APPLY = process.argv.includes('--apply');
+// --mismatched (2026-10-27, SO-61290): also lines whose tax code is a 12% one but which carry no tax
+// -- the source's line says 0-VAT / EXEMPT / ZERO-RATED, and an edit to such a line would charge 12%.
+// Only re-coded when the source's code is a 0% one. --year=YYYY narrows to one year's orders.
+const MISMATCHED = process.argv.includes('--mismatched');
+const YEAR = Number((process.argv.find((a) => a.startsWith('--year=')) || '').slice(7)) || null;
 const SOURCE_TAX_MAP = {
   'VAT_PH:0-VAT': 'VATPH_0',
   'VAT_PH:EXEMPT': 'VATPH_EX',
@@ -29,17 +36,21 @@ const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
 
 async function main() {
   console.log(`DB: ${process.env.DB_NAME} on ${process.env.DB_HOST} -- ${APPLY ? 'APPLYING' : 'DRY RUN'}`);
-  const [taxes] = await pool.query('SELECT id, code FROM taxes');
+  const [taxes] = await pool.query('SELECT id, code, rate FROM taxes');
   const taxIdByCode = new Map(taxes.map((t) => [t.code, t.id]));
+  const rateById = new Map(taxes.map((t) => [t.id, Number(t.rate) || 0]));
 
+  const TARGET = MISMATCHED
+    ? '(t.id IS NULL OR (t.rate > 0 AND ABS(COALESCE(sol.tax_amount, 0)) < 0.005 AND sol.net_of_tax > 0))'
+    : 't.id IS NULL';
   const [missing] = await pool.query(`
-    SELECT sol.id, sol.line_no, sol.description, so.sales_order_no, DATE(so.date_created) AS so_date
+    SELECT sol.id, sol.line_no, sol.description, so.sales_order_no, DATE(so.date_created) AS so_date, sol.tax_code_id
       FROM sales_order_lines sol
       JOIN sales_orders so ON so.id = sol.sales_order_id
       LEFT JOIN taxes t ON t.id = sol.tax_code_id
-     WHERE t.id IS NULL
-     ORDER BY so.date_created, so.id, sol.line_no`);
-  console.log(`Lines with no tax code: ${missing.length}`);
+     WHERE ${TARGET}${YEAR ? ' AND YEAR(so.date_created) = ?' : ''}
+     ORDER BY so.date_created, so.id, sol.line_no`, YEAR ? [YEAR] : []);
+  console.log(`Lines with ${MISMATCHED ? 'no tax code, or a 12% code but no tax' : 'no tax code'}${YEAR ? ` (${YEAR})` : ''}: ${missing.length}`);
   if (!missing.length) return;
 
   const bySo = new Map();
@@ -88,6 +99,10 @@ async function main() {
         problems.codeUnmapped.set(code || '(blank)', (problems.codeUnmapped.get(code || '(blank)') || 0) + 1);
         continue;
       }
+      // A coded line (the --mismatched case) is only re-coded to a 0% code -- if the source also
+      // says 12%, the line's figures are what is off, not its code, and it is left for a person.
+      if (line.tax_code_id && (rateById.get(taxId) || 0) > 0) { problems.sourceSays12 = (problems.sourceSays12 || 0) + 1; continue; }
+      if (line.tax_code_id && Number(line.tax_code_id) === Number(taxId)) continue;
       tally.set(code, (tally.get(code) || 0) + 1);
       plan.push({ id: line.id, taxId });
     }
@@ -99,15 +114,16 @@ async function main() {
   console.log(`  SO not found in source: ${problems.soNotInSource}`);
   console.log(`  source fetch failed:    ${problems.fetchFailed}`);
   console.log(`  line not matched:       ${problems.lineNotMatched}`);
+  if (problems.sourceSays12) console.log(`  source also says 12% (figures off, left): ${problems.sourceSays12}`);
   for (const [code, n] of problems.codeUnmapped) console.log(`  unmapped code ${code}: ${n}`);
 
   if (!APPLY) { console.log('\nDRY RUN -- nothing written. Re-run with --apply.'); return; }
   let changed = 0;
   for (const p of plan) {
-    // Re-checks the code is still missing, so a re-run or a concurrent edit is never overwritten.
+    // Re-checks the line is still as found, so a re-run or a concurrent edit is never overwritten.
     const [r] = await pool.query(
       `UPDATE sales_order_lines sol LEFT JOIN taxes t ON t.id = sol.tax_code_id
-          SET sol.tax_code_id = ? WHERE sol.id = ? AND t.id IS NULL`, [p.taxId, p.id]);
+          SET sol.tax_code_id = ? WHERE sol.id = ? AND ${TARGET}`, [p.taxId, p.id]);
     changed += r.affectedRows;
   }
   console.log(`\nUpdated ${changed} of ${plan.length} planned lines.`);

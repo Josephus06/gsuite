@@ -43,7 +43,13 @@ const LINE_COLUMNS = [
   { key: 'subtotal', label: 'Subtotal' },
   { key: 'disc_percent', label: 'Disc %' },
   { key: 'disc_amount', label: 'Disc Amt' },
-  { key: 'disc_price_per_unit', label: 'Disc Price/Unit' },
+  // Imported lines carry no stored Disc Price/Unit (129,761 of them, 2026-10-27: SO-61290's 800.00 read
+  // blank); it is the line's net per piece, as the source shows it.
+  { key: 'disc_price_per_unit', label: 'Disc Price/Unit', render: (r) => {
+    if (r.disc_price_per_unit != null && r.disc_price_per_unit !== '') return r.disc_price_per_unit;
+    const qty = Number(r.quantity) || 0;
+    return qty ? Number((Number(r.net_of_tax || 0) / qty).toFixed(2)) : '';
+  } },
   { key: 'net_of_tax', label: 'Net of Tax' },
   { key: 'tax_code', label: 'Tax Code' },
   { key: 'tax_amount', label: 'Tax Amt' },
