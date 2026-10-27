@@ -13,7 +13,8 @@ function money(v) { const n = Number(v); return Number.isFinite(n) ? n.toLocaleS
 function formatDate(v) { return v ? displayDate(v) : ''; }
 
 export default function FundTransfers() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
+  const canPrint = can('/fund-transfers', 'can_print') || user?.account_type === 'System Admin';
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -75,7 +76,10 @@ export default function FundTransfers() {
                     <td data-label="To Account">{row.to_account_name}</td>
                     <td data-label="Prepared By">{row.prepared_by_name}</td>
                     <td data-label="Total Amount" style={{ textAlign: 'right' }}>{money(row.amount)}</td>
-                    <td><Link className="btn btn-sm btn-primary" to={`/fund-transfers/${row.id}`}>View</Link></td>
+                    <td style={{ display: 'flex', gap: 6 }}>
+                      {canPrint && <button className="btn btn-sm" onClick={() => window.open(`/fund-transfers/${row.id}/print`, '_blank')}>Print</button>}
+                      <Link className="btn btn-sm btn-primary" to={`/fund-transfers/${row.id}`}>View</Link>
+                    </td>
                   </tr>
                 ))}
               </tbody>

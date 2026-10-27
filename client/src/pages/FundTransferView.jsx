@@ -14,7 +14,9 @@ function formatDate(v) { return v ? displayDate(v) : ''; }
 export default function FundTransferView() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
+  // The server lets a System Admin print without can_print, which /fund-transfers was never granted.
+  const canPrint = can('/fund-transfers', 'can_print') || user?.account_type === 'System Admin';
   const [ft, setFt] = useState(null);
   const [tab, setTab] = useState('gl');
   const [auditLogs, setAuditLogs] = useState([]);
@@ -48,7 +50,7 @@ export default function FundTransferView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={'/fund-transfers'}>Back to Lists</Link>
-          {can('/fund-transfers', 'can_print') && <button className="btn btn-sm" onClick={() => window.open(`/fund-transfers/${ft.id}/print`, '_blank')}>Print</button>}
+          {canPrint && <button className="btn btn-sm" onClick={() => window.open(`/fund-transfers/${ft.id}/print`, '_blank')}>Print</button>}
           {(can('/fund-transfers', 'can_edit') && !periodLocked) && ft.status !== 'void' && <Link className="btn btn-sm" to={`/fund-transfers/${ft.id}/edit`}>Edit</Link>}
           {(can('/fund-transfers', 'can_void') && !periodLocked) && ft.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
