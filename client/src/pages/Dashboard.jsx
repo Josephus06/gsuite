@@ -821,7 +821,11 @@ function GmCalendarCard({ navigate, canSeeCollections }) {
     <div className="holo-card dash-chart-card">
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
         <h3 style={{ margin: 0 }}>Calendar</h3>
-        <div className="status-tabs" style={{ margin: 0, flex: 1 }}>
+        {/* A phone gets a dropdown: the four tabs do not fit beside "Calendar" (asked 2026-10-27). */}
+        <select className="gm-cal-select" value={view} onChange={(e) => choose(e.target.value)} aria-label="Calendar">
+          {tabs.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+        </select>
+        <div className="status-tabs gm-cal-tabs" style={{ margin: 0, flex: 1 }}>
           {tabs.map((t) => (
             <button key={t.key} type="button" className={`status-tab ${view === t.key ? 'active' : ''}`} onClick={() => choose(t.key)}>
               {t.label}
