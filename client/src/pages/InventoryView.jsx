@@ -140,6 +140,10 @@ export default function InventoryView() {
   const nonStock = ['Non-Inventory', 'Service', 'Discount', 'Landed Cost'].includes(item.item_type);
   // Non-Inventory items have their own create/edit screen (NonInventoryEdit.jsx).
   const isNonInventory = item.item_type === 'Non-Inventory';
+  // Service items too (2026-10-27): THERMAL SCANNING is a Service item but this page called it an
+  // Inventory Item and sent Back / Add New to the Inventory list.
+  const isService = String(item.item_type || '').toLowerCase() === 'service';
+  const kindTitle = isNonInventory ? 'Non-Inventory Item' : isService ? 'Service Item' : nonStock ? `${item.item_type} Item` : 'Inventory Item';
   const costingPending = !nonStock && !item.is_costing_approved;
   const accountingPending = !nonStock && !item.is_accounting_approved;
   const showApproveCosting = canApprove && item.is_active && costingPending && costingReady;
@@ -151,9 +155,9 @@ export default function InventoryView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <Link className="btn btn-sm" to={isNonInventory ? '/non-inventories' : '/inventory'}>Back to Lists</Link>
-          {canEdit && <Link className="btn btn-sm btn-primary" to={isNonInventory ? `/non-inventories/${id}/edit` : String(item.item_type || '').toLowerCase() === 'service' ? `/service-items/${id}/edit` : `/inventory/${id}/edit`}>Edit</Link>}
-          {canAdd && <Link className="btn btn-sm" to={isNonInventory ? '/non-inventories/new' : '/inventory/new'}>Add New</Link>}
+          <Link className="btn btn-sm" to={isNonInventory ? '/non-inventories' : isService ? '/service-items' : '/inventory'}>Back to Lists</Link>
+          {canEdit && <Link className="btn btn-sm btn-primary" to={isNonInventory ? `/non-inventories/${id}/edit` : isService ? `/service-items/${id}/edit` : `/inventory/${id}/edit`}>Edit</Link>}
+          {canAdd && <Link className="btn btn-sm" to={isNonInventory ? '/non-inventories/new' : isService ? '/service-items/new' : '/inventory/new'}>Add New</Link>}
           {showApproveCosting && <button className="btn btn-sm btn-primary" disabled={approving} onClick={handleApproveCosting}>Approve Costing</button>}
           {showApproveAccounting && <button className="btn btn-sm btn-primary" disabled={approving} onClick={handleApproveAccounting}>Approve Accounting</button>}
         </div>
@@ -163,7 +167,7 @@ export default function InventoryView() {
 
       <div className="estimate-banner">
         <div className="estimate-banner-title">
-          <h1>{isNonInventory ? 'Non-Inventory Item' : 'Inventory Item'}</h1>
+          <h1>{kindTitle}</h1>
           <span className="estimate-no">{item.item_code}</span>
         </div>
         <div className="estimate-status">
