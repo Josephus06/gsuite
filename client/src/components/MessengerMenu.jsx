@@ -5,6 +5,7 @@ import { useAuth } from '../context/useAuth';
 import Avatar from './Avatar';
 import { openChat, openGroupChat } from './ChatDock';
 import { parseUtc } from '../utils/datetime';
+import { hiddenPollGate, onTabVisible } from '../utils/backgroundPoll';
 
 // The Messenger icon in the top bar (asked 2026-10-14): every recent conversation and group chat in
 // one dropdown, newest first, with the last message and an unread dot -- Facebook's Messenger menu.
@@ -62,7 +63,10 @@ export default function MessengerMenu() {
   useEffect(() => {
     if (!enabled) return undefined;
     load();
-    const t = setInterval(load, REFRESH_MS);
+    // Slow while the tab is hidden; refreshed as soon as it is shown (utils/backgroundPoll.js).
+    const gate = hiddenPollGate();
+    const t = setInterval(() => { if (gate()) load(); }, REFRESH_MS);
+    const offVisible = onTabVisible(load);
     // A box read a conversation: its dot goes now, not at the next refresh.
     const onRead = (e) => setRows((rs) => rs.map((r) => (r.kind === 'dm' && r.id === e.detail ? { ...r, unread: 0 } : r)));
     window.addEventListener('chat:read', onRead);
@@ -70,6 +74,7 @@ export default function MessengerMenu() {
     window.addEventListener('chatgroup:changed', load);
     return () => {
       clearInterval(t);
+      offVisible();
       window.removeEventListener('chat:read', onRead);
       window.removeEventListener('chat:activity', load);
       window.removeEventListener('chatgroup:changed', load);

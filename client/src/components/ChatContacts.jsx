@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import Avatar from './Avatar';
 import { openChat } from './ChatDock';
+import { hiddenPollGate, onTabVisible } from '../utils/backgroundPoll';
 
 // The Dashboard's people list (2026-10-12): everyone you can chat with -- photo, online dot, unread
 // count. Clicking one pops out their chatbox (ChatDock). Only for users with the Chat permission.
@@ -23,11 +24,14 @@ export default function ChatContacts() {
   useEffect(() => {
     if (!enabled) return undefined;
     load();
-    const t = setInterval(load, REFRESH_MS);
+    // Slow while the tab is hidden; refreshed as soon as it is shown (utils/backgroundPoll.js).
+    const gate = hiddenPollGate();
+    const t = setInterval(() => { if (gate()) load(); }, REFRESH_MS);
+    const offVisible = onTabVisible(load);
     // A box marked a conversation read: drop its badge now rather than at the next refresh.
     const onRead = (e) => setContacts((cs) => cs.map((c) => (c.id === e.detail ? { ...c, unread: 0 } : c)));
     window.addEventListener('chat:read', onRead);
-    return () => { clearInterval(t); window.removeEventListener('chat:read', onRead); };
+    return () => { clearInterval(t); offVisible(); window.removeEventListener('chat:read', onRead); };
   }, [enabled, load]);
 
   if (!enabled) return null;

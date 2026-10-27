@@ -3,6 +3,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import ChatGroupModal from './ChatGroupModal';
 import { openGroupChat } from './ChatDock';
+import { hiddenPollGate, onTabVisible } from '../utils/backgroundPoll';
 
 // The group chats I am in, with unread counts, and "+ New group" for those allowed to create one
 // (Can Add on Chat; 2026-10-13). Shown with the people list on the Dashboard and the Feed.
@@ -22,11 +23,14 @@ export default function ChatGroups({ compact = false }) {
   useEffect(() => {
     if (!enabled) return undefined;
     load();
-    const t = setInterval(load, REFRESH_MS);
+    // Slow while the tab is hidden; refreshed as soon as it is shown (utils/backgroundPoll.js).
+    const gate = hiddenPollGate();
+    const t = setInterval(() => { if (gate()) load(); }, REFRESH_MS);
+    const offVisible = onTabVisible(load);
     // A group box was read, or a group changed (created, renamed, left, deleted): refresh now.
     const onChange = () => load();
     window.addEventListener('chatgroup:changed', onChange);
-    return () => { clearInterval(t); window.removeEventListener('chatgroup:changed', onChange); };
+    return () => { clearInterval(t); offVisible(); window.removeEventListener('chatgroup:changed', onChange); };
   }, [enabled, load]);
 
   if (!enabled || (!groups.length && !canCreate)) return null;

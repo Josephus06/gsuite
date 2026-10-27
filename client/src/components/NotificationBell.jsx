@@ -6,6 +6,7 @@ import {
 import { useNavigate, Link } from 'react-router-dom';
 import api from '../api/client';
 import { parseUtc } from '../utils/datetime';
+import { hiddenPollGate } from '../utils/backgroundPoll';
 
 const POLL_MS = 5000;
 const TOAST_MS = 6000;
@@ -101,7 +102,9 @@ export default function NotificationBell() {
 
   useEffect(() => {
     poll();
-    const t = setInterval(poll, POLL_MS);
+    // Every POLL_MS while the tab is shown; once a minute while hidden (utils/backgroundPoll.js).
+    const gate = hiddenPollGate();
+    const t = setInterval(() => { if (gate()) poll(); }, POLL_MS);
     function onVisible() { if (document.visibilityState === 'visible') poll(); }
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', onVisible);
