@@ -121,7 +121,7 @@ export default function Inventory() {
                     <td data-label="Item Code">{row.item_code}</td>
                     <td data-label="Display Name">{row.display_name}</td>
                     <td data-label="Sales Description">{row.sales_description}</td>
-                    <td data-label="Unit Title">{row.base_unit_title}</td>
+                    <td data-label="Unit Title">{row.unit_title || row.base_unit_title}</td>
                     <td data-label="Type">{row.to_type}</td>
                     <td data-label="Category">{row.category_name}</td>
                     <td data-label="Last Purchase Price" style={{ textAlign: 'right' }}>{money(row.last_purchase_price)}</td>

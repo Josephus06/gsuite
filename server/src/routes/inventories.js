@@ -140,6 +140,9 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
               -- was ordered in store the title ('Square Foot', 'Piece'), and without this the
               -- Purchase Requisition had only the base unit's title to fall back on.
               pu.title AS purchase_unit_title, su.title AS stock_unit_title,
+              -- The Unit Title picked on the form ('LENGTH-LMTR-6.1'), shown in the list's Unit Title
+              -- column ahead of the base unit (2026-10-27).
+              (SELECT ut.title FROM unit_titles ut WHERE ut.id = i.unit_title_id) AS unit_title,
               ea.account_name AS expense_account_name,
               COALESCE((SELECT SUM(il.qty_on_hand) FROM inventory_locations il WHERE il.inventory_id = i.id), 0) AS total_qty_on_hand
        ${baseFrom} ${whereSql}
