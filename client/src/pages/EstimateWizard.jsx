@@ -1565,12 +1565,12 @@ export default function EstimateWizard() {
                 <thead>
                   <tr>
                     <th>#</th>
-                    {/* The two required ones are marked in the header, so the asterisk is visible
+                    {/* The required ones are marked in the header, so the asterisk is visible
                         while the grid is being filled rather than only in the error at NEXT. */}
                     {JOB_ORDER_COLUMNS.map((c) => (
                       <th key={c.key}>
                         {c.label}
-                        {(c.key === 'delivery_date' || c.key === 'delivery_time') && <span style={{ color: '#b91c1c' }}> *</span>}
+                        {['delivery_date', 'delivery_time', 'tax_code_id'].includes(c.key) && <span style={{ color: '#b91c1c' }}> *</span>}
                       </th>
                     ))}
                   </tr>

@@ -513,6 +513,9 @@ router.put('/:id', requireAuth, requireOpenPeriod('sales_orders', 'non_gl'), asy
     const taxIds = [...new Set(sent.map((l) => Number(l.tax_code_id)).filter(Boolean))];
     const [taxRows] = taxIds.length ? await conn.query('SELECT id, rate FROM taxes WHERE id IN (?)', [taxIds]) : [[]];
     const rate = new Map(taxRows.map((t) => [Number(t.id), Number(t.rate)]));
+    // ...and it must be a tax that exists, or the line would bill as untaxed all the same.
+    const badTax = sent.filter((l) => Number(l.tax_code_id) && !rate.has(Number(l.tax_code_id))).map((l) => byId.get(Number(l.id)).line_no);
+    if (badTax.length) return res.status(400).json({ error: `Tax Code is not a valid tax on line ${badTax.join(', ')}. Pick it again.` });
 
     // Customer change (asked 2026-10-07), at ANY status since 2026-10-08. Invoices and delivery tickets
     // raised from the SO read their customer through it, so they move with it; an invoice carrying its

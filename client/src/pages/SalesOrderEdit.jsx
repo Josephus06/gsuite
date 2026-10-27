@@ -231,7 +231,7 @@ export default function SalesOrderEdit() {
             <thead>
               <tr>
                 <th>#</th><th>JO #</th><th>Job Location</th><th>Description</th><th>Qty</th><th>Units</th><th>Price/Unit</th><th>Subtotal</th>
-                <th title="Per piece">Disc Amt</th><th>Disc Price/Unit</th><th>Net of Tax</th><th>Tax Code</th><th>Tax Amt</th><th>Gross Amt</th>
+                <th title="Per piece">Disc Amt</th><th>Disc Price/Unit</th><th>Net of Tax</th><th>Tax Code <span style={{ color: '#b91c1c' }}>*</span></th><th>Tax Amt</th><th>Gross Amt</th>
                 <th>Length</th><th>Width</th><th>Height</th><th>UOM</th><th>Delivery Date</th><th>Delivery Time</th><th>Remarks</th>
               </tr>
             </thead>

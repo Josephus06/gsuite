@@ -1034,7 +1034,9 @@ router.put('/:id/status', requireAuth, requireStatusChange, async (req, res, nex
       // Tax Code on every job line (asked 2026-10-20): the Sales Order and the invoice take their
       // tax from it, and a line without one bills as untaxed.
       const [noTax] = await conn.query(
-        'SELECT line_no, description FROM estimate_job_orders WHERE estimate_id = ? AND tax_code_id IS NULL ORDER BY line_no',
+        // A code pointing at no tax row counts as none -- the line would bill untaxed either way.
+        `SELECT jo.line_no, jo.description FROM estimate_job_orders jo LEFT JOIN taxes t ON t.id = jo.tax_code_id
+          WHERE jo.estimate_id = ? AND t.id IS NULL ORDER BY jo.line_no`,
         [req.params.id]);
       if (noTax.length) {
         await conn.rollback();
