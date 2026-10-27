@@ -466,6 +466,16 @@ async function userDepartmentId(q, userId) {
   return r ? r.department_id : null;
 }
 
+// HRD (asked 2026-10-27): someone whose employee record is in the HRD / Human Resource department.
+// They see every overtime request once it is approved -- the ones accepted by the employee too.
+const OT_HRD_STATUSES = ['approved', 'accepted'];
+async function isHrd(userId, q = pool) {
+  const [[r]] = await q.query(
+    `SELECT 1 AS x FROM users u JOIN employees e ON e.id = u.employee_id JOIN departments d ON d.id = e.department_id
+      WHERE u.id = ? AND (d.name = 'HRD' OR d.name LIKE 'Human Resource%')`, [userId]);
+  return !!r;
+}
+
 // Whose approval an overtime request waits on, and whether this user is one of them:
 //   for themself  -- the filer's department heads, while SUBMITTED
 //   for another   -- the employee's department heads, once NOTED
@@ -593,6 +603,7 @@ async function maySee(userId, doc) {
     // An artist's overtime: the Design Supervisors, who confirm its actual time.
     if (d && (await otConfirmRule(doc, d)).confirmers.some((c) => Number(c.id) === Number(userId))) return true;
     if (d && d.target_department_id && await isDepartmentNoter(userId, d.target_department_id)) return true;
+    if (OT_HRD_STATUSES.includes(doc.status) && await isHrd(userId)) return true;
   }
   // Your own form, provided you still hold the module at all.
   return doc.user_id === userId && userCan(userId, ROUTE, 'can_view');
@@ -670,8 +681,10 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const params = [];
 
     if (!(await userCan(req.user.id, ROUTE, 'can_view_all'))) {
-      where.push('f.user_id = ?');
-      params.push(req.user.id);
+      // Plus overtime filed for them by someone else, once it is past draft (2026-10-27).
+      where.push(`(f.user_id = ? OR (f.type = 'overtime' AND f.status <> 'draft' AND EXISTS (
+        SELECT 1 FROM form_overtime_details o WHERE o.form_request_id = f.id AND o.target_user_id = ?)))`);
+      params.push(req.user.id, req.user.id);
     }
     if (req.query.status) { where.push('f.status = ?'); params.push(req.query.status); }
     if (req.query.type && TYPES.includes(req.query.type)) { where.push('f.type = ?'); params.push(req.query.type); }
@@ -739,10 +752,12 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
     // Supervisor of someone (user_supervisors): their people's Business Trips (2026-10-21).
     const [[supOf]] = canSeeAll ? [[null]] : await pool.query(
       'SELECT 1 AS x FROM user_supervisors WHERE supervisor_id = ? AND user_id <> ? LIMIT 1', [req.user.id, req.user.id]).catch(() => [[null]]);
+    // HRD: every approved overtime request (2026-10-27).
+    const hrd = canSeeAll ? false : await isHrd(req.user.id);
     // Chosen as a form's approver or noter (2026-10-22).
     const [[chosenMine]] = canSeeAll ? [[null]] : await pool.query(
       'SELECT 1 AS x FROM form_requests WHERE approver_user_id = ? OR noter_user_id = ? LIMIT 1', [req.user.id, req.user.id]).catch(() => [[null]]);
-    if (!canSeeAll && !pageApprover && !pageViewer && headOf.length === 0 && !isAp && !otMine && !leaveIds.length && !fuelApprover && !supOf && !chosenMine) {
+    if (!canSeeAll && !pageApprover && !pageViewer && headOf.length === 0 && !isAp && !otMine && !leaveIds.length && !fuelApprover && !supOf && !chosenMine && !hrd) {
       return res.status(403).json({ error: 'You do not have permission to perform this action' });
     }
 
@@ -786,7 +801,15 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
       // The role-based routes above apply only to forms with no chosen approver (filed before
       // 2026-10-22); a chosen route reaches its own approver and noter, and nobody else.
       const legacy = mine.length ? `(f.approver_user_id IS NULL AND (${mine.join(' OR ')}))` : null;
-      const any = [legacy, '(f.approver_user_id = ? OR f.noter_user_id = ?)',
+      // Overtime reaches the employee it is for, and HRD once approved, whichever route it took
+      // (2026-10-27: one filed with a chosen approver was missing from the employee's list).
+      const overtime = [];
+      if (otMine) {
+        overtime.push("(f.type = 'overtime' AND EXISTS (SELECT 1 FROM form_overtime_details o WHERE o.form_request_id = f.id AND o.target_user_id = ?))");
+        params.push(req.user.id);
+      }
+      if (hrd) { overtime.push("(f.type = 'overtime' AND f.status IN (?))"); params.push(OT_HRD_STATUSES); }
+      const any = [legacy, ...overtime, '(f.approver_user_id = ? OR f.noter_user_id = ?)',
         // Their own forms, and the ones they noted, approved or rejected.
         '(f.user_id = ? OR f.noted_by = ? OR f.approved_by = ? OR f.rejected_by = ?)'].filter(Boolean);
       params.push(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id);
