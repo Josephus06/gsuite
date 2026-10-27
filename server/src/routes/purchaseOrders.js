@@ -173,7 +173,7 @@ const LIST_FROM = `FROM purchase_orders po
 
 const LIST_SELECT = `SELECT po.id, po.po_no, po.ref_no, po.type, po.date_created, po.status, po.receipt_status, po.bill_status,
               po.discount_amount, po.net_of_tax, po.tax_amount, po.total_amount, po.memo,
-              po.supplier_id, s.name AS supplier_name, u.display_name AS created_by_name,
+              po.supplier_id, s.name AS supplier_name, COALESCE(u.display_name, po.prepared_by_name) AS created_by_name,
               (${LIST_STATUS_CASE}) AS list_status
        ${LIST_FROM}`;
 
@@ -281,7 +281,7 @@ async function openLandedCosts(conn, parentId) {
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[po]] = await pool.query(
-      `SELECT po.*, s.name AS supplier_name, s.supplier_code, u.display_name AS created_by_name,
+      `SELECT po.*, s.name AS supplier_name, s.supplier_code, COALESCE(u.display_name, po.prepared_by_name) AS created_by_name,
               ${PO_TERM_SELECT}, parent.po_no AS parent_po_no, parent.id AS parent_po_id
        FROM purchase_orders po
        LEFT JOIN suppliers s ON s.id = po.supplier_id
@@ -337,7 +337,7 @@ async function loadPrintablePo(id) {
       `SELECT po.*, s.name AS supplier_name, s.supplier_code, s.address AS supplier_address,
               s.tin AS supplier_tin, s.contact_no AS supplier_contact_no, s.email AS supplier_email,
               s.credit_term AS supplier_credit_term,
-              u.display_name AS created_by_name, pt.term_name,
+              COALESCE(u.display_name, po.prepared_by_name) AS created_by_name, pt.term_name,
               sup.display_name AS approved_by_supervisor_name,
               gm.display_name AS approved_by_gm_name,
               parent.po_no AS parent_po_no
