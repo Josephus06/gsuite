@@ -6,6 +6,7 @@ import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import useAutoSearch from '../utils/useAutoSearch';
 import SearchInput from '../components/SearchInput';
+import { displayDate } from '../utils/dates';
 
 const PAGE_SIZE = 10;
 
@@ -108,13 +109,14 @@ export default function Inventory() {
                   <th>Type</th>
                   <th>Category</th>
                   <th style={{ textAlign: 'right' }}>Last Purchase Price</th>
+                  <th>Last Purchase Date</th>
                   <th style={{ textAlign: 'right' }}>Average Cost</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && (
-                  <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 20 }}>No items found.</td></tr>
+                  <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>No items found.</td></tr>
                 )}
                 {pageRows.map((row) => (
                   <tr key={row.id}>
@@ -125,6 +127,7 @@ export default function Inventory() {
                     <td data-label="Type">{row.to_type}</td>
                     <td data-label="Category">{row.category_name}</td>
                     <td data-label="Last Purchase Price" style={{ textAlign: 'right' }}>{money(row.last_purchase_price)}</td>
+                    <td data-label="Last Purchase Date" style={{ whiteSpace: 'nowrap' }}>{row.last_purchase_date ? displayDate(String(row.last_purchase_date).slice(0, 10)) : '—'}</td>
                     <td data-label="Average Cost" style={{ textAlign: 'right' }}>{money(row.average_cost)}</td>
                     <td style={{ display: 'flex', gap: 6 }}>
                       {can('/inventory', 'can_edit') && <Link className="btn btn-sm" to={`/inventory/${row.id}/edit`}>Update</Link>}
