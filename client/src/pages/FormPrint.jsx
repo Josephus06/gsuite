@@ -540,6 +540,38 @@ export default function FormPrint() {
           </>
         )}
 
+        {/* Overtime Request (2026-10-27: it printed only the signatures): who it is for, the day, the
+            time and hours filed, the purpose, and the actual time once it has been confirmed. */}
+        {doc.type === 'overtime' && (
+          <>
+            <div className="rf-row">
+              <Field label="Overtime For" value={d.for_self ? (d.target_name || doc.owner_name) : d.target_name} />
+              <Field label="Department" value={d.target_department || doc.department} />
+              <Field label="Date" value={fmtDate(d.ot_date)} />
+            </div>
+            <div className="rf-row">
+              <Field label="Time From" value={clock(d.time_from)} />
+              <Field label="Time To" value={clock(d.time_to)} />
+              <Field label="No. of Hours" value={d.hours != null ? Number(d.hours).toFixed(2) : ''} />
+            </div>
+            <div className="rf-box">
+              <h4>Purpose</h4>
+              <div style={{ whiteSpace: 'pre-wrap', minHeight: 40 }}>{d.purpose}</div>
+            </div>
+            {d.reference_no && <div className="rf-row" style={{ marginTop: 10 }}><Field label="Reference" value={d.reference_no} /></div>}
+            {d.ot_confirmed_at && (
+              <div className="rf-row" style={{ marginTop: 10 }}>
+                <Field label="Actual Time" value={`${clock(d.actual_time_from)} — ${clock(d.actual_time_to)}`} />
+                <Field label="Actual Hours" value={d.actual_hours != null ? Number(d.actual_hours).toFixed(2) : ''} />
+                <Field label="Confirmed" value={fmtDate(d.ot_confirmed_at)} />
+              </div>
+            )}
+            {doc.status === 'accepted' && (
+              <div className="rf-row"><Field label="Accepted" value={`${fmtDate(d.responded_at)}${d.response_remark ? ` — ${d.response_remark}` : ''}`} /></div>
+            )}
+          </>
+        )}
+
         {doc.type === 'attendance_adjustment' && (
           <>
             <div className="rf-row">

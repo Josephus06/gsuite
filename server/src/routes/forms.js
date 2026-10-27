@@ -2220,7 +2220,8 @@ router.get('/:id/print', requireAuth, requirePermission(ROUTE, 'can_print'), asy
 
     // An attendance adjustment prints once its superior has noted it, like the trip sheet.
     const printsWhenNoted = ['business_trip', 'attendance_adjustment'].includes(doc.type);
-    const allowed = printsWhenNoted ? ['noted', 'approved'] : ['approved'];
+    // Overtime filed for someone else ends at accepted -- a step past approved -- and prints there too.
+    const allowed = printsWhenNoted ? ['noted', 'approved'] : doc.type === 'overtime' ? ['approved', 'accepted'] : ['approved'];
     if (!allowed.includes(doc.status)) {
       return res.status(403).json({
         error: printsWhenNoted
