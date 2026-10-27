@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Modal from './Modal';
-import { useCalendarRange } from '../utils/calendarRange';
+import { useCalendarRange, CalAmount } from '../utils/calendarRange';
 import FilterPicker from './FilterPicker';
 import SearchInput from './SearchInput';
 
@@ -138,7 +138,7 @@ export default function GmDocumentCalendar({ type, range = 'month' }) {
         ? <CustomerTable cfg={cfg} customers={dayEntry.customers} count={dayEntry.count} total={dayEntry.total} />
         : <div className="muted" style={{ padding: 20, textAlign: 'center' }}>Nothing on this day.</div>)}
 
-      {range !== 'day' && <div className="artist-calendar-grid">
+      {range !== 'day' && <div className="artist-calendar-grid cal-compact">
         {WEEKDAYS.map((w) => <div key={w} className="artist-calendar-weekday">{w}</div>)}
         {cells.map((key, i) => {
           if (!key) return <div key={`pad-${i}`} className="artist-calendar-day is-empty" />;
@@ -164,7 +164,7 @@ export default function GmDocumentCalendar({ type, range = 'month' }) {
               <span className="artist-calendar-daynum">{Number(key.slice(8, 10))}</span>
               {entry?.total > 0 && (
                 <div className="cal-tally">
-                  <span className="cal-tally-item">{money(entry.total)}</span>
+                  <span className="cal-tally-item"><CalAmount value={entry.total} full={money(entry.total)} /></span>
                 </div>
               )}
               {chips.slice(0, 3).map((c) => (
@@ -187,6 +187,10 @@ export default function GmDocumentCalendar({ type, range = 'month' }) {
                 </span>
               ))}
               {dts.length > 3 && <span className="artist-calendar-more">+{dts.length - 3} DT</span>}
+              {/* A phone has no room for chips: how many, and the day opens on a tap. */}
+              {(chips.length > 0 || dts.length > 0) && (
+                <span className="cal-mobile-count">{chips.length || ''}{dts.length ? <span className="cal-dt">{chips.length ? ' · ' : ''}{dts.length} DT</span> : null}</span>
+              )}
             </div>
           );
         })}

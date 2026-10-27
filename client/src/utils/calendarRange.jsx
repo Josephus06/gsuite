@@ -81,3 +81,19 @@ export function CalendarRangeSwitch({ value, onChange }) {
     </div>
   );
 }
+
+// A day cell's peso figure: the full amount, and "171K" / "1.2M" for a phone, where seven columns
+// leave no room for one (index.css swaps them under 600px).
+function compactMoney(n) {
+  if (Math.abs(n) >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (Math.abs(n) >= 1e3) return `${Math.round(n / 1e3)}K`;
+  return String(Math.round(n));
+}
+export function CalAmount({ value, full }) {
+  return (
+    <>
+      <span className="cal-amt-full">{full}</span>
+      <span className="cal-amt-short">{compactMoney(Number(value) || 0)}</span>
+    </>
+  );
+}

@@ -2844,3 +2844,27 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 }
 .search-input-clear:hover { background: var(--accent-bg, rgba(0, 0, 0, 0.06)); color: var(--color-text-primary, #111827); }
 @media (pointer: coarse) { .search-input-clear { width: 32px; height: 32px; line-height: 32px; right: 2px; } }
+
+/* The dashboard calendars on a phone (2026-10-27: the month grid was clipped, its header ran off
+   the card and every figure was cut to "171,065.4"). The header wraps with the search on a line of
+   its own; the money calendars' cells (.cal-compact) drop the customer chips for a short total
+   ("171K") and a count, since tapping a day opens its full list anyway. */
+.cal-amt-short, .cal-mobile-count { display: none; }
+@media (max-width: 600px) {
+  .artist-calendar-head { flex-wrap: wrap; }
+  .artist-calendar-head > div { min-width: 0 !important; flex: 1 1 100%; }
+  .artist-calendar-head strong { min-width: 0; flex: 1; }
+  .artist-calendar-count { margin-left: 0; flex-basis: 100%; }
+  .artist-calendar-grid { gap: 2px; }
+  .artist-calendar-weekday { font-size: 9px; letter-spacing: 0; }
+  .cal-compact .artist-calendar-day { min-height: 52px; padding: 3px 2px; align-items: center; }
+  .cal-compact .artist-calendar-chip, .cal-compact .artist-calendar-more { display: none; }
+  .cal-compact .cal-amt-full { display: none; }
+  .cal-compact .cal-amt-short { display: inline; }
+  .cal-compact .cal-tally { justify-content: center; }
+  .cal-compact .cal-tally-item { padding: 0 1px; }
+  .cal-compact .cal-tally-item.cal-actual { padding-left: 2px; }
+  .cal-compact .cal-mobile-count {
+    display: block; font-size: 9px; font-weight: 600; opacity: 0.75; text-align: center; white-space: nowrap;
+  }
+}

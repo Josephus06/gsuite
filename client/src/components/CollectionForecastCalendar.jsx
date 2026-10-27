@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import Modal from './Modal';
-import { useCalendarRange } from '../utils/calendarRange';
+import { useCalendarRange, CalAmount } from '../utils/calendarRange';
 
 // The month of expected collections, in the shape of the production schedule so the two read
 // alike -- but the chips carry CUSTOMER names, because the question here is who is paying us on
@@ -76,7 +76,7 @@ export default function CollectionForecastCalendar({ customerId, range = 'month'
       {/* Day: the day's breakdown in place of a single-cell grid. */}
       {range === 'day' && !loading && <DayBreakdown entry={byDay.get(days[0])} />}
 
-      {range !== 'day' && <div className="artist-calendar-grid">
+      {range !== 'day' && <div className="artist-calendar-grid cal-compact">
         {WEEKDAYS.map((w) => <div key={w} className="artist-calendar-weekday">{w}</div>)}
         {cells.map((key, i) => {
           if (!key) return <div key={`pad-${i}`} className="artist-calendar-day is-empty" />;
@@ -103,10 +103,10 @@ export default function CollectionForecastCalendar({ customerId, range = 'month'
                   read as "we collected nothing" rather than "this has not happened yet". */}
               {(entry?.total > 0 || entry?.collected > 0) && (
                 <div className="cal-tally">
-                  {entry.total > 0 && <span className="cal-tally-item">{money(entry.total)}</span>}
+                  {entry.total > 0 && <span className="cal-tally-item"><CalAmount value={entry.total} full={money(entry.total)} /></span>}
                   {entry.collected > 0 && (
                     <span className="cal-tally-item cal-actual" title={`Actual collection: ${entry.paymentCount} payment(s), ${money(entry.collected)}`}>
-                      {money(entry.collected)}
+                      <CalAmount value={entry.collected} full={money(entry.collected)} />
                     </span>
                   )}
                 </div>
@@ -123,6 +123,7 @@ export default function CollectionForecastCalendar({ customerId, range = 'month'
               {customers.length > 3 && (
                 <span className="artist-calendar-more">+{customers.length - 3} more</span>
               )}
+              {customers.length > 0 && <span className="cal-mobile-count">{customers.length}</span>}
             </div>
           );
         })}
