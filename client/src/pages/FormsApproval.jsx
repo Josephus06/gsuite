@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
+import SearchInput from '../components/SearchInput';
 import { NO_ITEM_TYPES, STATUS_BADGE, TYPE_LABELS, fmtDate, money, pretty, statusLabel } from '../utils/requestForms';
 
 // The approval queue -- what is waiting on a decision, rather than what you filed.
@@ -21,6 +22,10 @@ export default function FormsApproval() {
   const [rows, setRows] = useState([]);
   const [tab, setTab] = useState('submitted');
   const [type, setType] = useState('');
+  // Search and Department (asked 2026-10-27) filter the loaded tab in place -- the queue is one
+  // short list per tab, so there is nothing to page through on the server.
+  const [search, setSearch] = useState('');
+  const [department, setDepartment] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -36,6 +41,16 @@ export default function FormsApproval() {
   }, [tab, type]);
 
   useEffect(() => { load(); }, [load]);
+
+  const departments = useMemo(
+    () => [...new Set(rows.map((r) => r.department).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [rows]);
+  const shown = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((r) => (!department || r.department === department)
+      && (!q || [r.request_no, r.owner_name, r.department, TYPE_LABELS[r.type] || pretty(r.type)]
+        .some((v) => String(v || '').toLowerCase().includes(q))));
+  }, [rows, search, department]);
 
   return (
     <div>
@@ -63,6 +78,18 @@ export default function FormsApproval() {
               {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </div>
+          <div className="field">
+            <label>Department</label>
+            <select value={department} onChange={(e) => setDepartment(e.target.value)}>
+              <option value="">--ALL--</option>
+              {department && !departments.includes(department) && <option value={department}>{department}</option>}
+              {departments.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label>Search</label>
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="REQ #, name or department..." />
+          </div>
         </div>
       </div>
 
@@ -83,12 +110,12 @@ export default function FormsApproval() {
                 </tr>
               </thead>
               <tbody>
-                {rows.length === 0 && (
+                {shown.length === 0 && (
                   <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>
-                    Nothing here.
+                    {rows.length ? 'Nothing matches.' : 'Nothing here.'}
                   </td></tr>
                 )}
-                {rows.map((r) => (
+                {shown.map((r) => (
                   <tr key={r.id}>
                     <td data-label="REQ #">{r.request_no}</td>
                     <td data-label="Form">{TYPE_LABELS[r.type] || pretty(r.type)}</td>

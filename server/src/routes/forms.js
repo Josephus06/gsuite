@@ -816,7 +816,10 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
       where.push(`(${any.join(' OR ')})`);
     }
     if (req.query.status && WORKFLOW_STATUSES.includes(req.query.status)) {
-      where.push('f.status = ?'); params.push(req.query.status);
+      // The page has no tabs for an overtime's answer: accepted sits under Approved, declined under
+      // Rejected (2026-10-27), or HRD never found the ones the employee had already accepted.
+      const also = { approved: ['accepted'], rejected: ['declined'] }[req.query.status] || [];
+      where.push('f.status IN (?)'); params.push([req.query.status, ...also]);
     }
     if (req.query.type && TYPES.includes(req.query.type)) { where.push('f.type = ?'); params.push(req.query.type); }
 
