@@ -47,7 +47,7 @@ const blankLine = () => ({ key: Math.random().toString(36).slice(2), account: nu
 // `fromLiquidation` is an approved Liquidation or Request for Payment (the form as GET /forms/:id
 // returns it; an RFP's items carry no account, so Accounting picks each line's) -- Create
 // Vendor Bill on the form. Its items become the expense lines (each item's account, particulars and
-// amount, under the form's department), the form's credit account is the header Account (13305
+// amount, under the filer's department), the form's credit account is the header Account (13305
 // Advances To Employees - For Liquidation unless AP chose another) and the filer is the vendor. The
 // bill is saved with form_request_id so the form shows it and cannot be billed twice.
 export default function StandaloneVendorBillModal({ onClose, onSaved, replicateFrom, fromLiquidation }) {
@@ -107,7 +107,10 @@ export default function StandaloneVendorBillModal({ onClose, onSaved, replicateF
     setMemo(isRfp
       ? `Request for Payment ${f.request_no}${f.detail?.payable_to ? ` -- ${f.detail.payable_to}` : ''}`
       : `Liquidation ${f.request_no}${f.name ? ` -- ${f.name}` : ''}`);
-    const deptOk = (metaData.departments || []).some((d) => String(d.id) === String(f.department_id));
+    // A liquidation's bill goes under the department of whoever filed it (2026-10-28), off their
+    // employee record; the form's own Department only when they have none.
+    const isDept = (id) => id && (metaData.departments || []).some((d) => String(d.id) === String(id));
+    const deptId = !isRfp && isDept(f.owner_department_id) ? f.owner_department_id : (isDept(f.department_id) ? f.department_id : '');
     // Only the items not on a bill yet: a liquidation can be split across bills by item (2026-10-12).
     // Each line remembers its item, so removing a line leaves that item for another bill.
     const copied = (f.items || []).filter((it) => Number(it.amount) && !f.billed_items?.[it.id]).map((it) => ({
@@ -116,7 +119,7 @@ export default function StandaloneVendorBillModal({ onClose, onSaved, replicateF
       account: findAcct(it.cogs_account_id)
         || (it.cogs_account_id ? { id: it.cogs_account_id, account_code: it.cogs_account_code, account_name: it.cogs_account_name } : null),
       description: it.particulars || '',
-      department_id: deptOk ? String(f.department_id) : '',
+      department_id: deptId ? String(deptId) : '',
       amount: String(Number(it.amount)),
     }));
     if (copied.length) setLines(copied);

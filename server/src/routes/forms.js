@@ -360,10 +360,15 @@ async function loadFull(id) {
     `SELECT f.*, u.display_name AS owner_name, u.username AS owner_username,
             nu.display_name AS noted_by_name, au.display_name AS approved_by_name,
             ru.display_name AS rejected_by_name,
-            ca.account_code AS credit_account_code, ca.account_name AS credit_account_name
+            ca.account_code AS credit_account_code, ca.account_name AS credit_account_name,
+            -- The filer's own department, off their employee record (2026-10-28): what a Vendor Bill
+            -- raised from their liquidation is charged to.
+            oe.department_id AS owner_department_id, od.name AS owner_department_name
        FROM form_requests f
        LEFT JOIN chart_of_accounts ca ON ca.id = f.credit_account_id
        LEFT JOIN users u ON u.id = f.user_id
+       LEFT JOIN employees oe ON oe.id = u.employee_id
+       LEFT JOIN departments od ON od.id = oe.department_id
        LEFT JOIN users nu ON nu.id = f.noted_by
        LEFT JOIN users au ON au.id = f.approved_by
        LEFT JOIN users ru ON ru.id = f.rejected_by
