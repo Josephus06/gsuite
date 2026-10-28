@@ -7,6 +7,8 @@ import { NO_ITEM_TYPES, STATUS_BADGE, TYPE_LABELS, fmtDate, money, pretty, statu
 
 // The approval queue -- what is waiting on a decision, rather than what you filed.
 //
+// A submitted form with no noter (none chosen, a fuel request, a leave with nobody to note it) sits
+// under For Approval with the noted ones -- the server sorts that out (2026-10-28).
 // Drafts never appear: a form nobody has submitted is its owner's business alone. Submitted opens
 // first because it is where a form waits longest -- on its department head. Approved and Rejected
 // are there to look back at, not to work through.
@@ -124,7 +126,7 @@ export default function FormsApproval() {
                     <td data-label="Submitted">{fmtDate(r.submitted_at)}</td>
                     <td data-label="Amount">{NO_ITEM_TYPES.includes(r.type) ? '—' : money(r.total_amount)}</td>
                     <td data-label="Status">
-                      <span className={`badge ${STATUS_BADGE[r.status] || 'badge-muted'}`}>{r.status === 'noted' && Number(r.waiting_pre_approval) ? 'For Pre-Approval' : statusLabel(r.status)}</span>
+                      <span className={`badge ${STATUS_BADGE[r.status] || 'badge-muted'}`}>{r.status === 'noted' && Number(r.waiting_pre_approval) ? 'For Pre-Approval' : r.direct_approval ? 'For Approval' : statusLabel(r.status)}</span>
                     </td>
                     <td>
                       <Link className="btn btn-sm btn-primary" to={`/forms/${r.id}`}>Review</Link>

@@ -665,6 +665,18 @@ async function maySee(userId, doc) {
   return doc.user_id === userId && userCan(userId, ROUTE, 'can_view');
 }
 
+// A submitted form with nothing to note -- no noter chosen, a fuel request, a leave whose line has
+// nobody below the approver, an overtime for yourself -- waits on approval from the start, so the
+// approval queue lists it under For Approval, not For Noting (2026-10-28).
+async function skipsNoting(doc) {
+  const ch = await chosenRoute(doc.id);
+  if (ch) return !ch.noter;
+  if (doc.type === 'fuel') return true;
+  if (LEAVE_ROUTED.includes(doc.type)) return !(await leaveRoute(doc)).noters.length;
+  if (doc.type === 'overtime') return !!(await overtimeDetail(doc.id))?.for_self;
+  return false;
+}
+
 // May this user note this particular form, and if not, why not? One answer used by the button, the
 // endpoint and the explanation on screen, so the three cannot disagree.
 async function mayNote(userId, doc) {
@@ -877,16 +889,20 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
       params.push(req.user.id, req.user.id, ...(pre ? [req.user.id] : []), req.user.id, req.user.id, ...(pre ? [req.user.id] : []), req.user.id, req.user.id);
       where.push(`(${any.join(' OR ')})`);
     }
-    if (req.query.status && WORKFLOW_STATUSES.includes(req.query.status)) {
+    const tab = WORKFLOW_STATUSES.includes(req.query.status) ? req.query.status : null;
+    if (tab) {
       // The page has no tabs for an overtime's answer: accepted sits under Approved, declined under
       // Rejected (2026-10-27), or HRD never found the ones the employee had already accepted.
-      const also = { approved: ['accepted'], rejected: ['declined'] }[req.query.status] || [];
-      where.push('f.status IN (?)'); params.push([req.query.status, ...also]);
+      // For Noting / For Approval both read submitted and noted forms: a submitted one with nothing
+      // to note belongs under For Approval (skipsNoting, sorted out below).
+      const also = { approved: ['accepted'], rejected: ['declined'], submitted: ['noted'], noted: ['submitted'] }[tab] || [];
+      where.push('f.status IN (?)'); params.push([tab, ...also]);
     }
     if (req.query.type && TYPES.includes(req.query.type)) { where.push('f.type = ?'); params.push(req.query.type); }
 
     const [rows] = await pool.query(
       `SELECT f.id, f.request_no, f.type, f.status, f.department, f.name, f.created_at, f.submitted_at, f.noted_at,
+              f.user_id, f.department_id,
               ${(await hasPreApproverCol()) ? 'f.pre_approver_user_id IS NOT NULL AND f.pre_approved_at IS NULL AS waiting_pre_approval,' : ''}
               u.display_name AS owner_name,
               (SELECT COALESCE(SUM(i.amount), 0) FROM form_request_items i WHERE i.form_request_id = f.id) AS total_amount
@@ -896,7 +912,11 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
         ORDER BY FIELD(f.status, 'submitted', 'noted', 'rejected', 'approved', 'accepted', 'declined'), f.id DESC`,
       params,
     );
-    res.json(rows);
+    for (const r of rows) r.direct_approval = r.status === 'submitted' && await skipsNoting(r);
+    const shown = tab === 'submitted' ? rows.filter((r) => r.status === 'submitted' && !r.direct_approval)
+      : tab === 'noted' ? rows.filter((r) => r.status === 'noted' || r.direct_approval)
+        : rows;
+    res.json(shown);
   } catch (err) { next(err); }
 });
 
