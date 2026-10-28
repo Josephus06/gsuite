@@ -221,6 +221,51 @@ function MemoModal({ approvers, preparer, existing, copyOf, onClose, onSaved }) 
   );
 }
 
+// The memo as it reads on paper -- what the approver checks before deciding.
+function MemoPreview({ memo }) {
+  const head = [['TO', memo.memo_to], ['FROM', memo.memo_from], ['DATE', fmtDate(memo.memo_date)], ['SUBJECT', memo.subject]];
+  return (
+    <div className="card" style={{ padding: 16, marginBottom: 12, maxHeight: '55vh', overflowY: 'auto' }}>
+      <table style={{ width: 'auto', marginBottom: 10 }}>
+        <tbody>
+          {head.map(([k, v]) => (
+            <tr key={k}>
+              <td style={{ padding: '2px 16px 2px 0', fontWeight: 700, border: 'none' }}>{k}:</td>
+              <td style={{ padding: '2px 0', border: 'none' }}>{v}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <hr />
+      {memo.heading && <p style={{ fontWeight: 700 }}>{memo.heading}</p>}
+      {(memo.body || []).map((b, i) => (b.type === 'table' ? (
+        <div key={i} className="table-wrap" style={{ margin: '8px 0' }}>
+          <table>
+            <thead><tr>{(b.columns || []).map((c, j) => <th key={j}>{c}</th>)}</tr></thead>
+            <tbody>
+              {(b.rows || []).map((row, r) => <tr key={r}>{row.map((c, j) => <td key={j}>{c}</td>)}</tr>)}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p key={i} style={{ whiteSpace: 'pre-wrap', fontWeight: b.bold ? 700 : 400 }}>{b.text}</p>
+      )))}
+      <div style={{ display: 'flex', gap: 48, marginTop: 16, flexWrap: 'wrap' }}>
+        <div>
+          <div className="muted" style={{ fontSize: 12 }}>Prepared by</div>
+          <strong>{memo.prepared_by_name}</strong>
+          {memo.prepared_by_title && <div className="muted" style={{ fontSize: 12 }}>{memo.prepared_by_title}</div>}
+        </div>
+        <div>
+          <div className="muted" style={{ fontSize: 12 }}>Approved by</div>
+          <strong>{memo.status === 'approved' ? memo.signatory_name : memo.approver_name}</strong>
+          <div className="muted" style={{ fontSize: 12 }}>General Manager</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // The approver's decision. Approving confirms the name printed above "General Manager" -- it starts
 // as the name they signed with last time (or their employee record), so it is typed once.
 function DecisionModal({ memo, approve, signAs, onClose, onDone }) {
@@ -243,11 +288,11 @@ function DecisionModal({ memo, approve, signAs, onClose, onDone }) {
   }
 
   return (
-    <Modal title={`${approve ? 'Approve' : 'Reject'} ${memo.memo_no}`} onClose={onClose}>
+    <Modal title={`${approve ? 'Approve' : 'Reject'} ${memo.memo_no}`} onClose={onClose} xl>
       {error && <div className="error-banner">{error}</div>}
+      <MemoPreview memo={memo} />
       <p style={{ marginTop: 0 }}>
-        <strong>{memo.subject}</strong> to {memo.memo_to}.{' '}
-        <a href={`/hrd/memo/${memo.id}/print`} target="_blank" rel="noreferrer">Preview</a>
+        <a href={`/hrd/memo/${memo.id}/print`} target="_blank" rel="noreferrer">Open the print layout</a>
       </p>
       {approve ? (
         <div className="field">
@@ -278,6 +323,7 @@ export default function HrMemos() {
   const [preparer, setPreparer] = useState({});
   const [metaLoaded, setMetaLoaded] = useState(false);
   const [deciding, setDeciding] = useState(null); // { memo, approve }
+  const [viewing, setViewing] = useState(null);
   const [status, setStatus] = useState('');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -371,6 +417,7 @@ export default function HrMemos() {
                         <button type="button" className="btn btn-sm btn-danger" onClick={() => setDeciding({ memo: r, approve: false })}>Reject</button>{' '}
                       </>
                     )}
+                    <button type="button" className="btn btn-sm" onClick={() => setViewing(r)}>View</button>{' '}
                     {canPrint && <button type="button" className="btn btn-sm" onClick={() => print(r)}>Print</button>}{' '}
                     {canEdit && <button type="button" className="btn btn-sm" onClick={() => setEditing({ existing: r })}>Edit</button>}{' '}
                     {canAdd && metaLoaded && (
@@ -394,6 +441,20 @@ export default function HrMemos() {
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); load(); }}
         />
+      )}
+      {viewing && (
+        <Modal title={viewing.memo_no} onClose={() => setViewing(null)} xl>
+          <MemoPreview memo={viewing} />
+          <div className="modal-actions">
+            <button type="button" className="btn" onClick={() => setViewing(null)}>Close</button>
+            {canDecide(viewing) && (
+              <>
+                <button type="button" className="btn btn-danger" onClick={() => { setDeciding({ memo: viewing, approve: false }); setViewing(null); }}>Reject</button>
+                <button type="button" className="btn btn-primary" onClick={() => { setDeciding({ memo: viewing, approve: true }); setViewing(null); }}>Approve</button>
+              </>
+            )}
+          </div>
+        </Modal>
       )}
       {deciding && (
         <DecisionModal
