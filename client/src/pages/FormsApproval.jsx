@@ -11,8 +11,8 @@ import { NO_ITEM_TYPES, STATUS_BADGE, TYPE_LABELS, fmtDate, money, pretty, statu
 // first because it is where a form waits longest -- on its department head. Approved and Rejected
 // are there to look back at, not to work through.
 const TABS = [
-  { key: 'submitted', label: 'Submitted' },
-  { key: 'noted', label: 'Noted' },
+  { key: 'submitted', label: 'For Noting' },
+  { key: 'noted', label: 'For Approval' },
   { key: 'approved', label: 'Approved' },
   { key: 'rejected', label: 'Rejected' },
 ];
