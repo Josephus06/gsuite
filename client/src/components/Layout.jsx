@@ -180,6 +180,7 @@ const NAV_STRUCTURE = [
       { route: '/non-standard-job-orders', label: 'NSTDJO' },
       { route: '/non-standard-sales-orders', label: 'NSSO' },
       { route: '/warranty-certificates', label: 'Warranty Certificate' },
+      { route: '/completion-certificates', label: 'Certificate of Completion' },
       { route: '/job-orders', label: 'Job Orders' },
       { route: '/reports/pending-billing', label: 'Pending Billing' },
       { route: '/reports/weighted-sales', label: 'Weighted Sales per Month' },

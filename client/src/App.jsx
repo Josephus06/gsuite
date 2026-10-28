@@ -248,6 +248,10 @@ import WarrantyCertificates from './pages/WarrantyCertificates';
 import WarrantyCertificateForm from './pages/WarrantyCertificateForm';
 import WarrantyCertificateView from './pages/WarrantyCertificateView';
 import WarrantyCertificatePrint from './pages/WarrantyCertificatePrint';
+import CompletionCertificates from './pages/CompletionCertificates';
+import CompletionCertificateForm from './pages/CompletionCertificateForm';
+import CompletionCertificateView from './pages/CompletionCertificateView';
+import CompletionCertificatePrint from './pages/CompletionCertificatePrint';
 import SalesInvoicePrint from './pages/SalesInvoicePrint';
 import DeliveryTicketPrint from './pages/DeliveryTicketPrint';
 import JobOrderPar from './pages/JobOrderPar';
@@ -275,6 +279,7 @@ function App() {
       <Route path="/driver/:token" element={<DriverRun />} />
       {/* Standalone printable certificate -- protected but rendered without the app chrome. */}
       <Route path="/warranty-certificates/:id/print" element={<ProtectedRoute><WarrantyCertificatePrint /></ProtectedRoute>} />
+      <Route path="/completion-certificates/:id/print" element={<ProtectedRoute><CompletionCertificatePrint /></ProtectedRoute>} />
       {/* Pre-printed Billing Statement overlay -- no app chrome, since anything else on the
           page would print on top of the form. */}
       <Route path="/sales-invoices/:id/print" element={<ProtectedRoute><SalesInvoicePrint /></ProtectedRoute>} />
@@ -387,6 +392,10 @@ function App() {
         <Route path="/warranty-certificates/new" element={<WarrantyCertificateForm />} />
         <Route path="/warranty-certificates/:id/edit" element={<WarrantyCertificateForm />} />
         <Route path="/warranty-certificates/:id" element={<WarrantyCertificateView />} />
+        <Route path="/completion-certificates" element={<CompletionCertificates />} />
+        <Route path="/completion-certificates/new" element={<CompletionCertificateForm />} />
+        <Route path="/completion-certificates/:id/edit" element={<CompletionCertificateForm />} />
+        <Route path="/completion-certificates/:id" element={<CompletionCertificateView />} />
         <Route path="/job-orders" element={<JobOrders />} />
         <Route path="/job-orders/:id" element={<JobOrderView />} />
         <Route path="/job-orders/:id/edit" element={<JobOrderEdit />} />

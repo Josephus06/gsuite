@@ -38,7 +38,12 @@ export default function WarrantyCertificateView() {
   const isApproved = wc.status === 'approved';
   const isVoided = wc.status === 'voided';
   // Group lines by coverage type (each coverage becomes a section header on the certificate).
-  const groups = lines.reduce((acc, l) => { const k = l.coverage || '—'; (acc[k] = acc[k] || []).push(l); return acc; }, {});
+  const groups = lines.reduce((acc, l) => {
+    // A line may carry several coverages ("Structural, Electrical"); it is listed under each.
+    const keys = String(l.coverage || '').split(',').map((x) => x.trim()).filter(Boolean);
+    for (const k of keys.length ? keys : ['—']) (acc[k] = acc[k] || []).push(l);
+    return acc;
+  }, {});
 
   return (
     <div>

@@ -33,8 +33,13 @@ export default function WarrantyCertificatePrint() {
 
   if (!wc) return <LoadingSpinner />;
   const lines = wc.lines || [];
-  const groups = lines.reduce((acc, l) => { const k = l.coverage || '—'; (acc[k] = acc[k] || []).push(l); return acc; }, {});
-  const validities = [...new Set(lines.map((l) => l.coverage).filter(Boolean))];
+  const groups = lines.reduce((acc, l) => {
+    // A line may carry several coverages ("Structural, Electrical"); it is listed under each.
+    const keys = String(l.coverage || '').split(',').map((x) => x.trim()).filter(Boolean);
+    for (const k of keys.length ? keys : ['—']) (acc[k] = acc[k] || []).push(l);
+    return acc;
+  }, {});
+  const validities = Object.keys(groups).filter((k) => k !== '—');
 
   return (
     <div className="wc-print">
