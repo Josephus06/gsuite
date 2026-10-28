@@ -3,6 +3,43 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
+import Modal from '../components/Modal';
+
+// The coverages a line can carry, as the source's Coverages picker lists them (2026-10-28). A line
+// may carry several; they are saved as one comma-separated text.
+const COVERAGES = [
+  'Structural',
+  'Electrical',
+  'Sticker Printing Without Laminate (Non 3M)',
+  'Sticker Printing With Cold UV Laminate (Non 3M)',
+  'Sticker Printing Without Laminate (3M)',
+  'Sticker Printing With Cold UV Laminate (3M)',
+  'Flex Printing (Non 3M)',
+  'Flex Printing (3M)',
+];
+const splitCoverage = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
+
+function CoverageModal({ value, onDone, onClose }) {
+  const [picked, setPicked] = useState(() => splitCoverage(value));
+  const toggle = (c) => setPicked((p) => (p.includes(c) ? p.filter((x) => x !== c) : [...p, c]));
+  // Kept in the list's order, whatever order they were ticked in; an older free-text coverage stays.
+  const done = () => onDone([...COVERAGES.filter((c) => picked.includes(c)), ...picked.filter((c) => !COVERAGES.includes(c))].join(', '));
+  return (
+    <Modal title="Coverages" onClose={onClose}>
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {[...COVERAGES, ...picked.filter((c) => !COVERAGES.includes(c))].map((c) => (
+          <label key={c} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 4px', borderBottom: '1px solid var(--border, #e2e8f0)', cursor: 'pointer', fontWeight: 400 }}>
+            <input type="checkbox" checked={picked.includes(c)} onChange={() => toggle(c)} style={{ width: 'auto' }} />
+            {c}
+          </label>
+        ))}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
+        <button className="btn btn-primary" onClick={done}>Done</button>
+      </div>
+    </Modal>
+  );
+}
 
 function today() { return new Date().toISOString().slice(0, 10); }
 function plusYear(d) {
@@ -27,6 +64,7 @@ export default function WarrantyCertificateForm() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [coverageFor, setCoverageFor] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -66,7 +104,8 @@ export default function WarrantyCertificateForm() {
     });
     const from = String(s.date_created).slice(0, 10);
     setLines((data.job_orders || []).map((j) => ({
-      job_order_id: j.job_order_id, job_order_no: j.job_order_no, job_description: j.job_description, coverage: j.coverage,
+      // Coverage starts empty, picked per line from the Coverages list (as the source does).
+      job_order_id: j.job_order_id, job_order_no: j.job_order_no, job_description: j.job_description, coverage: '',
       warranty_date_from: from, warranty_date_to: plusYear(from), remarks: '', ext_warranty_date_from: '', ext_warranty_date_to: '', ext_remarks: '',
     })));
   }
@@ -135,7 +174,12 @@ export default function WarrantyCertificateForm() {
                   <td><button type="button" className="btn btn-sm btn-warning" onClick={() => delLine(i)}>✕</button></td>
                   <td>{l.job_order_no}</td>
                   <td style={{ minWidth: 220 }}><input value={l.job_description || ''} onChange={(e) => setLine(i, { job_description: e.target.value })} style={{ width: '100%' }} /></td>
-                  <td style={{ minWidth: 160 }}><input value={l.coverage || ''} onChange={(e) => setLine(i, { coverage: e.target.value })} style={{ width: '100%' }} /></td>
+                  <td style={{ minWidth: 200 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <button type="button" className="btn btn-sm btn-primary" onClick={() => setCoverageFor(i)}>Coverage</button>
+                      <span style={{ fontSize: 12 }}>{l.coverage}</span>
+                    </div>
+                  </td>
                   <td><input type="date" value={l.warranty_date_from || ''} onChange={(e) => setLine(i, { warranty_date_from: e.target.value })} /></td>
                   <td><input type="date" value={l.warranty_date_to || ''} onChange={(e) => setLine(i, { warranty_date_to: e.target.value })} /></td>
                   <td><input value={l.remarks || ''} onChange={(e) => setLine(i, { remarks: e.target.value })} style={{ width: 120 }} /></td>
@@ -148,6 +192,14 @@ export default function WarrantyCertificateForm() {
           </table>
         </div>
       </div>
+
+      {coverageFor !== null && (
+        <CoverageModal
+          value={lines[coverageFor]?.coverage}
+          onClose={() => setCoverageFor(null)}
+          onDone={(v) => { setLine(coverageFor, { coverage: v }); setCoverageFor(null); }}
+        />
+      )}
     </div>
   );
 }
