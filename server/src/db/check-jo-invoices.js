@@ -16,6 +16,8 @@
 //
 //   node src/db/check-jo-invoices.js JO-24604-10-10,JO-28446-3-3
 //   node src/db/check-jo-invoices.js --file=jos.txt
+//   node src/db/check-jo-invoices.js --pending [--location=<id>]   every JO on Pending Billing (2026-10-28),
+//                                                                  all offices unless --location
 require('dotenv').config();
 const fs = require('fs');
 const pool = require('../db');
@@ -23,7 +25,9 @@ const L = require('./lib/liveWindow');
 
 const fileArg = (process.argv.find((a) => a.startsWith('--file=')) || '').split('=')[1];
 const listArg = process.argv.slice(2).filter((a) => !a.startsWith('--')).join(',');
-const JOS = [...new Set((fileArg ? fs.readFileSync(fileArg, 'utf8') : listArg).split(/[\s,]+/).map((s) => s.trim().toUpperCase()).filter(Boolean))];
+const PENDING = process.argv.includes('--pending');
+const locationArg = (process.argv.find((a) => a.startsWith('--location=')) || '').split('=')[1];
+let JOS = [...new Set((fileArg ? fs.readFileSync(fileArg, 'utf8') : listArg).split(/[\s,]+/).map((s) => s.trim().toUpperCase()).filter(Boolean))];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function api(t, ep, payload) {
@@ -34,7 +38,14 @@ async function api(t, ep, payload) {
 }
 
 (async () => {
-  if (!JOS.length) { console.error('Give JO numbers: JO-1-1-1,JO-2-1-1 or --file=path'); process.exit(2); }
+  if (PENDING) {
+    // The report's own rows, so this checks exactly what the page lists.
+    const { loadRows } = require('../routes/pendingBillingReport');
+    const rows = await loadRows({ query: locationArg ? { location_id: locationArg } : {}, user: { id: 1 } }, { allReps: true });
+    JOS = [...new Set(rows.filter((r) => r.sales_order_no).map((r) => String(r.job_order_no).toUpperCase()))];
+    console.log(`Pending Billing lists ${rows.length} JO(s); ${JOS.length} on a Sales Order to check.`);
+  }
+  if (!JOS.length) { console.error('Give JO numbers: JO-1-1-1,JO-2-1-1, --file=path or --pending'); process.exit(2); }
   console.log(`DB ${process.env.DB_NAME} on ${process.env.DB_HOST} -- READ ONLY. ${JOS.length} job order(s).\n`);
   const t = await L.login();
   const soInvoices = new Map(); // source SO number -> [{ no, status, lines }]

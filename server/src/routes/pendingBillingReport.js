@@ -276,3 +276,4 @@ async function pendingBillingSummary() {
 
 module.exports = router;
 module.exports.pendingBillingSummary = pendingBillingSummary;
+module.exports.loadRows = loadRows; // db/check-jo-invoices.js --pending
