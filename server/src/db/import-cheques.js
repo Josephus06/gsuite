@@ -96,6 +96,14 @@ async function main() {
 
   const token = await login();
 
+  // A line's department is the source's per-entry SysFK_Dept_LdgrEntries (a source department pk),
+  // mapped to T1S by name. The header's department is almost always blank (2026-10-28).
+  const deptKey = (s) => String(s || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const deptByKey = new Map(depts.map((d) => [deptKey(d.name), d.id]));
+  const deptByLive = new Map(listRows(await api(token, 'get_departments', {}))
+    .map((d) => [d.SysPK_Dept, deptByKey.get(deptKey(d.Name_Dept || d.Title_Dept || d.name)) || null]));
+  const lineDept = (e, h) => deptByLive.get(e.SysFK_Dept_LdgrEntries) || deptByName.get(norm(h.transaction_department?.Name_Dept)) || null;
+
   // ---- live COA pk -> account code (line accounts arrive as UUIDs) ----------------------
   const coaPkToCode = new Map();
   for (let off = 0; off < 20000; off += PAGE) {
@@ -160,7 +168,7 @@ async function main() {
         return {
           line_no: i + 1,
           account_id: acct,
-          department_id: deptByName.get(norm(e.DepartmentName_LdgrEntries || h.transaction_department?.Name_Dept)) || null,
+          department_id: lineDept(e, h),
           description: e.Particulars_LdgrEntries || e.Memo_LdgrEntries || null,
           amount: num(e.DRAmount_LdgrEntries) || (gross - tax),
           tax_code_id: taxByCode.get(norm(e.TaxCode_LdgrEntries)) || null,

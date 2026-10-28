@@ -84,6 +84,14 @@ async function main() {
 
   const token = await login();
 
+  // A line's department is the source's per-entry SysFK_Dept_LdgrEntries (a source department pk),
+  // mapped to T1S by name. The header's department is almost always blank (2026-10-28).
+  const deptKey = (s) => String(s || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const deptByKey = new Map(depts.map((d) => [deptKey(d.name), d.id]));
+  const deptByLive = new Map(listRows(await api(token, 'get_departments', {}))
+    .map((d) => [d.SysPK_Dept, deptByKey.get(deptKey(d.Name_Dept || d.Title_Dept || d.name)) || null]));
+  const lineDept = (e, h) => deptByLive.get(e.SysFK_Dept_LdgrEntries) || deptByName.get(norm(h.transaction_department?.Name_Dept)) || null;
+
   const coaPkToCode = new Map();
   for (let off = 0; off < 20000; off += PAGE) {
     const list = listRows(await api(token, 'get_chart_of_accounts', { searchKey: '', limit: PAGE, offset: off }));
@@ -125,7 +133,7 @@ async function main() {
       const lines = entries.map((e, i) => ({
         line_no: i + 1,
         account_id: coaByCode.get(coaPkToCode.get(e.SysFK_COA_LdgrEntries)) || null,
-        department_id: deptByName.get(norm(h.transaction_department?.Name_Dept)) || null,
+        department_id: lineDept(e, h),
         // Live names the counterparty only by type on the entry; the id/name are not carried
         // on the ledger row, so the type is recorded and the rest left null.
         party_type: e.LedgerAccountType_LdgrEntries || null,

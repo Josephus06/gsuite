@@ -54,9 +54,10 @@ export default function JournalForm() {
 
   // ?liquidation=<form id>: Create Journal on an approved Liquidation. Its GL Impact becomes the
   // lines -- each item's account debited for its amount (memo: its particulars), the form's credit
-  // account (13305 unless AP chose another) credited for the total -- all under the form's
-  // department with the filer as Employee. Saved with form_request_id, so the form shows this
-  // journal and cannot be posted a second time by journal or Vendor Bill.
+  // account (13305 unless AP chose another) credited for the total -- all under the filer's own
+  // department (their employee record, 2026-10-28; the form's typed one only when they have none)
+  // with the filer as Employee. Saved with form_request_id, so the form shows this journal and
+  // cannot be posted a second time by journal or Vendor Bill.
   const liquidationId = editId ? null : searchParams.get('liquidation');
   const [liquidation, setLiquidation] = useState(null);
   useEffect(() => {
@@ -65,7 +66,8 @@ export default function JournalForm() {
       setLiquidation(f);
       const acct = (id) => meta.accounts.find((a) => String(a.id) === String(id));
       const label = (a) => (a ? `${a.account_code} — ${a.account_name}` : '');
-      const dept = meta.departments.some((d) => String(d.id) === String(f.department_id)) ? f.department_id : '';
+      const isDept = (id) => id && meta.departments.some((d) => String(d.id) === String(id));
+      const dept = isDept(f.owner_department_id) ? f.owner_department_id : (isDept(f.department_id) ? f.department_id : '');
       const emp = f.journal_employee;
       const party = emp ? { party_type: 'EMPLOYEE', party_id: emp.id, party_name: emp.name } : {};
       const items = (f.items || []).filter((it) => Number(it.amount) && it.cogs_account_id);
