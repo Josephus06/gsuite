@@ -6,14 +6,13 @@ const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 
 const router = express.Router();
 
-// Sales > Pending Billing: every Job Order production has COMPLETED that is not yet (fully)
-// invoiced -- work done and waiting for its bill.
+// Sales > Pending Billing: Job Orders that went through Assembly Build, Quality Inspection AND Item
+// Delivery but are not yet (fully) on a Delivery Ticket or an Invoice -- delivered and waiting for
+// the bill (2026-10-28). To Bill = the quantity delivered less what DTs and invoices already cover.
 //
-// "Completed" is production_stage 'completed' or 'partially_completed', and what is ready to bill is
-// what was actually QI'd or delivered (2026-10-28) -- not the whole JO. The status sync moves EVERY JO
-// of an order to 'completed' once the source calls the order Pending Billing, which it does as soon as
-// one JO is done: SO-49071's JO-49071-11-11 (installation, no build, QI or delivery at the source)
-// listed its full amount because JO-8 was QI'd. "Invoiced" is counted from the
+// Not production_stage: the status sync moves EVERY JO of an order to 'completed' once the source
+// calls the order Pending Billing, which it does as soon as one JO is done -- SO-49071's
+// JO-49071-11-11 (installation, no build, QI or delivery at the source) listed its full amount. "Invoiced" is counted from the
 // invoice LINES that name the JO (not cancelled), NOT job_orders.quantity_invoiced -- that counter
 // was never filled in for migrated JOs (117k fully-billed JOs read 0 there).
 //
@@ -123,8 +122,11 @@ async function invoicedByJobOrder(jos) {
 // in one keyed query each (indexes added by register-pending-billing-page.js).
 // allReps: the whole company, whoever is asking -- the General Manager's dashboard card.
 async function loadRows(req, { allReps = false } = {}) {
-  const { search, sales_rep_id: rep, customer_id: customerId, from, to, delivered, location_id: locationId } = req.query;
-  const where = ["jo.production_stage IN ('completed', 'partially_completed')", "(jo.status IS NULL OR jo.status <> 'Cancelled')"];
+  const { search, sales_rep_id: rep, customer_id: customerId, from, to, location_id: locationId } = req.query;
+  const where = ['COALESCE(jo.quantity_built, 0) > 0', 'COALESCE(jo.quantity_inspected, 0) > 0', 'COALESCE(jo.quantity_delivered, 0) > 0',
+    // The source already calls it billed (its order went Billed): old migrated orders whose invoices
+    // never came over with JO lines would otherwise flood the list (1,301 locally, 2026-10-28).
+    "(jo.production_stage IS NULL OR jo.production_stage <> 'invoiced')", "(jo.status IS NULL OR jo.status <> 'Cancelled')"];
   const params = [];
   // Never billed to a customer, so never listed (2026-10-12; the Include checkbox is gone):
   //   NSJO   a Non-Standard SO's JO -- RMA, internal (INT), sample (SAM)
@@ -141,15 +143,13 @@ async function loadRows(req, { allReps = false } = {}) {
     where.push('(jo.job_order_no LIKE ? OR so.sales_order_no LIKE ? OR ns.nsso_no LIKE ? OR c.name LIKE ? OR jo.description LIKE ?)');
     const q = `%${String(search).trim()}%`; params.push(q, q, q, q, q);
   }
-  if (delivered === 'yes') where.push('jo.quantity_delivered > 0');
-  if (delivered === 'no') where.push('COALESCE(jo.quantity_delivered, 0) = 0');
   const [jos] = await pool.query(
     `SELECT jo.id, jo.job_order_no, jo.description, jo.quantity, jo.quantity_inspected, jo.quantity_delivered,
             jo.production_stage, jo.delivery_date, jo.units, jo.nsso_id, jo.sales_order_line_id, jo.nsso_line_id,
             so.id AS sales_order_id, so.sales_order_no, so.date_created AS so_date, ns.nsso_no, ns.type AS nsso_type,
             COALESCE(so.customer_id, ns.customer_id) AS customer_id, c.name AS customer_name,
             CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name, sd.name AS department_name,
-            LEAST(jo.quantity, GREATEST(COALESCE(jo.quantity_inspected, 0), COALESCE(jo.quantity_delivered, 0))) AS completed_qty
+            LEAST(jo.quantity, jo.quantity_delivered) AS completed_qty
        FROM job_orders jo
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
        LEFT JOIN non_standard_sales_orders ns ON ns.id = jo.nsso_id

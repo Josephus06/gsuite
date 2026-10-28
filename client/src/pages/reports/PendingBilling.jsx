@@ -16,7 +16,7 @@ const qty = (v) => Number(v || 0).toLocaleString('en-US', { maximumFractionDigit
 
 export default function PendingBilling() {
   // location_id starts null: the first load waits for the locations so it is already Head Office's.
-  const [f, setF] = useState({ search: '', sales_rep_id: '', location_id: null, from: '', to: '', delivered: '' });
+  const [f, setF] = useState({ search: '', sales_rep_id: '', location_id: null, from: '', to: '' });
   const [locations, setLocations] = useState([]);
   const [reps, setReps] = useState([]);
   const [data, setData] = useState(null);
@@ -38,7 +38,6 @@ export default function PendingBilling() {
   const params = () => ({
     search: f.search || undefined, sales_rep_id: f.sales_rep_id || undefined, location_id: f.location_id || undefined,
     from: f.from || undefined, to: f.to || undefined,
-    delivered: f.delivered || undefined,
   });
 
   useEffect(() => {
@@ -73,7 +72,7 @@ export default function PendingBilling() {
         <h1>Pending Billing</h1>
         <button type="button" className="btn btn-sm" disabled={exporting || !data?.rows?.length} onClick={exportExcel}>{exporting ? 'Exporting…' : 'Export to Excel'}</button>
       </div>
-      <p className="muted" style={{ marginTop: -8 }}>Completed Job Orders not yet invoiced, oldest first.</p>
+      <p className="muted" style={{ marginTop: -8 }}>Job Orders built, QI'd and delivered but not yet on a Delivery Ticket or Invoice, oldest first.</p>
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="filter-grid">
@@ -90,12 +89,6 @@ export default function PendingBilling() {
           </div>
           <div className="field"><label>Completed From</label><input type="date" value={f.from} onChange={(e) => upd('from', e.target.value)} /></div>
           <div className="field"><label>Completed To</label><input type="date" value={f.to} onChange={(e) => upd('to', e.target.value)} /></div>
-          <div className="field">
-            <label>Delivered</label>
-            <select value={f.delivered} onChange={(e) => upd('delivered', e.target.value)}>
-              <option value="">All</option><option value="yes">Delivered</option><option value="no">Not yet delivered</option>
-            </select>
-          </div>
         </div>
       </div>
 
