@@ -123,6 +123,10 @@ function Signatures({ doc }) {
           role={['attendance_adjustment', 'leave'].includes(doc.type) ? 'Noted By (Immediate Superior)' : 'Noted By'}
         />
       )}
+      {/* A Liquidation's Pre-approver (2026-10-28), when one was chosen. */}
+      {doc.type === 'liquidation' && (doc.pre_approver_user_id || doc.pre_approved_by) && (
+        <Signature image={doc.pre_approved_signature} name={doc.pre_approved_by_name} role="Pre-approved By" />
+      )}
       <Signature image={doc.approved_signature} name={doc.approved_by_name} role="Approved By" />
     </div>
   );

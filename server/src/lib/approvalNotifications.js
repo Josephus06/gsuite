@@ -114,11 +114,23 @@ function notifyFormStatus(formId, actorId) {
     // The approver and noter the requestor chose (2026-10-22): submitted -> the noter; noted (or
     // submitted with no noter, which is filed straight as noted) -> the approver. Later steps
     // (approved, rejected, an overtime's accept / decline) are told as before, below.
-    const [[ch]] = await pool.query('SELECT approver_user_id, noter_user_id, noted_by FROM form_requests WHERE id = ?', [doc.id]).catch(() => [[null]]);
+    // A Liquidation's Pre-approver (2026-10-28) sits between the note and the approval.
+    const [[ch]] = await pool.query(
+      'SELECT approver_user_id, noter_user_id, noted_by, pre_approver_user_id, pre_approved_at FROM form_requests WHERE id = ?', [doc.id])
+      .catch(() => pool.query('SELECT approver_user_id, noter_user_id, noted_by FROM form_requests WHERE id = ?', [doc.id]))
+      .catch(() => [[null]]);
     if (ch && ch.approver_user_id && (doc.status === 'submitted' || doc.status === 'noted')) {
       const from = doc.department ? ` from ${doc.department}` : '';
       if (doc.status === 'submitted' && ch.noter_user_id) {
         await insertFor([ch.noter_user_id], { ...base, type: 'form_pending_note', title: `${what} needs your noting`, message: `${what}${from} is waiting to be noted.` }, actorId);
+      } else if (doc.status === 'noted' && ch.pre_approver_user_id && !ch.pre_approved_at) {
+        await insertFor([ch.pre_approver_user_id], { ...base, type: 'form_pending_pre_approval', title: `${what} needs your pre-approval`,
+          message: ch.noted_by ? `${what} has been noted and is waiting for your pre-approval.` : `${what}${from} is waiting for your pre-approval.` }, actorId);
+        if (ch.noted_by) await insertFor([doc.user_id], { ...base, type: 'form_noted', title: `${what} was noted`, message: `${what} has been noted and is now waiting for pre-approval.` }, actorId);
+      } else if (doc.status === 'noted' && ch.pre_approver_user_id && ch.pre_approved_at) {
+        await insertFor([ch.approver_user_id], { ...base, type: 'form_pending_approval', title: `${what} needs your approval`,
+          message: `${what} has been pre-approved and is waiting for your approval.` }, actorId);
+        await insertFor([doc.user_id], { ...base, type: 'form_pre_approved', title: `${what} was pre-approved`, message: `${what} has been pre-approved and is now waiting for approval.` }, actorId);
       } else {
         await insertFor([ch.approver_user_id], { ...base, type: 'form_pending_approval', title: `${what} needs your approval`,
           message: ch.noted_by ? `${what} has been noted and is waiting for your approval.` : `${what}${from} is waiting for your approval.` }, actorId);

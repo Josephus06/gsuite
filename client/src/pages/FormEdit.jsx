@@ -66,7 +66,7 @@ export default function FormEdit() {
     fuel_liters: '', fuel_price_per_liter: '', fuel_amount: '', fuel_odometer_km: '', fuel_station: '', fuel_purpose: '',
     remarks: '',
     // Who approves (required, the General Manager by default) and who notes (optional) -- 2026-10-22.
-    approver_user_id: '', noter_user_id: '',
+    approver_user_id: '', noter_user_id: '', pre_approver_user_id: '',
   });
   const [memberLines, setMemberLines] = useState([]);
   // Fuel Request: the Fleet vehicles, and this user's monthly limit and what is left (GET /forms/meta/fuel).
@@ -106,6 +106,7 @@ export default function FormEdit() {
     setForm({
       department: data.department || '', name: data.name || '', remarks: data.remarks || '',
       approver_user_id: data.approver_user_id ? String(data.approver_user_id) : '', noter_user_id: data.noter_user_id ? String(data.noter_user_id) : '',
+      pre_approver_user_id: data.pre_approver_user_id ? String(data.pre_approver_user_id) : '',
       week_no: d.week_no || '', form_no: d.form_no || '',
       date_from: d.date_from ? String(d.date_from).slice(0, 10) : '',
       date_to: d.date_to ? String(d.date_to).slice(0, 10) : '',
@@ -945,6 +946,21 @@ export default function FormEdit() {
               onClear={() => set('noter_user_id', '')}
             />
           </div>
+          {/* A Liquidation's Pre-approver (2026-10-28): optional, between the noter and the approver. */}
+          {type === 'liquidation' && (
+            <div className="field">
+              <label>Pre-approver</label>
+              <EntityPicker
+                label="Pre-approver" items={otPeople} value={form.pre_approver_user_id}
+                getLabel={(p) => `${p.name}${p.department ? ` — ${p.department}` : ''}`}
+                columns={[{ key: 'name', label: 'Name' }, { key: 'department', label: 'Department' }]}
+                searchKeys={['name', 'department']}
+                placeholder="None"
+                onSelect={(p) => set('pre_approver_user_id', p ? String(p.id) : '')}
+                onClear={() => set('pre_approver_user_id', '')}
+              />
+            </div>
+          )}
           <div className="field">
             <label>Approver *</label>
             <EntityPicker
@@ -958,7 +974,11 @@ export default function FormEdit() {
           </div>
         </div>
         <div className="muted" style={{ fontSize: 12 }}>
-          {form.noter_user_id ? 'Once submitted it goes to the noter, then to the approver.' : 'No noter: once submitted it goes straight to the approver.'}
+          {(() => {
+            const steps = [form.noter_user_id && 'the noter', type === 'liquidation' && form.pre_approver_user_id && 'the pre-approver', 'the approver'].filter(Boolean);
+            return steps.length === 1 ? 'No noter: once submitted it goes straight to the approver.'
+              : `Once submitted it goes to ${steps.slice(0, -1).join(', then to ')}, then to ${steps[steps.length - 1]}.`;
+          })()}
         </div>
       </div>
 

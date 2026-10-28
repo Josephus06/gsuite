@@ -61,39 +61,90 @@ const routedWord = (doc) => (doc.type === 'undertime' ? 'undertime' : 'leave');
 // none a submitted form goes straight to For Approval (status 'noted'). Only those two act on the form.
 // A form saved before this (no approver chosen) keeps the routing it was filed under -- the
 // type-by-type rules below (department heads, leave line, fuel approvers, ...).
+// A Liquidation may also name a PRE-APPROVER (2026-10-28; db/add-form-pre-approver.js): once noted it
+// waits on them, and the Approver can approve only after it is pre-approved.
 async function chosenRoute(formId, q = pool) {
+  const base = 'SELECT f.approver_user_id, f.noter_user_id, au.display_name AS approver_name, nu.display_name AS noter_name';
+  const from = 'FROM form_requests f LEFT JOIN users au ON au.id = f.approver_user_id LEFT JOIN users nu ON nu.id = f.noter_user_id';
   const [[r]] = await q.query(
-    `SELECT f.approver_user_id, f.noter_user_id, au.display_name AS approver_name, nu.display_name AS noter_name
-       FROM form_requests f LEFT JOIN users au ON au.id = f.approver_user_id LEFT JOIN users nu ON nu.id = f.noter_user_id
-      WHERE f.id = ?`, [formId]).catch((e) => { if (e.code === 'ER_BAD_FIELD_ERROR') return [[null]]; throw e; });
+    `${base}, f.pre_approver_user_id, f.pre_approved_at, pu.display_name AS pre_approver_name
+       ${from} LEFT JOIN users pu ON pu.id = f.pre_approver_user_id WHERE f.id = ?`, [formId])
+    // Before db/add-form-pre-approver.js has run: the route without a pre-approver.
+    .catch((e) => { if (e.code === 'ER_BAD_FIELD_ERROR') return q.query(`${base} ${from} WHERE f.id = ?`, [formId]); throw e; })
+    .catch((e) => { if (e.code === 'ER_BAD_FIELD_ERROR') return [[null]]; throw e; });
   if (!r || !r.approver_user_id) return null;
   return {
     approver: { id: Number(r.approver_user_id), display_name: r.approver_name },
     noter: r.noter_user_id ? { id: Number(r.noter_user_id), display_name: r.noter_name } : null,
+    preApprover: r.pre_approver_user_id ? { id: Number(r.pre_approver_user_id), display_name: r.pre_approver_name } : null,
+    preApproved: !!r.pre_approved_at,
   };
+}
+// May this user pre-approve the form now: its chosen pre-approver, once noted, not yet pre-approved.
+function chosenPreApproval(userId, doc, ch) {
+  if (!ch || !ch.preApprover) return { allowed: false, eligible: false, reason: 'This form has no pre-approver.' };
+  const eligible = Number(userId) === ch.preApprover.id;
+  const atStep = doc.status === 'noted' && !ch.preApproved;
+  let reason = null;
+  if (!eligible) reason = `Only ${ch.preApprover.display_name}, the pre-approver chosen on this form, can pre-approve it.`;
+  else if (doc.status === 'submitted') reason = `This has to be noted first, by ${ch.noter ? ch.noter.display_name : 'its noter'}.`;
+  else if (!atStep) reason = 'Not waiting on pre-approval.';
+  return { allowed: eligible && atStep, eligible, reason };
 }
 // mayApprove's answer for a chosen route.
 function chosenApproval(userId, doc, ch) {
-  const atStep = ch.noter ? doc.status === 'noted' : ['submitted', 'noted'].includes(doc.status);
+  const waitsPre = !!ch.preApprover && !ch.preApproved;
+  const atStep = (ch.noter ? doc.status === 'noted' : ['submitted', 'noted'].includes(doc.status)) && !waitsPre;
   const eligible = Number(userId) === ch.approver.id && Number(userId) !== Number(doc.user_id);
   let reason = null;
   if (!eligible) reason = `Only ${ch.approver.display_name}, the approver chosen on this form, can approve it.`;
   else if (ch.noter && doc.status === 'submitted') reason = `This has to be noted first, by ${ch.noter.display_name}.`;
+  else if (waitsPre && doc.status === 'noted') reason = `This has to be pre-approved first, by ${ch.preApprover.display_name}.`;
   else if (!atStep) reason = 'Not waiting on approval.';
   return { allowed: eligible && atStep, eligible, approvers: [ch.approver], noters: ch.noter ? [ch.noter] : [], reason };
 }
-// The Approver / Noter sent with a save: an approver required, neither the requestor, two people.
-async function readChosen(q, body, ownerId) {
+// The Approver / Noter (and, on a Liquidation, Pre-approver) sent with a save: an approver required,
+// none of them the requestor, each a different person.
+async function readChosen(q, body, ownerId, type) {
   const approverId = Number(body.approver_user_id) || null;
   const noterId = Number(body.noter_user_id) || null;
+  const preApproverId = PRE_APPROVER_TYPES.includes(type) ? (Number(body.pre_approver_user_id) || null) : null;
   if (!approverId) return { error: 'Choose who approves this form.' };
   if (approverId === Number(ownerId)) return { error: 'You cannot approve your own form -- choose another approver.' };
   if (noterId && noterId === Number(ownerId)) return { error: 'You cannot note your own form -- choose another noter, or leave it blank.' };
   if (noterId && noterId === approverId) return { error: 'The noter and the approver have to be two different people.' };
-  const ids = [approverId, noterId].filter(Boolean);
+  if (preApproverId && preApproverId === Number(ownerId)) return { error: 'You cannot pre-approve your own form -- choose another pre-approver, or leave it blank.' };
+  if (preApproverId && (preApproverId === approverId || preApproverId === noterId)) {
+    return { error: 'The pre-approver has to be a different person from the noter and the approver.' };
+  }
+  const ids = [approverId, noterId, preApproverId].filter(Boolean);
   const [rows] = await q.query('SELECT id FROM users WHERE id IN (?) AND is_active = 1', [ids]);
-  if (rows.length !== ids.length) return { error: 'The approver or noter chosen is not an active user.' };
-  return { approverId, noterId };
+  if (rows.length !== ids.length) return { error: 'The approver, noter or pre-approver chosen is not an active user.' };
+  return { approverId, noterId, preApproverId };
+}
+// The form types that may carry a Pre-approver (2026-10-28).
+const PRE_APPROVER_TYPES = ['liquidation'];
+// Whether db/add-form-pre-approver.js has run (checked once; a restart after running it picks it up).
+let preApproverCol = null;
+function hasPreApproverCol() {
+  if (!preApproverCol) {
+    preApproverCol = pool.query(
+      `SELECT COUNT(*) AS n FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = 'form_requests' AND column_name = 'pre_approver_user_id'`)
+      .then(([[r]]) => Number(r.n) > 0)
+      .catch(() => { preApproverCol = null; return false; });
+  }
+  return preApproverCol;
+}
+// Store the chosen pre-approver -- a no-op before db/add-form-pre-approver.js has run when nobody is
+// chosen; one chosen then says the setup is missing.
+async function savePreApprover(q, formId, preApproverId) {
+  try {
+    await q.query('UPDATE form_requests SET pre_approver_user_id = ? WHERE id = ?', [preApproverId, formId]);
+  } catch (e) {
+    if (e.code !== 'ER_BAD_FIELD_ERROR') throw e;
+    if (preApproverId) throw Object.assign(new Error('The Pre-approver is not set up yet -- run db/add-form-pre-approver.js.'), { status: 409 });
+  }
 }
 
 const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund', 'attendance_adjustment', 'overtime', 'leave', 'undertime', 'gate_pass',
@@ -564,7 +615,7 @@ async function mayApprove(userId, doc) {
 async function maySee(userId, doc) {
   // The approver and noter the requestor chose.
   const ch = await chosenRoute(doc.id);
-  if (ch && [ch.approver.id, ch.noter && ch.noter.id].includes(Number(userId))) return true;
+  if (ch && [ch.approver.id, ch.noter && ch.noter.id, ch.preApprover && ch.preApprover.id].includes(Number(userId))) return true;
   // Heading the department comes first because it is the one route in that does NOT depend on a
   // page grant -- a head may hold nothing on /forms and still have to note this.
   if (await isDepartmentNoter(userId, doc.department_id)) return true;
@@ -581,7 +632,7 @@ async function maySee(userId, doc) {
   if (await userCan(userId, ROUTE, 'can_view_all')) return true;
   if (await userCan(userId, APPROVAL_ROUTE, 'can_view_all')) return true;
   // One they have already acted on -- noted, approved or rejected.
-  if ([doc.noted_by, doc.approved_by, doc.rejected_by].some((u) => u != null && Number(u) === Number(userId))) return true;
+  if ([doc.noted_by, doc.pre_approved_by, doc.approved_by, doc.rejected_by].some((u) => u != null && Number(u) === Number(userId))) return true;
   // A Business Trip: the requestor's supervisor(s), who approve it.
   if (doc.type === 'business_trip') {
     const sups = await businessTripApprovers(doc.user_id);
@@ -696,6 +747,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     const [rows] = await pool.query(
       `SELECT f.id, f.request_no, f.type, f.status, f.department, f.name, f.created_at, f.submitted_at,
+              ${(await hasPreApproverCol()) ? 'f.pre_approver_user_id IS NOT NULL AND f.pre_approved_at IS NULL AS waiting_pre_approval,' : ''}
               u.display_name AS owner_name,
               (SELECT COALESCE(SUM(i.amount), 0) FROM form_request_items i WHERE i.form_request_id = f.id) AS total_amount
          FROM form_requests f
@@ -756,7 +808,9 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
     const hrd = canSeeAll ? false : await isHrd(req.user.id);
     // Chosen as a form's approver or noter (2026-10-22).
     const [[chosenMine]] = canSeeAll ? [[null]] : await pool.query(
-      'SELECT 1 AS x FROM form_requests WHERE approver_user_id = ? OR noter_user_id = ? LIMIT 1', [req.user.id, req.user.id]).catch(() => [[null]]);
+      'SELECT 1 AS x FROM form_requests WHERE approver_user_id = ? OR noter_user_id = ? OR pre_approver_user_id = ? LIMIT 1', [req.user.id, req.user.id, req.user.id])
+      .catch(() => pool.query('SELECT 1 AS x FROM form_requests WHERE approver_user_id = ? OR noter_user_id = ? LIMIT 1', [req.user.id, req.user.id]))
+      .catch(() => [[null]]);
     if (!canSeeAll && !pageApprover && !pageViewer && headOf.length === 0 && !isAp && !otMine && !leaveIds.length && !fuelApprover && !supOf && !chosenMine && !hrd) {
       return res.status(403).json({ error: 'You do not have permission to perform this action' });
     }
@@ -809,10 +863,13 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
         params.push(req.user.id);
       }
       if (hrd) { overtime.push("(f.type = 'overtime' AND f.status IN (?))"); params.push(OT_HRD_STATUSES); }
-      const any = [legacy, ...overtime, '(f.approver_user_id = ? OR f.noter_user_id = ?)',
-        // Their own forms, and the ones they noted, approved or rejected.
-        '(f.user_id = ? OR f.noted_by = ? OR f.approved_by = ? OR f.rejected_by = ?)'].filter(Boolean);
-      params.push(req.user.id, req.user.id, req.user.id, req.user.id, req.user.id, req.user.id);
+      const pre = await hasPreApproverCol();
+      const any = [legacy, ...overtime,
+        pre ? '(f.approver_user_id = ? OR f.noter_user_id = ? OR f.pre_approver_user_id = ?)' : '(f.approver_user_id = ? OR f.noter_user_id = ?)',
+        // Their own forms, and the ones they noted, pre-approved, approved or rejected.
+        pre ? '(f.user_id = ? OR f.noted_by = ? OR f.pre_approved_by = ? OR f.approved_by = ? OR f.rejected_by = ?)'
+          : '(f.user_id = ? OR f.noted_by = ? OR f.approved_by = ? OR f.rejected_by = ?)'].filter(Boolean);
+      params.push(req.user.id, req.user.id, ...(pre ? [req.user.id] : []), req.user.id, req.user.id, ...(pre ? [req.user.id] : []), req.user.id, req.user.id);
       where.push(`(${any.join(' OR ')})`);
     }
     if (req.query.status && WORKFLOW_STATUSES.includes(req.query.status)) {
@@ -825,6 +882,7 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
 
     const [rows] = await pool.query(
       `SELECT f.id, f.request_no, f.type, f.status, f.department, f.name, f.created_at, f.submitted_at, f.noted_at,
+              ${(await hasPreApproverCol()) ? 'f.pre_approver_user_id IS NOT NULL AND f.pre_approved_at IS NULL AS waiting_pre_approval,' : ''}
               u.display_name AS owner_name,
               (SELECT COALESCE(SUM(i.amount), 0) FROM form_request_items i WHERE i.form_request_id = f.id) AS total_amount
          FROM form_requests f
@@ -1241,6 +1299,16 @@ router.get('/:id', requireAuth, async (req, res, next) => {
       doc.leave_approvers = [chD.approver.display_name];
       doc.leave_needs_note = !!chD.noter;
       doc.noters = chD.noter ? [chD.noter.display_name] : [];
+      // The Pre-approver, and whether this user may pre-approve it now.
+      doc.pre_approver_user_id = chD.preApprover ? chD.preApprover.id : null;
+      doc.pre_approver_name = chD.preApprover ? chD.preApprover.display_name : null;
+      doc.pre_approved = chD.preApproved;
+      doc.waiting_pre_approval = !!chD.preApprover && !chD.preApproved && doc.status === 'noted';
+      doc.can_pre_approve = chosenPreApproval(req.user.id, doc, chD).allowed;
+      if (doc.pre_approved_by) {
+        const [[pu]] = await pool.query('SELECT display_name FROM users WHERE id = ?', [doc.pre_approved_by]);
+        doc.pre_approved_by_name = pu ? pu.display_name : null;
+      }
     }
     doc.can_reject = await mayReject(req.user.id, doc);
     if (doc.type === 'overtime') {
@@ -1546,7 +1614,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
   const problem = validate(type, req.body, items) || await badBanks(type, req.body, items);
   if (problem) return res.status(400).json({ error: problem });
-  const chosen = await readChosen(pool, req.body, req.user.id);
+  const chosen = await readChosen(pool, req.body, req.user.id, type);
   if (chosen.error) return res.status(400).json({ error: chosen.error });
 
   const conn = await pool.getConnection();
@@ -1570,6 +1638,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     });
 
     await conn.query('UPDATE form_requests SET approver_user_id = ?, noter_user_id = ? WHERE id = ?', [chosen.approverId, chosen.noterId, id]);
+    await savePreApprover(conn, id, chosen.preApproverId);
     for (const it of items) {
       await conn.query(
         'INSERT INTO form_request_items (form_request_id, item_date, particulars, amount, from_account_id, to_account_id) VALUES (?, ?, ?, ?, ?, ?)',
@@ -1648,7 +1717,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 
     const problem = validate(doc.type, req.body, items) || await badBanks(doc.type, req.body, items);
     if (problem) return res.status(400).json({ error: problem });
-    const chosen = await readChosen(pool, req.body, doc.user_id);
+    const chosen = await readChosen(pool, req.body, doc.user_id, doc.type);
     if (chosen.error) return res.status(400).json({ error: chosen.error });
 
     await conn.beginTransaction();
@@ -1661,6 +1730,12 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       await conn.query('UPDATE form_requests SET approver_user_id = ?, noter_user_id = ? WHERE id = ?', [chosen.approverId, chosen.noterId, doc.id]);
       await logFormAudit(conn, doc.id, req.user.id, 'Updated', 'Approver / Noter',
         `${nm(doc.approver_user_id)} / ${nm(doc.noter_user_id)}`, `${nm(chosen.approverId)} / ${nm(chosen.noterId)}`);
+    }
+    if (PRE_APPROVER_TYPES.includes(doc.type) && Number(doc.pre_approver_user_id || 0) !== Number(chosen.preApproverId || 0)) {
+      const [ppl] = await conn.query('SELECT id, display_name FROM users WHERE id IN (?)', [[doc.pre_approver_user_id, chosen.preApproverId].filter(Boolean).concat(0)]);
+      const nm = (uid) => (uid ? (ppl.find((u) => Number(u.id) === Number(uid))?.display_name || uid) : 'none');
+      await savePreApprover(conn, doc.id, chosen.preApproverId);
+      await logFormAudit(conn, doc.id, req.user.id, 'Updated', 'Pre-approver', nm(doc.pre_approver_user_id), nm(chosen.preApproverId));
     }
 
     const departmentName = trunc(req.body.department, 255);
@@ -1908,6 +1983,25 @@ router.post('/:id/gate-pass/:which', requireAuth, async (req, res, next) => {
   } catch (err) { return next(err); }
 });
 
+// Pre-approving a Liquidation (2026-10-28): its chosen pre-approver, once noted. The status stays
+// 'noted' (For Approval) -- pre_approved_at is what lets the Approver act (chosenApproval).
+router.post('/:id/pre-approve', requireAuth, async (req, res, next) => {
+  try {
+    const [[doc]] = await pool.query('SELECT id, type, status, user_id FROM form_requests WHERE id = ?', [req.params.id]);
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    const ch = await chosenRoute(doc.id);
+    const pa = chosenPreApproval(req.user.id, doc, ch);
+    if (!pa.allowed) return res.status(pa.eligible ? 409 : 403).json({ error: pa.reason });
+    const [r] = await pool.query(
+      "UPDATE form_requests SET pre_approved_at = NOW(), pre_approved_by = ?, updated_at = NOW() WHERE id = ? AND status = 'noted' AND pre_approved_at IS NULL",
+      [req.user.id, doc.id]);
+    if (!r.affectedRows) return res.status(409).json({ error: 'This form changed just now -- reload it and try again.' });
+    await logFormAudit(pool, doc.id, req.user.id, 'Status Change', 'Status', 'For Pre-Approval', 'Pre-approved');
+    notifyFormStatus(doc.id, req.user.id);
+    return res.json({ ok: true, status: 'noted', pre_approved: true });
+  } catch (err) { return next(err); }
+});
+
 // Who may approve is mayApprove's call, not a page gate: a department's ticked leave approvers need
 // no grant on the Forms Approval page to approve that department's leave.
 router.post('/:id/approve', requireAuth, async (req, res, next) => {
@@ -2070,6 +2164,8 @@ async function mayReject(userId, doc) {
   }
   // The approver (for leave, by the filer's reporting line -- lib/leaveRoute.js).
   if ((await mayApprove(userId, doc)).eligible) return true;
+  // A Liquidation's pre-approver, while it waits on them (2026-10-28).
+  if (doc.status === 'noted' && chosenPreApproval(userId, doc, await chosenRoute(doc.id)).allowed) return true;
   return doc.status === 'submitted' && (await mayNote(userId, doc)).allowed;
 }
 
@@ -2094,6 +2190,9 @@ router.post('/:id/reject', requireAuth, async (req, res, next) => {
       [req.user.id, trunc(req.body.reason, 2000) || 'Rejected', doc.id],
     );
     await logFormAudit(conn, doc.id, req.user.id, 'Disapproved', 'Reason', null, trunc(req.body.reason, 2000) || 'Rejected');
+    // Unlike the note, a pre-approval does not survive a rejection: the revised form goes back to the
+    // pre-approver (2026-10-28).
+    if (await hasPreApproverCol()) await conn.query('UPDATE form_requests SET pre_approved_at = NULL, pre_approved_by = NULL WHERE id = ?', [doc.id]);
 
     const remarks = req.body.line_remarks && typeof req.body.line_remarks === 'object' ? req.body.line_remarks : {};
     for (const [itemId, remark] of Object.entries(remarks)) {
@@ -2240,13 +2339,19 @@ router.get('/:id/print', requireAuth, requirePermission(ROUTE, 'can_print'), asy
     // is printing. The signature is drawn onto a decision that was already made and already
     // attributed; it never makes one. Where somebody has no signature on file the line stays blank
     // to be signed by hand, exactly as the form worked before.
-    const signers = [doc.user_id, doc.noted_by, doc.approved_by].filter(Boolean);
+    // A Liquidation's Pre-approver (2026-10-28) signs between the noter and the approver.
+    if (doc.pre_approved_by) {
+      const [[pu]] = await pool.query('SELECT display_name FROM users WHERE id = ?', [doc.pre_approved_by]);
+      doc.pre_approved_by_name = pu ? pu.display_name : null;
+    }
+    const signers = [doc.user_id, doc.noted_by, doc.pre_approved_by, doc.approved_by].filter(Boolean);
     if (signers.length) {
       const [sigs] = await pool.query(
         'SELECT id, signature_data FROM users WHERE id IN (?) AND signature_data IS NOT NULL', [signers]);
       const byId = new Map(sigs.map((s) => [String(s.id), s.signature_data]));
       doc.owner_signature = byId.get(String(doc.user_id)) || null;
       doc.noted_signature = byId.get(String(doc.noted_by)) || null;
+      doc.pre_approved_signature = doc.pre_approved_by ? byId.get(String(doc.pre_approved_by)) || null : null;
       doc.approved_signature = byId.get(String(doc.approved_by)) || null;
     }
     return res.json(doc);

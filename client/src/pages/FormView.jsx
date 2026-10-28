@@ -157,7 +157,11 @@ export default function FormView() {
   const noteBlocked = !leaveDirect && doc.status === 'submitted' && !doc.can_note && doc.note_blocked_reason;
   // Approving reads only from NOTED -- the head's sign-off is a gate, not a step to skip. Rejecting
   // still works from SUBMITTED: sending something back does not need the head to have seen it first.
-  const mayApprove = doc.can_approve && (doc.status === 'noted' || (leaveDirect && doc.status === 'submitted'));
+  // A Liquidation with a Pre-approver (2026-10-28) waits on them once noted; the Approver acts after.
+  const waitingPre = !!doc.waiting_pre_approval;
+  const mayPreApprove = !!doc.can_pre_approve;
+  const mayApprove = doc.can_approve && !waitingPre && (doc.status === 'noted' || (leaveDirect && doc.status === 'submitted'));
+  const shownStatus = waitingPre ? 'For Pre-Approval' : statusLabel(doc.status);
   // Decided by the server: an approver at submitted or noted, and the noter (department head, or
   // Accounts Payable for a liquidation) while the form is waiting on them.
   const mayReject = !!doc.can_reject;
@@ -199,7 +203,7 @@ export default function FormView() {
         {/* Frozen while scrolling (2026-10-13), so it says which form it is acting on. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600 }}>
           {TYPE_LABELS[doc.type] || pretty(doc.type)} {doc.request_no}
-          {doc.status && <span className={`badge ${STATUS_BADGE[doc.status] || 'badge-muted'}`}>{statusLabel(doc.status)}</span>}
+          {doc.status && <span className={`badge ${STATUS_BADGE[doc.status] || 'badge-muted'}`}>{shownStatus}</span>}
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Link className="btn btn-sm" to={'/forms'}>Back</Link>
@@ -214,6 +218,10 @@ export default function FormView() {
           {mayNote && (
             <button className="btn btn-sm btn-primary" disabled={busy}
               onClick={() => act('note', null, 'Noted.')}>Note</button>
+          )}
+          {mayPreApprove && (
+            <button className="btn btn-sm btn-primary" disabled={busy}
+              onClick={() => act('pre-approve', null, 'Pre-approved.')}>Pre-approve</button>
           )}
           {mayApprove && (
             <button className="btn btn-sm btn-success" disabled={busy}
@@ -271,12 +279,18 @@ export default function FormView() {
           <span className="estimate-no">{doc.request_no}</span>
         </div>
         <div className="estimate-status">
-          <span className={`badge ${STATUS_BADGE[doc.status] || 'badge-muted'}`}>{statusLabel(doc.status)}</span>
+          <span className={`badge ${STATUS_BADGE[doc.status] || 'badge-muted'}`}>{shownStatus}</span>
         </div>
       </div>
 
       {noteBlocked && (
         <div className="muted" style={{ marginBottom: 8 }}>{doc.note_blocked_reason}</div>
+      )}
+
+      {waitingPre && !mayPreApprove && (
+        <div className="muted" style={{ marginBottom: 8 }}>
+          Waiting on pre-approval by {doc.pre_approver_name}{doc.can_approve ? ' before you can approve it' : ''}.
+        </div>
       )}
 
       {awaitingNote && (
@@ -305,6 +319,7 @@ export default function FormView() {
         <Line label="Filed By">{doc.owner_name}</Line>
         {/* The noter and approver the requestor chose (2026-10-22). */}
         {doc.chosen_route && <Line label="Noter">{doc.noter_name || 'None — straight to approval'}</Line>}
+        {doc.chosen_route && doc.type === 'liquidation' && <Line label="Pre-approver">{doc.pre_approver_name || 'None'}</Line>}
         {doc.chosen_route && <Line label="Approver">{doc.approver_name}</Line>}
         <Line label="Department">{doc.department}</Line>
         <Line label="Name">{doc.name}</Line>
@@ -316,6 +331,7 @@ export default function FormView() {
         <Line label="To Be Noted By">
           {!doc.noted_at && (doc.noters || []).length ? doc.noters.join(' or ') : null}
         </Line>
+        <Line label="Pre-approved">{doc.pre_approved_at ? `${fmtDate(doc.pre_approved_at)} by ${doc.pre_approved_by_name || '—'}` : null}</Line>
         <Line label="Approved">{doc.approved_at ? `${fmtDate(doc.approved_at)} by ${doc.approved_by_name || '—'}` : null}</Line>
       </div>
 
