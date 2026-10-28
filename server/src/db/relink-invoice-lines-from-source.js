@@ -23,6 +23,7 @@
 //   node src/db/relink-invoice-lines-from-source.js --invoice=INV-81375 # preview one
 //   node src/db/relink-invoice-lines-from-source.js --apply             # backs up to /root/match2026/
 //   node src/db/relink-invoice-lines-from-source.js --from=2024-01-01   # earlier years too (default 2026-01-01)
+//   node src/db/relink-invoice-lines-from-source.js --recount-backups [--apply]   # recount the JOs of relinks already applied
 // Droplet and office replicate: run on ONE box (the droplet).
 require('dotenv').config();
 const fs = require('fs');
@@ -43,6 +44,54 @@ async function api(t, ep, payload) {
     try { return await L.api(t, ep, payload); } catch (e) { if (a === 3) throw e; await sleep(2000 * (a + 1)); }
   }
   return null;
+}
+
+
+// Every JO a line left or moved to gets its Invoiced counter recounted (2026-10-28: after INV-52203
+// moved to JO-44614-4-5, JO-44614-1-5 still read Invoiced 1 and JO-44614-4-5 read 0). The counter
+// becomes the larger of what T1S invoice lines naming the JO add up to and what the source says it
+// invoiced (its SO line's Invoiced_LdgrJob) -- never above the JO's quantity.
+// pending: JO id -> quantity still to move onto it (negative: off it), for a preview to show the result.
+async function recountJos(t, joIds, pending = new Map()) {
+  const ids = [...new Set(joIds.filter(Boolean).map(Number))];
+  if (!ids.length) return 0;
+  const [jos] = await pool.query(
+    `SELECT jo.id, jo.job_order_no, jo.quantity, jo.quantity_invoiced, so.sales_order_no,
+            (SELECT COALESCE(SUM(l.quantity), 0) FROM sales_invoice_lines l JOIN sales_invoices si ON si.id = l.sales_invoice_id
+              WHERE l.job_order_id = jo.id AND si.status <> 'cancelled') AS lines_qty
+       FROM job_orders jo LEFT JOIN sales_orders so ON so.id = jo.sales_order_id WHERE jo.id IN (?)`, [ids]);
+  const srcBySo = new Map();
+  let n = 0;
+  for (const jo of jos) {
+    let srcQty = 0;
+    if (jo.sales_order_no) {
+      if (!srcBySo.has(jo.sales_order_no)) {
+        const m = new Map();
+        const so = L.listRows(await api(t, 'get_transactions', { where: { UserPK_TransH: jo.sales_order_no, Module_TransH: 'SALESORDER' }, limit: 1 }))[0];
+        if (so) {
+          const srcJos = L.listRows(await api(t, 'get_transactions', { where: { SysFK_TransHSO_TransH: so.SysPK_TransH, Module_TransH: 'JOBORDER' }, limit: 500 }));
+          const noByPk = new Map(srcJos.map((j) => [j.SysPK_TransH, String(j.UserPK_TransH || '').toUpperCase()]));
+          for (const l of L.listRows(await api(t, 'get_transaction_ledger_jobs', { where: { SysFK_TransH_LdgrJob: so.SysPK_TransH } }))) {
+            const no = noByPk.get(l.SysFK_TransHJO_LdgrJob);
+            if (no) m.set(no, (m.get(no) || 0) + num(l.Invoiced_LdgrJob));
+          }
+        }
+        srcBySo.set(jo.sales_order_no, m);
+      }
+      srcQty = srcBySo.get(jo.sales_order_no).get(String(jo.job_order_no).toUpperCase()) || 0;
+    }
+    const to = Math.min(num(jo.quantity), Math.max(num(jo.lines_qty) + (pending.get(Number(jo.id)) || 0), srcQty));
+    if (Math.abs(to - num(jo.quantity_invoiced)) < 0.0001) continue;
+    console.log(`  ${jo.job_order_no}: Invoiced ${num(jo.quantity_invoiced)} -> ${to}`);
+    if (APPLY) {
+      await pool.query('UPDATE job_orders SET quantity_invoiced = ?, updated_at = NOW() WHERE id = ?', [to, jo.id]);
+      await pool.query(
+        `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+         VALUES ('JobOrder', ?, 'Updated', 'quantity_invoiced', ?, ?, 1)`, [jo.id, String(num(jo.quantity_invoiced)), String(to)]);
+    }
+    n += 1;
+  }
+  return n;
 }
 
 function matchLines(mine, src) {
@@ -66,6 +115,18 @@ function matchLines(mine, src) {
 
 (async () => {
   console.log(`DB ${process.env.DB_NAME} on ${process.env.DB_HOST} -- ${APPLY ? 'APPLYING' : 'PREVIEW'}`);
+  // --recount-backups: the JOs of every relink already applied (its backups in /root/match2026), recounted.
+  if (process.argv.includes('--recount-backups')) {
+    const dir = '/root/match2026';
+    const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((x) => /^relink-invoice-lines-.*\.json$/.test(x)) : [];
+    const joIds = [];
+    for (const x of files) for (const c of JSON.parse(fs.readFileSync(`${dir}/${x}`, 'utf8'))) for (const l of c.lines || []) joIds.push(l.old_job_order_id, l.new_job_order_id);
+    console.log(`${files.length} relink backup(s), ${new Set(joIds.filter(Boolean)).size} job order(s) to recount.`);
+    const n = await recountJos(await L.login(), joIds);
+    console.log(`${APPLY ? 'Recounted' : 'Would recount'} ${n} job order(s).${APPLY ? '' : ' Re-run with --apply.'}`);
+    await pool.end();
+    return;
+  }
   const [targets] = ONE
     ? await pool.query('SELECT id, invoice_no, sales_order_id, gross_amount FROM sales_invoices WHERE invoice_no = ?', [ONE])
     : await pool.query(
@@ -119,7 +180,7 @@ function matchLines(mine, src) {
       if (!/^(NS)?JO-|^NSJO-|^RFQC-/i.test(joNo)) continue;
       const jo = await joId(joNo);
       if (!jo) { stats.joNotInT1s += 1; unknownJo.set(joNo, inv.invoice_no); continue; }
-      if (jo.id !== m.job_order_id) change.lines.push({ line_id: m.id, old_job_order_id: m.job_order_id, new_job_order_id: jo.id, jo_no: joNo });
+      if (jo.id !== m.job_order_id) change.lines.push({ line_id: m.id, old_job_order_id: m.job_order_id, new_job_order_id: jo.id, jo_no: joNo, quantity: num(m.quantity) });
     }
     if (change.new_sales_order_id || change.lines.length) {
       changes.push(change);
@@ -132,7 +193,16 @@ function matchLines(mine, src) {
   console.log(`\n${JSON.stringify(stats)}`);
   samples.forEach((s) => console.log(`  ${s}`));
   if (unknownJo.size) console.log(`JO numbers the source names that T1S does not hold (${unknownJo.size}): ${[...unknownJo.keys()].slice(0, 15).join(', ')}${unknownJo.size > 15 ? ' ...' : ''}`);
-  if (!APPLY || !changes.length) { await pool.end(); return; }
+  const touched = changes.flatMap((c) => c.lines.flatMap((x) => [x.old_job_order_id, x.new_job_order_id]));
+  if (!APPLY || !changes.length) {
+    const pending = new Map();
+    for (const x of changes.flatMap((c) => c.lines)) {
+      if (x.old_job_order_id) pending.set(Number(x.old_job_order_id), (pending.get(Number(x.old_job_order_id)) || 0) - x.quantity);
+      pending.set(Number(x.new_job_order_id), (pending.get(Number(x.new_job_order_id)) || 0) + x.quantity);
+    }
+    if (touched.length) { console.log('\nInvoiced counters these moves would recount:'); await recountJos(t, touched, pending); }
+    await pool.end(); return;
+  }
 
   const dir = '/root/match2026';
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -154,5 +224,7 @@ function matchLines(mine, src) {
     } catch (e) { await conn.rollback(); console.error(`${c.invoice_no}: ${e.message}`); } finally { conn.release(); }
   }
   console.log(`Applied: ${h} invoice headers, ${l} lines.`);
+  console.log('Invoiced counters recounted:');
+  await recountJos(t, touched);
   await pool.end();
 })().catch((e) => { console.error(e); process.exit(1); });
