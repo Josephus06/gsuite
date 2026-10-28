@@ -508,7 +508,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
         jo.disc_price_per_unit = Number((Number(jo.net_of_tax || 0) / qty).toFixed(4));
       }
       const [processes] = await pool.query(
-        `SELECT p.*, pr.process_name, i.display_name AS item_name
+        `SELECT p.*, pr.process_name, i.display_name AS item_name, i.item_type
          FROM estimate_job_order_processes p
          LEFT JOIN processes pr ON pr.id = p.process_id
          LEFT JOIN inventories i ON i.id = p.item_id
@@ -1461,6 +1461,24 @@ router.delete('/:id/job-orders/:joId/processes/:procId', requireAuth, requirePer
   } finally {
     conn.release();
   }
+});
+
+// The "Print Selected" tick on a process line (2026-10-28; db/add-estimate-print-selected.js): which
+// lines' items the "Print with Selected Items" quotations list. It changes only what is printed, so
+// it is open at any status -- an approved estimate is printed most -- to anyone who can edit or
+// print estimates. Kept out of PROCESS_FIELDS so saving a line on the form never resets it.
+router.put('/:id/job-orders/:joId/processes/:procId/print-selected', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await userCan(req.user.id, ROUTE, 'can_edit')) && !(await userCan(req.user.id, ROUTE, 'can_print')) && !(await isSystemAdmin(req.user.id))) {
+      return res.status(403).json({ error: 'You do not have permission to change what this estimate prints.' });
+    }
+    const [r] = await pool.query(
+      `UPDATE estimate_job_order_processes p JOIN estimate_job_orders jo ON jo.id = p.estimate_job_order_id
+          SET p.print_selected = ? WHERE p.id = ? AND jo.id = ? AND jo.estimate_id = ?`,
+      [req.body?.selected ? 1 : 0, req.params.procId, req.params.joId, req.params.id]);
+    if (!r.affectedRows) return res.status(404).json({ error: 'Not found' });
+    res.json({ print_selected: req.body?.selected ? 1 : 0 });
+  } catch (err) { next(err); }
 });
 
 // Assign a sales rep to an estimate waiting in For CSA Assignment, and move it on.

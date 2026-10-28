@@ -11,6 +11,8 @@ import LoadingSpinner from '../components/LoadingSpinner';
 
 import { displayDateTime, displayAuditTime } from '../utils/dates';
 import { CustomerLink } from '../components/PartyLink';
+import ButtonMenu from '../components/ButtonMenu';
+import { isPrintSelected } from '../utils/estimatePrintSelected';
 
 // Read-only counterpart to EstimateWizard (which stays the create/edit form): mirrors
 // the real system's estimate detail screen -- a summary banner with status-driven
@@ -225,6 +227,17 @@ ${estimate.estimate_no} will be CANCELLED. The new estimate will have you as its
   if (loading || !estimate) return <LoadingSpinner />;
 
   const jobOrders = estimate.jobOrders || [];
+  // The Print Selected tick, saved the moment it is clicked (and put back if the save fails).
+  const canTickPrint = can('/estimates', 'can_edit') || can('/estimates', 'can_print') || user?.account_type === 'System Admin';
+  const setPrintSelected = (jo, p, selected) => {
+    const apply = (val) => setEstimate((e) => ({
+      ...e,
+      jobOrders: e.jobOrders.map((j) => (j.id !== jo.id ? j : { ...j, processes: j.processes.map((x) => (x.id === p.id ? { ...x, print_selected: val } : x)) })),
+    }));
+    apply(selected ? 1 : 0);
+    api.put(`/estimates/${id}/job-orders/${jo.id}/processes/${p.id}/print-selected`, { selected })
+      .catch((e) => { apply(p.print_selected ?? null); alert(e.response?.data?.error || 'Could not save the Print Selected tick.'); });
+  };
   // Computed from the lines whenever there ARE lines -- they are the truth, and the header
   // aggregates are only written when someone clicks "Recalculate from Job Orders" in the Billing
   // step, so they go stale.
@@ -332,7 +345,18 @@ ${estimate.estimate_no} will be CANCELLED. The new estimate will have you as its
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={'/estimates'}>Back</Link>
           {canEditContent && <Link className="btn btn-sm btn-primary" to={`/estimates/${id}/edit`}>Edit</Link>}
-          {canShowPrint && <button className="btn btn-sm btn-primary" onClick={() => window.open(`/estimates/${id}/print`, '_blank')}>Print</button>}
+          {/* Three quotations, as the source's Print menu: the plain one, and the two listing each job's
+              Print Selected items -- with the discount hidden (net prices) or shown. */}
+          {canShowPrint && (
+            <ButtonMenu
+              label="Print"
+              options={[
+                { label: 'Print', onClick: () => window.open(`/estimates/${id}/print`, '_blank') },
+                { label: 'Print with Selected Items (Hide Discount)', onClick: () => window.open(`/estimates/${id}/print?items=1`, '_blank') },
+                { label: 'Print with Selected Items (Show Discount)', onClick: () => window.open(`/estimates/${id}/print?items=1&discount=1`, '_blank') },
+              ]}
+            />
+          )}
           {(canEdit || canRecordCustomerAnswer || supervisorCanAct) && isPending && canShowApprove && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>{approveLabel}</button>}
           {/* The customer saying no is as much their answer as saying yes, so it opens to the same
               people -- at the customer stage only. canRecordCustomerAnswer is false at the
@@ -434,12 +458,16 @@ ${estimate.estimate_no} will be CANCELLED. The new estimate will have you as its
               </div>
               <div className="table-wrap" style={{ marginTop: 6 }}>
                 <table>
-                  <thead><tr><th>#</th>{PROCESS_VIEW_COLUMNS.map((c) => <th key={c.key}>{c.label}</th>)}</tr></thead>
+                  <thead><tr><th>#</th>{PROCESS_VIEW_COLUMNS.map((c) => <th key={c.key}>{c.label}</th>)}<th>Print Selected</th></tr></thead>
                   <tbody>
                     {(jo.processes || []).map((p, pi) => (
                       <tr key={p.id}>
                         <td>{pi + 1}</td>
                         {PROCESS_VIEW_COLUMNS.map((c) => <td key={c.key}>{c.render ? c.render(p) : p[c.key]}</td>)}
+                        <td style={{ textAlign: 'center' }}>
+                          <input type="checkbox" style={{ width: 'auto' }} checked={isPrintSelected(p)} disabled={!canTickPrint}
+                            title="List this line's item on Print with Selected Items" onChange={(e) => setPrintSelected(jo, p, e.target.checked)} />
+                        </td>
                       </tr>
                     ))}
                   </tbody>
