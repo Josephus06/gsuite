@@ -1,5 +1,5 @@
 // Re-works a job order's Process Cost from its process's Costing brackets with T1S's own formula,
-// (SubTotal + Total Sub Con) x Process Qty (shared/costing.js, set 2026-10-27). A JO imported from
+// (SubTotal + Sub Con) x Process Qty (shared/costing.js, set 2026-10-28). A JO imported from
 // the source keeps the source's own figures (import-jo-processes.js), which do not follow it --
 // JO-198481-2-6 had 1,350.00 for 10 CBM and 238.00 for 96 CBM of the same process.
 //

@@ -84,8 +84,9 @@ export function selectBracket(brackets, qty) {
 //                              from its own Total Price (120.2 -> 118), and the user asked that
 //                              every Selling Price be the Total Price rounded up.
 //   AL/AN/AP/AR  the discount ceilings as amounts = AI x each level's %
-// costPerUnit = T (COGS before OPEX). costBasis = SubTotal + Total Sub Con (Sub Con with its
-// mark-up, as the user set on 2026-10-27) -- the Process Cost per unit, no COGS mark-up or OPEX.
+// costPerUnit = T (COGS before OPEX). costBasis = SubTotal + Sub Con (the plain Sub Con, not its
+// mark-up -- the user's rule of 2026-10-28, replacing Total Sub Con) -- the Process Cost per unit,
+// no COGS mark-up or OPEX.
 export function computeProcessCosting(bracket) {
   if (!bracket) return null;
   const pct = (v, p) => v * num(p) / 100;
@@ -104,7 +105,7 @@ export function computeProcessCosting(bracket) {
   const totalOpex = opexAdmin + markupOpexAdmin + opexSelling + markupOpexSelling;
   const markupSubCon = pct(subCon, bracket.markup_sub_con_pct);
   const totalSubCon = subCon + markupSubCon;
-  const costBasis = subtotalMoh + totalSubCon;
+  const costBasis = subtotalMoh + subCon;
   const priceUnrounded = costPerUnit + totalOpex + totalSubCon; // Total Price
   // toFixed(6) first so float noise (99.0000000001) does not round a whole peso up by one.
   const pricePerUnit = Math.ceil(Number(priceUnrounded.toFixed(6)));
@@ -160,7 +161,7 @@ export function computeMaterialCosting(inventory) {
 //
 // process_cost and material_cost are true production cost, not price, and are
 // deliberately sourced from different figures than process_price/material_price:
-// - process_cost = (SubTotal MOH + Total Sub Con) x procQuantity -- the Process Costing tab's
+// - process_cost = (SubTotal MOH + Sub Con) x procQuantity -- the Process Costing tab's
 //   own bracket fields, with no COGS markup or OPEX layered in (unlike process_price,
 //   which is the full COGS+OPEX selling rate).
 // - material_cost = Average Cost (Base Cost) x sizeFactor x matQuantity -- the inventory's
