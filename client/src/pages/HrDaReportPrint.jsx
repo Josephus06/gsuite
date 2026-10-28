@@ -1,39 +1,32 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { monthTitle } from './HrDaReport';
+import { periodTitle } from './HrDaReport';
 
 // The DA Report as the company's sheet prints it ("DA REPORT FORMAT.xlsx"): one bordered table --
-// the title "Discipline Management Report (OCTOBER 2026)" (Times New Roman 13 bold), each section's
+// the title "Discipline Management Report (OCTOBER 2026)" -- or the week, "(OCTOBER 20 – 26, 2026)" -- (Times New Roman 13 bold), each section's
 // heading (Times 10 bold), the column heads, then the lines (Calibri 11, centred but the name).
 // Column widths keep the sheet's own (32 / 54 / 51 / 20). The last section is padded with blank
 // rows to the sheet's nine, so a short month still prints as the form.
 const MIN_ROWS = 9;
 
 export default function HrDaReportPrint() {
-  const [params] = useSearchParams();
-  const month = params.get('month');
+  const { id } = useParams();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.get('/hr-da-reports/print', { params: { month } })
+    api.get(`/hr-da-reports/${id}/print`)
       .then(({ data: d }) => setData(d))
       .catch((e) => setError(e.response?.data?.error || 'Could not load the report.'));
-  }, [month]);
+  }, [id]);
 
   if (error) return <div style={{ maxWidth: 620, margin: '80px auto', textAlign: 'center', font: '14px system-ui' }}>{error}</div>;
   if (!data) return <LoadingSpinner />;
 
-  const groups = [];
-  for (const r of data.rows) {
-    let g = groups.find((x) => x.stage === r.stage);
-    if (!g) { g = { stage: r.stage, rows: [] }; groups.push(g); }
-    g.rows.push(r);
-  }
-  if (!groups.length) groups.push({ stage: 'NOTICE TO EXPLAIN', rows: [] });
-  const blanks = Math.max(0, MIN_ROWS - data.rows.length);
+  const groups = data.sections.length ? data.sections : [{ stage: 'NOTICE TO EXPLAIN', rows: [] }];
+  const blanks = Math.max(0, MIN_ROWS - groups.reduce((n, g) => n + g.rows.length, 0));
 
   return (
     <div className="dap">
@@ -66,15 +59,15 @@ export default function HrDaReportPrint() {
             <col style={{ width: '20.5%' }} /><col style={{ width: '34.3%' }} /><col style={{ width: '32.5%' }} /><col style={{ width: '12.7%' }} />
           </colgroup>
           <tbody>
-            <tr><td colSpan={4} className="dap-title">Discipline Management Report ({monthTitle(month)})</td></tr>
+            <tr><td colSpan={4} className="dap-title">Discipline Management Report ({periodTitle(data.report_type, data.period_from, data.period_to)})</td></tr>
             {groups.map((g, gi) => [
               <tr key={`s${gi}`}><td colSpan={4} className="dap-stage">{g.stage}</td></tr>,
               <tr key={`h${gi}`}>
                 <td className="dap-head">EMPLOYEE NAME</td><td className="dap-head">VIOLATION</td>
                 <td className="dap-head">SECTION VIOLATED</td><td className="dap-head">FINAL SANCTION</td>
               </tr>,
-              ...g.rows.map((r) => (
-                <tr key={r.id}>
+              ...g.rows.map((r, ri) => (
+                <tr key={r.id || `r${gi}-${ri}`}>
                   <td className="dap-cell dap-name">{r.employee_name}</td>
                   <td className="dap-cell">{r.violation}</td>
                   <td className="dap-cell">{r.section_violated}</td>
