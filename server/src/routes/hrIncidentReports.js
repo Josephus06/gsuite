@@ -180,6 +180,22 @@ router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async
   }
 });
 
+// Correcting the charge's account -- the date, place and what happened -- while the report is still
+// For Evaluation (2026-10-28). Once HR has picked it up, the account is what they are ruling on.
+// The employee and the violation stay as filed (see routes/hrViolations.js PUT).
+router.put('/:id/charge', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const [[ir]] = await pool.query('SELECT id, status, violation_id FROM hr_incident_reports WHERE id = ?', [req.params.id]);
+    if (!ir) return res.status(404).json({ error: 'Not found' });
+    if (ir.status !== 'for_evaluation') return res.status(409).json({ error: 'Only a report still For Evaluation can be edited.' });
+    if (!req.body.violation_date) return res.status(400).json({ error: 'Enter the date the violation happened.' });
+    await pool.query(
+      'UPDATE hr_violations SET violation_date = ?, place = ?, details = ?, updated_at = NOW() WHERE id = ?',
+      [req.body.violation_date, trunc(req.body.place, 200), trunc(req.body.details, 4000), ir.violation_id]);
+    return res.json({ ok: true });
+  } catch (err) { return next(err); }
+});
+
 router.get('/meta/options', requireAuth, requirePermission(ROUTE, 'can_view'), (req, res) => {
   res.json({ statuses: STATUSES, recommendations: RECOMMENDATIONS });
 });

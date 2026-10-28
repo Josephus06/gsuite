@@ -328,6 +328,9 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 // HR ruling on a different charge from the one they read. File a new one and delete this instead.
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
+    // Only while its report is still For Evaluation (2026-10-28) -- after that HR is ruling on it.
+    const [[ir]] = await pool.query('SELECT status FROM hr_incident_reports WHERE violation_id = ?', [req.params.id]);
+    if (ir && ir.status !== 'for_evaluation') return res.status(409).json({ error: 'Only a charge whose report is still For Evaluation can be edited.' });
     const fields = [];
     const params = [];
     if (req.body.violation_date) { fields.push('violation_date = ?'); params.push(req.body.violation_date); }

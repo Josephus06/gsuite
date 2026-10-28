@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
+import Modal from '../components/Modal';
+import AutoCorrectTextarea from '../components/AutoCorrectTextarea';
 import { useAuth } from '../context/useAuth';
 import { displayDate } from '../utils/dates';
 
@@ -26,6 +28,59 @@ const FILTERS = [
 function fmtDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 const pretty = (s) => (s ? String(s).replace(/_/g, ' ') : '');
 
+// Editing a report's charge while it is still For Evaluation (2026-10-28): the date, place and what
+// happened. The employee and the violation stay as filed -- a different charge is a new report.
+function EditChargeModal({ report, onClose, onSaved }) {
+  const [form, setForm] = useState(null);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    api.get(`/hr-incident-reports/${report.id}`)
+      .then(({ data }) => setForm({
+        violation_date: data.violation_date ? String(data.violation_date).slice(0, 10) : '',
+        place: data.place || '', details: data.details || '',
+      }))
+      .catch((e) => setError(e.response?.data?.error || 'Could not load the report.'));
+  }, [report.id]);
+
+  async function save() {
+    setError(''); setSaving(true);
+    try { await api.put(`/hr-incident-reports/${report.id}/charge`, form); onSaved(); }
+    catch (e) { setError(e.response?.data?.error || 'Could not save.'); setSaving(false); }
+  }
+
+  return (
+    <Modal title={`Edit ${report.incident_no}`} onClose={onClose}>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="muted" style={{ marginBottom: 10 }}>
+        {report.employee_name} — {report.violation_name} <span className="muted">({report.violation_no})</span>
+      </div>
+      {!form ? <LoadingSpinner /> : (
+        <>
+          <div className="field">
+            <label>Date of Violation *</label>
+            <input type="date" value={form.violation_date} onChange={(e) => setForm({ ...form, violation_date: e.target.value })} />
+          </div>
+          <div className="field">
+            <label>Place</label>
+            <input value={form.place} maxLength={200} placeholder="Where it happened" onChange={(e) => setForm({ ...form, place: e.target.value })} />
+          </div>
+          <div className="field">
+            <label>What happened</label>
+            <AutoCorrectTextarea rows={5} value={form.details} maxLength={4000}
+              placeholder="The account HR will evaluate. Facts and what was observed."
+              onChange={(e) => setForm((x) => ({ ...x, details: e.target.value }))} />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+            <button className="btn" onClick={onClose}>Cancel</button>
+            <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>
+          </div>
+        </>
+      )}
+    </Modal>
+  );
+}
+
 export default function HrIncidentReports() {
   const navigate = useNavigate();
   const { can } = useAuth();
@@ -37,6 +92,8 @@ export default function HrIncidentReports() {
   const [busy, setBusy] = useState(false);
 
   const canDelete = can('/hrd/incident-reports', 'can_delete');
+  const canEdit = can('/hrd/incident-reports', 'can_edit');
+  const [editing, setEditing] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -150,6 +207,9 @@ export default function HrIncidentReports() {
                       <div style={{ display: 'flex', gap: 6 }}>
                         <Link className="btn btn-sm btn-primary"
                           to={`/hrd/incident-reports/${r.id}`}>Evaluate</Link>
+                        {canEdit && r.status === 'for_evaluation' && (
+                          <button className="btn btn-sm" onClick={() => setEditing(r)}>Edit</button>
+                        )}
                         {canDelete && (
                           <button className="btn btn-sm btn-danger" disabled={busy}
                             onClick={() => remove(r)}>Delete</button>
@@ -163,6 +223,10 @@ export default function HrIncidentReports() {
           </div>
         )}
       </div>
+
+      {editing && (
+        <EditChargeModal report={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />
+      )}
     </div>
   );
 }

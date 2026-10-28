@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
+import AutoCorrectTextarea from '../components/AutoCorrectTextarea';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
@@ -192,9 +193,9 @@ function ChargeModal({ types, onClose, onSaved }) {
       </div>
       <div className="field">
         <label>What happened</label>
-        <textarea rows={4} value={form.details} maxLength={4000}
+        <AutoCorrectTextarea rows={4} value={form.details} maxLength={4000}
           placeholder="The account HR will evaluate. Facts and what was observed."
-          onChange={(e) => setForm({ ...form, details: e.target.value })} />
+          onChange={(e) => setForm((f) => ({ ...f, details: e.target.value }))} />
       </div>
 
       <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
