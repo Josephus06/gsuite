@@ -6,6 +6,7 @@ import DataTable from '../components/DataTable';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate, displayAuditTime } from '../utils/dates';
 import { CustomerLink } from '../components/PartyLink';
+import ButtonMenu from '../components/ButtonMenu';
 
 // Certificate of Completion (2026-10-28): the header, its Approvers and Certifiers, and the
 // approve / print / void actions -- as the Warranty Certificate view.
@@ -42,8 +43,16 @@ export default function CompletionCertificateView() {
           <Link className="btn btn-sm" to={'/completion-certificates'}>Back to Lists</Link>
           {can('/completion-certificates', 'can_edit') && !isVoided && !isApproved && <Link className="btn btn-sm btn-primary" to={`/completion-certificates/${id}/edit`}>Edit</Link>}
           {can('/completion-certificates', 'can_approve') && cc.status === 'pending_approval' && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>Approve</button>}
-          {/* Printed once approved, as the Warranty Certificate. */}
-          {isApproved && <button className="btn btn-sm btn-primary" onClick={() => window.open(`/completion-certificates/${id}/print`, '_blank')}>Print</button>}
+          {/* Printed once approved, as the Warranty Certificate -- either of the source's two certificates. */}
+          {isApproved && (
+            <ButtonMenu
+              label="Print"
+              options={[
+                { label: 'Certificate of Completion', onClick: () => window.open(`/completion-certificates/${id}/print`, '_blank') },
+                { label: 'Certificate of Acceptance', onClick: () => window.open(`/completion-certificates/${id}/print?type=acceptance`, '_blank') },
+              ]}
+            />
+          )}
           {can('/completion-certificates', 'can_void') && !isVoided && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>
       </div>
