@@ -242,6 +242,7 @@ import HrMemoPrint from './pages/HrMemoPrint';
 import HrDaReport from './pages/HrDaReport';
 import HrDaReportPrint from './pages/HrDaReportPrint';
 import HrDaReportForm from './pages/HrDaReportForm';
+import HrDaReportPresent from './pages/HrDaReportPresent';
 import NonStandardJobOrders from './pages/NonStandardJobOrders';
 import NonStandardJobOrderView from './pages/NonStandardJobOrderView';
 import NonStandardSalesOrders from './pages/NonStandardSalesOrders';
@@ -297,6 +298,7 @@ function App() {
       <Route path="/hrd/coe/:id/print" element={<ProtectedRoute><HrCoePrint /></ProtectedRoute>} />
       <Route path="/hrd/memo/:id/print" element={<ProtectedRoute><HrMemoPrint /></ProtectedRoute>} />
       <Route path="/hrd/da-report/:id/print" element={<ProtectedRoute><HrDaReportPrint /></ProtectedRoute>} />
+      <Route path="/hrd/da-report/:id/present" element={<ProtectedRoute><HrDaReportPresent /></ProtectedRoute>} />
       <Route path="/transfer-orders/:id/print" element={<ProtectedRoute><TransferOrderPrint /></ProtectedRoute>} />
       {/* The four request forms, printed on their own sheet -- standalone for the same reason. */}
       <Route path="/forms/:id/print" element={<ProtectedRoute><FormPrint /></ProtectedRoute>} />

@@ -87,6 +87,7 @@ export default function HrDaReport() {
                     <td data-label="Prepared By">{r.created_by_name}</td>
                     <td data-label="Last Saved">{displayAuditTime(r.updated_at)}</td>
                     <td style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                      <button className="btn btn-sm" onClick={() => window.open(`/hrd/da-report/${r.id}/present`, '_blank')}>Present</button>
                       {can('/hrd/da-report', 'can_print') && <button className="btn btn-sm" onClick={() => window.open(`/hrd/da-report/${r.id}/print`, '_blank')}>Print</button>}
                       <Link className="btn btn-sm btn-primary" to={`/hrd/da-report/${r.id}`}>{can('/hrd/da-report', 'can_edit') ? 'Open' : 'View'}</Link>
                       {can('/hrd/da-report', 'can_delete') && <button className="btn btn-sm btn-danger" onClick={() => remove(r)}>Delete</button>}

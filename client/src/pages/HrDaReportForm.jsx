@@ -9,6 +9,8 @@ import { periodTitle } from './HrDaReport';
 // One DA Report, filled in as the sheet is (2026-10-28): the period, then each section (stage of the
 // disciplinary action) with its rows -- Employee Name / Violation / Section Violated / Final
 // Sanction -- all saved together. Blank rows are left out when saved.
+// Each row has its Date (2026-10-28): HR logs cases day by day and presents the week's report --
+// Present opens HrDaReportPresent.jsx.
 
 const ymd = (d) => d.toISOString().slice(0, 10);
 // Same periods the server works out: the month, or the Monday-to-Sunday week, of the date picked.
@@ -24,7 +26,7 @@ function periodOf(type, date) {
   return { from: ymd(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1))), to: ymd(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0))) };
 }
 
-const blankRow = () => ({ employee_id: '', employee_name: '', violation: '', violation_type_id: '', section_violated: '', final_sanction: 'ISSUED NTE' });
+const blankRow = (entryDate = '') => ({ entry_date: entryDate, employee_id: '', employee_name: '', violation: '', violation_type_id: '', section_violated: '', final_sanction: 'ISSUED NTE' });
 const blankSection = (stage = 'NOTICE TO EXPLAIN') => ({ stage, rows: [blankRow(), blankRow(), blankRow()] });
 
 export default function HrDaReportForm() {
@@ -58,9 +60,14 @@ export default function HrDaReportForm() {
   const editable = id ? can('/hrd/da-report', 'can_edit') : can('/hrd/da-report', 'can_add');
   const period = id && report ? { from: report.period_from, to: report.period_to } : periodOf(type, type === 'monthly' ? `${date.slice(0, 7)}-01` : date);
 
+  // A new row's date: today when it falls in the report's period, else the period's first day.
+  const today = new Date().toLocaleDateString('en-CA');
+  const defaultDay = () => (period && today >= period.from && today <= period.to ? today : period?.from || '');
+  const withDates = (ss) => ss.map((s) => ({ ...s, rows: s.rows.map((r) => ({ ...r, entry_date: r.entry_date || defaultDay() })) }));
+
   const setSection = (si, patch) => setSections((ss) => ss.map((s, i) => (i === si ? { ...s, ...patch } : s)));
   const setRow = (si, ri, patch) => setSections((ss) => ss.map((s, i) => (i === si ? { ...s, rows: s.rows.map((r, j) => (j === ri ? { ...r, ...patch } : r)) } : s)));
-  const addRow = (si) => setSections((ss) => ss.map((s, i) => (i === si ? { ...s, rows: [...s.rows, blankRow()] } : s)));
+  const addRow = (si) => setSections((ss) => ss.map((s, i) => (i === si ? { ...s, rows: [...s.rows, blankRow(defaultDay())] } : s)));
   const removeRow = (si, ri) => setSections((ss) => ss.map((s, i) => (i === si ? { ...s, rows: s.rows.filter((_, j) => j !== ri) } : s)));
   const addSection = () => {
     const used = new Set(sections.map((s) => s.stage));
@@ -71,11 +78,11 @@ export default function HrDaReportForm() {
     setError(''); setSaved(''); setSaving(true);
     try {
       if (id) {
-        await api.put(`/hr-da-reports/${id}`, { sections });
+        await api.put(`/hr-da-reports/${id}`, { sections: withDates(sections) });
         setSaved('Saved.');
         setSaving(false);
       } else {
-        const { data } = await api.post('/hr-da-reports', { report_type: type, period_from: period.from, sections });
+        const { data } = await api.post('/hr-da-reports', { report_type: type, period_from: period.from, sections: withDates(sections) });
         navigate(`/hrd/da-report/${data.id}`, { replace: true });
       }
     } catch (e) {
@@ -98,6 +105,7 @@ export default function HrDaReportForm() {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to="/hrd/da-report">Back to Lists</Link>
+          {id && <button className="btn btn-sm" onClick={() => window.open(`/hrd/da-report/${id}/present`, '_blank')}>Present</button>}
           {id && can('/hrd/da-report', 'can_print') && <button className="btn btn-sm" onClick={() => window.open(`/hrd/da-report/${id}/print`, '_blank')}>Print</button>}
           {editable && <button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving...' : 'Save'}</button>}
         </div>
@@ -145,16 +153,21 @@ export default function HrDaReportForm() {
             <table>
               <thead>
                 <tr>
-                  <th style={{ width: '24%' }}>Employee Name</th>
-                  <th style={{ width: '24%' }}>Violation</th>
-                  <th style={{ width: '30%' }}>Section Violated</th>
-                  <th style={{ width: '18%' }}>Final Sanction</th>
+                  <th style={{ width: 140 }}>Date</th>
+                  <th style={{ width: '22%' }}>Employee Name</th>
+                  <th style={{ width: '22%' }}>Violation</th>
+                  <th style={{ width: '27%' }}>Section Violated</th>
+                  <th style={{ width: '16%' }}>Final Sanction</th>
                   {editable && <th style={{ width: 40 }} />}
                 </tr>
               </thead>
               <tbody>
                 {s.rows.map((r, ri) => (
                   <tr key={ri}>
+                    <td style={{ padding: 4 }}>
+                      <input type="date" value={r.entry_date || ''} disabled={!editable} min={period?.from} max={period?.to}
+                        placeholder={defaultDay()} onChange={(e) => setRow(si, ri, { entry_date: e.target.value })} />
+                    </td>
                     <td style={{ padding: 4 }}>
                       {editable ? (
                         <EntityPicker

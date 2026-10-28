@@ -12,6 +12,9 @@ const router = express.Router();
 // One form per period (hr_da_reports), filled in and saved whole like the sheet: its sections and
 // rows are sent together and replace what was there (hr_da_entries). HR keeps a Monthly report and a
 // Weekly one (Monday to Sunday); one of each per period.
+//
+// Each row carries the day it was logged (entry_date, 2026-10-28): HR adds to the week's report day
+// by day and presents it once a week -- HrDaReportPresent.jsx, a slide deck of the saved report.
 const ROUTE = '/hrd/da-report';
 // The usual stages, in the order the report lists them. HR may type another.
 const STAGES = ['NOTICE TO EXPLAIN', 'NOTICE OF DECISION', 'WRITTEN WARNING', 'FINAL WARNING', 'SUSPENSION', 'TERMINATION'];
@@ -45,7 +48,7 @@ const reportName = (e) => [e.last_name, e.first_name].map((x) => String(x || '')
 
 // The form's sections -> rows to store. A row needs an employee and a violation; blank rows (the
 // sheet's empty lines) are dropped, and so is a section left with none.
-function readSections(input) {
+function readSections(input, period) {
   const rows = [];
   let sort = 0;
   for (const s of (Array.isArray(input) ? input : []).slice(0, MAX_SECTIONS)) {
@@ -55,6 +58,9 @@ function readSections(input) {
       const violation = trunc(r?.violation, 300);
       const section = trunc(r?.section_violated, 300);
       const sanction = trunc(r?.final_sanction, 200);
+      // Inside the report's period, else its first day.
+      const day = /^\d{4}-\d{2}-\d{2}$/.test(String(r?.entry_date || '')) ? String(r.entry_date) : null;
+      const entryDate = day && period && day >= period.from && day <= period.to ? day : (period?.from || null);
       if (!employeeName && !violation && !section) continue;
       if (!employeeName) return { error: `A row under ${stage} has no employee.` };
       if (!violation) return { error: `${employeeName.toUpperCase()} under ${stage} has no violation.` };
@@ -62,7 +68,7 @@ function readSections(input) {
       rows.push({
         stage, employee_id: Number(r.employee_id) || null, employee_name: employeeName.toUpperCase(), violation,
         violation_type_id: Number(r.violation_type_id) || null, section_violated: section,
-        final_sanction: sanction ? sanction.toUpperCase() : null, sort_order: sort,
+        final_sanction: sanction ? sanction.toUpperCase() : null, entry_date: entryDate, sort_order: sort,
       });
       if (rows.length > MAX_ROWS) return { error: `A report holds up to ${MAX_ROWS} rows.` };
     }
@@ -81,6 +87,18 @@ function toSections(rows) {
   return sections;
 }
 
+// entry_date arrives with add-hr-da-report.js's re-run; until then rows are saved without it.
+let entryDateCol = null;
+async function hasEntryDate() {
+  if (entryDateCol === null) {
+    const [[c]] = await pool.query(
+      `SELECT COUNT(*) AS n FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = 'hr_da_entries' AND column_name = 'entry_date'`);
+    entryDateCol = c.n > 0;
+  }
+  return entryDateCol;
+}
+
 async function loadReport(id) {
   const [[rep]] = await pool.query(
     `SELECT r.*, DATE_FORMAT(r.period_from, '%Y-%m-%d') AS period_from, DATE_FORMAT(r.period_to, '%Y-%m-%d') AS period_to,
@@ -88,15 +106,19 @@ async function loadReport(id) {
        FROM hr_da_reports r LEFT JOIN users u ON u.id = r.created_by_user_id WHERE r.id = ?`, [id]);
   if (!rep) return null;
   const [rows] = await pool.query(
-    `SELECT id, stage, employee_id, employee_name, violation, violation_type_id, section_violated, final_sanction
-       FROM hr_da_entries WHERE report_id = ? ORDER BY sort_order, id`, [id]);
+    `SELECT x.id, x.stage, x.employee_id, x.employee_name, x.violation, x.violation_type_id, x.section_violated, x.final_sanction,
+            ${(await hasEntryDate()) ? "DATE_FORMAT(x.entry_date, '%Y-%m-%d')" : 'NULL'} AS entry_date,
+            d.name AS department_name, e.position_title AS position
+       FROM hr_da_entries x LEFT JOIN employees e ON e.id = x.employee_id LEFT JOIN departments d ON d.id = e.department_id
+      WHERE x.report_id = ? ORDER BY x.sort_order, x.id`, [id]);
   return { ...rep, sections: toSections(rows) };
 }
 
 async function writeRows(conn, report, rows, userId) {
   await conn.query('DELETE FROM hr_da_entries WHERE report_id = ?', [report.id]);
+  const withDate = await hasEntryDate();
   for (const r of rows) {
-    const cols = Object.keys(r);
+    const cols = Object.keys(r).filter((c) => withDate || c !== 'entry_date');
     await conn.query(
       `INSERT INTO hr_da_entries (report_id, report_month, ${cols.join(', ')}, created_by_user_id)
        VALUES (?, ?, ${cols.map(() => '?').join(', ')}, ?)`,
@@ -165,7 +187,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   const type = TYPES.includes(b.report_type) ? b.report_type : 'monthly';
   const period = periodOf(type, b.period_from);
   if (!period) return res.status(400).json({ error: `Pick the ${type === 'weekly' ? 'week' : 'month'} of the report.` });
-  const { error, rows } = readSections(b.sections);
+  const { error, rows } = readSections(b.sections, period);
   if (error) return res.status(400).json({ error });
   const conn = await pool.getConnection();
   try {
@@ -187,12 +209,12 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const b = req.body || {};
-  const { error, rows } = readSections(b.sections);
-  if (error) return res.status(400).json({ error });
   const conn = await pool.getConnection();
   try {
-    const [[rep]] = await conn.query("SELECT id, DATE_FORMAT(period_from, '%Y-%m-%d') AS period_from FROM hr_da_reports WHERE id = ?", [req.params.id]);
+    const [[rep]] = await conn.query("SELECT id, DATE_FORMAT(period_from, '%Y-%m-%d') AS period_from, DATE_FORMAT(period_to, '%Y-%m-%d') AS period_to FROM hr_da_reports WHERE id = ?", [req.params.id]);
     if (!rep) return res.status(404).json({ error: 'Not found' });
+    const { error, rows } = readSections(b.sections, { from: rep.period_from, to: rep.period_to });
+    if (error) return res.status(400).json({ error });
     await conn.beginTransaction();
     await conn.query('UPDATE hr_da_reports SET remarks = ? WHERE id = ?', [trunc(b.remarks, 500), rep.id]);
     await writeRows(conn, rep, rows, req.user.id);

@@ -63,6 +63,15 @@ const pool = require('../db');
     await pool.query('ALTER TABLE hr_da_entries ADD COLUMN report_id BIGINT NULL AFTER id, ADD KEY idx_hr_da_entries_report (report_id)');
     console.log('  hr_da_entries.report_id added');
   }
+  // The day a case was logged (2026-10-28): HR adds to the week's report day by day and presents it
+  // weekly, the presentation going through the week a day at a time.
+  const [[hasDate]] = await pool.query(
+    `SELECT COUNT(*) AS n FROM information_schema.columns
+      WHERE table_schema = DATABASE() AND table_name = 'hr_da_entries' AND column_name = 'entry_date'`);
+  if (!hasDate.n) {
+    await pool.query('ALTER TABLE hr_da_entries ADD COLUMN entry_date DATE NULL AFTER report_month');
+    console.log('  hr_da_entries.entry_date added');
+  }
   console.log('  hr_da_reports, hr_da_entries ready');
 
   // Loose rows -> their month's report.
