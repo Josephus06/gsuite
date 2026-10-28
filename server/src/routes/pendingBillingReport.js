@@ -144,7 +144,7 @@ async function loadRows(req, { allReps = false } = {}) {
     const q = `%${String(search).trim()}%`; params.push(q, q, q, q, q);
   }
   const [jos] = await pool.query(
-    `SELECT jo.id, jo.job_order_no, jo.description, jo.quantity, jo.quantity_inspected, jo.quantity_delivered,
+    `SELECT jo.id, jo.job_order_no, jo.description, jo.quantity, jo.quantity_inspected, jo.quantity_delivered, jo.quantity_invoiced,
             jo.production_stage, jo.delivery_date, jo.units, jo.nsso_id, jo.sales_order_line_id, jo.nsso_line_id,
             so.id AS sales_order_id, so.sales_order_no, so.date_created AS so_date, ns.nsso_no, ns.type AS nsso_type,
             COALESCE(so.customer_id, ns.customer_id) AS customer_id, c.name AS customer_name,
@@ -186,7 +186,10 @@ async function loadRows(req, { allReps = false } = {}) {
     const sol = solById.get(Number(j.sales_order_line_id)) || solByJo.get(Number(j.id)) || solBySoLine.get(`${j.sales_order_id}|${lineNo}`);
     const unit = j.nsso_id ? perUnit(nslById.get(Number(j.nsso_line_id))) : perUnit(sol);
     const i = invM.get(Number(j.id));
-    const invoiced = Number(i?.qty || 0);
+    // Or the JO's own Invoiced counter, when higher (2026-10-28): the source calls JO-23809-4-5 invoiced
+    // 24 of 24 -- DT-2341 delivered 24 and was converted -- though INV-40262's line says 20.
+    // db/sync-jo-invoiced-from-source.js copies the source's figure there.
+    const invoiced = Math.max(Number(i?.qty || 0), Number(j.quantity_invoiced || 0));
     const uninvoiced = Number(j.completed_qty || 0) - invoiced;
     if (uninvoiced <= 0.0001) continue;
     const completed = qiM.get(Number(j.id))?.d || null;
