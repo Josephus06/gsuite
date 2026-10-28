@@ -191,7 +191,9 @@ async function loadRows(req, { allReps = false } = {}) {
     // db/sync-jo-invoiced-from-source.js copies the source's figure there.
     const invoiced = Math.max(Number(i?.qty || 0), Number(j.quantity_invoiced || 0));
     const uninvoiced = Number(j.completed_qty || 0) - invoiced;
-    if (uninvoiced <= 0.0001) continue;
+    // A remainder under 0.05 of a piece is decimal noise in the invoice quantities, not something to
+    // bill (2026-10-28, JO-6906-1-1: To Bill 0.01 of 168, Invoiced 168).
+    if (uninvoiced < 0.05) continue;
     const completed = qiM.get(Number(j.id))?.d || null;
     const done = completed || j.so_date;
     const doneDay = done ? String(done instanceof Date ? done.toISOString() : done).slice(0, 10) : null;
