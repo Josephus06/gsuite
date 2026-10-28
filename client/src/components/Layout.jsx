@@ -51,6 +51,8 @@ const NAV_STRUCTURE = [
       { route: '/hrd/coe', label: 'Certificate of Employment' },
       // Memo (2026-10-27): HR's memos to employees on the letterhead, approved by a General Manager.
       { route: '/hrd/memo', label: 'Memo' },
+      // DA Report (2026-10-28): the monthly Discipline Management Report.
+      { route: '/hrd/da-report', label: 'DA Report' },
     ],
   },
   // Forms. The four company request forms -- liquidation, payment, business trip, revolving fund --
