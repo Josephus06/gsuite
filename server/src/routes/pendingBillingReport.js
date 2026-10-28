@@ -9,8 +9,11 @@ const router = express.Router();
 // Sales > Pending Billing: every Job Order production has COMPLETED that is not yet (fully)
 // invoiced -- work done and waiting for its bill.
 //
-// "Completed" is production_stage 'completed' (all of it) or 'partially_completed' (the QI'd part);
-// the status sync keeps that stage in step with the source. "Invoiced" is counted from the
+// "Completed" is production_stage 'completed' or 'partially_completed', and what is ready to bill is
+// what was actually QI'd or delivered (2026-10-28) -- not the whole JO. The status sync moves EVERY JO
+// of an order to 'completed' once the source calls the order Pending Billing, which it does as soon as
+// one JO is done: SO-49071's JO-49071-11-11 (installation, no build, QI or delivery at the source)
+// listed its full amount because JO-8 was QI'd. "Invoiced" is counted from the
 // invoice LINES that name the JO (not cancelled), NOT job_orders.quantity_invoiced -- that counter
 // was never filled in for migrated JOs (117k fully-billed JOs read 0 there).
 //
@@ -29,24 +32,30 @@ const ROUTE = '/reports/pending-billing';
 // Every live JO on the order takes its share, completed or not, so billing a JO still in production
 // is not handed to a completed sibling.
 //
+// A line that names one JO but carries ANOTHER JO's description word for word counts for that other
+// JO (2026-10-28): INV-19162 "LEAR NOTEBOOK" was migrated onto JO-14012-5-8 (LEAR BROCHURE), so the
+// notebook JO-14012-6-8 read unbilled though the source shows it invoiced. A line naming no JO goes
+// first to the one JO on the order whose description it matches.
+//
 // An OPEN Delivery Ticket bills too (2026-10-09): DT-6339 billed SO-71070's nine completed JOs and they
 // still read pending. Only open ones -- a converted DT's billing is already on its invoice, and a
 // void one bills nothing. Their lines name no JO, so they are shared out the same way.
 // A CONVERTED one that became no invoice bills too (2026-10-28: SO-55784, a 0.00 sponsorship billed on
 // DT-4248 and converted without an invoice); db/backfill-converted-dt-lines.js brings in its lines.
+const descKey = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 async function invoicedByJobOrder(jos) {
   const joIds = jos.map((j) => j.id);
   const soIds = [...new Set(jos.map((j) => j.sales_order_id).filter(Boolean))];
   const [[siblings], [lines]] = await Promise.all([
     pool.query(
-      `SELECT id, sales_order_id, quantity FROM job_orders
+      `SELECT id, sales_order_id, quantity, description FROM job_orders
         WHERE sales_order_id IN (?) AND (status IS NULL OR status <> 'Cancelled')`, [soIds.concat(0)]),
     pool.query(
-      `SELECT l.job_order_id, l.quantity, si.invoice_no, si.sales_order_id
+      `SELECT l.job_order_id, l.quantity, l.description, si.invoice_no, si.sales_order_id
          FROM sales_invoice_lines l JOIN sales_invoices si ON si.id = l.sales_invoice_id
         WHERE si.status <> 'cancelled' AND (l.job_order_id IN (?) OR si.sales_order_id IN (?))
        UNION ALL
-       SELECT l.job_order_id, l.quantity, d.dt_no, d.sales_order_id
+       SELECT l.job_order_id, l.quantity, l.description, d.dt_no, d.sales_order_id
          FROM delivery_ticket_lines l JOIN delivery_tickets d ON d.id = l.delivery_ticket_id
         WHERE (d.status = 'open'
                -- A converted ticket that became no invoice (a 0.00 sponsorship, 2026-10-28) bills by itself.
@@ -57,8 +66,24 @@ async function invoicedByJobOrder(jos) {
   ]);
   const jo = new Map();
   for (const j of [...siblings, ...jos]) {
-    if (!jo.has(Number(j.id))) jo.set(Number(j.id), { so: j.sales_order_id ? Number(j.sales_order_id) : null, qty: Number(j.quantity || 0), got: 0, invoices: new Set() });
+    if (!jo.has(Number(j.id))) jo.set(Number(j.id), { so: j.sales_order_id ? Number(j.sales_order_id) : null, qty: Number(j.quantity || 0), desc: descKey(j.description), got: 0, invoices: new Set() });
   }
+  // so id -> description -> the one JO with it (null when two JOs share it).
+  const byDesc = new Map();
+  for (const [id, j] of jo) {
+    if (!j.so || !j.desc) continue;
+    if (!byDesc.has(j.so)) byDesc.set(j.so, new Map());
+    const m = byDesc.get(j.so);
+    m.set(j.desc, m.has(j.desc) ? null : id);
+  }
+  const jobOfLine = (l) => {
+    const named = l.job_order_id ? jo.get(Number(l.job_order_id)) : null;
+    const key = descKey(l.description);
+    if (named && (!key || named.desc === key)) return named;
+    const so = named?.so || (l.sales_order_id ? Number(l.sales_order_id) : null);
+    const match = key && so ? byDesc.get(so)?.get(key) : null;
+    return match ? jo.get(match) : named;
+  };
   const pool_ = new Map(); // so id -> [{ qty, invoice_no }]
   const toPool = (so, qty, invoiceNo) => {
     if (!so || qty <= 0.0001) return;
@@ -67,7 +92,7 @@ async function invoicedByJobOrder(jos) {
   };
   for (const l of lines) {
     const q = Number(l.quantity || 0);
-    const j = l.job_order_id ? jo.get(Number(l.job_order_id)) : null;
+    const j = jobOfLine(l);
     if (!j) { toPool(l.sales_order_id ? Number(l.sales_order_id) : null, q, l.invoice_no); continue; }
     const take = Math.min(q, Math.max(j.qty - j.got, 0));
     if (take > 0) { j.got += take; j.invoices.add(l.invoice_no); }
@@ -124,7 +149,7 @@ async function loadRows(req, { allReps = false } = {}) {
             so.id AS sales_order_id, so.sales_order_no, so.date_created AS so_date, ns.nsso_no, ns.type AS nsso_type,
             COALESCE(so.customer_id, ns.customer_id) AS customer_id, c.name AS customer_name,
             CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name, sd.name AS department_name,
-            CASE WHEN jo.production_stage = 'completed' THEN jo.quantity ELSE COALESCE(jo.quantity_inspected, 0) END AS completed_qty
+            LEAST(jo.quantity, GREATEST(COALESCE(jo.quantity_inspected, 0), COALESCE(jo.quantity_delivered, 0))) AS completed_qty
        FROM job_orders jo
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
        LEFT JOIN non_standard_sales_orders ns ON ns.id = jo.nsso_id
