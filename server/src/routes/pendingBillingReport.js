@@ -32,6 +32,8 @@ const ROUTE = '/reports/pending-billing';
 // An OPEN Delivery Ticket bills too (2026-10-09): DT-6339 billed SO-71070's nine completed JOs and they
 // still read pending. Only open ones -- a converted DT's billing is already on its invoice, and a
 // void one bills nothing. Their lines name no JO, so they are shared out the same way.
+// A CONVERTED one that became no invoice bills too (2026-10-28: SO-55784, a 0.00 sponsorship billed on
+// DT-4248 and converted without an invoice); db/backfill-converted-dt-lines.js brings in its lines.
 async function invoicedByJobOrder(jos) {
   const joIds = jos.map((j) => j.id);
   const soIds = [...new Set(jos.map((j) => j.sales_order_id).filter(Boolean))];
@@ -46,7 +48,11 @@ async function invoicedByJobOrder(jos) {
        UNION ALL
        SELECT l.job_order_id, l.quantity, d.dt_no, d.sales_order_id
          FROM delivery_ticket_lines l JOIN delivery_tickets d ON d.id = l.delivery_ticket_id
-        WHERE d.status = 'open' AND (l.job_order_id IN (?) OR d.sales_order_id IN (?))`,
+        WHERE (d.status = 'open'
+               -- A converted ticket that became no invoice (a 0.00 sponsorship, 2026-10-28) bills by itself.
+               OR (d.status = 'converted' AND NOT EXISTS (
+                    SELECT 1 FROM sales_invoices x WHERE x.delivery_ticket_id = d.id AND x.status <> 'cancelled')))
+          AND (l.job_order_id IN (?) OR d.sales_order_id IN (?))`,
       [joIds, soIds.concat(0), joIds, soIds.concat(0)]),
   ]);
   const jo = new Map();

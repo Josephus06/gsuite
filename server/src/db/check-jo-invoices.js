@@ -8,6 +8,9 @@
 //              the JO read as never billed
 //              -> node src/db/relink-invoice-lines-from-source.js --invoice=INV-1   (then --apply)
 //   CANCELLED  the invoice is in T1S but cancelled there, while live in the source
+//   DT LINES   billed by a delivery ticket the source CONVERTED into no invoice (a 0.00 sponsorship),
+//              whose lines T1S never took in
+//              -> node src/db/backfill-converted-dt-lines.js   (then --apply)
 //
 // READ-ONLY, here and against the source. It prints the commands to run for what it finds.
 //
@@ -35,7 +38,7 @@ async function api(t, ep, payload) {
   console.log(`DB ${process.env.DB_NAME} on ${process.env.DB_HOST} -- READ ONLY. ${JOS.length} job order(s).\n`);
   const t = await L.login();
   const soInvoices = new Map(); // source SO number -> [{ no, status, lines }]
-  const missing = new Set(); const unlinked = new Set();
+  const missing = new Set(); const unlinked = new Set(); const dtLinesMissing = new Set();
   const tally = { ok: 0, missing: 0, unlinked: 0, cancelled: 0, notInvoicedInSource: 0, joNotInT1s: 0, soNotInSource: 0 };
 
   for (const joNo of JOS) {
@@ -64,6 +67,11 @@ async function api(t, ep, payload) {
           if (L.isVoidOrCancelled(dt.Status_TransH)) continue;
           if (/CONVERT/i.test(dt.Status_TransH || '')) {
             const cands = L.listRows(await api(t, 'get_invoices', { searchKey: dt.UserPK_TransH, limit: 20, offset: 0 })).filter((iv) => iv.sl_pk === dt.UserPK_TransH);
+            if (!cands.length) {
+              // Converted into no invoice (a 0.00 sponsorship ticket): the ticket itself is the billing.
+              const det = await api(t, 'get_invoice', { pk: dt.SysPK_TransH });
+              list.push({ no: dt.UserPK_TransH, convertedDt: true, status: dt.Status_TransH, void: false, lines: det?.data?.[1] || [] });
+            }
             for (const c of cands) {
               if (list.some((x) => x.no === c.invc_pk)) continue;
               const inv = await api(t, 'get_invoice', { pk: c.SysPK_TransH });
@@ -91,6 +99,14 @@ async function api(t, ep, payload) {
 
     for (const src of billing) {
       const qty = src.lines.filter((l) => String(l.UserPK_TransH || '').trim().toUpperCase() === joNo).reduce((n, l) => n + Number(l.Qty_LdgrInvty || 0), 0);
+      if (src.convertedDt) {
+        const [[dtLine]] = await pool.query(
+          `SELECT COUNT(*) AS n FROM delivery_ticket_lines l JOIN delivery_tickets d ON d.id = l.delivery_ticket_id
+            WHERE d.dt_no = ? AND l.job_order_id = ?`, [src.no, jo.id]);
+        if (dtLine.n) { out.push(`${src.no} (converted, no invoice) ok`); tally.ok += 1; }
+        else { out.push(`${src.no} (qty ${qty}) converted with no invoice -- its lines are not in T1S`); dtLinesMissing.add(src.no); tally.dtLinesMissing = (tally.dtLinesMissing || 0) + 1; }
+        continue;
+      }
       const [[mine]] = await pool.query('SELECT id, status, sales_order_id FROM sales_invoices WHERE invoice_no = ?', [src.no]);
       if (!mine) { out.push(`${src.no} (qty ${qty}) MISSING from T1S`); missing.add(src.no); tally.missing += 1; continue; }
       if (mine.status === 'cancelled') { out.push(`${src.no} CANCELLED in T1S, live in the source (${src.status})`); tally.cancelled += 1; continue; }
@@ -103,6 +119,9 @@ async function api(t, ep, payload) {
 
   console.log(`\nSummary: ${JSON.stringify(tally)}`);
   if (missing.size) console.log(`\nMissing invoices -- import them (dry run first):\n  node src/db/import-invoices-by-number.js ${[...missing].join(',')} --dry-run`);
+  if (dtLinesMissing.size) {
+    console.log(`\nConverted delivery tickets that became no invoice, missing their lines -- bring them in (dry run first):\n  node src/db/backfill-converted-dt-lines.js${dtLinesMissing.size === 1 ? ` --only=${[...dtLinesMissing][0]}` : ''}`);
+  }
   if (unlinked.size) {
     console.log('\nInvoices whose lines are not linked to the JO -- preview each, then add --apply:');
     for (const n of unlinked) console.log(`  node src/db/relink-invoice-lines-from-source.js --invoice=${n}`);
