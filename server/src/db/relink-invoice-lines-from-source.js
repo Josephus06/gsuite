@@ -22,6 +22,7 @@
 //   node src/db/relink-invoice-lines-from-source.js                     # preview, suspect 2026 invoices
 //   node src/db/relink-invoice-lines-from-source.js --invoice=INV-81375 # preview one
 //   node src/db/relink-invoice-lines-from-source.js --apply             # backs up to /root/match2026/
+//   node src/db/relink-invoice-lines-from-source.js --from=2024-01-01   # earlier years too (default 2026-01-01)
 // Droplet and office replicate: run on ONE box (the droplet).
 require('dotenv').config();
 const fs = require('fs');
@@ -30,6 +31,9 @@ const L = require('./lib/liveWindow');
 
 const APPLY = process.argv.includes('--apply');
 const ONE = (process.argv.find((a) => a.startsWith('--invoice=')) || '').split('=')[1] || null;
+// --from=2024-01-01 (2026-10-28): earlier years too -- INV-52203 (2024) billed JO-44614-4-5 but named
+// JO-44614-1-5. Default: 2026 on.
+const FROM = (process.argv.find((a) => a.startsWith('--from=')) || '').split('=')[1] || '2026-01-01';
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const norm = (s) => String(s || '').trim().replace(/\s+/g, ' ').toUpperCase();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -70,10 +74,10 @@ function matchLines(mine, src) {
          JOIN sales_invoice_lines sil ON sil.sales_invoice_id = si.id
          LEFT JOIN job_orders jo ON jo.id = sil.job_order_id
          LEFT JOIN sales_orders so ON so.id = si.sales_order_id
-        WHERE si.date_created >= '2026-01-01' AND si.status <> 'cancelled'
+        WHERE si.date_created >= ? AND si.status <> 'cancelled'
           AND (sil.job_order_id IS NULL OR jo.id IS NULL OR (si.sales_order_id IS NOT NULL AND so.id IS NULL)
                OR TRIM(UPPER(jo.description)) <> TRIM(UPPER(sil.description)))
-        ORDER BY si.id`);
+        ORDER BY si.id`, [FROM]);
   console.log(`Invoices to check: ${targets.length}`);
 
   const t = await L.login();
