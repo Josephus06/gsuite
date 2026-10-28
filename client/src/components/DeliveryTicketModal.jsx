@@ -88,6 +88,9 @@ export default function DeliveryTicketModal({ salesOrderId, ticket = null, onClo
           first_name: d.sales_rep_name?.split(' ')[0],
           last_name: d.sales_rep_name?.split(' ').slice(1).join(' '),
         });
+        // A new ticket's Department is the sales rep's own (2026-10-28).
+        const rep = empRes.data.find((e) => Number(e.id) === Number(d.sales_rep_id));
+        if (rep?.department_id) setDepartment({ id: rep.department_id, name: rep.department_name });
       }
       if (d.office_location_id) setOfficeLocation({ id: d.office_location_id, location_name: d.office_location_name });
       setDateDue(addDays(new Date().toISOString().slice(0, 10), 30));
@@ -230,7 +233,10 @@ export default function DeliveryTicketModal({ salesOrderId, ticket = null, onClo
                   getLabel={(e) => `${e.first_name} ${e.last_name}`}
                   columns={[{ key: 'name', label: 'Name', render: (e) => `${e.first_name} ${e.last_name}` }]}
                   searchKeys={['first_name', 'last_name']}
-                  onSelect={setSalesRep}
+                  onSelect={(e) => {
+                    setSalesRep(e);
+                    if (e?.department_id) setDepartment({ id: e.department_id, name: e.department_name });
+                  }}
                 />
               </div>
               <div className="field">
