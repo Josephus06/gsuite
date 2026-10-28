@@ -28,7 +28,7 @@ const pool = require('../db');
       project_name VARCHAR(500) NULL,
       location VARCHAR(500) NULL,
       contract_package VARCHAR(1000) NULL,
-      status VARCHAR(30) NOT NULL DEFAULT 'pending_approval',
+      status VARCHAR(30) NOT NULL DEFAULT 'issued',
       approved_at DATETIME NULL,
       approved_by_user_id BIGINT NULL,
       voided_at DATETIME NULL,

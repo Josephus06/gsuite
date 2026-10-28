@@ -22,15 +22,10 @@ function Sign({ label, name, title, date }) {
   return (
     <div className="cc-sign">
       {label !== '' && <div className="cc-sign-label">{label}</div>}
+      {/* The name sits on the line, the title and date under it. */}
+      <div className="cc-sign-name">{date ? ' ' : (name || ' ')}</div>
       <div className="cc-sign-line" />
-      {date ? (
-        <div className="cc-sign-sub">Month / Day / Year</div>
-      ) : (
-        <>
-          <div className="cc-sign-name">{name || ' '}</div>
-          <div className="cc-sign-sub">{title ? `${title} · ` : ''}Date: ________</div>
-        </>
-      )}
+      <div className="cc-sign-sub">{date ? 'Month / Day / Year' : `${title ? `${title} · ` : ''}Date: ________`}</div>
     </div>
   );
 }
@@ -92,8 +87,8 @@ export default function CompletionCertificatePrint() {
         .cc-body p { margin: 0 0 2mm; }
         .cc-hi { color: #2e3192; font-weight: 600; }
         .cc-signs { margin-top: auto; display: grid; grid-template-columns: repeat(4, 1fr); gap: 7mm; padding-top: 3mm; }
-        .cc-sign-label { font-size: 7pt; letter-spacing: 1px; color: #64748b; text-transform: uppercase; height: 9mm; }
-        .cc-sign-line { border-top: 1px solid #6b7280; margin-bottom: 1.2mm; }
+        .cc-sign-label { font-size: 7pt; letter-spacing: 1px; color: #64748b; text-transform: uppercase; height: 8mm; }
+        .cc-sign-line { border-top: 1px solid #6b7280; margin: .6mm 0 1.2mm; }
         .cc-sign-name { font-weight: 600; font-size: 9pt; }
         .cc-sign-sub { font-size: 7.6pt; color: #64748b; }
         .cc-stack + .cc-stack { margin-top: 7mm; }

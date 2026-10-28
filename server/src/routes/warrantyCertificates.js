@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
 
 const router = express.Router();
 // Warranty Certificate (WC-##): raised against a BILLED Sales Order. Pulls the SO's job orders in as
@@ -174,7 +174,20 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
-router.put('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
+// Approved by a General Manager (2026-10-28) -- one on the General Managers list or with that
+// account type -- or a System Admin.
+async function mayApprove(userId) {
+  if (await isSystemAdmin(userId)) return true;
+  const [[row]] = await pool.query(
+    `SELECT 1 AS x FROM users u WHERE u.id = ? AND u.is_active = 1
+        AND (u.account_type = 'General Manager' OR u.id IN (SELECT user_id FROM general_managers))`, [userId]);
+  return !!row;
+}
+
+router.put('/:id/approve', requireAuth, async (req, res, next) => {
+  if (!(await mayApprove(req.user.id).catch(() => false))) {
+    return res.status(403).json({ error: 'Only a General Manager can approve a Warranty Certificate.' });
+  }
   const conn = await pool.getConnection();
   try {
     const [[wc]] = await conn.query('SELECT status FROM warranty_certificates WHERE id = ?', [req.params.id]);

@@ -6,7 +6,8 @@ const router = express.Router();
 // Certificate of Completion (COC-##, 2026-10-28), as the source's completion_certificate_crud: raised
 // against a BILLED Sales Order -- PO #, Customer, Submitted By, Project Name, Location, Contract
 // Package -- signed by the customer's own contact persons, a list of Approvers and one of Certifiers.
-// Pending Approval -> Approved (only then Printed) -> Void, as the Warranty Certificate.
+// No approval (2026-10-28: only the Warranty Certificate goes to the General Manager): it is Issued
+// when saved, prints straight away, and can be edited until it is Voided.
 const ROUTE = '/completion-certificates';
 const ROLES = ['approver', 'certifier'];
 
@@ -89,7 +90,10 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const { search, status } = req.query;
     const where = [];
     const params = [];
-    if (status) { where.push('cc.status = ?'); params.push(status); }
+    // Issued is everything not voided -- including certificates saved as pending_approval before
+    // approval was dropped.
+    if (status === 'issued') where.push("cc.status <> 'voided'");
+    else if (status) { where.push('cc.status = ?'); params.push(status); }
     if (search) {
       where.push('(cc.coc_no LIKE ? OR c.name LIKE ? OR so.sales_order_no LIKE ? OR cc.project_name LIKE ? OR cc.po_no LIKE ?)');
       const q = `%${search}%`;
@@ -170,7 +174,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       `INSERT INTO completion_certificates
          (coc_no, sales_order_id, customer_id, date_created, po_no, submitted_by_employee_id, submitted_by_name,
           project_name, location, contract_package, status, created_by_user_id)
-       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_approval', ?)`,
+       VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', ?)`,
       [b.sales_order_id, so.customer_id, ...headerValues(b), req.user.id]);
     const cocId = r.insertId;
     const cocNo = `COC-${cocId}`;
@@ -188,7 +192,6 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     const [[cc]] = await conn.query('SELECT status FROM completion_certificates WHERE id = ?', [req.params.id]);
     if (!cc) return res.status(404).json({ error: 'Not found' });
     if (cc.status === 'voided') return res.status(409).json({ error: 'A voided certificate cannot be edited.' });
-    if (cc.status === 'approved') return res.status(409).json({ error: 'An approved certificate cannot be edited.' });
     const b = req.body || {};
     await conn.beginTransaction();
     await conn.query(
@@ -197,20 +200,6 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       [...headerValues(b), req.params.id]);
     await writeSigners(conn, req.params.id, b);
     await logAudit(conn, { cocId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'certificate' });
-    await conn.commit();
-    res.json({ ok: true });
-  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
-});
-
-router.put('/:id/approve', requireAuth, requirePermission(ROUTE, 'can_approve'), async (req, res, next) => {
-  const conn = await pool.getConnection();
-  try {
-    const [[cc]] = await conn.query('SELECT status FROM completion_certificates WHERE id = ?', [req.params.id]);
-    if (!cc) return res.status(404).json({ error: 'Not found' });
-    if (cc.status !== 'pending_approval') return res.status(409).json({ error: `This certificate is already ${cc.status}.` });
-    await conn.beginTransaction();
-    await conn.query("UPDATE completion_certificates SET status = 'approved', approved_at = NOW(), approved_by_user_id = ? WHERE id = ?", [req.user.id, req.params.id]);
-    await logAudit(conn, { cocId: req.params.id, userId: req.user.id, eventType: 'Approved', fieldName: 'status', oldValue: cc.status, newValue: 'approved' });
     await conn.commit();
     res.json({ ok: true });
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }

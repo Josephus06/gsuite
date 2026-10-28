@@ -11,7 +11,8 @@ import SearchInput from '../components/SearchInput';
 
 // Certificate of Completion list (2026-10-28) -- same shape as the Warranty Certificate list.
 const PAGE_SIZE = 15;
-const STATUS_LABELS = { pending_approval: 'Pending Approval', approved: 'Approved', voided: 'Voided' };
+// No approval: anything not voided is Issued (older pending/approved ones included).
+const STATUS_LABELS = { issued: 'Issued', pending_approval: 'Issued', approved: 'Issued', voided: 'Voided' };
 function formatDate(v) { return v ? displayDate(v) : ''; }
 
 export default function CompletionCertificates() {
@@ -56,8 +57,7 @@ export default function CompletionCertificates() {
             <label>Status</label>
             <select value={status} onChange={(e) => setStatus(e.target.value)}>
               <option value="">--ALL--</option>
-              <option value="pending_approval">Pending Approval</option>
-              <option value="approved">Approved</option>
+              <option value="issued">Issued</option>
               <option value="voided">Voided</option>
             </select>
           </div>

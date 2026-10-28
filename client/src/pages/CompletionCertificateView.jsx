@@ -9,8 +9,8 @@ import { CustomerLink } from '../components/PartyLink';
 import ButtonMenu from '../components/ButtonMenu';
 
 // Certificate of Completion (2026-10-28): the header, its Approvers and Certifiers, and the
-// approve / print / void actions -- as the Warranty Certificate view.
-const STATUS_LABELS = { pending_approval: 'Pending', approved: 'Approved', voided: 'Voided' };
+// print / void actions. No approval -- only the Warranty Certificate goes to the General Manager.
+const STATUS_LABELS = { issued: 'Issued', pending_approval: 'Issued', approved: 'Issued', voided: 'Voided' };
 function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
 export default function CompletionCertificateView() {
@@ -27,11 +27,9 @@ export default function CompletionCertificateView() {
   useEffect(() => { if (tab === 'system') api.get(`/completion-certificates/${id}/audit-logs`).then(({ data }) => setAuditLogs(data)); }, [tab, id]);
 
   async function act(fn) { setBusy(true); setError(''); try { await fn(); await load(); } catch (e) { setError(e.response?.data?.error || 'Action failed'); } finally { setBusy(false); } }
-  const handleApprove = () => { if (confirm('Approve this Certificate of Completion?')) act(() => api.put(`/completion-certificates/${id}/approve`)); };
   const handleVoid = () => { if (confirm('Void this Certificate of Completion?')) act(() => api.put(`/completion-certificates/${id}/void`)); };
 
   if (!cc) return <LoadingSpinner />;
-  const isApproved = cc.status === 'approved';
   const isVoided = cc.status === 'voided';
   const signers = tab === 'certifiers' ? cc.certifiers : cc.approvers;
 
@@ -41,10 +39,9 @@ export default function CompletionCertificateView() {
         <div style={{ fontWeight: 600 }}>CERTIFICATE OF COMPLETION <span className="muted">{STATUS_LABELS[cc.status] || cc.status}</span></div>
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={'/completion-certificates'}>Back to Lists</Link>
-          {can('/completion-certificates', 'can_edit') && !isVoided && !isApproved && <Link className="btn btn-sm btn-primary" to={`/completion-certificates/${id}/edit`}>Edit</Link>}
-          {can('/completion-certificates', 'can_approve') && cc.status === 'pending_approval' && <button className="btn btn-sm btn-primary" disabled={busy} onClick={handleApprove}>Approve</button>}
-          {/* Printed once approved, as the Warranty Certificate -- either of the source's two certificates. */}
-          {isApproved && (
+          {can('/completion-certificates', 'can_edit') && !isVoided && <Link className="btn btn-sm btn-primary" to={`/completion-certificates/${id}/edit`}>Edit</Link>}
+          {/* Either of the source's two certificates; a voided one prints marked VOID. */}
+          {(
             <ButtonMenu
               label="Print"
               options={[
@@ -73,7 +70,6 @@ export default function CompletionCertificateView() {
             <div>Project Name : <span className="hi">{cc.project_name}</span></div>
             <div>Location : <span className="hi">{cc.location}</span></div>
             <div>Contract Package : <span className="hi">{cc.contract_package}</span></div>
-            {isApproved && <div>Approved : <span className="hi">{formatDate(cc.approved_at)}{cc.approved_by_name ? ` by ${cc.approved_by_name}` : ''}</span></div>}
           </div>
         </div>
       </div>
