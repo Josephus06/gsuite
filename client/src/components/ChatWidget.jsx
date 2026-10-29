@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
-import { chime, speak } from '../utils/notificationSound';
-import { afterWakePhrase, listenOnce, voiceSupported, voiceUnavailableReason, wakeWordListener } from '../utils/voiceInput';
+import { speak } from '../utils/notificationSound';
+import { listenOnce, voiceSupported, voiceUnavailableReason } from '../utils/voiceInput';
 import { hiddenPollGate } from '../utils/backgroundPoll';
 
 // Floating chat widget, mounted once in Layout.jsx so it persists across navigation.
@@ -15,8 +15,8 @@ import { hiddenPollGate } from '../utils/backgroundPoll';
 // the setInterval pattern already used in client/src/pages/AssignedJobOrderRun.jsx.
 const GREETING = "Hi! Ask me things like \"how many estimates today\" or \"my weighted sales this month\" — or type \"create ticket\" to reach a department.";
 const POLL_MS = 6000;
-// What the assistant says back when it is woken by name with no question attached.
-const ANSWERING = 'How can I assist you?';
+// The "Hey Jot" wake word was removed (2026-10-29): it held the microphone open in every tab. The
+// 🎤 button -- ask one question by voice -- stays.
 
 // Phrases that mean "stop talking to the department, talk to the assistant again". Matched
 // only as a whole message, deliberately: a genuine ticket reply that happens to contain
@@ -31,12 +31,6 @@ const POS_KEY = 'chatWidgetPos';
 // The mascot tucked away into a small corner bubble (asked 2026-10-07: it sat on top of list
 // buttons). Remembered per browser; the chat still opens from the bubble.
 const TUCK_KEY = 'chatWidget.tucked';
-// Whether the wake word is armed. OFF unless someone turns it on: arming it holds the microphone
-// open for the whole session and streams what it hears to the transcriber, which is not something
-// to switch on for a person without asking (see utils/voiceInput.js).
-const WAKE_KEY = 'chatWidget.wakeWord';
-// Whether the "you can talk to this" nudge has already been shown and dealt with.
-const HINT_KEY = 'chatWidget.voiceHint';
 const DEFAULT_POS = { right: 20, bottom: 20 };
 const DRAG_THRESHOLD = 4; // px of movement before a press counts as a drag rather than a click
 
@@ -107,18 +101,7 @@ export default function ChatWidget() {
   // that lights up and shows nothing for three seconds reads as broken.
   const [partial, setPartial] = useState('');
   const [voiceNote, setVoiceNote] = useState('');
-  // The one-time nudge that the wake word exists at all.
-  const [hintSeen, setHintSeen] = useState(() => {
-    try { return localStorage.getItem(HINT_KEY) === 'seen'; } catch { return false; }
-  });
-  const [wakeOn, setWakeOn] = useState(() => {
-    try { return voiceSupported() && localStorage.getItem(WAKE_KEY) === 'on'; } catch { return false; }
-  });
-  const wakeRef = useRef(null);
   const cancelListenRef = useRef(null);
-  // Holds the current handler so the wake listener -- started once, kept alive for the session --
-  // always calls the latest one instead of the closure it was created with.
-  const onWakeRef = useRef(null);
 
   // Draggable launcher. Position is stored as a distance from the RIGHT/BOTTOM edges so the
   // widget keeps its corner-relative spot when the window is resized -- the same reason the
@@ -208,33 +191,9 @@ export default function ChatWidget() {
       || departments.find((d) => d.name.toLowerCase().includes(q) || q.includes(d.name.toLowerCase()));
   }
 
-  // Reads a reply out and holds the wake listener while it does. Without the hold the assistant
-  // transcribes its own answer and wakes itself up on any word that sounds like the wake phrase.
-  function sayAloud(text, onDone) {
-    wakeRef.current?.pause();
+  // Reads a reply out -- the answer to a question asked with the 🎤 button.
+  function sayAloud(text) {
     speak(text);
-    let settled = false;
-    let ticks = 0;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      clearInterval(poll);
-      clearTimeout(cap);
-      // With something to do next -- start listening for the question -- the wake listener stays
-      // held, because that next thing needs the microphone itself.
-      if (onDone) onDone(); else wakeRef.current?.resume();
-    };
-    const poll = setInterval(() => {
-      // The first ticks are skipped on purpose: speak() only QUEUES an utterance, so for a moment
-      // afterwards the synthesiser reports neither speaking nor pending. Believing it that early
-      // means the greeting and the microphone start at the same time, and the assistant hears
-      // itself asking how it can help.
-      if ((ticks += 1) < 3) return;
-      const s = window.speechSynthesis;
-      if (!s || (!s.speaking && !s.pending)) finish();
-    }, 250);
-    // A stalled synthesiser must not leave the wake word deaf for the rest of the session.
-    const cap = setTimeout(finish, 60000);
   }
 
   async function submit(text, { spoken = false } = {}) {
@@ -314,16 +273,13 @@ export default function ChatWidget() {
 
   // ---------------------------------------------------------------- listening
 
-  // One question, then stop. The wake listener is held for the duration: Chrome allows a single
-  // live recogniser per page, so leaving it running would mean the two take turns killing each
-  // other and neither hears anything.
+  // One question, then stop.
   function startListening() {
     if (!voiceOk) { setVoiceNote(voiceUnavailableReason()); return; }
     if (listening) { cancelListenRef.current?.(); return; }
     setVoiceNote('');
     setPartial('');
     setListening(true);
-    wakeRef.current?.pause();
     cancelListenRef.current = listenOnce({
       onPartial: setPartial,
       onResult: (text) => { setPartial(''); submit(text, { spoken: true }); },
@@ -333,82 +289,12 @@ export default function ChatWidget() {
         setPartial('');
         cancelListenRef.current = null;
         if (!heard) setVoiceNote('I did not catch that.');
-        wakeRef.current?.resume();
       },
     });
   }
-
-  // The wake phrase was heard. Whatever followed it in the same breath is the question --
-  // "hey Jot, how many estimates today" should not need a second prompt.
-  function handleWake(said) {
-    const question = afterWakePhrase(said);
-    setOpen(true);
-    chime();
-    // submit() posts the user's side itself -- pushing it here as well showed every spoken
-    // question twice.
-    if (question) {
-      submit(question, { spoken: true });
-      return;
-    }
-    // Nothing but the name: answer the way a person would -- say you are listening, and then
-    // actually listen. The microphone only opens once the greeting has finished playing, or it
-    // would record the greeting as the question.
-    pushLocal('bot', ANSWERING);
-    sayAloud(ANSWERING, startListening);
-  }
-
-  // Kept current on every render. The wake listener is started once and lives for the session,
-  // so without this it would keep calling the handler from the render that created it -- and
-  // answer every question against the conversation as it stood then.
-  useEffect(() => { onWakeRef.current = handleWake; });
-
-  useEffect(() => {
-    if (!wakeOn) return undefined;
-    const listener = wakeWordListener({
-      onWake: (said, isFinal) => {
-        // Acted on only once the transcriber has settled: an interim result changes under you,
-        // and firing on it opens the chat two or three times for one "hey Jot".
-        if (isFinal) onWakeRef.current?.(said);
-      },
-      // A microphone that is missing or blocked will be missing or blocked on the next page
-      // load too, so the preference is written off as well -- otherwise it re-arms on every
-      // visit and greets the user with the same failure.
-      onError: (msg) => {
-        setVoiceNote(msg);
-        setWakeOn(false);
-        try { localStorage.setItem(WAKE_KEY, 'off'); } catch { /* this session only */ }
-      },
-    });
-    wakeRef.current = listener;
-    // Only the tab in front listens (2026-10-29: T1S lagged with many tabs open). Chrome gives the
-    // microphone to one recogniser at a time, so every open tab's listener kept aborting the
-    // others' and restarting itself -- a loop across all the tabs, each restart a new connection to
-    // the speech service. A hidden tab pauses its listener and picks it up again when shown.
-    const onVisibility = () => {
-      if (document.visibilityState === 'hidden') listener.pause?.();
-      else listener.resume?.();
-    };
-    if (document.visibilityState === 'hidden') listener.pause?.();
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => { document.removeEventListener('visibilitychange', onVisibility); listener.stop(); wakeRef.current = null; };
-  }, [wakeOn]);
 
   // Leaving the page with the microphone live leaves the browser's recording dot on.
-  useEffect(() => () => { cancelListenRef.current?.(); wakeRef.current?.stop(); }, []);
-
-  function dismissHint() {
-    setHintSeen(true);
-    try { localStorage.setItem(HINT_KEY, 'seen'); } catch { /* it will offer again next session */ }
-  }
-
-  function toggleWake() {
-    dismissHint();
-    if (!voiceOk) { setVoiceNote(voiceUnavailableReason()); return; }
-    const next = !wakeOn;
-    setWakeOn(next);
-    try { localStorage.setItem(WAKE_KEY, next ? 'on' : 'off'); } catch { /* this session only */ }
-    setVoiceNote(next ? 'Listening for "Tetel". Say it any time, even with this closed.' : '');
-  }
+  useEffect(() => () => { cancelListenRef.current?.(); }, []);
 
   const anchor = anchorFor(pos, open);
 
@@ -438,9 +324,6 @@ export default function ChatWidget() {
         >
           💬
         </button>
-        {wakeOn && (
-          <span title='Listening for "Tetel"' style={{ position: 'absolute', top: -4, right: -4, width: 12, height: 12, borderRadius: '50%', background: 'var(--danger)', border: '2px solid #fff' }} />
-        )}
       </div>
     );
   }
@@ -484,21 +367,6 @@ export default function ChatWidget() {
               {ticket && (
                 <Link to={`/tickets/${ticket.id}`} title="Open full ticket" style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 13 }}>↗</Link>
               )}
-              {/* Arming the wake word holds the microphone open for the session, so it is a
-                  visible switch rather than a setting buried somewhere -- anyone should be able
-                  to see at a glance whether this machine is listening. */}
-              <button
-                type="button"
-                onClick={toggleWake}
-                title={wakeOn ? 'Listening for "Tetel" — click to stop' : 'Listen for "Tetel"'}
-                style={{
-                  background: wakeOn ? 'rgba(255,255,255,0.32)' : 'rgba(255,255,255,0.18)',
-                  border: 'none', color: '#fff', cursor: 'pointer', fontSize: 11,
-                  borderRadius: 10, padding: '2px 8px', opacity: voiceOk ? 1 : 0.5,
-                }}
-              >
-                {wakeOn ? '👂 On' : '👂'}
-              </button>
               {/* Tucked: the mascot is a corner bubble; this brings the figure back. */}
               {tucked && (
                 <button
@@ -532,20 +400,6 @@ export default function ChatWidget() {
           </div>
           {/* What the microphone is doing, in words. A mic button that lights up and says nothing
               is indistinguishable from one that is broken. */}
-          {/* Nobody guesses that a small ear icon in a header arms a wake word. Said once, in the
-              panel, with the switch right there -- and never again after it has been turned on or
-              waved away. */}
-          {voiceOk && !wakeOn && !hintSeen && (
-            <div style={{
-              padding: '8px 12px', fontSize: 12, borderTop: '1px solid var(--border)',
-              background: 'var(--panel-2, #f3f4f6)', display: 'flex', alignItems: 'center', gap: 8,
-            }}
-            >
-              <span style={{ flex: 1 }}>Prefer to talk? Turn on listening and just say <strong>“Tetel”</strong>.</span>
-              <button type="button" className="btn btn-sm btn-primary" onClick={toggleWake}>Turn on</button>
-              <button type="button" className="link-btn" onClick={dismissHint} title="Don't show this again">✕</button>
-            </div>
-          )}
           {(listening || partial || voiceNote) && (
             <div style={{
               padding: '6px 12px', fontSize: 12, borderTop: '1px solid var(--border)',
@@ -632,21 +486,6 @@ export default function ChatWidget() {
         >
           –
         </button>
-      )}
-      {/* The microphone is open even with the panel closed, so it says so on the launcher. A
-          listening machine that gives no sign of it is the kind of thing people find out about
-          later and rightly object to. */}
-      {wakeOn && !open && (
-        <div
-          title='Listening for "Tetel"'
-          style={{
-            position: 'absolute', top: 4, right: 4, display: 'flex', alignItems: 'center', gap: 4,
-            background: 'var(--danger)', color: '#fff', borderRadius: 10, padding: '1px 7px',
-            fontSize: 10, fontWeight: 700, pointerEvents: 'none', boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
-          }}
-        >
-          🎤 ON
-        </div>
       )}
     </div>
   );
