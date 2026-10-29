@@ -12,6 +12,7 @@ const {
 const { leaveRoute } = require('../lib/leaveRoute');
 const { businessTripApprovers } = require('../lib/businessTripRoute');
 const { notifyFormStatus } = require('../lib/approvalNotifications');
+const { checkOtDeclines } = require('../lib/otDeclineIr');
 
 const router = express.Router();
 
@@ -2127,6 +2128,8 @@ router.post('/:id/ot-respond', requireAuth, async (req, res, next) => {
     await logFormAudit(pool, doc.id, req.user.id, 'Status Change', 'Status', 'Approved', STATUS_LABEL[status]);
     if (remark) await logFormAudit(pool, doc.id, req.user.id, 'Updated', 'Response', null, remark);
     notifyFormStatus(doc.id, req.user.id);
+    // An artist's third decline in a row this month files an Incident Report (lib/otDeclineIr.js).
+    if (!accept) await checkOtDeclines(doc.id, req.user.id);
     return res.json({ ok: true, status });
   } catch (err) { return next(err); }
 });
