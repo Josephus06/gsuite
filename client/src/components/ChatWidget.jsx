@@ -4,6 +4,7 @@ import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import { chime, speak } from '../utils/notificationSound';
 import { afterWakePhrase, listenOnce, voiceSupported, voiceUnavailableReason, wakeWordListener } from '../utils/voiceInput';
+import { hiddenPollGate } from '../utils/backgroundPoll';
 
 // Floating chat widget, mounted once in Layout.jsx so it persists across navigation.
 // Default mode is a small data-Q&A assistant (server/src/lib/chatbotIntents.js);
@@ -188,7 +189,8 @@ export default function ChatWidget() {
     if (!open || !ticket || mode !== 'ticket_thread') return undefined;
     const poll = () => api.get(`/tickets/${ticket.id}`).then(({ data }) => setTicketMessages(data.messages)).catch(() => {});
     poll();
-    const t = setInterval(poll, POLL_MS);
+    const gate = hiddenPollGate(); // a hidden tab checks once a minute (2026-10-29)
+    const t = setInterval(() => { if (gate()) poll(); }, POLL_MS);
     return () => clearInterval(t);
   }, [open, ticket, mode]);
 
@@ -378,7 +380,17 @@ export default function ChatWidget() {
       },
     });
     wakeRef.current = listener;
-    return () => { listener.stop(); wakeRef.current = null; };
+    // Only the tab in front listens (2026-10-29: T1S lagged with many tabs open). Chrome gives the
+    // microphone to one recogniser at a time, so every open tab's listener kept aborting the
+    // others' and restarting itself -- a loop across all the tabs, each restart a new connection to
+    // the speech service. A hidden tab pauses its listener and picks it up again when shown.
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') listener.pause?.();
+      else listener.resume?.();
+    };
+    if (document.visibilityState === 'hidden') listener.pause?.();
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => { document.removeEventListener('visibilitychange', onVisibility); listener.stop(); wakeRef.current = null; };
   }, [wakeOn]);
 
   // Leaving the page with the microphone live leaves the browser's recording dot on.

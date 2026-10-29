@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { Sparkline } from './charts';
+import { hiddenPollGate } from '../utils/backgroundPoll';
 
 // The System Admin's dashboard panel: is the server this ERP runs on healthy right now?
 // A compact view of Admin > System Health (same endpoint, server/src/lib/systemHealth.js) -- CPU,
@@ -44,7 +45,8 @@ export default function SystemHealthCard({ navigate }) {
       .then(({ data: d }) => { if (alive) { setData(d); setError(''); } })
       .catch((err) => { if (alive) setError(err.response?.data?.error || 'System health is unavailable.'); });
     load();
-    const timer = setInterval(load, 30000);
+    const gate = hiddenPollGate(); // a hidden tab checks once a minute (2026-10-29)
+    const timer = setInterval(() => { if (gate()) load(); }, 30000);
     return () => { alive = false; clearInterval(timer); };
   }, []);
 

@@ -3,6 +3,7 @@ import api from '../api/client';
 import ChatGroupModal from './ChatGroupModal';
 import ChatMessages, { replyTarget } from './chat/ChatMessages';
 import ChatComposer from './chat/ChatComposer';
+import { hiddenPollGate } from '../utils/backgroundPoll';
 
 // One group chat's box in the dock (2026-10-13). Like a one-to-one box, but every message from
 // someone else carries their name, the header opens the group's details (members; the creator
@@ -63,7 +64,8 @@ export default function GroupChatBox({ box, meId, onClose, onToggle, onSent, onO
     const load = () => api.get(`/chat/groups/${box.group.id}/readers`)
       .then(({ data }) => { if (alive && Array.isArray(data)) setReaders(data); }).catch(() => {});
     load();
-    const t = setInterval(load, READERS_MS);
+    const gate = hiddenPollGate(); // a hidden tab checks once a minute (2026-10-29)
+    const t = setInterval(() => { if (gate()) load(); }, READERS_MS);
     return () => { alive = false; clearInterval(t); };
   }, [box.group.id, box.minimized, lastMsg]);
 

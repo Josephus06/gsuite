@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import api from '../api/client';
+import { hiddenPollGate } from '../utils/backgroundPoll';
 
 // Where the driver is, on the itinerary screen.
 //
@@ -112,7 +113,8 @@ export default function DriverMap({ itineraryId, driverName, origin, stops = [] 
   // nothing over asking on the same cadence -- and this page is open on a desk, not a phone.
   useEffect(() => {
     if (!live) return undefined;
-    const t = setInterval(load, 30000);
+    const gate = hiddenPollGate(); // a hidden tab checks once a minute (2026-10-29)
+    const t = setInterval(() => { if (gate()) load(); }, 30000);
     return () => clearInterval(t);
   }, [live, load]);
 
