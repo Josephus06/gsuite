@@ -9,7 +9,9 @@
 //   uninspected built qty left on a build            -> For QI
 //   else all inspected and no open RFQC / RWIP       -> Completed (Invoiced if fully invoiced)
 //   else something inspected                         -> Partially Completed
-// and moved only FORWARD to that, never back. Its Sales Order is then recomputed the way the app
+// and moved only FORWARD to that, never back. Partially Completed JOs are judged too (2026-10-29):
+// JO-63045-1-1 had 178 of 500 built and inspected in T1S while the source read it Completed --
+// after its builds and QIs are re-pulled (import-production-stages.js --only=SO-...) this moves it on. Its Sales Order is then recomputed the way the app
 // does it (lib/salesOrderStatus.js), also forward only.
 //
 //   node src/db/fix-regressed-jo-stages.js                  # preview
@@ -41,7 +43,7 @@ const SO_RANK = ['pending_for_jo', 'jo_in_process', 'pending_delivery', 'partial
        FROM job_orders jo
        JOIN (SELECT job_order_id, SUM(quantity_built - passed_qty - rma_qty) AS uninspected, SUM(rma_qty) AS rma
                FROM assembly_builds WHERE status <> 'cancelled' GROUP BY job_order_id) b ON b.job_order_id = jo.id
-      WHERE jo.status = 'Released' AND jo.production_stage IN ('pending_for_scheduling','for_revision','in_process_with_revision','in_process','for_qi')
+      WHERE jo.status = 'Released' AND jo.production_stage IN ('pending_for_scheduling','for_revision','in_process_with_revision','in_process','for_qi','partially_completed')
         ${ONE ? 'AND jo.job_order_no = ?' : ''}`,
     ONE ? [ONE] : []);
 
