@@ -30,6 +30,9 @@ function addDays(dateStr, days) {
 
 const day = (v) => (v ? String(v).slice(0, 10) : '');
 
+// The invoice's own pick stays selectable, and shown, even when its list did not load.
+const withCurrent = (list, cur) => (cur && !list.some((x) => Number(x.id) === Number(cur.id)) ? [...list, cur] : list);
+
 export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
   // Sales Rep, Office Location and Department come from the order the invoice bills; only a System
   // Admin changes them (asked 2026-10-24) -- one the invoice has none of stays open to fill.
@@ -78,18 +81,24 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // Each list loads on its own: one that is refused (a permission, a timeout) leaves its picker
+  // showing just the invoice's current value, instead of failing the whole edit. The banner names
+  // the lists that did not load.
   useEffect(() => {
+    const failed = [];
+    const load = (url, name) => api.get(url).catch(() => { failed.push(name); return { data: [] }; });
     Promise.all([
-      api.get('/employees'),
-      api.get('/lookups/locations'),
-      api.get('/lookups/departments'),
-      api.get('/lookups/payment-terms'),
-      api.get('/lookups/taxes').catch(() => ({ data: [] })),
+      load('/employees', 'Sales Reps'),
+      load('/lookups/locations', 'Office Locations'),
+      load('/lookups/departments', 'Departments'),
+      load('/lookups/payment-terms', 'Terms'),
+      load('/lookups/taxes', 'Tax Codes'),
     ]).then(([empRes, locRes, deptRes, termRes, taxRes]) => {
       setTaxes((taxRes.data || []).filter((t) => t.is_active !== 0 && t.is_active !== false));
-      setEmployees(empRes.data);
-      setLocations(locRes.data);
-      setDepartments(deptRes.data);
+      setEmployees(empRes.data || []);
+      setLocations(locRes.data || []);
+      setDepartments(deptRes.data || []);
+      if (failed.length) setError(`Could not load: ${failed.join(', ')}. Those keep their current value.`);
       const terms = termRes.data || [];
       setPaymentTerms(terms);
       // Open the picker on the term the invoice already carries. Matched case- and
@@ -99,7 +108,7 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
       const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
       setPaymentTerm(terms.find((t) => norm(t.term_name) === norm(invoice.term)) || null);
       setLoading(false);
-    }).catch(() => { setError('Could not load the pickers.'); setLoading(false); });
+    });
   }, [invoice.term]);
 
   // The same arithmetic the server does, line by line, so the preview cannot say one thing and
@@ -250,7 +259,7 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
             <div className="field">
               <label>Sales Rep</label>
               <EntityPicker
-                label="Sales Rep" items={employees} value={salesRep?.id || ''} disabled={!isAdmin && !!invoice.sales_rep_id}
+                label="Sales Rep" items={withCurrent(employees, salesRep)} value={salesRep?.id || ''} disabled={!isAdmin && !!invoice.sales_rep_id}
                 getLabel={(e) => (e.name ? e.name : `${e.first_name} ${e.last_name}`)}
                 columns={[{ key: 'name', label: 'Name', render: (e) => `${e.first_name} ${e.last_name}` }]}
                 searchKeys={['first_name', 'last_name']}
@@ -261,7 +270,7 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
             <div className="field">
               <label>Office Location</label>
               <EntityPicker
-                label="Office Location" items={locations} value={officeLocation?.id || ''} disabled={!isAdmin && !!invoice.office_location_id}
+                label="Office Location" items={withCurrent(locations, officeLocation)} value={officeLocation?.id || ''} disabled={!isAdmin && !!invoice.office_location_id}
                 getLabel={(l) => l.location_name}
                 columns={[{ key: 'location_name', label: 'Location' }]}
                 searchKeys={['location_name']}
@@ -272,7 +281,7 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
             <div className="field">
               <label>Department *</label>
               <EntityPicker
-                label="Department" items={departments} value={department?.id || ''} disabled={!isAdmin && !!invoice.department_id}
+                label="Department" items={withCurrent(departments, department)} value={department?.id || ''} disabled={!isAdmin && !!invoice.department_id}
                 getLabel={(d) => d.name}
                 columns={[{ key: 'name', label: 'Department' }]}
                 searchKeys={['name']}
