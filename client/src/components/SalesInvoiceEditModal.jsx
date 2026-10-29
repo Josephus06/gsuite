@@ -30,6 +30,24 @@ function addDays(dateStr, days) {
 
 const day = (v) => (v ? String(v).slice(0, 10) : '');
 
+// The per-unit price a line actually bills at: its Unit Price, unless Qty x Unit Price misses the
+// stored Subtotal, then Subtotal / Qty to the 4 decimals the column holds.
+function billedPrice(l) {
+  const qty = Number(l.quantity || 0);
+  const price = Number(l.price_per_unit || 0);
+  const subtotal = Number(l.subtotal);
+  if (!qty || !Number.isFinite(subtotal) || Math.abs(Number((price * qty).toFixed(2)) - subtotal) < 0.005) return price;
+  return Number((subtotal / qty).toFixed(4));
+}
+
+// What the line opened with, which "changed" is measured against.
+const sameAsOpened = (it) => it.description === (it.original.description || '')
+  && Number(it.quantity) === Number(it.original.quantity || 0)
+  && Number(it.price_per_unit) === billedPrice(it.original)
+  && Number(it.disc_percent) === Number(it.original.disc_percent || 0)
+  && it.tax_code === (it.original.tax_code || '')
+  && it.tax_override === '';
+
 // The invoice's own pick stays selectable, and shown, even when its list did not load.
 const withCurrent = (list, cur) => (cur && !list.some((x) => Number(x.id) === Number(cur.id)) ? [...list, cur] : list);
 
@@ -58,12 +76,18 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
   const [memo, setMemo] = useState(invoice.memo || '');
   const [withholdingPct, setWithholdingPct] = useState(Number(invoice.withholding_tax_pct || 0));
   // `original` rides along so the line's tax rate can be recovered and the audit shows what moved.
+  //
+  // A line imported from the source can bill a Subtotal that is not Qty x Unit Price (10 x 250.00
+  // billed at 2,500.02 -- the source kept more decimals of the price). Its Unit Price opens at what
+  // the line really bills per unit (250.002), so typing 250 is a change that is saved, and an
+  // untouched line previews its stored figures -- the preview never promises a total the save
+  // will not give.
   const [items, setItems] = useState(() => (invoice.lines || []).map((l) => ({
     id: l.id,
     description: l.description || '',
     quantity: Number(l.quantity || 0),
     units: l.units || '',
-    price_per_unit: Number(l.price_per_unit || 0),
+    price_per_unit: billedPrice(l),
     disc_percent: Number(l.disc_percent || 0),
     tax_code: l.tax_code || '',
     // A Tax Amount typed by hand; '' means "computed from the rate".
@@ -116,6 +140,16 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
   // the line was billed at (tax / net) -- exact for every rate in this data, and 0 for the
   // zero-rated and exempt lines where there is nothing to recover.
   const priced = items.map((it) => {
+    if (sameAsOpened(it)) {
+      const o = it.original;
+      const subtotal = Number(o.subtotal || 0);
+      const net = Number(o.net_of_tax || 0);
+      const tax = Number(o.tax_amount || 0);
+      return {
+        ...it, subtotal, discAmount: Number(o.disc_amount ?? subtotal - net), net, tax,
+        gross: Number(o.gross_amount ?? net + tax),
+      };
+    }
     const qty = Number(it.quantity) || 0;
     const price = Number(it.price_per_unit) || 0;
     const disc = Number(it.disc_percent) || 0;
@@ -182,12 +216,7 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
         removed_line_ids: items.filter((it) => it.removed).map((it) => it.id),
         lines: items
           .filter((it) => !it.removed)
-          .filter((it) => it.description !== (it.original.description || '')
-            || Number(it.quantity) !== Number(it.original.quantity || 0)
-            || Number(it.price_per_unit) !== Number(it.original.price_per_unit || 0)
-            || Number(it.disc_percent) !== Number(it.original.disc_percent || 0)
-            || it.tax_code !== (it.original.tax_code || '')
-            || it.tax_override !== '')
+          .filter((it) => !sameAsOpened(it))
           .map((it) => ({
             id: it.id,
             description: it.description,
