@@ -77,7 +77,8 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
         beg_qty: r.beg_qty, beg_cost: r.beg_cost == null || r.beg_cost === '' ? null : Number(r.beg_cost),
         beg_value: r.beg_value, input: r.input, value_of_inputs: r.value_of_inputs,
         output: r.output, value_of_outputs: r.value_of_outputs,
-        ending_qty: r.ending_qty, ending_cost: r.ending_cost, ending_value: r.ending_value,
+        ending_qty: r.ending_qty, ending_qty_base: r.ending_qty_base, base_unit: r.base_unit_code || '',
+        ending_cost: r.ending_cost, ending_value: r.ending_value,
       });
     }
     const QTY = '#,##0.0000'; // quantities show 4 decimals on screen
@@ -95,7 +96,9 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
         { header: 'Value of Inputs', key: 'value_of_inputs', width: 16, money: true },
         { header: 'Output', key: 'output', width: 14, numFmt: QTY },
         { header: 'Value of Outputs', key: 'value_of_outputs', width: 16, money: true },
-        { header: 'Ending Inv. Qty On-hand', key: 'ending_qty', width: 16, numFmt: QTY },
+        { header: 'Ending Inv. Qty On-hand (Stock Unit)', key: 'ending_qty', width: 18, numFmt: QTY },
+        { header: 'Ending Inv. Qty On-hand (Base Unit)', key: 'ending_qty_base', width: 18, numFmt: QTY },
+        { header: 'Base Unit', key: 'base_unit', width: 10 },
         { header: 'Ending Ave. Cost', key: 'ending_cost', width: 14, money: true },
         { header: 'Ending Inv On-hand Value', key: 'ending_value', width: 17, money: true },
       ],

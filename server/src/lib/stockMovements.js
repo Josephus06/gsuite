@@ -208,6 +208,8 @@ function ledgerQuery(filters = {}) {
     )
     SELECT k.item_id AS inventory_id, i.item_code, i.display_name,
            COALESCE(s.unit_title, u.code) AS unit_title,
+           COALESCE(NULLIF(i.conversion_factor, 0), 1) AS conversion_factor,
+           su.code AS stock_unit_code, u.code AS base_unit_code,
            k.location_id, l.location_name,
            COALESCE(s.beg_qty, 0) + COALESCE(p.net_qty, 0) AS beg_qty,
            s.beg_cost, s.ave_cost,
@@ -218,6 +220,7 @@ function ledgerQuery(filters = {}) {
       FROM cells k
       JOIN inventories i ON i.id = k.item_id
       LEFT JOIN units_of_measure u ON u.id = i.base_unit_id
+      LEFT JOIN units_of_measure su ON su.id = i.stock_unit_id
       LEFT JOIN locations l ON l.id = k.location_id
       LEFT JOIN snap s ON s.item_id = k.item_id AND s.location_id = k.location_id
       LEFT JOIN prior_net p ON p.item_id = k.item_id AND p.location_id = k.location_id
@@ -252,6 +255,11 @@ function shapeLedgerRow(r) {
     output,
     value_of_outputs: Number(r.output_value || 0) + Number(r.output_unvalued || 0) * ave,
     ending_qty: endingQty,
+    // The same on-hand in the Base Unit (2026-10-29) -- stock qty x conversion_factor, as the Bin
+    // Card's Balance (Base Unit) reads it.
+    ending_qty_base: endingQty * Number(r.conversion_factor || 1),
+    stock_unit_code: r.stock_unit_code || null,
+    base_unit_code: r.base_unit_code || null,
     ending_cost: ave,
     ending_value: endingQty * ave,
   };

@@ -215,17 +215,18 @@ export default function StockLedgerReport() {
                   <th>Value of Inputs</th>
                   <th>Output</th>
                   <th>Value of Outputs</th>
-                  <th>Ending Inv. Qty On-hand</th>
+                  <th>Ending Inv. Qty On-hand (Stock Unit)</th>
+                  <th>Ending Inv. Qty On-hand (Base Unit)</th>
                   <th>Ending Ave. Cost</th>
                   <th>Ending Inv On-hand Value</th>
                 </tr>
               </thead>
               <tbody>
                 {rows === null && (
-                  <tr><td colSpan={13} className="muted" style={{ textAlign: 'center', padding: 20 }}>Set your filters and click Generate.</td></tr>
+                  <tr><td colSpan={14} className="muted" style={{ textAlign: 'center', padding: 20 }}>Set your filters and click Generate.</td></tr>
                 )}
                 {rows !== null && grouped.length === 0 && (
-                  <tr><td colSpan={13} className="muted" style={{ textAlign: 'center', padding: 20 }}>No stock ledger data found.</td></tr>
+                  <tr><td colSpan={14} className="muted" style={{ textAlign: 'center', padding: 20 }}>No stock ledger data found.</td></tr>
                 )}
                 {pageGroups.map((g) => (
                   <Fragment key={g.item_code}>
@@ -233,7 +234,7 @@ export default function StockLedgerReport() {
                       <td><strong>{g.item_code}</strong></td>
                       <td></td>
                       <td>{g.unit_title}</td>
-                      <td colSpan={10}></td>
+                      <td colSpan={11}></td>
                     </tr>
                     {g.locations.map((r) => {
                       const key = `${r.inventory_id}-${r.location_id}`;
@@ -256,13 +257,14 @@ export default function StockLedgerReport() {
                             <td>{r.value_of_inputs ? moneyFmt(r.value_of_inputs) : ''}</td>
                             <td>{r.output || ''}</td>
                             <td>{r.value_of_outputs ? moneyFmt(r.value_of_outputs) : ''}</td>
-                            <td>{qtyFmt(r.ending_qty)}</td>
+                            <td>{qtyFmt(r.ending_qty)} {r.stock_unit_code && <span className="muted">{r.stock_unit_code}</span>}</td>
+                            <td>{qtyFmt(r.ending_qty_base)} {r.base_unit_code && <span className="muted">{r.base_unit_code}</span>}</td>
                             <td>{moneyFmt(r.ending_cost)}</td>
                             <td>{moneyFmt(r.ending_value)}</td>
                           </tr>
                           {open && (
                             <tr>
-                              <td colSpan={13} style={{ padding: '8px 24px', background: 'rgba(127,127,127,0.06)' }}>
+                              <td colSpan={14} style={{ padding: '8px 24px', background: 'rgba(127,127,127,0.06)' }}>
                                 {detail === 'loading' && <span className="muted">Loading movements...</span>}
                                 {detail !== 'loading' && (!detail || detail.length === 0) && (
                                   <span className="muted">No movements in this period. The Beginning balance is the opening figure carried forward.</span>
