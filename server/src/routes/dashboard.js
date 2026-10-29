@@ -1058,24 +1058,42 @@ router.get('/gm-calendar', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Each user's dashboard is built once a minute at most (2026-10-29: the whole company lagged with
+// many tabs open -- every new tab opens here, and each build is ~0.5 s of company-wide queries).
+// Tabs opened together share the one build in flight; ?fresh=1 skips the cache.
+const DASHBOARD_TTL_MS = 60 * 1000;
+const dashboardCache = new Map(); // user id -> { at, promise }
 router.get('/', requireAuth, async (req, res, next) => {
-  try {
+  const key = req.user.id;
+  const hit = dashboardCache.get(key);
+  if (!req.query.fresh && hit && Date.now() - hit.at < DASHBOARD_TTL_MS) {
+    try { return res.json(await hit.promise); } catch { /* the shared build failed -- build again below */ }
+  }
+  const promise = buildDashboard(req);
+  dashboardCache.set(key, { at: Date.now(), promise });
+  promise.catch(() => { if (dashboardCache.get(key)?.promise === promise) dashboardCache.delete(key); });
+  if (dashboardCache.size > 2000) dashboardCache.delete(dashboardCache.keys().next().value);
+  try { return res.json(await promise); } catch (err) { return next(err); }
+});
+
+async function buildDashboard(req) {
+  {
     const scope = await resolveScope(req.user.id);
 
     if (scope.role === 'admin') {
       const [metrics, gm] = await Promise.all([adminMetrics(req.user.id), isGeneralManager(req.user.id)]);
       const [gmCards, gmRings] = gm ? await Promise.all([generalManagerCards(), generalManagerRings()]) : [null, null];
-      return res.json({ role: 'admin', ...metrics, ...(gmRings ? { rings: gmRings } : {}), gmCards });
+      return { role: 'admin', ...metrics, ...(gmRings ? { rings: gmRings } : {}), gmCards };
     }
 
     if (scope.role === 'design_supervisor') {
       const metrics = await designSupervisorMetrics();
-      return res.json({ role: 'design_supervisor', ...metrics });
+      return { role: 'design_supervisor', ...metrics };
     }
 
     if (scope.role === 'artist') {
       const metrics = await artistMetrics(scope.employeeIds[0]);
-      return res.json({ role: 'artist', ...metrics });
+      return { role: 'artist', ...metrics };
     }
 
     const summary = await repMetrics(scope.employeeIds);
@@ -1097,11 +1115,9 @@ router.get('/', requireAuth, async (req, res, next) => {
     const bounds = monthBounds(null);
     const calendar = await salesCalendar(bounds.start, bounds.end);
 
-    res.json({ role: scope.role, summary, byRep, calendar, calendarMonth: bounds.month });
-  } catch (err) {
-    next(err);
+    return { role: scope.role, summary, byRep, calendar, calendarMonth: bounds.month };
   }
-});
+}
 
 // Lets the artist dashboard's calendar page to another month without refetching the whole
 // dashboard. Scoped to the caller's own employee record -- an artist only ever sees their own
