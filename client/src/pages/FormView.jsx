@@ -137,9 +137,9 @@ export default function FormView() {
   const mayEdit = !!doc.can_edit;
   const maySubmit = doc.is_owner && doc.status === 'draft' && can('/forms', 'can_add');
   const mayDiscard = doc.is_owner && doc.status === 'draft' && can('/forms', 'can_delete');
-  // A Leave Application can be withdrawn by its filer until it is approved (2026-10-22). Same rule as
-  // the server's LEAVE_CANCELLABLE.
-  const mayCancel = doc.is_owner && doc.type === 'leave' && ['submitted', 'noted', 'rejected'].includes(doc.status);
+  // The filer can withdraw a form until somebody notes or approves it -- a Leave Application until it
+  // is approved (2026-10-22, 2026-10-29). The server decides (forms.js cancellable).
+  const mayCancel = !!doc.can_cancel;
   // Noting a liquidation or a payment belongs to the head of the department it came from, not to a
   // permission, so the server decides and this only draws the answer. When it says no, it says WHY
   // -- most departments have no head recorded yet, and a missing button with no explanation reads
@@ -184,10 +184,10 @@ export default function FormView() {
   const mayCheckVoucher = ftrUnposted && can('/cheques', 'can_add');
   const hasRelated = doc.billable || doc.type === 'fund_transfer';
 
-  function cancelLeave() {
+  function cancelForm() {
     const reason = prompt(`Cancel ${doc.request_no}?\n\nIt is withdrawn from approval and cannot be reopened. Reason (optional):`);
     if (reason === null) return;
-    act('cancel', { reason }, 'Leave cancelled.');
+    act('cancel', { reason }, `${doc.type_label || 'Form'} cancelled.`);
   }
 
   async function discard() {
@@ -244,7 +244,7 @@ export default function FormView() {
             <button className="btn btn-sm btn-warning" disabled={busy} onClick={() => setRejecting(true)}>Reject</button>
           )}
           {mayDiscard && <button className="btn btn-sm btn-danger" disabled={busy} onClick={discard}>Discard</button>}
-          {mayCancel && <button className="btn btn-sm btn-danger" disabled={busy} onClick={cancelLeave}>Cancel Leave</button>}
+          {mayCancel && <button className="btn btn-sm btn-danger" disabled={busy} onClick={cancelForm}>Cancel Request</button>}
           {mayBill && (
             <button className="btn btn-sm btn-primary" onClick={() => setBilling(true)}>
               {doc.partly_billed ? 'Bill Remaining Items' : 'Create Vendor Bill'}

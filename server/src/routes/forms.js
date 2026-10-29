@@ -1207,6 +1207,7 @@ router.get('/:id', requireAuth, async (req, res, next) => {
 
     doc.type_label = TYPE_LABELS[doc.type] || doc.type;
     doc.is_owner = doc.user_id === req.user.id;
+    doc.can_cancel = doc.is_owner && cancellable(doc);
     // The owner while it is still open; a System Admin always.
     doc.can_edit = (await userCan(req.user.id, ROUTE, 'can_edit'))
       && ((doc.is_owner && EDITABLE_STATUSES.includes(doc.status)) || await isSystemAdmin(req.user.id));
@@ -1918,24 +1919,38 @@ router.post('/:id/submit', requireAuth, requirePermission(ROUTE, 'can_add'), asy
 // is not approved -- For Noting, For Approval, or Rejected. An approved leave is not cancelled here:
 // it already counts against the employee's leave and attendance. A cancelled form is closed: it
 // leaves every approval queue and can no longer be edited. Whoever it was waiting on is told.
+//
+// Every other form (asked 2026-10-29): its filer can cancel it until somebody acts on it -- while it
+// is For Noting, or For Approval with nobody's note on it (a route with no noter), and not
+// pre-approved; or once it is Rejected. Noted, pre-approved or approved, it stays.
 const LEAVE_CANCELLABLE = ['submitted', 'noted', 'rejected'];
+function cancellable(doc) {
+  if (doc.type === 'leave') return LEAVE_CANCELLABLE.includes(doc.status);
+  if (doc.status === 'rejected') return true;
+  if (doc.noted_by || doc.pre_approved_at || doc.approved_by) return false;
+  return ['submitted', 'noted'].includes(doc.status);
+}
 const statusName = (s) => ({ submitted: 'For Noting', noted: 'For Approval', rejected: 'Rejected' }[s] || s);
 router.post('/:id/cancel', requireAuth, async (req, res, next) => {
   try {
     const [[doc]] = await pool.query(
-      'SELECT id, user_id, status, type, request_no, approver_user_id, noter_user_id FROM form_requests WHERE id = ?',
+      `SELECT id, user_id, status, type, request_no, approver_user_id, noter_user_id, noted_by, pre_approved_at, approved_by
+         FROM form_requests WHERE id = ?`,
       [req.params.id]);
     if (!doc) return res.status(404).json({ error: 'Not found' });
     if (doc.user_id !== req.user.id) return res.status(403).json({ error: 'Only the person who filed this form can cancel it.' });
-    if (doc.type !== 'leave') return res.status(409).json({ error: 'Only a Leave Application can be cancelled.' });
     if (doc.status === 'draft') return res.status(409).json({ error: 'A draft is not sent yet -- discard it instead.' });
-    if (!LEAVE_CANCELLABLE.includes(doc.status)) {
-      return res.status(409).json({ error: `This leave is already ${doc.status} and can no longer be cancelled.` });
+    if (doc.status === 'cancelled') return res.status(409).json({ error: 'This form is already cancelled.' });
+    if (!cancellable(doc)) {
+      return res.status(409).json({ error: doc.noted_by && doc.status !== 'approved'
+        ? 'This form has already been noted and can no longer be cancelled.'
+        : `This form is already ${STATUS_LABEL[doc.status] || doc.status} and can no longer be cancelled.` });
     }
+    const label = TYPE_LABELS[doc.type] || 'Form';
     const reason = trunc(req.body?.reason, 255);
     const [r] = await pool.query(
       "UPDATE form_requests SET status = 'cancelled', updated_at = NOW() WHERE id = ? AND status = ?", [doc.id, doc.status]);
-    if (!r.affectedRows) return res.status(409).json({ error: 'This leave changed just now -- reload it and try again.' });
+    if (!r.affectedRows) return res.status(409).json({ error: 'This form changed just now -- reload it and try again.' });
     await logFormAudit(pool, doc.id, req.user.id, 'Status Change', 'Status', statusName(doc.status),
       reason ? `Cancelled by the requestor: ${reason}` : 'Cancelled by the requestor');
 
@@ -1946,9 +1961,9 @@ router.post('/:id/cancel', requireAuth, async (req, res, next) => {
       await pool.query(
         `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
          VALUES (?, 'form_cancelled', ?, ?, 'Form', ?)`,
-        [uid, `Leave Application ${doc.request_no || ''} was cancelled`.slice(0, 255),
+        [uid, `${label} ${doc.request_no || ''} was cancelled`.slice(0, 255),
           (reason ? `The requestor cancelled it: ${reason}` : 'The requestor cancelled it. Nothing to approve.').slice(0, 500), doc.id],
-      ).catch((e) => console.error('[notifications] leave cancel:', e.message));
+      ).catch((e) => console.error('[notifications] form cancel:', e.message));
     }
     return res.json({ ok: true, status: 'cancelled' });
   } catch (err) { return next(err); }
