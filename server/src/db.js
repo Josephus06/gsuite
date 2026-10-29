@@ -8,7 +8,9 @@ const pool = mysql.createPool({
   password: process.env.DB_PASSWORD || '',
   database: process.env.DB_NAME || 'gsuite_erp',
   waitForConnections: true,
-  connectionLimit: 10,
+  // 10 was the whole company's share (2026-10-29: lag with many tabs open) -- every tab's polling and
+  // every report queued behind a few slow queries. DB_POOL_SIZE overrides; MySQL allows 151 by default.
+  connectionLimit: Number(process.env.DB_POOL_SIZE) || 25,
   decimalNumbers: true,
   // Without this, mysql2 returns DATE/DATETIME columns as JS Date objects parsed in the
   // server's local timezone; res.json() then serializes them via toISOString() (UTC),
