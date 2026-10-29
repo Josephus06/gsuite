@@ -103,6 +103,46 @@ const FORM_LABEL = {
 //   approved / rejected   the owner
 function notifyFormStatus(formId, actorId) {
   return safely(`form ${formId}`, async () => {
+    await notifyNext(formId, actorId);
+    await notifyInvolved(formId, actorId);
+  });
+}
+
+// Everyone on a form hears how it ended (asked 2026-10-29: "notify all involved" -- an overtime
+// accepted or declined by the employee reached only its requestor). On approved, rejected,
+// accepted or declined: the noter, the pre-approver, the approver -- chosen or the ones who
+// actually acted -- and an overtime's employee. The requestor (and, on an approved overtime, its
+// employee) are already told by notifyNext, so they are left out here: nobody is told twice.
+const OUTCOME_WORD = { approved: 'approved', rejected: 'rejected', accepted: 'accepted', declined: 'declined' };
+async function notifyInvolved(formId, actorId) {
+  const [[doc]] = await pool.query(
+    `SELECT f.*, au.display_name AS actor_name FROM form_requests f LEFT JOIN users au ON au.id = ? WHERE f.id = ?`, [actorId || 0, formId]);
+  if (!doc || !OUTCOME_WORD[doc.status]) return;
+  let target = null;
+  if (doc.type === 'overtime') {
+    const [[d]] = await pool.query(
+      `SELECT o.for_self, o.target_user_id, tu.display_name AS target_name FROM form_overtime_details o
+         LEFT JOIN users tu ON tu.id = o.target_user_id WHERE o.form_request_id = ?`, [doc.id]);
+    target = d && !d.for_self ? d : null;
+  }
+  const involved = [doc.noter_user_id, doc.noted_by, doc.pre_approver_user_id, doc.pre_approved_by,
+    doc.approver_user_id, doc.approved_by, doc.rejected_by, target && target.target_user_id];
+  const alreadyTold = new Set([Number(doc.user_id), ...(doc.status === 'approved' && target ? [Number(target.target_user_id)] : [])]);
+  const to = involved.filter((id) => id && !alreadyTold.has(Number(id)));
+  if (!to.length) return;
+  const what = `${FORM_LABEL[doc.type] || 'Form'} ${doc.request_no || ''}${target ? ` for ${target.target_name}` : ''}`.trim();
+  const by = doc.actor_name ? ` by ${doc.actor_name}` : '';
+  const message = doc.status === 'rejected' && doc.rejection_reason ? `${what} was rejected${by}. Reason: ${doc.rejection_reason}`
+    : `${what} was ${OUTCOME_WORD[doc.status]}${by}.`;
+  await insertFor(to, {
+    relatedType: 'Form', relatedId: doc.id,
+    type: ['approved', 'accepted'].includes(doc.status) ? 'form_approved' : 'form_rejected',
+    title: `${what} was ${OUTCOME_WORD[doc.status]}`, message,
+  }, actorId);
+}
+
+async function notifyNext(formId, actorId) {
+  {
     const [[doc]] = await pool.query(
       'SELECT id, request_no, type, user_id, department_id, department, status, rejection_reason FROM form_requests WHERE id = ?',
       [formId],
@@ -226,7 +266,7 @@ function notifyFormStatus(formId, actorId) {
         ...base, type: 'form_rejected', title: `${what} was rejected`, message: doc.rejection_reason ? `Reason: ${doc.rejection_reason}` : `${what} was rejected.`,
       }, actorId);
     }
-  });
+  }
 }
 
 module.exports = { notifyPoPending, notifyPoApproved, notifyFormStatus, insertFor, usersWithPermission };
