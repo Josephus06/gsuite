@@ -1207,7 +1207,9 @@ router.get('/:id', requireAuth, async (req, res, next) => {
 
     doc.type_label = TYPE_LABELS[doc.type] || doc.type;
     doc.is_owner = doc.user_id === req.user.id;
-    doc.can_cancel = doc.is_owner && cancellable(doc);
+    doc.can_cancel = (await isSystemAdmin(req.user.id))
+      ? ADMIN_CANCELLABLE.includes(doc.status) && !(await adminCancelBlock(doc))
+      : doc.is_owner && cancellable(doc);
     // The owner while it is still open; a System Admin always.
     doc.can_edit = (await userCan(req.user.id, ROUTE, 'can_edit'))
       && ((doc.is_owner && EDITABLE_STATUSES.includes(doc.status)) || await isSystemAdmin(req.user.id));
@@ -1930,7 +1932,24 @@ function cancellable(doc) {
   if (doc.noted_by || doc.pre_approved_at || doc.approved_by) return false;
   return ['submitted', 'noted'].includes(doc.status);
 }
-const statusName = (s) => ({ submitted: 'For Noting', noted: 'For Approval', rejected: 'Rejected' }[s] || s);
+// A System Admin can cancel any form that is not a draft (2026-10-29), approved ones included --
+// unless something was raised from it that carries the money: a live Vendor Bill or Journal (a
+// liquidation / request for payment) or Check Voucher / Fund Transfer (a fund transfer request).
+// Those are cancelled or voided first; the form follows.
+const ADMIN_CANCELLABLE = ['submitted', 'noted', 'rejected', 'approved', 'accepted'];
+async function adminCancelBlock(doc) {
+  if (BILLABLE_FORM_TYPES.includes(doc.type)) {
+    const b = await liquidationBilling(pool, doc.id);
+    const docs = [...b.bills.map((x) => x.bill_no), ...(b.journal ? [b.journal.journal_no] : [])];
+    if (docs.length) return `Cancel or void ${docs.join(', ')} first -- it was raised from this form.`;
+  }
+  if (doc.type === 'fund_transfer') {
+    const p = await fundTransferRequestPosting(pool, doc.id);
+    if (p.live.length) return `Void ${p.live.map((v) => v.doc_no).join(', ')} first -- it was raised from this form.`;
+  }
+  return null;
+}
+const statusName = (s) => ({ submitted: 'For Noting', noted: 'For Approval', rejected: 'Rejected', approved: 'Approved', accepted: 'Accepted' }[s] || s);
 router.post('/:id/cancel', requireAuth, async (req, res, next) => {
   try {
     const [[doc]] = await pool.query(
@@ -1938,10 +1957,17 @@ router.post('/:id/cancel', requireAuth, async (req, res, next) => {
          FROM form_requests WHERE id = ?`,
       [req.params.id]);
     if (!doc) return res.status(404).json({ error: 'Not found' });
-    if (doc.user_id !== req.user.id) return res.status(403).json({ error: 'Only the person who filed this form can cancel it.' });
+    const admin = await isSystemAdmin(req.user.id);
+    if (doc.user_id !== req.user.id && !admin) return res.status(403).json({ error: 'Only the person who filed this form, or a System Admin, can cancel it.' });
     if (doc.status === 'draft') return res.status(409).json({ error: 'A draft is not sent yet -- discard it instead.' });
     if (doc.status === 'cancelled') return res.status(409).json({ error: 'This form is already cancelled.' });
-    if (!cancellable(doc)) {
+    if (admin) {
+      if (!ADMIN_CANCELLABLE.includes(doc.status)) {
+        return res.status(409).json({ error: `This form is ${STATUS_LABEL[doc.status] || doc.status} and can no longer be cancelled.` });
+      }
+      const block = await adminCancelBlock(doc);
+      if (block) return res.status(409).json({ error: block });
+    } else if (!cancellable(doc)) {
       return res.status(409).json({ error: doc.noted_by && doc.status !== 'approved'
         ? 'This form has already been noted and can no longer be cancelled.'
         : `This form is already ${STATUS_LABEL[doc.status] || doc.status} and can no longer be cancelled.` });
@@ -1951,18 +1977,35 @@ router.post('/:id/cancel', requireAuth, async (req, res, next) => {
     const [r] = await pool.query(
       "UPDATE form_requests SET status = 'cancelled', updated_at = NOW() WHERE id = ? AND status = ?", [doc.id, doc.status]);
     if (!r.affectedRows) return res.status(409).json({ error: 'This form changed just now -- reload it and try again.' });
+    // An approved Fuel Request put an entry in its vehicle's fuel log (see /approve); it goes with it.
+    if (doc.type === 'fuel' && doc.status === 'approved') {
+      const [[d]] = await pool.query('SELECT fuel_log_id FROM form_fuel_details WHERE form_request_id = ?', [doc.id]).catch(() => [[null]]);
+      if (d?.fuel_log_id) {
+        await pool.query('DELETE FROM vehicle_fuel_logs WHERE id = ?', [d.fuel_log_id]).catch((e) => { if (e.code !== 'ER_NO_SUCH_TABLE') throw e; });
+        await pool.query('UPDATE form_fuel_details SET fuel_log_id = NULL WHERE form_request_id = ?', [doc.id]);
+      }
+    }
+    const who = doc.user_id === req.user.id ? 'the requestor' : 'a System Admin';
     await logFormAudit(pool, doc.id, req.user.id, 'Status Change', 'Status', statusName(doc.status),
-      reason ? `Cancelled by the requestor: ${reason}` : 'Cancelled by the requestor');
+      reason ? `Cancelled by ${who}: ${reason}` : `Cancelled by ${who}`);
 
-    // Tell whoever it was waiting on, so it is not looked for in a queue it has left.
-    const waitingOn = doc.status === 'submitted' && doc.noter_user_id ? [doc.noter_user_id]
-      : doc.status === 'rejected' ? [] : [doc.approver_user_id];
+    // Tell whoever it was waiting on, so it is not looked for in a queue it has left -- and, when an
+    // admin cancels it, its filer, and its approver if it had been approved.
+    const settled = ['approved', 'accepted'].includes(doc.status);
+    const waitingOn = settled ? [doc.approved_by]
+      : doc.status === 'submitted' && doc.noter_user_id ? [doc.noter_user_id]
+        : doc.status === 'rejected' ? [] : [doc.approver_user_id];
+    if (doc.user_id !== req.user.id) waitingOn.push(doc.user_id);
+    const told = new Set();
     for (const uid of waitingOn.filter((u) => u && Number(u) !== Number(req.user.id))) {
+      if (told.has(Number(uid))) continue;
+      told.add(Number(uid));
+      const tail = settled ? 'It no longer stands as approved.' : 'Nothing to approve.';
       await pool.query(
         `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
          VALUES (?, 'form_cancelled', ?, ?, 'Form', ?)`,
         [uid, `${label} ${doc.request_no || ''} was cancelled`.slice(0, 255),
-          (reason ? `The requestor cancelled it: ${reason}` : 'The requestor cancelled it. Nothing to approve.').slice(0, 500), doc.id],
+          (reason ? `Cancelled by ${who}: ${reason}` : `Cancelled by ${who}. ${tail}`).slice(0, 500), doc.id],
       ).catch((e) => console.error('[notifications] form cancel:', e.message));
     }
     return res.json({ ok: true, status: 'cancelled' });
