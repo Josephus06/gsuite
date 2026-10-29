@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -33,6 +33,26 @@ async function logIr(q, irId, userId, eventType, fieldName = null, oldValue = nu
      VALUES ('IncidentReport', ?, ?, ?, ?, ?, ?)`,
     [irId, eventType, fieldName, oldValue == null ? null : String(oldValue).slice(0, 1000), newValue == null ? null : String(newValue).slice(0, 1000), userId]);
 }
+// Who sees which reports (2026-10-29): your own -- the charges you filed -- unless you hold
+// can_view_all here (a System Admin always does). A WHERE fragment on hr_violations v, or null.
+async function ownScope(userId) {
+  if (await userCan(userId, ROUTE, 'can_view_all')) return null;
+  return { sql: 'v.reported_by_user_id = ?', params: [userId] };
+}
+const scoped = (scope) => (scope ? ` AND ${scope.sql}` : '');
+const scopeParams = (scope) => (scope ? scope.params : []);
+
+// One report, if this user may see it. Someone else's answers 404, not 403 -- it is not
+// confirmed to exist.
+async function loadVisible(req, res) {
+  const scope = await ownScope(req.user.id);
+  const [[ir]] = await pool.query(
+    `SELECT ir.id, ir.status, ir.violation_id FROM hr_incident_reports ir JOIN hr_violations v ON v.id = ir.violation_id
+      WHERE ir.id = ?${scoped(scope)}`, [req.params.id, ...scopeParams(scope)]);
+  if (!ir) { res.status(404).json({ error: 'Not found' }); return null; }
+  return ir;
+}
+
 const day = (v) => (v ? (v instanceof Date ? v.toISOString() : String(v)).slice(0, 10) : null);
 
 const BASE_SELECT = `
@@ -49,8 +69,9 @@ const BASE_SELECT = `
 
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const where = [];
-    const params = [];
+    const scope = await ownScope(req.user.id);
+    const where = scope ? [scope.sql] : [];
+    const params = [...scopeParams(scope)];
     // 'open' is the default view, because a queue nobody can see the end of stops being a queue.
     const status = String(req.query.status || 'open');
     if (status === 'open') {
@@ -78,11 +99,13 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     // The counts the HR screen leads with: what is waiting, what is in hand, what is finished.
     const [[counts]] = await pool.query(
-      `SELECT SUM(status = 'for_evaluation') AS for_evaluation,
-              SUM(status = 'under_review') AS under_review,
-              SUM(status IN ('substantiated', 'unsubstantiated', 'dismissed')) AS closed,
+      `SELECT SUM(ir.status = 'for_evaluation') AS for_evaluation,
+              SUM(ir.status = 'under_review') AS under_review,
+              SUM(ir.status IN ('substantiated', 'unsubstantiated', 'dismissed')) AS closed,
               COUNT(*) AS total
-         FROM hr_incident_reports`,
+         FROM hr_incident_reports ir JOIN hr_violations v ON v.id = ir.violation_id
+        WHERE 1 = 1${scoped(scope)}`,
+      scopeParams(scope),
     );
     res.json({ rows, counts });
   } catch (err) { next(err); }
@@ -90,7 +113,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const [[ir]] = await pool.query(`${BASE_SELECT} WHERE ir.id = ?`, [req.params.id]);
+    const scope = await ownScope(req.user.id);
+    const [[ir]] = await pool.query(`${BASE_SELECT} WHERE ir.id = ?${scoped(scope)}`, [req.params.id, ...scopeParams(scope)]);
     if (!ir) return res.status(404).json({ error: 'Not found' });
 
     // The employee's other charges. A first offence and a fourth call for different answers, and
@@ -100,9 +124,9 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
               ir2.incident_no, ir2.status, ir2.recommendation
          FROM hr_violations v
          LEFT JOIN hr_incident_reports ir2 ON ir2.violation_id = v.id
-        WHERE v.employee_id = ? AND v.id <> ?
+        WHERE v.employee_id = ? AND v.id <> ?${scoped(scope)}
         ORDER BY v.violation_date DESC, v.id DESC LIMIT 30`,
-      [ir.employee_id, ir.violation_id],
+      [ir.employee_id, ir.violation_id, ...scopeParams(scope)],
     );
     return res.json({ ...ir, history });
   } catch (err) { return next(err); }
@@ -112,9 +136,9 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
 // it is a grant on this page and not on the one where charges are raised.
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
+    if (!(await loadVisible(req, res))) return undefined;
     const [[ir]] = await pool.query(
       'SELECT id, status, hr_findings, recommendation, recommendation_notes FROM hr_incident_reports WHERE id = ?', [req.params.id]);
-    if (!ir) return res.status(404).json({ error: 'Not found' });
 
     const fields = [];
     const params = [];
@@ -178,11 +202,13 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 // deleting from their own queue, which is the decision that guard defers to. can_delete on this
 // page is the grant that says who may do it.
 router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async (req, res, next) => {
+  let ir;
+  try {
+    ir = await loadVisible(req, res);
+  } catch (err) { return next(err); }
+  if (!ir) return undefined;
   const conn = await pool.getConnection();
   try {
-    const [[ir]] = await conn.query('SELECT id, violation_id FROM hr_incident_reports WHERE id = ?', [req.params.id]);
-    if (!ir) return res.status(404).json({ error: 'Not found' });
-
     await conn.beginTransaction();
     await conn.query('DELETE FROM hr_incident_reports WHERE id = ?', [ir.id]);
     await conn.query('DELETE FROM hr_violations WHERE id = ?', [ir.violation_id]);
@@ -201,8 +227,8 @@ router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async
 // The employee and the violation stay as filed (see routes/hrViolations.js PUT).
 router.put('/:id/charge', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
-    const [[ir]] = await pool.query('SELECT id, status, violation_id FROM hr_incident_reports WHERE id = ?', [req.params.id]);
-    if (!ir) return res.status(404).json({ error: 'Not found' });
+    const ir = await loadVisible(req, res);
+    if (!ir) return undefined;
     if (ir.status !== 'for_evaluation') return res.status(409).json({ error: 'Only a report still For Evaluation can be edited.' });
     if (!req.body.violation_date) return res.status(400).json({ error: 'Enter the date the violation happened.' });
     const [[was]] = await pool.query('SELECT violation_date, place, details FROM hr_violations WHERE id = ?', [ir.violation_id]);
@@ -222,6 +248,7 @@ router.put('/:id/charge', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
 // itself -- who reported it and when.
 router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
+    if (!(await loadVisible(req, res))) return undefined;
     const [rows] = await pool.query(
       `SELECT a.*, u.display_name AS set_by_name FROM audit_logs a LEFT JOIN users u ON u.id = a.set_by_user_id
         WHERE a.auditable_type = 'IncidentReport' AND a.auditable_id = ? ORDER BY a.set_at DESC, a.id DESC`, [req.params.id]);
