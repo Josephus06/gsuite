@@ -3,7 +3,8 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { displayDate } from '../utils/dates';
+import DataTable from '../components/DataTable';
+import { displayDate, displayAuditTime } from '../utils/dates';
 
 const SEVERITY_BADGE = { minor: 'badge-muted', major: 'badge-warning', grave: 'badge-danger' };
 const STATUS_BADGE = {
@@ -47,7 +48,10 @@ export default function HrIncidentReportView() {
   const canEvaluate = can('/hrd/incident-reports', 'can_edit');
   const canDelete = can('/hrd/incident-reports', 'can_delete');
 
+  // System Info (2026-10-29): the report's history -- filed, evaluated, edited -- reloaded with it.
+  const [auditLogs, setAuditLogs] = useState([]);
   const load = useCallback(() => api.get(`/hr-incident-reports/${id}`).then(({ data }) => {
+    api.get(`/hr-incident-reports/${id}/audit-logs`).then(({ data: a }) => setAuditLogs(a)).catch(() => {});
     setIr(data);
     setForm({
       hr_findings: data.hr_findings || '',
@@ -248,6 +252,21 @@ export default function HrIncidentReportView() {
             </div>
           </>
         )}
+      </div>
+
+      <div className="card" style={{ marginTop: 16 }}>
+        <h3 className="subsection" style={{ marginTop: 0 }}>System Info</h3>
+        <DataTable
+          columns={[
+            { key: 'set_at', label: 'When', render: (r) => displayAuditTime(r.set_at) },
+            { key: 'set_by_name', label: 'Set By' }, { key: 'event_type', label: 'Type' },
+            { key: 'field_name', label: 'Field', render: (r) => pretty(r.field_name) },
+            { key: 'old_value', label: 'Old Value', render: (r) => (r.field_name === 'status' || r.field_name === 'recommendation' ? pretty(r.old_value) : r.old_value) },
+            { key: 'new_value', label: 'New Value', render: (r) => (r.field_name === 'status' || r.field_name === 'recommendation' ? pretty(r.new_value) : r.new_value) },
+          ]}
+          rows={auditLogs}
+          emptyLabel="No history yet."
+        />
       </div>
     </div>
   );

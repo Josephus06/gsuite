@@ -25,6 +25,16 @@ const RECOMMENDATIONS = [
 
 const trunc = (s, n) => (s == null || String(s).trim() === '' ? null : String(s).trim().slice(0, n));
 
+// System Info (2026-10-29): what was done to a report and by whom -- its filing, each evaluation
+// change, each edit of the charge.
+async function logIr(q, irId, userId, eventType, fieldName = null, oldValue = null, newValue = null) {
+  await q.query(
+    `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+     VALUES ('IncidentReport', ?, ?, ?, ?, ?, ?)`,
+    [irId, eventType, fieldName, oldValue == null ? null : String(oldValue).slice(0, 1000), newValue == null ? null : String(newValue).slice(0, 1000), userId]);
+}
+const day = (v) => (v ? (v instanceof Date ? v.toISOString() : String(v)).slice(0, 10) : null);
+
 const BASE_SELECT = `
   SELECT ir.id, ir.incident_no, ir.status, ir.hr_findings, ir.recommendation, ir.recommendation_notes,
          ir.evaluated_at, ir.created_at,
@@ -102,7 +112,8 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
 // it is a grant on this page and not on the one where charges are raised.
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   try {
-    const [[ir]] = await pool.query('SELECT id, status FROM hr_incident_reports WHERE id = ?', [req.params.id]);
+    const [[ir]] = await pool.query(
+      'SELECT id, status, hr_findings, recommendation, recommendation_notes FROM hr_incident_reports WHERE id = ?', [req.params.id]);
     if (!ir) return res.status(404).json({ error: 'Not found' });
 
     const fields = [];
@@ -138,6 +149,11 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     fields.push('updated_at = NOW()');
     params.push(req.params.id);
     await pool.query(`UPDATE hr_incident_reports SET ${fields.join(', ')} WHERE id = ?`, params);
+    const [[now]] = await pool.query(
+      'SELECT status, hr_findings, recommendation, recommendation_notes FROM hr_incident_reports WHERE id = ?', [ir.id]);
+    for (const f of ['status', 'hr_findings', 'recommendation', 'recommendation_notes']) {
+      if (String(ir[f] ?? '') !== String(now[f] ?? '')) await logIr(pool, ir.id, req.user.id, 'Updated', f, ir[f], now[f]);
+    }
 
     // The charge follows its report rather than carrying a status of its own that could disagree
     // with it. One fact, one place.
@@ -189,10 +205,33 @@ router.put('/:id/charge', requireAuth, requirePermission(ROUTE, 'can_edit'), asy
     if (!ir) return res.status(404).json({ error: 'Not found' });
     if (ir.status !== 'for_evaluation') return res.status(409).json({ error: 'Only a report still For Evaluation can be edited.' });
     if (!req.body.violation_date) return res.status(400).json({ error: 'Enter the date the violation happened.' });
+    const [[was]] = await pool.query('SELECT violation_date, place, details FROM hr_violations WHERE id = ?', [ir.violation_id]);
+    const next_ = { violation_date: req.body.violation_date, place: trunc(req.body.place, 200), details: trunc(req.body.details, 4000) };
     await pool.query(
       'UPDATE hr_violations SET violation_date = ?, place = ?, details = ?, updated_at = NOW() WHERE id = ?',
-      [req.body.violation_date, trunc(req.body.place, 200), trunc(req.body.details, 4000), ir.violation_id]);
+      [next_.violation_date, next_.place, next_.details, ir.violation_id]);
+    for (const f of ['violation_date', 'place', 'details']) {
+      const a = f === 'violation_date' ? day(was[f]) : was[f];
+      if (String(a ?? '') !== String(next_[f] ?? '')) await logIr(pool, ir.id, req.user.id, 'Updated', f, a, next_[f]);
+    }
     return res.json({ ok: true });
+  } catch (err) { return next(err); }
+});
+
+// System Info. A report filed before logging began (2026-10-29) shows its filing from the charge
+// itself -- who reported it and when.
+router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT a.*, u.display_name AS set_by_name FROM audit_logs a LEFT JOIN users u ON u.id = a.set_by_user_id
+        WHERE a.auditable_type = 'IncidentReport' AND a.auditable_id = ? ORDER BY a.set_at DESC, a.id DESC`, [req.params.id]);
+    if (!rows.some((r) => r.event_type === 'Created')) {
+      const [[ir]] = await pool.query(
+        `SELECT ir.incident_no, ir.created_at, u.display_name FROM hr_incident_reports ir
+           JOIN hr_violations v ON v.id = ir.violation_id LEFT JOIN users u ON u.id = v.reported_by_user_id WHERE ir.id = ?`, [req.params.id]);
+      if (ir) rows.push({ id: `created-${req.params.id}`, set_at: ir.created_at, set_by_name: ir.display_name || '—', event_type: 'Created', field_name: 'incident_no', old_value: null, new_value: ir.incident_no });
+    }
+    return res.json(rows);
   } catch (err) { return next(err); }
 });
 

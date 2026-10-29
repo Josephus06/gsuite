@@ -309,6 +309,14 @@ router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'),
        WHERE a.auditable_type = 'Cheque' AND a.auditable_id = ? ORDER BY a.set_at DESC`,
       [req.params.id]
     );
+    // A cheque brought over from the source has no Created entry (the importer logs nothing) -- its
+    // own creator and time stand in, so System Info is never blank (2026-10-29, CHK-9206).
+    if (!rows.some((r) => r.event_type === 'Created')) {
+      const [[c]] = await pool.query(
+        `SELECT c.cheque_no, c.created_at, u.display_name FROM cheques c LEFT JOIN users u ON u.id = c.created_by_user_id WHERE c.id = ?`,
+        [req.params.id]);
+      if (c) rows.push({ id: `created-${req.params.id}`, set_at: c.created_at, set_by_name: c.display_name || 'Imported from source', event_type: 'Created', field_name: 'cheque_no', old_value: null, new_value: c.cheque_no });
+    }
     res.json(rows);
   } catch (err) { next(err); }
 });

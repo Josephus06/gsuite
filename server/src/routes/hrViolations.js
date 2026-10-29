@@ -307,6 +307,10 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const [ir] = await conn.query(
       'INSERT INTO hr_incident_reports (violation_id) VALUES (?)', [violationId]);
     await conn.query('UPDATE hr_incident_reports SET incident_no = ? WHERE id = ?', [`IR-${ir.insertId}`, ir.insertId]);
+    // The report's System Info starts here (routes/hrIncidentReports.js audit-logs).
+    await conn.query(
+      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+       VALUES ('IncidentReport', ?, 'Created', 'incident_no', NULL, ?, ?)`, [ir.insertId, `IR-${ir.insertId}`, req.user.id]);
 
     await conn.commit();
     return res.status(201).json({
