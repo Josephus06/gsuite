@@ -10,7 +10,8 @@ const ROUTE = '/reports/artist-incentive';
 // is done, not when the order was raised or planned.
 //
 // The two sources earn differently: a Non-Standard Job Order carries its incentive per
-// materials line (5% of that line's Process Price, stored at save time), while a Job Order
+// materials line (a percentage of that line's Process Price, stored at save time -- the percentage
+// is a setting, edited below the filters since 2026-10-30), while a Job Order
 // earns a flat 7.50 per unit of layout work -- an amount, not a percentage.
 const money = (n) => Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const day = (v) => (v ? String(v).slice(0, 10) : '');
@@ -67,6 +68,25 @@ export default function ArtistIncentiveReport() {
 
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { api.get(`${ROUTE}/artists`).then(({ data: rows }) => setArtists(rows)); }, []);
+
+  // The NSTDJO incentive percentage -- shown to everyone, editable with can_edit here.
+  const [settings, setSettings] = useState(null);
+  const [pctDraft, setPctDraft] = useState(null); // null = not editing
+  const [savingPct, setSavingPct] = useState(false);
+  const [pctError, setPctError] = useState('');
+  useEffect(() => { api.get(`${ROUTE}/settings`).then(({ data: s }) => setSettings(s)).catch(() => {}); }, []);
+  async function savePct() {
+    setSavingPct(true); setPctError('');
+    try {
+      const { data: s } = await api.put(`${ROUTE}/settings`, { nstdjo_incentive_pct: pctDraft });
+      setSettings((cur) => ({ ...cur, ...s }));
+      setPctDraft(null);
+    } catch (err) {
+      setPctError(err.response?.data?.error || 'Could not save the percentage.');
+    } finally {
+      setSavingPct(false);
+    }
+  }
 
   // Close on a click anywhere else, or on Escape. Without it the only way out of the menu is
   // to pick something, which on a button that downloads a file is a trap, not a shortcut.
@@ -209,6 +229,37 @@ export default function ArtistIncentiveReport() {
           </div>
         </div>
       </div>
+
+      {settings && (
+        <div className="card print-toolbar" style={{ marginBottom: 16, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <strong>Incentive rates:</strong>
+          <span>Job Order {money(settings.jo_incentive_amount)} per layout</span>
+          <span className="muted">·</span>
+          {pctDraft === null ? (
+            <>
+              <span>Non-Standard Job Order <strong>{settings.nstdjo_incentive_pct}%</strong> of each line&apos;s Process Price</span>
+              {settings.can_edit && (
+                <button type="button" className="btn btn-sm" onClick={() => { setPctDraft(String(settings.nstdjo_incentive_pct)); setPctError(''); }}>Change</button>
+              )}
+            </>
+          ) : (
+            <>
+              <span>Non-Standard Job Order</span>
+              <input type="number" min="0" max="100" step="0.01" autoFocus value={pctDraft} style={{ width: 90 }}
+                onChange={(event) => setPctDraft(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && savePct()} />
+              <span>% of Process Price</span>
+              <button type="button" className="btn btn-sm btn-primary" disabled={savingPct || pctDraft === ''} onClick={savePct}>
+                {savingPct ? 'Saving…' : 'Save'}
+              </button>
+              <button type="button" className="btn btn-sm" disabled={savingPct} onClick={() => setPctDraft(null)}>Cancel</button>
+              <span className="muted" style={{ fontSize: 12, flexBasis: '100%' }}>
+                Applies to NSTDJOs saved from now on. Saved orders keep their incentive until their lines are saved again.
+              </span>
+            </>
+          )}
+          {pctError && <span style={{ color: '#b91c1c' }}>{pctError}</span>}
+        </div>
+      )}
 
       {error && <div className="card" style={{ color: '#b91c1c', marginBottom: 16 }}>{error}</div>}
 

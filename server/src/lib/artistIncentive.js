@@ -15,10 +15,24 @@
 const JO_INCENTIVE_AMOUNT = 7.5;
 
 // A Non-Standard Job Order carries its incentive per materials line, worked out when the
-// order was saved (5% of that line's Process Price -- ARTIST_INCENTIVE_RATE in
-// nonStandardJobOrders.js). Reading the stored figure rather than recomputing means a later
-// change to the rate cannot restate what past work already earned.
-const NSTDJO_INCENTIVE_RATE = 0.05;
+// order was saved (a percentage of that line's Process Price). Reading the stored figure rather
+// than recomputing means a later change to the rate cannot restate what past work already earned.
+//
+// The percentage is a setting (2026-10-30), app_settings 'nstdjo_artist_incentive_pct', edited on
+// the Artist Incentive Report; 5 until someone sets it.
+const NSTDJO_INCENTIVE_SETTING = 'nstdjo_artist_incentive_pct';
+const NSTDJO_INCENTIVE_DEFAULT_PCT = 5;
+const pool = require('../db');
+
+async function getNstdjoIncentivePct(q = pool) {
+  const [[row]] = await q.query('SELECT value FROM app_settings WHERE name = ?', [NSTDJO_INCENTIVE_SETTING]).catch(() => [[null]]);
+  const pct = row ? Number(row.value) : NaN;
+  return Number.isFinite(pct) && pct >= 0 ? pct : NSTDJO_INCENTIVE_DEFAULT_PCT;
+}
+
+// One line's incentive at a given percentage; null with no Process Price, as before.
+const nstdjoLineIncentive = (processPrice, pct) =>
+  (processPrice ? Number((Number(processPrice) * pct / 100).toFixed(2)) : null);
 
 const joLayoutQty = (alias = 'jo') => `COALESCE(NULLIF(${alias}.layout_qty, 0), 1)`;
 
@@ -37,11 +51,15 @@ const nstdjoIncentiveExpression = (alias = 'n') =>
 const joIncentiveBasis = (alias = 'jo') =>
   `CONCAT('${JO_INCENTIVE_AMOUNT.toFixed(2)} x ',
           TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM ${joLayoutQty(alias)})))`;
-const NSTDJO_INCENTIVE_BASIS = `${(NSTDJO_INCENTIVE_RATE * 100).toFixed(0)}% per line`;
+// No number in it: an order keeps the rate it was saved at, which need not be today's.
+const NSTDJO_INCENTIVE_BASIS = '% of Process Price, per line';
 
 module.exports = {
   JO_INCENTIVE_AMOUNT,
-  NSTDJO_INCENTIVE_RATE,
+  NSTDJO_INCENTIVE_SETTING,
+  NSTDJO_INCENTIVE_DEFAULT_PCT,
+  getNstdjoIncentivePct,
+  nstdjoLineIncentive,
   NSTDJO_INCENTIVE_BASIS,
   jobOrderIncentiveExpression,
   nstdjoIncentiveExpression,

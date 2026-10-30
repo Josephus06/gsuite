@@ -17,9 +17,9 @@ const ROUTE = '/non-standard-job-orders';
 // they are not a hardcoded list. Only SITE INSPECTION alters the form, so it is the one
 // value the UI needs to name: it relabels the PMS Job Type and address fields below.
 const SITE_INSPECTION = 'SITE INSPECTION';
-// The artist earns 5% of a line's Process Price. Kept in sync with ARTIST_INCENTIVE_RATE
-// in server/src/routes/nonStandardJobOrders.js, which recomputes it on save.
-const ARTIST_INCENTIVE_RATE = 0.05;
+// The artist earns a percentage of a line's Process Price -- a setting (2026-10-30), read from the
+// Artist Incentive Report's /settings. The server recomputes it on save; this is the preview.
+const DEFAULT_INCENTIVE_PCT = 5;
 
 const today = () => new Date().toISOString().slice(0, 10);
 // Mirrors the Materials grid column order on the form. process_qty/process_price belong
@@ -103,6 +103,12 @@ export default function NonStandardJobOrderFormModal({ mode = 'create', order, r
   const [contactError, setContactError] = useState('');
 
   useEffect(() => { api.get(`${ROUTE}/meta`).then(({ data }) => setMeta(data)); }, []);
+  const [incentivePct, setIncentivePct] = useState(DEFAULT_INCENTIVE_PCT);
+  useEffect(() => {
+    api.get('/reports/artist-incentive/settings')
+      .then(({ data }) => { if (Number.isFinite(Number(data?.nstdjo_incentive_pct))) setIncentivePct(Number(data.nstdjo_incentive_pct)); })
+      .catch(() => {});
+  }, []);
 
   // A new order inherits the raiser's own branch defaults; a revision keeps whatever the
   // order was saved with.
@@ -146,7 +152,7 @@ export default function NonStandardJobOrderFormModal({ mode = 'create', order, r
         ...current,
         materials: current.materials.map((material) => {
           const price = processPriceFor(brackets[material.process_id], material);
-          const incentive = price === '' ? '' : Number((price * ARTIST_INCENTIVE_RATE).toFixed(2));
+          const incentive = price === '' ? '' : Number((price * incentivePct / 100).toFixed(2));
           if (String(material.process_price) === String(price)
             && String(material.artist_incentive) === String(incentive)) return material;
           return { ...material, process_price: price, artist_incentive: incentive };
@@ -154,7 +160,7 @@ export default function NonStandardJobOrderFormModal({ mode = 'create', order, r
       }));
     })();
     return () => { stale = true; };
-  }, [pricingKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pricingKey, incentivePct]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function setField(name, value) {
     setForm((current) => ({ ...current, [name]: value }));
@@ -338,7 +344,7 @@ export default function NonStandardJobOrderFormModal({ mode = 'create', order, r
                   <td><input type="number" step="0.0001" value={material.total} onChange={(event) => setMaterial(index, 'total', event.target.value)} /></td>
                   <td><input value={material.unit} onChange={(event) => setMaterial(index, 'unit', event.target.value)} /></td>
                   <td><input readOnly value={material.process_price} title="Auto-calculated: Process Costing rate for this quantity bracket x Qty" placeholder="—" /></td>
-                  <td><input readOnly value={material.artist_incentive} title="Auto-calculated: 5% of Process Price" placeholder="—" /></td>
+                  <td><input readOnly value={material.artist_incentive} title={`Auto-calculated: ${incentivePct}% of Process Price`} placeholder="—" /></td>
                   <td><input value={material.artist_remarks} onChange={(event) => setMaterial(index, 'artist_remarks', event.target.value)} /></td>
                   <td><input value={material.sales_remarks} onChange={(event) => setMaterial(index, 'sales_remarks', event.target.value)} /></td>
                   <td><button type="button" className="btn btn-sm" onClick={() => removeMaterial(index)}>Remove</button></td>

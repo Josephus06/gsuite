@@ -98,8 +98,9 @@ const afterSbuGate = (jobType, status, gatedSubStatus) => (jobType === SITE_INSP
 const CANCELLED_STATUS = 'Cancelled';
 // End states -- nothing further can be done to an order once it reaches one of these.
 const TERMINAL_STATUSES = [CANCELLED_STATUS, COMPLETED_STATUS];
-// The artist earns 5% of a materials line's Process Price.
-const ARTIST_INCENTIVE_RATE = 0.05;
+// The artist earns a percentage of a materials line's Process Price -- a setting since 2026-10-30
+// (lib/artistIncentive.js getNstdjoIncentivePct), read once per save.
+const { getNstdjoIncentivePct, nstdjoLineIncentive } = require('../lib/artistIncentive');
 
 // Feeds the detail view's System Info tab, same shape every other module logs.
 async function logAudit(conn, { id, userId, eventType, fieldName = null, oldValue = null, newValue = null }) {
@@ -476,9 +477,10 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const nstdjoNo = `NSTDJO-${result.insertId}`;
     await conn.query('UPDATE non_standard_job_orders SET nstdjo_no = ? WHERE id = ?', [nstdjoNo, result.insertId]);
 
+    const incentivePct = await getNstdjoIncentivePct(conn);
     for (const [index, m] of materials.entries()) {
       // Recomputed here rather than trusting the client's figure -- this drives a payout.
-      const artistIncentive = m.process_price ? Number((Number(m.process_price) * ARTIST_INCENTIVE_RATE).toFixed(2)) : null;
+      const artistIncentive = nstdjoLineIncentive(m.process_price, incentivePct);
       await conn.query(
         `INSERT INTO non_standard_job_order_materials
          (non_standard_job_order_id, line_no, process_id, process_qty, process_price, artist_incentive,
@@ -691,8 +693,9 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
 
     // Materials are replaced wholesale rather than diffed -- the grid posts the full set.
     await conn.query('DELETE FROM non_standard_job_order_materials WHERE non_standard_job_order_id = ?', [req.params.id]);
+    const incentivePct = await getNstdjoIncentivePct(conn);
     for (const [index, m] of materials.entries()) {
-      const artistIncentive = m.process_price ? Number((Number(m.process_price) * ARTIST_INCENTIVE_RATE).toFixed(2)) : null;
+      const artistIncentive = nstdjoLineIncentive(m.process_price, incentivePct);
       await conn.query(
         `INSERT INTO non_standard_job_order_materials
          (non_standard_job_order_id, line_no, process_id, process_qty, process_price, artist_incentive,

@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { getArtistEmployeeScope } = require('../lib/artistVisibility');
 
 const router = express.Router();
@@ -10,7 +10,7 @@ const ROUTE = '/reports/artist-incentive';
 // artist's own Assigned JO worklist -- the two must never quote different figures for the
 // same job, which a second copy of these rules is exactly how you get.
 const {
-  JO_INCENTIVE_AMOUNT, NSTDJO_INCENTIVE_BASIS,
+  JO_INCENTIVE_AMOUNT, NSTDJO_INCENTIVE_BASIS, NSTDJO_INCENTIVE_SETTING, getNstdjoIncentivePct,
   jobOrderIncentiveExpression, nstdjoIncentiveExpression, joIncentiveBasis,
 } = require('../lib/artistIncentive');
 const { buildArtistIncentiveWorkbook } = require('../lib/artistIncentiveWorkbook');
@@ -256,6 +256,40 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 // change, and an artist who has since moved on or been made a supervisor keeps the work they
 // did. A name in the body that cannot be selected in the filter is the mismatch this whole
 // endpoint has already been fixed for once.
+// The NSTDJO incentive percentage (2026-10-30). Read by anyone signed in -- the NSTDJO form shows
+// the incentive as the line is priced -- and changed by a System Admin or whoever holds can_edit
+// here. A change applies to NSTDJOs saved from then on; a saved order keeps what it was saved at
+// until its lines are saved again. Each change is in the audit log.
+router.get('/settings', requireAuth, async (req, res, next) => {
+  try {
+    res.json({
+      nstdjo_incentive_pct: await getNstdjoIncentivePct(),
+      jo_incentive_amount: JO_INCENTIVE_AMOUNT,
+      can_edit: await userCan(req.user.id, ROUTE, 'can_edit'),
+    });
+  } catch (err) { next(err); }
+});
+
+router.put('/settings', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const pct = Number(req.body?.nstdjo_incentive_pct);
+    if (req.body?.nstdjo_incentive_pct === '' || !Number.isFinite(pct) || pct < 0 || pct > 100) {
+      return res.status(400).json({ error: 'Enter a percentage from 0 to 100.' });
+    }
+    const value = String(Number(pct.toFixed(4)));
+    const was = await getNstdjoIncentivePct();
+    await pool.query('INSERT INTO app_settings (name, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
+      [NSTDJO_INCENTIVE_SETTING, value]);
+    if (Number(was) !== Number(value)) {
+      await pool.query(
+        `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+         VALUES ('AppSetting', 0, 'Updated', ?, ?, ?, ?)`,
+        [NSTDJO_INCENTIVE_SETTING, String(was), value, req.user.id]);
+    }
+    return res.json({ nstdjo_incentive_pct: Number(value) });
+  } catch (err) { return next(err); }
+});
+
 router.get('/artists', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     // Scoped the same way the body is: an Artist may only see their own incentives, so

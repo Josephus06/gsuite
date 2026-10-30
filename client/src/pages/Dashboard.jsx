@@ -111,7 +111,7 @@ function money(v) {
   const n = Number(v) || 0;
   return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
-// Incentive is earned in fractions of a peso -- 7.50 a layout, 5% of an NSTDJO line -- so it
+// Incentive is earned in fractions of a peso -- 7.50 a layout, a set % of an NSTDJO line -- so it
 // keeps two decimals where the whole-peso money() above would round 1,207.50 up to 1,208 and
 // disagree with Reports > Artist Incentive, which shows the exact figure.
 function money2(v) {

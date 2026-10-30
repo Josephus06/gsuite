@@ -183,7 +183,7 @@ export default function AssignedJobOrders() {
                     <td>{row.pms_job_type_name ? `${row.pms_job_type_code} — ${row.pms_job_type_name}` : '—'}</td>
                     <td>{row.minutes_consume ?? 0} mins</td>
                     {/* Amount first, then what it is made of -- a flat 7.50 per layout on a
-                        Job Order, 5% of each materials line on a Non-Standard one. */}
+                        Job Order, a set % (Artist Incentive Report) of each materials line on a Non-Standard one. */}
                     <td style={{ whiteSpace: 'nowrap' }}>
                       {formatIncentive(row.incentive_amount)}
                       {row.incentive_basis && <div className="muted" style={{ fontSize: '0.85em' }}>{row.incentive_basis}</div>}
