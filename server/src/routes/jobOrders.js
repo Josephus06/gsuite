@@ -13,6 +13,7 @@ const { isHeadOfficeUser } = require('../lib/userLocation');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 const { sendXlsx, day } = require('../lib/xlsxExport');
+const { shrinkFile } = require('../lib/shrinkFile');
 const {
   notifyDesignSupervisors, notifyAssignedArtist, notifySalesRep, NOTIFY_TYPE_JO_REVISION,
 } = require('../lib/designNotifications');
@@ -1355,14 +1356,18 @@ router.post('/:id/attachments', requireAuth, async (req, res, next) => {
     // Any file type is accepted -- artists attach drawings, spreadsheets and images as well
     // as PDFs. The browser's reported type is stored only to serve the download back with a
     // sensible Content-Type; it is never trusted to decide anything.
-    const safeMime = /^[\w.+-]+\/[\w.+-]+$/.test(String(mimeType || ''))
+    let safeMime = /^[\w.+-]+\/[\w.+-]+$/.test(String(mimeType || ''))
       ? String(mimeType).slice(0, 100)
       : 'application/octet-stream';
+    // A photo or screenshot is stored as a smaller JPG (lib/shrinkFile.js).
+    let storedName = String(fileName);
+    const small = await shrinkFile(buf, storedName);
+    if (small) { buf = small.buf; storedName = small.fileName; safeMime = small.mime; }
 
     const [result] = await conn.query(
       `INSERT INTO job_order_attachments (job_order_id, kind, file_name, mime_type, size_bytes, file_data, uploaded_by_user_id)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [req.params.id, kind, String(fileName).slice(0, 255), safeMime, buf.length, buf, req.user.id]
+      [req.params.id, kind, storedName.slice(0, 255), safeMime, buf.length, buf, req.user.id]
     );
     const [[row]] = await conn.query(
       `SELECT id, kind, file_name, mime_type, size_bytes, created_at FROM job_order_attachments WHERE id = ?`,

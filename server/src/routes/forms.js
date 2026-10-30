@@ -10,6 +10,7 @@ const {
   AP_NOTED_TYPES, isAccountsPayable, notersForDoc,
 } = require('../lib/formNoters');
 const { leaveRoute } = require('../lib/leaveRoute');
+const { shrinkFile } = require('../lib/shrinkFile');
 const { businessTripApprovers } = require('../lib/businessTripRoute');
 const { notifyFormStatus } = require('../lib/approvalNotifications');
 const { checkOtDeclines } = require('../lib/otDeclineIr');
@@ -2347,16 +2348,20 @@ router.post('/:id/attachments', requireAuth, async (req, res, next) => {
     const { file_name: fileName, data, mime_type: mimeType } = req.body || {};
     if (!fileName || !data) return res.status(400).json({ error: 'file_name and data are required' });
     // A bare base64 string or a full data: URL, which is what the browser's FileReader gives.
-    const buf = Buffer.from(String(data).includes(',') ? String(data).split(',').pop() : String(data), 'base64');
+    let buf = Buffer.from(String(data).includes(',') ? String(data).split(',').pop() : String(data), 'base64');
     if (!buf.length) return res.status(400).json({ error: 'The uploaded file is empty' });
     if (buf.length > MAX_ATTACHMENT_BYTES) return res.status(413).json({ error: 'Files must be 10MB or smaller' });
     // Any type is accepted; the browser's reported type is only used to serve the file back.
-    const safeMime = /^[\w.+-]+\/[\w.+-]+$/.test(String(mimeType || '')) ? String(mimeType).slice(0, 100) : 'application/octet-stream';
+    let safeMime = /^[\w.+-]+\/[\w.+-]+$/.test(String(mimeType || '')) ? String(mimeType).slice(0, 100) : 'application/octet-stream';
+    // A photo or screenshot is stored as a smaller JPG (lib/shrinkFile.js).
+    let storedName = String(fileName).slice(0, 255);
+    const small = await shrinkFile(buf, storedName);
+    if (small) { buf = small.buf; storedName = small.fileName.slice(0, 255); safeMime = small.mime; }
     const [r] = await pool.query(
       `INSERT INTO form_request_attachments (form_request_id, file_name, mime_type, size_bytes, file_data, uploaded_by_user_id)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [doc.id, String(fileName).slice(0, 255), safeMime, buf.length, buf, req.user.id]);
-    await logFormAudit(pool, doc.id, req.user.id, 'Updated', 'Attachment', null, String(fileName).slice(0, 255));
+      [doc.id, storedName, safeMime, buf.length, buf, req.user.id]);
+    await logFormAudit(pool, doc.id, req.user.id, 'Updated', 'Attachment', null, storedName);
     res.status(201).json({ id: r.insertId });
   } catch (err) { next(err); }
 });
