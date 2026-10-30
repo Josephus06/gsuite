@@ -137,7 +137,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
               -- Amount Due on gross, as the invoice view shows it: the stored balance (Gross - EWT -
               -- payments) plus EWT while open, 0 once settled.
               ${grossDueSql('si')} AS amount_due,
-              si.bs_si_no, si.term, si.status, si.memo, si.invoice_type,
+              si.bs_si_no, si.term, si.status, si.memo, si.invoice_type, si.logistics_received_date,
+              dt.dt_no, dt.date_created AS dt_date_created,
               COALESCE(so.sales_order_no, ns.nsso_no) AS sales_order_no, e.estimate_no, c.name AS customer_name,
               COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id) AS customer_id,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
@@ -150,6 +151,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN employees sr ON sr.id = si.sales_rep_id
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        LEFT JOIN departments d ON d.id = si.department_id
+       -- The Delivery Ticket it billed, if any (2026-10-30: DT # and its date on the list).
+       LEFT JOIN delivery_tickets dt ON dt.id = si.delivery_ticket_id
        ${whereSql}
        ORDER BY si.id DESC
        LIMIT ? OFFSET ?`,
@@ -174,7 +177,8 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
               -- Amount Due on gross, as the invoice view shows it: the stored balance (Gross - EWT -
               -- payments) plus EWT while open, 0 once settled.
               ${grossDueSql('si')} AS amount_due,
-              si.bs_si_no, si.term, si.status, si.memo, si.invoice_type,
+              si.bs_si_no, si.term, si.status, si.memo, si.invoice_type, si.logistics_received_date,
+              dt.dt_no, dt.date_created AS dt_date_created,
               COALESCE(so.sales_order_no, ns.nsso_no) AS sales_order_no, e.estimate_no, c.name AS customer_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               loc.location_name AS office_location_name, d.name AS department_name
@@ -186,6 +190,8 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
        LEFT JOIN employees sr ON sr.id = si.sales_rep_id
        LEFT JOIN locations loc ON loc.id = si.office_location_id
        LEFT JOIN departments d ON d.id = si.department_id
+       -- The Delivery Ticket it billed, if any (2026-10-30: DT # and its date on the list).
+       LEFT JOIN delivery_tickets dt ON dt.id = si.delivery_ticket_id
        ${whereSql}
        ORDER BY si.id DESC`,
       params
@@ -202,6 +208,8 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
       { header: 'SO #', key: 'so', width: 14 },
       { header: 'Date Created', key: 'date_created', width: 13 },
       { header: 'Date Due', key: 'date_due', width: 13 },
+      { header: 'DT #', key: 'dt_no', width: 14 },
+      { header: 'DT Date Created', key: 'dt_date', width: 15 },
       { header: 'Office Location', key: 'location', width: 22 },
       { header: 'Customer', key: 'customer', width: 38 },
       { header: 'Sales Rep', key: 'rep', width: 24 },
@@ -213,10 +221,11 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
       { header: 'Type', key: 'type', width: 6 },
       { header: 'BS/SI #', key: 'bs_si', width: 14 },
       { header: 'Term', key: 'term', width: 14 },
+      { header: 'Received by Logistics', key: 'logistics', width: 18 },
       { header: 'Status', key: 'status', width: 10 },
       { header: 'Memo', key: 'memo', width: 40 },
     ];
-    ws.autoFilter = 'A1:Q1';
+    ws.autoFilter = 'A1:T1';
     ws.getRow(1).font = { bold: true };
     ws.getRow(1).commit();
 
@@ -227,12 +236,14 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
       ws.addRow({
         invoice_no: r.invoice_no, so: r.sales_order_no || r.estimate_no || '',
         date_created: day(r.date_created), date_due: day(r.date_due),
+        dt_no: r.dt_no || '', dt_date: day(r.dt_date_created),
         location: r.office_location_name || '', customer: r.customer_name || '',
         rep: r.sales_rep_name || '', department: r.department_name || '',
         // Numbers, not preformatted strings, so the columns can be totalled.
         net: Number(r.net_of_tax || 0), tax: Number(r.tax_amount || 0),
         gross: Number(r.gross_amount || 0), due: Number(r.amount_due || 0),
         type: r.invoice_type || 'SI', bs_si: r.bs_si_no || '', term: r.term || '',
+        logistics: day(r.logistics_received_date),
         status: STATUS[r.status] || r.status, memo: r.memo || '',
       }).commit();
     }

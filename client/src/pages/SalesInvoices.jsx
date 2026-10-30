@@ -230,6 +230,8 @@ export default function SalesInvoices() {
                   <th>SO #</th>
                   <th>Date Created</th>
                   <th>Date Due</th>
+                  <th>DT #</th>
+                  <th>DT Date Created</th>
                   <th>Office Location</th>
                   <th>Customer</th>
                   <th>Sales Rep</th>
@@ -241,6 +243,7 @@ export default function SalesInvoices() {
                   <th>Type</th>
                   <th>BS/SI #</th>
                   <th>Term</th>
+                  <th>Received by Logistics</th>
                   <th>Status</th>
                   <th>Memo</th>
                   <th></th>
@@ -248,7 +251,7 @@ export default function SalesInvoices() {
               </thead>
               <tbody>
                 {rows.length === 0 && (
-                  <tr><td colSpan={18} className="muted" style={{ textAlign: 'center', padding: 20 }}>No invoices found.</td></tr>
+                  <tr><td colSpan={21} className="muted" style={{ textAlign: 'center', padding: 20 }}>No invoices found.</td></tr>
                 )}
                 {pageRows.map((row) => (
                   <tr key={row.id}>
@@ -256,6 +259,8 @@ export default function SalesInvoices() {
                     <td data-label="SO #">{row.sales_order_no}</td>
                     <td data-label="Date Created">{formatDate(row.date_created)}</td>
                     <td data-label="Date Due">{formatDate(row.date_due)}</td>
+                    <td data-label="DT #">{row.dt_no}</td>
+                    <td data-label="DT Date Created">{formatDate(row.dt_date_created)}</td>
                     <td data-label="Office Location">{row.office_location_name}</td>
                     <td data-label="Customer"><CustomerLink id={row.customer_id} name={row.customer_name} /></td>
                     <td data-label="Sales Rep">{row.sales_rep_name}</td>
@@ -267,6 +272,7 @@ export default function SalesInvoices() {
                     <td data-label="Type">{row.invoice_type || 'SI'}</td>
                     <td data-label="BS/SI #">{row.bs_si_no}</td>
                     <td data-label="Term">{row.term}</td>
+                    <td data-label="Received by Logistics">{formatDate(row.logistics_received_date)}</td>
                     <td data-label="Status">{STATUS_LABELS[row.status] || row.status}</td>
                     <td data-label="Memo">{row.memo}</td>
                     <td><Link className="btn btn-sm btn-primary" to={`/sales-invoices/${row.id}`}>View</Link></td>
