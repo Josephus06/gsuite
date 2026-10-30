@@ -6,7 +6,7 @@ import header from '../assets/memo-header.jpeg';
 import footer from '../assets/memo-footer.jpeg';
 
 // Memo on the company's own template ("NOVEMBER 2026.docx", 2026-10-27): US Letter, Times New Roman
-// 12pt, the GraphicStar logo over the blue/orange rule in the header and the three branch addresses in
+// 12pt, the GraphicStar logo over the blue/orange rule in the header (the "Creations Made Easy" logo since 2026-10-30) and the three branch addresses in
 // the footer -- the template's own two images, placed where Word places them. A long memo runs onto
 // more pages; the letterhead repeats on each (fixed in print, with the body inside a table whose
 // header/footer rows reserve the letterhead's space on every page).
@@ -55,9 +55,11 @@ export default function HrMemoPrint() {
         .memop-sheet { width: 215.9mm; min-height: 279.4mm; margin: 0 auto; background: #fff; color: #000; position: relative;
           box-shadow: 0 1px 6px rgba(0,0,0,.25); box-sizing: border-box; padding: 0 25.4mm;
           font: 12pt/1.15 'Times New Roman', Times, serif; }
-        /* Header: the image is 184.3 x 17.7mm, centred in a paragraph indented 0.375in past each margin,
-           7.9mm (450 twips) from the top. Footer: 208.2 x 35.6mm, 0.875in left of the margin, at the foot. */
-        .memop-head { position: absolute; top: 7.9mm; left: 15.8mm; width: 184.3mm; height: 17.7mm; }
+        /* Header ("Document2.docx", 2026-10-30): the "Creations Made Easy" logo over the blue/orange rule,
+           Word's two-picture group flattened into one image, 170.7 x 16.7mm at 14.1mm from the left edge
+           (0.7in left of a 1.25in margin), 7.9mm from the top.
+           Footer: 208.2 x 35.6mm, 0.875in left of the margin, at the foot. */
+        .memop-head { position: absolute; top: 7.9mm; left: 14.1mm; width: 170.7mm; height: 16.7mm; }
         .memop-foot { position: absolute; bottom: 0; left: 3.2mm; width: 208.2mm; height: 35.6mm; }
         .memop-head img, .memop-foot img { display: block; width: 100%; height: 100%; }
         .memop-draft { position: absolute; top: 42%; left: 0; right: 0; text-align: center; font: 700 54pt Arial, sans-serif;
