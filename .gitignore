@@ -33,3 +33,11 @@ client/public/fonts/*.otf
 client/public/fonts/*.ttf
 client/public/fonts/*.woff
 client/public/fonts/*.woff2
+
+# Any full data dump, wherever it lands (two railway-full.sql files sat unignored at the root
+# and in server/ until 2026-10-31).
+*full*.sql
+# Rollback/report snapshots written by data-fix scripts -- live records, keep on the box.
+server/rollback/
+# One-off local scratch scripts (server/_counts.js and friends).
+server/_*.js
