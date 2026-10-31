@@ -67,6 +67,7 @@ import JobTypes from './pages/JobTypes';
 import UnitOfMeasures from './pages/UnitOfMeasures';
 import JobTypeEdit from './pages/JobTypeEdit';
 import AssignedJobOrders from './pages/AssignedJobOrders';
+import DesignSchedule from './pages/DesignSchedule';
 import ArtistIncentiveReport from './pages/reports/ArtistIncentiveReport';
 import AiRenderings from './pages/AiRenderings';
 import DeliverySummary from './pages/reports/DeliverySummary';
@@ -409,6 +410,7 @@ function App() {
         <Route path="/unit-of-measures" element={<UnitOfMeasures />} />
         <Route path="/job-types/new" element={<JobTypeEdit />} />
         <Route path="/job-types/:id/edit" element={<JobTypeEdit />} />
+        <Route path="/design-schedule" element={<DesignSchedule />} />
         <Route path="/assigned-jo" element={<AssignedJobOrders />} />
         <Route path="/reports/artist-incentive" element={<ArtistIncentiveReport />} />
         <Route path="/ai-renderings" element={<AiRenderings />} />

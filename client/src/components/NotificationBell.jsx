@@ -155,6 +155,8 @@ export default function NotificationBell() {
     if (n.related_type === 'JobOrder' && n.related_id) {
       return n.type === 'design_artist_assigned' ? `/assigned-jo/${n.related_id}` : `/job-orders/${n.related_id}`;
     }
+    // Design Schedule (2026-10-31): forwarded / confirmed / rejected / rescheduled slots open on the calendar.
+    if (n.related_type === 'DesignSchedule' && n.related_id) return `/design-schedule?id=${n.related_id}`;
     if (n.related_type === 'NonStandardSalesOrder' && n.related_id) return `/non-standard-sales-orders/${n.related_id}`;
     if (n.related_type === 'NonStandardJobOrder' && n.related_id) {
       return n.type === 'design_artist_assigned' ? `/assigned-jo/nstdjo/${n.related_id}` : `/non-standard-job-orders/${n.related_id}`;

@@ -44,10 +44,18 @@ async function officeLocationOf(conn, relatedType, relatedId) {
         WHERE n.id = ?`, [relatedId]);
     return r?.loc || null;
   }
+  // A Design Schedule slot belongs to whichever order it schedules.
+  if (relatedType === 'DesignSchedule') {
+    const [[s]] = await conn.query('SELECT order_type, order_id FROM design_schedules WHERE id = ?', [relatedId]);
+    if (!s) return null;
+    return officeLocationOf(conn, s.order_type === 'JO' ? 'JobOrder' : 'NonStandardJobOrder', s.order_id);
+  }
   return null;
 }
 
-async function notifyDesignSupervisors(conn, { title, message, relatedType, relatedId, excludeUserId = null }) {
+async function notifyDesignSupervisors(conn, {
+  title, message, relatedType, relatedId, excludeUserId = null, type = NOTIFY_TYPE_PENDING_ASSIGNMENT,
+}) {
   const [supervisors] = await conn.query(
     `SELECT u.id, ub.location_id FROM users u
        LEFT JOIN user_branches ub ON ub.user_id = u.id AND ub.is_default = TRUE
@@ -63,7 +71,7 @@ async function notifyDesignSupervisors(conn, { title, message, relatedType, rela
     await conn.query(
       `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
        VALUES (?, ?, ?, ?, ?, ?)`,
-      [id, NOTIFY_TYPE_PENDING_ASSIGNMENT, title, message, relatedType, relatedId],
+      [id, type, title, message, relatedType, relatedId],
     );
   }
   return recipients.length;

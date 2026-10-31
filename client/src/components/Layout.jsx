@@ -197,6 +197,8 @@ const NAV_STRUCTURE = [
   {
     label: 'Design',
     children: [
+      // The SBU's calendar of layout slots, confirmed by the Design Supervisor (routes/designSchedule.js).
+      { route: '/design-schedule', label: 'Design Schedule' },
       { route: '/assigned-jo', label: 'Assigned JO' },
       { route: '/reports/artist-incentive', label: 'Artist Incentive Report' },
       { route: '/ai-renderings', label: 'AI Rendering' },
