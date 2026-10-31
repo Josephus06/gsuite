@@ -344,7 +344,7 @@ function DayModal({ date, list, canSchedule, onClose, onStep, onOpen, onNew }) {
                   display: 'block', whiteSpace: 'normal',
                 }}>
                 <div><strong>{timeOf(e.ghost ? e.proposed_start : e.scheduled_start)} - {timeOf(e.ghost ? e.proposed_end : e.scheduled_end)}</strong> · {e.order_no} <span style={{ opacity: 0.7 }}>({e.order_type})</span></div>
-                <div>{e.customer_name}{e.artist_name ? ` · ${e.artist_name}` : ''}</div>
+                <div>{e.customer_name}{e.artist_name ? ` · ${e.artist_name}` : ''}{e.delivery_date ? ` · Delivery ${displayDate(e.delivery_date)}` : ''}</div>
                 <div style={{ opacity: 0.8 }}>
                   {e.ghost ? '⇄ proposed new time' : (PHASE_LABEL[e.phase] || e.phase)}{!e.ghost && e.proposed_by_side ? ' · ⇄ reschedule pending' : ''}
                 </div>
@@ -362,13 +362,13 @@ function NewScheduleModal({ date, start = '09:00', onClose, onSaved }) {
   const [orderType, setOrderType] = useState('JO');
   const [orders, setOrders] = useState([]);
   const endDefault = `${String(Math.min(23, Number(start.slice(0, 2)) + 3)).padStart(2, '0')}:${start.slice(3, 5)}`;
-  const [form, setForm] = useState({ order_id: '', date, start, end: endDefault, notes: '' });
+  const [form, setForm] = useState({ order_id: '', date, start, end: endDefault, notes: '', delivery_date: '' });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     setOrders([]);
-    setForm((f) => ({ ...f, order_id: '' }));
+    setForm((f) => ({ ...f, order_id: '', delivery_date: '' }));
     api.get(`${ROUTE}/eligible`, { params: { type: orderType } }).then(({ data }) => setOrders(data));
   }, [orderType]);
 
@@ -378,7 +378,7 @@ function NewScheduleModal({ date, start = '09:00', onClose, onSaved }) {
     setSaving(true);
     try {
       await api.post(ROUTE, {
-        order_type: orderType, order_id: form.order_id, notes: form.notes, forward,
+        order_type: orderType, order_id: form.order_id, notes: form.notes, delivery_date: form.delivery_date || null, forward,
         scheduled_start: `${form.date}T${form.start}`, scheduled_end: `${form.date}T${form.end}`,
       });
       onSaved();
@@ -409,9 +409,19 @@ function NewScheduleModal({ date, start = '09:00', onClose, onSaved }) {
             { key: 'delivery_date', label: 'Delivery', render: (o) => displayDate(o.delivery_date) },
           ]}
           searchKeys={['order_no', 'customer_name', 'description']}
-          onSelect={(o) => setForm({ ...form, order_id: o.id })}
+          // Delivery Date starts as the order's own; the SBU can change it for this schedule.
+          onSelect={(o) => setForm({ ...form, order_id: o.id, delivery_date: o.delivery_date ? String(o.delivery_date).slice(0, 10) : '' })}
         />
         <div className="muted" style={{ fontSize: 12 }}>Orders waiting for Design that are not on the schedule yet.</div>
+      </div>
+      <div className="field">
+        <label>Delivery Date</label>
+        <input type="date" value={form.delivery_date} onChange={(e) => setForm({ ...form, delivery_date: e.target.value })} />
+        {form.delivery_date && form.date && form.date > form.delivery_date && (
+          <div className="badge-warning" style={{ fontSize: 12, padding: '4px 8px', borderRadius: 4, marginTop: 4 }}>
+            The design slot is after the delivery date.
+          </div>
+        )}
       </div>
       <SlotFields form={form} setForm={setForm} />
       <div className="field">
@@ -440,7 +450,10 @@ function SlotFields({ form, setForm }) {
 // Moving a slot: a plain edit while Design has not confirmed it, a reschedule proposal once they have.
 function MoveModal({ schedule, date, side, onClose, onSaved }) {
   const confirmed = schedule.status === 'Confirmed';
-  const [form, setForm] = useState({ date, start: hhmm(schedule.scheduled_start), end: hhmm(schedule.scheduled_end), note: '' });
+  const [form, setForm] = useState({
+    date, start: hhmm(schedule.scheduled_start), end: hhmm(schedule.scheduled_end), note: '',
+    delivery_date: schedule.delivery_date ? String(schedule.delivery_date).slice(0, 10) : '',
+  });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const other = side.both ? null : (side.design ? 'the SBU' : 'the Design Supervisor');
@@ -451,7 +464,7 @@ function MoveModal({ schedule, date, side, onClose, onSaved }) {
     const body = { scheduled_start: `${form.date}T${form.start}`, scheduled_end: `${form.date}T${form.end}` };
     try {
       if (confirmed) await api.post(`${ROUTE}/${schedule.id}/reschedule`, { ...body, note: form.note });
-      else await api.put(`${ROUTE}/${schedule.id}`, { ...body, notes: schedule.notes });
+      else await api.put(`${ROUTE}/${schedule.id}`, { ...body, notes: schedule.notes, delivery_date: form.delivery_date || null });
       onSaved();
     } catch (err) {
       setError(errorOf(err));
@@ -465,6 +478,12 @@ function MoveModal({ schedule, date, side, onClose, onSaved }) {
       <p className="muted">Currently {slotText(schedule.scheduled_start, schedule.scheduled_end)}.</p>
       {confirmed && other && (
         <p>This slot is confirmed, so the new time goes to {other} to accept. Until then it stays where it is.</p>
+      )}
+      {!confirmed && (
+        <div className="field">
+          <label>Delivery Date</label>
+          <input type="date" value={form.delivery_date} onChange={(e) => setForm({ ...form, delivery_date: e.target.value })} />
+        </div>
       )}
       <SlotFields form={form} setForm={setForm} />
       {confirmed && (
@@ -529,6 +548,7 @@ function DetailModal({ id, meta, onClose, onChanged, onMove }) {
         <div>Status : <span className={`badge ${PHASE_BADGE[s.phase]}`}>{PHASE_LABEL[s.phase] || s.phase}</span></div>
         <div>Customer : <span className="hi">{s.customer_name}</span></div>
         <div>Schedule : <span className="hi">{slotText(s.scheduled_start, s.scheduled_end)}</span></div>
+        <div>Delivery Date : <span className="hi">{s.delivery_date ? displayDate(s.delivery_date) : '--'}</span></div>
         <div>Artist : <span className="hi">{s.artist_name || '--'}</span></div>
         <div>Order Sub Status : <span className="hi">{s.order_sub_status}</span></div>
         <div>Scheduled by : <span className="hi">{s.created_by_name}</span></div>

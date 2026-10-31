@@ -64,6 +64,7 @@ async function main() {
       scheduled_end DATETIME NOT NULL,
       status VARCHAR(30) NOT NULL DEFAULT 'Draft',
       notes TEXT NULL,
+      delivery_date DATE NULL,
       reject_reason TEXT NULL,
       proposed_start DATETIME NULL,
       proposed_end DATETIME NULL,
@@ -82,6 +83,10 @@ async function main() {
       KEY idx_design_schedules_start (scheduled_start),
       KEY idx_design_schedules_status (status)
     )`);
+  // Delivery Date on the schedule (asked 2026-10-31), filled from the order's own delivery date and
+  // changeable by the SBU -- added to a table created before it existed.
+  const [[hasDelivery]] = await pool.query("SHOW COLUMNS FROM design_schedules LIKE 'delivery_date'");
+  if (!hasDelivery) await pool.query('ALTER TABLE design_schedules ADD COLUMN delivery_date DATE NULL AFTER notes');
   console.log('Table design_schedules ready.');
 
   let [[page]] = await pool.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);

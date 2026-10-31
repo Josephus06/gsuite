@@ -79,6 +79,14 @@ async function sideOf(userId) {
   };
 }
 
+// Delivery Date: optional, a plain YYYY-MM-DD.
+function readDeliveryDate(body) {
+  const v = String(body?.delivery_date || '').trim();
+  if (!v) return { value: null };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return { error: 'Delivery Date must be a date.' };
+  return { value: v };
+}
+
 const BASE_SELECT = `
   SELECT ds.*,
          COALESCE(jo.job_order_no, n.nstdjo_no) AS order_no,
@@ -341,6 +349,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   const { order_type: orderType, order_id: orderId, notes } = req.body || {};
   const slot = readSlot(req.body);
   if (slot.error) return res.status(400).json({ error: slot.error });
+  const delivery = readDeliveryDate(req.body);
+  if (delivery.error) return res.status(400).json({ error: delivery.error });
 
   const conn = await pool.getConnection();
   try {
@@ -353,9 +363,9 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       return res.status(409).json({ error: 'This order is already on the Design Schedule -- move that slot instead.' });
     }
     const [r] = await conn.query(
-      `INSERT INTO design_schedules (order_type, order_id, scheduled_start, scheduled_end, notes, created_by_user_id)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [orderType, orderId, slot.start, slot.end, notes || null, req.user.id],
+      `INSERT INTO design_schedules (order_type, order_id, scheduled_start, scheduled_end, notes, delivery_date, created_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [orderType, orderId, slot.start, slot.end, notes || null, delivery.value, req.user.id],
     );
     await logAudit(conn, { id: r.insertId, userId: req.user.id, eventType: 'Created', fieldName: 'scheduled_start', newValue: `${slot.start} - ${slot.end}` });
     if (req.body.forward) await forwardSchedule(conn, await loadSchedule(conn, r.insertId), req.user.id);
@@ -375,10 +385,15 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), withSchedu
   }
   const slot = readSlot(req.body);
   if (slot.error) return [400, slot.error];
+  const delivery = req.body.delivery_date === undefined ? { value: schedule.delivery_date } : readDeliveryDate(req.body);
+  if (delivery.error) return [400, delivery.error];
   await conn.query(
-    'UPDATE design_schedules SET scheduled_start = ?, scheduled_end = ?, notes = ? WHERE id = ?',
-    [slot.start, slot.end, req.body.notes ?? schedule.notes, schedule.id],
+    'UPDATE design_schedules SET scheduled_start = ?, scheduled_end = ?, notes = ?, delivery_date = ? WHERE id = ?',
+    [slot.start, slot.end, req.body.notes ?? schedule.notes, delivery.value, schedule.id],
   );
+  if ((delivery.value || null) !== (schedule.delivery_date || null)) {
+    await logAudit(conn, { id: schedule.id, userId: req.user.id, fieldName: 'delivery_date', oldValue: schedule.delivery_date, newValue: delivery.value });
+  }
   if (slot.start !== schedule.scheduled_start || slot.end !== schedule.scheduled_end) {
     await logAudit(conn, {
       id: schedule.id, userId: req.user.id, fieldName: 'scheduled_start',
