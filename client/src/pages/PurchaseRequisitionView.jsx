@@ -83,7 +83,7 @@ export default function PurchaseRequisitionView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={'/purchase-requisitions'}>Back</Link>
-          {canEdit && isPending && <Link className="btn btn-sm btn-primary" to={`/purchase-requisitions/${id}/edit`}>Edit</Link>}
+          {canEdit && pr.status !== 'cancelled' && <Link className="btn btn-sm btn-primary" to={`/purchase-requisitions/${id}/edit`}>Edit</Link>}
           {canEdit && isPending && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
         </div>
       </div>

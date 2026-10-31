@@ -138,7 +138,7 @@ export default function PurchaseRequisitionEdit() {
       const payload = {
         ...form,
         lines: lines.map((l) => ({
-          item_id: l.item_id, purchase_description: l.purchase_description, job_order_id: l.job_order_id || null,
+          id: l.id || undefined, item_id: l.item_id, purchase_description: l.purchase_description, job_order_id: l.job_order_id || null,
           qty: l.qty, purchase_unit: l.purchase_unit, unit_title: l.unit_title,
         })),
       };
@@ -239,16 +239,20 @@ export default function PurchaseRequisitionEdit() {
             { key: 'qty_on_hand', label: 'Qty on Hand', render: (l) => Number(l.qty_on_hand || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) },
             {
               key: 'qty', label: 'Qty',
-              render: (l) => <input type="number" step="0.0001" style={{ width: 90 }} defaultValue={l.qty} onBlur={(e) => updateLine(l._key, { qty: e.target.value })} />,
+              // A line already on a Purchase Order cannot go below what is ordered (the server enforces it too).
+              render: (l) => <input type="number" step="0.0001" min={Number(l.po_qty || 0) || undefined} style={{ width: 90 }} defaultValue={l.qty} onBlur={(e) => updateLine(l._key, { qty: e.target.value })} />,
             },
             {
               key: 'purchase_unit', label: 'Purchase Unit',
               render: (l) => <input style={{ width: 90 }} defaultValue={l.purchase_unit} onBlur={(e) => updateLine(l._key, { purchase_unit: e.target.value })} />,
             },
             { key: 'unit_title', label: 'Unit Title' },
+            ...(isNew ? [] : [{ key: 'po_qty', label: 'PO Qty', render: (l) => Number(l.po_qty || 0) }]),
           ]}
           rows={lines}
-          actions={(l) => <button className="btn btn-sm btn-danger" onClick={() => removeLine(l._key)}>Delete</button>}
+          actions={(l) => (Number(l.po_qty || 0) > 0
+            ? <span className="muted" title="Already on a Purchase Order">On PO</span>
+            : <button className="btn btn-sm btn-danger" onClick={() => removeLine(l._key)}>Delete</button>)}
           emptyLabel="No materials yet."
         />
 

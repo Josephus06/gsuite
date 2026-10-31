@@ -233,13 +233,14 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
   }
 });
 
+// Edit (asked 2026-10-31: "add edit in purchase requisition"): any PR that is not cancelled, not just a
+// Pending Request -- most PRs are Request In-Process within the day, and were locked from then on.
+// Lines are updated IN PLACE by id (purchase_order_lines point at purchase_requisition_lines.id, so the
+// old delete-and-reinsert would orphan every PO line). A line a Purchase Order has already taken
+// (po_qty > 0) keeps its item, cannot be removed, and its Qty cannot drop below what is on order.
 router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[pr]] = await conn.query('SELECT status FROM purchase_requisitions WHERE id = ?', [req.params.id]);
-    if (!pr) return res.status(404).json({ error: 'Not found' });
-    if (pr.status !== 'pending_request') return res.status(409).json({ error: 'Only a Pending Request PR can be edited.' });
-
     const {
       date_created: dateCreated, date_needed: dateNeeded, department_id: departmentId,
       requestor_id: requestorId, memo, lines,
@@ -250,20 +251,79 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (deptError) return res.status(400).json({ error: deptError });
 
     await conn.beginTransaction();
+    const [[pr]] = await conn.query('SELECT * FROM purchase_requisitions WHERE id = ? FOR UPDATE', [req.params.id]);
+    if (!pr) { await conn.rollback(); return res.status(404).json({ error: 'Not found' }); }
+    if (pr.status === 'cancelled') { await conn.rollback(); return res.status(409).json({ error: 'A cancelled PR cannot be edited.' }); }
+
+    const [existing] = await conn.query(
+      `SELECT prl.*, i.item_code FROM purchase_requisition_lines prl LEFT JOIN inventories i ON i.id = prl.item_id
+        WHERE prl.purchase_requisition_id = ? FOR UPDATE`, [req.params.id]);
+    const byId = new Map(existing.map((l) => [String(l.id), l]));
+    const keptIds = new Set();
+    for (const [i, l] of submitted.entries()) {
+      if (!l.id) continue;
+      const old = byId.get(String(l.id));
+      if (!old) { await conn.rollback(); return res.status(400).json({ error: `Line ${i + 1} is not on this PR.` }); }
+      keptIds.add(String(l.id));
+      const ordered = Number(old.po_qty || 0);
+      if (ordered > 0 && String(l.item_id) !== String(old.item_id)) {
+        await conn.rollback();
+        return res.status(409).json({ error: `Line ${i + 1} (${old.item_code}) is already on a Purchase Order -- its item cannot be changed.` });
+      }
+      if (Number(l.qty) < ordered - 1e-9) {
+        await conn.rollback();
+        return res.status(409).json({ error: `Line ${i + 1} (${old.item_code}): Qty can be no lower than ${ordered}, already on a Purchase Order.` });
+      }
+    }
+    const removed = existing.filter((l) => !keptIds.has(String(l.id)));
+    const blocked = removed.find((l) => Number(l.po_qty || 0) > 0);
+    if (blocked) {
+      await conn.rollback();
+      return res.status(409).json({ error: `${blocked.item_code} is already on a Purchase Order and cannot be removed.` });
+    }
+
+    const header = {
+      date_created: dateCreated || pr.date_created, date_needed: dateNeeded || null, department_id: departmentId || null,
+      requestor_id: requestorId || null, memo: memo || null,
+    };
     await conn.query(
-      `UPDATE purchase_requisitions SET date_created = ?, date_needed = ?, department_id = ?, requestor_id = ?, memo = ?, updated_at = NOW() WHERE id = ?`,
-      [dateCreated, dateNeeded || null, departmentId || null, requestorId || null, memo || null, req.params.id]
+      'UPDATE purchase_requisitions SET date_created = ?, date_needed = ?, department_id = ?, requestor_id = ?, memo = ?, updated_at = NOW() WHERE id = ?',
+      [header.date_created, header.date_needed, header.department_id, header.requestor_id, header.memo, req.params.id]
     );
-    await conn.query('DELETE FROM purchase_requisition_lines WHERE purchase_requisition_id = ?', [req.params.id]);
+    const norm = (v) => (v === null || v === undefined ? '' : String(v));
+    for (const [field, value] of Object.entries(header)) {
+      const before = field.startsWith('date_') && pr[field] ? String(pr[field]).slice(0, 10) : pr[field];
+      if (norm(before) !== norm(value)) {
+        await logAudit(conn, { prId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: field, oldValue: before, newValue: value });
+      }
+    }
+
+    for (const l of removed) {
+      await conn.query('DELETE FROM purchase_requisition_lines WHERE id = ?', [l.id]);
+      await logAudit(conn, { prId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'line removed', oldValue: `${l.item_code} x ${Number(l.qty)}` });
+    }
     let lineNo = 1;
     for (const l of submitted) {
-      await conn.query(
-        `INSERT INTO purchase_requisition_lines (purchase_requisition_id, line_no, item_id, purchase_description, job_order_id, qty, purchase_unit, unit_title)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [req.params.id, lineNo++, l.item_id, l.purchase_description || null, l.job_order_id || null, l.qty, l.purchase_unit || null, l.unit_title || null]
-      );
+      const vals = [l.item_id, l.purchase_description || null, l.job_order_id || null, l.qty, l.purchase_unit || null, l.unit_title || null];
+      const old = l.id ? byId.get(String(l.id)) : null;
+      if (old) {
+        await conn.query(
+          `UPDATE purchase_requisition_lines SET line_no = ?, item_id = ?, purchase_description = ?, job_order_id = ?, qty = ?, purchase_unit = ?, unit_title = ?
+            WHERE id = ?`, [lineNo++, ...vals, old.id]);
+        if (Number(old.qty) !== Number(l.qty)) {
+          await logAudit(conn, { prId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: `qty (${old.item_code})`, oldValue: Number(old.qty), newValue: Number(l.qty) });
+        }
+        if (String(old.job_order_id || '') !== String(l.job_order_id || '')) {
+          await logAudit(conn, { prId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: `job_order_id (${old.item_code})`, oldValue: old.job_order_id, newValue: l.job_order_id || null });
+        }
+      } else {
+        await conn.query(
+          `INSERT INTO purchase_requisition_lines (purchase_requisition_id, line_no, item_id, purchase_description, job_order_id, qty, purchase_unit, unit_title)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [req.params.id, lineNo++, ...vals]);
+        const [[item]] = await conn.query('SELECT item_code FROM inventories WHERE id = ?', [l.item_id]);
+        await logAudit(conn, { prId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'line added', newValue: `${item?.item_code || l.item_id} x ${Number(l.qty)}` });
+      }
     }
-    await logAudit(conn, { prId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'lines' });
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM purchase_requisitions WHERE id = ?', [req.params.id]);

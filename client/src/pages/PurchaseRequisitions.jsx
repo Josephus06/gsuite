@@ -108,7 +108,12 @@ export default function PurchaseRequisitions() {
                     <td data-label="Prepared By">{row.prepared_by_name}</td>
                     <td data-label="Status">{STATUS_LABELS[row.status] || row.status}</td>
                     <td data-label="Item Status">{row.item_status}</td>
-                    <td><Link className="btn btn-sm btn-primary" to={`/purchase-requisitions/${row.id}`}>View</Link></td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <Link className="btn btn-sm btn-primary" to={`/purchase-requisitions/${row.id}`}>View</Link>
+                      {can('/purchase-requisitions', 'can_edit') && row.status !== 'cancelled' && (
+                        <Link className="btn btn-sm" style={{ marginLeft: 6 }} to={`/purchase-requisitions/${row.id}/edit`}>Edit</Link>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
