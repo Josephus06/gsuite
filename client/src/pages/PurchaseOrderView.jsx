@@ -258,6 +258,8 @@ export default function PurchaseOrderView() {
   // "Bill" only makes sense once at least one line has been received but not yet
   // (fully) billed -- mirrors the Create Vendor Bill form's own eligibility filter.
   const hasBillableLine = canBill && po.lines.some((l) => Number(l.received_qty || 0) > Number(l.billed_qty || 0));
+  // JO # on any PO type with a line bought for a job order (its own, or its PR line's) -- PO-3 always.
+  const showJo = po.type === 'PO3' || po.lines.some((l) => l.job_order_no);
 
   return (
     <div>
@@ -354,7 +356,7 @@ export default function PurchaseOrderView() {
                       the one type that could not say which warehouse or cost centre a
                       freight charge belonged to. */}
                   <th>Location</th><th>Department</th>
-                  {po.type === 'PO3' && <th>JO #</th>}
+                  {showJo && <th>JO #</th>}
                   <th>Qty</th><th>Unit</th><th>Rate</th><th>Disc %</th><th>Disc Amt</th>
                   <th>Net of Tax</th><th>Tax Code</th><th>Tax Amt</th><th>Ext. Price</th><th>Received</th>
                 </tr>
@@ -390,7 +392,7 @@ export default function PurchaseOrderView() {
                     {po.type === 'PO1' && <td>{l.pr_qty != null ? Number(l.pr_qty).toFixed(4) : '—'}</td>}
                     <td>{l.location_name || '—'}</td>
                     <td>{l.department_name || '—'}</td>
-                    {po.type === 'PO3' && <td>{l.job_order_no || '—'}</td>}
+                    {showJo && <td>{l.job_order_no ? <Link className="link-btn" to={`/job-orders/${l.line_job_order_id}`}>{l.job_order_no}</Link> : '—'}</td>}
                     <td>{qty(l.qty)}</td>
                     {/* The unit of the Qty beside it, which is the PURCHASE unit -- receiving
                         multiplies this quantity by the item's conversion factor. Showing

@@ -355,13 +355,17 @@ async function loadPrintablePo(id) {
 
     const [lines] = await pool.query(
       `SELECT pol.*, i.item_code, i.display_name AS item_name, t.code AS tax_code,
-              loc.location_name, d.name AS department_name, jo.job_order_no
+              loc.location_name, d.name AS department_name,
+              -- The JO the line is bought for: its own, else its PR line's (a PO-1 from a PR).
+              COALESCE(jo.id, pjo.id) AS line_job_order_id, COALESCE(jo.job_order_no, pjo.job_order_no) AS job_order_no
          FROM purchase_order_lines pol
          LEFT JOIN inventories i ON i.id = pol.item_id
          LEFT JOIN taxes t ON t.id = pol.tax_code_id
          LEFT JOIN locations loc ON loc.id = pol.location_id
          LEFT JOIN departments d ON d.id = pol.department_id
          LEFT JOIN job_orders jo ON jo.id = pol.job_order_id
+         LEFT JOIN purchase_requisition_lines prl ON prl.id = pol.purchase_requisition_line_id
+         LEFT JOIN job_orders pjo ON pjo.id = prl.job_order_id
         WHERE pol.purchase_order_id = ?
         ORDER BY pol.id`,
       [id]
