@@ -15,7 +15,8 @@ function money(v) {
 // the same header/line fields as Create, reached from the detail view's Edit button --
 // only shown there while the PO is still Pending Approval, matching the backend's own
 // PUT /:id guard). Existing lines that
-// already have Received/Billed activity have their Qty locked and can't be removed --
+// already have Received/Billed activity can't be removed, and their Qty can't go below what was
+// Received/Billed (it was locked outright until 2026-10-31) --
 // everything else (rate, discount, tax, description, location, department) stays
 // editable, and brand-new lines can be added/removed freely, same restrictions the
 // backend enforces server-side regardless of what this form allows client-side.
@@ -84,6 +85,8 @@ export default function PurchaseOrderEdit() {
         qty: l.qty, purchase_unit: l.purchase_unit, unit_title: l.unit_title,
         rate: l.rate, disc_percent: discountLabel(l), tax_code_id: l.tax_code_id || '',
         locked: Number(l.received_qty || 0) > 0 || Number(l.billed_qty || 0) > 0,
+        // A received / billed line's qty can still change, down to what it has received / billed.
+        min_qty: Math.max(Number(l.received_qty || 0), Number(l.billed_qty || 0)),
         purchase_requisition_line_id: l.purchase_requisition_line_id || null,
       })));
       setLoading(false);
@@ -263,9 +266,13 @@ export default function PurchaseOrderEdit() {
                       />
                     </td>
                     <td>
-                      {l.locked
-                        ? <span title="Qty is locked: already Received/Billed">{l.qty}</span>
-                        : <input type="number" step="0.0001" style={{ width: 80 }} value={l.qty} onChange={(e) => updateLine(l._key, { qty: e.target.value })} />}
+                      <input
+                        type="number" step="0.0001" style={{ width: 80 }} value={l.qty}
+                        min={l.locked ? l.min_qty : undefined}
+                        title={l.locked ? `Already Received/Billed: ${l.min_qty} -- Qty cannot go below it` : undefined}
+                        onChange={(e) => updateLine(l._key, { qty: e.target.value })}
+                      />
+                      {l.locked && <div className="muted" style={{ fontSize: 11 }}>min {l.min_qty}</div>}
                     </td>
                     <td>{l.purchase_unit}</td>
                     <td><input type="number" step="0.000001" style={{ width: 90 }} value={l.rate} onChange={(e) => updateLine(l._key, { rate: e.target.value })} /></td>

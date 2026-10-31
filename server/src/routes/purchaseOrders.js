@@ -1827,12 +1827,13 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       if (!l.id) continue;
       const existing = existingById.get(Number(l.id));
       if (!existing) return res.status(400).json({ error: 'One of the submitted lines does not belong to this Purchase Order.' });
-      const hasActivity = Number(existing.received_qty) > 0 || Number(existing.billed_qty) > 0;
-      const qtyChanged = Number(l.qty) !== Number(existing.qty);
       // A PR-sourced line's qty may change (the PR asks for 0.0533 ROLL, the supplier sells whole
       // rolls); its PR line's po_qty moves by the same difference below, the way Cancel undoes it.
-      if (qtyChanged && hasActivity) {
-        return res.status(409).json({ error: 'Qty cannot be changed on a line that already has Received or Billed activity.' });
+      // A received or billed line's qty may change too (asked 2026-10-31), but never below what has
+      // already been received or billed on it; receipt_status is re-read from the lines after.
+      const floor = Math.max(Number(existing.received_qty || 0), Number(existing.billed_qty || 0));
+      if (Number(l.qty) !== Number(existing.qty) && Number(l.qty) < floor - 1e-9) {
+        return res.status(409).json({ error: `Qty on ${existing.purchase_description || `line ${existing.id}`} cannot go below what is already Received / Billed (${floor}).` });
       }
     }
     for (const l of submitted) {
@@ -1882,6 +1883,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         const delta = Number(l.qty) - Number(existing.qty);
         if (existing.purchase_requisition_line_id && delta !== 0) {
           await conn.query('UPDATE purchase_requisition_lines SET po_qty = GREATEST(po_qty + ?, 0) WHERE id = ?', [delta, existing.purchase_requisition_line_id]);
+        }
+        if (delta !== 0) {
           await logAudit(conn, { poId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: `qty (line ${existing.id})`, oldValue: existing.qty, newValue: l.qty });
         }
         await conn.query(
@@ -1913,6 +1916,17 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
         subtotal, discountAmount, netOfTax, taxAmount, totalAmount, req.params.id]
     );
     await logAudit(conn, { poId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'total_amount', oldValue: po.total_amount, newValue: totalAmount });
+
+    // A qty raised over what was received reopens the PO for receiving; one lowered to it closes it.
+    // Same rule as Receive (above).
+    const [allLines] = await conn.query('SELECT qty, received_qty FROM purchase_order_lines WHERE purchase_order_id = ?', [req.params.id]);
+    const allReceived = allLines.every((x) => Number(x.received_qty) >= Number(x.qty));
+    const anyReceived = allLines.some((x) => Number(x.received_qty) > 0);
+    const receiptStatus = allReceived ? 'fully_received' : anyReceived ? 'partially_received' : 'not_received';
+    if (anyReceived && receiptStatus !== po.receipt_status) {
+      await conn.query('UPDATE purchase_orders SET receipt_status = ? WHERE id = ?', [receiptStatus, req.params.id]);
+      await logAudit(conn, { poId: req.params.id, userId: req.user.id, eventType: 'Status Change', fieldName: 'receipt_status', oldValue: po.receipt_status, newValue: receiptStatus });
+    }
     await conn.commit();
 
     const [[row]] = await pool.query('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
