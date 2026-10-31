@@ -3,6 +3,7 @@ const pool = require('../db');
 const { costMissingLines, costProcessLine, costInputsChanged } = require('../lib/joProcessCosting');
 const { completeDesignProcesses } = require('../lib/designAutoComplete');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
+const { mayGmApprove } = require('../lib/generalManagers');
 const { motherUom } = require('../lib/reworkUom');
 const { isPlannerUser, isPlanner, PLANNER_COLUMNS } = require('../lib/plannerRoles');
 const { isAdvanceCopy } = require('../lib/advanceCopy');
@@ -561,10 +562,11 @@ router.put('/:id/forward-advance-copy', requireAuth, async (req, res, next) => {
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
-// Approve an RWIP (rework) job order -- gated by the PRODUCTION page's can_approve ("who can approve
-// RWIP"), distinct from NSSO approval. One step: "Pending RMA Approval" -> Released / In-Process, so
-// it lands on the production floor to be worked and completed.
-router.put('/:id/approve-rwip', requireAuth, requirePermission('/production', 'can_approve'), async (req, res, next) => {
+// Approve an RWIP or RFQC (rework) job order. One step: "Pending RMA Approval" -> Released /
+// In-Process, so it lands on the production floor to be worked and completed. A General Manager (or
+// a System Admin) approves it (asked 2026-10-31) -- the Production page's can_approve no longer does.
+router.put('/:id/approve-rwip', requireAuth, async (req, res, next) => {
+  if (!(await mayGmApprove(req.user.id))) return res.status(403).json({ error: 'Only a General Manager can approve an RWIP / RFQC.' });
   const conn = await pool.getConnection();
   try {
     const [[jo]] = await conn.query('SELECT id, parent_job_order_id, status FROM job_orders WHERE id = ?', [req.params.id]);

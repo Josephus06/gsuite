@@ -195,6 +195,8 @@ router.get('/me', requireAuth, async (req, res, next) => {
     user.is_sales_manager = !!user.is_sales_manager;
     user.is_sales_marketing_director = !!user.is_sales_marketing_director;
     user.is_sales_business_unit = !!user.is_sales_business_unit;
+    // GM approvals (RMA NSSOs, RWIP / RFQC) -- lib/generalManagers.js decides on the server too.
+    user.is_general_manager = await require('../lib/generalManagers').isGeneralManager(user.id);
     user.is_purchasing_supervisor = !!user.is_purchasing_supervisor;
     for (const flag of PLANNER_FLAGS) user[flag] = !!user[flag];
     user.is_production_supervisor = !!user.is_production_supervisor;

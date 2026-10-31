@@ -9,6 +9,7 @@ const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { sendXlsx, day } = require('../lib/xlsxExport');
 const { DESIGN_QUEUE_STATUS } = require('../lib/designSupervisorVisibility');
 const { notifyDesignSupervisors } = require('../lib/designNotifications');
+const { mayGmApprove, notifyGmApproval } = require('../lib/generalManagers');
 
 const router = express.Router();
 // Non-Standard Sales Order (NSSO-<TYPE>-####): a sales-order-like document raised outside the
@@ -532,6 +533,22 @@ router.post('/:id/lines/from-source', requireAuth, requireOpenPeriod('non_standa
     }
     await recomputeTotals(conn, req.params.id);
     await conn.commit();
+    // An RMA / RMA-Installation with its lines is ready for the GM (mayApproveNsso). Told once: the
+    // wizard can save the lines again, and a second notice for the same NSSO is noise.
+    if (lineNo) {
+      const [[n]] = await pool.query('SELECT nsso_no, type, status FROM non_standard_sales_orders WHERE id = ?', [req.params.id]);
+      const [[told]] = await pool.query(
+        "SELECT 1 AS x FROM notifications WHERE type = 'gm_approval' AND related_type = 'NonStandardSalesOrder' AND related_id = ? LIMIT 1",
+        [req.params.id]
+      );
+      if (n && ['rma', 'rma_installation'].includes(n.type) && n.status === 'pending_approval' && !told) {
+        await notifyGmApproval({
+          title: `${n.nsso_no} needs GM approval`,
+          message: `${n.type === 'rma' ? 'RMA' : 'RMA - Installation'} NSSO with ${lineNo} job order line(s).`,
+          relatedType: 'NonStandardSalesOrder', relatedId: Number(req.params.id),
+        }, req.user.id);
+      }
+    }
     const [lines] = await pool.query(
       `SELECT l.*, jt.display_name AS job_type_name, jl.location_name AS job_location_name, sjo.job_order_no AS source_job_order_no
        FROM non_standard_sales_order_lines l
@@ -722,7 +739,11 @@ router.put('/:id/lines/:lineId/sample', requireAuth, requireOpenPeriod('non_stan
 // (users.is_sales_business_unit) -- or a System Admin -- approves one, and a sales supervisor's
 // "NSSO Can Approve" does not reach it (asked 2026-10-06). Every other type is still governed by
 // that permission alone.
+//
+// An RMA or RMA-Installation is approved by a General Manager (or a System Admin), not on that
+// permission either (asked 2026-10-31): create -> GM approval -> create the NSJO.
 async function mayApproveNsso(userId, type) {
+  if (type === 'rma' || type === 'rma_installation') return mayGmApprove(userId);
   if (type === 'sample') {
     if (await isSystemAdmin(userId)) return true;
     const [[u]] = await pool.query('SELECT is_sales_business_unit FROM users WHERE id = ?', [userId]);
@@ -738,7 +759,11 @@ router.put('/:id/approve', requireAuth, async (req, res, next) => {
     const [[n]] = await conn.query('SELECT status, type FROM non_standard_sales_orders WHERE id = ?', [req.params.id]);
     if (!n) return res.status(404).json({ error: 'Not found' });
     if (!(await mayApproveNsso(req.user.id, n.type))) {
-      return res.status(403).json({ error: n.type === 'sample' ? 'Only an SBU head can approve a Sample NSSO.' : 'You do not have permission to perform this action' });
+      return res.status(403).json({
+        error: n.type === 'sample' ? 'Only an SBU head can approve a Sample NSSO.'
+          : ['rma', 'rma_installation'].includes(n.type) ? 'Only a General Manager can approve an RMA / RMA-Installation NSSO.'
+            : 'You do not have permission to perform this action',
+      });
     }
     if (n.status === 'cancelled') return res.status(409).json({ error: 'This NSSO is cancelled.' });
     if (n.status !== 'pending_approval') return res.status(409).json({ error: 'This NSSO is not pending approval.' });

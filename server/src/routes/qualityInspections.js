@@ -4,6 +4,7 @@ const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeSalesOrderStatus, invoicedOrTicketedSql } = require('../lib/salesOrderStatus');
 const { createReworkJobOrder, countOpenRework } = require('../lib/reworkJobOrder');
+const { notifyGmApproval } = require('../lib/generalManagers');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 
@@ -324,6 +325,14 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     }
     await logAudit(conn, { qiId, userId: req.user.id, eventType: 'Created', fieldName: 'qi_no', newValue: qiNo });
     await conn.commit();
+    // An RFQC waits on a General Manager (lib/generalManagers.js).
+    if (rfqc) {
+      await notifyGmApproval({
+        title: `${rfqc.job_order_no} needs GM approval`,
+        message: `RFQC from ${jo.job_order_no} (${qiNo}), qty ${rmaTotal}.`,
+        relatedType: 'JobOrder', relatedId: rfqc.id,
+      }, req.user.id);
+    }
 
     const [[row]] = await pool.query('SELECT * FROM quality_inspections WHERE id = ?', [qiId]);
     res.status(201).json(row);

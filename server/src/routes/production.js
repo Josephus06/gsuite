@@ -17,6 +17,7 @@ const {
 const { isAdvanceCopy, advanceCopySql, ADVANCE_COPY_REFUSAL } = require('../lib/advanceCopy');
 const { PLANNER_COLUMNS, isPlanner } = require('../lib/plannerRoles');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
+const { notifyGmApproval } = require('../lib/generalManagers');
 
 // Completing a process and building both move stock dated today (the Assembly Build row
 // is inserted with CURDATE()), so today's period is what has to be open for them.
@@ -1200,6 +1201,12 @@ router.post('/:id/rwip', requireAuth, async (req, res, next) => {
     await rwipAudit(conn, rwipId, req.user.id, 'Created', 'status', null, 'Pending RMA Approval');
     await rwipAudit(conn, jo.id, req.user.id, 'Updated', 'rwip', null, jobOrderNo);
     await conn.commit();
+    // An RWIP waits on a General Manager (lib/generalManagers.js).
+    await notifyGmApproval({
+      title: `${jobOrderNo} needs GM approval`,
+      message: `RWIP from ${jo.job_order_no}.`,
+      relatedType: 'JobOrder', relatedId: rwipId,
+    }, req.user.id);
     res.status(201).json({ job_order_id: rwipId, job_order_no: jobOrderNo });
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });

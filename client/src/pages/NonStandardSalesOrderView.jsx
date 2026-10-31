@@ -52,13 +52,18 @@ export default function NonStandardSalesOrderView() {
   const canEdit = (can('/non-standard-sales-orders', 'can_edit') && !periodLocked);
   // A Sample is approved by an SBU head (or a System Admin) only -- not on the NSSO Approve
   // permission a sales supervisor holds. The server decides the same way (mayApproveNsso).
+  // An RMA / RMA-Installation: a General Manager (or a System Admin) only.
   const canApprove = n.type === 'sample'
     ? (!!user?.is_sales_business_unit || user?.account_type === 'System Admin')
-    : can('/non-standard-sales-orders', 'can_approve');
+    : ['rma', 'rma_installation'].includes(n.type)
+      ? (!!user?.is_general_manager || user?.account_type === 'System Admin')
+      : can('/non-standard-sales-orders', 'can_approve');
   const canAdd = can('/non-standard-sales-orders', 'can_add');
   const isOpen = n.status !== 'cancelled';
   const notApproved = n.status === 'pending_approval';
-  const [statusMain, statusSub] = STATUS[n.status] || [n.status, ''];
+  const [statusMain, statusSubRaw] = STATUS[n.status] || [n.status, ''];
+  // Says whose approval it waits on, for the types only a GM approves.
+  const statusSub = n.status === 'pending_approval' && ['rma', 'rma_installation'].includes(n.type) ? 'Needs GM Approval' : statusSubRaw;
   const b = n.billing || {};
   // Delivered and billed exactly like a Sales Order: Item Delivery once a line's Job Order has
   // something built and QI'd but not yet shipped, Bill once something shipped is not yet invoiced.

@@ -297,7 +297,8 @@ export default function JobOrderView() {
   // Whose button it is: this job order's own sales rep (maySalesRevise already states that --
   // System Admin, the named rep, or another Sales account with can_edit covering for them).
   const canForwardAdvance = canForwardAdvanceCopy(jo) && maySalesRevise(user, jo, canEdit);
-  const canApproveRwipPerm = can('/production', 'can_approve');
+  // RWIP / RFQC: a General Manager (or a System Admin) approves -- lib/generalManagers.js on the server.
+  const canApproveRwipPerm = !!user?.is_general_manager || user?.account_type === 'System Admin';
   const rwipPendingApproval = isRwip && jo.status === 'Pending RMA Approval';
   const isTerminal = jo.status === 'Completed' || jo.status === 'Cancelled';
   const isOnHold = !!jo.is_on_hold;
