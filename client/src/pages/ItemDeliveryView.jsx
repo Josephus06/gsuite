@@ -142,6 +142,39 @@ export default function ItemDeliveryView() {
     }
   }
 
+  // Edit mode: the date, memo and each line's quantity / memo (PUT /item-deliveries/:id).
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState(null);
+
+  function startEdit() {
+    setError('');
+    setForm({
+      date_created: String(d.date_created || '').slice(0, 10),
+      memo: d.memo || '',
+      lines: (d.lines || []).map((l) => ({ id: l.id, qty_delivered: String(Number(l.qty_delivered)), memo: l.memo || '' })),
+    });
+    setEditing(true);
+  }
+
+  function setLine(lineId, field, value) {
+    setForm((f) => ({ ...f, lines: f.lines.map((l) => (l.id === lineId ? { ...l, [field]: value } : l)) }));
+  }
+
+  async function saveEdit() {
+    setBusy(true);
+    setError('');
+    try {
+      await api.put(`/item-deliveries/${id}`, form);
+      setEditing(false);
+      await load();
+      if (tab === 'system') await loadAuditLogs();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Save failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
   const periodLocked = usePeriodLocked(d?.date_created, 'non_gl');
 
@@ -160,7 +193,9 @@ export default function ItemDeliveryView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={d.nsso_id ? `/non-standard-sales-orders/${d.nsso_id}` : `/sales-orders/${d.sales_order_id}`}>Back to Lists</Link>
-          {canEdit && <button className="btn btn-sm" disabled title="Editing a saved Item Delivery isn't implemented in this build">Edit</button>}
+          {canEdit && !isCancelled && !editing && <button className="btn btn-sm" onClick={startEdit}>Edit</button>}
+          {editing && <button className="btn btn-sm btn-primary" disabled={busy} onClick={saveEdit}>{busy ? 'Saving...' : 'Save'}</button>}
+          {editing && <button className="btn btn-sm" disabled={busy} onClick={() => { setEditing(false); setError(''); }}>Discard</button>}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
           {canVoid && !isCancelled && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
         </div>
@@ -197,12 +232,16 @@ export default function ItemDeliveryView() {
           </div>
           <div>
             <div>ID # : <span className="hi">{d.delivery_no}</span></div>
-            <div>Date Created : <span className="hi">{formatDate(d.date_created)}</span></div>
+            <div>Date Created : {editing
+              ? <input type="date" value={form.date_created} onChange={(e) => setForm({ ...form, date_created: e.target.value })} />
+              : <span className="hi">{formatDate(d.date_created)}</span>}</div>
             <div>Created From : <span className="hi">{d.sales_order_no}</span></div>
             <div>Created By : <span className="hi">{d.created_by_name}</span></div>
           </div>
           <div>
-            <div>Memo : <span className="hi">{d.memo}</span></div>
+            <div>Memo : {editing
+              ? <textarea rows={2} value={form.memo} onChange={(e) => setForm({ ...form, memo: e.target.value })} style={{ width: '100%' }} />
+              : <span className="hi">{d.memo}</span>}</div>
             <div>Delivered Via : <span className="hi">{d.delivery_method_name || 'Not specified'}</span></div>
             <div>Delivery Cost : <span className="hi">{d.delivery_cost == null ? '--' : money(d.delivery_cost)}</span></div>
             {d.delivery_reference && <div>Reference : <span className="hi">{d.delivery_reference}</span></div>}
@@ -232,14 +271,19 @@ export default function ItemDeliveryView() {
               <thead>
                 <tr>
                   <th>#</th><th>JO #</th><th>Item</th><th>Description</th><th>Location</th>
-                  <th>Qty</th><th>Unit</th><th>Size</th>
+                  <th>Qty</th><th>Unit</th><th>Size</th>{editing && <th>Line Memo</th>}
                 </tr>
               </thead>
               <tbody>
                 {lines.length === 0 && (
-                  <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>No lines on this delivery.</td></tr>
+                  <tr><td colSpan={editing ? 9 : 8} className="muted" style={{ textAlign: 'center', padding: 20 }}>No lines on this delivery.</td></tr>
                 )}
-                {lines.map((l, idx) => (
+                {lines.map((l, idx) => {
+                  const f = editing ? form.lines.find((x) => x.id === l.id) : null;
+                  // Most this line can hold: built and QI'd, less what other deliveries shipped.
+                  const max = Math.min(Number(l.quantity_built || 0), Number(l.quantity_inspected || 0))
+                    - (Number(l.quantity_delivered || 0) - Number(l.qty_delivered || 0));
+                  return (
                   <tr key={l.id}>
                     <td>{idx + 1}</td>
                     <td>
@@ -250,11 +294,27 @@ export default function ItemDeliveryView() {
                     <td>{l.item_name}</td>
                     <td>{l.description}</td>
                     <td>{l.job_location_name}</td>
-                    <td>{qty(l.qty_delivered)}</td>
+                    <td>
+                      {f ? (
+                        <>
+                          <input
+                            type="number" min="0" step="any" max={max} value={f.qty_delivered} style={{ width: 110 }}
+                            onChange={(e) => setLine(l.id, 'qty_delivered', e.target.value)}
+                          />
+                          <div className="muted" style={{ fontSize: 11 }}>max {qty(max)}{Number(f.qty_delivered) === 0 ? ' -- 0 removes the line' : ''}</div>
+                        </>
+                      ) : qty(l.qty_delivered)}
+                    </td>
                     <td>{l.units}</td>
                     <td>{l.length ?? 0} x {l.width ?? 0} x {l.height ?? 0}</td>
+                    {f && (
+                      <td>
+                        <input value={f.memo} onChange={(e) => setLine(l.id, 'memo', e.target.value)} />
+                      </td>
+                    )}
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

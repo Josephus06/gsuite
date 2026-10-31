@@ -249,7 +249,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     if (!d) return res.status(404).json({ error: 'Not found' });
 
     const [lines] = await pool.query(
-      `SELECT idl.*, jo.job_order_no, jo.description, jo.quantity AS jo_quantity, jo.quantity_inspected,
+      `SELECT idl.*, jo.job_order_no, jo.description, jo.quantity AS jo_quantity, jo.quantity_built, jo.quantity_inspected,
               jo.quantity_delivered, jo.units, jo.length, jo.width, jo.height,
               jt.display_name AS item_name, jt.cogs_account_id, jt.asset_account_id,
               loc.location_name AS job_location_name,
@@ -447,6 +447,108 @@ router.put('/:id/delivery-method', requireAuth, requireOpenPeriod('item_deliveri
         WHERE del.id = ?`,
       [req.params.id],
     );
+    res.json(row);
+  } catch (err) {
+    await conn.rollback();
+    next(err);
+  } finally {
+    conn.release();
+  }
+});
+
+// Correcting a saved delivery: its date, memo, and each line's quantity and memo. Lines can be
+// changed but not added -- a JO left off is a new delivery. A quantity of 0 takes the line off,
+// and at least one line has to stay (cancel the delivery instead).
+//
+// The Job Order's Qty Delivered moves by the difference, under the same cap as a new delivery:
+// a line can hold at most min(built, inspected) less what the JO's OTHER deliveries already
+// shipped. Both the old and the new date must sit in an open period.
+router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const [[d]] = await conn.query('SELECT id, status, sales_order_id, nsso_id, date_created, memo FROM item_deliveries WHERE id = ?', [req.params.id]);
+    if (!d) return res.status(404).json({ error: 'Not found' });
+    if (d.status === 'cancelled') return res.status(409).json({ error: 'This Item Delivery is cancelled, so it cannot be edited.' });
+
+    const oldDate = d.date_created ? String(d.date_created).slice(0, 10) : null; // dateStrings: already 'YYYY-MM-DD'
+    const newDate = req.body.date_created ? String(req.body.date_created).slice(0, 10) : oldDate;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate || '')) return res.status(400).json({ error: 'Date Created is required.' });
+    await assertPeriodOpen(oldDate, 'non_gl', conn);
+    if (newDate !== oldDate) await assertPeriodOpen(newDate, 'non_gl', conn);
+    const newMemo = req.body.memo == null || String(req.body.memo).trim() === '' ? null : String(req.body.memo).trim();
+
+    const [lines] = await conn.query(
+      `SELECT idl.id, idl.job_order_id, idl.qty_delivered, idl.memo, jo.job_order_no,
+              jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered
+         FROM item_delivery_lines idl JOIN job_orders jo ON jo.id = idl.job_order_id
+        WHERE idl.item_delivery_id = ?`,
+      [req.params.id]
+    );
+    const submitted = new Map((Array.isArray(req.body.lines) ? req.body.lines : []).map((l) => [Number(l.id), l]));
+
+    const changes = [];
+    for (const l of lines) {
+      const s = submitted.get(l.id);
+      if (!s) continue; // a line not sent is left as it is
+      const newQty = Number(s.qty_delivered);
+      if (!Number.isFinite(newQty) || newQty < 0) return res.status(400).json({ error: `Qty for ${l.job_order_no} must be zero or more.` });
+      const oldQty = Number(l.qty_delivered);
+      const cap = Math.min(Number(l.quantity_built), Number(l.quantity_inspected)) - (Number(l.quantity_delivered || 0) - oldQty);
+      if (newQty > oldQty && newQty > cap) {
+        return res.status(409).json({ error: `Qty for ${l.job_order_no} exceeds what's both Built and QI'd and not delivered on another Item Delivery (${cap}).` });
+      }
+      const lineMemo = s.memo === undefined ? l.memo : (String(s.memo || '').trim() || null);
+      changes.push({ l, oldQty, newQty, lineMemo });
+    }
+    const remaining = lines.filter((l) => {
+      const c = changes.find((x) => x.l.id === l.id);
+      return (c ? c.newQty : Number(l.qty_delivered)) > 0;
+    });
+    if (!remaining.length) return res.status(400).json({ error: 'At least one line needs a quantity. To undo the whole delivery, cancel it instead.' });
+
+    await conn.beginTransaction();
+    await conn.query('UPDATE item_deliveries SET date_created = ?, memo = ? WHERE id = ?', [newDate, newMemo, req.params.id]);
+    const audit = (fieldName, oldValue, newValue) => logAudit(conn, {
+      deliveryId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName, oldValue, newValue,
+    });
+    if (newDate !== oldDate) await audit('date_created', oldDate, newDate);
+    if ((d.memo || null) !== newMemo) await audit('memo', d.memo || null, newMemo);
+
+    for (const { l, oldQty, newQty, lineMemo } of changes) {
+      if (newQty !== oldQty) {
+        await conn.query('UPDATE job_orders SET quantity_delivered = GREATEST(0, quantity_delivered + ?), updated_at = NOW() WHERE id = ?', [newQty - oldQty, l.job_order_id]);
+        await audit(`qty_delivered (${l.job_order_no})`, oldQty, newQty);
+      }
+      if (newQty === 0) {
+        await conn.query('DELETE FROM item_delivery_lines WHERE id = ?', [l.id]);
+        continue;
+      }
+      if (newQty !== oldQty || (l.memo || null) !== lineMemo) {
+        await conn.query('UPDATE item_delivery_lines SET qty_delivered = ?, memo = ? WHERE id = ?', [newQty, lineMemo, l.id]);
+      }
+      if ((l.memo || null) !== lineMemo) await audit(`line memo (${l.job_order_no})`, l.memo || null, lineMemo);
+    }
+
+    // Quantities moved: the order's status is recomputed exactly as on save and cancel.
+    if (changes.some((c) => c.newQty !== c.oldQty)) {
+      if (d.nsso_id) await recomputeNssoStatus(conn, d.nsso_id);
+      const [[so]] = d.sales_order_id ? await conn.query('SELECT status FROM sales_orders WHERE id = ?', [d.sales_order_id]) : [[null]];
+      if (so && so.status !== 'cancelled') {
+        const [freshLines] = await conn.query(
+          `SELECT sol.job_order_id, sol.quantity, jo.quantity_built, jo.quantity_inspected, jo.quantity_delivered, ${invoicedOrTicketedSql('jo')}
+           FROM sales_order_lines sol
+           LEFT JOIN job_orders jo ON jo.id = sol.job_order_id WHERE sol.sales_order_id = ?`,
+          [d.sales_order_id]
+        );
+        const newStatus = computeSalesOrderStatus(freshLines);
+        if (newStatus !== so.status) {
+          await conn.query('UPDATE sales_orders SET status = ?, updated_at = NOW() WHERE id = ?', [newStatus, d.sales_order_id]);
+        }
+      }
+    }
+    await conn.commit();
+
+    const [[row]] = await pool.query('SELECT * FROM item_deliveries WHERE id = ?', [req.params.id]);
     res.json(row);
   } catch (err) {
     await conn.rollback();
