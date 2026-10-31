@@ -84,7 +84,8 @@ export default function DesignSchedule() {
 
   function refresh() { setReloadKey((k) => k + 1); }
   function closeModal() {
-    setModal(null);
+    // A slot opened from the day view goes back to that day.
+    setModal(modal?.back ? { kind: 'day', date: modal.back } : null);
     if (searchParams.get('id')) setSearchParams({}, { replace: true });
   }
 
@@ -119,7 +120,14 @@ export default function DesignSchedule() {
     if (schedule && canMove(schedule)) setModal({ kind: 'move', schedule, date });
   }
 
-  const dayList = byDay.get(selectedDay) || [];
+  // Opens the day view. Stepping past the month shown turns the calendar too, so that day's slots load.
+  function openDay(k) {
+    setSelectedDay(k);
+    const [y, m] = k.split('-').map(Number);
+    if (y !== month.getFullYear() || m - 1 !== month.getMonth()) setMonth(new Date(y, m - 1, 1));
+    setModal({ kind: 'day', date: k });
+  }
+
   const needsMe = events.filter((e) => !e.ghost && (
     (side.design && e.status === 'For Confirmation')
     || (side.design && e.phase === 'Confirmed')
@@ -184,8 +192,7 @@ export default function DesignSchedule() {
                 return (
                   <div
                     key={k}
-                    onClick={() => setSelectedDay(k)}
-                    onDoubleClick={() => side.sbu && k >= todayKey && setModal({ kind: 'new', date: k })}
+                    onClick={() => openDay(k)}
                     onDragOver={(ev) => ev.preventDefault()}
                     onDrop={(ev) => onDrop(ev, k)}
                     style={{
@@ -198,7 +205,7 @@ export default function DesignSchedule() {
                       <EventChip key={`${e.id}${e.ghost ? 'g' : ''}`} e={e} draggable={canMove(e)}
                         onOpen={() => setModal({ kind: 'detail', id: e.id })} />
                     ))}
-                    {list.length > 4 && <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>+{list.length - 4} more</div>}
+                    {list.length > 4 && <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>+{list.length - 4} more -- click the day</div>}
                   </div>
                 );
               })}
@@ -207,37 +214,16 @@ export default function DesignSchedule() {
         )}
       </div>
 
-      <div className="card" style={{ marginTop: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <h3 style={{ margin: 0 }}>{displayDate(selectedDay)}</h3>
-          {side.sbu && selectedDay >= todayKey && (
-            <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={() => setModal({ kind: 'new', date: selectedDay })}>+ Schedule on this day</button>
-          )}
-        </div>
-        {dayList.length === 0 ? <p className="muted">Nothing scheduled.</p> : (
-          <table style={{ marginTop: 8 }}>
-            <thead><tr><th>Time</th><th>Order</th><th>Customer</th><th>Artist</th><th>Status</th></tr></thead>
-            <tbody>
-              {dayList.map((e) => (
-                <tr key={`${e.id}${e.ghost ? 'g' : ''}`} onClick={() => setModal({ kind: 'detail', id: e.id })} style={{ cursor: 'pointer', opacity: e.ghost ? 0.6 : 1 }}>
-                  <td>
-                    {e.ghost ? `${timeOf(e.proposed_start)} - ${timeOf(e.proposed_end)}` : `${timeOf(e.scheduled_start)} - ${timeOf(e.scheduled_end)}`}
-                    {e.carried_over_from && <div className="muted" style={{ fontSize: 11 }}>↻ carried over from {displayDate(e.carried_over_from)}</div>}
-                    {e.ghost && <div className="muted" style={{ fontSize: 11 }}>⇄ proposed new time</div>}
-                  </td>
-                  <td>{e.order_no} <span className="muted">({e.order_type})</span><div className="muted" style={{ fontSize: 11 }}>{String(e.description || '').slice(0, 80)}</div></td>
-                  <td>{e.customer_name}</td>
-                  <td>{e.artist_name || <span className="muted">--</span>}</td>
-                  <td><span className={`badge ${PHASE_BADGE[e.phase]}`}>{PHASE_LABEL[e.phase] || e.phase}</span>{e.proposed_by_side && !e.ghost && ' ⇄'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
+      {modal?.kind === 'day' && (
+        <DayModal
+          date={modal.date} list={byDay.get(modal.date) || []} canSchedule={side.sbu && modal.date >= todayKey}
+          onClose={closeModal} onStep={openDay}
+          onOpen={(e) => setModal({ kind: 'detail', id: e.id, back: modal.date })}
+          onNew={(start) => setModal({ kind: 'new', date: modal.date, start })}
+        />
+      )}
       {modal?.kind === 'new' && (
-        <NewScheduleModal date={modal.date} onClose={closeModal} onSaved={() => { closeModal(); refresh(); }} />
+        <NewScheduleModal date={modal.date} start={modal.start} onClose={closeModal} onSaved={() => { closeModal(); refresh(); }} />
       )}
       {modal?.kind === 'move' && (
         <MoveModal schedule={modal.schedule} date={modal.date} side={side} onClose={closeModal} onSaved={() => { closeModal(); refresh(); }} />
@@ -272,10 +258,111 @@ function EventChip({ e, draggable, onOpen }) {
   );
 }
 
-function NewScheduleModal({ date, onClose, onSaved }) {
+// One day, hour by hour: each slot drawn from its start to its end, side by side where they overlap.
+// Carried-over slots sit in a strip above the timeline -- their times belong to the day they slipped from.
+const HOUR_PX = 56;
+const minutesOf = (v) => { const [h, m] = String(v).split(' ')[1].split(':').map(Number); return h * 60 + m; };
+const shiftDay = (k, n) => { const [y, m, d] = k.split('-').map(Number); return ymd(new Date(y, m - 1, d + n)); };
+
+function DayModal({ date, list, canSchedule, onClose, onStep, onOpen, onNew }) {
+  const carried = list.filter((e) => e.carried_over_from);
+  const timed = list.filter((e) => !e.carried_over_from).map((e) => ({
+    e,
+    s: minutesOf(e.ghost ? e.proposed_start : e.scheduled_start),
+    f: minutesOf(e.ghost ? e.proposed_end : e.scheduled_end),
+  })).sort((a, b) => a.s - b.s || a.f - b.f);
+
+  // Columns per overlapping cluster: each slot takes the first column free at its start, and every
+  // slot in a cluster shares the cluster's column count so they line up.
+  let cluster = [];
+  let clusterEnd = -1;
+  let cols = [];
+  const flush = () => { cluster.forEach((x) => { x.n = cols.length; }); cluster = []; cols = []; };
+  for (const x of timed) {
+    if (x.s >= clusterEnd) { flush(); clusterEnd = -1; }
+    let c = cols.findIndex((end) => end <= x.s);
+    if (c === -1) { c = cols.length; cols.push(0); }
+    cols[c] = Math.max(x.f, x.s + 15);
+    x.col = c;
+    cluster.push(x);
+    clusterEnd = Math.max(clusterEnd, cols[c]);
+  }
+  flush();
+
+  // Office hours by default, widened to whatever is actually booked.
+  const firstHour = Math.min(7, ...timed.map((x) => Math.floor(x.s / 60)));
+  const lastHour = Math.max(19, ...timed.map((x) => Math.ceil(x.f / 60)));
+  const hours = Array.from({ length: lastHour - firstHour }, (_, i) => firstHour + i);
+  const hourLabel = (h) => `${h % 12 || 12} ${h < 12 ? 'am' : 'pm'}`;
+
+  return (
+    <Modal title={displayDate(date)} onClose={onClose} large>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <button type="button" className="btn btn-sm" onClick={() => onStep(shiftDay(date, -1))}>‹ Previous day</button>
+        <button type="button" className="btn btn-sm" onClick={() => onStep(shiftDay(date, 1))}>Next day ›</button>
+        <span className="muted" style={{ fontSize: 12 }}>{list.length} scheduled</span>
+        {canSchedule && <button type="button" className="btn btn-sm btn-primary" style={{ marginLeft: 'auto' }} onClick={() => onNew('09:00')}>+ Schedule on this day</button>}
+      </div>
+
+      {carried.length > 0 && (
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 4 }}>↻ Carried over -- not finished on the day scheduled</div>
+          {carried.map((e) => (
+            <button key={e.id} type="button" onClick={() => onOpen(e)} className={`badge ${PHASE_BADGE[e.phase]}`}
+              style={{ display: 'block', width: '100%', textAlign: 'left', border: 'none', cursor: 'pointer', marginTop: 3, padding: '6px 8px' }}>
+              <strong>{e.order_no}</strong> ({e.order_type}) · {e.customer_name} · {e.artist_name || 'no artist yet'}
+              <span style={{ float: 'right' }}>from {displayDate(e.carried_over_from)}, {timeOf(e.scheduled_start)} - {timeOf(e.scheduled_end)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div style={{ maxHeight: '60vh', overflowY: 'auto', border: '1px solid var(--color-border)', borderRadius: 6 }}>
+        <div style={{ position: 'relative', height: hours.length * HOUR_PX }}>
+          {hours.map((h, i) => (
+            <div key={h} onClick={() => canSchedule && onNew(`${String(h).padStart(2, '0')}:00`)}
+              title={canSchedule ? `Schedule at ${hourLabel(h)}` : undefined}
+              style={{
+                position: 'absolute', top: i * HOUR_PX, left: 0, right: 0, height: HOUR_PX,
+                borderTop: i ? '1px solid var(--color-border)' : 'none', cursor: canSchedule ? 'copy' : 'default',
+              }}>
+              <span className="muted" style={{ fontSize: 11, position: 'absolute', left: 6, top: 2 }}>{hourLabel(h)}</span>
+            </div>
+          ))}
+          {timed.map(({ e, s, f, col, n }) => {
+            const top = ((s - firstHour * 60) / 60) * HOUR_PX;
+            const height = Math.max(((f - s) / 60) * HOUR_PX, 26);
+            return (
+              <button key={`${e.id}${e.ghost ? 'g' : ''}`} type="button" onClick={() => onOpen(e)}
+                className={`badge ${PHASE_BADGE[e.phase]}`}
+                title={e.description || ''}
+                style={{
+                  position: 'absolute', top: top + 1, height: height - 2,
+                  left: `calc(56px + (100% - 62px) * ${col / n})`, width: `calc((100% - 62px) / ${n} - 4px)`,
+                  textAlign: 'left', cursor: 'pointer', overflow: 'hidden', padding: '3px 6px', fontSize: 12, lineHeight: 1.3,
+                  border: e.ghost ? '1px dashed currentColor' : '1px solid rgba(0,0,0,0.08)', opacity: e.ghost ? 0.6 : 1,
+                  display: 'block', whiteSpace: 'normal',
+                }}>
+                <div><strong>{timeOf(e.ghost ? e.proposed_start : e.scheduled_start)} - {timeOf(e.ghost ? e.proposed_end : e.scheduled_end)}</strong> · {e.order_no} <span style={{ opacity: 0.7 }}>({e.order_type})</span></div>
+                <div>{e.customer_name}{e.artist_name ? ` · ${e.artist_name}` : ''}</div>
+                <div style={{ opacity: 0.8 }}>
+                  {e.ghost ? '⇄ proposed new time' : (PHASE_LABEL[e.phase] || e.phase)}{!e.ghost && e.proposed_by_side ? ' · ⇄ reschedule pending' : ''}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {list.length === 0 && <p className="muted" style={{ marginTop: 8 }}>Nothing scheduled{canSchedule ? ' -- click an hour to schedule a JO / NSTDJO there.' : '.'}</p>}
+    </Modal>
+  );
+}
+
+function NewScheduleModal({ date, start = '09:00', onClose, onSaved }) {
   const [orderType, setOrderType] = useState('JO');
   const [orders, setOrders] = useState([]);
-  const [form, setForm] = useState({ order_id: '', date, start: '09:00', end: '12:00', notes: '' });
+  const endDefault = `${String(Math.min(23, Number(start.slice(0, 2)) + 3)).padStart(2, '0')}:${start.slice(3, 5)}`;
+  const [form, setForm] = useState({ order_id: '', date, start, end: endDefault, notes: '' });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
