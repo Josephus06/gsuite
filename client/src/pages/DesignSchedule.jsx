@@ -79,11 +79,33 @@ export default function DesignSchedule() {
   // Modals: { kind: 'new' | 'detail' | 'move' | 'day' | 'batch', ... }
   const [modal, setModal] = useState(null);
 
-  const gridStart = new Date(month);
-  gridStart.setDate(1 - month.getDay());
-  const days = Array.from({ length: 42 }, (_, i) => { const d = new Date(gridStart); d.setDate(gridStart.getDate() + i); return d; });
+  // Month / Week / Day (asked 2026-11-03). Month is the 6-week grid of `month`; Week and Day follow the
+  // selected day. The window fetched is exactly the days on screen.
+  const [view, setView] = useState('month');
+  const [search, setSearch] = useState('');
+  let days;
+  if (view === 'month') {
+    const gridStart = new Date(month);
+    gridStart.setDate(1 - month.getDay());
+    days = Array.from({ length: 42 }, (_, i) => { const d = new Date(gridStart); d.setDate(gridStart.getDate() + i); return d; });
+  } else {
+    const [y, m, d] = selectedDay.split('-').map(Number);
+    const first = view === 'week' ? new Date(y, m - 1, d - new Date(y, m - 1, d).getDay()) : new Date(y, m - 1, d);
+    days = Array.from({ length: view === 'week' ? 7 : 1 }, (_, i) => new Date(first.getFullYear(), first.getMonth(), first.getDate() + i));
+  }
   const from = ymd(days[0]);
-  const to = ymd(days[41]);
+  const to = ymd(days[days.length - 1]);
+
+  // Moves the selected day, keeping the month in step with it.
+  function goTo(k) {
+    setSelectedDay(k);
+    const [y, m] = k.split('-').map(Number);
+    setMonth(new Date(y, m - 1, 1));
+  }
+  function step(n) {
+    if (view === 'month') setMonth(new Date(month.getFullYear(), month.getMonth() + n, 1));
+    else goTo(shiftDay(selectedDay, view === 'week' ? 7 * n : n));
+  }
 
   useEffect(() => {
     api.get(`${ROUTE}/meta`).then(({ data }) => setMeta(data));
@@ -131,9 +153,16 @@ export default function DesignSchedule() {
 
   // Each slot on the day it shows (carried-over ones on today, first), plus a dashed ghost on the
   // day a pending reschedule / revision would move it to.
+  // Search: order no., customer, artist, account officer, description, type or status -- across the
+  // days on screen.
+  const q = search.trim().toLowerCase();
+  const shown = q
+    ? events.filter((e) => [e.order_no, e.customer_name, e.artist_name, e.preferred_artist_name, e.sales_rep_name, e.description, e.order_type, PHASE_LABEL[e.phase] || e.phase]
+      .some((v) => String(v || '').toLowerCase().includes(q)))
+    : events;
   const byDay = new Map();
   const put = (k, e) => { if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(e); };
-  for (const e of events) {
+  for (const e of shown) {
     put(e.display_date, e);
     if (e.proposed_start) put(String(e.proposed_start).slice(0, 10), { ...e, ghost: true });
   }
@@ -159,11 +188,12 @@ export default function DesignSchedule() {
 
   // Opens the day view. Stepping past the month shown turns the calendar too, so that day's slots load.
   function openDay(k) {
-    setSelectedDay(k);
-    const [y, m] = k.split('-').map(Number);
-    if (y !== month.getFullYear() || m - 1 !== month.getMonth()) setMonth(new Date(y, m - 1, 1));
+    goTo(k);
     setModal({ kind: 'day', date: k });
   }
+  const title = view === 'month' ? displayMonth(month)
+    : view === 'week' ? `${displayDate(from)} – ${displayDate(to)}`
+      : `${WEEKDAYS[days[0].getDay()]}, ${displayDate(from)}`;
 
   // A Design Supervisor clicking a slot that is waiting on them gets its whole calendar -- that is where
   // the job types, revisions and the Approve / Send back buttons are.
@@ -218,10 +248,18 @@ export default function DesignSchedule() {
 
       <div className="card">
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-          <button type="button" className="btn btn-sm" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}>‹</button>
-          <h3 style={{ margin: 0, minWidth: 170, textAlign: 'center' }}>{displayMonth(month)}</h3>
-          <button type="button" className="btn btn-sm" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}>›</button>
-          <button type="button" className="btn btn-sm" onClick={() => { const d = new Date(); setMonth(new Date(d.getFullYear(), d.getMonth(), 1)); setSelectedDay(todayKey); }}>Today</button>
+          <button type="button" className="btn btn-sm" onClick={() => step(-1)}>‹</button>
+          <h3 style={{ margin: 0, minWidth: 220, textAlign: 'center' }}>{title}</h3>
+          <button type="button" className="btn btn-sm" onClick={() => step(1)}>›</button>
+          <button type="button" className="btn btn-sm" onClick={() => goTo(todayKey)}>Today</button>
+          <div style={{ display: 'flex', gap: 0 }}>
+            {[['day', 'Day'], ['week', 'Week'], ['month', 'Month']].map(([v, label]) => (
+              <button key={v} type="button" className={`btn btn-sm ${view === v ? 'btn-primary' : ''}`} onClick={() => setView(v)}>{label}</button>
+            ))}
+          </div>
+          <input type="search" placeholder="Search JO / NSTDJO, customer, artist, AO..." value={search} onChange={(e) => setSearch(e.target.value)}
+            style={{ flex: '1 1 220px', maxWidth: 320 }} />
+          {q && <span className="muted" style={{ fontSize: 12 }}>{shown.length} match(es)</span>}
           {!side.artistEmployeeId && (
             <label style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
               Artist calendar
@@ -236,7 +274,49 @@ export default function DesignSchedule() {
           {Object.keys(PHASE_BADGE).filter((p) => p !== 'Cancelled').map((p) => <span key={p} className={`badge ${PHASE_BADGE[p]}`}>{PHASE_LABEL[p] || p}</span>)}
           <span className="muted">↻ carried over · ⇄ change pending{side.sales || side.design ? ' · drag a slot to move it' : ''}</span>
         </div>
-        {loading ? <LoadingSpinner /> : (
+        {loading ? <LoadingSpinner /> : view === 'day' ? (
+          <>
+            {side.sales && from >= todayKey && (
+              <div style={{ marginBottom: 8 }}>
+                <button type="button" className="btn btn-sm btn-primary" onClick={() => setModal({ kind: 'new', date: from, start: '09:00' })}>+ Schedule on this day</button>
+              </div>
+            )}
+            <DayTimeline list={byDay.get(from) || []} canSchedule={side.sales && from >= todayKey}
+              onOpen={(e) => openSlot(e)} onNew={(start) => setModal({ kind: 'new', date: from, start })} />
+          </>
+        ) : view === 'week' ? (
+          <div style={{ overflowX: 'auto' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(130px, 1fr))', gap: 1, background: 'var(--color-border)', minWidth: 910 }}>
+              {days.map((d) => {
+                const k = ymd(d);
+                const list = byDay.get(k) || [];
+                return (
+                  <div key={k} onDragOver={(ev) => ev.preventDefault()} onDrop={(ev) => onDrop(ev, k)}
+                    style={{ background: 'var(--color-surface)', minHeight: 380, padding: 6 }}>
+                    <button type="button" onClick={() => openDay(k)} title="Open the day"
+                      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 12, fontWeight: k === todayKey ? 700 : 600, color: k === todayKey ? 'var(--color-primary)' : undefined }}>
+                      {WEEKDAYS[d.getDay()]} {d.getDate()}
+                    </button>
+                    {list.map((e) => (
+                      <button key={`${e.id}${e.ghost ? 'g' : ''}`} type="button" draggable={canMove(e)}
+                        onDragStart={(ev) => ev.dataTransfer.setData('text/plain', String(e.id))}
+                        onClick={() => openSlot(e)} className={`badge ${PHASE_BADGE[e.phase]}`}
+                        style={{
+                          display: 'block', width: '100%', textAlign: 'left', marginTop: 4, padding: '4px 6px', whiteSpace: 'normal', fontSize: 11, lineHeight: 1.35,
+                          cursor: canMove(e) ? 'grab' : 'pointer', border: e.ghost ? '1px dashed currentColor' : 'none', opacity: e.ghost ? 0.6 : 1,
+                        }}>
+                        <strong>{e.carried_over_from ? '↻ ' : ''}{timeOf(e.ghost ? e.proposed_start : e.scheduled_start)} - {timeOf(e.ghost ? e.proposed_end : e.scheduled_end)}</strong>
+                        <div>{e.order_no} ({e.order_type})</div>
+                        <div>{e.customer_name}</div>
+                        <div style={{ opacity: 0.8 }}>{(e.ghost && e.proposed_artist_name) || e.artist_name || 'no artist'} · {e.ghost ? 'proposed' : (PHASE_LABEL[e.phase] || e.phase)}</div>
+                      </button>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
           <div style={{ overflowX: 'auto' }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(110px, 1fr))', gap: 1, background: 'var(--color-border)', minWidth: 770 }}>
               {WEEKDAYS.map((w) => <div key={w} style={{ background: 'var(--color-surface)', padding: 6, fontWeight: 600, fontSize: 12 }}>{w}</div>)}
@@ -325,6 +405,21 @@ const minutesOf = (v) => { const [h, m] = String(v).split(' ')[1].split(':').map
 const shiftDay = (k, n) => { const [y, m, d] = k.split('-').map(Number); return ymd(new Date(y, m - 1, d + n)); };
 
 function DayModal({ date, list, canSchedule, onClose, onStep, onOpen, onNew }) {
+  return (
+    <Modal title={displayDate(date)} onClose={onClose} large>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <button type="button" className="btn btn-sm" onClick={() => onStep(shiftDay(date, -1))}>‹ Previous day</button>
+        <button type="button" className="btn btn-sm" onClick={() => onStep(shiftDay(date, 1))}>Next day ›</button>
+        <span className="muted" style={{ fontSize: 12 }}>{list.length} scheduled</span>
+        {canSchedule && <button type="button" className="btn btn-sm btn-primary" style={{ marginLeft: 'auto' }} onClick={() => onNew('09:00')}>+ Schedule on this day</button>}
+      </div>
+      <DayTimeline list={list} canSchedule={canSchedule} onOpen={onOpen} onNew={onNew} />
+    </Modal>
+  );
+}
+
+// The hour-by-hour body of a day: in the day popup, and inline as the calendar's Day view.
+function DayTimeline({ list, canSchedule, onOpen, onNew }) {
   const carried = list.filter((e) => e.carried_over_from);
   const timed = list.filter((e) => !e.carried_over_from).map((e) => ({
     e,
@@ -356,14 +451,7 @@ function DayModal({ date, list, canSchedule, onClose, onStep, onOpen, onNew }) {
   const hourLabel = (h) => `${h % 12 || 12} ${h < 12 ? 'am' : 'pm'}`;
 
   return (
-    <Modal title={displayDate(date)} onClose={onClose} large>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <button type="button" className="btn btn-sm" onClick={() => onStep(shiftDay(date, -1))}>‹ Previous day</button>
-        <button type="button" className="btn btn-sm" onClick={() => onStep(shiftDay(date, 1))}>Next day ›</button>
-        <span className="muted" style={{ fontSize: 12 }}>{list.length} scheduled</span>
-        {canSchedule && <button type="button" className="btn btn-sm btn-primary" style={{ marginLeft: 'auto' }} onClick={() => onNew('09:00')}>+ Schedule on this day</button>}
-      </div>
-
+    <>
       {carried.length > 0 && (
         <div style={{ marginBottom: 10 }}>
           <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 4 }}>↻ Carried over -- not finished on the day scheduled</div>
@@ -415,7 +503,7 @@ function DayModal({ date, list, canSchedule, onClose, onStep, onOpen, onNew }) {
         </div>
       </div>
       {list.length === 0 && <p className="muted" style={{ marginTop: 8 }}>Nothing scheduled{canSchedule ? ' -- click an hour to schedule a JO / NSTDJO there.' : '.'}</p>}
-    </Modal>
+    </>
   );
 }
 
