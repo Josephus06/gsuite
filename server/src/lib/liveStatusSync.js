@@ -149,7 +149,8 @@ const MODULES = {
           ? "CASE WHEN quantity_inspected > 0 THEN 'partially_completed' ELSE production_stage END"
           : '?';
       await conn.query(
-        `UPDATE job_orders SET production_stage = ${earned} WHERE sales_order_id = ? AND (production_stage IS NULL OR production_stage IN (?))`,
+        // Released only: a JO still in design (Planned - Pending for BOM) is not on the production ladder.
+        `UPDATE job_orders SET production_stage = ${earned} WHERE sales_order_id = ? AND status = 'Released' AND (production_stage IS NULL OR production_stage IN (?))`,
         earned === '?' ? [stage, localId, behind.length ? behind : ['']] : [localId, behind.length ? behind : ['']]
       );
     },
