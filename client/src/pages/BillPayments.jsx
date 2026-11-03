@@ -10,7 +10,7 @@ import useAutoSearch from '../utils/useAutoSearch';
 import SearchInput from '../components/SearchInput';
 
 const PAGE_SIZE = 15;
-const STATUS_LABELS = { open: 'Open', voided: 'Voided' };
+const STATUS_LABELS = { open: 'Open', posted: 'Posted', voided: 'Voided' };
 
 function money(v) {
   const n = Number(v);

@@ -121,7 +121,7 @@ async function listBillPayments(query) {
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const [rows] = await pool.query(
       `SELECT bp.id, bp.bill_payment_no, bp.date_created, bp.payment_method_id, pm.name AS payment_method_name,
-              bp.total_amount, bp.status, bp.memo, bp.check_no, bp.payee_name, bp.date_released,
+              bp.total_amount, bp.status, bp.memo, bp.check_no, bp.check_date, bp.payee_name, bp.date_released,
               bp.supplier_id, s.name AS supplier_name, coa.account_name AS bank_account_name
        FROM bill_payments bp
        LEFT JOIN suppliers s ON s.id = bp.supplier_id
@@ -147,28 +147,27 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const rows = await listBillPayments(req.query);
-    const STATUS = { open: 'Open', voided: 'Voided' };
+    const STATUS = { open: 'Open', posted: 'Posted', voided: 'Voided' };
     await sendXlsx(res, {
       filename: 'bill-payments.xlsx',
       sheet: 'Bill Payments',
+      // The Cheque list's extract format (asked 2026-11-03), column for column -- routes/cheques.js.
       columns: [
-        { header: 'Payment #', key: 'no', width: 16 },
+        { header: 'Cheque No', key: 'no', width: 16 },
         { header: 'Date', key: 'date', width: 12 },
-        { header: 'Check #', key: 'check_no', width: 14 },
-        { header: 'Vendor', key: 'vendor', width: 38 },
-        { header: 'Payee Name', key: 'payee', width: 30 },
+        { header: 'Cheque Date', key: 'cheque_date', width: 12 },
+        { header: 'Cheque #', key: 'cheque_number', width: 14 },
+        { header: 'Payee', key: 'payee', width: 38 },
         { header: 'Account', key: 'account', width: 28 },
-        { header: 'Payment Method', key: 'method', width: 16 },
-        { header: 'Total Amount', key: 'total', width: 16, money: true },
+        { header: 'Total', key: 'total', width: 16, money: true },
         { header: 'Date Released', key: 'released', width: 14 },
-        { header: 'Status', key: 'status', width: 10 },
+        { header: 'Status', key: 'status', width: 13 },
         { header: 'Memo', key: 'memo', width: 50 },
       ],
       rows: rows.map((r) => ({
-        no: r.bill_payment_no, date: day(r.date_created), check_no: r.check_no || '', vendor: r.supplier_name || '',
-        payee: r.payee_name || '', account: r.bank_account_name || '', method: r.payment_method_name || '',
-        total: Number(r.total_amount || 0), released: day(r.date_released) || 'Not released',
-        status: STATUS[r.status] || r.status, memo: r.memo || '',
+        no: r.bill_payment_no, date: day(r.date_created), cheque_date: day(r.check_date), cheque_number: r.check_no || '',
+        payee: r.payee_name || r.supplier_name || '', account: r.bank_account_name || '', total: Number(r.total_amount || 0),
+        released: day(r.date_released) || 'Not released', status: STATUS[r.status] || r.status, memo: r.memo || '',
       })),
     });
   } catch (err) {
