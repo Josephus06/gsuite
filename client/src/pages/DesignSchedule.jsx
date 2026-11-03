@@ -208,9 +208,11 @@ export default function DesignSchedule() {
 
   return (
     <div className="page">
-      <div className="page-header">
+      {/* Buttons beside the title, not at the far right: on a zoomed-in or narrow screen the right edge
+          is the first thing cut off, and Arjie could not find "+ Schedule JO / NSTDJO" (2026-11-03). */}
+      <div className="page-header" style={{ justifyContent: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
         <h1>Design Schedule</h1>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {side.sales && (
             <button type="button" className="btn" onClick={() => setModal({ kind: 'new', date: selectedDay >= todayKey ? selectedDay : todayKey })}>
               + Schedule JO / NSTDJO
