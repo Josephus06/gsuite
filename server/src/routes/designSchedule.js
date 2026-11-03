@@ -101,7 +101,8 @@ async function sideOf(userId) {
   const sales = flagged || u?.account_type === 'Sales';
   const design = !!u?.is_design_supervisor || admin;
   let scope = [];
-  if (admin) scope = null;
+  // Every SBU has the same view: all sales groups' slots (asked 2026-11-03), not just their own tree.
+  if (admin || sbu) scope = null;
   else if (flagged) scope = await getSalesRepEmployeeScope(userId, ROUTE);
   else if (sales) scope = (await userCan(userId, ROUTE, 'can_view_all')) ? null : [u.employee_id].filter(Boolean);
   return {
@@ -478,8 +479,8 @@ router.get('/batches', requireAuth, requirePermission(ROUTE, 'can_view'), async 
     if (!side.design && !side.sales) return res.json([]);
     const [rows] = await pool.query(
       `SELECT b.id FROM design_schedule_batches b WHERE b.status IN (?, ?)
-        ${side.design || side.admin ? '' : 'AND b.forwarded_by_user_id = ?'} ORDER BY b.id`,
-      side.design || side.admin ? [BATCH_WITH_DESIGN, BATCH_WITH_SBU] : [BATCH_WITH_DESIGN, BATCH_WITH_SBU, side.userId],
+        ${side.design || side.sbu ? '' : 'AND b.forwarded_by_user_id = ?'} ORDER BY b.id`,
+      side.design || side.sbu ? [BATCH_WITH_DESIGN, BATCH_WITH_SBU] : [BATCH_WITH_DESIGN, BATCH_WITH_SBU, side.userId],
     );
     res.json(await Promise.all(rows.map((r) => loadBatch(pool, r.id))));
   } catch (err) { next(err); }
@@ -738,26 +739,49 @@ router.post('/:id/revise/withdraw', requireAuth, requirePermission(ROUTE, 'can_e
   return null;
 }));
 
-// Design: approve the calendar. With no revision it is approved and assigned now; with revisions it
-// goes back to the SBU to approve them.
-router.post('/batches/:id/approve', requireAuth, requirePermission(ROUTE, 'can_edit'), withBatch(async ({ conn, batch, side, req }) => {
-  if (!side.design) return [403, 'Only a Design Supervisor approves the calendar.'];
+// Every SBU acts on any calendar, so all of them hear about one coming back.
+async function sbuUserIds(conn) {
+  const [rows] = await conn.query(
+    "SELECT id FROM users WHERE is_active = TRUE AND is_sales_business_unit = TRUE AND (account_type IS NULL OR account_type <> 'System Admin')");
+  return rows.map((r) => r.id);
+}
+
+function designDecisionGate(batch, side) {
+  if (!side.design) return [403, 'Only a Design Supervisor decides on the calendar.'];
   if (batch.status !== BATCH_WITH_DESIGN) return [409, `This calendar is ${batch.status}.`];
   if (!batch.items.length) return [409, 'This calendar has nothing left on it.'];
   const missing = batch.items.find((s) => !s.plan_layout_job_type_id || !(Number(s.plan_layout_qty) > 0));
   if (missing) return [400, `Set the Layout - Job Type and Qty of ${missing.order_no} first.`];
-  await conn.query('UPDATE design_schedule_batches SET reviewed_by_user_id = ?, reviewed_at = NOW(), return_note = NULL WHERE id = ?', [req.user.id, batch.id]);
+  return null;
+}
+
+// Design: approve the calendar as it stands -- every order assigned to its artist now. A calendar with
+// revisions is sent back to the SBU instead (below), so nothing Sales has not agreed to is assigned.
+router.post('/batches/:id/approve', requireAuth, requirePermission(ROUTE, 'can_edit'), withBatch(async ({ conn, batch, side, req }) => {
+  const fail = designDecisionGate(batch, side);
+  if (fail) return fail;
   const revised = batch.items.filter((s) => s.proposed_by_side === 'DESIGN');
-  if (revised.length) {
-    await conn.query('UPDATE design_schedule_batches SET status = ? WHERE id = ?', [BATCH_WITH_SBU, batch.id]);
-    await notifyUsers(conn, [batch.forwarded_by_user_id], {
-      title: `Design revised ${revised.length} slot(s) on calendar #${batch.id} -- please approve`,
-      message: revised.map((s) => s.order_no).join(', ').slice(0, 500),
-      relatedType: 'DesignScheduleBatch', relatedId: batch.id,
-    });
-    return null;
-  }
-  return approveBatch(conn, batch, req.user.id).then((err) => (err ? [409, err] : null));
+  if (revised.length) return [409, `${revised.length} slot(s) are revised -- send the calendar back to the SBU, or undo the revisions to approve it as it is.`];
+  await conn.query('UPDATE design_schedule_batches SET reviewed_by_user_id = ?, reviewed_at = NOW(), return_note = NULL WHERE id = ?', [req.user.id, batch.id]);
+  const err = await approveBatch(conn, batch, req.user.id);
+  return err ? [409, err] : null;
+}));
+
+// Design: send the revised calendar back to Sales -- the SBU approves the revisions or returns it.
+router.post('/batches/:id/send-back', requireAuth, requirePermission(ROUTE, 'can_edit'), withBatch(async ({ conn, batch, side, req }) => {
+  const fail = designDecisionGate(batch, side);
+  if (fail) return fail;
+  const revised = batch.items.filter((s) => s.proposed_by_side === 'DESIGN');
+  if (!revised.length) return [409, "Nothing is revised -- revise a slot's time or artist first, or approve the calendar as it is."];
+  await conn.query(
+    'UPDATE design_schedule_batches SET status = ?, reviewed_by_user_id = ?, reviewed_at = NOW(), return_note = NULL WHERE id = ?',
+    [BATCH_WITH_SBU, req.user.id, batch.id]);
+  await notifyUsers(conn, [batch.forwarded_by_user_id, ...(await sbuUserIds(conn))], {
+    title: `Design revised ${revised.length} slot(s) on calendar #${batch.id} -- please approve`,
+    message: revised.map((s) => s.order_no).join(', ').slice(0, 500),
+    relatedType: 'DesignScheduleBatch', relatedId: batch.id,
+  });
+  return null;
 }));
 
 // SBU: approve Design's revisions -- they take effect and the calendar is approved and assigned.

@@ -165,6 +165,13 @@ export default function DesignSchedule() {
     setModal({ kind: 'day', date: k });
   }
 
+  // A Design Supervisor clicking a slot that is waiting on them gets its whole calendar -- that is where
+  // the job types, revisions and the Approve / Send back buttons are.
+  function openSlot(e, back) {
+    if (side.design && e.status === 'For Approval' && e.batch_id) setModal({ kind: 'batch', id: e.batch_id });
+    else setModal({ kind: 'detail', id: e.id, ...(back ? { back } : {}) });
+  }
+
   const batchNeedsMe = (b) => (b.status === 'For Approval' && side.design) || (b.status === 'For SBU Approval' && side.sbu);
   const proposals = events.filter((e) => !e.ghost && awaitingMe(e, side));
 
@@ -252,7 +259,7 @@ export default function DesignSchedule() {
                     <div style={{ fontSize: 12, fontWeight: k === todayKey ? 700 : 400, color: k === todayKey ? 'var(--color-primary)' : undefined }}>{d.getDate()}</div>
                     {list.slice(0, 4).map((e) => (
                       <EventChip key={`${e.id}${e.ghost ? 'g' : ''}`} e={e} draggable={canMove(e)}
-                        onOpen={() => setModal({ kind: 'detail', id: e.id })} />
+                        onOpen={() => openSlot(e)} />
                     ))}
                     {list.length > 4 && <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>+{list.length - 4} more -- click the day</div>}
                   </div>
@@ -267,7 +274,7 @@ export default function DesignSchedule() {
         <DayModal
           date={modal.date} list={byDay.get(modal.date) || []} canSchedule={side.sales && modal.date >= todayKey}
           onClose={closeModal} onStep={openDay}
-          onOpen={(e) => setModal({ kind: 'detail', id: e.id, back: modal.date })}
+          onOpen={(e) => openSlot(e, modal.date)}
           onNew={(start) => setModal({ kind: 'new', date: modal.date, start })}
         />
       )}
@@ -746,7 +753,12 @@ function BatchModal({ id, meta, onClose, onChanged }) {
         {batch.approved_by_name && ` · approved by ${batch.approved_by_name}`}
       </p>
       {batch.return_note && batch.status === 'For Approval' && <div className="error-banner">Returned by the SBU: {batch.return_note}</div>}
-      {reviewing && <p style={{ fontSize: 13 }}>Set each order&apos;s Layout - Job Type and Qty. Revise a time or artist if needed -- revisions go to the SBU to approve.</p>}
+      {reviewing && (
+        <p style={{ fontSize: 13 }}>
+          Set each order&apos;s Layout - Job Type and Qty, then <strong>Approve</strong> the calendar as it is -- or <strong>Revise</strong> a
+          slot&apos;s time or artist and <strong>Send it back to the SBU</strong> to approve the revisions.
+        </p>
+      )}
 
       <div style={{ overflowX: 'auto' }}>
         <table>
@@ -813,9 +825,18 @@ function BatchModal({ id, meta, onClose, onChanged }) {
         <div className="modal-actions">
           <button type="button" className="btn" onClick={onClose}>Close</button>
           {reviewing && (
-            <button type="button" className="btn btn-primary" disabled={busy} onClick={() => call('post', `/batches/${batch.id}/approve`)}>
-              {revisedCount ? `Send ${revisedCount} revision(s) to the SBU` : 'Approve calendar & assign artists'}
-            </button>
+            <>
+              <button type="button" className="btn btn-warning" disabled={busy || !revisedCount}
+                title={revisedCount ? '' : "Revise a slot's time or artist first"}
+                onClick={() => call('post', `/batches/${batch.id}/send-back`)}>
+                Send revised calendar back to SBU{revisedCount ? ` (${revisedCount})` : ''}
+              </button>
+              <button type="button" className="btn btn-primary" disabled={busy || revisedCount > 0}
+                title={revisedCount ? 'Revisions go to the SBU first -- or undo them to approve as it is' : ''}
+                onClick={() => call('post', `/batches/${batch.id}/approve`)}>
+                Approve calendar &amp; assign artists
+              </button>
+            </>
           )}
           {answering && (
             <>
