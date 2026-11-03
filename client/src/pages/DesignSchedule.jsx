@@ -519,6 +519,8 @@ function NewScheduleModal({ date, start = '09:00', artists, onClose, onSaved }) 
   const [picked, setPicked] = useState([]); // order rows
   const [find, setFind] = useState('');
   const [page, setPage] = useState(1);
+  // Multiple off: one order at a time. On: search an order number first, then tick (asked 2026-11-03).
+  const [multiple, setMultiple] = useState(false);
   const endDefault = `${String(Math.min(23, Number(start.slice(0, 2)) + 3)).padStart(2, '0')}:${start.slice(3, 5)}`;
   const [form, setForm] = useState({ date, start, end: endDefault, notes: '', delivery_date: '', preferred_artist_id: '' });
   const [error, setError] = useState('');
@@ -532,7 +534,7 @@ function NewScheduleModal({ date, start = '09:00', artists, onClose, onSaved }) 
   }, [orderType]);
 
   const q = find.trim().toLowerCase();
-  const matches = (orders || []).filter((o) => !q || [o.order_no, o.customer_name, o.description, o.sub_status]
+  const matches = multiple && !q ? [] : (orders || []).filter((o) => !q || [o.order_no, o.customer_name, o.description, o.sub_status]
     .some((v) => String(v || '').toLowerCase().includes(q)));
   const totalPages = Math.max(1, Math.ceil(matches.length / ORDERS_PER_PAGE));
   const pageRows = matches.slice((page - 1) * ORDERS_PER_PAGE, page * ORDERS_PER_PAGE);
@@ -542,7 +544,15 @@ function NewScheduleModal({ date, start = '09:00', artists, onClose, onSaved }) 
     setPicked(next);
     setForm((f) => ({ ...f, delivery_date: next.length === 1 && next[0].delivery_date ? String(next[0].delivery_date).slice(0, 10) : '' }));
   }
-  const toggle = (o) => pick(isPicked(o) ? picked.filter((p) => p.id !== o.id) : [...picked, o]);
+  const toggle = (o) => {
+    if (!multiple) pick(isPicked(o) ? [] : [o]);
+    else pick(isPicked(o) ? picked.filter((p) => p.id !== o.id) : [...picked, o]);
+  };
+  function setMultipleMode(on) {
+    setMultiple(on);
+    setPage(1);
+    if (!on && picked.length > 1) pick(picked.slice(0, 1));
+  }
   const allOnPage = pageRows.length > 0 && pageRows.every(isPicked);
   const togglePage = () => pick(allOnPage
     ? picked.filter((p) => !pageRows.some((o) => o.id === p.id))
@@ -585,28 +595,45 @@ function NewScheduleModal({ date, start = '09:00', artists, onClose, onSaved }) 
         </div>
         <div className="field" style={{ flex: 1, minWidth: 220 }}>
           <label>Search</label>
-          <input type="search" placeholder="No., customer, description..." value={find} onChange={(e) => { setFind(e.target.value); setPage(1); }} />
+          <input type="search" placeholder={multiple ? 'Type the JO / NSTDJO number...' : 'No., customer, description...'} value={find} onChange={(e) => { setFind(e.target.value); setPage(1); }} />
         </div>
       </div>
       <div className="muted" style={{ fontSize: 12, margin: '4px 0' }}>
-        Your (and your team&apos;s) orders waiting for Design that are not on the schedule yet. Tick one or more.
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginRight: 10, fontWeight: 600, color: 'var(--color-text)' }}>
+          <input type="checkbox" checked={multiple} onChange={(e) => setMultipleMode(e.target.checked)} /> Multiple
+        </label>
+        {multiple ? 'Search a JO / NSTDJO number, tick it, then search the next.' : 'Pick one order -- tick Multiple to schedule several.'}
         {picked.length > 0 && <strong style={{ marginLeft: 8, color: 'var(--color-primary)' }}>{picked.length} selected</strong>}
         {picked.length > 0 && <button type="button" className="btn btn-sm" style={{ marginLeft: 8 }} onClick={() => pick([])}>Clear</button>}
       </div>
+      {multiple && picked.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+          {picked.map((o) => (
+            <span key={o.id} className="badge badge-info" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              {o.order_no}
+              <button type="button" onClick={() => toggle(o)} title="Remove" style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 0, lineHeight: 1 }}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
       {orders === null ? <LoadingSpinner /> : (
         <div style={{ overflowX: 'auto', maxHeight: 340, overflowY: 'auto' }}>
           <table>
             <thead>
               <tr>
-                <th style={{ width: 32 }}><input type="checkbox" checked={allOnPage} onChange={togglePage} title="Tick every order on this page" /></th>
+                <th style={{ width: 32 }}>{multiple && q && <input type="checkbox" checked={allOnPage} onChange={togglePage} title="Tick every order found" />}</th>
                 <th>No.</th><th>Customer</th><th>Description</th><th>Sub Status</th><th>Delivery</th>
               </tr>
             </thead>
             <tbody>
-              {pageRows.length === 0 && <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>No orders to schedule.</td></tr>}
+              {pageRows.length === 0 && (
+                <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>
+                  {multiple && !q ? 'Search a JO / NSTDJO number to find the orders to tick.' : 'No orders to schedule.'}
+                </td></tr>
+              )}
               {pageRows.map((o) => (
                 <tr key={o.id} onClick={() => toggle(o)} style={{ cursor: 'pointer', background: isPicked(o) ? 'rgba(99, 102, 241, 0.08)' : undefined }}>
-                  <td><input type="checkbox" checked={isPicked(o)} onChange={() => toggle(o)} onClick={(e) => e.stopPropagation()} /></td>
+                  <td><input type={multiple ? 'checkbox' : 'radio'} checked={isPicked(o)} onChange={() => toggle(o)} onClick={(e) => e.stopPropagation()} /></td>
                   <td style={{ whiteSpace: 'nowrap' }}>{o.order_no}</td>
                   <td>{o.customer_name}</td>
                   <td>{String(o.description || '').slice(0, 70)}</td>
