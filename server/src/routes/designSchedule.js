@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const { notifyDesignSupervisors, notifyAssignedArtist } = require('../lib/designNotifications');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES } = require('../lib/designSupervisorVisibility');
@@ -94,9 +94,16 @@ async function sideOf(userId) {
   );
   const admin = u?.account_type === 'System Admin';
   const sbu = !!u?.is_sales_business_unit || admin;
-  const sales = sbu || !!u?.is_account_officer || !!u?.is_supervisor;
+  const flagged = sbu || !!u?.is_account_officer || !!u?.is_supervisor;
+  // Every Sales account schedules (asked 2026-11-03: "all sales"). One with none of the three flags is
+  // treated as an Account Officer -- their own orders only -- since getSalesRepEmployeeScope would read
+  // "no flag" as no restriction at all.
+  const sales = flagged || u?.account_type === 'Sales';
   const design = !!u?.is_design_supervisor || admin;
-  const scope = admin ? null : (sales ? await getSalesRepEmployeeScope(userId, ROUTE) : []);
+  let scope = [];
+  if (admin) scope = null;
+  else if (flagged) scope = await getSalesRepEmployeeScope(userId, ROUTE);
+  else if (sales) scope = (await userCan(userId, ROUTE, 'can_view_all')) ? null : [u.employee_id].filter(Boolean);
   return {
     userId: Number(userId), admin, sales, sbu, design, both: sbu && design, scope,
     artistEmployeeId: !sales && !design && u?.account_type === 'Artist' ? u.employee_id : null,

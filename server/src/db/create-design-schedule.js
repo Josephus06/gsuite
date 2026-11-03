@@ -140,8 +140,14 @@ async function main() {
   await grant(await ids("account_type = 'System Admin'"), all, 'System Admin');
   await grant(await ids('is_sales_business_unit = TRUE'),
     { can_view: true, can_add: true, can_edit: true, can_delete: false, can_approve: false, can_print: false }, 'SBU');
-  await grant(await ids('(is_account_officer = TRUE OR is_supervisor = TRUE)'),
-    { can_view: true, can_add: true, can_edit: true, can_delete: false, can_approve: false, can_print: false }, 'Account Officer / Sales Supervisor');
+  // All of Sales (asked 2026-11-03), flagged or not -- routes/designSchedule.js treats an unflagged
+  // Sales account as an Account Officer.
+  await grant(await ids("(is_account_officer = TRUE OR is_supervisor = TRUE OR account_type = 'Sales')"),
+    { can_view: true, can_add: true, can_edit: true, can_delete: false, can_approve: false, can_print: false }, 'Sales (Account Officer / Supervisor)');
+  // Everyone in the Design department sees the calendar, artists or not.
+  await grant(await ids(`employee_id IN (SELECT e.id FROM employees e JOIN departments d ON d.id = e.department_id
+                          WHERE LOWER(TRIM(d.name)) = 'design')`),
+    { can_view: true, can_add: false, can_edit: false, can_delete: false, can_approve: false, can_print: false }, 'Design department');
   await grant(await ids('is_design_supervisor = TRUE'),
     { can_view: true, can_add: false, can_edit: true, can_delete: false, can_approve: true, can_print: false }, 'Design Supervisor');
   await grant(await ids("account_type = 'Artist'"),
