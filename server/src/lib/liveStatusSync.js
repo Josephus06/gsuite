@@ -139,9 +139,18 @@ const MODULES = {
       }
       // Only JOs behind the order's stage catch up to it; one already further along keeps its own.
       const behind = Object.keys(JO_STAGE_RANK).filter((s) => JO_STAGE_RANK[s] < JO_STAGE_RANK[stage]);
+      // The source calls an order Pending Delivery / Pending Billing once ANY of its JOs is done, so
+      // Completed is not copied onto a JO that has not passed QI itself: JO-60582-4-10, nothing built,
+      // inspected or delivered, read "Released Completed" with its nine siblings (2026-11-03). Its own
+      // inspected qty decides: all -> Completed, some -> Partially Completed, none -> left where it is.
+      const earned = stage === 'completed'
+        ? "CASE WHEN quantity > 0 AND quantity_inspected >= quantity THEN 'completed' WHEN quantity_inspected > 0 THEN 'partially_completed' ELSE production_stage END"
+        : stage === 'partially_completed'
+          ? "CASE WHEN quantity_inspected > 0 THEN 'partially_completed' ELSE production_stage END"
+          : '?';
       await conn.query(
-        'UPDATE job_orders SET production_stage = ? WHERE sales_order_id = ? AND (production_stage IS NULL OR production_stage IN (?))',
-        [stage, localId, behind.length ? behind : ['']]
+        `UPDATE job_orders SET production_stage = ${earned} WHERE sales_order_id = ? AND (production_stage IS NULL OR production_stage IN (?))`,
+        earned === '?' ? [stage, localId, behind.length ? behind : ['']] : [localId, behind.length ? behind : ['']]
       );
     },
   },
