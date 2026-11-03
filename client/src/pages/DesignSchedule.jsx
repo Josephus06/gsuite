@@ -6,25 +6,29 @@ import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate, displayMonth, displayAuditTime } from '../utils/dates';
 
-// Design > Design Schedule (2026-10-31). The SBU puts a JO / NSTDJO on the calendar and forwards it;
-// a Design Supervisor confirms or rejects it, then assigns the artist through the same endpoints the
-// order screens use. A confirmed slot moved by one side waits for the other side to accept it. A
-// confirmed slot not finished by the end of its day carries over to the top of today (server-side:
-// routes/designSchedule.js decorate()).
+// Design > Design Schedule (flow of 2026-11-03; server: routes/designSchedule.js). Sales -- Account
+// Officers, their Supervisors, the SBU -- put their JO / NSTDJO on the calendar with a preferred artist;
+// the SBU forwards every unsent slot to Design as one calendar; a Design Supervisor sets each slot's
+// Layout Job Type + Qty, may revise its time or artist (the SBU approves revisions), and approving
+// assigns every order to its artist. An approved slot not finished by the end of its day carries over
+// to the top of today.
 const ROUTE = '/design-schedule';
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const PHASE_BADGE = {
   Draft: 'badge-muted',
-  'For Confirmation': 'badge-warning',
-  Rejected: 'badge-danger',
+  'For Approval': 'badge-warning',
+  Revised: 'badge-danger',
   Confirmed: 'badge-info',
   Assigned: 'badge-success',
   Done: 'badge-muted',
   Cancelled: 'badge-muted',
 };
 const PHASE_LABEL = {
-  Confirmed: 'Confirmed - needs artist',
+  Draft: 'Draft - not sent',
+  'For Approval': 'With Design',
+  Revised: 'Revised - SBU to approve',
+  Confirmed: 'Approved',
   Assigned: 'Artist assigned',
   Done: 'Layout done',
 };
@@ -40,12 +44,24 @@ const slotText = (start, end) => `${displayDate(String(start).slice(0, 10))}, ${
 const orderLink = (s) => (s.order_type === 'JO' ? `/job-orders/${s.order_id}` : `/non-standard-job-orders/${s.order_id}`);
 const runLink = (s) => (s.order_type === 'JO' ? `/assigned-jo/${s.order_id}` : `/assigned-jo/nstdjo/${s.order_id}`);
 const errorOf = (err) => err.response?.data?.error || err.message;
+const artistLabel = (a) => (a ? `${a.first_name} ${a.last_name}` : '');
 
-// A pending proposal waits on the side that did not make it. An account on both sides answers anything.
+// A pending reschedule on an approved slot waits on the side that did not make it.
 function awaitingMe(s, side) {
-  if (!s.proposed_by_side) return false;
+  if (s.status !== 'Confirmed' || !s.proposed_by_side) return false;
   if (side.both) return true;
   return s.proposed_by_side === 'DESIGN' ? side.sbu : side.design;
+}
+
+function ArtistPicker({ artists, value, onSelect }) {
+  return (
+    <EntityPicker
+      label="Artist" items={artists} value={value || ''} getLabel={artistLabel}
+      columns={[{ key: 'name', label: 'Name', render: artistLabel }, { key: 'position_title', label: 'Position' }]}
+      searchKeys={['first_name', 'last_name']}
+      onSelect={(a) => onSelect(a.id)}
+    />
+  );
 }
 
 export default function DesignSchedule() {
@@ -54,10 +70,13 @@ export default function DesignSchedule() {
   const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [artistId, setArtistId] = useState('');
   const [events, setEvents] = useState([]);
+  const [batches, setBatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState(ymd(new Date()));
   const [reloadKey, setReloadKey] = useState(0);
-  // Modals: { kind: 'new', date } | { kind: 'detail', id } | { kind: 'move', schedule, date }
+  const [error, setError] = useState('');
+  const [forwarding, setForwarding] = useState(false);
+  // Modals: { kind: 'new' | 'detail' | 'move' | 'day' | 'batch', ... }
   const [modal, setModal] = useState(null);
 
   const gridStart = new Date(month);
@@ -66,7 +85,10 @@ export default function DesignSchedule() {
   const from = ymd(days[0]);
   const to = ymd(days[41]);
 
-  useEffect(() => { api.get(`${ROUTE}/meta`).then(({ data }) => setMeta(data)); }, []);
+  useEffect(() => {
+    api.get(`${ROUTE}/meta`).then(({ data }) => setMeta(data));
+    api.get(`${ROUTE}/batches`).then(({ data }) => setBatches(data));
+  }, [reloadKey]);
 
   useEffect(() => {
     setLoading(true);
@@ -76,24 +98,39 @@ export default function DesignSchedule() {
     });
   }, [from, to, artistId, reloadKey]);
 
-  // Opened from a notification: /design-schedule?id=12
+  // Opened from a notification: /design-schedule?id=12 (a slot) or ?batch=3 (a calendar)
   useEffect(() => {
     const id = searchParams.get('id');
+    const batch = searchParams.get('batch');
     if (id) setModal({ kind: 'detail', id });
+    else if (batch) setModal({ kind: 'batch', id: batch });
   }, [searchParams]);
 
   function refresh() { setReloadKey((k) => k + 1); }
   function closeModal() {
     // A slot opened from the day view goes back to that day.
     setModal(modal?.back ? { kind: 'day', date: modal.back } : null);
-    if (searchParams.get('id')) setSearchParams({}, { replace: true });
+    if (searchParams.get('id') || searchParams.get('batch')) setSearchParams({}, { replace: true });
+  }
+
+  async function forwardAll() {
+    if (!window.confirm(`Forward all ${meta.unsent} unsent slot(s) to Design as one calendar?`)) return;
+    setError('');
+    setForwarding(true);
+    try {
+      const { data } = await api.post(`${ROUTE}/forward`);
+      refresh();
+      setModal({ kind: 'batch', id: data.id });
+    } catch (err) {
+      setError(errorOf(err));
+    } finally { setForwarding(false); }
   }
 
   if (!meta) return <LoadingSpinner />;
   const { side } = meta;
 
   // Each slot on the day it shows (carried-over ones on today, first), plus a dashed ghost on the
-  // day a pending reschedule would move it to.
+  // day a pending reschedule / revision would move it to.
   const byDay = new Map();
   const put = (k, e) => { if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(e); };
   for (const e of events) {
@@ -106,10 +143,10 @@ export default function DesignSchedule() {
   }
   const todayKey = meta.today;
 
-  // Which slots this user may drag to another day.
+  // Which slots this user may drag to another day (the server checks whose they are).
   function canMove(e) {
     if (e.ghost) return false;
-    if (['Draft', 'Rejected', 'For Confirmation'].includes(e.status)) return side.sbu;
+    if (e.status === 'Draft') return side.sales;
     return e.status === 'Confirmed' && e.phase !== 'Done' && (side.sbu || side.design);
   }
 
@@ -128,32 +165,44 @@ export default function DesignSchedule() {
     setModal({ kind: 'day', date: k });
   }
 
-  const needsMe = events.filter((e) => !e.ghost && (
-    (side.design && e.status === 'For Confirmation')
-    || (side.design && e.phase === 'Confirmed')
-    || awaitingMe(e, side)
-    || (side.sbu && e.status === 'Rejected')
-  ));
+  const batchNeedsMe = (b) => (b.status === 'For Approval' && side.design) || (b.status === 'For SBU Approval' && side.sbu);
+  const proposals = events.filter((e) => !e.ghost && awaitingMe(e, side));
 
   return (
     <div className="page">
       <div className="page-header">
         <h1>Design Schedule</h1>
-        {side.sbu && (
-          <button type="button" className="btn btn-primary" onClick={() => setModal({ kind: 'new', date: selectedDay >= todayKey ? selectedDay : todayKey })}>
-            + Schedule JO / NSTDJO
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          {side.sales && (
+            <button type="button" className="btn" onClick={() => setModal({ kind: 'new', date: selectedDay >= todayKey ? selectedDay : todayKey })}>
+              + Schedule JO / NSTDJO
+            </button>
+          )}
+          {side.sbu && (
+            <button type="button" className="btn btn-primary" disabled={forwarding || !meta.unsent} onClick={forwardAll}
+              title={meta.unsent ? '' : 'Nothing new on the calendar'}>
+              Forward calendar to Design{meta.unsent ? ` (${meta.unsent})` : ''}
+            </button>
+          )}
+        </div>
       </div>
+      {error && <div className="error-banner">{error}</div>}
 
-      {needsMe.length > 0 && (
+      {(batches.length > 0 || proposals.length > 0) && (
         <div className="card" style={{ marginBottom: 12 }}>
-          <strong>Waiting on you ({needsMe.length})</strong>
+          {batches.length > 0 && <strong>Calendars in progress</strong>}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
-            {needsMe.map((e) => (
-              <button key={e.id} type="button" className={`badge ${PHASE_BADGE[e.phase]}`} style={{ border: 'none', cursor: 'pointer' }}
+            {batches.map((b) => (
+              <button key={b.id} type="button" className={`badge ${batchNeedsMe(b) ? 'badge-danger' : 'badge-warning'}`} style={{ border: 'none', cursor: 'pointer', padding: '6px 10px' }}
+                onClick={() => setModal({ kind: 'batch', id: b.id })}>
+                Calendar #{b.id} · {b.items.length} order(s) · {b.status === 'For Approval' ? 'with Design' : 'revised - SBU to approve'}
+                {batchNeedsMe(b) ? ' · waiting on you' : ''}
+              </button>
+            ))}
+            {proposals.map((e) => (
+              <button key={e.id} type="button" className="badge badge-danger" style={{ border: 'none', cursor: 'pointer', padding: '6px 10px' }}
                 onClick={() => setModal({ kind: 'detail', id: e.id })}>
-                {e.order_no} · {e.proposed_by_side ? 'reschedule' : (PHASE_LABEL[e.phase] || e.phase)}
+                {e.order_no} · reschedule waiting on you
               </button>
             ))}
           </div>
@@ -171,14 +220,14 @@ export default function DesignSchedule() {
               Artist calendar
               <select value={artistId} onChange={(e) => setArtistId(e.target.value)}>
                 <option value="">All schedules</option>
-                {meta.artists.map((a) => <option key={a.id} value={a.id}>{a.first_name} {a.last_name}</option>)}
+                {meta.artists.map((a) => <option key={a.id} value={a.id}>{artistLabel(a)}</option>)}
               </select>
             </label>
           )}
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8, fontSize: 11 }}>
           {Object.keys(PHASE_BADGE).filter((p) => p !== 'Cancelled').map((p) => <span key={p} className={`badge ${PHASE_BADGE[p]}`}>{PHASE_LABEL[p] || p}</span>)}
-          <span className="muted">↻ carried over · ⇄ reschedule pending{side.sbu || side.design ? ' · drag a slot to move it' : ''}</span>
+          <span className="muted">↻ carried over · ⇄ change pending{side.sales || side.design ? ' · drag a slot to move it' : ''}</span>
         </div>
         {loading ? <LoadingSpinner /> : (
           <div style={{ overflowX: 'auto' }}>
@@ -216,21 +265,25 @@ export default function DesignSchedule() {
 
       {modal?.kind === 'day' && (
         <DayModal
-          date={modal.date} list={byDay.get(modal.date) || []} canSchedule={side.sbu && modal.date >= todayKey}
+          date={modal.date} list={byDay.get(modal.date) || []} canSchedule={side.sales && modal.date >= todayKey}
           onClose={closeModal} onStep={openDay}
           onOpen={(e) => setModal({ kind: 'detail', id: e.id, back: modal.date })}
           onNew={(start) => setModal({ kind: 'new', date: modal.date, start })}
         />
       )}
       {modal?.kind === 'new' && (
-        <NewScheduleModal date={modal.date} start={modal.start} onClose={closeModal} onSaved={() => { closeModal(); refresh(); }} />
+        <NewScheduleModal date={modal.date} start={modal.start} artists={meta.artists} onClose={closeModal} onSaved={() => { closeModal(); refresh(); }} />
       )}
       {modal?.kind === 'move' && (
-        <MoveModal schedule={modal.schedule} date={modal.date} side={side} onClose={closeModal} onSaved={() => { closeModal(); refresh(); }} />
+        <MoveModal schedule={modal.schedule} date={modal.date} side={side} artists={meta.artists} onClose={closeModal} onSaved={() => { closeModal(); refresh(); }} />
       )}
       {modal?.kind === 'detail' && (
         <DetailModal id={modal.id} meta={meta} onClose={closeModal} onChanged={refresh}
-          onMove={(schedule) => setModal({ kind: 'move', schedule, date: String(schedule.scheduled_start).slice(0, 10) })} />
+          onMove={(schedule) => setModal({ kind: 'move', schedule, date: String(schedule.scheduled_start).slice(0, 10) })}
+          onOpenBatch={(batchId) => setModal({ kind: 'batch', id: batchId })} />
+      )}
+      {modal?.kind === 'batch' && (
+        <BatchModal id={modal.id} meta={meta} onClose={closeModal} onChanged={refresh} />
       )}
     </div>
   );
@@ -344,9 +397,10 @@ function DayModal({ date, list, canSchedule, onClose, onStep, onOpen, onNew }) {
                   display: 'block', whiteSpace: 'normal',
                 }}>
                 <div><strong>{timeOf(e.ghost ? e.proposed_start : e.scheduled_start)} - {timeOf(e.ghost ? e.proposed_end : e.scheduled_end)}</strong> · {e.order_no} <span style={{ opacity: 0.7 }}>({e.order_type})</span></div>
-                <div>{e.customer_name}{e.artist_name ? ` · ${e.artist_name}` : ''}{e.delivery_date ? ` · Delivery ${displayDate(e.delivery_date)}` : ''}</div>
+                <div>{e.customer_name}{e.artist_name ? ` · ${e.ghost && e.proposed_artist_name ? e.proposed_artist_name : e.artist_name}` : ''}{e.delivery_date ? ` · Delivery ${displayDate(e.delivery_date)}` : ''}</div>
                 <div style={{ opacity: 0.8 }}>
-                  {e.ghost ? '⇄ proposed new time' : (PHASE_LABEL[e.phase] || e.phase)}{!e.ghost && e.proposed_by_side ? ' · ⇄ reschedule pending' : ''}
+                  {e.ghost ? '⇄ proposed new time' : (PHASE_LABEL[e.phase] || e.phase)}{!e.ghost && e.proposed_by_side ? ' · ⇄ change pending' : ''}
+                  {e.sales_rep_name ? ` · ${e.sales_rep_name}` : ''}
                 </div>
               </button>
             );
@@ -358,11 +412,11 @@ function DayModal({ date, list, canSchedule, onClose, onStep, onOpen, onNew }) {
   );
 }
 
-function NewScheduleModal({ date, start = '09:00', onClose, onSaved }) {
+function NewScheduleModal({ date, start = '09:00', artists, onClose, onSaved }) {
   const [orderType, setOrderType] = useState('JO');
   const [orders, setOrders] = useState([]);
   const endDefault = `${String(Math.min(23, Number(start.slice(0, 2)) + 3)).padStart(2, '0')}:${start.slice(3, 5)}`;
-  const [form, setForm] = useState({ order_id: '', date, start, end: endDefault, notes: '', delivery_date: '' });
+  const [form, setForm] = useState({ order_id: '', date, start, end: endDefault, notes: '', delivery_date: '', preferred_artist_id: '' });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -372,13 +426,15 @@ function NewScheduleModal({ date, start = '09:00', onClose, onSaved }) {
     api.get(`${ROUTE}/eligible`, { params: { type: orderType } }).then(({ data }) => setOrders(data));
   }, [orderType]);
 
-  async function save(forward) {
+  async function save() {
     setError('');
     if (!form.order_id) { setError('Choose the order to schedule.'); return; }
+    if (!form.preferred_artist_id) { setError('Choose the preferred artist.'); return; }
     setSaving(true);
     try {
       await api.post(ROUTE, {
-        order_type: orderType, order_id: form.order_id, notes: form.notes, delivery_date: form.delivery_date || null, forward,
+        order_type: orderType, order_id: form.order_id, notes: form.notes, delivery_date: form.delivery_date || null,
+        preferred_artist_id: form.preferred_artist_id,
         scheduled_start: `${form.date}T${form.start}`, scheduled_end: `${form.date}T${form.end}`,
       });
       onSaved();
@@ -409,10 +465,14 @@ function NewScheduleModal({ date, start = '09:00', onClose, onSaved }) {
             { key: 'delivery_date', label: 'Delivery', render: (o) => displayDate(o.delivery_date) },
           ]}
           searchKeys={['order_no', 'customer_name', 'description']}
-          // Delivery Date starts as the order's own; the SBU can change it for this schedule.
+          // Delivery Date starts as the order's own; it can be changed for this schedule.
           onSelect={(o) => setForm({ ...form, order_id: o.id, delivery_date: o.delivery_date ? String(o.delivery_date).slice(0, 10) : '' })}
         />
-        <div className="muted" style={{ fontSize: 12 }}>Orders waiting for Design that are not on the schedule yet.</div>
+        <div className="muted" style={{ fontSize: 12 }}>Your (and your team&apos;s) orders waiting for Design that are not on the schedule yet.</div>
+      </div>
+      <div className="field">
+        <label>Preferred Artist *</label>
+        <ArtistPicker artists={artists} value={form.preferred_artist_id} onSelect={(id) => setForm({ ...form, preferred_artist_id: id })} />
       </div>
       <div className="field">
         <label>Delivery Date</label>
@@ -428,10 +488,10 @@ function NewScheduleModal({ date, start = '09:00', onClose, onSaved }) {
         <label>Notes for Design</label>
         <textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
       </div>
+      <p className="muted" style={{ fontSize: 12 }}>Saved to the calendar as a draft. The SBU forwards the whole calendar to Design.</p>
       <div className="modal-actions">
         <button type="button" className="btn" onClick={onClose}>Close</button>
-        <button type="button" className="btn" disabled={saving} onClick={() => save(false)}>Save as Draft</button>
-        <button type="button" className="btn btn-primary" disabled={saving} onClick={() => save(true)}>Save &amp; Forward to Design</button>
+        <button type="button" className="btn btn-primary" disabled={saving} onClick={save}>Save</button>
       </div>
     </Modal>
   );
@@ -447,12 +507,14 @@ function SlotFields({ form, setForm }) {
   );
 }
 
-// Moving a slot: a plain edit while Design has not confirmed it, a reschedule proposal once they have.
-function MoveModal({ schedule, date, side, onClose, onSaved }) {
+// Moving a slot: a plain edit while it is a draft (time, artist, delivery date), a reschedule proposal
+// once approved.
+function MoveModal({ schedule, date, side, artists, onClose, onSaved }) {
   const confirmed = schedule.status === 'Confirmed';
   const [form, setForm] = useState({
     date, start: hhmm(schedule.scheduled_start), end: hhmm(schedule.scheduled_end), note: '',
     delivery_date: schedule.delivery_date ? String(schedule.delivery_date).slice(0, 10) : '',
+    preferred_artist_id: schedule.preferred_artist_id || '',
   });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -464,7 +526,11 @@ function MoveModal({ schedule, date, side, onClose, onSaved }) {
     const body = { scheduled_start: `${form.date}T${form.start}`, scheduled_end: `${form.date}T${form.end}` };
     try {
       if (confirmed) await api.post(`${ROUTE}/${schedule.id}/reschedule`, { ...body, note: form.note });
-      else await api.put(`${ROUTE}/${schedule.id}`, { ...body, notes: schedule.notes, delivery_date: form.delivery_date || null });
+      else {
+        await api.put(`${ROUTE}/${schedule.id}`, {
+          ...body, notes: schedule.notes, delivery_date: form.delivery_date || null, preferred_artist_id: form.preferred_artist_id,
+        });
+      }
       onSaved();
     } catch (err) {
       setError(errorOf(err));
@@ -473,17 +539,23 @@ function MoveModal({ schedule, date, side, onClose, onSaved }) {
   }
 
   return (
-    <Modal title={`${confirmed ? 'Reschedule' : 'Move'} ${schedule.order_no}`} onClose={onClose}>
+    <Modal title={`${confirmed ? 'Reschedule' : 'Edit'} ${schedule.order_no}`} onClose={onClose}>
       {error && <div className="error-banner">{error}</div>}
       <p className="muted">Currently {slotText(schedule.scheduled_start, schedule.scheduled_end)}.</p>
       {confirmed && other && (
-        <p>This slot is confirmed, so the new time goes to {other} to accept. Until then it stays where it is.</p>
+        <p>This slot is approved, so the new time goes to {other} to accept. Until then it stays where it is.</p>
       )}
       {!confirmed && (
-        <div className="field">
-          <label>Delivery Date</label>
-          <input type="date" value={form.delivery_date} onChange={(e) => setForm({ ...form, delivery_date: e.target.value })} />
-        </div>
+        <>
+          <div className="field">
+            <label>Preferred Artist</label>
+            <ArtistPicker artists={artists} value={form.preferred_artist_id} onSelect={(id) => setForm({ ...form, preferred_artist_id: id })} />
+          </div>
+          <div className="field">
+            <label>Delivery Date</label>
+            <input type="date" value={form.delivery_date} onChange={(e) => setForm({ ...form, delivery_date: e.target.value })} />
+          </div>
+        </>
       )}
       <SlotFields form={form} setForm={setForm} />
       {confirmed && (
@@ -502,13 +574,12 @@ function MoveModal({ schedule, date, side, onClose, onSaved }) {
   );
 }
 
-function DetailModal({ id, meta, onClose, onChanged, onMove }) {
+function DetailModal({ id, meta, onClose, onChanged, onMove, onOpenBatch }) {
   const { side } = meta;
   const [s, setS] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  // 'reject' | 'reject-proposal' | 'assign' -- the inline sub-form currently open.
-  const [sub, setSub] = useState(null);
+  const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
 
   function load() {
@@ -520,9 +591,8 @@ function DetailModal({ id, meta, onClose, onChanged, onMove }) {
     setError('');
     setBusy(true);
     try {
-      const { data } = await api.post(`${ROUTE}/${id}/${path}`, body);
-      setS((prev) => ({ ...data, history: prev?.history || [] }));
-      setSub(null);
+      await api.post(`${ROUTE}/${id}/${path}`, body);
+      setRejecting(false);
       setReason('');
       onChanged();
       load();
@@ -535,9 +605,8 @@ function DetailModal({ id, meta, onClose, onChanged, onMove }) {
     return <Modal title="Design Schedule" onClose={onClose}>{error ? <div className="error-banner">{error}</div> : <LoadingSpinner />}</Modal>;
   }
 
-  const editable = ['Draft', 'Rejected', 'For Confirmation'].includes(s.status);
   const movable = s.status === 'Confirmed' && s.phase !== 'Done';
-  const mineProposal = s.proposed_by_side && !side.both
+  const mineProposal = s.status === 'Confirmed' && s.proposed_by_side && !side.both
     && ((s.proposed_by_side === 'DESIGN' && side.design) || (s.proposed_by_side === 'SBU' && side.sbu));
 
   return (
@@ -548,11 +617,14 @@ function DetailModal({ id, meta, onClose, onChanged, onMove }) {
         <div>Status : <span className={`badge ${PHASE_BADGE[s.phase]}`}>{PHASE_LABEL[s.phase] || s.phase}</span></div>
         <div>Customer : <span className="hi">{s.customer_name}</span></div>
         <div>Schedule : <span className="hi">{slotText(s.scheduled_start, s.scheduled_end)}</span></div>
+        <div>Account Officer : <span className="hi">{s.sales_rep_name || '--'}</span></div>
         <div>Delivery Date : <span className="hi">{s.delivery_date ? displayDate(s.delivery_date) : '--'}</span></div>
-        <div>Artist : <span className="hi">{s.artist_name || '--'}</span></div>
+        <div>Preferred Artist : <span className="hi">{s.preferred_artist_name || '--'}</span></div>
+        <div>Assigned Artist : <span className="hi">{s.assigned_artist_name || '--'}</span></div>
+        <div>Layout - Job Type : <span className="hi">{s.plan_layout_job_type_name ? `${s.plan_layout_job_type_name} × ${Number(s.plan_layout_qty || 0)}` : '--'}</span></div>
         <div>Order Sub Status : <span className="hi">{s.order_sub_status}</span></div>
         <div>Scheduled by : <span className="hi">{s.created_by_name}</span></div>
-        <div>Confirmed by : <span className="hi">{s.confirmed_by_name || '--'}</span></div>
+        <div>Approved by : <span className="hi">{s.confirmed_by_name || '--'}</span></div>
       </div>
       {s.description && <p style={{ whiteSpace: 'pre-wrap' }}>{s.description}</p>}
       {s.notes && <p><strong>Notes:</strong> {s.notes}</p>}
@@ -561,52 +633,40 @@ function DetailModal({ id, meta, onClose, onChanged, onMove }) {
           ↻ Not finished on {displayDate(s.carried_over_from)} -- carried over to today on the artist&apos;s calendar.
         </div>
       )}
-      {s.status === 'Rejected' && s.reject_reason && <div className="error-banner">Rejected by Design: {s.reject_reason}</div>}
       {s.proposed_by_side && (
         <div className="card" style={{ margin: '8px 0' }}>
-          ⇄ <strong>{s.proposed_by_name}</strong> ({s.proposed_by_side === 'DESIGN' ? 'Design' : 'SBU'}) proposed moving this to{' '}
+          ⇄ <strong>{s.proposed_by_name}</strong> ({s.proposed_by_side === 'DESIGN' ? 'Design' : 'SBU'}) proposed{' '}
           <strong>{slotText(s.proposed_start, s.proposed_end)}</strong>
+          {s.proposed_artist_name && <> with <strong>{s.proposed_artist_name}</strong></>}
           {s.proposal_note && <div className="muted">Reason: {s.proposal_note}</div>}
           <div className="muted">Waiting on {s.proposed_by_side === 'DESIGN' ? 'the SBU' : 'the Design Supervisor'}.</div>
         </div>
       )}
 
-      {sub === 'reject' || sub === 'reject-proposal' ? (
+      {rejecting ? (
         <div className="field">
-          <label>{sub === 'reject' ? 'Why is this slot rejected? (required)' : 'Reason (optional)'}</label>
+          <label>Reason (optional)</label>
           <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} autoFocus />
           <div className="modal-actions">
-            <button type="button" className="btn" onClick={() => setSub(null)}>Back</button>
-            <button type="button" className="btn btn-danger" disabled={busy}
-              onClick={() => act(sub === 'reject' ? 'reject' : 'proposal/reject', { reason })}>Reject</button>
+            <button type="button" className="btn" onClick={() => setRejecting(false)}>Back</button>
+            <button type="button" className="btn btn-danger" disabled={busy} onClick={() => act('proposal/reject', { reason })}>Reject new time</button>
           </div>
         </div>
-      ) : sub === 'assign' ? (
-        <AssignArtistForm s={s} meta={meta} onCancel={() => setSub(null)} onDone={() => { setSub(null); onChanged(); load(); }} />
       ) : (
         <div className="modal-actions" style={{ flexWrap: 'wrap' }}>
-          {side.sbu && editable && <button type="button" className="btn" onClick={() => onMove(s)}>Edit date / time</button>}
-          {side.sbu && ['Draft', 'Rejected'].includes(s.status) && (
-            <button type="button" className="btn btn-primary" disabled={busy} onClick={() => act('forward')}>Forward to Design Supervisor</button>
+          {side.sales && s.status === 'Draft' && <button type="button" className="btn" onClick={() => onMove(s)}>Edit</button>}
+          {s.status !== 'Cancelled' && !['Assigned', 'Done'].includes(s.phase) && (s.status === 'Draft' ? side.sales : side.sbu) && (
+            <button type="button" className="btn btn-danger" disabled={busy} onClick={() => window.confirm('Take this slot off the calendar?') && act('cancel')}>Cancel slot</button>
           )}
-          {side.sbu && s.status !== 'Cancelled' && !['Assigned', 'Done'].includes(s.phase) && (
-            <button type="button" className="btn btn-danger" disabled={busy} onClick={() => window.confirm('Cancel this schedule?') && act('cancel')}>Cancel schedule</button>
-          )}
-          {side.design && s.status === 'For Confirmation' && (
-            <>
-              <button type="button" className="btn btn-danger" onClick={() => setSub('reject')}>Reject</button>
-              <button type="button" className="btn btn-primary" disabled={busy} onClick={() => act('confirm')}>Confirm</button>
-            </>
-          )}
-          {side.design && ['Confirmed', 'Assigned'].includes(s.phase) && (
-            <button type="button" className="btn btn-primary" onClick={() => setSub('assign')}>{s.phase === 'Assigned' ? 'Reassign Artist' : 'Assign Artist'}</button>
+          {s.batch_id && s.status === 'For Approval' && (
+            <button type="button" className="btn btn-primary" onClick={() => onOpenBatch(s.batch_id)}>Open calendar #{s.batch_id}</button>
           )}
           {(side.sbu || side.design) && movable && !s.proposed_by_side && (
             <button type="button" className="btn" onClick={() => onMove(s)}>Reschedule</button>
           )}
           {awaitingMe(s, side) && (
             <>
-              <button type="button" className="btn btn-danger" onClick={() => setSub('reject-proposal')}>Reject new time</button>
+              <button type="button" className="btn btn-danger" onClick={() => setRejecting(true)}>Reject new time</button>
               <button type="button" className="btn btn-primary" disabled={busy} onClick={() => act('proposal/accept')}>Accept new time</button>
             </>
           )}
@@ -633,79 +693,170 @@ function DetailModal({ id, meta, onClose, onChanged, onMove }) {
   );
 }
 
-// The same assignment the JO / NSTDJO screens make, through the same endpoints. Planned Start is the
-// confirmed slot -- that is what was agreed with the SBU, so it is not re-typed here.
-function AssignArtistForm({ s, meta, onCancel, onDone }) {
-  const [form, setForm] = useState({
-    layout_job_type_id: s.layout_job_type_id || '', artist_id: s.artist_id || '', layout_qty: s.layout_qty || 1,
-  });
+// One forwarded calendar. Design sets each slot's Layout Job Type + Qty and may revise its time or
+// artist, then approves; with revisions it goes to the SBU, who approves them or returns the calendar.
+function BatchModal({ id, meta, onClose, onChanged }) {
+  const { side } = meta;
+  const [batch, setBatch] = useState(null);
   const [error, setError] = useState('');
-  const [saving, setSaving] = useState(false);
-  // An NSTDJO's layout job type has to belong to its own job type (nonStandardJobOrders.js assign-artist).
-  const pmsJobTypes = s.order_type === 'NSTDJO'
-    ? meta.pmsJobTypes.filter((p) => String(p.job_type_id) === String(s.nstdjo_job_type_id))
-    : meta.pmsJobTypes;
-  const plannedStart = String(s.scheduled_start).slice(0, 16).replace(' ', 'T');
-  const minutes = pmsJobTypes.find((p) => String(p.id) === String(form.layout_job_type_id))?.minutes_consume;
-  const plannedEnd = minutes && Number(form.layout_qty)
-    ? new Date(new Date(plannedStart).getTime() + Number(minutes) * Number(form.layout_qty) * 60000).toLocaleString()
-    : '';
+  const [busy, setBusy] = useState(false);
+  const [revising, setRevising] = useState(null); // the slot being revised
+  const [returning, setReturning] = useState(false);
+  const [note, setNote] = useState('');
 
-  async function save(e) {
-    e.preventDefault();
+  function load() {
+    api.get(`${ROUTE}/batches/${id}`).then(({ data }) => setBatch(data)).catch((err) => setError(errorOf(err)));
+  }
+  useEffect(load, [id]);
+
+  async function call(method, path, body) {
     setError('');
-    setSaving(true);
+    setBusy(true);
     try {
-      if (s.order_type === 'JO') {
-        await api.put(`/job-orders/${s.order_id}/assign-design`, {
-          layout_job_type_id: form.layout_job_type_id, artist_id: form.artist_id, layout_qty: form.layout_qty, planned_start_at: plannedStart,
-        });
-      } else {
-        await api.put(`/non-standard-job-orders/${s.order_id}/assign-artist`, {
-          layout_job_type_id: form.layout_job_type_id || null, artist_employee_id: form.artist_id, layout_qty: form.layout_qty, planned_start_at: plannedStart,
-        });
-      }
-      onDone();
+      await api[method](`${ROUTE}${path}`, body);
+      onChanged();
+      load();
+      return true;
     } catch (err) {
       setError(errorOf(err));
-      setSaving(false);
-    }
+      return false;
+    } finally { setBusy(false); }
   }
 
+  if (!batch) {
+    return <Modal title="Design calendar" onClose={onClose}>{error ? <div className="error-banner">{error}</div> : <LoadingSpinner />}</Modal>;
+  }
+
+  const reviewing = side.design && batch.status === 'For Approval';
+  const answering = side.sbu && batch.status === 'For SBU Approval';
+  const revisedCount = batch.items.filter((s) => s.proposed_by_side === 'DESIGN').length;
+  const jobTypesFor = (s) => (s.order_type === 'NSTDJO'
+    ? meta.pmsJobTypes.filter((p) => String(p.job_type_id) === String(s.nstdjo_job_type_id))
+    : meta.pmsJobTypes);
+  const saveLayout = (s, patch) => call('put', `/${s.id}/layout`, {
+    layout_job_type_id: s.plan_layout_job_type_id || null, layout_qty: s.plan_layout_qty || null, ...patch,
+  });
+
   return (
-    <form onSubmit={save} style={{ marginTop: 8 }}>
-      <h3>Assign Layout Job Type / Artist</h3>
+    <Modal title={`Design calendar #${batch.id}`} onClose={onClose} large>
       {error && <div className="error-banner">{error}</div>}
-      <div className="field">
-        <label>Layout - Job Type</label>
-        <EntityPicker
-          label="Layout - Job Type" items={pmsJobTypes} value={form.layout_job_type_id} getLabel={(p) => p.display_name}
-          columns={[{ key: 'code', label: 'Code' }, { key: 'display_name', label: 'Display Name' }, { key: 'minutes_consume', label: 'Minutes Consume' }]}
-          searchKeys={['code', 'display_name']}
-          onSelect={(p) => setForm({ ...form, layout_job_type_id: p.id })}
-        />
+      <p className="muted" style={{ marginTop: 0 }}>
+        Forwarded by {batch.forwarded_by_name} on {displayAuditTime(batch.forwarded_at)} · {batch.items.length} order(s) ·{' '}
+        <strong>{batch.status === 'For Approval' ? 'With Design' : batch.status === 'For SBU Approval' ? 'Revised - waiting on the SBU' : batch.status}</strong>
+        {batch.approved_by_name && ` · approved by ${batch.approved_by_name}`}
+      </p>
+      {batch.return_note && batch.status === 'For Approval' && <div className="error-banner">Returned by the SBU: {batch.return_note}</div>}
+      {reviewing && <p style={{ fontSize: 13 }}>Set each order&apos;s Layout - Job Type and Qty. Revise a time or artist if needed -- revisions go to the SBU to approve.</p>}
+
+      <div style={{ overflowX: 'auto' }}>
+        <table>
+          <thead>
+            <tr><th>Order</th><th>Customer / AO</th><th>Schedule</th><th>Artist</th><th>Layout - Job Type</th><th>Qty</th><th>Revision</th></tr>
+          </thead>
+          <tbody>
+            {batch.items.map((s) => (
+              <tr key={s.id}>
+                <td><Link to={orderLink(s)}>{s.order_no}</Link> <span className="muted">({s.order_type})</span></td>
+                <td>{s.customer_name}<div className="muted" style={{ fontSize: 12 }}>{s.sales_rep_name}</div></td>
+                <td style={{ whiteSpace: 'nowrap' }}>{slotText(s.scheduled_start, s.scheduled_end)}</td>
+                <td>{s.assigned_artist_name || s.preferred_artist_name}</td>
+                <td style={{ minWidth: 200 }}>
+                  {reviewing ? (
+                    <select value={s.plan_layout_job_type_id || ''} disabled={busy} onChange={(e) => saveLayout(s, { layout_job_type_id: e.target.value || null })}>
+                      <option value="">-- choose --</option>
+                      {jobTypesFor(s).map((p) => <option key={p.id} value={p.id}>{p.display_name} ({p.minutes_consume} min)</option>)}
+                    </select>
+                  ) : (s.plan_layout_job_type_name || '--')}
+                </td>
+                <td>
+                  {reviewing ? (
+                    <input type="number" min="0.0001" step="any" style={{ width: 70 }} defaultValue={s.plan_layout_qty ? Number(s.plan_layout_qty) : ''}
+                      onBlur={(e) => { if (String(Number(e.target.value || 0)) !== String(Number(s.plan_layout_qty || 0))) saveLayout(s, { layout_qty: e.target.value || null }); }} />
+                  ) : (s.plan_layout_qty ? Number(s.plan_layout_qty) : '--')}
+                </td>
+                <td style={{ minWidth: 180 }}>
+                  {s.proposed_by_side === 'DESIGN' ? (
+                    <span className="badge badge-danger" style={{ whiteSpace: 'normal' }}>
+                      ⇄ {slotText(s.proposed_start, s.proposed_end)}{s.proposed_artist_name ? ` · ${s.proposed_artist_name}` : ''}
+                      {s.proposal_note && <div style={{ opacity: 0.8 }}>{s.proposal_note}</div>}
+                    </span>
+                  ) : <span className="muted">--</span>}
+                  {reviewing && (
+                    <div style={{ marginTop: 4, display: 'flex', gap: 4 }}>
+                      <button type="button" className="btn btn-sm" onClick={() => setRevising(s)}>Revise</button>
+                      {s.proposed_by_side === 'DESIGN' && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => call('post', `/${s.id}/revise/withdraw`)}>Undo</button>}
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
+
+      {revising && (
+        <ReviseForm s={revising} artists={meta.artists} busy={busy} onCancel={() => setRevising(null)}
+          onSave={async (body) => { if (await call('post', `/${revising.id}/revise`, body)) setRevising(null); }} />
+      )}
+
+      {returning ? (
+        <div className="field" style={{ marginTop: 12 }}>
+          <label>Why are the revisions not approved? (required)</label>
+          <textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} autoFocus />
+          <div className="modal-actions">
+            <button type="button" className="btn" onClick={() => setReturning(false)}>Back</button>
+            <button type="button" className="btn btn-danger" disabled={busy}
+              onClick={async () => { if (await call('post', `/batches/${batch.id}/return`, { note })) { setReturning(false); setNote(''); } }}>Return to Design</button>
+          </div>
+        </div>
+      ) : (
+        <div className="modal-actions">
+          <button type="button" className="btn" onClick={onClose}>Close</button>
+          {reviewing && (
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={() => call('post', `/batches/${batch.id}/approve`)}>
+              {revisedCount ? `Send ${revisedCount} revision(s) to the SBU` : 'Approve calendar & assign artists'}
+            </button>
+          )}
+          {answering && (
+            <>
+              <button type="button" className="btn btn-danger" onClick={() => setReturning(true)}>Return to Design</button>
+              <button type="button" className="btn btn-primary" disabled={busy} onClick={() => call('post', `/batches/${batch.id}/accept`)}>
+                Approve revisions & assign artists
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function ReviseForm({ s, artists, busy, onCancel, onSave }) {
+  const [form, setForm] = useState({
+    date: String(s.proposed_start || s.scheduled_start).slice(0, 10),
+    start: hhmm(s.proposed_start || s.scheduled_start), end: hhmm(s.proposed_end || s.scheduled_end),
+    preferred_artist_id: s.proposed_artist_id || s.preferred_artist_id, note: s.proposal_note || '',
+  });
+  return (
+    <div className="card" style={{ marginTop: 12 }}>
+      <h3 style={{ marginTop: 0 }}>Revise {s.order_no}</h3>
       <div className="field">
         <label>Artist</label>
-        <EntityPicker
-          label="Artist" items={meta.artists} value={form.artist_id} getLabel={(a) => `${a.first_name} ${a.last_name}`}
-          columns={[{ key: 'name', label: 'Name', render: (a) => `${a.first_name} ${a.last_name}` }, { key: 'position_title', label: 'Position' }]}
-          searchKeys={['first_name', 'last_name']}
-          onSelect={(a) => setForm({ ...form, artist_id: a.id })}
-        />
+        <ArtistPicker artists={artists} value={form.preferred_artist_id} onSelect={(id) => setForm({ ...form, preferred_artist_id: id })} />
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-        <div className="field">
-          <label>Qty</label>
-          <input type="number" min="0.0001" step="any" required value={form.layout_qty} onChange={(e) => setForm({ ...form, layout_qty: e.target.value })} />
-        </div>
-        <div className="field"><label>Planned Start <span className="muted">(the schedule)</span></label><input readOnly tabIndex={-1} value={new Date(plannedStart).toLocaleString()} /></div>
-        <div className="field"><label>Planned End <span className="muted">(Minutes × Qty)</span></label><input readOnly tabIndex={-1} value={plannedEnd} /></div>
+      <SlotFields form={form} setForm={setForm} />
+      <div className="field">
+        <label>Reason</label>
+        <textarea rows={2} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} />
       </div>
       <div className="modal-actions">
         <button type="button" className="btn" onClick={onCancel}>Back</button>
-        <button type="submit" className="btn btn-primary" disabled={saving || !form.artist_id}>Save</button>
+        <button type="button" className="btn btn-primary" disabled={busy}
+          onClick={() => onSave({
+            scheduled_start: `${form.date}T${form.start}`, scheduled_end: `${form.date}T${form.end}`,
+            preferred_artist_id: form.preferred_artist_id, note: form.note,
+          })}>Save revision</button>
       </div>
-    </form>
+    </div>
   );
 }

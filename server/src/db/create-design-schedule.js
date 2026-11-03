@@ -3,21 +3,22 @@
 //
 // One row per scheduled order. The flow it carries:
 //
-//   Draft             the SBU has put the order on the calendar but not sent it yet
-//   For Confirmation  forwarded to the Design Supervisors (forwarding also forwards the order itself
-//                     into the design queue when it was still Pending / SBU Approved)
-//   Rejected          a Design Supervisor turned the slot down, with a reason; the SBU can move it
-//                     and forward again
-//   Confirmed         accepted; the supervisor then assigns the artist through the existing
-//                     assign-design / assign-artist endpoints, so the artist lives on the order and
-//                     nowhere else -- "Assigned" and "Done" are read off the order, never stored here
-//   Cancelled         withdrawn by the SBU
+//   Draft             Sales (Account Officer, Supervisor, SBU) has put the order on the calendar with
+//                     a preferred artist; not sent yet
+//   For Approval      forwarded by the SBU in a calendar (design_schedule_batches) -- forwarding also
+//                     forwards the order itself into the design queue when it was still Pending / SBU
+//                     Approved. Design sets the Layout Job Type + Qty and may revise; the calendar's own
+//                     status says whether it is with Design or back with the SBU
+//   Confirmed         approved; the order was assigned to the artist at that moment, so the artist
+//                     lives on the order -- "Assigned" and "Done" are read off the order, never stored here
+//   Cancelled         taken off the calendar
+// (Rejected, and For Confirmation without a calendar, belong to the first flow and are moved to Draft.)
 //
 // A confirmed slot moved by one side is a PROPOSAL (proposed_start / proposed_end / proposed_by_side)
 // until the other side accepts it: the Design Supervisor's move waits on the SBU, the SBU's on Design.
 // The confirmed dates stay in force until then, so a rejected proposal leaves nothing to undo.
 //
-// Grants: System Admin full; the SBUs (is_sales_business_unit) view + add + edit; the Design
+// Grants: System Admin full; the SBUs (is_sales_business_unit), Account Officers and Supervisors view + add + edit; the Design
 // Supervisors view + edit + approve; Artists view (they see their own assignments only).
 //
 // Idempotent -- safe to re-run:
@@ -87,6 +88,39 @@ async function main() {
   // changeable by the SBU -- added to a table created before it existed.
   const [[hasDelivery]] = await pool.query("SHOW COLUMNS FROM design_schedules LIKE 'delivery_date'");
   if (!hasDelivery) await pool.query('ALTER TABLE design_schedules ADD COLUMN delivery_date DATE NULL AFTER notes');
+  // THE CALENDAR FLOW (asked 2026-11-03). An Account Officer schedules their own JO / NSTDJO with a
+  // preferred artist; their Sales Supervisor's calendar is the team's plus their own; the SBU's is
+  // everyone's, and the SBU forwards every unsent slot to Design at once, as one calendar -- a batch.
+  // Design sets each slot's Layout Job Type + Qty and may revise its time or artist; a revision goes
+  // back to the SBU to approve. Once approved, every order is assigned to its artist.
+  const addColumn = async (name, ddl) => {
+    const [[has]] = await pool.query(`SHOW COLUMNS FROM design_schedules LIKE '${name}'`);
+    if (!has) await pool.query(`ALTER TABLE design_schedules ADD COLUMN ${name} ${ddl}`);
+  };
+  await addColumn('batch_id', 'INT NULL AFTER status');
+  await addColumn('preferred_artist_id', 'INT NULL AFTER batch_id');
+  await addColumn('plan_layout_job_type_id', 'INT NULL AFTER preferred_artist_id');
+  await addColumn('plan_layout_qty', 'DECIMAL(12,4) NULL AFTER plan_layout_job_type_id');
+  await addColumn('proposed_artist_id', 'INT NULL AFTER proposed_end');
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS design_schedule_batches (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      status VARCHAR(30) NOT NULL DEFAULT 'For Approval',
+      forwarded_by_user_id INT NOT NULL,
+      forwarded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      reviewed_by_user_id INT NULL,
+      reviewed_at DATETIME NULL,
+      return_note TEXT NULL,
+      approved_by_user_id INT NULL,
+      approved_at DATETIME NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      KEY idx_design_schedule_batches_status (status)
+    )`);
+  // Slots sent one at a time under the first flow go back to Draft, to be forwarded with the next calendar.
+  const [moved] = await pool.query(
+    "UPDATE design_schedules SET status = 'Draft' WHERE batch_id IS NULL AND status IN ('For Confirmation', 'Rejected')");
+  if (moved.affectedRows) console.log(`  ${moved.affectedRows} slot(s) sent one at a time put back to Draft.`);
   console.log('Table design_schedules ready.');
 
   let [[page]] = await pool.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
@@ -106,6 +140,8 @@ async function main() {
   await grant(await ids("account_type = 'System Admin'"), all, 'System Admin');
   await grant(await ids('is_sales_business_unit = TRUE'),
     { can_view: true, can_add: true, can_edit: true, can_delete: false, can_approve: false, can_print: false }, 'SBU');
+  await grant(await ids('(is_account_officer = TRUE OR is_supervisor = TRUE)'),
+    { can_view: true, can_add: true, can_edit: true, can_delete: false, can_approve: false, can_print: false }, 'Account Officer / Sales Supervisor');
   await grant(await ids('is_design_supervisor = TRUE'),
     { can_view: true, can_add: false, can_edit: true, can_delete: false, can_approve: true, can_print: false }, 'Design Supervisor');
   await grant(await ids("account_type = 'Artist'"),
