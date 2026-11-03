@@ -63,6 +63,9 @@ async function main() {
   const [wtaxes] = await pool.query('SELECT id, code, rate, name FROM withholding_taxes');
   const [[ap]] = await pool.query("SELECT id FROM chart_of_accounts WHERE account_code = '20100' LIMIT 1");
   const [[headOffice]] = await pool.query("SELECT id FROM locations WHERE location_name LIKE 'Head Office%' LIMIT 1");
+  // Supplier names flattened as import-suppliers.js compares them, for the duplicate-supplier fallback.
+  const supplierKey = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+  const [suppliers] = await pool.query('SELECT id, name FROM suppliers');
   console.log(`accounts resolved ${[...acctByLive.values()].filter(Boolean).length}/${liveCoa.length} | departments ${[...deptByLive.values()].filter(Boolean).length}/${liveDepts.length}\n`);
 
   const out = { imported: 0, exists: 0, notFound: 0, hasPo: 0, void: 0, skipped: [], failed: [] };
@@ -80,8 +83,18 @@ async function main() {
         if (!h) { out.notFound += 1; continue; }
         if (h.SysFK_TransHSL_TransH) { out.hasPo += 1; continue; } // a PO bill: import-vendor-bills.js's job
         if (L.isVoidOrCancelled(h.Status_TransH)) { out.void += 1; continue; }
-        const [[sup]] = await pool.query('SELECT id FROM suppliers WHERE live_pk = ? LIMIT 1', [h.SysFK_Accnt_TransH]);
-        if (!sup) { out.skipped.push(`${billNo}: supplier not in T1S`); continue; }
+        let [[sup]] = await pool.query('SELECT id FROM suppliers WHERE live_pk = ? LIMIT 1', [h.SysFK_Accnt_TransH]);
+        // The source has duplicate suppliers, and import-suppliers.js merged each set into one row that
+        // keeps one live_pk -- VB-24422 names "CEBU AIR INC.", the duplicate of "CEBU AIR, INC." that
+        // T1S has (2026-11-03). So a miss falls back to the source name, flattened the same way, when
+        // exactly one supplier here carries it.
+        if (!sup) {
+          const acc = L.listRows(await L.api(t, 'get_accounts', { where: { SysPK_Accnt: h.SysFK_Accnt_TransH } }))[0];
+          const key = supplierKey(acc?.Name_Accnt);
+          const same = key ? suppliers.filter((s) => supplierKey(s.name) === key) : [];
+          if (same.length === 1) sup = same[0];
+          else { out.skipped.push(`${billNo}: supplier ${acc?.Name_Accnt || h.SysFK_Accnt_TransH} not in T1S${same.length > 1 ? ' (several by that name)' : ''}`); continue; }
+        }
         // Paged: a bill can carry more than one page of ledger entries (VB-24357 has over 100), and a
         // single call silently returned the first 100 -- 37 of its expense lines.
         const entries = [];
