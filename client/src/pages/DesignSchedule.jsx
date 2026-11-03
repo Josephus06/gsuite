@@ -4,6 +4,7 @@ import api from '../api/client';
 import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
+import Pagination from '../components/Pagination';
 import { displayDate, displayMonth, displayAuditTime } from '../utils/dates';
 
 // Design > Design Schedule (flow of 2026-11-03; server: routes/designSchedule.js). Sales -- Account
@@ -507,86 +508,148 @@ function DayTimeline({ list, canSchedule, onOpen, onNew }) {
   );
 }
 
+// Several orders at once (asked 2026-11-03): tick the JOs / NSTDJOs, and each becomes its own slot at the
+// same date, time and artist. Each keeps its own order's delivery date unless one order is picked and
+// the date is changed. One request per order, so one refusal does not stop the rest.
+const ORDERS_PER_PAGE = 10;
+
 function NewScheduleModal({ date, start = '09:00', artists, onClose, onSaved }) {
   const [orderType, setOrderType] = useState('JO');
-  const [orders, setOrders] = useState([]);
+  const [orders, setOrders] = useState(null);
+  const [picked, setPicked] = useState([]); // order rows
+  const [find, setFind] = useState('');
+  const [page, setPage] = useState(1);
   const endDefault = `${String(Math.min(23, Number(start.slice(0, 2)) + 3)).padStart(2, '0')}:${start.slice(3, 5)}`;
-  const [form, setForm] = useState({ order_id: '', date, start, end: endDefault, notes: '', delivery_date: '', preferred_artist_id: '' });
+  const [form, setForm] = useState({ date, start, end: endDefault, notes: '', delivery_date: '', preferred_artist_id: '' });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setOrders([]);
-    setForm((f) => ({ ...f, order_id: '', delivery_date: '' }));
+    setOrders(null);
+    setPicked([]);
+    setPage(1);
     api.get(`${ROUTE}/eligible`, { params: { type: orderType } }).then(({ data }) => setOrders(data));
   }, [orderType]);
 
+  const q = find.trim().toLowerCase();
+  const matches = (orders || []).filter((o) => !q || [o.order_no, o.customer_name, o.description, o.sub_status]
+    .some((v) => String(v || '').toLowerCase().includes(q)));
+  const totalPages = Math.max(1, Math.ceil(matches.length / ORDERS_PER_PAGE));
+  const pageRows = matches.slice((page - 1) * ORDERS_PER_PAGE, page * ORDERS_PER_PAGE);
+  const isPicked = (o) => picked.some((p) => p.id === o.id);
+  // One order: its delivery date, changeable. Several: each keeps its own.
+  function pick(next) {
+    setPicked(next);
+    setForm((f) => ({ ...f, delivery_date: next.length === 1 && next[0].delivery_date ? String(next[0].delivery_date).slice(0, 10) : '' }));
+  }
+  const toggle = (o) => pick(isPicked(o) ? picked.filter((p) => p.id !== o.id) : [...picked, o]);
+  const allOnPage = pageRows.length > 0 && pageRows.every(isPicked);
+  const togglePage = () => pick(allOnPage
+    ? picked.filter((p) => !pageRows.some((o) => o.id === p.id))
+    : [...picked, ...pageRows.filter((o) => !isPicked(o))]);
+
   async function save() {
     setError('');
-    if (!form.order_id) { setError('Choose the order to schedule.'); return; }
+    if (!picked.length) { setError('Tick at least one order to schedule.'); return; }
     if (!form.preferred_artist_id) { setError('Choose the preferred artist.'); return; }
     setSaving(true);
-    try {
-      await api.post(ROUTE, {
-        order_type: orderType, order_id: form.order_id, notes: form.notes, delivery_date: form.delivery_date || null,
-        preferred_artist_id: form.preferred_artist_id,
-        scheduled_start: `${form.date}T${form.start}`, scheduled_end: `${form.date}T${form.end}`,
-      });
-      onSaved();
-    } catch (err) {
-      setError(errorOf(err));
-      setSaving(false);
+    const failed = [];
+    for (const o of picked) {
+      try {
+        await api.post(ROUTE, {
+          order_type: orderType, order_id: o.id, notes: form.notes, preferred_artist_id: form.preferred_artist_id,
+          delivery_date: picked.length === 1 ? (form.delivery_date || null) : (o.delivery_date ? String(o.delivery_date).slice(0, 10) : null),
+          scheduled_start: `${form.date}T${form.start}`, scheduled_end: `${form.date}T${form.end}`,
+        });
+      } catch (err) {
+        failed.push({ o, msg: errorOf(err) });
+      }
     }
+    setSaving(false);
+    if (!failed.length) { onSaved(); return; }
+    // Keep only the ones that did not go in, so Save can be pressed again for them.
+    setPicked(failed.map((x) => x.o));
+    setError(`${picked.length - failed.length} scheduled, ${failed.length} not: ${failed.map((x) => `${x.o.order_no}: ${x.msg}`).join(' · ')}`);
   }
 
   return (
-    <Modal title="Schedule for Design" onClose={onClose}>
+    <Modal title="Schedule for Design" onClose={onClose} large>
       {error && <div className="error-banner">{error}</div>}
-      <div className="field">
-        <label>Type</label>
-        <select value={orderType} onChange={(e) => setOrderType(e.target.value)}>
-          <option value="JO">Job Order (JO)</option>
-          <option value="NSTDJO">Non-Standard Job Order (NSTDJO)</option>
-        </select>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div className="field" style={{ minWidth: 240 }}>
+          <label>Type</label>
+          <select value={orderType} onChange={(e) => setOrderType(e.target.value)}>
+            <option value="JO">Job Order (JO)</option>
+            <option value="NSTDJO">Non-Standard Job Order (NSTDJO)</option>
+          </select>
+        </div>
+        <div className="field" style={{ flex: 1, minWidth: 220 }}>
+          <label>Search</label>
+          <input type="search" placeholder="No., customer, description..." value={find} onChange={(e) => { setFind(e.target.value); setPage(1); }} />
+        </div>
       </div>
-      <div className="field">
-        <label>{orderType}</label>
-        <EntityPicker
-          label={orderType} items={orders} value={form.order_id} getLabel={(o) => `${o.order_no} - ${o.customer_name || ''}`}
-          columns={[
-            { key: 'order_no', label: 'No.' }, { key: 'customer_name', label: 'Customer' },
-            { key: 'description', label: 'Description', render: (o) => String(o.description || '').slice(0, 60) },
-            { key: 'sub_status', label: 'Sub Status' },
-            { key: 'delivery_date', label: 'Delivery', render: (o) => displayDate(o.delivery_date) },
-          ]}
-          searchKeys={['order_no', 'customer_name', 'description']}
-          // Delivery Date starts as the order's own; it can be changed for this schedule.
-          onSelect={(o) => setForm({ ...form, order_id: o.id, delivery_date: o.delivery_date ? String(o.delivery_date).slice(0, 10) : '' })}
-        />
-        <div className="muted" style={{ fontSize: 12 }}>Your (and your team&apos;s) orders waiting for Design that are not on the schedule yet.</div>
+      <div className="muted" style={{ fontSize: 12, margin: '4px 0' }}>
+        Your (and your team&apos;s) orders waiting for Design that are not on the schedule yet. Tick one or more.
+        {picked.length > 0 && <strong style={{ marginLeft: 8, color: 'var(--color-primary)' }}>{picked.length} selected</strong>}
+        {picked.length > 0 && <button type="button" className="btn btn-sm" style={{ marginLeft: 8 }} onClick={() => pick([])}>Clear</button>}
       </div>
-      <div className="field">
-        <label>Preferred Artist *</label>
-        <ArtistPicker artists={artists} value={form.preferred_artist_id} onSelect={(id) => setForm({ ...form, preferred_artist_id: id })} />
-      </div>
-      <div className="field">
-        <label>Delivery Date</label>
-        <input type="date" value={form.delivery_date} onChange={(e) => setForm({ ...form, delivery_date: e.target.value })} />
-        {form.delivery_date && form.date && form.date > form.delivery_date && (
-          <div className="badge-warning" style={{ fontSize: 12, padding: '4px 8px', borderRadius: 4, marginTop: 4 }}>
-            The design slot is after the delivery date.
-          </div>
-        )}
+      {orders === null ? <LoadingSpinner /> : (
+        <div style={{ overflowX: 'auto', maxHeight: 340, overflowY: 'auto' }}>
+          <table>
+            <thead>
+              <tr>
+                <th style={{ width: 32 }}><input type="checkbox" checked={allOnPage} onChange={togglePage} title="Tick every order on this page" /></th>
+                <th>No.</th><th>Customer</th><th>Description</th><th>Sub Status</th><th>Delivery</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pageRows.length === 0 && <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>No orders to schedule.</td></tr>}
+              {pageRows.map((o) => (
+                <tr key={o.id} onClick={() => toggle(o)} style={{ cursor: 'pointer', background: isPicked(o) ? 'rgba(99, 102, 241, 0.08)' : undefined }}>
+                  <td><input type="checkbox" checked={isPicked(o)} onChange={() => toggle(o)} onClick={(e) => e.stopPropagation()} /></td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{o.order_no}</td>
+                  <td>{o.customer_name}</td>
+                  <td>{String(o.description || '').slice(0, 70)}</td>
+                  <td>{o.sub_status}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{displayDate(o.delivery_date)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+        <div className="field">
+          <label>Preferred Artist *</label>
+          <ArtistPicker artists={artists} value={form.preferred_artist_id} onSelect={(id) => setForm({ ...form, preferred_artist_id: id })} />
+        </div>
+        <div className="field">
+          <label>Delivery Date</label>
+          {picked.length > 1 ? (
+            <input readOnly tabIndex={-1} value="Each order keeps its own delivery date" />
+          ) : (
+            <input type="date" value={form.delivery_date} onChange={(e) => setForm({ ...form, delivery_date: e.target.value })} />
+          )}
+          {picked.length === 1 && form.delivery_date && form.date && form.date > form.delivery_date && (
+            <div className="badge-warning" style={{ fontSize: 12, padding: '4px 8px', borderRadius: 4, marginTop: 4 }}>
+              The design slot is after the delivery date.
+            </div>
+          )}
+        </div>
       </div>
       <SlotFields form={form} setForm={setForm} />
       <div className="field">
         <label>Notes for Design</label>
         <textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
       </div>
-      <p className="muted" style={{ fontSize: 12 }}>Saved to the calendar as a draft. The SBU forwards the whole calendar to Design.</p>
+      <p className="muted" style={{ fontSize: 12 }}>Saved to the calendar as drafts. The SBU forwards the whole calendar to Design.</p>
       <div className="modal-actions">
         <button type="button" className="btn" onClick={onClose}>Close</button>
-        <button type="button" className="btn btn-primary" disabled={saving} onClick={save}>Save</button>
+        <button type="button" className="btn btn-primary" disabled={saving || !picked.length} onClick={save}>
+          {saving ? 'Saving...' : picked.length > 1 ? `Save ${picked.length} schedules` : 'Save'}
+        </button>
       </div>
     </Modal>
   );
