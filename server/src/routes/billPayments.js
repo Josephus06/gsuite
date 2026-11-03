@@ -151,9 +151,10 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
     await sendXlsx(res, {
       filename: 'bill-payments.xlsx',
       sheet: 'Bill Payments',
-      // The Cheque list's extract format (asked 2026-11-03), column for column -- routes/cheques.js.
+      // The Cheque list's extract format (asked 2026-11-03), column for column -- routes/cheques.js -- except
+      // the first column, which is the Bill Payment's own number and so reads Payment No.
       columns: [
-        { header: 'Cheque No', key: 'no', width: 16 },
+        { header: 'Payment No', key: 'no', width: 16 },
         { header: 'Date', key: 'date', width: 12 },
         { header: 'Cheque Date', key: 'cheque_date', width: 12 },
         { header: 'Cheque #', key: 'cheque_number', width: 14 },
