@@ -220,7 +220,7 @@ export default function StandaloneVendorBillModal({ onClose, onSaved, replicateF
         form_request_id: fromLiquidation?.id || null,
         ...(fromLiquidation ? { form_request_item_ids: [...new Set(payload.map((l) => l.form_request_item_id).filter(Boolean))] } : {}),
         lines: payload.map((l) => ({
-          account_id: l.account.id, description: l.description, department_id: Number(l.department_id),
+          account_id: l.account.id, form_request_item_id: l.form_request_item_id || null, description: l.description, department_id: Number(l.department_id),
           qty: 1, unit_price: Number(l.amount || 0), tax_code_id: l.tax_code_id || null, is_withhold: l.is_withhold,
           tax_amount: l.tax_typed !== undefined && l.tax_typed !== '' ? Number(l.tax_typed) : undefined,
         })),

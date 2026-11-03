@@ -436,11 +436,16 @@ async function createStandaloneBill(req, res, conn) {
   // this bill posts are the ones its lines came from; an older screen that names none bills them all.
   const formRequestId = Number(req.body.form_request_id) || null;
   let formItemIds = [];
+  // The account each item's line debits -- it stands in for an item AP has not given one on the form.
+  const itemAccounts = new Map();
   if (formRequestId) {
     formItemIds = Array.isArray(req.body.form_request_item_ids)
       ? [...new Set(req.body.form_request_item_ids.map(Number).filter(Boolean))]
       : (await liquidationBilling(conn, formRequestId)).unbilledItemIds;
-    const why = await liquidationPostError(conn, formRequestId, { via: 'bill', itemIds: formItemIds });
+    for (const l of submitted) {
+      if (Number(l.form_request_item_id) && Number(l.account_id)) itemAccounts.set(Number(l.form_request_item_id), Number(l.account_id));
+    }
+    const why = await liquidationPostError(conn, formRequestId, { via: 'bill', itemIds: formItemIds, itemAccounts });
     if (why) return res.status(409).json({ error: why });
   }
 
@@ -508,6 +513,21 @@ async function createStandaloneBill(req, res, conn) {
 
   for (const itemId of formItemIds) {
     await conn.query('INSERT INTO vendor_bill_form_items (vendor_bill_id, form_request_item_id) VALUES (?, ?)', [billId, itemId]);
+    // An item with no account of its own takes the one its line on this bill debits.
+    const accountId = itemAccounts.get(itemId);
+    if (!accountId) continue;
+    const [r] = await conn.query(
+      'UPDATE form_request_items SET cogs_account_id = ? WHERE id = ? AND form_request_id = ? AND cogs_account_id IS NULL',
+      [accountId, itemId, formRequestId]);
+    if (r.affectedRows) {
+      const [[a]] = await conn.query(
+        `SELECT i.particulars, CONCAT(c.account_code, ' — ', c.account_name) AS label FROM form_request_items i
+           JOIN chart_of_accounts c ON c.id = i.cogs_account_id WHERE i.id = ?`, [itemId]);
+      await conn.query(
+        `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+         VALUES ('FormRequest', ?, 'Updated', ?, NULL, ?, ?)`,
+        [formRequestId, `COGS Account (${String(a?.particulars || 'item').slice(0, 100)}) from ${billNo}`, a?.label || null, req.user.id]);
+    }
   }
 
   for (const l of computedLines) {

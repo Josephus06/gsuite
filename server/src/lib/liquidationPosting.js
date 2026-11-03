@@ -46,7 +46,10 @@ async function liquidationPostedBy(conn, formId) {
 // Refuses (returns the reason) unless formId is an approved liquidation that may be posted this way.
 //   via 'journal' (default): nothing has posted it yet.
 //   via 'bill', itemIds: no Journal posted it, and every item named is its own and not on a live bill.
-async function liquidationPostError(conn, formId, { via = 'journal', itemIds = null } = {}) {
+//   itemAccounts (bill only): item id -> the account its bill line debits. Accounts Payable picks the
+//   account right there on the bill (2026-11-03: "already put an account per item" and still refused),
+//   so an item covered by its line needs none of its own -- the bill writes it back to the item.
+async function liquidationPostError(conn, formId, { via = 'journal', itemIds = null, itemAccounts = null } = {}) {
   const [[form]] = await conn.query('SELECT type, status, request_no FROM form_requests WHERE id = ?', [formId]);
   // A Request for Payment is billed the same way, item by item -- by Vendor Bill only, never a
   // Journal (2026-10-12).
@@ -62,8 +65,9 @@ async function liquidationPostError(conn, formId, { via = 'journal', itemIds = n
     const [rows] = await conn.query(
       `SELECT id FROM form_request_items WHERE form_request_id = ? AND cogs_account_id IS NULL${ids ? ' AND id IN (?)' : ''}`,
       ids ? [formId, ids] : [formId]);
-    return rows.length
-      ? `Accounts Payable has to select an account for every item of ${form.request_no} first -- ${rows.length} item(s) still have none.`
+    const missing = rows.filter((r) => !itemAccounts?.get(Number(r.id)));
+    return missing.length
+      ? `Accounts Payable has to select an account for every item of ${form.request_no} first -- ${missing.length} item(s) still have none.`
       : null;
   }
   if (via !== 'bill') {
