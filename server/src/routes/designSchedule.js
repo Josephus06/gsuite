@@ -156,7 +156,12 @@ const BASE_SELECT = `
          b.status AS batch_status,
          cu.display_name AS created_by_name,
          cf.display_name AS confirmed_by_name,
-         pu.display_name AS proposed_by_name
+         pu.display_name AS proposed_by_name,
+         -- Who booked first when several slots start at the same date and time (asked 2026-11-03: two
+         -- AOs on one 9:00, the SBU needs to know whose came first): the order they were saved in.
+         (SELECT COUNT(*) FROM design_schedules x WHERE x.scheduled_start = ds.scheduled_start AND x.status <> 'Cancelled') AS same_time_count,
+         (SELECT COUNT(*) + 1 FROM design_schedules x WHERE x.scheduled_start = ds.scheduled_start AND x.status <> 'Cancelled'
+             AND (x.created_at < ds.created_at OR (x.created_at = ds.created_at AND x.id < ds.id))) AS booked_rank
     FROM design_schedules ds
     LEFT JOIN job_orders jo ON ds.order_type = 'JO' AND jo.id = ds.order_id
     LEFT JOIN non_standard_job_orders n ON ds.order_type = 'NSTDJO' AND n.id = ds.order_id
@@ -350,7 +355,7 @@ async function loadBatch(conn, id, lock = false) {
       WHERE b.id = ?${lock ? ' FOR UPDATE' : ''}`, [id],
   );
   if (!batch) return null;
-  const [items] = await conn.query(`${BASE_SELECT} WHERE ds.batch_id = ? AND ds.status <> 'Cancelled' ORDER BY ds.scheduled_start${lock ? ' FOR UPDATE' : ''}`, [id]);
+  const [items] = await conn.query(`${BASE_SELECT} WHERE ds.batch_id = ? AND ds.status <> 'Cancelled' ORDER BY ds.scheduled_start, ds.created_at, ds.id${lock ? ' FOR UPDATE' : ''}`, [id]);
   return { ...batch, items: items.map((r) => decorate(r)) };
 }
 
@@ -466,7 +471,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       conditions.push('COALESCE(jo.artist_id, n.artist_employee_id, ds.preferred_artist_id) = ?');
       params.push(req.query.artist_id);
     }
-    const [rows] = await pool.query(`${BASE_SELECT} WHERE ${conditions.join(' AND ')} ORDER BY ds.scheduled_start`, params);
+    const [rows] = await pool.query(`${BASE_SELECT} WHERE ${conditions.join(' AND ')} ORDER BY ds.scheduled_start, ds.created_at, ds.id`, params);
     res.json(rows.map((r) => decorate(r, today)));
   } catch (err) { next(err); }
 });
@@ -645,7 +650,7 @@ router.post('/forward', requireAuth, requirePermission(ROUTE, 'can_edit'), async
     if (!side.sbu) return res.status(403).json({ error: 'Only the SBU forwards the calendar to Design.' });
     await conn.beginTransaction();
     const vis = visibilitySql(side);
-    const [rows] = await conn.query(`${BASE_SELECT} WHERE ds.status = 'Draft' AND ${vis.sql} ORDER BY ds.scheduled_start FOR UPDATE`, vis.params);
+    const [rows] = await conn.query(`${BASE_SELECT} WHERE ds.status = 'Draft' AND ${vis.sql} ORDER BY ds.scheduled_start, ds.created_at, ds.id FOR UPDATE`, vis.params);
     const drafts = rows.map((r) => decorate(r));
     const live = drafts.filter((s) => s.order_status !== 'Cancelled');
     if (!live.length) { await conn.rollback(); return res.status(409).json({ error: 'There is nothing new on the calendar to forward.' }); }

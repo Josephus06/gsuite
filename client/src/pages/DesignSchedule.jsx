@@ -42,6 +42,11 @@ function timeOf(v) {
 }
 const hhmm = (v) => String(v || '').split(' ')[1]?.slice(0, 5) || '';
 const slotText = (start, end) => `${displayDate(String(start).slice(0, 10))}, ${timeOf(start)} - ${timeOf(end)}`;
+// Several slots at the same date and time: which was booked first (same_time_count / booked_rank from the server).
+const ordinal = (n) => `${n}${[, 'st', 'nd', 'rd'][n % 100 >> 3 ^ 1 && n % 10] || 'th'}`;
+const sharesTime = (e) => !e.ghost && Number(e.same_time_count) > 1;
+const bookedText = (e) => (sharesTime(e) ? `booked ${ordinal(Number(e.booked_rank))} of ${Number(e.same_time_count)} at this time` : '');
+const byBooking = (a, b) => String(a.created_at).localeCompare(String(b.created_at)) || a.id - b.id;
 const orderLink = (s) => (s.order_type === 'JO' ? `/job-orders/${s.order_id}` : `/non-standard-job-orders/${s.order_id}`);
 const runLink = (s) => (s.order_type === 'JO' ? `/assigned-jo/${s.order_id}` : `/assigned-jo/nstdjo/${s.order_id}`);
 const errorOf = (err) => err.response?.data?.error || err.message;
@@ -169,7 +174,8 @@ export default function DesignSchedule() {
   }
   for (const list of byDay.values()) {
     list.sort((a, b) => (!!b.carried_over_from - !!a.carried_over_from)
-      || String(a.ghost ? a.proposed_start : a.scheduled_start).slice(11).localeCompare(String(b.ghost ? b.proposed_start : b.scheduled_start).slice(11)));
+      || String(a.ghost ? a.proposed_start : a.scheduled_start).slice(11).localeCompare(String(b.ghost ? b.proposed_start : b.scheduled_start).slice(11))
+      || byBooking(a, b));
   }
   const todayKey = meta.today;
 
@@ -311,6 +317,7 @@ export default function DesignSchedule() {
                         <strong>{e.carried_over_from ? '↻ ' : ''}{timeOf(e.ghost ? e.proposed_start : e.scheduled_start)} - {timeOf(e.ghost ? e.proposed_end : e.scheduled_end)}</strong>
                         <div>{e.order_no} ({e.order_type})</div>
                         <div>{e.customer_name}</div>
+                        {sharesTime(e) && <div style={{ fontWeight: 600 }}>{ordinal(Number(e.booked_rank))} booked · {e.created_by_name}</div>}
                         <div style={{ opacity: 0.8 }}>{(e.ghost && e.proposed_artist_name) || e.artist_name || 'no artist'} · {e.ghost ? 'proposed' : (PHASE_LABEL[e.phase] || e.phase)}</div>
                       </button>
                     ))}
@@ -387,7 +394,7 @@ function EventChip({ e, draggable, onOpen }) {
       draggable={draggable}
       onDragStart={(ev) => ev.dataTransfer.setData('text/plain', String(e.id))}
       onClick={(ev) => { ev.stopPropagation(); onOpen(); }}
-      title={`${e.order_no} · ${e.customer_name || ''} · ${PHASE_LABEL[e.phase] || e.phase}${e.artist_name ? ` · ${e.artist_name}` : ''}${e.carried_over_from ? ` · carried over from ${displayDate(e.carried_over_from)}` : ''}`}
+      title={`${e.order_no} · ${e.customer_name || ''} · ${PHASE_LABEL[e.phase] || e.phase}${e.artist_name ? ` · ${e.artist_name}` : ''}${e.carried_over_from ? ` · carried over from ${displayDate(e.carried_over_from)}` : ''}${sharesTime(e) ? ` · ${bookedText(e)} by ${e.created_by_name}` : ''}`}
       className={`badge ${PHASE_BADGE[e.phase]}`}
       style={{
         display: 'block', width: '100%', textAlign: 'left', cursor: draggable ? 'grab' : 'pointer', marginTop: 3,
@@ -396,7 +403,7 @@ function EventChip({ e, draggable, onOpen }) {
         textDecoration: e.phase === 'Done' ? 'line-through' : 'none',
       }}
     >
-      {e.carried_over_from && '↻ '}{e.proposed_by_side && !e.ghost && '⇄ '}{timeOf(start)} {e.order_no}
+      {e.carried_over_from && '↻ '}{e.proposed_by_side && !e.ghost && '⇄ '}{sharesTime(e) && <strong>{ordinal(Number(e.booked_rank))} </strong>}{timeOf(start)} {e.order_no}
     </button>
   );
 }
@@ -428,7 +435,7 @@ function DayTimeline({ list, canSchedule, onOpen, onNew }) {
     e,
     s: minutesOf(e.ghost ? e.proposed_start : e.scheduled_start),
     f: minutesOf(e.ghost ? e.proposed_end : e.scheduled_end),
-  })).sort((a, b) => a.s - b.s || a.f - b.f);
+  })).sort((a, b) => a.s - b.s || a.f - b.f || byBooking(a.e, b.e));
 
   // Columns per overlapping cluster: each slot takes the first column free at its start, and every
   // slot in a cluster shares the cluster's column count so they line up.
@@ -810,7 +817,8 @@ function DetailModal({ id, meta, onClose, onChanged, onMove, onOpenBatch }) {
         <div>Assigned Artist : <span className="hi">{s.assigned_artist_name || '--'}</span></div>
         <div>Layout - Job Type : <span className="hi">{s.plan_layout_job_type_name ? `${s.plan_layout_job_type_name} × ${Number(s.plan_layout_qty || 0)}` : '--'}</span></div>
         <div>Order Sub Status : <span className="hi">{s.order_sub_status}</span></div>
-        <div>Scheduled by : <span className="hi">{s.created_by_name}</span></div>
+        <div>Scheduled by : <span className="hi">{s.created_by_name} · {displayAuditTime(s.created_at)}</span></div>
+        {sharesTime(s) && <div>Booking order : <span className="hi">{ordinal(Number(s.booked_rank))} of {Number(s.same_time_count)} at this date and time</span></div>}
         <div>Approved by : <span className="hi">{s.confirmed_by_name || '--'}</span></div>
       </div>
       {s.description && <p style={{ whiteSpace: 'pre-wrap' }}>{s.description}</p>}
@@ -950,7 +958,11 @@ function BatchModal({ id, meta, onClose, onChanged }) {
               <tr key={s.id}>
                 <td><Link to={orderLink(s)}>{s.order_no}</Link> <span className="muted">({s.order_type})</span></td>
                 <td>{s.customer_name}<div className="muted" style={{ fontSize: 12 }}>{s.sales_rep_name}</div></td>
-                <td style={{ whiteSpace: 'nowrap' }}>{slotText(s.scheduled_start, s.scheduled_end)}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>{slotText(s.scheduled_start, s.scheduled_end)}
+                  <div className="muted" style={{ fontSize: 12, fontWeight: sharesTime(s) ? 600 : undefined }}>
+                    {sharesTime(s) ? `${ordinal(Number(s.booked_rank))} of ${Number(s.same_time_count)} booked · ` : 'Booked '}by {s.created_by_name}, {displayAuditTime(s.created_at)}
+                  </div>
+                </td>
                 <td>{s.assigned_artist_name || s.preferred_artist_name}</td>
                 <td style={{ minWidth: 200 }}>
                   {reviewing ? (
