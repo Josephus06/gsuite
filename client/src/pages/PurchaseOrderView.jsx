@@ -221,15 +221,6 @@ export default function PurchaseOrderView() {
   const showEdit = canEdit && (st === 'pending_approval' || st === 'pending_approval_gm'
     || user?.account_type === 'System Admin'
     || (!!user?.can_edit_approved_po && isApprovedPo(po.status) && st !== 'cancelled'));
-  async function saveDescription(line, value) {
-    if (value.trim() === (line.purchase_description || '')) return;
-    try {
-      const { data } = await api.put(`/purchase-orders/${id}/lines/${line.id}/description`, { purchase_description: value });
-      setPo((p) => ({ ...p, lines: p.lines.map((x) => (x.id === line.id ? { ...x, purchase_description: data.purchase_description } : x)) }));
-    } catch (e) {
-      alert(e.response?.data?.error || 'Could not save the description.');
-    }
-  }
   // A Purchasing Supervisor signs a PO up to this; above it the General Manager alone. PO3 is the
   // General Manager's whatever the amount (PO4 too until 2026-10-20). Kept in step with APPROVAL_THRESHOLD /
   // GM_ONLY_TYPES in routes/purchaseOrders.js, which is what actually enforces it.
@@ -376,17 +367,9 @@ export default function PurchaseOrderView() {
                       </Link>
                     </td>
                     <td>
-                      {/* Editable at any status, on every PO type (asked 2026-10-08) -- saved when
-                          the box is left. Nothing else on an approved PO changes here. */}
-                      {canEdit ? (
-                        <input
-                          key={`${l.id}-${l.purchase_description ?? ''}`}
-                          defaultValue={l.purchase_description || ''} style={{ minWidth: 160 }}
-                          title="Edit the purchase description; saved when you click away"
-                          onBlur={(e) => saveDescription(l, e.target.value)}
-                          onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
-                        />
-                      ) : (l.purchase_description || '—')}
+                      {/* Read-only here (asked 2026-11-04): the view is not an edit form. Changed on the
+                          Edit page, like the rest of the line. */}
+                      {l.purchase_description || '—'}
                     </td>
                     {po.type === 'PO1' && <td>{l.pr_no || '—'}</td>}
                     {po.type === 'PO1' && <td>{l.pr_qty != null ? Number(l.pr_qty).toFixed(4) : '—'}</td>}
