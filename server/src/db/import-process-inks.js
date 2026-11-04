@@ -22,6 +22,7 @@
 require('dotenv').config();
 const pool = require('../db');
 const L = require('./lib/liveWindow');
+const { syncNewInkCost, r2 } = require('../lib/processInk');
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const clean = (s) => (s || '').toString().trim();
@@ -117,8 +118,17 @@ async function main() {
     if (!id) { missingProc.add(clean(p.UserPK_Proc)); continue; }
     inkSet += 1;
     if (!DRY_RUN && schemaReady) {
-      await pool.query(`UPDATE processes SET ${INK_COLS.map(([c]) => `${c} = ?`).join(', ')} WHERE id = ?`,
-        [...INK_COLS.map(([, s]) => num(p[s])), id]);
+      // The source's Costing figures are kept as a MANUAL value only where they differ from its computed
+      // one rounded to 2 decimals; otherwise left blank, so they follow the inks when those change.
+      const manualOr = (costing, computed) => (num(p[costing]) == null || Math.abs(num(p[costing]) - r2(num(p[computed]) || 0)) < 0.005 ? null : num(p[costing]));
+      const vals = INK_COLS.map(([c, s]) => {
+        if (c === 'ink_usage_costing') return manualOr('InkUsageCosting_Proc', 'InkUsage_Proc');
+        if (c === 'ink_price_per_ml_costing') return manualOr('InkPricePerSQFTCosting_Proc', 'InkPricePerSQFT_Proc');
+        return num(p[s]);
+      });
+      await pool.query(`UPDATE processes SET ${INK_COLS.map(([c]) => `${c} = ?`).join(', ')} WHERE id = ?`, [...vals, id]);
+      // Process Costing's New INK Cost follows it (INK waits for Update on the Process Costing view).
+      await syncNewInkCost(pool, id);
     }
   }
   console.log(`ink calculation: ${inkSet} process(es)${DRY_RUN ? ' would be' : ''} set`);

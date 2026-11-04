@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { syncNewInkCost } = require('../lib/processInk');
 
 const router = express.Router();
 const ROUTE = '/process-costing';
@@ -93,6 +94,8 @@ router.post('/:processId/cost-brackets', requireAuth, requirePermission(ROUTE, '
       `INSERT INTO process_cost_brackets (process_id, ${FIELDS.join(', ')}) VALUES (?, ${FIELDS.map(() => '?').join(', ')})`,
       [req.params.processId, ...values]
     );
+    // New INK Cost is the process's (lib/processInk.js), whatever was typed.
+    await syncNewInkCost(pool, req.params.processId);
     const [[row]] = await pool.query('SELECT * FROM process_cost_brackets WHERE id = ?', [result.insertId]);
     await audit(req.params.processId, req.user.id, 'Created', `Bracket ${bracketName(row)}`);
     res.status(201).json(row);
@@ -111,6 +114,7 @@ router.put('/:processId/cost-brackets/:bracketId', requireAuth, requirePermissio
       `UPDATE process_cost_brackets SET ${FIELDS.map((f) => `${f} = ?`).join(', ')}, updated_at = NOW() WHERE id = ? AND process_id = ?`,
       [...values, req.params.bracketId, req.params.processId]
     );
+    await syncNewInkCost(pool, req.params.processId);
     const [[row]] = await pool.query('SELECT * FROM process_cost_brackets WHERE id = ?', [req.params.bracketId]);
     // Named by the bracket's range as it was, so a changed Qty Min/Max still reads sensibly.
     const name = bracketName(before);
@@ -119,6 +123,25 @@ router.put('/:processId/cost-brackets/:bracketId', requireAuth, requirePermissio
       if (was !== now) await audit(req.params.processId, req.user.id, 'Updated', `${name} · ${LABELS[f] || f}`, was, now);
     }
     res.json(row);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Update (2026-11-04): every bracket's INK takes its New INK Cost -- the process's ink cost per unit
+// from Lookups > Processes > Ink -- so the two read the same again. Audited per bracket.
+router.post('/:processId/cost-brackets/apply-ink-cost', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    await syncNewInkCost(pool, req.params.processId);
+    const [rows] = await pool.query(
+      'SELECT * FROM process_cost_brackets WHERE process_id = ? AND new_ink_cost IS NOT NULL AND (ink_cost IS NULL OR ink_cost <> new_ink_cost)',
+      [req.params.processId]);
+    for (const b of rows) {
+      await pool.query('UPDATE process_cost_brackets SET ink_cost = new_ink_cost, updated_at = NOW() WHERE id = ?', [b.id]);
+      await audit(req.params.processId, req.user.id, 'Updated', `${bracketName(b)} · INK`, display(b.ink_cost), display(b.new_ink_cost));
+    }
+    const [all] = await pool.query('SELECT * FROM process_cost_brackets WHERE process_id = ? ORDER BY qty_min', [req.params.processId]);
+    res.json({ updated: rows.length, brackets: all });
   } catch (err) {
     next(err);
   }

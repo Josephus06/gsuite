@@ -39,4 +39,18 @@ function computeInk(p, inks) {
   };
 }
 
-module.exports = { computeInk, r2 };
+// Process Costing's New INK Cost is the process's costing ink cost per unit (2026-11-04): every bracket
+// of the process carries it, kept in step whenever the process, its brackets or the import change.
+// INK (ink_cost, what the price is built from) only takes it when someone clicks Update on the Process
+// Costing view (routes/processCosting.js apply-ink-cost). A process without an ink set-up is left alone.
+async function syncNewInkCost(db, processId) {
+  // Before db/import-process-inks.js has run here there is no such column: nothing to follow yet.
+  const [[p]] = await db.query('SELECT ink_cost_per_sqft_costing AS v FROM processes WHERE id = ?', [processId])
+    .catch((e) => { if (e.code === 'ER_BAD_FIELD_ERROR') return [[null]]; throw e; });
+  if (!p || p.v == null) return null;
+  await db.query('UPDATE process_cost_brackets SET new_ink_cost = ? WHERE process_id = ? AND (new_ink_cost IS NULL OR new_ink_cost <> ?)',
+    [p.v, processId, p.v]);
+  return Number(p.v);
+}
+
+module.exports = { computeInk, r2, syncNewInkCost };

@@ -20,6 +20,22 @@ export default function ProcessCostingView() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [tab, setTab] = useState('costing');
   const [loading, setLoading] = useState(true);
+  const [updating, setUpdating] = useState(false);
+  const [error, setError] = useState('');
+
+  // Update (2026-11-04): INK takes New INK Cost -- the process's ink cost per unit from Lookups >
+  // Processes > Ink, which New INK Cost follows by itself -- so the two match again.
+  const inkBehind = brackets.some((b) => b.new_ink_cost != null && Number(b.new_ink_cost) !== Number(b.ink_cost ?? NaN));
+  async function applyInkCost() {
+    setUpdating(true); setError('');
+    try {
+      const { data } = await api.post(`/processes/${id}/cost-brackets/apply-ink-cost`);
+      setBrackets(data.brackets);
+      api.get(`/processes/${id}/audit-logs`).then((a) => setAuditLogs(a.data)).catch(() => {});
+    } catch (e) {
+      setError(e.response?.data?.error || 'Could not update INK.');
+    } finally { setUpdating(false); }
+  }
 
   useEffect(() => {
     Promise.all([
@@ -48,9 +64,21 @@ export default function ProcessCostingView() {
           {(can('/process-costing', 'can_edit') || can('/process-costing', 'can_add')) && (
             <Link className="btn btn-sm btn-primary" to={`/process-costing/${id}/edit`}>Edit</Link>
           )}
+          {can('/process-costing', 'can_edit') && (
+            <button type="button" className="btn btn-sm btn-primary" disabled={updating || !inkBehind} onClick={applyInkCost}
+              title={inkBehind ? 'Set INK to the New INK Cost on every bracket' : 'INK already equals the New INK Cost'}>
+              {updating ? 'Updating…' : 'Update'}
+            </button>
+          )}
         </div>
       </div>
 
+      {error && <div className="error-banner">{error}</div>}
+      {inkBehind && (
+        <div className="muted" style={{ marginBottom: 8, color: '#b45309' }}>
+          New INK Cost has changed from the process&apos;s Ink set-up. Click Update to make INK the same.
+        </div>
+      )}
       <div className="estimate-banner">
         <div className="estimate-banner-title">
           <h1 style={{ fontSize: '2em' }}>{process.process_name}</h1>

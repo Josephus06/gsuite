@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
-const { computeInk } = require('../lib/processInk');
+const { computeInk, syncNewInkCost } = require('../lib/processInk');
 
 // Master Lists > Lookups > Processes, view and edit (2026-11-04): the header the lookup already had,
 // plus the source's Materials tab, Ink tab and Ink Calculation (process_items and the ink_* columns
@@ -110,6 +110,8 @@ async function save(req, res, next, id) {
           [id, module, seq, r.inventory_id, module === 'Ink' ? dec(r.ink_price) : null, module === 'Ink' ? dec(r.volume_ml) : null]);
       }
     }
+    // Process Costing's New INK Cost follows the new figure straight away (INK waits for Update there).
+    await syncNewInkCost(conn, id);
     await conn.commit();
   } catch (err) {
     await conn.rollback();
