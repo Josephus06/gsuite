@@ -190,14 +190,17 @@ function phaseOf(r) {
   return 'Confirmed';
 }
 
-// CARRY-OVER. An approved slot whose layout is not finished by the end of its day shows at the top of
-// today on the calendar, marked with the day it was meant for, and keeps rolling forward one day at a
-// time until the artist finishes it. Worked out on read, so no overnight job has to have run, and the
-// slot keeps its original date for the record.
+// CARRY-OVER. A slot whose layout is not finished by the end of its day shows at the top of the next
+// day -- today -- on the calendar, marked with the day it was meant for, and keeps rolling forward one
+// day at a time until the artist finishes it. Every slot not done or cancelled, at whatever step:
+// approved or assigned, and since 2026-11-04 also a Draft, one with Design or back with the SBU (it
+// was approved ones only, so an unapproved slot sat on its past day). Worked out on read, so no
+// overnight job has to have run, and the slot keeps its original date for the record.
+const CARRIES = ['Draft', 'For Approval', 'Revised', 'Confirmed', 'Assigned'];
 function decorate(r, today = manilaToday()) {
   const phase = phaseOf(r);
   const day = String(r.scheduled_start).slice(0, 10);
-  const carried = (phase === 'Confirmed' || phase === 'Assigned') && day < today;
+  const carried = CARRIES.includes(phase) && day < today;
   return { ...r, phase, display_date: carried ? today : day, carried_over_from: carried ? day : null };
 }
 
@@ -462,7 +465,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     const conditions = [`(DATE(ds.scheduled_start) BETWEEN ? AND ?
       OR DATE(ds.proposed_start) BETWEEN ? AND ?
-      OR (? BETWEEN ? AND ? AND ds.status = 'Confirmed' AND DATE(ds.scheduled_start) < ?
+      OR (? BETWEEN ? AND ? AND ds.status <> 'Cancelled' AND DATE(ds.scheduled_start) < ?
           AND COALESCE(jo.layout_ended_at, n.layout_ended_at) IS NULL))`, vis.sql];
     const params = [from, to, from, to, today, from, to, today, ...vis.params];
     if (req.query.include_cancelled !== '1') conditions.push("ds.status <> 'Cancelled'");

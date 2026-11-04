@@ -825,7 +825,7 @@ function DetailModal({ id, meta, onClose, onChanged, onMove, onOpenBatch }) {
       {s.notes && <p><strong>Notes:</strong> {s.notes}</p>}
       {s.carried_over_from && (
         <div className="badge-warning" style={{ padding: '8px 12px', borderRadius: 6, margin: '8px 0' }}>
-          ↻ Not finished on {displayDate(s.carried_over_from)} -- carried over to today on the artist&apos;s calendar.
+          ↻ Not finished on {displayDate(s.carried_over_from)} -- carried over to today, and it moves to the next day each day until the layout is done.
         </div>
       )}
       {s.proposed_by_side && (
