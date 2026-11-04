@@ -25,6 +25,9 @@
 //     --limit=N          stop after N files (a first trial run)
 //     --keep-spaces      copy Spaces files but leave them in Spaces as well
 //     --no-optimize      skip OPTIMIZE TABLE afterwards (it gives the freed space back to the disk)
+//     --parallel=N       connections per Spaces download (default 8)
+//     --stop-at=HH:MM    start no new file after this Manila time (a night run that leaves the office
+//                        line free in the morning); the next run carries on where this one stopped
 //   node src/db/archive-attachments.js --check            every archived file still on the drive, size right
 //   node src/db/archive-attachments.js --check --deep     ... and its checksum right (reads everything)
 //
@@ -34,7 +37,6 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { Readable, Transform } = require('stream');
 const { pipeline } = require('stream/promises');
 const pool = require('../db');
 const storage = require('../lib/objectStorage');
@@ -98,6 +100,92 @@ async function hashFile(full) {
   await pipeline(fs.createReadStream(full), h);
   return h.digest('hex');
 }
+// Spaces is slow on one connection from the office (~200 KB/s, and one stalled outright on the
+// first trial) while the line takes ~6 MB/s over several. So a Spaces file is fetched in 32 MB
+// ranges, PARALLEL at a time, each written at its own offset; a range that sends nothing for 60 s
+// is dropped and asked for again.
+const CHUNK = 32 * 1024 * 1024;
+const PARALLEL = Math.max(1, Math.min(16, Number(opt('parallel')) || 8));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function fetchRange(key, name, a, b, fd) {
+  const ctrl = new AbortController();
+  let timer;
+  const arm = () => { clearTimeout(timer); timer = setTimeout(() => ctrl.abort(new Error('no data for 60 s')), 60_000); };
+  arm();
+  try {
+    const res = await fetch(await storage.signDownload(key, name), { headers: { Range: `bytes=${a}-${b}` }, signal: ctrl.signal });
+    if (res.status !== 206) throw new Error(`Spaces answered ${res.status} to a range request`);
+    let pos = a;
+    for await (const chunk of res.body) {
+      arm();
+      fs.writeSync(fd, chunk, 0, chunk.length, pos);
+      pos += chunk.length;
+    }
+    if (pos !== b + 1) throw new Error(`got ${pos - a} of ${b - a + 1} bytes`);
+  } finally { clearTimeout(timer); }
+}
+
+async function downloadRanged(key, name, size, part) {
+  const fd = fs.openSync(part, 'w');
+  try {
+    fs.ftruncateSync(fd, size);
+    const ranges = [];
+    for (let o = 0; o < size; o += CHUNK) ranges.push([o, Math.min(size, o + CHUNK) - 1]);
+    let next = 0; let got = 0; let lastLog = Date.now(); const t0 = Date.now();
+    const worker = async () => {
+      while (next < ranges.length) {
+        const [a, b] = ranges[next++];
+        for (let attempt = 1; ; attempt++) {
+          try { await fetchRange(key, name, a, b, fd); break; }
+          catch (e) {
+            if (attempt >= 6) throw new Error(`bytes ${a}-${b} failed 6 times: ${e.message}`);
+            log(`      range ${a}-${b}: ${e.message} -- retry ${attempt}`);
+            await sleep(attempt * 5000);
+          }
+        }
+        got += b - a + 1;
+        if (Date.now() - lastLog > 30_000) {
+          lastLog = Date.now();
+          log(`      ${Math.round((got / size) * 100)}%  ${gb(got)} of ${gb(size)}  ${(got / 1048576 / ((Date.now() - t0) / 1000)).toFixed(2)} MB/s`);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(PARALLEL, ranges.length) }, worker));
+    fs.fsyncSync(fd);
+  } finally { fs.closeSync(fd); }
+}
+
+// SHA-256 of a file and its S3 ETag, in one read. Uploads go up in objectStorage.PART_SIZE parts,
+// so a multipart ETag is md5(md5(part 1) + md5(part 2) + ...)-N -- computing it from the copy and
+// matching Spaces' proves the copy byte for byte against what Spaces holds.
+async function hashFileAndEtag(full, multipart) {
+  const sha = crypto.createHash('sha256'); const whole = crypto.createHash('md5');
+  const partMd5s = []; let cur = crypto.createHash('md5'); let inPart = 0;
+  for await (const chunk of fs.createReadStream(full, { highWaterMark: 8 * 1024 * 1024 })) {
+    sha.update(chunk); whole.update(chunk);
+    let off = 0;
+    while (off < chunk.length) {
+      const take = Math.min(chunk.length - off, storage.PART_SIZE - inPart);
+      cur.update(chunk.subarray(off, off + take)); inPart += take; off += take;
+      if (inPart === storage.PART_SIZE) { partMd5s.push(cur.digest()); cur = crypto.createHash('md5'); inPart = 0; }
+    }
+  }
+  if (inPart) partMd5s.push(cur.digest());
+  const etag = multipart ? `${crypto.createHash('md5').update(Buffer.concat(partMd5s)).digest('hex')}-${partMd5s.length}` : whole.digest('hex');
+  return { sha: sha.digest('hex'), etag };
+}
+
+// Past --stop-at (Manila)? A run started at 19:00 with --stop-at=06:00 stops tomorrow morning.
+const STOP_AT = opt('stop-at');
+const manilaMinutes = () => { const d = new Date(Date.now() + 8 * 3600e3); return d.getUTCHours() * 60 + d.getUTCMinutes(); };
+const START_MIN = manilaMinutes();
+function pastStopAt() {
+  if (!STOP_AT || !/^\d{1,2}:\d{2}$/.test(STOP_AT)) return false;
+  const [h, m] = STOP_AT.split(':').map(Number); const stop = h * 60 + m; const now = manilaMinutes();
+  return stop > START_MIN ? (now >= stop || now < START_MIN) : (now >= stop && now < START_MIN);
+}
+
 function fsyncFile(full) { const fd = fs.openSync(full, 'r+'); try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); } }
 function freeBytes() { const s = fs.statfsSync(ROOT); return Number(s.bavail) * Number(s.bsize); }
 
@@ -143,23 +231,18 @@ async function writeCopy(s, row, full) {
     bytes = buf.length;
   } else {
     const head = await storage.headObject(row.storage_key);
-    let last;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const res = await fetch(await storage.signDownload(row.storage_key, row.file_name));
-        if (!res.ok || !res.body) throw new Error(`Spaces answered ${res.status}`);
-        const h = crypto.createHash('sha256'); let n = 0;
-        const tap = new Transform({ transform(chunk, _e, cb) { h.update(chunk); n += chunk.length; cb(null, chunk); } });
-        await pipeline(Readable.fromWeb(res.body), tap, fs.createWriteStream(part));
-        sha = h.digest('hex'); bytes = n; last = null;
-        break;
-      } catch (e) { last = e; log(`    download attempt ${attempt} failed: ${e.message}`); }
-    }
-    if (last) throw last;
+    log(`    downloading ${row.file_name} (${gb(head.size)}) over ${PARALLEL} connections`);
+    await downloadRanged(row.storage_key, row.file_name, head.size, part);
+    bytes = fs.statSync(part).size;
     if (bytes !== head.size) throw new Error(`downloaded ${bytes} bytes, Spaces says ${head.size}`);
+    const want = String(head.etag || '').replace(/"/g, '');
+    const got = await hashFileAndEtag(part, want.includes('-'));
+    if (want && got.etag !== want) { fs.unlinkSync(part); throw new Error(`copy does not match Spaces (ETag ${got.etag} vs ${want}) -- copied again next run`); }
+    if (row.checksum_sha256 && row.checksum_sha256 !== got.sha) { fs.unlinkSync(part); throw new Error('copy differs from the checksum recorded at upload -- copied again next run'); }
+    fs.renameSync(part, full);
+    return { sha: got.sha, bytes };
   }
   if (row.checksum_sha256 && row.checksum_sha256 !== sha) {
-    if (s.kind === 'spaces') throw new Error(`checksum differs from the one recorded at upload (${row.checksum_sha256.slice(0, 12)}...)`);
     log(`    note: bytes differ from the checksum recorded at upload; archived as stored`);
   }
   fsyncFile(part);
@@ -192,6 +275,7 @@ async function apply(conn, cutoff) {
     log(`  ${s.key}: ${rows.length} file(s), ${gb(rows.reduce((n, r) => n + Number(r.size || 0), 0))}`);
     for (const r of rows) {
       if (done >= LIMIT) { log(`  --limit ${LIMIT} reached`); break outer; }
+      if (pastStopAt()) { log(`  --stop-at ${STOP_AT} reached; the rest is moved on the next run`); break outer; }
       if (freeBytes() - Number(r.size || 0) < RESERVE) { log(`  STOPPED: ${ROOT} is down to ${gb(freeBytes())}, the reserve is ${gb(RESERVE)}. Free space or add a drive, then run again.`); break outer; }
       const month = manilaMonth(r.created_at);
       const rel = [r.folder, month.slice(0, 4), month.slice(5, 7), safe(r.doc || 'no-document', 80), safe(`${r.id}_${r.file_name}`)].join('/');
