@@ -3,6 +3,7 @@ const ExcelJS = require('exceljs');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
+const { hasSoAttachmentKind } = require('../lib/soAttachmentKind');
 
 const router = express.Router();
 
@@ -160,7 +161,10 @@ async function loadRows(req, { allReps = false } = {}) {
   if (!jos.length) return [];
   const ids = jos.map((j) => j.id);
   const byJo = (rows) => new Map(rows.map((r) => [Number(r.job_order_id), r]));
-  const [invM, [qis], [dels], [solRows], [nslRows]] = await Promise.all([
+  // wt PO / wt PAR&Pics (2026-11-04): the SO has a file typed PO, the JO one typed PAR & Pics.
+  const soIds = [...new Set(jos.map((j) => j.sales_order_id).filter(Boolean))].concat(0);
+  const withKind = await hasSoAttachmentKind();
+  const [invM, [qis], [dels], [solRows], [nslRows], [poRows], [parRows]] = await Promise.all([
     invoicedByJobOrder(jos),
     pool.query(`SELECT job_order_id, MAX(date_created) d FROM quality_inspections
                  WHERE job_order_id IN (?) AND (status IS NULL OR status <> 'cancelled') GROUP BY job_order_id`, [ids]),
@@ -170,7 +174,11 @@ async function loadRows(req, { allReps = false } = {}) {
       [[...new Set(jos.map((j) => j.sales_order_id).filter(Boolean))].concat(0)]),
     pool.query('SELECT id, quantity, gross_amount FROM non_standard_sales_order_lines WHERE id IN (?)',
       [[...new Set(jos.map((j) => j.nsso_line_id).filter(Boolean))].concat(0)]),
+    withKind ? pool.query("SELECT DISTINCT sales_order_id FROM sales_order_attachments WHERE kind = 'PO' AND sales_order_id IN (?)", [soIds]) : [[]],
+    pool.query("SELECT DISTINCT job_order_id FROM job_order_attachments WHERE kind = 'PAR & Pics' AND job_order_id IN (?)", [ids]),
   ]);
+  const withPo = new Set(poRows.map((r) => Number(r.sales_order_id)));
+  const withPar = new Set(parRows.map((r) => Number(r.job_order_id)));
   const qiM = byJo(qis); const delM = byJo(dels);
   const solById = new Map(solRows.map((l) => [Number(l.id), l]));
   const solByJo = new Map(solRows.filter((l) => l.job_order_id).map((l) => [Number(l.job_order_id), l]));
@@ -200,7 +208,7 @@ async function loadRows(req, { allReps = false } = {}) {
     if (from && (!doneDay || doneDay < from)) continue;
     if (to && (!doneDay || doneDay > to)) continue;
     out.push({
-      ...j, unit_gross: unit, invoiced_qty: invoiced, invoice_nos: i?.invoice_nos || null,
+      ...j, unit_gross: unit, with_par_pics: withPar.has(Number(j.id)), with_po: withPo.has(Number(j.sales_order_id)), invoiced_qty: invoiced, invoice_nos: i?.invoice_nos || null,
       completed_date: completed, last_delivery_date: delM.get(Number(j.id))?.d || null,
       uninvoiced_qty: Number(uninvoiced.toFixed(4)),
       unbilled_amount: Number((uninvoiced * unit).toFixed(2)),
@@ -238,6 +246,8 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
       { header: 'Department', key: 'department_name', width: 18 },
       { header: 'Description', key: 'description', width: 44 },
       { header: 'Completed', key: 'completed_date', width: 12 },
+      { header: 'wt PAR&Pics', key: 'par', width: 11 },
+      { header: 'wt PO', key: 'po', width: 8 },
       { header: 'Days Pending', key: 'days_pending', width: 10 },
       { header: 'Qty', key: 'quantity', width: 9 },
       { header: 'Completed Qty', key: 'completed_qty', width: 11 },
@@ -251,6 +261,7 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
     ws.getRow(1).font = { bold: true };
     for (const r of rows) {
       ws.addRow({ ...r, order: r.sales_order_no || r.nsso_no || '', completed_date: r.completed_date ? String(r.completed_date).slice(0, 10) : '',
+        par: r.with_par_pics ? 'Yes' : '', po: r.with_po ? 'Yes' : '',
         unit_gross: Number(Number(r.unit_gross || 0).toFixed(2)) });
     }
     const total = ws.addRow({ job_order_no: 'Total', uninvoiced_qty: rows.reduce((s, r) => s + r.uninvoiced_qty, 0), unbilled_amount: rows.reduce((s, r) => s + r.unbilled_amount, 0) });

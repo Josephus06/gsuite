@@ -107,13 +107,16 @@ export default function PendingBilling() {
                 <thead>
                   <tr>
                     <th>Job Order</th><th>SO / NSSO</th><th>Customer</th><th>Sales Rep</th><th>Department</th><th>Description</th>
-                    <th>Completed</th><th className="text-right">Days Pending</th><th className="text-right">Qty</th>
+                    <th>Completed</th>
+                    <th title="The Job Order has a PAR & Pics file (Production > Job Order > Production Attachment)" style={{ textAlign: 'center' }}>wt PAR&amp;Pics</th>
+                    <th title="The Sales Order has a file typed PO (Sales Order > Attachment)" style={{ textAlign: 'center' }}>wt PO</th>
+                    <th className="text-right">Days Pending</th><th className="text-right">Qty</th>
                     <th className="text-right">Delivered</th><th className="text-right">Invoiced</th><th className="text-right">To Bill</th>
                     <th className="text-right">Unit Price</th><th className="text-right">Unbilled Amount</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.rows.length === 0 && <tr><td colSpan={14} className="muted" style={{ textAlign: 'center', padding: 16 }}>Nothing pending billing.</td></tr>}
+                  {data.rows.length === 0 && <tr><td colSpan={16} className="muted" style={{ textAlign: 'center', padding: 16 }}>Nothing pending billing.</td></tr>}
                   {data.rows.map((r) => (
                     <tr key={r.id}>
                       <td style={{ whiteSpace: 'nowrap' }}><Link to={`/job-orders/${r.id}`}>{r.job_order_no}</Link></td>
@@ -123,6 +126,8 @@ export default function PendingBilling() {
                       <td>{r.department_name || ''}</td>
                       <td style={{ maxWidth: 320 }}>{r.description}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>{displayDate(r.completed_date || r.so_date)}</td>
+                      <td style={{ textAlign: 'center' }}><input type="checkbox" checked={!!r.with_par_pics} readOnly onClick={(e) => e.preventDefault()} style={{ cursor: 'default' }} aria-label="with PAR & Pics" /></td>
+                      <td style={{ textAlign: 'center' }}><input type="checkbox" checked={!!r.with_po} readOnly onClick={(e) => e.preventDefault()} style={{ cursor: 'default' }} aria-label="with PO" /></td>
                       <td className="text-right" style={r.days_pending > 30 ? { color: 'var(--danger, #b91c1c)', fontWeight: 600 } : undefined}>{r.days_pending ?? ''}</td>
                       <td className="text-right">{qty(r.quantity)}</td>
                       <td className="text-right">{qty(r.quantity_delivered)}</td>
@@ -134,7 +139,7 @@ export default function PendingBilling() {
                   ))}
                   {data.rows.length > 0 && (
                     <tr style={{ fontWeight: 700, borderTop: '2px solid var(--border)' }}>
-                      <td colSpan={11}>Total</td><td className="text-right">{qty(t.qty)}</td><td /><td className="text-right">{money(t.amount)}</td>
+                      <td colSpan={13}>Total</td><td className="text-right">{qty(t.qty)}</td><td /><td className="text-right">{money(t.amount)}</td>
                     </tr>
                   )}
                 </tbody>

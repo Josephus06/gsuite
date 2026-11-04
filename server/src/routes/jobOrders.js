@@ -1291,7 +1291,9 @@ const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const ARTIST_ATTACHMENT_KINDS = ['Perspective', 'Bill of Materials', 'Other'];
 // The production planner's own files, attached from the Production JO screen. Named so
 // they cannot collide with the artist's 'Other'.
-const PRODUCTION_ATTACHMENT_KINDS = ['Production Plan', 'Reference', 'Other (Production)'];
+// 'PAR & Pics' (2026-11-04): the signed Project Accomplishment Report and site photos -- Pending Billing's
+// "wt PAR&Pics" column ticks when a JO has one.
+const PRODUCTION_ATTACHMENT_KINDS = ['Production Plan', 'Reference', 'PAR & Pics', 'Other (Production)'];
 const ATTACHMENT_KINDS = [...ARTIST_ATTACHMENT_KINDS, ...PRODUCTION_ATTACHMENT_KINDS];
 const isProductionKind = (kind) => PRODUCTION_ATTACHMENT_KINDS.includes(kind);
 

@@ -7,6 +7,7 @@ const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { computeSalesOrderStatus, invoicedOrTicketedSql, openDtQtySql } = require('../lib/salesOrderStatus');
 const { releaseIfDirectToProduction } = require('../lib/directToProduction');
 const { sendXlsx } = require('../lib/xlsxExport');
+const { SO_ATTACHMENT_KINDS, hasSoAttachmentKind } = require('../lib/soAttachmentKind');
 
 const router = express.Router();
 
@@ -800,8 +801,9 @@ router.get('/:id/attachments', requireAuth, requirePermission(ROUTE, 'can_view')
       [so.estimate_id],
     ) : [[]];
 
+    const kindCol = (await hasSoAttachmentKind()) ? 'a.kind' : 'NULL AS kind';
     const [own] = await pool.query(
-      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.archived_at, u.display_name AS uploaded_by_name
+      `SELECT a.id, ${kindCol}, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.archived_at, u.display_name AS uploaded_by_name
          FROM sales_order_attachments a
          LEFT JOIN users u ON u.id = a.uploaded_by_user_id
         WHERE a.sales_order_id = ? ORDER BY a.id`,
@@ -859,6 +861,12 @@ router.post('/:id/order-attachments', requireAuth, requirePermission(ROUTE, 'can
 
     const { file_name: fileName, data, mime_type: mimeType } = req.body || {};
     if (!fileName || !data) return res.status(400).json({ error: 'file_name and data are required.' });
+    // Document type: 'PO' is what Pending Billing's "wt PO" looks for.
+    const kind = req.body?.kind || null;
+    if (kind && !SO_ATTACHMENT_KINDS.includes(kind)) {
+      return res.status(400).json({ error: `kind must be one of: ${SO_ATTACHMENT_KINDS.join(', ')}` });
+    }
+    const withKind = await hasSoAttachmentKind();
     if (!SO_ATTACHMENT_TYPES.test(String(mimeType || ''))) {
       return res.status(400).json({ error: 'Only a PDF or an image can be attached.' });
     }
@@ -878,12 +886,12 @@ router.post('/:id/order-attachments', requireAuth, requirePermission(ROUTE, 'can
     }
 
     const [result] = await pool.query(
-      `INSERT INTO sales_order_attachments (sales_order_id, file_name, mime_type, size_bytes, file_data, uploaded_by_user_id)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [req.params.id, String(fileName).slice(0, 255), String(mimeType).slice(0, 100), buf.length, buf, req.user.id]
+      `INSERT INTO sales_order_attachments (sales_order_id, ${withKind ? 'kind, ' : ''}file_name, mime_type, size_bytes, file_data, uploaded_by_user_id)
+       VALUES (?, ${withKind ? '?, ' : ''}?, ?, ?, ?, ?)`,
+      [req.params.id, ...(withKind ? [kind] : []), String(fileName).slice(0, 255), String(mimeType).slice(0, 100), buf.length, buf, req.user.id]
     );
     const [[row]] = await pool.query(
-      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.archived_at, a.uploaded_by_user_id,
+      `SELECT a.id, ${withKind ? 'a.kind' : 'NULL AS kind'}, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.archived_at, a.uploaded_by_user_id,
               u.display_name AS uploaded_by_name
          FROM sales_order_attachments a
          LEFT JOIN users u ON u.id = a.uploaded_by_user_id

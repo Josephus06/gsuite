@@ -20,7 +20,7 @@ import { displayDateTime } from '../utils/dates';
 const MAX_BYTES = 10 * 1024 * 1024;
 
 export const ARTIST_KINDS = ['Perspective', 'Bill of Materials', 'Other'];
-export const PRODUCTION_KINDS = ['Production Plan', 'Reference', 'Other (Production)'];
+export const PRODUCTION_KINDS = ['Production Plan', 'Reference', 'PAR & Pics', 'Other (Production)'];
 
 // Short extension badge for the row icon: "PDF", "XLSX", or "FILE" when there is none.
 function fileExt(name) {

@@ -179,6 +179,8 @@ export default function SalesOrderView() {
   const [attachmentError, setAttachmentError] = useState('');
   const [canManageAttachments, setCanManageAttachments] = useState(false);
   const [uploading, setUploading] = useState(false);
+  // Document type of the next upload: 'PO' ticks Pending Billing's "wt PO" for this order.
+  const [attachmentKind, setAttachmentKind] = useState('PO');
   const attachmentInputRef = useRef(null);
 
   function load() {
@@ -243,7 +245,7 @@ export default function SalesOrderView() {
         reader.readAsDataURL(file);
       });
       const { data: row } = await api.post(`/sales-orders/${id}/order-attachments`, {
-        file_name: file.name, mime_type: file.type, data,
+        file_name: file.name, mime_type: file.type, data, kind: attachmentKind,
       });
       setAttachments((prev) => [...prev, row]);
     } catch (err) {
@@ -570,16 +572,17 @@ export default function SalesOrderView() {
           {attachmentError && <div className="error-banner" style={{ marginBottom: 12 }}>{attachmentError}</div>}
           <div className="table-wrap">
             <table>
-              <thead><tr><th>#</th><th>File</th><th>Source</th><th>Type</th><th>Size</th><th>Uploaded By</th><th>Uploaded</th><th></th></tr></thead>
+              <thead><tr><th>#</th><th>File</th><th>Source</th><th>Document Type</th><th>Type</th><th>Size</th><th>Uploaded By</th><th>Uploaded</th><th></th></tr></thead>
               <tbody>
                 {attachments.length === 0 && (
-                  <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>No files on this order yet.</td></tr>
+                  <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 20 }}>No files on this order yet.</td></tr>
                 )}
                 {attachments.map((a, idx) => (
                   <tr key={`${a.source}-${a.id}`}>
                     <td>{idx + 1}</td>
                     <td><button type="button" className="link-btn" onClick={() => openAttachment(a)}>{a.file_name}</button><ArchivedTag at={a.archived_at} /></td>
                     <td>{a.source === 'order' ? 'This order' : 'Estimate'}</td>
+                    <td>{a.kind || ''}</td>
                     <td>{a.mime_type === 'application/pdf' ? 'PDF' : (String(a.mime_type || '').startsWith('image/') ? 'Image' : a.mime_type)}</td>
                     <td>{fileSize(a.size_bytes)}</td>
                     <td>{a.uploaded_by_name || ''}</td>
@@ -599,6 +602,13 @@ export default function SalesOrderView() {
 
           {canManageAttachments ? (
             <div style={{ marginTop: 12 }}>
+              <label style={{ marginRight: 8 }}>
+                Document type{' '}
+                <select value={attachmentKind} onChange={(e) => setAttachmentKind(e.target.value)} disabled={uploading}>
+                  <option value="PO">PO</option>
+                  <option value="Other">Other</option>
+                </select>
+              </label>
               <input
                 ref={attachmentInputRef}
                 type="file"
